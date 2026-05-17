@@ -6,6 +6,8 @@ import { after, before, describe, it } from 'node:test'
 import { computeClimateConflictRisk, computeFloodRisk, computeServiceImpacts } from '../src/analytics.js'
 import { getConnector, runIngestion } from '../src/ingestion.js'
 import { createServer } from '../src/server.js'
+import { Pg0Manager } from '../src/pg0.js'
+import { createStoreFromEnv } from '../src/storage.js'
 import { JsonStore } from '../src/store.js'
 import { toCsv, toGeoJson } from '../src/utils.js'
 
@@ -65,6 +67,32 @@ describe('Lindela Lite analytics', () => {
   })
 })
 
+
+describe('Lindela Lite storage modes', () => {
+  it('creates a JSON store when explicitly requested', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-storage-'))
+    const store = await createStoreFromEnv({
+      LINDELA_LITE_DB_MODE: 'json',
+      LINDELA_LITE_STORE: path.join(dir, 'store.json'),
+    })
+    assert.equal(store.mode, 'json')
+    const data = await store.read()
+    assert.equal(data.source_runs.length, 0)
+  })
+
+  it('reports pg0 unavailable when the configured command is missing', async () => {
+    const pg0 = new Pg0Manager({ command: 'missing-pg0-for-lindela-lite-test' })
+    assert.equal(await pg0.available(), false)
+  })
+
+  it('requires a database URL for explicit postgres mode', async () => {
+    await assert.rejects(
+      () => createStoreFromEnv({ LINDELA_LITE_DB_MODE: 'postgres' }),
+      /DATABASE_URL/,
+    )
+  })
+})
+
 describe('Lindela Lite API', () => {
   let server
   let baseUrl
@@ -72,15 +100,15 @@ describe('Lindela Lite API', () => {
 
   before(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-api-'))
-    process.env.LINDELA_LITE_STORE = path.join(tmpDir, 'store.json')
-    server = createServer()
+    const store = new JsonStore(path.join(tmpDir, 'store.json'))
+    store.mode = 'json'
+    server = createServer({ store })
     await new Promise((resolve) => server.listen(0, resolve))
     baseUrl = `http://127.0.0.1:${server.address().port}`
   })
 
   after(async () => {
     await new Promise((resolve) => server.close(resolve))
-    delete process.env.LINDELA_LITE_STORE
   })
 
   it('serves health and source catalogs', async () => {
@@ -88,6 +116,7 @@ describe('Lindela Lite API', () => {
     const sources = await fetchJson(`${baseUrl}/api/v1/sources`)
     assert.equal(health.success, true)
     assert.ok(health.exclusions.includes('gdelt'))
+    assert.equal(health.storage.mode, 'json')
     assert.ok(sources.data.some((source) => source.id === 'open_meteo'))
     assert.ok(!sources.data.some((source) => source.id === 'gdelt'))
   })

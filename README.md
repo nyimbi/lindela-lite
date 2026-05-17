@@ -34,6 +34,23 @@ curl -X POST http://127.0.0.1:4177/api/v1/ingest/run \
   -d '{"sources":["open_meteo","gdacs"],"regions":[{"name":"Turkana","lat":3.1,"lon":35.6,"country":"KE"}]}'
 ```
 
+## Storage
+
+Lindela Lite supports four storage modes:
+
+- `auto` defaults to external Postgres when `LINDELA_LITE_DATABASE_URL` or `DATABASE_URL` is set, then tries local `pg0`, then falls back to JSON.
+- `pg0` starts a local pg0 PostgreSQL instance and stores records in Postgres.
+- `postgres` uses an external PostgreSQL database URL.
+- `json` uses the original local JSON file store.
+
+```bash
+LINDELA_LITE_DB_MODE=pg0 npm start
+LINDELA_LITE_DB_MODE=postgres LINDELA_LITE_DATABASE_URL=postgresql://user:pass@host:5432/db npm start
+LINDELA_LITE_DB_MODE=json npm start
+```
+
+See [docs/storage.md](docs/storage.md).
+
 ## Sources
 
 Built-in source ids:

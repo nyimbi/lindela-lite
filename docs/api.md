@@ -4,7 +4,7 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 
 ## Endpoints
 
-- `GET /api/v1/health` returns service status, store counts, and available source ids.
+- `GET /api/v1/health` returns service status, storage mode, store counts, and available source ids.
 - `GET /api/v1/sources` lists source capabilities and last source runs.
 - `POST /api/v1/ingest/run` runs one or more ingestors.
 - `GET /api/v1/events` returns hazard and conflict events.
