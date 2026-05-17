@@ -19,7 +19,5 @@ Lindela Lite is the public-good climate-conflict edition. It is useful on its ow
 
 ## Explicit Exclusions
 
-- No GDELT ingestion.
-- No WorldMonitor code.
 - No Lindela commercial internals.
 - No client data, secrets, or trained model artifacts.
