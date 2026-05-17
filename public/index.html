@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lindela Lite</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Lindela Lite</h1>
+        <p>Climate-conflict, flood, environmental, and service-delivery impact monitoring.</p>
+      </div>
+      <button id="refreshButton" type="button">Refresh</button>
+    </header>
+
+    <main class="layout">
+      <section class="panel controls">
+        <h2>Ingestion</h2>
+        <label>Latitude <input id="latInput" type="number" step="0.0001" value="3.1167"></label>
+        <label>Longitude <input id="lonInput" type="number" step="0.0001" value="35.6"></label>
+        <label>Region <input id="regionInput" type="text" value="Turkana"></label>
+        <label>Country <input id="countryInput" type="text" value="KE" maxlength="3"></label>
+        <div class="source-grid" id="sourceGrid"></div>
+        <button id="runButton" type="button">Run Selected Sources</button>
+        <p class="note">GDELT is intentionally unavailable in Lindela Lite.</p>
+      </section>
+
+      <section class="panel overview">
+        <h2>Overview</h2>
+        <div class="metrics" id="metrics"></div>
+        <div class="status" id="status"></div>
+      </section>
+
+      <section class="panel map-panel">
+        <h2>Risk Map</h2>
+        <div id="map" class="map"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Flood Risk</h2>
+        <div id="floodRisk" class="cards"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Climate-Conflict Risk</h2>
+        <div id="conflictRisk" class="cards"></div>
+      </section>
+
+      <section class="panel table-panel">
+        <h2>Recent Events</h2>
+        <table>
+          <thead>
+            <tr><th>Type</th><th>Severity</th><th>Title</th><th>Source</th></tr>
+          </thead>
+          <tbody id="eventsTable"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
