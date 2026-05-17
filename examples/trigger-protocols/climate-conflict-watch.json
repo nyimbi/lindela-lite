@@ -1,0 +1,67 @@
+{
+  "schema_version": "lindela-lite.trigger-protocol.v1",
+  "id": "climate-conflict-watch-v1",
+  "name": "Climate-Conflict Watch",
+  "purpose": "Monitor climate-conflict pressure from climate stress, hazards, service exposure, and user-supplied conflict events.",
+  "poll": {
+    "endpoint": "/api/v1/conflict-risk",
+    "method": "GET",
+    "interval_minutes": 120,
+    "freshness_warning_minutes": 360
+  },
+  "scope": {
+    "country": "KE",
+    "bbox": "33.5,-5.0,42.5,5.5",
+    "include_sources": ["open_meteo", "gdacs", "nasa_firms", "conflict_csv", "acled_csv"],
+    "exclude_sources": ["gdelt"]
+  },
+  "triggers": [
+    {
+      "id": "climate-conflict-critical",
+      "when": {
+        "all": [
+          { "field": "score", "operator": ">=", "value": 80 },
+          { "field": "drivers.conflict_events", "operator": ">", "value": 0 }
+        ]
+      },
+      "severity": "critical",
+      "message": "Critical climate-conflict pressure with recent conflict events."
+    },
+    {
+      "id": "climate-stress-with-service-exposure",
+      "when": {
+        "all": [
+          { "field": "score", "operator": ">=", "value": 60 },
+          { "field": "drivers.nearby_service_assets", "operator": ">=", "value": 3 }
+        ]
+      },
+      "severity": "high",
+      "message": "High climate-conflict pressure near multiple service assets."
+    }
+  ],
+  "actions": [
+    {
+      "type": "notify",
+      "channel": "analysis",
+      "template": "Climate-conflict risk {risk_level} in {region_name}: score {score}."
+    },
+    {
+      "type": "export_snapshot",
+      "format": "json",
+      "endpoint": "/api/v1/assessments?country=KE"
+    },
+    {
+      "type": "create_ticket",
+      "queue": "field-verification",
+      "title": "Validate climate-conflict drivers for {region_name}"
+    }
+  ],
+  "suppression": {
+    "dedupe_key": "{id}:{score}",
+    "repeat_after_minutes": 720
+  },
+  "review": {
+    "human_review_required": true,
+    "review_note": "Scores are baseline decision support and must not be treated as automated attribution or prediction."
+  }
+}
