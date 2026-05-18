@@ -21,7 +21,6 @@ This package is intentionally separate from the full Lindela platform. It does n
 ## Run
 
 ```bash
-cd packages/lindela-lite
 npm test
 npm start
 ```
@@ -57,3 +56,11 @@ See [docs/api.md](docs/api.md).
 ## Open-Source Boundary
 
 See [docs/open-source-boundary.md](docs/open-source-boundary.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+## Trigger Protocol Examples
+
+Example downstream trigger configurations are in [examples/trigger-protocols](examples/trigger-protocols).
