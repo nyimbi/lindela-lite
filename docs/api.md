@@ -11,6 +11,8 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 - `GET /api/v1/climate` returns climate observations.
 - `GET /api/v1/flood-risk` returns flood risk scores.
 - `GET /api/v1/conflict-risk` returns climate-conflict risk scores.
+- `GET /api/v1/service-assets` returns imported service assets.
+- `POST /api/v1/service-assets` imports service assets from JSON, CSV, or GeoJSON.
 - `GET /api/v1/service-impacts` returns service-delivery impact assessments.
 - `GET /api/v1/assessments` returns a combined assessment package.
 - `GET /api/v1/export.geojson` returns event and service features as GeoJSON.
@@ -39,3 +41,7 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 ```
 
 `gdelt` is not a valid source id.
+
+## OpenAPI
+
+The OpenAPI 3.1 contract is available at [openapi.yaml](openapi.yaml).

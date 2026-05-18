@@ -1,8 +1,10 @@
-Lindela Lite is intended for dual licensing.
+Lindela Lite Dual License
 
-Community use: AGPL-3.0-only.
-Commercial use: available under a separate commercial license from Datacraft.
+Community license: GNU Affero General Public License v3.0 only (AGPL-3.0-only).
+Commercial license: available separately from Datacraft.
 
-The public package does not include proprietary Lindela platform code, client
-data, trained model artifacts, source reliability systems, report-management
-workflows or classified workflows.
+You may use, modify, and distribute Lindela Lite under AGPL-3.0-only. Organizations that cannot comply with AGPL obligations, including network-service source disclosure obligations, must obtain a separate commercial license.
+
+The public package does not include proprietary Lindela platform code, client data, trained model artifacts, source reliability systems, report-management workflows, wargaming systems, classified workflows, or enterprise orchestration.
+
+No WorldMonitor code is included or permitted in this repository. GDELT ingestion is intentionally excluded from Lindela Lite.

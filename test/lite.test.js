@@ -141,6 +141,50 @@ describe('Lindela Lite API', () => {
     assert.equal(events.data.length, 1)
     assert.equal(impacts.data.length, 1)
   })
+
+  it('returns empty arrays for empty-state API responses', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-empty-api-'))
+    const emptyStore = new JsonStore(path.join(dir, 'store.json'))
+    emptyStore.mode = 'json'
+    const emptyServer = createServer({ store: emptyStore })
+    await new Promise((resolve) => emptyServer.listen(0, resolve))
+    const emptyBase = `http://127.0.0.1:${emptyServer.address().port}`
+    try {
+      const events = await fetchJson(`${emptyBase}/api/v1/events`)
+      const climate = await fetchJson(`${emptyBase}/api/v1/climate`)
+      assert.deepEqual(events.data, [])
+      assert.deepEqual(climate.data, [])
+    } finally {
+      await new Promise((resolve) => emptyServer.close(resolve))
+    }
+  })
+
+  it('validates service asset imports', async () => {
+    const response = await fetch(`${baseUrl}/api/v1/service-assets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ service_assets: [{ name: 'Bad asset', service_type: 'health', country: 'KE', longitude: 35.6 }] }),
+    })
+    const payload = await response.json()
+    assert.equal(response.status, 400)
+    assert.equal(payload.success, false)
+    assert.match(payload.errors[0], /latitude/)
+  })
+
+  it('filters events and exports CSV and GeoJSON', async () => {
+    const filtered = await fetchJson(`${baseUrl}/api/v1/events?country=KE&event_type=resource_tension`)
+    assert.equal(filtered.data.length, 1)
+
+    const geojson = await fetchJson(`${baseUrl}/api/v1/export.geojson?country=KE`)
+    assert.equal(geojson.type, 'FeatureCollection')
+    assert.ok(geojson.features.length >= 1)
+
+    const csvResponse = await fetch(`${baseUrl}/api/v1/export.csv?country=KE`)
+    const csv = await csvResponse.text()
+    assert.equal(csvResponse.headers.get('content-type').startsWith('text/csv'), true)
+    assert.match(csv, /resource_tension/)
+  })
+
 })
 
 async function fetchJson(url) {

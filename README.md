@@ -68,7 +68,7 @@ The registry rejects `gdelt` to keep this package aligned with the open-source b
 
 ## API
 
-See [docs/api.md](docs/api.md).
+See [docs/api.md](docs/api.md), [docs/openapi.yaml](docs/openapi.yaml), and [docs/service-assets.md](docs/service-assets.md).
 
 ## Open-Source Boundary
 
@@ -81,3 +81,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.
 ## Trigger Protocol Examples
 
 Example downstream trigger configurations are in [examples/trigger-protocols](examples/trigger-protocols).
+
+## Security And Releases
+
+See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).

@@ -1,3 +1,4 @@
+import { fetchWithRetry } from './http.js'
 import { DEFAULT_REGIONS } from '../schema.js'
 import { stableId } from '../utils.js'
 
@@ -18,9 +19,7 @@ export const openMeteoConnector = {
         url.searchParams.set('forecast_days', String(options.forecast_days || 7))
         url.searchParams.set('timezone', 'UTC')
 
-        const response = await fetch(url, { signal: AbortSignal.timeout(options.timeout_ms || 20000) })
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const data = await response.json()
+        const data = await fetchWithRetry(url, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2, parse: 'json' })
 
         if (data.current) {
           climate_observations.push({

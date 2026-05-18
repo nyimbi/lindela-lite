@@ -1,3 +1,4 @@
+import { fetchWithRetry } from './http.js'
 import { normalizeSeverity } from '../schema.js'
 import { stableId, toNumber } from '../utils.js'
 
@@ -17,9 +18,7 @@ export const gdacsConnector = {
 
     for (const feed of feeds) {
       try {
-        const response = await fetch(feed, { signal: AbortSignal.timeout(options.timeout_ms || 20000) })
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const xml = await response.text()
+        const xml = await fetchWithRetry(feed, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2 })
         for (const item of parseRssItems(xml)) {
           const parsed = parseGdacsItem(item)
           hazard_events.push({

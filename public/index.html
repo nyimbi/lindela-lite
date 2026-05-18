@@ -12,7 +12,10 @@
         <h1>Lindela Lite</h1>
         <p>Climate-conflict, flood, environmental, and service-delivery impact monitoring.</p>
       </div>
-      <button id="refreshButton" type="button">Refresh</button>
+      <div class="topbar-actions">
+        <span id="storageMode" class="pill">storage: unknown</span>
+        <button id="refreshButton" type="button">Refresh</button>
+      </div>
     </header>
 
     <main class="layout">
@@ -27,15 +30,38 @@
         <p class="note">GDELT is intentionally unavailable in Lindela Lite.</p>
       </section>
 
+      <section class="panel controls">
+        <h2>Service Assets</h2>
+        <textarea id="serviceAssetInput" rows="8" spellcheck="false" placeholder="CSV: name,service_type,country,latitude,longitude
+Clinic A,health,KE,3.13,35.63"></textarea>
+        <div class="button-row">
+          <button id="importCsvButton" type="button">Import CSV</button>
+          <button id="importGeoJsonButton" type="button">Import GeoJSON</button>
+        </div>
+        <p class="note">Required fields: service_type, country, latitude, longitude.</p>
+      </section>
+
       <section class="panel overview">
         <h2>Overview</h2>
         <div class="metrics" id="metrics"></div>
         <div class="status" id="status"></div>
       </section>
 
+      <section class="panel source-panel">
+        <h2>Source Freshness</h2>
+        <div id="sourceFreshness" class="freshness"></div>
+      </section>
+
       <section class="panel map-panel">
-        <h2>Risk Map</h2>
-        <div id="map" class="map"></div>
+        <div class="panel-heading">
+          <h2>GeoJSON Viewer</h2>
+          <div class="button-row">
+            <button id="exportGeoJsonButton" type="button">GeoJSON</button>
+            <button id="exportCsvButton" type="button">CSV</button>
+          </div>
+        </div>
+        <div id="map" class="map" aria-label="GeoJSON point viewer"></div>
+        <div class="legend"><span class="dot critical"></span>Critical <span class="dot high"></span>High <span class="dot medium"></span>Medium <span class="dot low"></span>Low</div>
       </section>
 
       <section class="panel">

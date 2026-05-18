@@ -18,7 +18,7 @@ export async function createStoreFromEnv(env = process.env) {
   }
 
   if (mode === 'pg0') {
-    const pg0 = new Pg0Manager({ databaseUrl })
+    const pg0 = new Pg0Manager({ databaseUrl, command: env.PG0_BIN, name: env.PG0_NAME || env.LINDELA_LITE_PG0_NAME, port: env.PG0_PORT || env.LINDELA_LITE_PG0_PORT, dataDir: env.PG0_DATA_DIR || env.LINDELA_LITE_PG0_DATA_DIR })
     const started = await pg0.start()
     const store = new PostgresStore({ databaseUrl: started.databaseUrl })
     await store.ensureSchema()
@@ -33,7 +33,7 @@ export async function createStoreFromEnv(env = process.env) {
     return annotate(store, 'postgres')
   }
 
-  const pg0 = new Pg0Manager()
+  const pg0 = new Pg0Manager({ command: env.PG0_BIN, name: env.PG0_NAME || env.LINDELA_LITE_PG0_NAME, port: env.PG0_PORT || env.LINDELA_LITE_PG0_PORT, dataDir: env.PG0_DATA_DIR || env.LINDELA_LITE_PG0_DATA_DIR })
   if (await pg0.available()) {
     const started = await pg0.start()
     const store = new PostgresStore({ databaseUrl: started.databaseUrl })

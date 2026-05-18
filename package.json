@@ -7,7 +7,11 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test test/*.test.js"
+    "validate": "node scripts/validate.mjs",
+    "test": "node --test test/*.test.js",
+    "test:postgres": "node --test test/database.integration.test.js",
+    "test:pg0": "LINDELA_LITE_TEST_PG0=1 node --test test/database.integration.test.js",
+    "verify:pg0": "node scripts/verify-pg0.mjs"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -1,3 +1,4 @@
+import { fetchWithRetry } from './http.js'
 import { stableId } from '../utils.js'
 
 const FEEDS = [
@@ -13,9 +14,7 @@ export const glofasConnector = {
 
     for (const feed of feeds) {
       try {
-        const response = await fetch(feed, { signal: AbortSignal.timeout(options.timeout_ms || 20000) })
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const text = await response.text()
+        const text = await fetchWithRetry(feed, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2 })
         const items = [...text.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)]
         for (const match of items) {
           const title = readTag(match[1], 'title') || 'GloFAS flood forecast update'
