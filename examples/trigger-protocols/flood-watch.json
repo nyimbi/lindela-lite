@@ -1,0 +1,64 @@
+{
+  "schema_version": "lindela-lite.trigger-protocol.v1",
+  "id": "flood-watch-v1",
+  "name": "Flood Watch",
+  "purpose": "Monitor flood-risk scores and flood hazard events for early operational awareness.",
+  "poll": {
+    "endpoint": "/api/v1/flood-risk",
+    "method": "GET",
+    "interval_minutes": 60,
+    "freshness_warning_minutes": 180
+  },
+  "scope": {
+    "country": "KE",
+    "bbox": "33.5,-5.0,42.5,5.5",
+    "include_sources": ["open_meteo", "gdacs", "glofas", "chirps"]
+  },
+  "triggers": [
+    {
+      "id": "critical-flood-risk",
+      "when": {
+        "field": "score",
+        "operator": ">=",
+        "value": 80
+      },
+      "severity": "critical",
+      "message": "Critical flood risk detected in monitored area."
+    },
+    {
+      "id": "high-flood-risk",
+      "when": {
+        "field": "risk_level",
+        "operator": "in",
+        "value": ["high", "critical"]
+      },
+      "severity": "high",
+      "message": "High flood-risk level detected."
+    }
+  ],
+  "actions": [
+    {
+      "type": "notify",
+      "channel": "operations",
+      "template": "Flood risk {risk_level} in {region_name}: score {score}. Drivers: {drivers}."
+    },
+    {
+      "type": "export_snapshot",
+      "format": "geojson",
+      "endpoint": "/api/v1/export.geojson?event_type=flood"
+    },
+    {
+      "type": "create_ticket",
+      "queue": "climate-response",
+      "title": "Review flood risk for {region_name}"
+    }
+  ],
+  "suppression": {
+    "dedupe_key": "{id}:{risk_level}",
+    "repeat_after_minutes": 360
+  },
+  "review": {
+    "human_review_required": true,
+    "review_note": "Confirm source freshness and local context before operational response."
+  }
+}

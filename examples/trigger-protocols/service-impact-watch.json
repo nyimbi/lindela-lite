@@ -1,0 +1,64 @@
+{
+  "schema_version": "lindela-lite.trigger-protocol.v1",
+  "id": "service-impact-watch-v1",
+  "name": "Service Impact Watch",
+  "purpose": "Monitor likely service-delivery impacts from flood and climate-conflict risk around known assets.",
+  "poll": {
+    "endpoint": "/api/v1/service-impacts",
+    "method": "GET",
+    "interval_minutes": 180,
+    "freshness_warning_minutes": 360
+  },
+  "scope": {
+    "service_types": ["health", "water", "school", "road", "power", "telecom"],
+    "impact_levels": ["medium", "high", "critical"]
+  },
+  "triggers": [
+    {
+      "id": "critical-service-impact",
+      "when": {
+        "field": "impact_score",
+        "operator": ">=",
+        "value": 80
+      },
+      "severity": "critical",
+      "message": "Critical service-delivery impact risk."
+    },
+    {
+      "id": "health-or-water-impact",
+      "when": {
+        "all": [
+          { "field": "impact_score", "operator": ">=", "value": 60 },
+          { "field": "service_type", "operator": "in", "value": ["health", "water"] }
+        ]
+      },
+      "severity": "high",
+      "message": "High impact risk for health or water service asset."
+    }
+  ],
+  "actions": [
+    {
+      "type": "notify",
+      "channel": "service-delivery",
+      "template": "{service_type} asset {asset_name} has impact level {impact_level} with score {impact_score}."
+    },
+    {
+      "type": "create_ticket",
+      "queue": "service-continuity",
+      "title": "Review continuity plan for {asset_name}"
+    },
+    {
+      "type": "export_snapshot",
+      "format": "csv",
+      "endpoint": "/api/v1/export.csv"
+    }
+  ],
+  "suppression": {
+    "dedupe_key": "{asset_id}:{impact_level}",
+    "repeat_after_minutes": 720
+  },
+  "review": {
+    "human_review_required": true,
+    "review_note": "Contact local service owners before public communications or resource allocation."
+  }
+}
