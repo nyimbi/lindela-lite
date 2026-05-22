@@ -5,19 +5,20 @@ import { fileURLToPath } from 'node:url'
 import { refreshAnalytics } from './analytics.js'
 import { runIngestion } from './ingestion.js'
 import { publicSourceCatalog } from './schema.js'
-import { JsonStore } from './store.js'
+import { createStoreFromEnv } from './storage.js'
 import { filterRecords, jsonResponse, readRequestJson, toCsv, toGeoJson } from './utils.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
-const store = new JsonStore()
+let defaultStorePromise
 
-export function createServer() {
+export function createServer(options = {}) {
+  const storeProvider = options.store ? Promise.resolve(options.store) : getDefaultStore()
   return http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
       if (url.pathname.startsWith('/api/v1/')) {
-        await handleApi(req, res, url)
+        await handleApi(await storeProvider, req, res, url)
         return
       }
       await handleStatic(res, url.pathname)
@@ -30,7 +31,7 @@ export function createServer() {
   })
 }
 
-async function handleApi(req, res, url) {
+async function handleApi(store, req, res, url) {
   if (process.env.LINDELA_LITE_API_KEY && req.method !== 'GET') {
     if (req.headers['x-api-key'] !== process.env.LINDELA_LITE_API_KEY) {
       jsonResponse(res, 401, { success: false, error: 'Invalid API key' })
@@ -48,6 +49,7 @@ async function handleApi(req, res, url) {
       counts: counts(data),
       sources: publicSourceCatalog().map((source) => source.id),
       exclusions: ['gdelt'],
+      storage: { mode: store.mode || 'custom' },
     })
     return
   }
@@ -152,6 +154,11 @@ async function handleStatic(res, pathname) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     res.end(index)
   }
+}
+
+function getDefaultStore() {
+  if (!defaultStorePromise) defaultStorePromise = createStoreFromEnv()
+  return defaultStorePromise
 }
 
 function counts(data) {

@@ -3,7 +3,7 @@ import path from 'node:path'
 import { emptyStore } from './schema.js'
 import { nowIso } from './utils.js'
 
-const COLLECTIONS = [
+export const COLLECTIONS = [
   'source_runs',
   'climate_observations',
   'hazard_events',
@@ -57,7 +57,7 @@ export class JsonStore {
   }
 }
 
-function mergeById(existing, incoming) {
+export function mergeById(existing, incoming) {
   const map = new Map()
   for (const item of existing) map.set(item.id, item)
   for (const item of incoming) map.set(item.id, { ...map.get(item.id), ...item })
