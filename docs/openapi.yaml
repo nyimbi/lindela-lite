@@ -1,0 +1,238 @@
+openapi: 3.1.0
+info:
+  title: Lindela Lite API
+  version: 0.1.0
+  description: Public API for climate-conflict, flood-risk, service-impact, and source-ingestion data.
+servers:
+  - url: http://127.0.0.1:4177
+paths:
+  /api/v1/health:
+    get:
+      summary: Service health and storage mode
+      responses:
+        '200':
+          description: Health payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/v1/sources:
+    get:
+      summary: Source catalog and freshness
+      responses:
+        '200':
+          description: Source list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/ingest/run:
+    post:
+      summary: Run one or more source ingestors
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sources:
+                  type: array
+                  items:
+                    type: string
+                regions:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Region'
+      responses:
+        '200':
+          description: Ingestion result
+  /api/v1/service-assets:
+    get:
+      summary: List service assets
+      parameters:
+        - $ref: '#/components/parameters/Country'
+        - $ref: '#/components/parameters/Bbox'
+      responses:
+        '200':
+          description: Service assets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+    post:
+      summary: Import service assets from JSON, CSV, or GeoJSON
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                service_assets:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ServiceAssetInput'
+                service_assets_csv:
+                  type: string
+                service_assets_geojson:
+                  type: object
+      responses:
+        '201':
+          description: Import accepted
+        '400':
+          description: Validation error
+  /api/v1/events:
+    get:
+      summary: Hazard and conflict events
+      parameters:
+        - $ref: '#/components/parameters/Country'
+        - $ref: '#/components/parameters/Bbox'
+        - $ref: '#/components/parameters/EventType'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/climate:
+    get:
+      summary: Climate observations
+      responses:
+        '200':
+          description: Climate observations
+  /api/v1/flood-risk:
+    get:
+      summary: Flood risk scores
+      responses:
+        '200':
+          description: Flood risk scores
+  /api/v1/conflict-risk:
+    get:
+      summary: Climate-conflict risk scores
+      responses:
+        '200':
+          description: Climate-conflict risk scores
+  /api/v1/service-impacts:
+    get:
+      summary: Service delivery impact assessments
+      responses:
+        '200':
+          description: Service impact assessments
+  /api/v1/assessments:
+    get:
+      summary: Combined assessment package
+      responses:
+        '200':
+          description: Combined assessment
+  /api/v1/export.geojson:
+    get:
+      summary: Export records as GeoJSON
+      responses:
+        '200':
+          description: GeoJSON feature collection
+          content:
+            application/geo+json:
+              schema:
+                type: object
+  /api/v1/export.csv:
+    get:
+      summary: Export records as CSV
+      responses:
+        '200':
+          description: CSV export
+          content:
+            text/csv:
+              schema:
+                type: string
+components:
+  parameters:
+    Country:
+      name: country
+      in: query
+      schema:
+        type: string
+    Bbox:
+      name: bbox
+      in: query
+      description: west,south,east,north
+      schema:
+        type: string
+    EventType:
+      name: event_type
+      in: query
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 5000
+  schemas:
+    HealthResponse:
+      type: object
+      required: [success, status, counts, sources, exclusions, storage]
+      properties:
+        success:
+          type: boolean
+        status:
+          type: string
+        updated_at:
+          type: string
+        counts:
+          type: object
+        sources:
+          type: array
+          items:
+            type: string
+        exclusions:
+          type: array
+          items:
+            type: string
+        storage:
+          type: object
+          properties:
+            mode:
+              type: string
+              enum: [json, pg0, postgres, custom]
+    ListResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            type: object
+    Region:
+      type: object
+      required: [name, country, lat, lon]
+      properties:
+        name:
+          type: string
+        country:
+          type: string
+        lat:
+          type: number
+        lon:
+          type: number
+    ServiceAssetInput:
+      type: object
+      required: [name, service_type, country, latitude, longitude]
+      properties:
+        name:
+          type: string
+        service_type:
+          type: string
+          enum: [health, water, road, school, power, telecom, market, other]
+        country:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number

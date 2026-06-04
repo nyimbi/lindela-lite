@@ -65,3 +65,25 @@ JSON mode stores data in `data/lindela-lite-store.json` or the path set by `LIND
 - Explicit `pg0` or `postgres` mode fails loudly if the required database cannot start or connect.
 - Do not commit local JSON stores, database dumps, or downloaded source data.
 - The current schema intentionally avoids full Lindela internal schemas, source reputation systems, or enterprise orchestration tables.
+
+## Verification Commands
+
+Validate JSON mode and API tests:
+
+```bash
+npm test
+```
+
+Validate external PostgreSQL mode:
+
+```bash
+LINDELA_LITE_TEST_DATABASE_URL=postgresql://user:password@localhost:5432/lindela_lite_test npm run test:postgres
+```
+
+Validate local pg0 mode when the OS allows PostgreSQL shared memory:
+
+```bash
+PG0_BIN=/path/to/pg0 npm run verify:pg0
+```
+
+In restricted sandboxes, pg0 may fail during PostgreSQL shared-memory initialization even when the binary itself is installed correctly. Use the external PostgreSQL integration test in those environments.
