@@ -4,9 +4,15 @@ import { parseCsv, stableId, toNumber } from '../utils.js'
 export const serviceAssetsConnector = {
   id: 'service_assets',
   async ingest(options = {}) {
-    const provided = options.service_assets || []
-    const service_assets = Array.isArray(provided) ? provided.map(normalizeServiceAsset).filter(Boolean) : []
-    return { service_assets, errors: [] }
+    const provided = collectServiceAssetInputs(options)
+    const service_assets = []
+    const errors = []
+    provided.forEach((asset, index) => {
+      const normalized = normalizeServiceAsset(asset, index)
+      if (normalized.error) errors.push(normalized.error)
+      else service_assets.push(normalized.value)
+    })
+    return { service_assets, errors }
   },
 }
 
@@ -42,24 +48,53 @@ export const acledCsvConnector = {
   },
 }
 
-function normalizeServiceAsset(asset) {
+export function collectServiceAssetInputs(options = {}) {
+  const assets = []
+  if (Array.isArray(options.service_assets)) assets.push(...options.service_assets)
+  if (options.service_assets_csv) assets.push(...parseCsv(options.service_assets_csv))
+  if (options.service_assets_geojson) assets.push(...parseServiceAssetGeoJson(options.service_assets_geojson))
+  return assets
+}
+
+export function parseServiceAssetGeoJson(input) {
+  const geojson = typeof input === 'string' ? JSON.parse(input) : input
+  const features = geojson?.type === 'FeatureCollection' ? geojson.features || [] : geojson?.type === 'Feature' ? [geojson] : []
+  return features.map((feature) => {
+    const [longitude, latitude] = feature.geometry?.coordinates || []
+    return {
+      ...(feature.properties || {}),
+      latitude,
+      longitude,
+    }
+  })
+}
+
+export function normalizeServiceAsset(asset, index = 0) {
   const latitude = toNumber(asset.latitude ?? asset.lat)
   const longitude = toNumber(asset.longitude ?? asset.lon ?? asset.lng)
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
-  const service_type = SERVICE_TYPES.includes(asset.service_type || asset.type) ? (asset.service_type || asset.type) : 'other'
+  const serviceType = asset.service_type || asset.type
+  const country = asset.country || asset.country_code || null
+  const label = asset.name || asset.id || `row ${index + 1}`
+  if (!Number.isFinite(latitude)) return { error: `${label}: latitude is required and must be numeric` }
+  if (!Number.isFinite(longitude)) return { error: `${label}: longitude is required and must be numeric` }
+  if (!serviceType) return { error: `${label}: service_type is required` }
+  if (!SERVICE_TYPES.includes(serviceType)) return { error: `${label}: service_type must be one of ${SERVICE_TYPES.join(', ')}` }
+  if (!country) return { error: `${label}: country is required` }
   return {
-    id: asset.id || stableId('asset', [asset.name, service_type, latitude, longitude]),
-    source: 'service_assets',
-    name: asset.name || `${service_type} asset`,
-    service_type,
-    status: asset.status || 'unknown',
-    country: asset.country || null,
-    admin1: asset.admin1 || null,
-    latitude,
-    longitude,
-    capacity: toNumber(asset.capacity),
-    updated_at: asset.updated_at || new Date().toISOString(),
-    metadata: asset.metadata || {},
+    value: {
+      id: asset.id || stableId('asset', [asset.name, serviceType, latitude, longitude]),
+      source: 'service_assets',
+      name: asset.name || `${serviceType} asset`,
+      service_type: serviceType,
+      status: asset.status || 'unknown',
+      country,
+      admin1: asset.admin1 || null,
+      latitude,
+      longitude,
+      capacity: toNumber(asset.capacity),
+      updated_at: asset.updated_at || new Date().toISOString(),
+      metadata: asset.metadata || {},
+    },
   }
 }
 

@@ -81,6 +81,33 @@ async function handleApi(store, req, res, url) {
     return
   }
 
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/service-assets') {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.service_assets, url.searchParams) })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/v1/service-assets') {
+    const body = await readRequestJson(req)
+    const ingestion = await runIngestion(store, { ...body, sources: ['service_assets'] })
+    const run = ingestion.source_runs[0]
+    if (run.errors.length) {
+      jsonResponse(res, 400, { success: false, error: 'Invalid service asset input', errors: run.errors, accepted: ingestion.counts.service_assets })
+      return
+    }
+    const analytics = await refreshAnalytics(store)
+    jsonResponse(res, 201, {
+      success: true,
+      imported: ingestion.counts.service_assets,
+      source_run: run,
+      analytics: {
+        risk_scores: analytics.risk_scores.length,
+        impact_assessments: analytics.impact_assessments.length,
+      },
+    })
+    return
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/v1/events') {
     const records = [...data.hazard_events, ...data.conflict_events]
     jsonResponse(res, 200, { success: true, data: filterRecords(records, url.searchParams) })

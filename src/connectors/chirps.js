@@ -1,3 +1,4 @@
+import { fetchWithRetry } from './http.js'
 import { stableId } from '../utils.js'
 
 const INDEX_URL = 'https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/'
@@ -9,9 +10,7 @@ export const chirpsConnector = {
     const climate_observations = []
     const errors = []
     try {
-      const response = await fetch(options.chirps_index_url || INDEX_URL, { signal: AbortSignal.timeout(options.timeout_ms || 20000) })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const html = await response.text()
+      const html = await fetchWithRetry(options.chirps_index_url || INDEX_URL, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2 })
       const dates = [...new Set([...html.matchAll(FILE_PATTERN)].map((match) => match[1]))].sort().reverse()
       for (const date of dates.slice(0, options.limit || 30)) {
         climate_observations.push({

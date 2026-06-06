@@ -1,3 +1,4 @@
+import { fetchWithRetry } from './http.js'
 import { normalizeSeverity } from '../schema.js'
 import { parseCsv, stableId, toNumber } from '../utils.js'
 
@@ -20,9 +21,7 @@ export const nasaFirmsConnector = {
     for (const region of regions) {
       try {
         const url = AREA_CSV.replace('{key}', key).replace('{bbox}', region.bbox).replace('{days}', String(days))
-        const response = await fetch(url, { signal: AbortSignal.timeout(options.timeout_ms || 30000) })
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const rows = parseCsv(await response.text())
+        const rows = parseCsv(await fetchWithRetry(url, { timeoutMs: options.timeout_ms || 30000, retries: options.retries ?? 2 }))
         for (const row of rows) {
           const lat = toNumber(row.latitude)
           const lon = toNumber(row.longitude)

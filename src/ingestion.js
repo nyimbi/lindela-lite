@@ -70,7 +70,9 @@ export async function runIngestion(store, request = {}) {
       started_at: startedAt,
       completed_at: nowIso(),
       records_processed: countRecords(output),
+      records_by_collection: countRecordsByCollection(output),
       errors,
+      diagnostics: buildDiagnostics(output, errors),
     })
   }
 
@@ -90,4 +92,18 @@ export async function runIngestion(store, request = {}) {
 function countRecords(output) {
   return ['climate_observations', 'hazard_events', 'conflict_events', 'service_assets']
     .reduce((total, key) => total + (output?.[key]?.length || 0), 0)
+}
+
+
+function countRecordsByCollection(output) {
+  return Object.fromEntries(['climate_observations', 'hazard_events', 'conflict_events', 'service_assets']
+    .map((key) => [key, output?.[key]?.length || 0]))
+}
+
+function buildDiagnostics(output, errors) {
+  return {
+    degraded: Boolean(errors?.length),
+    error_count: errors?.length || 0,
+    records_by_collection: countRecordsByCollection(output),
+  }
 }
