@@ -1,0 +1,10 @@
+{
+  "current": {"time":"2026-05-18T00:00","precipitation":3.5,"temperature_2m":27.1,"relative_humidity_2m":68},
+  "daily": {
+    "time": ["2026-05-18", "2026-05-19"],
+    "precipitation_sum": [12.4, 2.1],
+    "precipitation_probability_max": [80, 30],
+    "temperature_2m_max": [31, 30],
+    "temperature_2m_min": [22, 21]
+  }
+}
