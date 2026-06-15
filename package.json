@@ -7,6 +7,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/server.js",
+    "deploy:one-click": "deploy/one-click.sh",
     "validate": "node scripts/validate.mjs",
     "test": "node --test test/*.test.js",
     "test:postgres": "node --test test/database.integration.test.js",
@@ -16,7 +17,7 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "BSD-3-Clause",
   "dependencies": {
     "pg": "^8.13.1"
   }

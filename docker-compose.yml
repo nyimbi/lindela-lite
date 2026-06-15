@@ -1,0 +1,66 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lindela_lite}
+      POSTGRES_USER: ${POSTGRES_USER:-lindela}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - lindela_lite_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-lindela} -d $${POSTGRES_DB:-lindela_lite}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      LINDELA_LITE_DB_MODE: postgres
+      LINDELA_LITE_DATABASE_URL: ${LINDELA_LITE_DATABASE_URL}
+      LINDELA_LITE_API_KEY: ${LINDELA_LITE_API_KEY}
+      LINDELA_LITE_PORT: ${LINDELA_LITE_PORT:-4177}
+      NASA_FIRMS_MAP_KEY: ${NASA_FIRMS_MAP_KEY:-OPEN_KEY}
+      RAPIDPRO_BASE_URL: ${RAPIDPRO_BASE_URL:-https://rapidpro.io}
+      RAPIDPRO_API_TOKEN: ${RAPIDPRO_API_TOKEN:-}
+      RAPIDPRO_ALERT_MODE: ${RAPIDPRO_ALERT_MODE:-flow_start}
+      RAPIDPRO_ALERT_FLOW_UUID: ${RAPIDPRO_ALERT_FLOW_UUID:-}
+      RAPIDPRO_ALERT_URNS: ${RAPIDPRO_ALERT_URNS:-}
+      RAPIDPRO_ALERT_CONTACTS: ${RAPIDPRO_ALERT_CONTACTS:-}
+      RAPIDPRO_ALERT_GROUPS: ${RAPIDPRO_ALERT_GROUPS:-}
+      RAPIDPRO_BASE_LANGUAGE: ${RAPIDPRO_BASE_LANGUAGE:-eng}
+      RAPIDPRO_WEBHOOK_SECRET: ${RAPIDPRO_WEBHOOK_SECRET:-}
+    ports:
+      - "${LINDELA_LITE_PORT:-4177}:4177"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4177/api/v1/health >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+  scheduler:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      LINDELA_LITE_API_KEY: ${LINDELA_LITE_API_KEY}
+      LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS: ${LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS:-900}
+    command:
+      - sh
+      - -c
+      - |
+        while true; do
+          curl -fsS -X POST http://app:4177/api/v1/ingest/run-due -H "x-api-key: $${LINDELA_LITE_API_KEY}" || true
+          curl -fsS -X POST http://app:4177/api/v1/report-schedules/run-due -H "x-api-key: $${LINDELA_LITE_API_KEY}" || true
+          sleep "$${LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS:-900}"
+        done
+
+volumes:
+  lindela_lite_pgdata:

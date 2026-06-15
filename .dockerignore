@@ -1,0 +1,10 @@
+node_modules
+npm-debug.log
+data
+.git
+.omx
+.env
+.env.*
+coverage
+*.log
+.DS_Store
