@@ -47,6 +47,64 @@ paths:
       responses:
         '200':
           description: Ingestion result
+  /api/v1/ingest/status:
+    get:
+      summary: Per-source ingestion health and schedule status
+      responses:
+        '200':
+          description: Ingestion source health
+  /api/v1/ingest/schedules:
+    get:
+      summary: List ingestion schedules
+      responses:
+        '200':
+          description: Ingestion schedules
+    post:
+      summary: Create an ingestion schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestionScheduleInput'
+      responses:
+        '201':
+          description: Ingestion schedule created
+  /api/v1/ingest/schedules/defaults:
+    post:
+      summary: Create default public-source ingestion schedules
+      responses:
+        '201':
+          description: Default ingestion schedules created
+  /api/v1/ingest/schedules/{id}:
+    get:
+      summary: Get an ingestion schedule
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Ingestion schedule
+    patch:
+      summary: Update an ingestion schedule
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Ingestion schedule updated
+  /api/v1/ingest/schedules/{id}/run:
+    post:
+      summary: Run one ingestion schedule immediately
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '201':
+          description: Ingestion schedule run recorded
+  /api/v1/ingest/run-due:
+    post:
+      summary: Run all due ingestion schedules
+      responses:
+        '201':
+          description: Due ingestion source runs recorded
   /api/v1/service-assets:
     get:
       summary: List service assets
@@ -121,6 +179,498 @@ paths:
       responses:
         '200':
           description: Service impact assessments
+  /api/v1/data-quality:
+    get:
+      summary: Source data quality and confidence summaries
+      responses:
+        '200':
+          description: Data quality summaries
+  /api/v1/operations/summary:
+    get:
+      summary: Operational incident and intervention summary
+      responses:
+        '200':
+          description: Operations summary
+  /api/v1/incidents:
+    get:
+      summary: List incidents
+      parameters:
+        - $ref: '#/components/parameters/Country'
+        - $ref: '#/components/parameters/Status'
+        - $ref: '#/components/parameters/Priority'
+      responses:
+        '200':
+          description: Incidents
+    post:
+      summary: Create an incident
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentInput'
+      responses:
+        '201':
+          description: Incident created
+  /api/v1/incidents/{id}:
+    get:
+      summary: Get an incident
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Incident
+    patch:
+      summary: Update an incident
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Incident updated
+  /api/v1/interventions:
+    get:
+      summary: List interventions
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+        - $ref: '#/components/parameters/Status'
+      responses:
+        '200':
+          description: Interventions
+    post:
+      summary: Create an intervention
+      responses:
+        '201':
+          description: Intervention created
+  /api/v1/interventions/{id}:
+    get:
+      summary: Get an intervention
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Intervention
+    patch:
+      summary: Update an intervention
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Intervention updated
+  /api/v1/tasks:
+    get:
+      summary: List intervention tasks
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+        - $ref: '#/components/parameters/InterventionId'
+        - $ref: '#/components/parameters/Status'
+      responses:
+        '200':
+          description: Intervention tasks
+    post:
+      summary: Create an intervention task
+      responses:
+        '201':
+          description: Task created
+  /api/v1/tasks/{id}:
+    get:
+      summary: Get an intervention task
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Task
+    patch:
+      summary: Update an intervention task
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Task updated
+  /api/v1/field-reports:
+    get:
+      summary: List field reports
+      responses:
+        '200':
+          description: Field reports
+    post:
+      summary: Create a field report
+      responses:
+        '201':
+          description: Field report created
+  /api/v1/field-reports/{id}:
+    get:
+      summary: Get a field report
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Field report
+    patch:
+      summary: Update a field report
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Field report updated
+  /api/v1/response-resources:
+    get:
+      summary: List response resources
+      responses:
+        '200':
+          description: Response resources
+    post:
+      summary: Create a response resource
+      responses:
+        '201':
+          description: Response resource created
+  /api/v1/response-resources/{id}:
+    get:
+      summary: Get a response resource
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Response resource
+    patch:
+      summary: Update a response resource
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Response resource updated
+  /api/v1/action-logs:
+    get:
+      summary: List immutable operational action logs
+      responses:
+        '200':
+          description: Action logs
+  /api/v1/alert-rules:
+    get:
+      summary: List alert rules
+      responses:
+        '200':
+          description: Alert rules
+    post:
+      summary: Create an alert rule
+      responses:
+        '201':
+          description: Alert rule created
+  /api/v1/alert-rules/{id}:
+    get:
+      summary: Get an alert rule
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Alert rule
+    patch:
+      summary: Update an alert rule
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Alert rule updated
+  /api/v1/alerts/evaluate:
+    post:
+      summary: Evaluate active alert rules
+      responses:
+        '201':
+          description: Alert events created
+  /api/v1/alert-events:
+    get:
+      summary: List alert events
+      responses:
+        '200':
+          description: Alert events
+  /api/v1/alert-events/{id}:
+    get:
+      summary: Get an alert event
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Alert event
+    patch:
+      summary: Update an alert event status
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Alert event updated
+  /api/v1/rapidpro/status:
+    get:
+      summary: RapidPro configuration status
+      responses:
+        '200':
+          description: RapidPro status
+  /api/v1/rapidpro/alert-events/{id}/send:
+    post:
+      summary: Send an alert event through RapidPro
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RapidProDispatchInput'
+      responses:
+        '201':
+          description: Dispatch recorded
+        '502':
+          description: RapidPro dispatch failed
+  /api/v1/rapidpro/field-report:
+    post:
+      summary: Receive a RapidPro field report webhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Field report created
+        '401':
+          description: Invalid webhook secret
+  /api/v1/rapidpro/dispatches:
+    get:
+      summary: List RapidPro dispatch logs
+      responses:
+        '200':
+          description: RapidPro dispatches
+  /api/v1/rapidpro/inbound:
+    get:
+      summary: List RapidPro inbound webhook logs
+      responses:
+        '200':
+          description: RapidPro inbound messages
+  /api/v1/report-templates:
+    get:
+      summary: List report templates
+      responses:
+        '200':
+          description: Report templates
+    post:
+      summary: Create a report template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportTemplateInput'
+      responses:
+        '201':
+          description: Report template created
+  /api/v1/report-templates/{id}:
+    get:
+      summary: Get a report template
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Report template
+    patch:
+      summary: Update a report template
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Report template updated
+  /api/v1/report-templates/{id}/copy:
+    post:
+      summary: Copy a report template
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '201':
+          description: Report template copied
+  /api/v1/reports:
+    get:
+      summary: List generated reports
+      responses:
+        '200':
+          description: Reports
+    post:
+      summary: Create a report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportInput'
+      responses:
+        '201':
+          description: Report created
+  /api/v1/reports/{id}:
+    get:
+      summary: Get a report
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Report
+    patch:
+      summary: Update a draft or ready report
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Report updated
+        '409':
+          description: Approved or distributed report is immutable
+  /api/v1/reports/{id}/generate:
+    post:
+      summary: Generate deterministic report sections
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Report generated
+  /api/v1/reports/{id}/approve:
+    post:
+      summary: Approve a generated report
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Report approved
+  /api/v1/reports/{id}/distribute:
+    post:
+      summary: Distribute a generated report
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportDistributionInput'
+      responses:
+        '201':
+          description: Distribution runs recorded
+  /api/v1/reports/{id}/export.md:
+    get:
+      summary: Export a report as Markdown
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Markdown report
+  /api/v1/reports/{id}/export.json:
+    get:
+      summary: Export a report as JSON
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: JSON report
+  /api/v1/reports/{id}/export.csv:
+    get:
+      summary: Export a report source appendix as CSV
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: CSV source appendix
+  /api/v1/reports/{id}/export.geojson:
+    get:
+      summary: Export a report source appendix as GeoJSON
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: GeoJSON source appendix
+  /api/v1/report-distributions:
+    get:
+      summary: List report distribution runs
+      responses:
+        '200':
+          description: Report distribution runs
+  /api/v1/report-distributions/{id}:
+    get:
+      summary: Get a report distribution run
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Report distribution run
+  /api/v1/report-distributions/{id}/retry:
+    post:
+      summary: Retry a report distribution run
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '201':
+          description: Retry distribution runs recorded
+  /api/v1/report-schedules:
+    get:
+      summary: List report schedules
+      responses:
+        '200':
+          description: Report schedules
+    post:
+      summary: Create a report schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportScheduleInput'
+      responses:
+        '201':
+          description: Report schedule created
+  /api/v1/report-schedules/{id}:
+    get:
+      summary: Get a report schedule
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Report schedule
+    patch:
+      summary: Update a report schedule
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Report schedule updated
+  /api/v1/report-schedules/{id}/run:
+    post:
+      summary: Run one report schedule immediately
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '201':
+          description: Report schedule run recorded
+  /api/v1/report-schedules/run-due:
+    post:
+      summary: Run all due report schedules
+      responses:
+        '201':
+          description: Due schedule runs recorded
+  /api/v1/report-schedule-runs:
+    get:
+      summary: List report schedule run history
+      responses:
+        '200':
+          description: Report schedule runs
+  /api/v1/report-schedule-runs/{id}:
+    get:
+      summary: Get a report schedule run
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Report schedule run
+  /api/v1/report-schedule-runs/{id}/retry:
+    post:
+      summary: Retry a report schedule run
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '201':
+          description: Retried report schedule run
   /api/v1/assessments:
     get:
       summary: Combined assessment package
@@ -172,6 +722,33 @@ components:
         type: integer
         minimum: 1
         maximum: 5000
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    Status:
+      name: status
+      in: query
+      schema:
+        type: string
+    Priority:
+      name: priority
+      in: query
+      schema:
+        type: string
+        enum: [low, medium, high, critical]
+    IncidentId:
+      name: incident_id
+      in: query
+      schema:
+        type: string
+    InterventionId:
+      name: intervention_id
+      in: query
+      schema:
+        type: string
   schemas:
     HealthResponse:
       type: object
@@ -221,6 +798,32 @@ components:
           type: number
         lon:
           type: number
+    IngestionScheduleInput:
+      type: object
+      required: [source]
+      properties:
+        source:
+          type: string
+          enum: [open_meteo, gdacs, glofas, chirps, nasa_firms, service_assets, acled_csv, conflict_csv]
+        status:
+          type: string
+          enum: [active, paused, archived]
+        interval_minutes:
+          type: integer
+          minimum: 1
+        timeout_ms:
+          type: integer
+          minimum: 1000
+        retries:
+          type: integer
+          minimum: 0
+        stale_after_minutes:
+          type: integer
+          minimum: 1
+        next_run_at:
+          type: string
+        default_options:
+          type: object
     ServiceAssetInput:
       type: object
       required: [name, service_type, country, latitude, longitude]
@@ -236,3 +839,116 @@ components:
           type: number
         longitude:
           type: number
+    IncidentInput:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        incident_type:
+          type: string
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+        country:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+    RapidProDispatchInput:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [flow_start, broadcast]
+        urns:
+          type: array
+          items:
+            type: string
+        contacts:
+          type: array
+          items:
+            type: string
+        groups:
+          type: array
+          items:
+            type: string
+        text:
+          type: string
+    ReportTemplateInput:
+      type: object
+      required: [name, report_type]
+      properties:
+        name:
+          type: string
+        report_type:
+          type: string
+          enum: [situation_report, incident_brief, intervention_update, data_quality_report, alert_digest]
+        title_pattern:
+          type: string
+        default_filters:
+          type: object
+        sections:
+          type: array
+          items:
+            type: string
+        distribution_defaults:
+          type: array
+          items:
+            type: object
+    ReportInput:
+      type: object
+      properties:
+        template_id:
+          type: string
+        report_type:
+          type: string
+          enum: [situation_report, incident_brief, intervention_update, data_quality_report, alert_digest]
+        scope:
+          type: object
+        generate:
+          type: boolean
+        section_ids:
+          type: array
+          items:
+            type: string
+    ReportDistributionInput:
+      type: object
+      properties:
+        channels:
+          type: array
+          items:
+            type: object
+            properties:
+              channel:
+                type: string
+                enum: [markdown_download, json, csv, geojson, webhook, rapidpro_sms]
+              url:
+                type: string
+              urns:
+                type: array
+                items:
+                  type: string
+              contacts:
+                type: array
+                items:
+                  type: string
+              groups:
+                type: array
+                items:
+                  type: string
+    ReportScheduleInput:
+      type: object
+      required: [template_id]
+      properties:
+        template_id:
+          type: string
+        timezone:
+          type: string
+        recurrence:
+          type: object
+        next_run_at:
+          type: string
+        auto_distribute:
+          type: boolean
