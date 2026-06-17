@@ -5,12 +5,29 @@ import { nowIso } from './utils.js'
 
 export const COLLECTIONS = [
   'source_runs',
+  'ingestion_schedules',
   'climate_observations',
   'hazard_events',
   'conflict_events',
   'service_assets',
   'impact_assessments',
   'risk_scores',
+  'data_quality',
+  'incidents',
+  'interventions',
+  'intervention_tasks',
+  'field_reports',
+  'response_resources',
+  'action_logs',
+  'alert_rules',
+  'alert_events',
+  'rapidpro_dispatches',
+  'rapidpro_inbound_messages',
+  'report_templates',
+  'reports',
+  'report_distribution_runs',
+  'report_schedules',
+  'report_schedule_runs',
 ]
 
 export class JsonStore {
@@ -47,12 +64,13 @@ export class JsonStore {
     return this.write(next)
   }
 
-  async replaceAnalytics({ risk_scores = [], impact_assessments = [] }) {
+  async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [] }) {
     const current = await this.read()
     return this.write({
       ...current,
       risk_scores,
       impact_assessments,
+      data_quality,
     })
   }
 }
@@ -61,5 +79,16 @@ export function mergeById(existing, incoming) {
   const map = new Map()
   for (const item of existing) map.set(item.id, item)
   for (const item of incoming) map.set(item.id, { ...map.get(item.id), ...item })
-  return [...map.values()].sort((a, b) => String(b.updated_at || b.observed_at || b.occurred_at || '').localeCompare(String(a.updated_at || a.observed_at || a.occurred_at || '')))
+  return [...map.values()].sort((a, b) => recordTimestamp(b).localeCompare(recordTimestamp(a)))
+}
+
+function recordTimestamp(record) {
+  return String(record.updated_at
+    || record.completed_at
+    || record.generated_at
+    || record.observed_at
+    || record.occurred_at
+    || record.created_at
+    || record.started_at
+    || '')
 }

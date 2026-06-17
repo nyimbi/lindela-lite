@@ -8,8 +8,9 @@ export async function refreshAnalytics(store) {
     ...computeClimateConflictRisk(data),
   ]
   const impact_assessments = computeServiceImpacts(data, risk_scores)
-  await store.replaceAnalytics({ risk_scores, impact_assessments })
-  return { risk_scores, impact_assessments }
+  const data_quality = computeDataQuality(data)
+  await store.replaceAnalytics({ risk_scores, impact_assessments, data_quality })
+  return { risk_scores, impact_assessments, data_quality }
 }
 
 export function computeFloodRisk(data) {
@@ -21,6 +22,11 @@ export function computeFloodRisk(data) {
     const maxProbability = Math.max(0, ...climate.map((item) => Number(item.precipitation_probability_pct || 0)))
     const hazardPressure = hazards.reduce((sum, event) => sum + severityWeight(event.severity) * 30, 0)
     const score = clamp(Math.round(precipitation * 1.5 + maxProbability * 0.35 + hazardPressure), 0, 100)
+    const confidence = confidenceScore([
+      { count: climate.length, weight: 45 },
+      { count: hazards.length, weight: 40 },
+      { count: climate.filter((item) => Number.isFinite(Number(item.precipitation_probability_pct))).length, weight: 15 },
+    ])
     return {
       id: stableId('risk', ['flood', region.key]),
       type: 'flood_risk',
@@ -30,6 +36,7 @@ export function computeFloodRisk(data) {
       longitude: region.longitude,
       score,
       risk_level: riskLevel(score),
+      confidence,
       generated_at: new Date().toISOString(),
       drivers: {
         precipitation_mm: Math.round(precipitation * 10) / 10,
@@ -53,6 +60,12 @@ export function computeClimateConflictRisk(data) {
     const conflictPressure = Math.min(30, conflicts.reduce((sum, event) => sum + 4 + Number(event.fatalities || 0) * 0.8, 0))
     const servicePressure = Math.min(10, serviceAssets.length * 1.5)
     const score = clamp(Math.round(climatePressure + hazardPressure + conflictPressure + servicePressure), 0, 100)
+    const confidence = confidenceScore([
+      { count: climate.length, weight: 30 },
+      { count: hazards.length, weight: 25 },
+      { count: conflicts.length, weight: 30 },
+      { count: serviceAssets.length, weight: 15 },
+    ])
     return {
       id: stableId('risk', ['climate_conflict', region.key]),
       type: 'climate_conflict_risk',
@@ -62,6 +75,7 @@ export function computeClimateConflictRisk(data) {
       longitude: region.longitude,
       score,
       risk_level: riskLevel(score),
+      confidence,
       generated_at: new Date().toISOString(),
       drivers: {
         climate_observations: climate.length,
@@ -85,6 +99,7 @@ export function computeServiceImpacts(data, riskScores) {
     const floodScore = nearestFlood && nearestFlood.distance_km <= 150 ? nearestFlood.item.score : 0
     const conflictScore = nearestConflict && nearestConflict.distance_km <= 150 ? nearestConflict.item.score : 0
     const score = clamp(Math.round(floodScore * 0.55 + conflictScore * 0.45), 0, 100)
+    const confidence = Math.round(((nearestFlood?.item?.confidence || 0) * 0.55) + ((nearestConflict?.item?.confidence || 0) * 0.45))
     assessments.push({
       id: stableId('impact', [asset.id, score]),
       asset_id: asset.id,
@@ -95,6 +110,7 @@ export function computeServiceImpacts(data, riskScores) {
       longitude: asset.longitude,
       impact_score: score,
       impact_level: riskLevel(score),
+      confidence,
       generated_at: new Date().toISOString(),
       drivers: {
         nearest_flood_risk: nearestFlood?.item?.region_name || null,
@@ -104,6 +120,68 @@ export function computeServiceImpacts(data, riskScores) {
     })
   }
   return assessments
+}
+
+export function computeDataQuality(data) {
+  const collections = {
+    climate_observations: data.climate_observations,
+    hazard_events: data.hazard_events,
+    conflict_events: data.conflict_events,
+    service_assets: data.service_assets,
+  }
+  const bySource = new Map()
+  for (const [collection, records] of Object.entries(collections)) {
+    for (const record of records || []) {
+      const source = record.source || 'operator'
+      if (!bySource.has(source)) {
+        bySource.set(source, {
+          id: `quality_${source}`,
+          source,
+          records_by_collection: {},
+          total_records: 0,
+          geocoded_records: 0,
+          latest_record_at: null,
+        })
+      }
+      const quality = bySource.get(source)
+      quality.records_by_collection[collection] = (quality.records_by_collection[collection] || 0) + 1
+      quality.total_records += 1
+      if (Number.isFinite(record.latitude) && Number.isFinite(record.longitude)) quality.geocoded_records += 1
+      quality.latest_record_at = latestDate(quality.latest_record_at, record.observed_at || record.occurred_at || record.updated_at || record.generated_at)
+    }
+  }
+
+  for (const run of data.source_runs || []) {
+    const source = run.source || 'unknown'
+    if (!bySource.has(source)) {
+      bySource.set(source, {
+        id: `quality_${source}`,
+        source,
+        records_by_collection: {},
+        total_records: 0,
+        geocoded_records: 0,
+        latest_record_at: null,
+      })
+    }
+    const quality = bySource.get(source)
+    quality.last_run_status = run.status
+    quality.last_run_at = latestDate(quality.last_run_at, run.completed_at)
+    quality.error_count = (quality.error_count || 0) + (run.errors?.length || 0)
+  }
+
+  return [...bySource.values()].map((quality) => {
+    const geocodeCoverage = quality.total_records ? quality.geocoded_records / quality.total_records : 0
+    const runPenalty = quality.last_run_status === 'failed' ? 35 : quality.last_run_status === 'degraded' ? 15 : 0
+    const freshnessPenalty = freshnessPenaltyFor(quality.latest_record_at || quality.last_run_at)
+    const confidence = clamp(Math.round(geocodeCoverage * 55 + Math.min(quality.total_records, 25) * 1.8 - runPenalty - freshnessPenalty), 0, 100)
+    return {
+      ...quality,
+      geocode_coverage_pct: Math.round(geocodeCoverage * 100),
+      freshness: freshnessLabel(quality.latest_record_at || quality.last_run_at),
+      confidence,
+      updated_at: new Date().toISOString(),
+    }
+  }).sort((a, b) => b.confidence - a.confidence)
 }
 
 function collectRegions(data) {
@@ -151,4 +229,37 @@ function recommendedActions(serviceType, score) {
   if (score >= 60) return [`Monitor ${serviceType} service continuity`, 'Confirm backup providers', 'Review flood and security access constraints']
   if (score >= 35) return ['Maintain routine monitoring', 'Check source freshness before operational decisions']
   return ['No immediate action beyond periodic monitoring']
+}
+
+function confidenceScore(parts) {
+  return clamp(Math.round(parts.reduce((sum, part) => sum + (part.count > 0 ? part.weight : 0), 0)), 0, 100)
+}
+
+function latestDate(current, candidate) {
+  if (!candidate) return current || null
+  if (!current) return new Date(candidate).toISOString()
+  const currentMs = Date.parse(current)
+  const candidateMs = Date.parse(candidate)
+  if (!Number.isFinite(candidateMs)) return current
+  return candidateMs > currentMs ? new Date(candidateMs).toISOString() : current
+}
+
+function freshnessPenaltyFor(value) {
+  if (!value) return 30
+  const ageDays = (Date.now() - Date.parse(value)) / 86400000
+  if (!Number.isFinite(ageDays) || ageDays < 0) return 0
+  if (ageDays <= 2) return 0
+  if (ageDays <= 14) return 10
+  if (ageDays <= 45) return 20
+  return 30
+}
+
+function freshnessLabel(value) {
+  if (!value) return 'unknown'
+  const ageDays = (Date.now() - Date.parse(value)) / 86400000
+  if (!Number.isFinite(ageDays) || ageDays < 0) return 'current'
+  if (ageDays <= 2) return 'current'
+  if (ageDays <= 14) return 'recent'
+  if (ageDays <= 45) return 'stale'
+  return 'expired'
 }

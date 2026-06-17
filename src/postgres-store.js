@@ -86,12 +86,13 @@ export class PostgresStore {
     return this.write(next)
   }
 
-  async replaceAnalytics({ risk_scores = [], impact_assessments = [] }) {
+  async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [] }) {
     const current = await this.read()
     return this.write({
       ...current,
       risk_scores,
       impact_assessments,
+      data_quality,
     })
   }
 

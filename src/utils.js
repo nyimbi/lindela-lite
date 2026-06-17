@@ -40,19 +40,37 @@ export function filterRecords(records, query) {
   const country = query.get('country')
   const source = query.get('source')
   const eventType = query.get('event_type')
+  const reportType = query.get('report_type') || query.get('type')
   const severity = query.get('severity')
+  const status = query.get('status')
+  const priority = query.get('priority')
+  const incidentId = query.get('incident_id')
+  const interventionId = query.get('intervention_id')
+  const serviceType = query.get('service_type')
+  const owner = query.get('owner')
+  const templateId = query.get('template_id')
+  const scheduleId = query.get('schedule_id')
   const from = query.get('from') ? Date.parse(query.get('from')) : null
   const to = query.get('to') ? Date.parse(query.get('to')) : null
   const limit = Math.min(Math.max(Number(query.get('limit') || 500), 1), 5000)
 
   return records
     .filter((item) => pointInBbox(item, bbox))
-    .filter((item) => !country || item.country === country)
+    .filter((item) => !country || item.country === country || item.scope?.country === country)
     .filter((item) => !source || item.source === source || item.source_name === source)
     .filter((item) => !eventType || item.event_type === eventType || item.type === eventType)
+    .filter((item) => !reportType || item.report_type === reportType || item.type === reportType)
     .filter((item) => !severity || item.severity === severity || item.risk_level === severity)
+    .filter((item) => !status || item.status === status)
+    .filter((item) => !priority || item.priority === priority)
+    .filter((item) => !incidentId || item.incident_id === incidentId || item.scope?.incident_id === incidentId || item.id === incidentId)
+    .filter((item) => !interventionId || item.intervention_id === interventionId || item.scope?.intervention_id === interventionId || item.id === interventionId)
+    .filter((item) => !serviceType || item.service_type === serviceType || item.scope?.service_type === serviceType)
+    .filter((item) => !owner || item.owner === owner)
+    .filter((item) => !templateId || item.template_id === templateId)
+    .filter((item) => !scheduleId || item.schedule_id === scheduleId)
     .filter((item) => {
-      const timestamp = Date.parse(item.observed_at || item.occurred_at || item.event_date || item.generated_at || item.updated_at || '')
+      const timestamp = Date.parse(item.observed_at || item.occurred_at || item.event_date || item.generated_at || item.approved_at || item.distributed_at || item.updated_at || item.created_at || '')
       if (!Number.isFinite(timestamp)) return true
       if (from && timestamp < from) return false
       if (to && timestamp > to) return false

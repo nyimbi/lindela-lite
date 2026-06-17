@@ -28,6 +28,100 @@ export const SERVICE_TYPES = Object.freeze([
   'other',
 ])
 
+export const INCIDENT_STATUSES = Object.freeze([
+  'open',
+  'monitoring',
+  'responding',
+  'stabilized',
+  'closed',
+])
+
+export const INTERVENTION_STATUSES = Object.freeze([
+  'planned',
+  'active',
+  'paused',
+  'completed',
+  'cancelled',
+])
+
+export const TASK_STATUSES = Object.freeze([
+  'todo',
+  'in_progress',
+  'blocked',
+  'done',
+  'cancelled',
+])
+
+export const RESOURCE_STATUSES = Object.freeze([
+  'available',
+  'reserved',
+  'deployed',
+  'depleted',
+])
+
+export const ALERT_RULE_STATUSES = Object.freeze([
+  'active',
+  'paused',
+])
+
+export const ALERT_EVENT_STATUSES = Object.freeze([
+  'open',
+  'acknowledged',
+  'resolved',
+])
+
+export const PRIORITY_LEVELS = Object.freeze([
+  'low',
+  'medium',
+  'high',
+  'critical',
+])
+
+export const REPORT_TYPES = Object.freeze([
+  'situation_report',
+  'incident_brief',
+  'intervention_update',
+  'data_quality_report',
+  'alert_digest',
+])
+
+export const REPORT_TEMPLATE_STATUSES = Object.freeze([
+  'active',
+  'paused',
+  'archived',
+])
+
+export const REPORT_STATUSES = Object.freeze([
+  'draft',
+  'ready',
+  'approved',
+  'distributed',
+  'archived',
+])
+
+export const REPORT_DISTRIBUTION_STATUSES = Object.freeze([
+  'prepared',
+  'sent',
+  'failed',
+])
+
+export const REPORT_SCHEDULE_STATUSES = Object.freeze([
+  'active',
+  'paused',
+  'archived',
+])
+
+export const REPORT_SCHEDULE_RUN_STATUSES = Object.freeze([
+  'completed',
+  'failed',
+])
+
+export const INGESTION_SCHEDULE_STATUSES = Object.freeze([
+  'active',
+  'paused',
+  'archived',
+])
+
 export function normalizeSeverity(value) {
   const normalized = String(value || '').toLowerCase()
   if (['critical', 'red', 'extreme'].includes(normalized)) return 'critical'
@@ -59,12 +153,29 @@ export function emptyStore() {
     version: 1,
     updated_at: new Date().toISOString(),
     source_runs: [],
+    ingestion_schedules: [],
     climate_observations: [],
     hazard_events: [],
     conflict_events: [],
     service_assets: [],
     impact_assessments: [],
     risk_scores: [],
+    data_quality: [],
+    incidents: [],
+    interventions: [],
+    intervention_tasks: [],
+    field_reports: [],
+    response_resources: [],
+    action_logs: [],
+    alert_rules: [],
+    alert_events: [],
+    rapidpro_dispatches: [],
+    rapidpro_inbound_messages: [],
+    report_templates: [],
+    reports: [],
+    report_distribution_runs: [],
+    report_schedules: [],
+    report_schedule_runs: [],
   }
 }
 
