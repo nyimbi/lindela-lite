@@ -100,7 +100,7 @@ label {
   font-weight: 650;
 }
 
-input {
+input, select {
   width: 100%;
   min-height: 34px;
   border: 1px solid var(--line);
@@ -108,6 +108,12 @@ input {
   padding: 6px 8px;
   color: var(--text);
   font: inherit;
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 14px 0;
 }
 
 .source-grid {
@@ -192,6 +198,12 @@ input {
   gap: 10px;
 }
 
+.split-table {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .card h3 {
   margin: 0 0 8px;
   font-size: 14px;
@@ -233,6 +245,10 @@ th {
   .metrics {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
+
+  .split-table {
+    grid-template-columns: 1fr;
+  }
 }
 
 
@@ -240,6 +256,64 @@ th {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.api-key-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: #d8eee5;
+  white-space: nowrap;
+}
+
+.api-key-field input {
+  width: 180px;
+  min-height: 32px;
+  border-color: rgb(255 255 255 / 25%);
+  background: rgb(255 255 255 / 10%);
+  color: white;
+}
+
+.api-key-field input::placeholder {
+  color: #b7c8c1;
+}
+
+.wrap {
+  flex-wrap: wrap;
+}
+
+.split-table.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.report-preview {
+  min-height: 280px;
+  max-height: 520px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 12px;
+  color: var(--text);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 1100px) {
+  .split-table.three {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .topbar-actions {
+    flex-wrap: wrap;
+  }
 }
 
 .panel-heading {

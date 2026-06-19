@@ -13,6 +13,7 @@
         <p>Climate-conflict, flood, environmental, and service-delivery impact monitoring.</p>
       </div>
       <div class="topbar-actions">
+        <label class="api-key-field">API key <input id="apiKeyInput" type="password" autocomplete="off" placeholder="optional"></label>
         <span id="storageMode" class="pill">storage: unknown</span>
         <button id="refreshButton" type="button">Refresh</button>
       </div>
@@ -26,7 +27,11 @@
         <label>Region <input id="regionInput" type="text" value="Turkana"></label>
         <label>Country <input id="countryInput" type="text" value="KE" maxlength="3"></label>
         <div class="source-grid" id="sourceGrid"></div>
-        <button id="runButton" type="button">Run Selected Sources</button>
+        <div class="button-row wrap">
+          <button id="runButton" type="button">Run Selected Sources</button>
+          <button id="createIngestionSchedulesButton" type="button">Create Public Schedules</button>
+          <button id="runDueIngestionButton" type="button">Run Due Sources</button>
+        </div>
         <p class="note">GDELT is intentionally unavailable in Lindela Lite.</p>
       </section>
 
@@ -41,6 +46,73 @@ Clinic A,health,KE,3.13,35.63"></textarea>
         <p class="note">Required fields: service_type, country, latitude, longitude.</p>
       </section>
 
+      <section class="panel controls">
+        <h2>Operations</h2>
+        <label>Incident title <input id="incidentTitleInput" type="text" placeholder="Flood access disruption"></label>
+        <label>Type <input id="incidentTypeInput" type="text" value="climate_disaster"></label>
+        <label>Priority
+          <select id="incidentPriorityInput">
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+        <button id="createIncidentButton" type="button">Create Incident</button>
+        <hr>
+        <label>Incident ID <input id="interventionIncidentInput" type="text" placeholder="incident_..."></label>
+        <label>Intervention title <input id="interventionTitleInput" type="text" placeholder="Open alternate water route"></label>
+        <label>Lead org <input id="interventionLeadInput" type="text" placeholder="Ops team"></label>
+        <button id="createInterventionButton" type="button">Create Intervention</button>
+        <hr>
+        <label>Intervention ID <input id="taskInterventionInput" type="text" placeholder="intervention_..."></label>
+        <label>Task <input id="taskTitleInput" type="text" placeholder="Validate access route"></label>
+        <label>Owner <input id="taskOwnerInput" type="text" placeholder="Field lead"></label>
+        <button id="createTaskButton" type="button">Create Task</button>
+        <hr>
+        <label>Alert name <input id="alertNameInput" type="text" value="Open incidents watch"></label>
+        <label>Metric <input id="alertMetricInput" type="text" value="operations.counts.open_incidents"></label>
+        <label>Threshold <input id="alertThresholdInput" type="number" value="1"></label>
+        <div class="button-row">
+          <button id="createAlertRuleButton" type="button">Create Rule</button>
+          <button id="evaluateAlertsButton" type="button">Evaluate</button>
+        </div>
+        <hr>
+        <label>RapidPro URNs <input id="rapidProUrnsInput" type="text" placeholder="+254700000000,+254711111111"></label>
+        <button id="sendRapidProAlertButton" type="button">Send Latest Alert</button>
+      </section>
+
+      <section class="panel controls">
+        <h2>Reporting</h2>
+        <label>Template ID <input id="reportTemplateIdInput" type="text" placeholder="report_template_..."></label>
+        <label>Template name <input id="reportTemplateNameInput" type="text" value="Daily operations SITREP"></label>
+        <label>Report type
+          <select id="reportTypeInput">
+            <option value="situation_report">Situation Report</option>
+            <option value="incident_brief">Incident Brief</option>
+            <option value="intervention_update">Intervention Update</option>
+            <option value="data_quality_report">Data Quality Report</option>
+            <option value="alert_digest">Alert Digest</option>
+          </select>
+        </label>
+        <label>Report country <input id="reportCountryInput" type="text" value="KE" maxlength="3"></label>
+        <label>Incident ID <input id="reportIncidentInput" type="text" placeholder="incident_..."></label>
+        <label>Intervention ID <input id="reportInterventionInput" type="text" placeholder="intervention_..."></label>
+        <label>Sections <input id="reportSectionsInput" type="text" value="executive_summary,incident_summary,intervention_summary,field_report_summary,alert_summary,data_quality_summary,appendix_sources"></label>
+        <div class="button-row wrap">
+          <button id="createReportTemplateButton" type="button">Create Template</button>
+          <button id="generateReportButton" type="button">Generate Report</button>
+          <button id="approveReportButton" type="button">Approve Latest</button>
+          <button id="distributeReportButton" type="button">Prepare Markdown</button>
+        </div>
+        <hr>
+        <label>Schedule next run <input id="reportScheduleNextRunInput" type="datetime-local"></label>
+        <div class="button-row wrap">
+          <button id="createReportScheduleButton" type="button">Create Schedule</button>
+          <button id="runDueReportsButton" type="button">Run Due</button>
+        </div>
+      </section>
+
       <section class="panel overview">
         <h2>Overview</h2>
         <div class="metrics" id="metrics"></div>
@@ -50,6 +122,60 @@ Clinic A,health,KE,3.13,35.63"></textarea>
       <section class="panel source-panel">
         <h2>Source Freshness</h2>
         <div id="sourceFreshness" class="freshness"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Data Quality</h2>
+        <div id="dataQuality" class="cards"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Operations Summary</h2>
+        <div class="metrics" id="operationsMetrics"></div>
+      </section>
+
+      <section class="panel">
+        <h2>RapidPro</h2>
+        <div id="rapidProStatus" class="cards"></div>
+      </section>
+
+      <section class="panel table-panel">
+        <h2>Reports</h2>
+        <table>
+          <thead>
+            <tr><th>Title</th><th>Type</th><th>Status</th><th>Generated</th></tr>
+          </thead>
+          <tbody id="reportsTable"></tbody>
+        </table>
+      </section>
+
+      <section class="panel table-panel">
+        <h2>Report Preview</h2>
+        <pre id="reportPreview" class="report-preview">No generated report yet.</pre>
+      </section>
+
+      <section class="panel table-panel">
+        <h2>Templates, Schedules, Distribution Runs</h2>
+        <div class="split-table three">
+          <table>
+            <thead>
+              <tr><th>Template</th><th>Type</th><th>ID</th></tr>
+            </thead>
+            <tbody id="reportTemplatesTable"></tbody>
+          </table>
+          <table>
+            <thead>
+              <tr><th>Schedule</th><th>Status</th><th>Next run</th></tr>
+            </thead>
+            <tbody id="reportSchedulesTable"></tbody>
+          </table>
+          <table>
+            <thead>
+              <tr><th>Channel</th><th>Status</th><th>Report</th></tr>
+            </thead>
+            <tbody id="reportDistributionsTable"></tbody>
+          </table>
+        </div>
       </section>
 
       <section class="panel map-panel">
@@ -72,6 +198,62 @@ Clinic A,health,KE,3.13,35.63"></textarea>
       <section class="panel">
         <h2>Climate-Conflict Risk</h2>
         <div id="conflictRisk" class="cards"></div>
+      </section>
+
+      <section class="panel table-panel">
+        <h2>Incidents</h2>
+        <table>
+          <thead>
+            <tr><th>Title</th><th>Status</th><th>Priority</th><th>ID</th></tr>
+          </thead>
+          <tbody id="incidentsTable"></tbody>
+        </table>
+      </section>
+
+      <section class="panel table-panel">
+        <h2>Interventions And Tasks</h2>
+        <div class="split-table">
+          <table>
+            <thead>
+              <tr><th>Intervention</th><th>Status</th><th>ID</th></tr>
+            </thead>
+            <tbody id="interventionsTable"></tbody>
+          </table>
+          <table>
+            <thead>
+              <tr><th>Task</th><th>Status</th><th>Owner</th></tr>
+            </thead>
+            <tbody id="tasksTable"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel table-panel">
+        <h2>Alert Events</h2>
+        <table>
+          <thead>
+            <tr><th>Rule</th><th>Severity</th><th>Status</th><th>Message</th></tr>
+          </thead>
+          <tbody id="alertsTable"></tbody>
+        </table>
+      </section>
+
+      <section class="panel table-panel">
+        <h2>RapidPro Activity</h2>
+        <div class="split-table">
+          <table>
+            <thead>
+              <tr><th>Dispatch</th><th>Status</th><th>Mode</th></tr>
+            </thead>
+            <tbody id="rapidProDispatchesTable"></tbody>
+          </table>
+          <table>
+            <thead>
+              <tr><th>From</th><th>Report</th><th>Text</th></tr>
+            </thead>
+            <tbody id="rapidProInboundTable"></tbody>
+          </table>
+        </div>
       </section>
 
       <section class="panel table-panel">
