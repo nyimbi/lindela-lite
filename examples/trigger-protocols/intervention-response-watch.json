@@ -1,0 +1,49 @@
+{
+  "id": "intervention-response-watch",
+  "name": "Intervention response watch",
+  "purpose": "Monitor operational incidents, interventions, tasks, and resources created from Lindela Lite risk outputs.",
+  "poll": {
+    "endpoint": "/api/v1/operations/summary",
+    "cadence": "15m"
+  },
+  "scope": {
+    "country": "KE",
+    "priority": ["high", "critical"]
+  },
+  "triggers": [
+    {
+      "id": "critical-open-incidents",
+      "condition": "critical_open_incidents > 0",
+      "severity": "high"
+    },
+    {
+      "id": "overdue-response-tasks",
+      "condition": "counts.overdue_tasks > 0",
+      "severity": "medium"
+    },
+    {
+      "id": "active-response-load",
+      "condition": "counts.active_interventions >= 5",
+      "severity": "medium"
+    }
+  ],
+  "actions": [
+    {
+      "type": "notify",
+      "target": "response-lead",
+      "message": "Review operational summary and assign intervention owners."
+    },
+    {
+      "type": "export_snapshot",
+      "endpoint": "/api/v1/export.csv"
+    }
+  ],
+  "suppression": {
+    "window": "2h",
+    "key": "trigger.id"
+  },
+  "review": {
+    "human_required": true,
+    "notes": "Use Lite records for coordination and audit; do not automate high-impact actions without review."
+  }
+}

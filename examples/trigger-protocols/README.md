@@ -9,6 +9,7 @@ The files are intentionally declarative. They are not proprietary Lindela workfl
 - `flood-watch.json` monitors flood risk and flood-related hazard events.
 - `climate-conflict-watch.json` monitors climate-conflict risk and user-supplied conflict events.
 - `service-impact-watch.json` monitors impact scores for health, water, education, transport, power, and telecom assets.
+- `intervention-response-watch.json` monitors open incidents, overdue tasks, and deployed response resources.
 
 ## Common Shape
 

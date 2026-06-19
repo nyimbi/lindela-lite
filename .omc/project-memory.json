@@ -1,0 +1,232 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1786189108683,
+  "projectRoot": "/Users/nyimbiodero/src/pjs/Lindela-Lite",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": ">=20.0.0",
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "npm",
+    "runtime": "Node.js 20.0.0"
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": "npm run start",
+    "scripts": {
+      "start": "node src/server.js",
+      "deploy:one-click": "deploy/one-click.sh",
+      "validate": "node scripts/validate.mjs",
+      "test": "node --test test/*.test.js",
+      "test:postgres": "node --test test/database.integration.test.js",
+      "test:pg0": "LINDELA_LITE_TEST_PG0=1 node --test test/database.integration.test.js",
+      "verify:pg0": "node scripts/verify-pg0.mjs"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": "ES modules",
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "examples",
+      "public",
+      "scripts",
+      "src",
+      "test"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "data": {
+      "path": "data",
+      "purpose": "Data files",
+      "fileCount": 1,
+      "lastAccessed": 1786189108639,
+      "keyFiles": [
+        "lindela-lite-store.json"
+      ]
+    },
+    "deploy": {
+      "path": "deploy",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1786189108674,
+      "keyFiles": [
+        "one-click.sh"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 19,
+      "lastAccessed": 1786189108676,
+      "keyFiles": [
+        "61440-BermejoF.pdf",
+        "README.md",
+        "api.md",
+        "architecture.md",
+        "configuration.md"
+      ]
+    },
+    "examples": {
+      "path": "examples",
+      "purpose": "Example code",
+      "fileCount": 0,
+      "lastAccessed": 1786189108677,
+      "keyFiles": []
+    },
+    "public": {
+      "path": "public",
+      "purpose": "Public files",
+      "fileCount": 3,
+      "lastAccessed": 1786189108679,
+      "keyFiles": [
+        "app.js",
+        "index.html",
+        "styles.css"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 2,
+      "lastAccessed": 1786189108680,
+      "keyFiles": [
+        "validate.mjs",
+        "verify-pg0.mjs"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 14,
+      "lastAccessed": 1786189108680,
+      "keyFiles": [
+        "alerts.js",
+        "analytics.js",
+        "index.js",
+        "ingestion.js",
+        "operations.js"
+      ]
+    },
+    "test": {
+      "path": "test",
+      "purpose": "Test files",
+      "fileCount": 3,
+      "lastAccessed": 1786189108681,
+      "keyFiles": [
+        "database.integration.test.js",
+        "fixtures.test.js",
+        "lite.test.js"
+      ]
+    },
+    "test/fixtures": {
+      "path": "test/fixtures",
+      "purpose": "Test fixtures",
+      "fileCount": 5,
+      "lastAccessed": 1786189108683,
+      "keyFiles": [
+        "chirps.html",
+        "firms.csv",
+        "gdacs.xml"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/server.js",
+      "accessCount": 10,
+      "lastAccessed": 1786189766196,
+      "type": "file"
+    },
+    {
+      "path": "test/lite.test.js",
+      "accessCount": 6,
+      "lastAccessed": 1786190109501,
+      "type": "file"
+    },
+    {
+      "path": "src/schema.js",
+      "accessCount": 2,
+      "lastAccessed": 1786189695599,
+      "type": "file"
+    },
+    {
+      "path": "src/utils.js",
+      "accessCount": 2,
+      "lastAccessed": 1786189703413,
+      "type": "file"
+    },
+    {
+      "path": "src/operations.js",
+      "accessCount": 2,
+      "lastAccessed": 1786189753890,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 1,
+      "lastAccessed": 1786189147841,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 1,
+      "lastAccessed": 1786189147894,
+      "type": "file"
+    },
+    {
+      "path": "docs/plans/world-class-roadmap.md",
+      "accessCount": 1,
+      "lastAccessed": 1786189356063,
+      "type": "file"
+    },
+    {
+      "path": "src/ingestion.js",
+      "accessCount": 1,
+      "lastAccessed": 1786189480663,
+      "type": "file"
+    },
+    {
+      "path": "src/alerts.js",
+      "accessCount": 1,
+      "lastAccessed": 1786189481306,
+      "type": "file"
+    },
+    {
+      "path": "src/analytics.js",
+      "accessCount": 1,
+      "lastAccessed": 1786189481360,
+      "type": "file"
+    },
+    {
+      "path": "src/store.js",
+      "accessCount": 1,
+      "lastAccessed": 1786189512277,
+      "type": "file"
+    },
+    {
+      "path": "src/auth.js",
+      "accessCount": 1,
+      "lastAccessed": 1786189726742,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

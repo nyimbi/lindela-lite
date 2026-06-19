@@ -2,20 +2,51 @@ import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { authenticate, requireScope, scopeForRoute } from './auth.js'
 import { refreshAnalytics } from './analytics.js'
-import { runIngestion } from './ingestion.js'
+import { evaluateAlertRules, normalizeAlertRule, updateAlertEvent } from './alerts.js'
+import {
+  defaultIngestionSchedules,
+  ingestionStatus,
+  normalizeIngestionSchedule,
+  runDueIngestionSchedules,
+  runIngestion,
+} from './ingestion.js'
+import { actionLog, buildCreate, buildUpdate, operationalSummary } from './operations.js'
+import { parseRapidProFieldReport, rapidProStatus, sendRapidProAlert, sendRapidProReportSummary, verifyRapidProWebhook } from './rapidpro.js'
+import {
+  approveReport,
+  computeNextRunAt,
+  formatReportSmsSummary,
+  generateReportSections,
+  markReportDistributed,
+  normalizeDistributionRun,
+  normalizeReport,
+  normalizeReportSchedule,
+  normalizeReportTemplate,
+  normalizeScheduleRun,
+  recordsForReportSources,
+  renderReportMarkdown,
+  scheduleIsDue,
+  updateReport,
+} from './reports.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
 import { filterRecords, jsonResponse, readRequestJson, toCsv, toGeoJson } from './utils.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
+const docsDir = path.resolve(__dirname, '../docs')
 let defaultStorePromise
 
 export function createServer(options = {}) {
   const storeProvider = options.store ? Promise.resolve(options.store) : getDefaultStore()
   return http.createServer(async (req, res) => {
     try {
+      if (hasTraversalSegment(req.url || '')) {
+        jsonResponse(res, 404, { success: false, error: 'Not found' })
+        return
+      }
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
       if (url.pathname.startsWith('/api/v1/')) {
         await handleApi(await storeProvider, req, res, url)
@@ -32,14 +63,32 @@ export function createServer(options = {}) {
 }
 
 async function handleApi(store, req, res, url) {
-  if (process.env.LINDELA_LITE_API_KEY && req.method !== 'GET') {
-    if (req.headers['x-api-key'] !== process.env.LINDELA_LITE_API_KEY) {
-      jsonResponse(res, 401, { success: false, error: 'Invalid API key' })
-      return
+  let auth = null
+  if (process.env.LINDELA_LITE_TOKENS || process.env.LINDELA_LITE_API_KEY) {
+    if (url.pathname === '/api/v1/rapidpro/field-report' && req.method === 'POST') {
+      if (!verifyRapidProWebhook(req, url)) {
+        jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook' })
+        return
+      }
+    } else if (url.pathname !== '/api/v1/health') {
+      auth = authenticate(req)
+      if (!auth && req.method !== 'GET') {
+        jsonResponse(res, 401, { success: false, error: 'Unauthorized' })
+        return
+      }
+      if (auth) {
+        try {
+          requireScope(auth, scopeForRoute(req.method, url.pathname))
+        } catch (error) {
+          jsonResponse(res, error.statusCode || 403, { success: false, error: error.message })
+          return
+        }
+      }
     }
   }
 
   const data = await store.read()
+  req.__auth = auth
 
   if (req.method === 'GET' && url.pathname === '/api/v1/health') {
     jsonResponse(res, 200, {
@@ -55,13 +104,22 @@ async function handleApi(store, req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/sources') {
+    const health = ingestionStatus(data)
     jsonResponse(res, 200, {
       success: true,
       data: publicSourceCatalog().map((source) => ({
         ...source,
         last_run: data.source_runs.find((run) => run.source === source.id) || null,
+        health: health.find((item) => item.source === source.id)?.status || 'unknown',
+        schedule: health.find((item) => item.source === source.id)?.schedule || null,
       })),
     })
+    return
+  }
+
+  const ingestionRoute = matchIngestionRoute(url.pathname)
+  if (ingestionRoute) {
+    await handleIngestionRoute(store, data, req, res, url, ingestionRoute)
     return
   }
 
@@ -69,6 +127,8 @@ async function handleApi(store, req, res, url) {
     const body = await readRequestJson(req)
     const ingestion = await runIngestion(store, body)
     const analytics = await refreshAnalytics(store)
+    const logs = ingestion.source_runs.map((run) => actionLog('source_runs', run.status, run, body.actor, req.__auth?.subject))
+    if (logs.length) await store.merge({ action_logs: logs })
     jsonResponse(res, 200, {
       success: true,
       source_runs: ingestion.source_runs,
@@ -76,7 +136,9 @@ async function handleApi(store, req, res, url) {
       analytics: {
         risk_scores: analytics.risk_scores.length,
         impact_assessments: analytics.impact_assessments.length,
+        data_quality: analytics.data_quality.length,
       },
+      action_logs: logs,
     })
     return
   }
@@ -103,6 +165,7 @@ async function handleApi(store, req, res, url) {
       analytics: {
         risk_scores: analytics.risk_scores.length,
         impact_assessments: analytics.impact_assessments.length,
+        data_quality: analytics.data_quality.length,
       },
     })
     return
@@ -134,6 +197,45 @@ async function handleApi(store, req, res, url) {
     return
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/v1/data-quality') {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.data_quality, url.searchParams) })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/operations/summary') {
+    jsonResponse(res, 200, { success: true, data: operationalSummary(data) })
+    return
+  }
+
+  if (url.pathname === '/api/v1/alerts/evaluate') {
+    await handleAlertEvaluation(store, data, req, res)
+    return
+  }
+
+  const rapidProRoute = matchRapidProRoute(url.pathname)
+  if (rapidProRoute) {
+    await handleRapidProRoute(store, data, req, res, url, rapidProRoute)
+    return
+  }
+
+  const reportingRoute = matchReportingRoute(url.pathname)
+  if (reportingRoute) {
+    await handleReportingRoute(store, data, req, res, url, reportingRoute)
+    return
+  }
+
+  const alertRoute = matchAlertRoute(url.pathname)
+  if (alertRoute) {
+    await handleAlertRoute(store, data, req, res, url, alertRoute)
+    return
+  }
+
+  const operationalRoute = matchOperationalRoute(url.pathname)
+  if (operationalRoute) {
+    await handleOperationalRoute(store, data, req, res, url, operationalRoute)
+    return
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/v1/assessments') {
     jsonResponse(res, 200, {
       success: true,
@@ -143,6 +245,9 @@ async function handleApi(store, req, res, url) {
         flood_risk: filterRecords(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams),
         climate_conflict_risk: filterRecords(data.risk_scores.filter((risk) => risk.type === 'climate_conflict_risk'), url.searchParams),
         service_impacts: filterRecords(data.impact_assessments, url.searchParams),
+        data_quality: filterRecords(data.data_quality, url.searchParams),
+        operations: operationalSummary(data),
+        alert_events: filterRecords(data.alert_events, url.searchParams),
         recent_events: filterRecords([...data.hazard_events, ...data.conflict_events], url.searchParams),
       },
     })
@@ -150,13 +255,37 @@ async function handleApi(store, req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/export.geojson') {
-    const records = filterRecords([...data.hazard_events, ...data.conflict_events, ...data.service_assets, ...data.risk_scores, ...data.impact_assessments], url.searchParams)
+    const records = filterRecords([
+      ...data.hazard_events,
+      ...data.conflict_events,
+      ...data.service_assets,
+      ...data.risk_scores,
+      ...data.impact_assessments,
+      ...data.incidents,
+      ...data.field_reports,
+      ...data.response_resources,
+      ...data.alert_events,
+    ], url.searchParams)
     jsonResponse(res, 200, toGeoJson(records), { 'content-type': 'application/geo+json; charset=utf-8' })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/export.csv') {
-    const records = filterRecords([...data.hazard_events, ...data.conflict_events, ...data.risk_scores, ...data.impact_assessments], url.searchParams)
+    const records = filterRecords([
+      ...data.hazard_events,
+      ...data.conflict_events,
+      ...data.risk_scores,
+      ...data.impact_assessments,
+      ...data.incidents,
+      ...data.interventions,
+      ...data.intervention_tasks,
+      ...data.field_reports,
+      ...data.response_resources,
+      ...data.alert_rules,
+      ...data.alert_events,
+      ...data.rapidpro_dispatches,
+      ...data.rapidpro_inbound_messages,
+    ], url.searchParams)
     res.writeHead(200, {
       'content-type': 'text/csv; charset=utf-8',
       'content-disposition': 'attachment; filename="lindela-lite-export.csv"',
@@ -168,10 +297,904 @@ async function handleApi(store, req, res, url) {
   jsonResponse(res, 404, { success: false, error: 'Not found' })
 }
 
+function isAuthorizedMutation(req, url) {
+  if (req.headers['x-api-key'] === process.env.LINDELA_LITE_API_KEY) return true
+  if (url.pathname === '/api/v1/rapidpro/field-report' && process.env.RAPIDPRO_WEBHOOK_SECRET) {
+    return verifyRapidProWebhook(req, url)
+  }
+  return false
+}
+
+async function handleIngestionRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && route.kind === 'status') {
+    jsonResponse(res, 200, { success: true, data: ingestionStatus(data) })
+    return
+  }
+
+  if (req.method === 'GET' && route.kind === 'schedules' && !route.id) {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.ingestion_schedules, url.searchParams) })
+    return
+  }
+
+  if (req.method === 'GET' && route.kind === 'schedules' && route.id) {
+    const record = data.ingestion_schedules.find((item) => item.id === route.id)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: 'Ingestion schedule not found' })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: record })
+    return
+  }
+
+  if (req.method === 'POST' && route.kind === 'defaults') {
+    const body = await readRequestJson(req)
+    const schedules = defaultIngestionSchedules(data, body)
+    const logs = schedules.map((schedule) => actionLog('ingestion_schedules', 'created', schedule, body.actor, req.__auth?.subject))
+    if (schedules.length) await store.merge({ ingestion_schedules: schedules, action_logs: logs })
+    jsonResponse(res, 201, { success: true, created: schedules.length, data: schedules, action_logs: logs })
+    return
+  }
+
+  if (req.method === 'POST' && route.kind === 'schedules' && !route.id) {
+    const body = await readRequestJson(req)
+    const record = normalizeIngestionSchedule(body)
+    const log = actionLog('ingestion_schedules', 'created', record, body.actor, req.__auth?.subject)
+    await store.merge({ ingestion_schedules: [record], action_logs: [log] })
+    jsonResponse(res, 201, { success: true, data: record, action_log: log })
+    return
+  }
+
+  if (req.method === 'PATCH' && route.kind === 'schedules' && route.id) {
+    const body = await readRequestJson(req)
+    const existing = data.ingestion_schedules.find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Ingestion schedule not found' })
+      return
+    }
+    const record = normalizeIngestionSchedule({ ...body, id: route.id }, existing)
+    const log = actionLog('ingestion_schedules', 'updated', record, body.actor, req.__auth?.subject)
+    await store.merge({ ingestion_schedules: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+
+  if (req.method === 'POST' && route.kind === 'run-due') {
+    const body = await readRequestJson(req)
+    const result = await runDueIngestionSchedules(store, data, body)
+    const analytics = await refreshAnalytics(store)
+    const logs = [
+      ...result.source_runs.map((run) => actionLog('source_runs', run.status, run, body.actor, req.__auth?.subject)),
+      ...result.schedules.map((schedule) => actionLog('ingestion_schedules', 'ran', schedule, body.actor, req.__auth?.subject)),
+    ]
+    if (logs.length) await store.merge({ action_logs: logs })
+    jsonResponse(res, 201, {
+      success: true,
+      data: result.source_runs,
+      schedules: result.schedules,
+      analytics: {
+        risk_scores: analytics.risk_scores.length,
+        impact_assessments: analytics.impact_assessments.length,
+        data_quality: analytics.data_quality.length,
+      },
+      action_logs: logs,
+    })
+    return
+  }
+
+  if (req.method === 'POST' && route.kind === 'run-one' && route.id) {
+    const body = await readRequestJson(req)
+    const schedule = data.ingestion_schedules.find((item) => item.id === route.id)
+    if (!schedule) {
+      jsonResponse(res, 404, { success: false, error: 'Ingestion schedule not found' })
+      return
+    }
+    const ingestion = await runIngestion(store, {
+      ...(schedule.default_options || {}),
+      sources: [schedule.source],
+      timeout_ms: schedule.timeout_ms,
+      retries: schedule.retries,
+      interval_minutes: schedule.interval_minutes,
+      stale_after_minutes: schedule.stale_after_minutes,
+      schedule_id: schedule.id,
+      run_type: 'scheduled',
+      ...body,
+    })
+    const completedAt = ingestion.source_runs[0]?.completed_at || new Date().toISOString()
+    const nextSchedule = {
+      ...schedule,
+      last_run_at: completedAt,
+      next_run_at: schedule.interval_minutes ? new Date(Date.parse(completedAt) + schedule.interval_minutes * 60 * 1000).toISOString() : schedule.next_run_at,
+      updated_at: new Date().toISOString(),
+    }
+    const analytics = await refreshAnalytics(store)
+    const logs = [
+      ...ingestion.source_runs.map((run) => actionLog('source_runs', run.status, run, body.actor, req.__auth?.subject)),
+      actionLog('ingestion_schedules', 'ran', nextSchedule, body.actor, req.__auth?.subject),
+    ]
+    await store.merge({ ingestion_schedules: [nextSchedule], action_logs: logs })
+    jsonResponse(res, 201, {
+      success: true,
+      data: ingestion.source_runs,
+      schedule: nextSchedule,
+      analytics: {
+        risk_scores: analytics.risk_scores.length,
+        impact_assessments: analytics.impact_assessments.length,
+        data_quality: analytics.data_quality.length,
+      },
+      action_logs: logs,
+    })
+    return
+  }
+
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+async function handleReportingRoute(store, data, req, res, url, route) {
+  if (route.kind === 'templates') {
+    await handleReportTemplateRoute(store, data, req, res, url, route)
+    return
+  }
+  if (route.kind === 'reports') {
+    await handleReportRoute(store, data, req, res, url, route)
+    return
+  }
+  if (route.kind === 'distributions') {
+    await handleReportDistributionRoute(store, data, req, res, url, route)
+    return
+  }
+  if (route.kind === 'schedules') {
+    await handleReportScheduleRoute(store, data, req, res, url, route)
+    return
+  }
+  if (route.kind === 'schedule-runs') {
+    await handleReportScheduleRunRoute(store, data, req, res, url, route)
+    return
+  }
+  jsonResponse(res, 404, { success: false, error: 'Not found' })
+}
+
+async function handleReportTemplateRoute(store, data, req, res, url, route) {
+  if (req.method === 'POST' && route.action === 'copy') {
+    const body = await readRequestJson(req)
+    const existing = data.report_templates.find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Report template not found' })
+      return
+    }
+    const record = normalizeReportTemplate({
+      ...existing,
+      id: body.id,
+      name: body.name || `${existing.name} Copy`,
+      version: 1,
+      created_at: undefined,
+      updated_at: undefined,
+    })
+    const log = actionLog('report_templates', 'copied', record, body.actor, req.__auth?.subject)
+    await store.merge({ report_templates: [record], action_logs: [log] })
+    jsonResponse(res, 201, { success: true, data: record, action_log: log })
+    return
+  }
+
+  if (req.method === 'GET' && !route.id) {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_templates, url.searchParams) })
+    return
+  }
+  if (req.method === 'GET' && route.id) {
+    const record = data.report_templates.find((item) => item.id === route.id)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: 'Report template not found' })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: record })
+    return
+  }
+  if (req.method === 'POST' && !route.id) {
+    const body = await readRequestJson(req)
+    const record = normalizeReportTemplate(body)
+    const log = actionLog('report_templates', 'created', record, body.actor, req.__auth?.subject)
+    await store.merge({ report_templates: [record], action_logs: [log] })
+    jsonResponse(res, 201, { success: true, data: record, action_log: log })
+    return
+  }
+  if (req.method === 'PATCH' && route.id) {
+    const body = await readRequestJson(req)
+    const existing = data.report_templates.find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Report template not found' })
+      return
+    }
+    const record = normalizeReportTemplate({ ...body, id: route.id }, existing)
+    const log = actionLog('report_templates', 'updated', record, body.actor, req.__auth?.subject)
+    await store.merge({ report_templates: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+async function handleReportRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && route.exportFormat) {
+    const report = data.reports.find((item) => item.id === route.id)
+    if (!report) {
+      jsonResponse(res, 404, { success: false, error: 'Report not found' })
+      return
+    }
+    if (route.exportFormat === 'md') {
+      res.writeHead(200, {
+        'content-type': 'text/markdown; charset=utf-8',
+        'content-disposition': `attachment; filename="${report.id}.md"`,
+      })
+      res.end(renderReportMarkdown(report))
+      return
+    }
+    if (route.exportFormat === 'csv') {
+      res.writeHead(200, {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="${report.id}-appendix.csv"`,
+      })
+      res.end(toCsv(recordsForReportSources(report, data)))
+      return
+    }
+    if (route.exportFormat === 'geojson') {
+      jsonResponse(res, 200, toGeoJson(recordsForReportSources(report, data)), { 'content-type': 'application/geo+json; charset=utf-8' })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: report })
+    return
+  }
+
+  if (req.method === 'GET' && !route.id) {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.reports, url.searchParams) })
+    return
+  }
+  if (req.method === 'GET' && route.id) {
+    const record = data.reports.find((item) => item.id === route.id)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: 'Report not found' })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: record })
+    return
+  }
+  if (req.method === 'POST' && !route.id) {
+    const body = await readRequestJson(req)
+    let record = normalizeReport(body, data)
+    if (body.generate) record = generateReportSections(record, data, body)
+    const log = actionLog('reports', 'created', record, body.actor, req.__auth?.subject)
+    await store.merge({ reports: [record], action_logs: [log] })
+    jsonResponse(res, 201, { success: true, data: record, action_log: log })
+    return
+  }
+  if (req.method === 'PATCH' && route.id && !route.action) {
+    const body = await readRequestJson(req)
+    const existing = data.reports.find((item) => item.id === route.id)
+    const record = updateReport(existing, body, data)
+    const log = actionLog('reports', 'updated', record, body.actor, req.__auth?.subject)
+    await store.merge({ reports: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+  if (req.method === 'POST' && route.action === 'generate') {
+    const body = await readRequestJson(req)
+    const existing = data.reports.find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Report not found' })
+      return
+    }
+    if (['approved', 'distributed'].includes(existing.status)) {
+      jsonResponse(res, 409, { success: false, error: 'Approved or distributed reports cannot be regenerated' })
+      return
+    }
+    const record = generateReportSections(existing, data, body)
+    const log = actionLog('reports', 'generated', record, body.actor, req.__auth?.subject)
+    await store.merge({ reports: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+  if (req.method === 'POST' && route.action === 'approve') {
+    const body = await readRequestJson(req)
+    const existing = data.reports.find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Report not found' })
+      return
+    }
+    const record = approveReport(existing, body.actor)
+    const log = actionLog('reports', 'approved', record, body.actor, req.__auth?.subject)
+    await store.merge({ reports: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+  if (req.method === 'POST' && route.action === 'distribute') {
+    const body = await readRequestJson(req)
+    const existing = data.reports.find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Report not found' })
+      return
+    }
+    const result = await distributeReport(existing, body, body.actor, data)
+    const record = result.report
+    const log = actionLog('reports', 'distributed', record, body.actor, req.__auth?.subject)
+    await store.merge({
+      reports: [record],
+      report_distribution_runs: result.runs,
+      rapidpro_dispatches: result.rapidproDispatches,
+      action_logs: [log, ...result.runs.map((run) => actionLog('report_distribution_runs', run.status, run, body.actor, req.__auth?.subject))],
+    })
+    jsonResponse(res, 201, { success: result.runs.every((run) => run.status !== 'failed'), data: result.runs, report: record, action_log: log })
+    return
+  }
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+async function handleReportDistributionRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && !route.id) {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_distribution_runs, url.searchParams) })
+    return
+  }
+  const run = data.report_distribution_runs.find((item) => item.id === route.id)
+  if (!run) {
+    jsonResponse(res, 404, { success: false, error: 'Report distribution not found' })
+    return
+  }
+  if (req.method === 'GET' && !route.action) {
+    jsonResponse(res, 200, { success: true, data: run })
+    return
+  }
+  if (req.method === 'POST' && route.action === 'retry') {
+    const body = await readRequestJson(req)
+    const report = data.reports.find((item) => item.id === run.report_id)
+    if (!report) {
+      jsonResponse(res, 404, { success: false, error: 'Report not found' })
+      return
+    }
+    const result = await distributeReport(report, { channels: [{ ...(run.options || {}), channel: run.channel, recipients: run.recipients }], retry_of: run.id }, body.actor, data)
+    await store.merge({
+      reports: [result.report],
+      report_distribution_runs: result.runs,
+      rapidpro_dispatches: result.rapidproDispatches,
+      action_logs: result.runs.map((item) => actionLog('report_distribution_runs', item.status, item, body.actor, req.__auth?.subject)),
+    })
+    jsonResponse(res, 201, { success: result.runs.every((item) => item.status !== 'failed'), data: result.runs })
+    return
+  }
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+async function handleReportScheduleRoute(store, data, req, res, url, route) {
+  if (route.kind === 'schedule-runs') {
+    await handleReportScheduleRunRoute(store, data, req, res, url, route)
+    return
+  }
+
+  if (req.method === 'POST' && route.action === 'run-due') {
+    const body = await readRequestJson(req)
+    const result = await runDueReportSchedules(data, body.actor)
+    await store.merge(result.writes)
+    jsonResponse(res, 201, { success: true, data: result.runs, reports: result.reports, distributions: result.distributions })
+    return
+  }
+  if (req.method === 'GET' && !route.id) {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_schedules, url.searchParams) })
+    return
+  }
+  if (req.method === 'GET' && route.id) {
+    const record = data.report_schedules.find((item) => item.id === route.id)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: record })
+    return
+  }
+  if (req.method === 'POST' && !route.id) {
+    const body = await readRequestJson(req)
+    const record = normalizeReportSchedule(body, data)
+    const log = actionLog('report_schedules', 'created', record, body.actor, req.__auth?.subject)
+    await store.merge({ report_schedules: [record], action_logs: [log] })
+    jsonResponse(res, 201, { success: true, data: record, action_log: log })
+    return
+  }
+  if (req.method === 'PATCH' && route.id) {
+    const body = await readRequestJson(req)
+    const existing = data.report_schedules.find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })
+      return
+    }
+    const record = normalizeReportSchedule({ ...body, id: route.id }, data, existing)
+    const log = actionLog('report_schedules', 'updated', record, body.actor, req.__auth?.subject)
+    await store.merge({ report_schedules: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+  if (req.method === 'POST' && route.action === 'run') {
+    const body = await readRequestJson(req)
+    const schedule = data.report_schedules.find((item) => item.id === route.id)
+    if (!schedule) {
+      jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })
+      return
+    }
+    const result = await runReportSchedule(data, schedule, body.actor)
+    await store.merge(result.writes)
+    jsonResponse(res, 201, { success: true, data: result.scheduleRun, report: result.report, distributions: result.distributions })
+    return
+  }
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+async function handleReportScheduleRunRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && !route.id) {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_schedule_runs, url.searchParams) })
+    return
+  }
+  const run = data.report_schedule_runs.find((item) => item.id === route.id)
+  if (!run) {
+    jsonResponse(res, 404, { success: false, error: 'Report schedule run not found' })
+    return
+  }
+  if (req.method === 'GET' && !route.action) {
+    jsonResponse(res, 200, { success: true, data: run })
+    return
+  }
+  if (req.method === 'POST' && route.action === 'retry') {
+    const body = await readRequestJson(req)
+    const schedule = data.report_schedules.find((item) => item.id === run.schedule_id)
+    if (!schedule) {
+      jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })
+      return
+    }
+    const result = await runReportSchedule(data, schedule, body.actor)
+    await store.merge(result.writes)
+    jsonResponse(res, 201, { success: true, data: result.scheduleRun, report: result.report, distributions: result.distributions })
+    return
+  }
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+async function distributeReport(report, body = {}, actor = 'operator', data = null) {
+  if (!['ready', 'approved', 'distributed'].includes(report.status)) {
+    throw Object.assign(new Error('Report must be ready or approved before distribution'), { statusCode: 400 })
+  }
+  const channels = normalizeDistributionChannels(body, report)
+  const runs = []
+  const rapidproDispatches = []
+  for (const channel of channels) {
+    const runInput = {
+      channel: channel.channel,
+      recipients: channel.recipients || recipientFields(channel),
+      payload_summary: formatReportSmsSummary(report),
+      options: channel,
+      retry_of: body.retry_of || null,
+    }
+    try {
+      if (['markdown_download', 'json', 'csv', 'geojson'].includes(channel.channel)) {
+        const appendixRecords = data ? recordsForReportSources(report, data) : []
+        const responseBody = {
+          markdown_download: { bytes: renderReportMarkdown(report).length },
+          json: { report_id: report.id },
+          csv: { records: appendixRecords.length },
+          geojson: { features: toGeoJson(appendixRecords).features.length },
+        }[channel.channel]
+        runs.push(normalizeDistributionRun({ ...runInput, status: 'prepared', response_body: responseBody }, report))
+      } else if (channel.channel === 'webhook') {
+        const response = await fetch(required(channel.url, 'url'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...(channel.headers || {}) },
+          body: JSON.stringify({ report, markdown: renderReportMarkdown(report) }),
+        })
+        const responseBody = await readExternalResponse(response)
+        runs.push(normalizeDistributionRun({
+          ...runInput,
+          status: response.ok ? 'sent' : 'failed',
+          response_status: response.status,
+          response_body: responseBody,
+          error: response.ok ? null : `Webhook HTTP ${response.status}`,
+        }, report))
+      } else if (channel.channel === 'rapidpro_sms') {
+        const summary = channel.text || formatReportSmsSummary(report)
+        const dispatch = await sendRapidProReportSummary(report, summary, channel)
+        rapidproDispatches.push(dispatch)
+        runs.push(normalizeDistributionRun({
+          ...runInput,
+          status: dispatch.status === 'sent' ? 'sent' : 'failed',
+          response_status: dispatch.response_status,
+          response_body: dispatch.response_body,
+          error: dispatch.error,
+        }, report))
+      } else {
+        throw Object.assign(new Error('channel must be markdown_download, json, csv, geojson, webhook, or rapidpro_sms'), { statusCode: 400 })
+      }
+    } catch (error) {
+      runs.push(normalizeDistributionRun({ ...runInput, status: 'failed', error: error.message }, report))
+    }
+  }
+  const hasDeliveredArtifact = runs.some((run) => run.status !== 'failed')
+  return { report: hasDeliveredArtifact ? markReportDistributed(report) : report, runs, rapidproDispatches, actor }
+}
+
+async function runDueReportSchedules(data, actor = 'operator') {
+  const due = data.report_schedules.filter((schedule) => scheduleIsDue(schedule))
+  const aggregate = emptyScheduleResult()
+  for (const schedule of due) {
+    const result = await runReportSchedule(data, schedule, actor)
+    mergeScheduleResult(aggregate, result)
+    data = {
+      ...data,
+      reports: result.report ? [...data.reports, result.report] : data.reports,
+      report_schedules: data.report_schedules.map((item) => (item.id === result.schedule.id ? result.schedule : item)),
+      report_schedule_runs: [...data.report_schedule_runs, result.scheduleRun],
+      report_distribution_runs: [...data.report_distribution_runs, ...result.distributions],
+      rapidpro_dispatches: [...data.rapidpro_dispatches, ...result.rapidproDispatches],
+    }
+  }
+  return aggregate
+}
+
+async function runReportSchedule(data, schedule, actor = 'operator') {
+  const startedAt = new Date().toISOString()
+  const template = data.report_templates.find((item) => item.id === schedule.template_id)
+  if (!template) {
+    const completedAt = new Date().toISOString()
+    const nextSchedule = {
+      ...schedule,
+      last_run_at: completedAt,
+      next_run_at: computeNextRunAt(schedule, completedAt),
+      updated_at: completedAt,
+    }
+    const scheduleRun = normalizeScheduleRun({ status: 'failed', started_at: startedAt, completed_at: completedAt, error: 'Template not found' }, nextSchedule)
+    return {
+      schedule: nextSchedule,
+      scheduleRun,
+      report: null,
+      distributions: [],
+      rapidproDispatches: [],
+      writes: {
+        report_schedules: [nextSchedule],
+        report_schedule_runs: [scheduleRun],
+        action_logs: [actionLog('report_schedule_runs', 'failed', scheduleRun, actor)],
+      },
+    }
+  }
+  let report = normalizeReport({
+    template_id: template.id,
+    owner: schedule.owner,
+    distribution_defaults: schedule.distribution_defaults,
+  }, data)
+  report = generateReportSections(report, data)
+  const distributions = []
+  const rapidproDispatches = []
+  if (schedule.auto_distribute) {
+    const distribution = await distributeReport({ ...report, status: 'approved' }, { channels: schedule.distribution_defaults }, actor, data)
+    report = distribution.report
+    distributions.push(...distribution.runs)
+    rapidproDispatches.push(...distribution.rapidproDispatches)
+  }
+  const now = new Date().toISOString()
+  const nextSchedule = {
+    ...schedule,
+    last_run_at: now,
+    next_run_at: computeNextRunAt(schedule, now),
+    updated_at: now,
+  }
+  const scheduleRun = normalizeScheduleRun({ status: 'completed', started_at: startedAt, completed_at: now }, schedule, report)
+  return {
+    schedule: nextSchedule,
+    scheduleRun,
+    report,
+    distributions,
+    rapidproDispatches,
+    writes: {
+      reports: [report],
+      report_schedules: [nextSchedule],
+      report_schedule_runs: [scheduleRun],
+      report_distribution_runs: distributions,
+      rapidpro_dispatches: rapidproDispatches,
+      action_logs: [
+        actionLog('reports', 'generated', report, actor),
+        actionLog('report_schedule_runs', 'completed', scheduleRun, actor),
+        ...distributions.map((run) => actionLog('report_distribution_runs', run.status, run, actor)),
+      ],
+    },
+  }
+}
+
+function normalizeDistributionChannels(body, report) {
+  const configured = body.channels || (body.channel ? [body] : report.distribution_defaults)
+  const channels = Array.isArray(configured) ? configured : [configured]
+  return channels.length ? channels.map((channel) => (typeof channel === 'string' ? { channel } : channel)) : [{ channel: 'markdown_download' }]
+}
+
+function recipientFields(channel) {
+  return {
+    urns: channel.urns || [],
+    contacts: channel.contacts || [],
+    groups: channel.groups || [],
+    url: channel.url || null,
+  }
+}
+
+function emptyScheduleResult() {
+  return {
+    runs: [],
+    reports: [],
+    distributions: [],
+    rapidproDispatches: [],
+    writes: {
+      reports: [],
+      report_schedules: [],
+      report_schedule_runs: [],
+      report_distribution_runs: [],
+      rapidpro_dispatches: [],
+      action_logs: [],
+    },
+  }
+}
+
+function mergeScheduleResult(target, result) {
+  target.runs.push(result.scheduleRun)
+  if (result.report) target.reports.push(result.report)
+  target.distributions.push(...result.distributions)
+  target.rapidproDispatches.push(...result.rapidproDispatches)
+  for (const [collection, records] of Object.entries(result.writes)) {
+    target.writes[collection].push(...records)
+  }
+}
+
+async function readExternalResponse(response) {
+  const text = await response.text()
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return { raw: text }
+  }
+}
+
+async function handleRapidProRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && route.kind === 'status') {
+    jsonResponse(res, 200, { success: true, data: rapidProStatus() })
+    return
+  }
+
+  if (req.method === 'GET' && route.kind === 'dispatches') {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.rapidpro_dispatches, url.searchParams) })
+    return
+  }
+
+  if (req.method === 'GET' && route.kind === 'inbound') {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.rapidpro_inbound_messages, url.searchParams) })
+    return
+  }
+
+  if (req.method === 'POST' && route.kind === 'send-alert') {
+    const body = await readRequestJson(req)
+    const alert = data.alert_events.find((item) => item.id === route.id)
+    if (!alert) {
+      jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
+      return
+    }
+    const dispatch = await sendRapidProAlert(alert, body)
+    const log = actionLog('rapidpro_dispatches', dispatch.status === 'sent' ? 'sent' : 'failed', dispatch, body.actor, req.__auth?.subject)
+    await store.merge({ rapidpro_dispatches: [dispatch], action_logs: [log] })
+    jsonResponse(res, dispatch.status === 'sent' ? 201 : 502, { success: dispatch.status === 'sent', data: dispatch, action_log: log })
+    return
+  }
+
+  if (req.method === 'POST' && route.kind === 'field-report') {
+    if (!verifyRapidProWebhook(req, url)) {
+      jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook secret' })
+      return
+    }
+    const payload = await readRequestJson(req)
+    const parsed = parseRapidProFieldReport(payload)
+    let incident = parsed.report.incident_id ? data.incidents.find((item) => item.id === parsed.report.incident_id) : null
+    const writes = { rapidpro_inbound_messages: [parsed.inbound], action_logs: [] }
+    if (!incident && !parsed.report.intervention_id) {
+      incident = buildCreate('incidents', parsed.fallbackIncident, data)
+      parsed.report.incident_id = incident.id
+      writes.incidents = [incident]
+      writes.action_logs.push(actionLog('incidents', 'created', incident, 'rapidpro'))
+    }
+    const report = buildCreate('field_reports', parsed.report, { ...data, incidents: incident ? [...data.incidents, incident] : data.incidents })
+    parsed.inbound.field_report_id = report.id
+    parsed.inbound.incident_id = report.incident_id
+    parsed.inbound.intervention_id = report.intervention_id
+    writes.field_reports = [report]
+    writes.rapidpro_inbound_messages = [parsed.inbound]
+    writes.action_logs.push(actionLog('field_reports', 'created', report, 'rapidpro'))
+    await store.merge(writes)
+    jsonResponse(res, 201, { success: true, data: report, inbound: parsed.inbound, incident_created: Boolean(writes.incidents?.length) })
+    return
+  }
+
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+async function handleAlertEvaluation(store, data, req, res) {
+  if (req.method !== 'POST') {
+    jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+    return
+  }
+  const body = await readRequestJson(req)
+  const context = {
+    counts: counts(data),
+    operations: operationalSummary(data),
+    data_quality: data.data_quality,
+  }
+  const events = evaluateAlertRules(data, context)
+  const logs = events.map((event) => actionLog('alert_events', 'created', event, body.actor, req.__auth?.subject))
+  if (events.length) await store.merge({ alert_events: events, action_logs: logs })
+  jsonResponse(res, 201, { success: true, evaluated: data.alert_rules.length, created: events.length, data: events })
+}
+
+async function handleAlertRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && !route.id) {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data[route.collection], url.searchParams) })
+    return
+  }
+
+  if (req.method === 'GET' && route.id) {
+    const record = data[route.collection].find((item) => item.id === route.id)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: 'Record not found' })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: record })
+    return
+  }
+
+  if (req.method === 'POST' && !route.id && route.collection === 'alert_rules') {
+    const body = await readRequestJson(req)
+    const record = normalizeAlertRule(body)
+    const log = actionLog(route.collection, 'created', record, body.actor, req.__auth?.subject)
+    await store.merge({ alert_rules: [record], action_logs: [log] })
+    jsonResponse(res, 201, { success: true, data: record, action_log: log })
+    return
+  }
+
+  if (req.method === 'PATCH' && route.id) {
+    const body = await readRequestJson(req)
+    const existing = data[route.collection].find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Record not found' })
+      return
+    }
+    const record = route.collection === 'alert_rules'
+      ? normalizeAlertRule({ ...existing, ...body, id: route.id }, existing)
+      : updateAlertEvent(existing, body)
+    const log = actionLog(route.collection, 'updated', record, body.actor, req.__auth?.subject)
+    await store.merge({ [route.collection]: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+async function handleOperationalRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && !route.id) {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data[route.collection], url.searchParams) })
+    return
+  }
+
+  if (req.method === 'GET' && route.id) {
+    const record = data[route.collection].find((item) => item.id === route.id)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: 'Record not found' })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: record })
+    return
+  }
+
+  if (req.method === 'POST' && !route.id) {
+    if (route.collection === 'action_logs') {
+      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only' })
+      return
+    }
+    const body = await readRequestJson(req)
+    const record = buildCreate(route.collection, body, data)
+    const log = actionLog(route.collection, 'created', record, body.actor, req.__auth?.subject)
+    await store.merge({ [route.collection]: [record], action_logs: [log] })
+    jsonResponse(res, 201, { success: true, data: record, action_log: log })
+    return
+  }
+
+  if (req.method === 'PATCH' && route.id) {
+    if (route.collection === 'action_logs') {
+      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only' })
+      return
+    }
+    const body = await readRequestJson(req)
+    const existing = data[route.collection].find((item) => item.id === route.id)
+    const record = buildUpdate(route.collection, existing, { ...body, id: route.id }, data)
+    const log = actionLog(route.collection, 'updated', record, body.actor, req.__auth?.subject)
+    await store.merge({ [route.collection]: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+function matchOperationalRoute(pathname) {
+  const routes = {
+    incidents: 'incidents',
+    interventions: 'interventions',
+    tasks: 'intervention_tasks',
+    'field-reports': 'field_reports',
+    'response-resources': 'response_resources',
+    'action-logs': 'action_logs',
+  }
+  const match = pathname.match(/^\/api\/v1\/([^/]+)(?:\/([^/]+))?$/)
+  if (!match || !routes[match[1]]) return null
+  return { collection: routes[match[1]], id: match[2] ? decodeURIComponent(match[2]) : null }
+}
+
+function matchIngestionRoute(pathname) {
+  if (pathname === '/api/v1/ingest/status') return { kind: 'status' }
+  if (pathname === '/api/v1/ingest/run-due') return { kind: 'run-due' }
+  if (pathname === '/api/v1/ingest/schedules/defaults') return { kind: 'defaults' }
+  const runOne = pathname.match(/^\/api\/v1\/ingest\/schedules\/([^/]+)\/run$/)
+  if (runOne) return { kind: 'run-one', id: decodeURIComponent(runOne[1]) }
+  const schedule = pathname.match(/^\/api\/v1\/ingest\/schedules(?:\/([^/]+))?$/)
+  if (schedule) return { kind: 'schedules', id: schedule[1] ? decodeURIComponent(schedule[1]) : null }
+  return null
+}
+
+function matchReportingRoute(pathname) {
+  if (pathname === '/api/v1/report-schedules/run-due') return { kind: 'schedules', action: 'run-due' }
+  const scheduleRunAction = pathname.match(/^\/api\/v1\/report-schedule-runs\/([^/]+)\/(retry)$/)
+  if (scheduleRunAction) return { kind: 'schedule-runs', id: decodeURIComponent(scheduleRunAction[1]), action: scheduleRunAction[2] }
+  const reportExport = pathname.match(/^\/api\/v1\/reports\/([^/]+)\/export\.(md|json|csv|geojson)$/)
+  if (reportExport) return { kind: 'reports', id: decodeURIComponent(reportExport[1]), exportFormat: reportExport[2] }
+  const templateAction = pathname.match(/^\/api\/v1\/report-templates\/([^/]+)\/(copy)$/)
+  if (templateAction) return { kind: 'templates', id: decodeURIComponent(templateAction[1]), action: templateAction[2] }
+  const reportAction = pathname.match(/^\/api\/v1\/reports\/([^/]+)\/(generate|approve|distribute)$/)
+  if (reportAction) return { kind: 'reports', id: decodeURIComponent(reportAction[1]), action: reportAction[2] }
+  const distributionAction = pathname.match(/^\/api\/v1\/report-distributions\/([^/]+)\/(retry)$/)
+  if (distributionAction) return { kind: 'distributions', id: decodeURIComponent(distributionAction[1]), action: distributionAction[2] }
+  const scheduleAction = pathname.match(/^\/api\/v1\/report-schedules\/([^/]+)\/(run)$/)
+  if (scheduleAction) return { kind: 'schedules', id: decodeURIComponent(scheduleAction[1]), action: scheduleAction[2] }
+  const routes = {
+    'report-templates': 'templates',
+    reports: 'reports',
+    'report-distributions': 'distributions',
+    'report-schedules': 'schedules',
+    'report-schedule-runs': 'schedule-runs',
+  }
+  const match = pathname.match(/^\/api\/v1\/([^/]+)(?:\/([^/]+))?$/)
+  if (!match || !routes[match[1]]) return null
+  return { kind: routes[match[1]], id: match[2] ? decodeURIComponent(match[2]) : null }
+}
+
+function matchAlertRoute(pathname) {
+  const routes = {
+    'alert-rules': 'alert_rules',
+    'alert-events': 'alert_events',
+  }
+  const match = pathname.match(/^\/api\/v1\/([^/]+)(?:\/([^/]+))?$/)
+  if (!match || !routes[match[1]]) return null
+  return { collection: routes[match[1]], id: match[2] ? decodeURIComponent(match[2]) : null }
+}
+
+function matchRapidProRoute(pathname) {
+  if (pathname === '/api/v1/rapidpro/status') return { kind: 'status' }
+  if (pathname === '/api/v1/rapidpro/dispatches') return { kind: 'dispatches' }
+  if (pathname === '/api/v1/rapidpro/inbound') return { kind: 'inbound' }
+  if (pathname === '/api/v1/rapidpro/field-report') return { kind: 'field-report' }
+  const sendAlert = pathname.match(/^\/api\/v1\/rapidpro\/alert-events\/([^/]+)\/send$/)
+  if (sendAlert) return { kind: 'send-alert', id: decodeURIComponent(sendAlert[1]) }
+  return null
+}
+
 async function handleStatic(res, pathname) {
+  if (pathname === '/docs' || pathname.startsWith('/docs/')) {
+    await handleDocs(res, pathname)
+    return
+  }
   const target = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '')
-  const safeTarget = path.normalize(target).replace(/^(\.\.(\/|\\|$))+/, '')
-  const filePath = path.join(publicDir, safeTarget)
+  const filePath = safeJoin(publicDir, target)
   try {
     const content = await fs.readFile(filePath)
     res.writeHead(200, { 'content-type': contentType(filePath) })
@@ -183,6 +1206,42 @@ async function handleStatic(res, pathname) {
   }
 }
 
+async function handleDocs(res, pathname) {
+  const target = pathname === '/docs' ? 'README.md' : pathname.replace(/^\/docs\/?/, '')
+  let filePath
+  try {
+    filePath = safeJoin(docsDir, target)
+  } catch {
+    jsonResponse(res, 404, { success: false, error: 'Document not found' })
+    return
+  }
+  try {
+    const content = await fs.readFile(filePath)
+    res.writeHead(200, { 'content-type': contentType(filePath) })
+    res.end(content)
+  } catch {
+    jsonResponse(res, 404, { success: false, error: 'Document not found' })
+  }
+}
+
+function safeJoin(rootDir, target) {
+  const filePath = path.resolve(rootDir, target || '')
+  const relative = path.relative(rootDir, filePath)
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw Object.assign(new Error('Path is outside document root'), { statusCode: 404 })
+  }
+  return filePath
+}
+
+function hasTraversalSegment(rawUrl) {
+  const rawPath = rawUrl.split('?')[0]
+  try {
+    return decodeURIComponent(rawPath).split(/[\\/]+/).includes('..')
+  } catch {
+    return true
+  }
+}
+
 function getDefaultStore() {
   if (!defaultStorePromise) defaultStorePromise = createStoreFromEnv()
   return defaultStorePromise
@@ -191,19 +1250,46 @@ function getDefaultStore() {
 function counts(data) {
   return {
     source_runs: data.source_runs.length,
+    ingestion_schedules: data.ingestion_schedules.length,
     climate_observations: data.climate_observations.length,
     hazard_events: data.hazard_events.length,
     conflict_events: data.conflict_events.length,
     service_assets: data.service_assets.length,
     impact_assessments: data.impact_assessments.length,
     risk_scores: data.risk_scores.length,
+    data_quality: data.data_quality.length,
+    incidents: data.incidents.length,
+    interventions: data.interventions.length,
+    intervention_tasks: data.intervention_tasks.length,
+    field_reports: data.field_reports.length,
+    response_resources: data.response_resources.length,
+    action_logs: data.action_logs.length,
+    alert_rules: data.alert_rules.length,
+    alert_events: data.alert_events.length,
+    rapidpro_dispatches: data.rapidpro_dispatches.length,
+    rapidpro_inbound_messages: data.rapidpro_inbound_messages.length,
+    report_templates: data.report_templates.length,
+    reports: data.reports.length,
+    report_distribution_runs: data.report_distribution_runs.length,
+    report_schedules: data.report_schedules.length,
+    report_schedule_runs: data.report_schedule_runs.length,
   }
+}
+
+function required(value, field) {
+  if (value === null || value === undefined || value === '') {
+    throw Object.assign(new Error(`${field} is required`), { statusCode: 400 })
+  }
+  return value
 }
 
 function contentType(filePath) {
   if (filePath.endsWith('.js')) return 'text/javascript; charset=utf-8'
   if (filePath.endsWith('.css')) return 'text/css; charset=utf-8'
   if (filePath.endsWith('.svg')) return 'image/svg+xml'
+  if (filePath.endsWith('.md')) return 'text/markdown; charset=utf-8'
+  if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) return 'text/yaml; charset=utf-8'
+  if (filePath.endsWith('.json')) return 'application/json; charset=utf-8'
   return 'text/html; charset=utf-8'
 }
 
