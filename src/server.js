@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authenticate, requireScope, scopeForRoute } from './auth.js'
+import { logger, metrics, timer } from './observability.js'
 import { refreshAnalytics } from './analytics.js'
 import { evaluateAlertRules, normalizeAlertRule, updateAlertEvent } from './alerts.js'
 import {
@@ -42,13 +43,22 @@ let defaultStorePromise
 export function createServer(options = {}) {
   const storeProvider = options.store ? Promise.resolve(options.store) : getDefaultStore()
   return http.createServer(async (req, res) => {
+    const t = timer()
+    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
+    const route = normalizeRoute(url.pathname)
+
     try {
       if (hasTraversalSegment(req.url || '')) {
         jsonResponse(res, 404, { success: false, error: 'Not found' })
         return
       }
-      const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
+
       if (url.pathname.startsWith('/api/v1/')) {
+        if (url.pathname === '/api/v1/metrics') {
+          res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'cache-control': 'no-store' })
+          res.end(metrics.render())
+          return
+        }
         await handleApi(await storeProvider, req, res, url)
         return
       }
@@ -58,8 +68,21 @@ export function createServer(options = {}) {
         success: false,
         error: error.message || 'Internal server error',
       })
+    } finally {
+      const elapsed = t.end()
+      const statusCode = res.statusCode || 500
+      metrics.counter('http_requests_total', { method: req.method, route, status: String(statusCode) })
+      metrics.histogram('http_request_duration_ms', elapsed, { method: req.method, route, status: String(statusCode) })
+      logger.info('http_request', { method: req.method, route, status: statusCode, elapsed_ms: elapsed })
     }
   })
+}
+
+function normalizeRoute(pathname) {
+  return pathname
+    .replace(/\/[a-f0-9-]{36}/g, '/:id')
+    .replace(/\/[a-f0-9_]{32,}/g, '/:id')
+    .replace(/\/\d+/g, '/:id')
 }
 
 async function handleApi(store, req, res, url) {

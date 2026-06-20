@@ -151,8 +151,8 @@
   "hotPaths": [
     {
       "path": "src/server.js",
-      "accessCount": 10,
-      "lastAccessed": 1786189766196,
+      "accessCount": 14,
+      "lastAccessed": 1786190175186,
       "type": "file"
     },
     {
@@ -162,15 +162,21 @@
       "type": "file"
     },
     {
-      "path": "src/schema.js",
-      "accessCount": 2,
-      "lastAccessed": 1786189695599,
+      "path": "src/ingestion.js",
+      "accessCount": 6,
+      "lastAccessed": 1786190200070,
       "type": "file"
     },
     {
       "path": "src/utils.js",
+      "accessCount": 3,
+      "lastAccessed": 1786190158639,
+      "type": "file"
+    },
+    {
+      "path": "src/schema.js",
       "accessCount": 2,
-      "lastAccessed": 1786189703413,
+      "lastAccessed": 1786189695599,
       "type": "file"
     },
     {
@@ -198,12 +204,6 @@
       "type": "file"
     },
     {
-      "path": "src/ingestion.js",
-      "accessCount": 1,
-      "lastAccessed": 1786189480663,
-      "type": "file"
-    },
-    {
       "path": "src/alerts.js",
       "accessCount": 1,
       "lastAccessed": 1786189481306,
@@ -225,6 +225,12 @@
       "path": "src/auth.js",
       "accessCount": 1,
       "lastAccessed": 1786189726742,
+      "type": "file"
+    },
+    {
+      "path": "src/observability.js",
+      "accessCount": 1,
+      "lastAccessed": 1786190135519,
       "type": "file"
     }
   ],

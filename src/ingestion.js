@@ -1,5 +1,6 @@
 import { BLOCKED_SOURCE_IDS, INGESTION_SCHEDULE_STATUSES, SOURCE_IDS } from './schema.js'
 import { nowIso, stableId, toNumber } from './utils.js'
+import { metrics } from './observability.js'
 import { openMeteoConnector } from './connectors/open-meteo.js'
 import { gdacsConnector } from './connectors/gdacs.js'
 import { glofasConnector } from './connectors/glofas.js'
@@ -96,6 +97,10 @@ export async function runIngestion(store, request = {}) {
       merged[key].push(...(output[key] || []))
     }
 
+    const completedAt = nowIso()
+    const durationMs = Date.now() - Date.parse(startedAt)
+    const recordsProcessed = countRecords(output)
+
     source_runs.push({
       id: stableId('run', [source, startedAt, status, errors]),
       source,
@@ -103,8 +108,8 @@ export async function runIngestion(store, request = {}) {
       run_type: request.run_type || (request.schedule_id ? 'scheduled' : 'manual'),
       schedule_id: request.schedule_id || null,
       started_at: startedAt,
-      completed_at: nowIso(),
-      records_processed: countRecords(output),
+      completed_at: completedAt,
+      records_processed: recordsProcessed,
       records_by_collection: countRecordsByCollection(output),
       errors,
       diagnostics: buildDiagnostics(output, errors, {
@@ -113,9 +118,12 @@ export async function runIngestion(store, request = {}) {
         retries: sourceRequest.retries,
         interval_minutes: request.interval_minutes ?? policy.interval_minutes ?? null,
         stale_after_minutes: request.stale_after_minutes ?? policy.stale_after_minutes ?? null,
-        duration_ms: Date.now() - Date.parse(startedAt),
+        duration_ms: durationMs,
       }),
     })
+
+    metrics.counter('ingestion_runs_total', { source, status })
+    metrics.histogram('ingestion_duration_ms', durationMs, { source })
   }
 
   const data = await store.merge({ ...merged, source_runs })
