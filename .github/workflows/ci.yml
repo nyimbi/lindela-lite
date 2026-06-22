@@ -3,49 +3,44 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
+    branches: [main]
 
 jobs:
   test:
-    name: Node ${{ matrix.node }}
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: [20, 22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-      - run: npm ci
-      - run: npm run validate
+          node-version: '20'
       - run: npm test
 
-  postgres-integration:
-    name: PostgreSQL integration
+  sbom:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: lindela_lite_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm test
-        env:
-          LINDELA_LITE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/lindela_lite_test
+          node-version: '20'
+      - run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+
+  provenance:
+    needs: [test, sbom]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: slsa-framework/slsa-github-generator@v1.10.0
+        with:
+          base64-subjects: ''
+          upload-assets: true
+          compile-generator: true

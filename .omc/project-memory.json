@@ -244,6 +244,12 @@
       "accessCount": 1,
       "lastAccessed": 1786190284315,
       "type": "file"
+    },
+    {
+      "path": "docs/security/supply-chain.md",
+      "accessCount": 1,
+      "lastAccessed": 1786190355716,
+      "type": "file"
     }
   ],
   "userDirectives": []
