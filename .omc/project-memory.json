@@ -151,14 +151,14 @@
   "hotPaths": [
     {
       "path": "src/server.js",
-      "accessCount": 14,
-      "lastAccessed": 1786190175186,
+      "accessCount": 18,
+      "lastAccessed": 1786190326877,
       "type": "file"
     },
     {
       "path": "src/ingestion.js",
-      "accessCount": 9,
-      "lastAccessed": 1786190230216,
+      "accessCount": 12,
+      "lastAccessed": 1786190301089,
       "type": "file"
     },
     {
@@ -168,21 +168,21 @@
       "type": "file"
     },
     {
+      "path": "src/store.js",
+      "accessCount": 5,
+      "lastAccessed": 1786190272907,
+      "type": "file"
+    },
+    {
       "path": "src/utils.js",
       "accessCount": 4,
       "lastAccessed": 1786190216112,
       "type": "file"
     },
     {
-      "path": "src/store.js",
-      "accessCount": 3,
-      "lastAccessed": 1786190240139,
-      "type": "file"
-    },
-    {
       "path": "src/schema.js",
-      "accessCount": 2,
-      "lastAccessed": 1786189695599,
+      "accessCount": 3,
+      "lastAccessed": 1786190262174,
       "type": "file"
     },
     {
@@ -231,6 +231,18 @@
       "path": "src/observability.js",
       "accessCount": 1,
       "lastAccessed": 1786190135519,
+      "type": "file"
+    },
+    {
+      "path": "src/lineage.js",
+      "accessCount": 1,
+      "lastAccessed": 1786190255806,
+      "type": "file"
+    },
+    {
+      "path": "src/pg0.js",
+      "accessCount": 1,
+      "lastAccessed": 1786190284315,
       "type": "file"
     }
   ],

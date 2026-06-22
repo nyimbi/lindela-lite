@@ -13,6 +13,7 @@ export const COLLECTIONS = [
   'impact_assessments',
   'risk_scores',
   'data_quality',
+  'data_lineage',
   'incidents',
   'interventions',
   'intervention_tasks',

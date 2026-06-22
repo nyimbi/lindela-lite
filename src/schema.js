@@ -176,6 +176,7 @@ export function emptyStore() {
     report_distribution_runs: [],
     report_schedules: [],
     report_schedule_runs: [],
+    data_lineage: [],
   }
 }
 

@@ -1,6 +1,7 @@
 import { BLOCKED_SOURCE_IDS, INGESTION_SCHEDULE_STATUSES, SOURCE_IDS } from './schema.js'
 import { nowIso, stableId, toNumber, canonicalHash } from './utils.js'
 import { metrics } from './observability.js'
+import { recordLineage } from './lineage.js'
 import { openMeteoConnector } from './connectors/open-meteo.js'
 import { gdacsConnector } from './connectors/gdacs.js'
 import { glofasConnector } from './connectors/glofas.js'
@@ -135,7 +136,20 @@ export async function runIngestion(store, request = {}) {
     metrics.histogram('ingestion_duration_ms', durationMs, { source })
   }
 
-  const data = await store.merge({ ...merged, source_runs })
+  const data_lineage = []
+  for (let i = 0; i < source_runs.length; i++) {
+    const run = source_runs[i]
+    const allRecords = [
+      ...merged.climate_observations,
+      ...merged.hazard_events,
+      ...merged.conflict_events,
+      ...merged.service_assets,
+    ]
+    const lineageRecord = recordLineage(store, run, allRecords)
+    data_lineage.push(lineageRecord)
+  }
+
+  const data = await store.merge({ ...merged, source_runs, data_lineage })
   return {
     source_runs,
     counts: {

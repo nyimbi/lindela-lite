@@ -225,6 +225,11 @@ async function handleApi(store, req, res, url) {
     return
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/v1/data-lineage') {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.data_lineage || [], url.searchParams) })
+    return
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/v1/operations/summary') {
     jsonResponse(res, 200, { success: true, data: operationalSummary(data) })
     return
@@ -1281,6 +1286,7 @@ function counts(data) {
     impact_assessments: data.impact_assessments.length,
     risk_scores: data.risk_scores.length,
     data_quality: data.data_quality.length,
+    data_lineage: data.data_lineage?.length || 0,
     incidents: data.incidents.length,
     interventions: data.interventions.length,
     intervention_tasks: data.intervention_tasks.length,
