@@ -77,8 +77,27 @@ export class JsonStore {
 
 export function mergeById(existing, incoming) {
   const map = new Map()
-  for (const item of existing) map.set(item.id, item)
-  for (const item of incoming) map.set(item.id, { ...map.get(item.id), ...item })
+  const hashMap = new Map()
+
+  for (const item of existing) {
+    map.set(item.id, item)
+    if (item.payload_hash) {
+      if (!hashMap.has(item.payload_hash)) {
+        hashMap.set(item.payload_hash, item)
+      }
+    }
+  }
+
+  for (const item of incoming) {
+    if (item.payload_hash && hashMap.has(item.payload_hash)) {
+      continue
+    }
+    map.set(item.id, { ...map.get(item.id), ...item })
+    if (item.payload_hash) {
+      hashMap.set(item.payload_hash, item)
+    }
+  }
+
   return [...map.values()].sort((a, b) => recordTimestamp(b).localeCompare(recordTimestamp(a)))
 }
 

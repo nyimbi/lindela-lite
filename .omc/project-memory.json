@@ -156,21 +156,27 @@
       "type": "file"
     },
     {
+      "path": "src/ingestion.js",
+      "accessCount": 9,
+      "lastAccessed": 1786190230216,
+      "type": "file"
+    },
+    {
       "path": "test/lite.test.js",
       "accessCount": 6,
       "lastAccessed": 1786190109501,
       "type": "file"
     },
     {
-      "path": "src/ingestion.js",
-      "accessCount": 6,
-      "lastAccessed": 1786190200070,
+      "path": "src/utils.js",
+      "accessCount": 4,
+      "lastAccessed": 1786190216112,
       "type": "file"
     },
     {
-      "path": "src/utils.js",
+      "path": "src/store.js",
       "accessCount": 3,
-      "lastAccessed": 1786190158639,
+      "lastAccessed": 1786190240139,
       "type": "file"
     },
     {
@@ -213,12 +219,6 @@
       "path": "src/analytics.js",
       "accessCount": 1,
       "lastAccessed": 1786189481360,
-      "type": "file"
-    },
-    {
-      "path": "src/store.js",
-      "accessCount": 1,
-      "lastAccessed": 1786189512277,
       "type": "file"
     },
     {

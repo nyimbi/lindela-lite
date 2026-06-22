@@ -5,6 +5,14 @@ export function stableId(prefix, value) {
   return `${prefix}_${hash}`
 }
 
+export function canonicalHash(record, ignoreKeys = ['id', 'payload_hash', 'ingested_at', 'generated_at', 'updated_at', 'created_at', 'first_seen_at']) {
+  const filtered = Object.fromEntries(
+    Object.entries(record).filter(([key]) => !ignoreKeys.includes(key))
+  )
+  const canonical = JSON.stringify(filtered, Object.keys(filtered).sort())
+  return crypto.createHash('sha256').update(canonical).digest('hex')
+}
+
 export function nowIso() {
   return new Date().toISOString()
 }

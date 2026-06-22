@@ -1,5 +1,5 @@
 import { BLOCKED_SOURCE_IDS, INGESTION_SCHEDULE_STATUSES, SOURCE_IDS } from './schema.js'
-import { nowIso, stableId, toNumber } from './utils.js'
+import { nowIso, stableId, toNumber, canonicalHash } from './utils.js'
 import { metrics } from './observability.js'
 import { openMeteoConnector } from './connectors/open-meteo.js'
 import { gdacsConnector } from './connectors/gdacs.js'
@@ -94,7 +94,16 @@ export async function runIngestion(store, request = {}) {
     }
 
     for (const key of Object.keys(merged)) {
-      merged[key].push(...(output[key] || []))
+      const records = output[key] || []
+      for (const record of records) {
+        if (!record.payload_hash) {
+          record.payload_hash = canonicalHash(record)
+        }
+        if (!record.first_seen_at) {
+          record.first_seen_at = nowIso()
+        }
+      }
+      merged[key].push(...records)
     }
 
     const completedAt = nowIso()
