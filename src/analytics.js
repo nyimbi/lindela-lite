@@ -3,6 +3,7 @@ import path from 'node:path'
 import { riskLevel, severityWeight } from './schema.js'
 import { clamp, haversineKm, stableId } from './utils.js'
 import { computeEnsembleStats } from './analytics/ensemble.js'
+import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
 
 export async function refreshAnalytics(store) {
   const data = await store.read()
@@ -12,7 +13,9 @@ export async function refreshAnalytics(store) {
   ]
   const impact_assessments = computeServiceImpacts(data, risk_scores)
   const data_quality = computeDataQuality(data)
-  await store.replaceAnalytics({ risk_scores, impact_assessments, data_quality })
+  const population_at_risk = computePopulationAtRisk(data)
+  const facilities_at_risk = computeFacilitiesAtRisk(data)
+  await store.replaceAnalytics({ risk_scores, impact_assessments, data_quality, population_at_risk, facilities_at_risk })
 
   // Persist calibration snapshot (best-effort, don't fail refresh)
   if (process.env.LINDELA_LITE_CALIBRATION_DIR !== 'off' && process.env.NODE_ENV !== 'test') {
@@ -25,7 +28,7 @@ export async function refreshAnalytics(store) {
     }
   }
 
-  return { risk_scores, impact_assessments, data_quality }
+  return { risk_scores, impact_assessments, data_quality, population_at_risk, facilities_at_risk }
 }
 
 export function computeFloodRisk(data) {

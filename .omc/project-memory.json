@@ -151,8 +151,14 @@
   "hotPaths": [
     {
       "path": "src/server.js",
-      "accessCount": 19,
-      "lastAccessed": 1786190464023,
+      "accessCount": 23,
+      "lastAccessed": 1786190715112,
+      "type": "file"
+    },
+    {
+      "path": "test/lite.test.js",
+      "accessCount": 13,
+      "lastAccessed": 1786190732471,
       "type": "file"
     },
     {
@@ -162,21 +168,15 @@
       "type": "file"
     },
     {
-      "path": "test/lite.test.js",
-      "accessCount": 11,
-      "lastAccessed": 1786190634405,
-      "type": "file"
-    },
-    {
       "path": "src/analytics.js",
-      "accessCount": 8,
-      "lastAccessed": 1786190614209,
+      "accessCount": 10,
+      "lastAccessed": 1786190689558,
       "type": "file"
     },
     {
       "path": "src/store.js",
-      "accessCount": 6,
-      "lastAccessed": 1786190463537,
+      "accessCount": 8,
+      "lastAccessed": 1786190671081,
       "type": "file"
     },
     {
@@ -187,8 +187,8 @@
     },
     {
       "path": "src/schema.js",
-      "accessCount": 4,
-      "lastAccessed": 1786190459083,
+      "accessCount": 5,
+      "lastAccessed": 1786190676950,
       "type": "file"
     },
     {
@@ -267,6 +267,12 @@
       "path": "src/analytics/ensemble.js",
       "accessCount": 1,
       "lastAccessed": 1786190564353,
+      "type": "file"
+    },
+    {
+      "path": "src/analytics/impact.js",
+      "accessCount": 1,
+      "lastAccessed": 1786190658175,
       "type": "file"
     }
   ],

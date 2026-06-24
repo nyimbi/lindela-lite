@@ -220,6 +220,16 @@ async function handleApi(store, req, res, url) {
     return
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/v1/impact/population-at-risk') {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.population_at_risk || [], url.searchParams) })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/impact/facilities-at-risk') {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.facilities_at_risk || [], url.searchParams) })
+    return
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/v1/data-quality') {
     jsonResponse(res, 200, { success: true, data: filterRecords(data.data_quality, url.searchParams) })
     return
@@ -1286,6 +1296,8 @@ function counts(data) {
     impact_assessments: data.impact_assessments.length,
     risk_scores: data.risk_scores.length,
     data_quality: data.data_quality.length,
+    population_at_risk: data.population_at_risk?.length || 0,
+    facilities_at_risk: data.facilities_at_risk?.length || 0,
     data_lineage: data.data_lineage?.length || 0,
     incidents: data.incidents.length,
     interventions: data.interventions.length,

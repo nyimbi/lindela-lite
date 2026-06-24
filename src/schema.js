@@ -161,6 +161,8 @@ export function emptyStore() {
     impact_assessments: [],
     risk_scores: [],
     data_quality: [],
+    population_at_risk: [],
+    facilities_at_risk: [],
     incidents: [],
     interventions: [],
     intervention_tasks: [],

@@ -8,6 +8,7 @@ import { after, before, describe, it } from 'node:test'
 import { promisify } from 'node:util'
 import { computeClimateConflictRisk, computeDataQuality, computeFloodRisk, computeServiceImpacts } from '../src/analytics.js'
 import { computeEnsembleStats } from '../src/analytics/ensemble.js'
+import { computePopulationAtRisk, computeFacilitiesAtRisk } from '../src/analytics/impact.js'
 import { getConnector, runIngestion } from '../src/ingestion.js'
 import { createServer } from '../src/server.js'
 import { Pg0Manager } from '../src/pg0.js'
@@ -104,6 +105,18 @@ describe('Lindela Lite analytics', () => {
     assert.ok(Math.abs(stats.p90 - 4.6) < 0.1)
     assert.ok(Math.abs(stats.p10 - 1.4) < 0.1)
     assert.equal(stats.count, 5)
+  })
+
+  it('computes population at risk for hazards near service assets', () => {
+    const dataWithAssets = {
+      ...data,
+      service_assets: [
+        { id: 'a1', name: 'Clinic', service_type: 'health', latitude: 3.12, longitude: 35.61, country: 'KE', population_served: 500 },
+      ],
+    }
+    const par = computePopulationAtRisk(dataWithAssets)
+    assert.ok(par.length > 0)
+    assert.ok(par[0].population_at_risk >= 500)
   })
 
   it('exports GeoJSON and CSV', () => {

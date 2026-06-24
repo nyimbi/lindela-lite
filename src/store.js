@@ -13,6 +13,8 @@ export const COLLECTIONS = [
   'impact_assessments',
   'risk_scores',
   'data_quality',
+  'population_at_risk',
+  'facilities_at_risk',
   'data_lineage',
   'incidents',
   'interventions',
@@ -65,13 +67,15 @@ export class JsonStore {
     return this.write(next)
   }
 
-  async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [] }) {
+  async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [], population_at_risk = [], facilities_at_risk = [] }) {
     const current = await this.read()
     return this.write({
       ...current,
       risk_scores,
       impact_assessments,
       data_quality,
+      population_at_risk,
+      facilities_at_risk,
     })
   }
 }
