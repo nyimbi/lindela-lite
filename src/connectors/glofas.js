@@ -33,6 +33,10 @@ export const glofasConnector = {
             country: null,
             latitude: null,
             longitude: null,
+            ensemble_members: [],
+            ensemble_p10: 0,
+            ensemble_p50: 0,
+            ensemble_p90: 0,
             metadata: { provider: 'Copernicus GloFAS', feed },
           })
         }

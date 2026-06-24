@@ -7,6 +7,7 @@ import path from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { promisify } from 'node:util'
 import { computeClimateConflictRisk, computeDataQuality, computeFloodRisk, computeServiceImpacts } from '../src/analytics.js'
+import { computeEnsembleStats } from '../src/analytics/ensemble.js'
 import { getConnector, runIngestion } from '../src/ingestion.js'
 import { createServer } from '../src/server.js'
 import { Pg0Manager } from '../src/pg0.js'
@@ -95,6 +96,14 @@ describe('Lindela Lite analytics', () => {
     assert.ok(flood[0].score_p10 <= flood[0].score_p50)
     assert.ok(flood[0].score_p50 <= flood[0].score_p90)
     assert.ok(flood[0].interval_width >= 0)
+  })
+
+  it('computes ensemble statistics with linear interpolation', () => {
+    const stats = computeEnsembleStats([1, 2, 3, 4, 5])
+    assert.equal(stats.p50, 3)
+    assert.ok(Math.abs(stats.p90 - 4.6) < 0.1)
+    assert.ok(Math.abs(stats.p10 - 1.4) < 0.1)
+    assert.equal(stats.count, 5)
   })
 
   it('exports GeoJSON and CSV', () => {

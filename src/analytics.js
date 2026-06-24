@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { riskLevel, severityWeight } from './schema.js'
 import { clamp, haversineKm, stableId } from './utils.js'
+import { computeEnsembleStats } from './analytics/ensemble.js'
 
 export async function refreshAnalytics(store) {
   const data = await store.read()
@@ -32,7 +33,14 @@ export function computeFloodRisk(data) {
   return regions.map((region) => {
     const climate = nearby(data.climate_observations, region, 125)
     const hazards = nearby(data.hazard_events.filter((event) => /flood|storm|disaster/i.test(event.event_type)), region, 250)
-    const precipitation = climate.reduce((sum, item) => sum + Number(item.precipitation_mm || 0), 0)
+
+    // Use ensemble p90 for worst-case precipitation if available, else use raw precipitation
+    const precipValues = climate.map((item) => Number(item.precipitation_mm || 0))
+    const ensembleValues = climate.map((item) => Number(item.ensemble_p90 || 0))
+    const hasEnsemble = ensembleValues.some((v) => v > 0)
+    const precipToUse = hasEnsemble ? ensembleValues : precipValues
+    const precipitation = precipToUse.reduce((sum, v) => sum + v, 0)
+
     const maxProbability = Math.max(0, ...climate.map((item) => Number(item.precipitation_probability_pct || 0)))
     const hazardPressure = hazards.reduce((sum, event) => sum + severityWeight(event.severity) * 30, 0)
     const score = clamp(Math.round(precipitation * 1.5 + maxProbability * 0.35 + hazardPressure), 0, 100)
@@ -49,6 +57,13 @@ export function computeFloodRisk(data) {
     const score_p90 = clamp(score + halfWidth, 0, 100)
     const interval_width = score_p90 - score_p10
 
+    const drivers = {
+      precipitation_mm: Math.round(precipitation * 10) / 10,
+      precipitation_probability_pct: maxProbability,
+      flood_hazard_events: hazards.length,
+    }
+    if (hasEnsemble) drivers.ensemble_used = true
+
     return {
       id: stableId('risk', ['flood', region.key]),
       type: 'flood_risk',
@@ -64,11 +79,7 @@ export function computeFloodRisk(data) {
       risk_level: riskLevel(score),
       confidence,
       generated_at: new Date().toISOString(),
-      drivers: {
-        precipitation_mm: Math.round(precipitation * 10) / 10,
-        precipitation_probability_pct: maxProbability,
-        flood_hazard_events: hazards.length,
-      },
+      drivers,
       methodology: 'Transparent baseline: precipitation forecast + flood/storm/disaster alerts near exposed locations.',
     }
   })

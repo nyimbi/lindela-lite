@@ -163,20 +163,20 @@
     },
     {
       "path": "test/lite.test.js",
-      "accessCount": 9,
-      "lastAccessed": 1786190544715,
+      "accessCount": 11,
+      "lastAccessed": 1786190634405,
+      "type": "file"
+    },
+    {
+      "path": "src/analytics.js",
+      "accessCount": 8,
+      "lastAccessed": 1786190614209,
       "type": "file"
     },
     {
       "path": "src/store.js",
       "accessCount": 6,
       "lastAccessed": 1786190463537,
-      "type": "file"
-    },
-    {
-      "path": "src/analytics.js",
-      "accessCount": 6,
-      "lastAccessed": 1786190529161,
       "type": "file"
     },
     {
@@ -192,9 +192,21 @@
       "type": "file"
     },
     {
+      "path": "src/connectors/open-meteo.js",
+      "accessCount": 3,
+      "lastAccessed": 1786190583513,
+      "type": "file"
+    },
+    {
       "path": "src/operations.js",
       "accessCount": 2,
       "lastAccessed": 1786189753890,
+      "type": "file"
+    },
+    {
+      "path": "src/connectors/glofas.js",
+      "accessCount": 2,
+      "lastAccessed": 1786190595744,
       "type": "file"
     },
     {
@@ -252,15 +264,9 @@
       "type": "file"
     },
     {
-      "path": "src/connectors/open-meteo.js",
+      "path": "src/analytics/ensemble.js",
       "accessCount": 1,
-      "lastAccessed": 1786190466673,
-      "type": "file"
-    },
-    {
-      "path": "src/connectors/glofas.js",
-      "accessCount": 1,
-      "lastAccessed": 1786190467283,
+      "lastAccessed": 1786190564353,
       "type": "file"
     }
   ],

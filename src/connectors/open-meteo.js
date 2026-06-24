@@ -8,6 +8,7 @@ export const openMeteoConnector = {
     const regions = options.regions?.length ? options.regions : DEFAULT_REGIONS
     const climate_observations = []
     const errors = []
+    const useEnsemble = options.include_ensemble && process.env.LINDELA_LITE_ENSEMBLE_ENABLED !== 'off'
 
     for (const region of regions) {
       try {
@@ -19,6 +20,7 @@ export const openMeteoConnector = {
         url.searchParams.set('forecast_days', String(options.forecast_days || 7))
         url.searchParams.set('timezone', 'UTC')
 
+        // Note: ensemble endpoint would be different; for now fall back to deterministic
         const data = await fetchWithRetry(url, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2, parse: 'json' })
 
         if (data.current) {
@@ -34,12 +36,17 @@ export const openMeteoConnector = {
             precipitation_mm: Number(data.current.precipitation || 0),
             temperature_c: Number(data.current.temperature_2m || 0),
             humidity_pct: Number(data.current.relative_humidity_2m || 0),
+            ensemble_members: [],
+            ensemble_p10: 0,
+            ensemble_p50: 0,
+            ensemble_p90: 0,
             metadata: { provider: 'Open-Meteo' },
           })
         }
 
         const daily = data.daily || {}
         for (let i = 0; i < (daily.time || []).length; i += 1) {
+          const precip = Number(daily.precipitation_sum?.[i] || 0)
           climate_observations.push({
             id: stableId('climate', ['open_meteo_daily', region, daily.time[i]]),
             source: 'open_meteo',
@@ -49,10 +56,14 @@ export const openMeteoConnector = {
             latitude: Number(region.lat),
             longitude: Number(region.lon),
             observed_at: daily.time[i],
-            precipitation_mm: Number(daily.precipitation_sum?.[i] || 0),
+            precipitation_mm: precip,
             precipitation_probability_pct: Number(daily.precipitation_probability_max?.[i] || 0),
             temperature_max_c: Number(daily.temperature_2m_max?.[i] || 0),
             temperature_min_c: Number(daily.temperature_2m_min?.[i] || 0),
+            ensemble_members: [],
+            ensemble_p10: precip,
+            ensemble_p50: precip,
+            ensemble_p90: precip,
             metadata: { provider: 'Open-Meteo', horizon: 'forecast' },
           })
         }
