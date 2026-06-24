@@ -151,8 +151,8 @@
   "hotPaths": [
     {
       "path": "src/server.js",
-      "accessCount": 18,
-      "lastAccessed": 1786190326877,
+      "accessCount": 19,
+      "lastAccessed": 1786190464023,
       "type": "file"
     },
     {
@@ -163,26 +163,32 @@
     },
     {
       "path": "test/lite.test.js",
-      "accessCount": 6,
-      "lastAccessed": 1786190109501,
+      "accessCount": 9,
+      "lastAccessed": 1786190544715,
       "type": "file"
     },
     {
       "path": "src/store.js",
-      "accessCount": 5,
-      "lastAccessed": 1786190272907,
+      "accessCount": 6,
+      "lastAccessed": 1786190463537,
+      "type": "file"
+    },
+    {
+      "path": "src/analytics.js",
+      "accessCount": 6,
+      "lastAccessed": 1786190529161,
       "type": "file"
     },
     {
       "path": "src/utils.js",
-      "accessCount": 4,
-      "lastAccessed": 1786190216112,
+      "accessCount": 5,
+      "lastAccessed": 1786190459532,
       "type": "file"
     },
     {
       "path": "src/schema.js",
-      "accessCount": 3,
-      "lastAccessed": 1786190262174,
+      "accessCount": 4,
+      "lastAccessed": 1786190459083,
       "type": "file"
     },
     {
@@ -216,12 +222,6 @@
       "type": "file"
     },
     {
-      "path": "src/analytics.js",
-      "accessCount": 1,
-      "lastAccessed": 1786189481360,
-      "type": "file"
-    },
-    {
       "path": "src/auth.js",
       "accessCount": 1,
       "lastAccessed": 1786189726742,
@@ -249,6 +249,18 @@
       "path": "docs/security/supply-chain.md",
       "accessCount": 1,
       "lastAccessed": 1786190355716,
+      "type": "file"
+    },
+    {
+      "path": "src/connectors/open-meteo.js",
+      "accessCount": 1,
+      "lastAccessed": 1786190466673,
+      "type": "file"
+    },
+    {
+      "path": "src/connectors/glofas.js",
+      "accessCount": 1,
+      "lastAccessed": 1786190467283,
       "type": "file"
     }
   ],

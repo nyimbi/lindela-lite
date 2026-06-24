@@ -5,11 +5,20 @@
       "agent_type": "general-purpose",
       "started_at": "2026-08-08T11:47:55.838Z",
       "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-08-08T11:59:54.974Z",
+      "duration_ms": 719136
+    },
+    {
+      "agent_id": "a203b6035892742af",
+      "agent_type": "general-purpose",
+      "started_at": "2026-08-08T12:00:52.399Z",
+      "parent_mode": "none",
       "status": "running"
     }
   ],
-  "total_spawned": 1,
-  "total_completed": 0,
+  "total_spawned": 2,
+  "total_completed": 1,
   "total_failed": 0,
-  "last_updated": "2026-08-08T11:47:55.939Z"
+  "last_updated": "2026-08-08T12:00:52.501Z"
 }

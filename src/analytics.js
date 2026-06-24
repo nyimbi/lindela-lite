@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import { riskLevel, severityWeight } from './schema.js'
 import { clamp, haversineKm, stableId } from './utils.js'
 
@@ -10,6 +12,18 @@ export async function refreshAnalytics(store) {
   const impact_assessments = computeServiceImpacts(data, risk_scores)
   const data_quality = computeDataQuality(data)
   await store.replaceAnalytics({ risk_scores, impact_assessments, data_quality })
+
+  // Persist calibration snapshot (best-effort, don't fail refresh)
+  if (process.env.LINDELA_LITE_CALIBRATION_DIR !== 'off' && process.env.NODE_ENV !== 'test') {
+    try {
+      const calibDir = path.resolve(process.env.LINDELA_LITE_CALIBRATION_DIR || 'data/calibration')
+      await fs.mkdir(calibDir, { recursive: true })
+      await fs.writeFile(path.join(calibDir, 'latest.json'), JSON.stringify({ risk_scores, data_quality, generated_at: new Date().toISOString() }, null, 2))
+    } catch {
+      // swallow errors
+    }
+  }
+
   return { risk_scores, impact_assessments, data_quality }
 }
 
@@ -27,6 +41,14 @@ export function computeFloodRisk(data) {
       { count: hazards.length, weight: 40 },
       { count: climate.filter((item) => Number.isFinite(Number(item.precipitation_probability_pct))).length, weight: 15 },
     ])
+
+    // Probabilistic bands: narrower when confidence is high
+    const halfWidth = Math.round((100 - confidence) * 0.4)
+    const score_p50 = score
+    const score_p10 = clamp(score - halfWidth, 0, 100)
+    const score_p90 = clamp(score + halfWidth, 0, 100)
+    const interval_width = score_p90 - score_p10
+
     return {
       id: stableId('risk', ['flood', region.key]),
       type: 'flood_risk',
@@ -35,6 +57,10 @@ export function computeFloodRisk(data) {
       latitude: region.latitude,
       longitude: region.longitude,
       score,
+      score_p10,
+      score_p50,
+      score_p90,
+      interval_width,
       risk_level: riskLevel(score),
       confidence,
       generated_at: new Date().toISOString(),
@@ -66,6 +92,14 @@ export function computeClimateConflictRisk(data) {
       { count: conflicts.length, weight: 30 },
       { count: serviceAssets.length, weight: 15 },
     ])
+
+    // Probabilistic bands: narrower when confidence is high
+    const halfWidth = Math.round((100 - confidence) * 0.4)
+    const score_p50 = score
+    const score_p10 = clamp(score - halfWidth, 0, 100)
+    const score_p90 = clamp(score + halfWidth, 0, 100)
+    const interval_width = score_p90 - score_p10
+
     return {
       id: stableId('risk', ['climate_conflict', region.key]),
       type: 'climate_conflict_risk',
@@ -74,6 +108,10 @@ export function computeClimateConflictRisk(data) {
       latitude: region.latitude,
       longitude: region.longitude,
       score,
+      score_p10,
+      score_p50,
+      score_p90,
+      interval_width,
       risk_level: riskLevel(score),
       confidence,
       generated_at: new Date().toISOString(),
@@ -122,6 +160,36 @@ export function computeServiceImpacts(data, riskScores) {
   return assessments
 }
 
+export function calibrationReport(data) {
+  const byType = new Map()
+  for (const score of data.risk_scores || []) {
+    const type = score.type
+    if (!byType.has(type)) {
+      byType.set(type, {
+        type,
+        count: 0,
+        total_score: 0,
+        total_confidence: 0,
+        total_interval_width: 0,
+      })
+    }
+    const item = byType.get(type)
+    item.count += 1
+    item.total_score += score.score || 0
+    item.total_confidence += score.confidence || 0
+    item.total_interval_width += score.interval_width || 0
+  }
+
+  return [...byType.values()].map((item) => ({
+    type: item.type,
+    count: item.count,
+    mean_score: item.count > 0 ? Math.round(item.total_score / item.count) : 0,
+    mean_confidence: item.count > 0 ? Math.round(item.total_confidence / item.count) : 0,
+    mean_interval_width: item.count > 0 ? Math.round(item.total_interval_width / item.count) : 0,
+    brier_score: null,
+  }))
+}
+
 export function computeDataQuality(data) {
   const collections = {
     climate_observations: data.climate_observations,
@@ -141,6 +209,7 @@ export function computeDataQuality(data) {
           total_records: 0,
           geocoded_records: 0,
           latest_record_at: null,
+          confidence_sum: 0,
         })
       }
       const quality = bySource.get(source)
@@ -161,6 +230,7 @@ export function computeDataQuality(data) {
         total_records: 0,
         geocoded_records: 0,
         latest_record_at: null,
+        confidence_sum: 0,
       })
     }
     const quality = bySource.get(source)
@@ -174,11 +244,13 @@ export function computeDataQuality(data) {
     const runPenalty = quality.last_run_status === 'failed' ? 35 : quality.last_run_status === 'degraded' ? 15 : 0
     const freshnessPenalty = freshnessPenaltyFor(quality.latest_record_at || quality.last_run_at)
     const confidence = clamp(Math.round(geocodeCoverage * 55 + Math.min(quality.total_records, 25) * 1.8 - runPenalty - freshnessPenalty), 0, 100)
+    const mean_confidence = quality.total_records > 0 ? Math.round(quality.confidence_sum / quality.total_records) : 0
     return {
       ...quality,
       geocode_coverage_pct: Math.round(geocodeCoverage * 100),
       freshness: freshnessLabel(quality.latest_record_at || quality.last_run_at),
       confidence,
+      mean_confidence,
       updated_at: new Date().toISOString(),
     }
   }).sort((a, b) => b.confidence - a.confidence)

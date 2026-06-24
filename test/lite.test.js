@@ -85,6 +85,18 @@ describe('Lindela Lite analytics', () => {
     assert.ok(quality.every((item) => Number.isFinite(item.confidence)))
   })
 
+  it('includes probabilistic bands in risk scores', () => {
+    const flood = computeFloodRisk(data)
+    assert.equal(flood.length, 1)
+    assert.ok(Number.isFinite(flood[0].score_p10))
+    assert.ok(Number.isFinite(flood[0].score_p50))
+    assert.ok(Number.isFinite(flood[0].score_p90))
+    assert.ok(Number.isFinite(flood[0].interval_width))
+    assert.ok(flood[0].score_p10 <= flood[0].score_p50)
+    assert.ok(flood[0].score_p50 <= flood[0].score_p90)
+    assert.ok(flood[0].interval_width >= 0)
+  })
+
   it('exports GeoJSON and CSV', () => {
     const records = [...data.hazard_events, ...data.conflict_events]
     const geojson = toGeoJson(records)
