@@ -4,6 +4,7 @@ import { riskLevel, severityWeight } from './schema.js'
 import { clamp, haversineKm, stableId } from './utils.js'
 import { computeEnsembleStats } from './analytics/ensemble.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
+import { biasCorrectClimate } from './analytics/downscaling.js'
 
 export async function refreshAnalytics(store) {
   const data = await store.read()
@@ -37,12 +38,15 @@ export function computeFloodRisk(data) {
     const climate = nearby(data.climate_observations, region, 125)
     const hazards = nearby(data.hazard_events.filter((event) => /flood|storm|disaster/i.test(event.event_type)), region, 250)
 
-    // Use ensemble p90 for worst-case precipitation if available, else use raw precipitation
-    const precipValues = climate.map((item) => Number(item.precipitation_mm || 0))
-    const ensembleValues = climate.map((item) => Number(item.ensemble_p90 || 0))
-    const hasEnsemble = ensembleValues.some((v) => v > 0)
-    const precipToUse = hasEnsemble ? ensembleValues : precipValues
-    const precipitation = precipToUse.reduce((sum, v) => sum + v, 0)
+    // Prefer bias-corrected values, else ensemble p90, else raw precipitation
+    const precipValues = climate.map((item) => {
+      if (Number.isFinite(item.bias_corrected_precipitation_mm)) return Number(item.bias_corrected_precipitation_mm)
+      if (Number.isFinite(item.ensemble_p90)) return Number(item.ensemble_p90)
+      return Number(item.precipitation_mm || 0)
+    })
+    const precipitation = precipValues.reduce((sum, v) => sum + v, 0)
+    const hasEnsemble = climate.some((c) => Number.isFinite(c.ensemble_p90))
+    const hasBiasCorrection = climate.some((c) => Number.isFinite(c.bias_corrected_precipitation_mm))
 
     const maxProbability = Math.max(0, ...climate.map((item) => Number(item.precipitation_probability_pct || 0)))
     const hazardPressure = hazards.reduce((sum, event) => sum + severityWeight(event.severity) * 30, 0)
@@ -65,6 +69,7 @@ export function computeFloodRisk(data) {
       precipitation_probability_pct: maxProbability,
       flood_hazard_events: hazards.length,
     }
+    if (hasBiasCorrection) drivers.bias_corrected = true
     if (hasEnsemble) drivers.ensemble_used = true
 
     return {

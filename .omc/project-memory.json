@@ -151,26 +151,26 @@
   "hotPaths": [
     {
       "path": "src/server.js",
-      "accessCount": 23,
-      "lastAccessed": 1786190715112,
+      "accessCount": 27,
+      "lastAccessed": 1786190791935,
       "type": "file"
     },
     {
       "path": "test/lite.test.js",
+      "accessCount": 15,
+      "lastAccessed": 1786190808725,
+      "type": "file"
+    },
+    {
+      "path": "src/analytics.js",
       "accessCount": 13,
-      "lastAccessed": 1786190732471,
+      "lastAccessed": 1786190771249,
       "type": "file"
     },
     {
       "path": "src/ingestion.js",
       "accessCount": 12,
       "lastAccessed": 1786190301089,
-      "type": "file"
-    },
-    {
-      "path": "src/analytics.js",
-      "accessCount": 10,
-      "lastAccessed": 1786190689558,
       "type": "file"
     },
     {
@@ -273,6 +273,12 @@
       "path": "src/analytics/impact.js",
       "accessCount": 1,
       "lastAccessed": 1786190658175,
+      "type": "file"
+    },
+    {
+      "path": "src/analytics/downscaling.js",
+      "accessCount": 1,
+      "lastAccessed": 1786190753124,
       "type": "file"
     }
   ],

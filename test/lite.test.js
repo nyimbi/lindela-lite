@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import { computeClimateConflictRisk, computeDataQuality, computeFloodRisk, computeServiceImpacts } from '../src/analytics.js'
 import { computeEnsembleStats } from '../src/analytics/ensemble.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from '../src/analytics/impact.js'
+import { quantileMap } from '../src/analytics/downscaling.js'
 import { getConnector, runIngestion } from '../src/ingestion.js'
 import { createServer } from '../src/server.js'
 import { Pg0Manager } from '../src/pg0.js'
@@ -117,6 +118,14 @@ describe('Lindela Lite analytics', () => {
     const par = computePopulationAtRisk(dataWithAssets)
     assert.ok(par.length > 0)
     assert.ok(par[0].population_at_risk >= 500)
+  })
+
+  it('maps gridded values to station values via quantile matching', () => {
+    const gridded = [1, 2, 3, 4, 5]
+    const station = [10, 20, 30, 40, 50]
+    const mapper = quantileMap(gridded, station)
+    const result = mapper(3)
+    assert.ok(Math.abs(result - 30) < 5)
   })
 
   it('exports GeoJSON and CSV', () => {

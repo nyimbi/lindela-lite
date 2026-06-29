@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { authenticate, requireScope, scopeForRoute } from './auth.js'
 import { logger, metrics, timer } from './observability.js'
 import { refreshAnalytics } from './analytics.js'
+import { biasCorrectClimate } from './analytics/downscaling.js'
 import { evaluateAlertRules, normalizeAlertRule, updateAlertEvent } from './alerts.js'
 import {
   defaultIngestionSchedules,
@@ -242,6 +243,15 @@ async function handleApi(store, req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/v1/operations/summary') {
     jsonResponse(res, 200, { success: true, data: operationalSummary(data) })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/v1/analytics/bias-correct') {
+    const body = await readRequestJson(req)
+    const observations = body.observations || []
+    const stations = body.stations || []
+    const corrected = biasCorrectClimate(observations, stations)
+    jsonResponse(res, 200, { success: true, data: corrected })
     return
   }
 
