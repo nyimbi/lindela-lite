@@ -12,12 +12,43 @@ import { computePopulationAtRisk, computeFacilitiesAtRisk } from '../src/analyti
 import { quantileMap } from '../src/analytics/downscaling.js'
 import { getConnector, runIngestion } from '../src/ingestion.js'
 import { createServer } from '../src/server.js'
+import { stacCatalog } from '../src/stac.js'
 import { Pg0Manager } from '../src/pg0.js'
 import { createStoreFromEnv } from '../src/storage.js'
 import { JsonStore, mergeById } from '../src/store.js'
 import { toCsv, toGeoJson } from '../src/utils.js'
 
 const execFileAsync = promisify(execFile)
+
+describe('Lindela Lite STAC', () => {
+  it('returns catalog with non-empty links', () => {
+    const catalog = stacCatalog('http://localhost:4177')
+    assert.equal(catalog.type, 'Catalog')
+    assert.equal(catalog.stac_version, '1.0.0')
+    assert.ok(Array.isArray(catalog.links))
+    assert.ok(catalog.links.length > 0)
+  })
+
+  it('GET /stac/catalog.json returns valid STAC Catalog', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-stac-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/stac/catalog.json`)
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.equal(json.type, 'Catalog')
+      assert.equal(json.stac_version, '1.0.0')
+      assert.ok(json.links.length > 0)
+    } finally {
+      listener.close()
+    }
+  })
+})
 
 describe('Lindela Lite open-source boundary', () => {
   it('rejects gdelt ingestion', () => {

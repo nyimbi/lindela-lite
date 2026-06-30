@@ -151,20 +151,20 @@
   "hotPaths": [
     {
       "path": "src/server.js",
-      "accessCount": 27,
-      "lastAccessed": 1786190791935,
+      "accessCount": 59,
+      "lastAccessed": 1786191614460,
       "type": "file"
     },
     {
       "path": "test/lite.test.js",
-      "accessCount": 15,
-      "lastAccessed": 1786190808725,
+      "accessCount": 23,
+      "lastAccessed": 1786191632215,
       "type": "file"
     },
     {
       "path": "src/analytics.js",
-      "accessCount": 13,
-      "lastAccessed": 1786190771249,
+      "accessCount": 14,
+      "lastAccessed": 1786191575104,
       "type": "file"
     },
     {
@@ -175,26 +175,32 @@
     },
     {
       "path": "src/store.js",
-      "accessCount": 8,
-      "lastAccessed": 1786190671081,
-      "type": "file"
-    },
-    {
-      "path": "src/utils.js",
-      "accessCount": 5,
-      "lastAccessed": 1786190459532,
+      "accessCount": 11,
+      "lastAccessed": 1786191569874,
       "type": "file"
     },
     {
       "path": "src/schema.js",
-      "accessCount": 5,
-      "lastAccessed": 1786190676950,
+      "accessCount": 8,
+      "lastAccessed": 1786191569538,
+      "type": "file"
+    },
+    {
+      "path": "src/alerts.js",
+      "accessCount": 6,
+      "lastAccessed": 1786191125547,
+      "type": "file"
+    },
+    {
+      "path": "src/utils.js",
+      "accessCount": 6,
+      "lastAccessed": 1786191570157,
       "type": "file"
     },
     {
       "path": "src/connectors/open-meteo.js",
-      "accessCount": 3,
-      "lastAccessed": 1786190583513,
+      "accessCount": 4,
+      "lastAccessed": 1786191574182,
       "type": "file"
     },
     {
@@ -207,6 +213,18 @@
       "path": "src/connectors/glofas.js",
       "accessCount": 2,
       "lastAccessed": 1786190595744,
+      "type": "file"
+    },
+    {
+      "path": "src/rapidpro.js",
+      "accessCount": 2,
+      "lastAccessed": 1786191216455,
+      "type": "file"
+    },
+    {
+      "path": "src/pii.js",
+      "accessCount": 2,
+      "lastAccessed": 1786191339960,
       "type": "file"
     },
     {
@@ -225,12 +243,6 @@
       "path": "docs/plans/world-class-roadmap.md",
       "accessCount": 1,
       "lastAccessed": 1786189356063,
-      "type": "file"
-    },
-    {
-      "path": "src/alerts.js",
-      "accessCount": 1,
-      "lastAccessed": 1786189481306,
       "type": "file"
     },
     {
@@ -279,6 +291,18 @@
       "path": "src/analytics/downscaling.js",
       "accessCount": 1,
       "lastAccessed": 1786190753124,
+      "type": "file"
+    },
+    {
+      "path": "examples/trigger-protocols/flood-watch.json",
+      "accessCount": 1,
+      "lastAccessed": 1786190986596,
+      "type": "file"
+    },
+    {
+      "path": "src/stac.js",
+      "accessCount": 1,
+      "lastAccessed": 1786191597499,
       "type": "file"
     }
   ],

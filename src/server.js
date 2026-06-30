@@ -36,6 +36,7 @@ import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
 import { filterRecords, jsonResponse, readRequestJson, toCsv, toGeoJson } from './utils.js'
 import { redactPii, applyRetention, loadPolicy } from './pii.js'
+import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './stac.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
@@ -52,6 +53,11 @@ export function createServer(options = {}) {
     try {
       if (hasTraversalSegment(req.url || '')) {
         jsonResponse(res, 404, { success: false, error: 'Not found' })
+        return
+      }
+
+      if (url.pathname.startsWith('/stac/') || url.pathname.startsWith('/ogc/')) {
+        await handleStacRoute(await storeProvider, req, res, url)
         return
       }
 
@@ -85,6 +91,75 @@ function normalizeRoute(pathname) {
     .replace(/\/[a-f0-9-]{36}/g, '/:id')
     .replace(/\/[a-f0-9_]{32,}/g, '/:id')
     .replace(/\/\d+/g, '/:id')
+}
+
+async function handleStacRoute(store, req, res, url) {
+  const data = await store.read()
+  const baseUrl = `http://${req.headers.host || 'localhost'}`
+
+  if (req.method === 'GET' && url.pathname === '/stac/catalog.json') {
+    jsonResponse(res, 200, stacCatalog(baseUrl))
+    return
+  }
+
+  const collectionMatch = url.pathname.match(/^\/stac\/collections\/([^/]+)(?:\/items(?:\/([^/]+))?)?$/)
+  if (collectionMatch && req.method === 'GET') {
+    const collectionId = collectionMatch[1]
+    const itemId = collectionMatch[2]
+
+    let records = []
+    if (collectionId === 'hazard-events') {
+      records = [...data.hazard_events, ...data.conflict_events]
+    } else if (collectionId === 'service-assets') {
+      records = data.service_assets
+    } else if (collectionId === 'risk-scores') {
+      records = data.risk_scores
+    } else {
+      jsonResponse(res, 404, { success: false, error: 'Collection not found' })
+      return
+    }
+
+    if (!itemId) {
+      if (url.pathname.includes('/items')) {
+        const items = records.map((r) => stacItem(r, collectionId, baseUrl))
+        jsonResponse(res, 200, { type: 'FeatureCollection', features: items })
+        return
+      }
+      jsonResponse(res, 200, stacCollection(collectionId, records, baseUrl))
+      return
+    }
+
+    const record = records.find((r) => r.id === itemId)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: 'Item not found' })
+      return
+    }
+
+    jsonResponse(res, 200, stacItem(record, collectionId, baseUrl), { 'content-type': 'application/geo+json; charset=utf-8' })
+    return
+  }
+
+  const ogcMatch = url.pathname.match(/^\/ogc\/collections\/([^/]+)\/items$/)
+  if (ogcMatch && req.method === 'GET') {
+    const collectionId = ogcMatch[1]
+
+    let records = []
+    if (collectionId === 'hazard-events') {
+      records = [...data.hazard_events, ...data.conflict_events]
+    } else if (collectionId === 'service-assets') {
+      records = data.service_assets
+    } else if (collectionId === 'risk-scores') {
+      records = data.risk_scores
+    } else {
+      jsonResponse(res, 404, { success: false, error: 'Collection not found' })
+      return
+    }
+
+    jsonResponse(res, 200, ogcFeatureCollection(records), { 'content-type': 'application/geo+json; charset=utf-8' })
+    return
+  }
+
+  jsonResponse(res, 404, { success: false, error: 'Not found' })
 }
 
 async function handleApi(store, req, res, url) {
