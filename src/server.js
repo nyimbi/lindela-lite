@@ -6,7 +6,7 @@ import { authenticate, requireScope, scopeForRoute } from './auth.js'
 import { logger, metrics, timer } from './observability.js'
 import { refreshAnalytics } from './analytics.js'
 import { biasCorrectClimate } from './analytics/downscaling.js'
-import { evaluateAlertRules, normalizeAlertRule, updateAlertEvent } from './alerts.js'
+import { evaluateAlertRules, normalizeAlertRule, updateAlertEvent, approveAlertEvent, normalizeTriggerProtocol, backtestTriggerProtocol, evaluateInShadowMode } from './alerts.js'
 import {
   defaultIngestionSchedules,
   ingestionStatus,
@@ -15,7 +15,7 @@ import {
   runIngestion,
 } from './ingestion.js'
 import { actionLog, buildCreate, buildUpdate, operationalSummary } from './operations.js'
-import { parseRapidProFieldReport, rapidProStatus, sendRapidProAlert, sendRapidProReportSummary, verifyRapidProWebhook } from './rapidpro.js'
+import { parseRapidProFieldReport, rapidProStatus, responseMetrics, sendRapidProAlert, sendRapidProReportSummary, verifyRapidProWebhook } from './rapidpro.js'
 import {
   approveReport,
   computeNextRunAt,
@@ -35,6 +35,7 @@ import {
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
 import { filterRecords, jsonResponse, readRequestJson, toCsv, toGeoJson } from './utils.js'
+import { redactPii, applyRetention, loadPolicy } from './pii.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
@@ -167,6 +168,27 @@ async function handleApi(store, req, res, url) {
     return
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/v1/maintenance/apply-retention') {
+    const policy = await loadPolicy()
+    const fieldReportRetention = applyRetention(data.field_reports, policy.retentionDays)
+    const inboundRetention = applyRetention(data.rapidpro_inbound_messages, policy.retentionDays)
+    await store.merge({
+      field_reports: fieldReportRetention.kept,
+      rapidpro_inbound_messages: inboundRetention.kept,
+    })
+    jsonResponse(res, 200, {
+      success: true,
+      field_reports: {
+        kept: fieldReportRetention.kept.length,
+        expired: fieldReportRetention.expired.length,
+      },
+      rapidpro_inbound_messages: {
+        kept: inboundRetention.kept.length,
+        expired: inboundRetention.expired.length,
+      },
+    })
+    return
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/service-assets') {
     jsonResponse(res, 200, { success: true, data: filterRecords(data.service_assets, url.searchParams) })
@@ -275,6 +297,12 @@ async function handleApi(store, req, res, url) {
   const alertRoute = matchAlertRoute(url.pathname)
   if (alertRoute) {
     await handleAlertRoute(store, data, req, res, url, alertRoute)
+    return
+  }
+
+  const triggerRoute = matchTriggerRoute(url.pathname)
+  if (triggerRoute) {
+    await handleTriggerRoute(store, data, req, res, url, triggerRoute)
     return
   }
 
@@ -1004,6 +1032,11 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
     return
   }
 
+  if (req.method === 'GET' && route.kind === 'response-metrics') {
+    jsonResponse(res, 200, { success: true, data: responseMetrics(data) })
+    return
+  }
+
   if (req.method === 'GET' && route.kind === 'dispatches') {
     jsonResponse(res, 200, { success: true, data: filterRecords(data.rapidpro_dispatches, url.searchParams) })
     return
@@ -1021,6 +1054,11 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
       jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
       return
     }
+    const approvalState = alert.approval?.state || 'proposed'
+    if (approvalState !== 'approved' && approvalState !== 'auto_approved') {
+      jsonResponse(res, 409, { success: false, error: 'Alert not approved', current_state: approvalState })
+      return
+    }
     const dispatch = await sendRapidProAlert(alert, body)
     const log = actionLog('rapidpro_dispatches', dispatch.status === 'sent' ? 'sent' : 'failed', dispatch, body.actor, req.__auth?.subject)
     await store.merge({ rapidpro_dispatches: [dispatch], action_logs: [log] })
@@ -1034,24 +1072,25 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
       return
     }
     const payload = await readRequestJson(req)
-    const parsed = parseRapidProFieldReport(payload)
+    const parsed = parseRapidProFieldReport(payload, data)
+    const policy = await loadPolicy()
     let incident = parsed.report.incident_id ? data.incidents.find((item) => item.id === parsed.report.incident_id) : null
-    const writes = { rapidpro_inbound_messages: [parsed.inbound], action_logs: [] }
+    const writes = { rapidpro_inbound_messages: [redactPii(parsed.inbound, policy)], action_logs: [] }
     if (!incident && !parsed.report.intervention_id) {
       incident = buildCreate('incidents', parsed.fallbackIncident, data)
       parsed.report.incident_id = incident.id
       writes.incidents = [incident]
       writes.action_logs.push(actionLog('incidents', 'created', incident, 'rapidpro'))
     }
-    const report = buildCreate('field_reports', parsed.report, { ...data, incidents: incident ? [...data.incidents, incident] : data.incidents })
+    const report = buildCreate('field_reports', redactPii(parsed.report, policy), { ...data, incidents: incident ? [...data.incidents, incident] : data.incidents })
     parsed.inbound.field_report_id = report.id
     parsed.inbound.incident_id = report.incident_id
     parsed.inbound.intervention_id = report.intervention_id
     writes.field_reports = [report]
-    writes.rapidpro_inbound_messages = [parsed.inbound]
+    writes.rapidpro_inbound_messages = [redactPii(parsed.inbound, policy)]
     writes.action_logs.push(actionLog('field_reports', 'created', report, 'rapidpro'))
     await store.merge(writes)
-    jsonResponse(res, 201, { success: true, data: report, inbound: parsed.inbound, incident_created: Boolean(writes.incidents?.length) })
+    jsonResponse(res, 201, { success: true, data: report, inbound: writes.rapidpro_inbound_messages[0], incident_created: Boolean(writes.incidents?.length) })
     return
   }
 
@@ -1100,7 +1139,7 @@ async function handleAlertRoute(store, data, req, res, url, route) {
     return
   }
 
-  if (req.method === 'PATCH' && route.id) {
+  if (req.method === 'PATCH' && route.id && !route.action) {
     const body = await readRequestJson(req)
     const existing = data[route.collection].find((item) => item.id === route.id)
     if (!existing) {
@@ -1113,6 +1152,101 @@ async function handleAlertRoute(store, data, req, res, url, route) {
     const log = actionLog(route.collection, 'updated', record, body.actor, req.__auth?.subject)
     await store.merge({ [route.collection]: [record], action_logs: [log] })
     jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+
+  if (req.method === 'POST' && route.id && route.action && route.collection === 'alert_events') {
+    const body = await readRequestJson(req)
+    const existing = data.alert_events.find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
+      return
+    }
+    const actor = body.actor || (req.__auth?.subject)
+    if (!actor) {
+      jsonResponse(res, 400, { success: false, error: 'actor is required' })
+      return
+    }
+    const decision = route.action === 'approve' ? 'approved' : route.action === 'reject' ? 'rejected' : null
+    if (!decision) {
+      jsonResponse(res, 400, { success: false, error: 'Invalid approval action' })
+      return
+    }
+    const record = approveAlertEvent(existing, actor, decision, body.note || '')
+    const log = actionLog('alert_events', route.action, record, body.actor, req.__auth?.subject)
+    await store.merge({ alert_events: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+async function handleTriggerRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && !route.id) {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.trigger_protocols || [], url.searchParams) })
+    return
+  }
+
+  if (req.method === 'GET' && route.id) {
+    const record = (data.trigger_protocols || []).find((item) => item.id === route.id)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: record })
+    return
+  }
+
+  if (req.method === 'POST' && !route.id && !route.action) {
+    const body = await readRequestJson(req)
+    const record = normalizeTriggerProtocol(body)
+    const log = actionLog('trigger_protocols', 'created', record, body.actor, req.__auth?.subject)
+    await store.merge({ trigger_protocols: [record], action_logs: [log] })
+    jsonResponse(res, 201, { success: true, data: record, action_log: log })
+    return
+  }
+
+  if (req.method === 'PATCH' && route.id && !route.action) {
+    const body = await readRequestJson(req)
+    const existing = (data.trigger_protocols || []).find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
+      return
+    }
+    const record = normalizeTriggerProtocol({ ...existing, ...body, id: route.id }, existing)
+    const log = actionLog('trigger_protocols', 'updated', record, body.actor, req.__auth?.subject)
+    await store.merge({ trigger_protocols: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+
+  if (req.method === 'POST' && route.id && route.action === 'backtest') {
+    const existing = (data.trigger_protocols || []).find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
+      return
+    }
+    const result = backtestTriggerProtocol(existing, data)
+    const updated = { ...existing, backtest: { ...result, last_run_at: new Date().toISOString() } }
+    const log = actionLog('trigger_protocols', 'backtest_run', updated, null, req.__auth?.subject)
+    await store.merge({ trigger_protocols: [updated], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: updated, backtest_result: result, action_log: log })
+    return
+  }
+
+  if (req.method === 'POST' && route.id && route.action === 'shadow-run') {
+    const existing = (data.trigger_protocols || []).find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
+      return
+    }
+    const context = {
+      counts: counts(data),
+      data_quality: data.data_quality,
+    }
+    const result = evaluateInShadowMode(existing, context)
+    jsonResponse(res, 200, { success: true, data: result })
     return
   }
 
@@ -1217,6 +1351,8 @@ function matchReportingRoute(pathname) {
 }
 
 function matchAlertRoute(pathname) {
+  const actionMatch = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\/(approve|reject)$/)
+  if (actionMatch) return { collection: 'alert_events', id: decodeURIComponent(actionMatch[1]), action: actionMatch[2] }
   const routes = {
     'alert-rules': 'alert_rules',
     'alert-events': 'alert_events',
@@ -1226,8 +1362,19 @@ function matchAlertRoute(pathname) {
   return { collection: routes[match[1]], id: match[2] ? decodeURIComponent(match[2]) : null }
 }
 
+function matchTriggerRoute(pathname) {
+  const backtest = pathname.match(/^\/api\/v1\/trigger-protocols\/([^/]+)\/backtest$/)
+  if (backtest) return { id: decodeURIComponent(backtest[1]), action: 'backtest' }
+  const shadowRun = pathname.match(/^\/api\/v1\/trigger-protocols\/([^/]+)\/shadow-run$/)
+  if (shadowRun) return { id: decodeURIComponent(shadowRun[1]), action: 'shadow-run' }
+  const match = pathname.match(/^\/api\/v1\/trigger-protocols(?:\/([^/]+))?$/)
+  if (!match) return null
+  return { id: match[1] ? decodeURIComponent(match[1]) : null }
+}
+
 function matchRapidProRoute(pathname) {
   if (pathname === '/api/v1/rapidpro/status') return { kind: 'status' }
+  if (pathname === '/api/v1/rapidpro/response-metrics') return { kind: 'response-metrics' }
   if (pathname === '/api/v1/rapidpro/dispatches') return { kind: 'dispatches' }
   if (pathname === '/api/v1/rapidpro/inbound') return { kind: 'inbound' }
   if (pathname === '/api/v1/rapidpro/field-report') return { kind: 'field-report' }
@@ -1317,6 +1464,7 @@ function counts(data) {
     action_logs: data.action_logs.length,
     alert_rules: data.alert_rules.length,
     alert_events: data.alert_events.length,
+    trigger_protocols: data.trigger_protocols?.length || 0,
     rapidpro_dispatches: data.rapidpro_dispatches.length,
     rapidpro_inbound_messages: data.rapidpro_inbound_messages.length,
     report_templates: data.report_templates.length,

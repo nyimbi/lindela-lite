@@ -613,7 +613,14 @@ describe('Lindela Lite API', () => {
     try {
       const alerts = await fetchJson(`${baseUrl}/api/v1/alert-events?limit=1`)
       assert.ok(alerts.data.length >= 1)
-      const response = await fetch(`${baseUrl}/api/v1/rapidpro/alert-events/${alerts.data[0].id}/send`, {
+      const alertId = alerts.data[0].id
+      const approveResponse = await fetch(`${baseUrl}/api/v1/alert-events/${alertId}/approve`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer test-token-${Math.random()}` },
+        body: JSON.stringify({ actor: 'test-approver', note: 'Approved for testing' }),
+      })
+      assert.equal(approveResponse.status, 200)
+      const response = await fetch(`${baseUrl}/api/v1/rapidpro/alert-events/${alertId}/send`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ urns: ['+254700000000'], actor: 'test' }),
@@ -628,7 +635,7 @@ describe('Lindela Lite API', () => {
       assert.equal(received[0].body.flow, 'flow-uuid-1')
 
       const dispatches = await fetchJson(`${baseUrl}/api/v1/rapidpro/dispatches`)
-      assert.ok(dispatches.data.some((dispatch) => dispatch.alert_event_id === alerts.data[0].id))
+      assert.ok(dispatches.data.some((dispatch) => dispatch.alert_event_id === alertId))
     } finally {
       restoreRapidProEnv(original)
       await new Promise((resolve) => rapidPro.close(resolve))

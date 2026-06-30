@@ -87,13 +87,34 @@ export async function sendRapidProReportSummary(report, summary, options = {}, e
   return { ...dispatch, report_id: report.id }
 }
 
-export function parseRapidProFieldReport(payload = {}) {
+export function parseRapidProFieldReport(payload = {}, data = null) {
   const text = String(payload.content || payload.text || payload.input?.text || payload.message?.text || '').trim()
   const from = normalizeSender(payload.from || payload.urn || payload.contact?.urn || payload.urns?.tel || payload.urns?.[0])
   const contact = payload.contact || {}
   const parsed = parseReportText(text)
   const observedAt = payload.observed_at || payload.created_on || payload.created_at || new Date().toISOString()
   const sourceId = payload.id || payload.uuid || payload.run?.uuid || payload.message?.uuid || stableId('rapidpro_payload', [from, text, observedAt])
+
+  let alertEventId = payload.alert_event_id
+  let dispatchId = null
+
+  if (!alertEventId && data && from) {
+    const now = new Date().getTime()
+    const twentyFourHoursMs = 24 * 60 * 60 * 1000
+    const recentDispatches = (data.rapidpro_dispatches || []).filter((dispatch) => {
+      if (!dispatch.created_at) return false
+      const dispatchTime = new Date(dispatch.created_at).getTime()
+      return now - dispatchTime <= twentyFourHoursMs
+    })
+
+    for (const dispatch of recentDispatches) {
+      if (dispatch.recipients?.urns?.includes(from) || dispatch.recipients?.urns?.some((urn) => urn.endsWith(from))) {
+        dispatchId = dispatch.id
+        alertEventId = dispatch.alert_event_id
+        break
+      }
+    }
+  }
 
   return {
     inbound: {
@@ -106,6 +127,8 @@ export function parseRapidProFieldReport(payload = {}) {
       contact_name: contact.name || payload.contact_name || null,
       text,
       status: 'processed',
+      alert_event_id: alertEventId || null,
+      dispatch_id: dispatchId || null,
       created_at: new Date().toISOString(),
       payload,
     },
@@ -118,6 +141,7 @@ export function parseRapidProFieldReport(payload = {}) {
       needs: payload.needs || parsed.needs,
       latitude: toNumber(payload.latitude ?? payload.lat ?? parsed.latitude),
       longitude: toNumber(payload.longitude ?? payload.lon ?? payload.lng ?? parsed.longitude),
+      alert_event_id: alertEventId || null,
       metadata: {
         provider: 'rapidpro',
         source_id: sourceId,
@@ -142,6 +166,54 @@ export function parseRapidProFieldReport(payload = {}) {
       },
     },
   }
+}
+
+export function responseMetrics(data) {
+  const dispatches = data.rapidpro_dispatches || []
+  const inbounds = data.rapidpro_inbound_messages || []
+  const result = {}
+
+  for (const dispatch of dispatches) {
+    const alertEventId = dispatch.alert_event_id
+    if (!alertEventId) continue
+    if (!result[alertEventId]) {
+      result[alertEventId] = {
+        alert_event_id: alertEventId,
+        dispatched_count: 0,
+        response_count: 0,
+        response_rate_pct: 0,
+        first_response_at: null,
+        mean_response_seconds: 0,
+      }
+    }
+    result[alertEventId].dispatched_count++
+  }
+
+  for (const inbound of inbounds) {
+    const alertEventId = inbound.alert_event_id
+    if (!alertEventId || !result[alertEventId]) continue
+    result[alertEventId].response_count++
+    if (!result[alertEventId].first_response_at || new Date(inbound.created_at) < new Date(result[alertEventId].first_response_at)) {
+      result[alertEventId].first_response_at = inbound.created_at
+    }
+  }
+
+  for (const alertEventId in result) {
+    const metrics = result[alertEventId]
+    if (metrics.dispatched_count > 0) {
+      metrics.response_rate_pct = Math.round((metrics.response_count / metrics.dispatched_count) * 10000) / 100
+    }
+    if (metrics.response_count > 0 && metrics.first_response_at) {
+      const dispatchTimes = dispatches
+        .filter((d) => d.alert_event_id === alertEventId)
+        .map((d) => new Date(d.created_at).getTime())
+      const earliestDispatch = Math.min(...dispatchTimes)
+      const firstResponseTime = new Date(metrics.first_response_at).getTime()
+      metrics.mean_response_seconds = Math.round((firstResponseTime - earliestDispatch) / 1000)
+    }
+  }
+
+  return Object.values(result)
 }
 
 export function verifyRapidProWebhook(req, url, env = process.env) {

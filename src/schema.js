@@ -171,6 +171,7 @@ export function emptyStore() {
     action_logs: [],
     alert_rules: [],
     alert_events: [],
+    trigger_protocols: [],
     rapidpro_dispatches: [],
     rapidpro_inbound_messages: [],
     report_templates: [],
