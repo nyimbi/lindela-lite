@@ -13,6 +13,7 @@ import { quantileMap } from '../src/analytics/downscaling.js'
 import { getConnector, runIngestion } from '../src/ingestion.js'
 import { createServer } from '../src/server.js'
 import { stacCatalog } from '../src/stac.js'
+import { renderCapXml } from '../src/cap.js'
 import { Pg0Manager } from '../src/pg0.js'
 import { createStoreFromEnv } from '../src/storage.js'
 import { JsonStore, mergeById } from '../src/store.js'
@@ -44,6 +45,56 @@ describe('Lindela Lite STAC', () => {
       assert.equal(json.type, 'Catalog')
       assert.equal(json.stac_version, '1.0.0')
       assert.ok(json.links.length > 0)
+    } finally {
+      listener.close()
+    }
+  })
+})
+
+describe('Lindela Lite CAP', () => {
+  it('renders valid CAP 1.2 XML', () => {
+    const alert = {
+      id: 'alert_123',
+      event_type: 'flood',
+      severity: 'high',
+      headline: 'Flash flood warning',
+      description: 'Heavy rainfall expected',
+      latitude: 3.1,
+      longitude: 35.6,
+      lead_time_days: 1,
+    }
+    const xml = renderCapXml(alert)
+    assert.ok(xml.startsWith('<?xml'))
+    assert.ok(xml.includes('<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">'))
+    assert.ok(xml.includes('<event>flood</event>'))
+  })
+
+  it('GET /api/v1/alert-events/:id.cap returns XML', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-cap-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      await store.merge({
+        alert_events: [{
+          id: 'test_alert_1',
+          event_type: 'flood',
+          severity: 'high',
+          headline: 'Test alert',
+          latitude: 3.1,
+          longitude: 35.6,
+        }],
+      })
+
+      const res = await fetch(`${baseUrl}/api/v1/alert-events/test_alert_1.cap`)
+      assert.equal(res.status, 200)
+      assert.equal(res.headers.get('content-type'), 'application/xml; charset=utf-8')
+      const xml = await res.text()
+      assert.ok(xml.startsWith('<?xml'))
+      assert.ok(xml.includes('<alert xmlns'))
     } finally {
       listener.close()
     }

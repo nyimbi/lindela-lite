@@ -37,6 +37,7 @@ import { createStoreFromEnv } from './storage.js'
 import { filterRecords, jsonResponse, readRequestJson, toCsv, toGeoJson } from './utils.js'
 import { redactPii, applyRetention, loadPolicy } from './pii.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './stac.js'
+import { renderCapXml } from './cap.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
@@ -1190,6 +1191,18 @@ async function handleAlertEvaluation(store, data, req, res) {
 }
 
 async function handleAlertRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && route.format === 'cap') {
+    const record = data[route.collection].find((item) => item.id === route.id)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
+      return
+    }
+    const xml = renderCapXml(record)
+    res.writeHead(200, { 'content-type': 'application/xml; charset=utf-8' })
+    res.end(xml)
+    return
+  }
+
   if (req.method === 'GET' && !route.id) {
     jsonResponse(res, 200, { success: true, data: filterRecords(data[route.collection], url.searchParams) })
     return
@@ -1426,6 +1439,8 @@ function matchReportingRoute(pathname) {
 }
 
 function matchAlertRoute(pathname) {
+  const capMatch = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\.cap$/)
+  if (capMatch) return { collection: 'alert_events', id: decodeURIComponent(capMatch[1]), format: 'cap' }
   const actionMatch = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\/(approve|reject)$/)
   if (actionMatch) return { collection: 'alert_events', id: decodeURIComponent(actionMatch[1]), action: actionMatch[2] }
   const routes = {

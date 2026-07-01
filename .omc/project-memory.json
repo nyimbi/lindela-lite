@@ -151,14 +151,14 @@
   "hotPaths": [
     {
       "path": "src/server.js",
-      "accessCount": 59,
-      "lastAccessed": 1786191614460,
+      "accessCount": 62,
+      "lastAccessed": 1786191678410,
       "type": "file"
     },
     {
       "path": "test/lite.test.js",
-      "accessCount": 23,
-      "lastAccessed": 1786191632215,
+      "accessCount": 25,
+      "lastAccessed": 1786191693100,
       "type": "file"
     },
     {
@@ -303,6 +303,12 @@
       "path": "src/stac.js",
       "accessCount": 1,
       "lastAccessed": 1786191597499,
+      "type": "file"
+    },
+    {
+      "path": "src/cap.js",
+      "accessCount": 1,
+      "lastAccessed": 1786191664623,
       "type": "file"
     }
   ],

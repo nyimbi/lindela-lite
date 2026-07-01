@@ -14,7 +14,7 @@
       "interval_width": 40,
       "risk_level": "low",
       "confidence": 0,
-      "generated_at": "2026-08-08T12:20:46.626Z",
+      "generated_at": "2026-08-08T12:21:54.458Z",
       "drivers": {
         "precipitation_mm": 0,
         "precipitation_probability_pct": 0,
@@ -36,7 +36,7 @@
       "interval_width": 32,
       "risk_level": "low",
       "confidence": 45,
-      "generated_at": "2026-08-08T12:20:46.626Z",
+      "generated_at": "2026-08-08T12:21:54.458Z",
       "drivers": {
         "climate_observations": 0,
         "hazard_events": 0,
@@ -55,16 +55,16 @@
       },
       "total_records": 1,
       "geocoded_records": 1,
-      "latest_record_at": "2026-08-08T12:20:46.608Z",
+      "latest_record_at": "2026-08-08T12:21:54.446Z",
       "confidence_sum": 0,
       "last_run_status": "success",
-      "last_run_at": "2026-08-08T12:20:46.608Z",
+      "last_run_at": "2026-08-08T12:21:54.446Z",
       "error_count": 0,
       "geocode_coverage_pct": 100,
       "freshness": "current",
       "confidence": 57,
       "mean_confidence": 0,
-      "updated_at": "2026-08-08T12:20:46.626Z"
+      "updated_at": "2026-08-08T12:21:54.458Z"
     },
     {
       "id": "quality_conflict_csv",
@@ -77,14 +77,14 @@
       "latest_record_at": "2026-01-02T00:00:00.000Z",
       "confidence_sum": 0,
       "last_run_status": "success",
-      "last_run_at": "2026-08-08T12:20:46.625Z",
+      "last_run_at": "2026-08-08T12:21:54.458Z",
       "error_count": 0,
       "geocode_coverage_pct": 100,
       "freshness": "expired",
       "confidence": 29,
       "mean_confidence": 0,
-      "updated_at": "2026-08-08T12:20:46.626Z"
+      "updated_at": "2026-08-08T12:21:54.458Z"
     }
   ],
-  "generated_at": "2026-08-08T12:20:46.627Z"
+  "generated_at": "2026-08-08T12:21:54.459Z"
 }
