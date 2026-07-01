@@ -1,6 +1,7 @@
 import { fetchWithRetry } from './http.js'
 import { normalizeSeverity } from '../schema.js'
 import { stableId, toNumber } from '../utils.js'
+import { defineConnector } from './spec.js'
 
 const FEEDS = [
   'https://www.gdacs.org/xml/rss.xml',
@@ -9,9 +10,7 @@ const FEEDS = [
   'https://www.gdacs.org/xml/rss_tropicalcyclones.xml',
 ]
 
-export const gdacsConnector = {
-  id: 'gdacs',
-  async ingest(options = {}) {
+async function gdacsIngest(options = {}) {
     const hazard_events = []
     const errors = []
     const feeds = options.gdacs_feeds?.length ? options.gdacs_feeds : FEEDS
@@ -44,7 +43,32 @@ export const gdacsConnector = {
     }
 
     return { hazard_events, errors }
+}
+
+export const spec = defineConnector({
+  id: 'gdacs',
+  description: 'GDACS disaster alerts (floods, earthquakes, droughts, cyclones)',
+  schema: {
+    requestSchema: {
+      gdacs_feeds: 'array of RSS feed URLs',
+      timeout_ms: 'number (default 20000)',
+      retries: 'number (default 2)',
+    },
+    outputSchema: {
+      hazard_events: 'array of GDACS alerts parsed from RSS',
+    },
   },
+  defaults: {
+    rateLimit: { perMinute: 120 },
+    retry: { max: 2, backoffMs: 1000 },
+    timeout_ms: 20000,
+  },
+  ingest: gdacsIngest,
+})
+
+export const gdacsConnector = {
+  id: 'gdacs',
+  ingest: gdacsIngest,
 }
 
 function parseRssItems(xml) {

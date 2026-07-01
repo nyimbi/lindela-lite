@@ -42,7 +42,9 @@ import { renderCapXml } from './cap.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
 const docsDir = path.resolve(__dirname, '../docs')
+const registryPath = path.resolve(__dirname, '../connectors.registry.json')
 let defaultStorePromise
+let connectorRegistry = null
 
 export function createServer(options = {}) {
   const storeProvider = options.store ? Promise.resolve(options.store) : getDefaultStore()
@@ -215,6 +217,23 @@ async function handleApi(store, req, res, url) {
         schedule: health.find((item) => item.source === source.id)?.schedule || null,
       })),
     })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/connectors') {
+    const registry = await getConnectorRegistry()
+    const sourceRuns = data.source_runs || []
+    const withStatus = registry.map((connector) => {
+      const lastRun = sourceRuns
+        .filter((run) => run.source === connector.id)
+        .sort((a, b) => new Date(b.completed_at).getTime() - new Date(a.completed_at).getTime())[0]
+      return {
+        ...connector,
+        last_run: lastRun || null,
+        status: lastRun?.status || 'unknown',
+      }
+    })
+    jsonResponse(res, 200, { success: true, data: withStatus })
     return
   }
 
@@ -1525,6 +1544,18 @@ function hasTraversalSegment(rawUrl) {
   } catch {
     return true
   }
+}
+
+async function getConnectorRegistry() {
+  if (connectorRegistry === null) {
+    try {
+      const content = await fs.readFile(registryPath, 'utf8')
+      connectorRegistry = JSON.parse(content)
+    } catch {
+      connectorRegistry = []
+    }
+  }
+  return connectorRegistry
 }
 
 function getDefaultStore() {

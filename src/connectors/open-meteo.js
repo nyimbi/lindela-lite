@@ -1,10 +1,9 @@
 import { fetchWithRetry } from './http.js'
 import { DEFAULT_REGIONS } from '../schema.js'
 import { stableId } from '../utils.js'
+import { defineConnector } from './spec.js'
 
-export const openMeteoConnector = {
-  id: 'open_meteo',
-  async ingest(options = {}) {
+async function openMeteoIngest(options = {}) {
     const regions = options.regions?.length ? options.regions : DEFAULT_REGIONS
     const climate_observations = []
     const errors = []
@@ -73,5 +72,32 @@ export const openMeteoConnector = {
     }
 
     return { climate_observations, errors }
+}
+
+export const spec = defineConnector({
+  id: 'open_meteo',
+  description: 'Open-Meteo weather forecasts and observations',
+  schema: {
+    requestSchema: {
+      regions: 'array of {name, country, lat, lon}',
+      forecast_days: 'number (default 7)',
+      include_ensemble: 'boolean (default false)',
+      timeout_ms: 'number (default 20000)',
+      retries: 'number (default 2)',
+    },
+    outputSchema: {
+      climate_observations: 'array of current and forecast weather observations',
+    },
   },
+  defaults: {
+    rateLimit: { perMinute: 60 },
+    retry: { max: 2, backoffMs: 1000 },
+    timeout_ms: 20000,
+  },
+  ingest: openMeteoIngest,
+})
+
+export const openMeteoConnector = {
+  id: 'open_meteo',
+  ingest: openMeteoIngest,
 }

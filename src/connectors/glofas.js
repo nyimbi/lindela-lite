@@ -1,13 +1,12 @@
 import { fetchWithRetry } from './http.js'
 import { stableId } from '../utils.js'
+import { defineConnector } from './spec.js'
 
 const FEEDS = [
   'https://global-flood.emergency.copernicus.eu/rss.xml',
 ]
 
-export const glofasConnector = {
-  id: 'glofas',
-  async ingest(options = {}) {
+async function glofasIngest(options = {}) {
     const hazard_events = []
     const errors = []
     const feeds = options.glofas_feeds?.length ? options.glofas_feeds : FEEDS
@@ -46,7 +45,32 @@ export const glofasConnector = {
     }
 
     return { hazard_events, errors }
+}
+
+export const spec = defineConnector({
+  id: 'glofas',
+  description: 'Copernicus GloFAS flood forecast RSS',
+  schema: {
+    requestSchema: {
+      glofas_feeds: 'array of RSS feed URLs',
+      timeout_ms: 'number (default 20000)',
+      retries: 'number (default 2)',
+    },
+    outputSchema: {
+      hazard_events: 'array of flood forecast alerts parsed from RSS',
+    },
   },
+  defaults: {
+    rateLimit: { perMinute: 120 },
+    retry: { max: 2, backoffMs: 1000 },
+    timeout_ms: 20000,
+  },
+  ingest: glofasIngest,
+})
+
+export const glofasConnector = {
+  id: 'glofas',
+  ingest: glofasIngest,
 }
 
 function readTag(xml, tag) {

@@ -1,0 +1,164 @@
+[
+  {
+    "id": "open_meteo",
+    "module": "src/connectors/open-meteo.js",
+    "description": "Open-Meteo weather forecasts and observations",
+    "schemas": {
+      "input": {
+        "regions": "array of {name, country, lat, lon}",
+        "forecast_days": "number",
+        "include_ensemble": "boolean",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": ["climate_observations"]
+    },
+    "defaults": {
+      "rateLimit": {"perMinute": 60},
+      "retry": {"max": 2, "backoffMs": 1000},
+      "timeout_ms": 20000
+    },
+    "tags": ["climate", "forecast", "weather"],
+    "contributor": "core",
+    "since": "0.1.0"
+  },
+  {
+    "id": "gdacs",
+    "module": "src/connectors/gdacs.js",
+    "description": "GDACS disaster alerts (floods, earthquakes, droughts, cyclones)",
+    "schemas": {
+      "input": {
+        "gdacs_feeds": "array of RSS feed URLs",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": ["hazard_events"]
+    },
+    "defaults": {
+      "rateLimit": {"perMinute": 120},
+      "retry": {"max": 2, "backoffMs": 1000},
+      "timeout_ms": 20000
+    },
+    "tags": ["hazards", "disaster", "rss"],
+    "contributor": "core",
+    "since": "0.1.0"
+  },
+  {
+    "id": "glofas",
+    "module": "src/connectors/glofas.js",
+    "description": "Copernicus GloFAS flood forecast RSS",
+    "schemas": {
+      "input": {
+        "glofas_feeds": "array of RSS feed URLs",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": ["hazard_events"]
+    },
+    "defaults": {
+      "rateLimit": {"perMinute": 120},
+      "retry": {"max": 2, "backoffMs": 1000},
+      "timeout_ms": 20000
+    },
+    "tags": ["flood", "forecast", "rss"],
+    "contributor": "core",
+    "since": "0.1.0"
+  },
+  {
+    "id": "chirps",
+    "module": "src/connectors/chirps.js",
+    "description": "CHIRPS rainfall dataset index",
+    "schemas": {
+      "input": {
+        "regions": "array of {name, country, lat, lon}",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": ["climate_observations"]
+    },
+    "defaults": {
+      "rateLimit": {"perMinute": 60},
+      "retry": {"max": 2, "backoffMs": 1000},
+      "timeout_ms": 20000
+    },
+    "tags": ["rainfall", "precipitation", "climate"],
+    "contributor": "core",
+    "since": "0.1.0"
+  },
+  {
+    "id": "nasa_firms",
+    "module": "src/connectors/nasa-firms.js",
+    "description": "NASA FIRMS fire detections",
+    "schemas": {
+      "input": {
+        "regions": "array of {name, country, lat, lon}",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": ["hazard_events"]
+    },
+    "defaults": {
+      "rateLimit": {"perMinute": 60},
+      "retry": {"max": 2, "backoffMs": 1000},
+      "timeout_ms": 30000
+    },
+    "tags": ["fire", "detection", "satellite"],
+    "contributor": "core",
+    "since": "0.1.0"
+  },
+  {
+    "id": "service_assets",
+    "module": "src/connectors/uploads.js",
+    "description": "User-supplied service assets (CSV or GeoJSON)",
+    "schemas": {
+      "input": {
+        "service_assets_csv": "string",
+        "service_assets_geojson": "string"
+      },
+      "output": ["service_assets"]
+    },
+    "defaults": {
+      "timeout_ms": 5000,
+      "retries": 0
+    },
+    "tags": ["infrastructure", "upload", "user-data"],
+    "contributor": "core",
+    "since": "0.1.0"
+  },
+  {
+    "id": "acled_csv",
+    "module": "src/connectors/uploads.js",
+    "description": "ACLED-compatible user CSV upload",
+    "schemas": {
+      "input": {
+        "acled_csv": "string (CSV data)"
+      },
+      "output": ["conflict_events"]
+    },
+    "defaults": {
+      "timeout_ms": 5000,
+      "retries": 0
+    },
+    "tags": ["conflict", "events", "upload", "licensed"],
+    "contributor": "core",
+    "since": "0.1.0"
+  },
+  {
+    "id": "conflict_csv",
+    "module": "src/connectors/uploads.js",
+    "description": "User conflict event CSV upload",
+    "schemas": {
+      "input": {
+        "conflict_csv": "string (CSV data)"
+      },
+      "output": ["conflict_events"]
+    },
+    "defaults": {
+      "timeout_ms": 5000,
+      "retries": 0
+    },
+    "tags": ["conflict", "events", "upload"],
+    "contributor": "core",
+    "since": "0.1.0"
+  }
+]

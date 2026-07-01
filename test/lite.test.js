@@ -14,6 +14,8 @@ import { getConnector, runIngestion } from '../src/ingestion.js'
 import { createServer } from '../src/server.js'
 import { stacCatalog } from '../src/stac.js'
 import { renderCapXml } from '../src/cap.js'
+import { spec as openMeteoSpec } from '../src/connectors/open-meteo.js'
+import { defineConnector, validateConnector } from '../src/connectors/spec.js'
 import { Pg0Manager } from '../src/pg0.js'
 import { createStoreFromEnv } from '../src/storage.js'
 import { JsonStore, mergeById } from '../src/store.js'
@@ -98,6 +100,40 @@ describe('Lindela Lite CAP', () => {
     } finally {
       listener.close()
     }
+  })
+})
+
+describe('Lindela Lite connectors SDK', () => {
+  it('exports spec from open-meteo connector', () => {
+    assert.equal(openMeteoSpec.id, 'open_meteo')
+    assert.ok(openMeteoSpec.description)
+    assert.ok(openMeteoSpec.schema)
+    assert.ok(openMeteoSpec.defaults)
+    assert.equal(typeof openMeteoSpec.ingest, 'function')
+  })
+
+  it('validates connector specs', () => {
+    const errors = validateConnector(openMeteoSpec)
+    assert.equal(errors.length, 0)
+  })
+
+  it('rejects invalid connector specs', () => {
+    const errors = validateConnector({ id: 'test' })
+    assert.ok(errors.length > 0)
+  })
+
+  it('defines new connectors and freezes them', () => {
+    const customSpec = defineConnector({
+      id: 'test_connector',
+      description: 'Test connector',
+      schema: {},
+      defaults: {},
+      ingest: async () => ({ test_data: [] }),
+    })
+    assert.equal(customSpec.id, 'test_connector')
+    assert.throws(() => {
+      customSpec.id = 'changed'
+    }, /Cannot assign to read only property/)
   })
 })
 
