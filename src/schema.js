@@ -180,6 +180,8 @@ export function emptyStore() {
     report_schedules: [],
     report_schedule_runs: [],
     data_lineage: [],
+    events_outbox: [],
+    webhook_subscriptions: [],
   }
 }
 

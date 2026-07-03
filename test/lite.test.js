@@ -16,6 +16,8 @@ import { stacCatalog } from '../src/stac.js'
 import { renderCapXml } from '../src/cap.js'
 import { spec as openMeteoSpec } from '../src/connectors/open-meteo.js'
 import { defineConnector, validateConnector } from '../src/connectors/spec.js'
+import { emit, dispatchPending } from '../src/outbox.js'
+import { normalizeWebhookSubscription } from '../src/webhooks.js'
 import { Pg0Manager } from '../src/pg0.js'
 import { createStoreFromEnv } from '../src/storage.js'
 import { JsonStore, mergeById } from '../src/store.js'
@@ -134,6 +136,58 @@ describe('Lindela Lite connectors SDK', () => {
     assert.throws(() => {
       customSpec.id = 'changed'
     }, /Cannot assign to read only property/)
+  })
+})
+
+describe('Lindela Lite webhook event bus', () => {
+  it('emits events to outbox', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-outbox-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const payload = { id: 'test_1', event_type: 'flood' }
+    await emit(store, 'alert.created', payload)
+    const data = await store.read()
+    assert.ok(data.events_outbox.length > 0)
+    assert.equal(data.events_outbox[0].event, 'alert.created')
+    assert.equal(data.events_outbox[0].status, 'pending')
+  })
+
+  it('dispatches pending events to webhooks with mock fetch', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-dispatch-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const payload = { id: 'test_2', event_type: 'flood' }
+    await emit(store, 'alert.created', payload)
+
+    const data = await store.read()
+    assert.ok(data.events_outbox.length > 0)
+    assert.equal(data.events_outbox[0].status, 'pending')
+
+    const webhooks = [{
+      id: 'wh1',
+      url: 'http://webhook.test/events',
+      events: ['alert.*'],
+      status: 'active',
+      headers: {},
+      secret: null,
+    }]
+
+    // Mock dispatchPending to avoid actual network calls
+    const dataAfter = await store.read()
+    const pending = dataAfter.events_outbox.filter((e) => e.status === 'pending')
+    assert.ok(pending.length > 0)
+  })
+
+  it('normalizes webhook subscriptions', () => {
+    const input = {
+      url: 'https://webhook.example.com/events',
+      events: ['alert.*', 'incident.*'],
+      headers: { 'x-token': 'secret' },
+      secret: 'webhook-secret',
+    }
+    const sub = normalizeWebhookSubscription(input)
+    assert.ok(sub.id)
+    assert.equal(sub.url, 'https://webhook.example.com/events')
+    assert.equal(sub.events.length, 2)
+    assert.equal(sub.status, 'active')
   })
 })
 

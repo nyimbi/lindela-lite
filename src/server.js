@@ -38,6 +38,8 @@ import { filterRecords, jsonResponse, readRequestJson, toCsv, toGeoJson } from '
 import { redactPii, applyRetention, loadPolicy } from './pii.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
+import { emit, dispatchPending } from './outbox.js'
+import { normalizeWebhookSubscription } from './webhooks.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
@@ -234,6 +236,25 @@ async function handleApi(store, req, res, url) {
       }
     })
     jsonResponse(res, 200, { success: true, data: withStatus })
+    return
+  }
+
+  const webhookRoute = matchWebhookRoute(url.pathname)
+  if (webhookRoute) {
+    await handleWebhookRoute(store, data, req, res, url, webhookRoute)
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/outbox') {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.events_outbox || [], url.searchParams) })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/v1/outbox/dispatch') {
+    const body = await readRequestJson(req)
+    const webhooks = data.webhook_subscriptions || []
+    const result = await dispatchPending(store, { webhooks, maxBatch: 50, timeoutMs: 5000 })
+    jsonResponse(res, 201, { success: true, ...result })
     return
   }
 
@@ -1206,6 +1227,13 @@ async function handleAlertEvaluation(store, data, req, res) {
   const events = evaluateAlertRules(data, context)
   const logs = events.map((event) => actionLog('alert_events', 'created', event, body.actor, req.__auth?.subject))
   if (events.length) await store.merge({ alert_events: events, action_logs: logs })
+  for (const event of events) {
+    try {
+      await emit(store, 'alert_event.created', event)
+    } catch (emitError) {
+      // Swallow emit errors
+    }
+  }
   jsonResponse(res, 201, { success: true, evaluated: data.alert_rules.length, created: events.length, data: events })
 }
 
@@ -1242,6 +1270,11 @@ async function handleAlertRoute(store, data, req, res, url, route) {
     const record = normalizeAlertRule(body)
     const log = actionLog(route.collection, 'created', record, body.actor, req.__auth?.subject)
     await store.merge({ alert_rules: [record], action_logs: [log] })
+    try {
+      await emit(store, 'alert_rule.created', record)
+    } catch (emitError) {
+      // Swallow emit errors to not break the request
+    }
     jsonResponse(res, 201, { success: true, data: record, action_log: log })
     return
   }
@@ -1385,6 +1418,13 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
     const record = buildCreate(route.collection, body, data)
     const log = actionLog(route.collection, 'created', record, body.actor, req.__auth?.subject)
     await store.merge({ [route.collection]: [record], action_logs: [log] })
+    if (route.collection === 'incidents') {
+      try {
+        await emit(store, 'incident.created', record)
+      } catch (emitError) {
+        // Swallow emit errors
+      }
+    }
     jsonResponse(res, 201, { success: true, data: record, action_log: log })
     return
   }
@@ -1404,6 +1444,62 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
   }
 
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+async function handleWebhookRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && !route.id) {
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.webhook_subscriptions || [], url.searchParams) })
+    return
+  }
+
+  if (req.method === 'GET' && route.id) {
+    const record = (data.webhook_subscriptions || []).find((item) => item.id === route.id)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: 'Webhook subscription not found' })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: record })
+    return
+  }
+
+  if (req.method === 'POST' && !route.id) {
+    const body = await readRequestJson(req)
+    try {
+      const record = normalizeWebhookSubscription(body)
+      const log = actionLog('webhook_subscriptions', 'created', record, body.actor, req.__auth?.subject)
+      await store.merge({ webhook_subscriptions: [record], action_logs: [log] })
+      jsonResponse(res, 201, { success: true, data: record, action_log: log })
+    } catch (error) {
+      jsonResponse(res, error.statusCode || 400, { success: false, error: error.message })
+    }
+    return
+  }
+
+  if (req.method === 'PATCH' && route.id) {
+    const body = await readRequestJson(req)
+    const existing = (data.webhook_subscriptions || []).find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Webhook subscription not found' })
+      return
+    }
+    try {
+      const record = normalizeWebhookSubscription({ ...body, id: route.id }, existing)
+      const log = actionLog('webhook_subscriptions', 'updated', record, body.actor, req.__auth?.subject)
+      await store.merge({ webhook_subscriptions: [record], action_logs: [log] })
+      jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    } catch (error) {
+      jsonResponse(res, error.statusCode || 400, { success: false, error: error.message })
+    }
+    return
+  }
+
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+function matchWebhookRoute(pathname) {
+  const match = pathname.match(/^\/api\/v1\/webhooks(?:\/([^/]+))?$/)
+  if (!match) return null
+  return { id: match[1] ? decodeURIComponent(match[1]) : null }
 }
 
 function matchOperationalRoute(pathname) {

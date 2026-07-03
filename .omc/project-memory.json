@@ -151,14 +151,14 @@
   "hotPaths": [
     {
       "path": "src/server.js",
-      "accessCount": 65,
-      "lastAccessed": 1786191797820,
+      "accessCount": 71,
+      "lastAccessed": 1786191932499,
       "type": "file"
     },
     {
       "path": "test/lite.test.js",
-      "accessCount": 28,
-      "lastAccessed": 1786191821093,
+      "accessCount": 32,
+      "lastAccessed": 1786191981551,
       "type": "file"
     },
     {
@@ -175,14 +175,14 @@
     },
     {
       "path": "src/store.js",
-      "accessCount": 11,
-      "lastAccessed": 1786191569874,
+      "accessCount": 12,
+      "lastAccessed": 1786191898684,
       "type": "file"
     },
     {
       "path": "src/schema.js",
-      "accessCount": 8,
-      "lastAccessed": 1786191569538,
+      "accessCount": 9,
+      "lastAccessed": 1786191892999,
       "type": "file"
     },
     {
@@ -333,6 +333,18 @@
       "path": "docs/connectors-sdk.md",
       "accessCount": 1,
       "lastAccessed": 1786191859750,
+      "type": "file"
+    },
+    {
+      "path": "src/outbox.js",
+      "accessCount": 1,
+      "lastAccessed": 1786191878767,
+      "type": "file"
+    },
+    {
+      "path": "src/webhooks.js",
+      "accessCount": 1,
+      "lastAccessed": 1786191885686,
       "type": "file"
     }
   ],
