@@ -18,6 +18,7 @@ import { spec as openMeteoSpec } from '../src/connectors/open-meteo.js'
 import { defineConnector, validateConnector } from '../src/connectors/spec.js'
 import { emit, dispatchPending } from '../src/outbox.js'
 import { normalizeWebhookSubscription } from '../src/webhooks.js'
+import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from '../src/scenarios.js'
 import { Pg0Manager } from '../src/pg0.js'
 import { createStoreFromEnv } from '../src/storage.js'
 import { JsonStore, mergeById } from '../src/store.js'
@@ -136,6 +137,99 @@ describe('Lindela Lite connectors SDK', () => {
     assert.throws(() => {
       customSpec.id = 'changed'
     }, /Cannot assign to read only property/)
+  })
+})
+
+describe('Lindela Lite scenario workbench', () => {
+  const testData = {
+    climate_observations: [
+      { id: 'c1', source: 'open_meteo', type: 'precipitation_forecast', latitude: 3.1, longitude: 35.6, country: 'KE', region_name: 'Turkana', precipitation_mm: 42, precipitation_probability_pct: 80 },
+    ],
+    hazard_events: [
+      { id: 'h1', source: 'gdacs', event_type: 'flood', severity: 'high', latitude: 3.2, longitude: 35.7, country: 'KE' },
+    ],
+    conflict_events: [
+      { id: 'e1', source: 'conflict_csv', event_type: 'communal_tension', latitude: 3.15, longitude: 35.62, country: 'KE', fatalities: 1 },
+    ],
+    service_assets: [
+      { id: 'a1', name: 'Clinic A', service_type: 'health', latitude: 3.13, longitude: 35.63, country: 'KE' },
+    ],
+  }
+
+  it('runs scenarios with precipitation multiplier', () => {
+    const perturbation = { precipitation_multiplier: 2 }
+    const result = runScenario(testData, perturbation)
+    assert.ok(result.scenario_id)
+    assert.ok(Array.isArray(result.risk_scores))
+    assert.ok(Array.isArray(result.impact_assessments))
+    assert.ok(result.diff)
+    assert.ok(Number.isFinite(result.diff.flood_risk_delta_mean))
+  })
+
+  it('encodes and decodes scenario URLs', () => {
+    const perturbation = { precipitation_multiplier: 1.5, offline_asset_ids: ['a1'] }
+    const token = encodeScenarioUrl(perturbation)
+    assert.ok(token)
+    assert.ok(typeof token === 'string')
+    const decoded = decodeScenarioUrl(token)
+    assert.equal(decoded.precipitation_multiplier, 1.5)
+    assert.deepEqual(decoded.offline_asset_ids, ['a1'])
+  })
+
+  it('POST /api/v1/scenarios returns scenario result with token', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-scenario-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await store.merge({
+      climate_observations: testData.climate_observations,
+      hazard_events: testData.hazard_events,
+      conflict_events: testData.conflict_events,
+      service_assets: testData.service_assets,
+    })
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/scenarios`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ precipitation_multiplier: 2 }),
+      })
+      assert.equal(res.status, 201)
+      const json = await res.json()
+      assert.equal(json.success, true)
+      assert.ok(json.risk_scores)
+      assert.ok(json.token)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /api/v1/scenarios/:token decodes and reruns scenario', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-scenario-get-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await store.merge({
+      climate_observations: testData.climate_observations,
+      hazard_events: testData.hazard_events,
+      conflict_events: testData.conflict_events,
+      service_assets: testData.service_assets,
+    })
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const token = encodeScenarioUrl({ precipitation_multiplier: 1.5 })
+      const res = await fetch(`${baseUrl}/api/v1/scenarios/${token}`)
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.equal(json.success, true)
+      assert.ok(json.risk_scores)
+    } finally {
+      listener.close()
+    }
   })
 })
 

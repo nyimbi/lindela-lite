@@ -151,14 +151,14 @@
   "hotPaths": [
     {
       "path": "src/server.js",
-      "accessCount": 71,
-      "lastAccessed": 1786191932499,
+      "accessCount": 74,
+      "lastAccessed": 1786192022243,
       "type": "file"
     },
     {
       "path": "test/lite.test.js",
-      "accessCount": 32,
-      "lastAccessed": 1786191981551,
+      "accessCount": 34,
+      "lastAccessed": 1786192038112,
       "type": "file"
     },
     {
@@ -345,6 +345,12 @@
       "path": "src/webhooks.js",
       "accessCount": 1,
       "lastAccessed": 1786191885686,
+      "type": "file"
+    },
+    {
+      "path": "src/scenarios.js",
+      "accessCount": 1,
+      "lastAccessed": 1786192008911,
       "type": "file"
     }
   ],

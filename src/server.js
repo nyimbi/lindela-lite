@@ -40,6 +40,7 @@ import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './s
 import { renderCapXml } from './cap.js'
 import { emit, dispatchPending } from './outbox.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
+import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
@@ -256,6 +257,29 @@ async function handleApi(store, req, res, url) {
     const result = await dispatchPending(store, { webhooks, maxBatch: 50, timeoutMs: 5000 })
     jsonResponse(res, 201, { success: true, ...result })
     return
+  }
+
+  const scenarioRoute = matchScenarioRoute(url.pathname)
+  if (scenarioRoute) {
+    if (req.method === 'POST' && scenarioRoute.kind === 'create') {
+      const body = await readRequestJson(req)
+      const perturbation = body.perturbation || body
+      const result = runScenario(data, perturbation)
+      const token = encodeScenarioUrl(perturbation)
+      jsonResponse(res, 201, { success: true, ...result, token })
+      return
+    }
+    if (req.method === 'GET' && scenarioRoute.kind === 'retrieve') {
+      try {
+        const perturbation = decodeScenarioUrl(scenarioRoute.token)
+        const result = runScenario(data, perturbation)
+        jsonResponse(res, 200, { success: true, ...result })
+        return
+      } catch (error) {
+        jsonResponse(res, error.statusCode || 400, { success: false, error: error.message })
+        return
+      }
+    }
   }
 
   const ingestionRoute = matchIngestionRoute(url.pathname)
@@ -1500,6 +1524,13 @@ function matchWebhookRoute(pathname) {
   const match = pathname.match(/^\/api\/v1\/webhooks(?:\/([^/]+))?$/)
   if (!match) return null
   return { id: match[1] ? decodeURIComponent(match[1]) : null }
+}
+
+function matchScenarioRoute(pathname) {
+  if (pathname === '/api/v1/scenarios') return { kind: 'create' }
+  const match = pathname.match(/^\/api\/v1\/scenarios\/([^/]+)$/)
+  if (match) return { kind: 'retrieve', token: decodeURIComponent(match[1]) }
+  return null
 }
 
 function matchOperationalRoute(pathname) {
