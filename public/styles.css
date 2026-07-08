@@ -392,3 +392,18 @@ textarea {
   color: var(--muted);
   font-size: 12px;
 }
+
+.offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--warn);
+  color: white;
+  padding: 12px 24px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 1000;
+  box-shadow: 0 2px 4px rgb(0 0 0 / 10%);
+}

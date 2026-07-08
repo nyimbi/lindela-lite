@@ -1,3 +1,7 @@
+if ('serviceWorker' in navigator) {
+	navigator.serviceWorker.register('/sw.js').catch(() => {})
+}
+
 const sourceGrid = document.querySelector('#sourceGrid')
 const metrics = document.querySelector('#metrics')
 const statusBox = document.querySelector('#status')
@@ -23,6 +27,7 @@ const reportTemplatesTable = document.querySelector('#reportTemplatesTable')
 const reportSchedulesTable = document.querySelector('#reportSchedulesTable')
 const reportDistributionsTable = document.querySelector('#reportDistributionsTable')
 const apiKeyInput = document.querySelector('#apiKeyInput')
+const offlineBanner = createOfflineBanner()
 
 const defaultSources = ['open_meteo', 'gdacs', 'glofas', 'chirps', 'nasa_firms']
 const state = { reports: [], templates: [], schedules: [] }
@@ -657,4 +662,39 @@ function renderMap(records) {
 
 function setStatus(message) {
   statusBox.textContent = message
+}
+
+function createOfflineBanner() {
+  const banner = document.createElement('div')
+  banner.className = 'offline-banner'
+  banner.textContent = 'Offline. Changes will sync when you reconnect.'
+  banner.style.display = 'none'
+  document.body.insertBefore(banner, document.body.firstChild)
+
+  window.addEventListener('online', () => {
+    banner.style.display = 'none'
+    if (navigator.serviceWorker?.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'sync' })
+    }
+  })
+  window.addEventListener('offline', () => {
+    banner.style.display = 'block'
+  })
+
+  return banner
+}
+
+window.lindelaQueue = {
+  async queueRequest(url, method, body) {
+    if (navigator.onLine) {
+      return postJson(url, body)
+    }
+    if (navigator.serviceWorker?.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'queueRequest',
+        request: { url, method, headers: authHeaders(), body: JSON.stringify(body) },
+      })
+    }
+    return { success: true, queued: true }
+  },
 }

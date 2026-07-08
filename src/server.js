@@ -736,11 +736,13 @@ async function handleReportRoute(store, data, req, res, url, route) {
       return
     }
     if (route.exportFormat === 'md') {
+      const locale = url.searchParams.get('locale') || 'en'
+      const plain = url.searchParams.get('plain') === '1'
       res.writeHead(200, {
         'content-type': 'text/markdown; charset=utf-8',
         'content-disposition': `attachment; filename="${report.id}.md"`,
       })
-      res.end(renderReportMarkdown(report))
+      res.end(renderReportMarkdown(report, { locale, plain }))
       return
     }
     if (route.exportFormat === 'csv') {
@@ -1624,6 +1626,59 @@ async function handleStatic(res, pathname) {
     await handleDocs(res, pathname)
     return
   }
+
+  // Handle service worker
+  if (pathname === '/sw.js') {
+    try {
+      const content = await fs.readFile(path.join(publicDir, 'sw.js'))
+      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+      res.end(content)
+      return
+    } catch {
+      jsonResponse(res, 404, { success: false, error: 'Not found' })
+      return
+    }
+  }
+
+  // Handle manifest
+  if (pathname === '/manifest.webmanifest') {
+    try {
+      const content = await fs.readFile(path.join(publicDir, 'manifest.webmanifest'))
+      res.writeHead(200, { 'content-type': 'application/manifest+json; charset=utf-8' })
+      res.end(content)
+      return
+    } catch {
+      jsonResponse(res, 404, { success: false, error: 'Not found' })
+      return
+    }
+  }
+
+  // Handle icon
+  if (pathname === '/icon.svg') {
+    try {
+      const content = await fs.readFile(path.join(publicDir, 'icon.svg'))
+      res.writeHead(200, { 'content-type': 'image/svg+xml' })
+      res.end(content)
+      return
+    } catch {
+      jsonResponse(res, 404, { success: false, error: 'Not found' })
+      return
+    }
+  }
+
+  // Handle i18n catalogs
+  if (pathname.startsWith('/i18n/') && pathname.endsWith('.json')) {
+    try {
+      const content = await fs.readFile(path.join(publicDir, pathname.slice(1)))
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(content)
+      return
+    } catch {
+      jsonResponse(res, 404, { success: false, error: 'Not found' })
+      return
+    }
+  }
+
   const target = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '')
   const filePath = safeJoin(publicDir, target)
   try {
