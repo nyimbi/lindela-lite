@@ -247,9 +247,10 @@ export function computeNextRunAt(schedule, from = new Date().toISOString()) {
   return next.toISOString()
 }
 
-export function renderReportMarkdown(report) {
+export function renderReportMarkdown(report, { locale = 'en', plain = false } = {}) {
+  let title = report.title
   const lines = [
-    `# ${report.title}`,
+    `# ${title}`,
     '',
     `- Type: ${report.report_type}`,
     `- Status: ${report.status}`,
@@ -264,7 +265,12 @@ export function renderReportMarkdown(report) {
   }
   for (const section of report.sections || []) {
     lines.push(`## ${section.title}`, '')
-    lines.push(section.content?.markdown || section.content?.summary || '')
+    let content = section.content?.markdown || section.content?.summary || ''
+    if (plain) {
+      const plainResult = plainLanguageText(content)
+      content = plainResult.text
+    }
+    lines.push(content)
     lines.push('')
   }
   if (report.source_refs?.length) {
@@ -273,6 +279,56 @@ export function renderReportMarkdown(report) {
     lines.push('')
   }
   return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()}\n`
+}
+
+function plainLanguageText(text) {
+  const maxLength = 25
+  const notes = []
+  let result = text
+
+  const sentences = text.split(/(?<=[.!?])\s+/)
+  const simplified = []
+
+  for (const sentence of sentences) {
+    const words = sentence.split(/\s+/)
+    if (words.length > maxLength) {
+      const chunks = []
+      let chunk = []
+      for (const word of words) {
+        chunk.push(word)
+        if (chunk.join(' ').split(/\s+/).length >= maxLength - 2) {
+          chunks.push(chunk.join(' '))
+          chunk = []
+        }
+      }
+      if (chunk.length) chunks.push(chunk.join(' '))
+      simplified.push(...chunks)
+      notes.push(`Simplified long sentence into ${chunks.length} parts`)
+    } else {
+      simplified.push(sentence)
+    }
+  }
+
+  result = simplified.join('. ')
+
+  const abbreviations = {
+    'SITREP': 'situation report',
+    'IBF': 'impact-based forecasting',
+    'GIS': 'geographic information system',
+    'API': 'application programming interface',
+    'SMS': 'text message',
+    'URL': 'web address',
+  }
+
+  for (const [abbr, expanded] of Object.entries(abbreviations)) {
+    const regex = new RegExp(`\\b${abbr}\\b`, 'g')
+    if (regex.test(result)) {
+      result = result.replace(regex, expanded)
+      notes.push(`Expanded ${abbr} to ${expanded}`)
+    }
+  }
+
+  return { text: result, notes }
 }
 
 export function recordsForReportSources(report, data) {

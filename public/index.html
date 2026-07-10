@@ -1,9 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="ltr">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Lindela Lite</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0b1220">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -14,6 +16,14 @@
       </div>
       <div class="topbar-actions">
         <label class="api-key-field">API key <input id="apiKeyInput" type="password" autocomplete="off" placeholder="optional"></label>
+        <select id="locale-select" style="width: 100px; min-height: 32px; border: 1px solid rgb(255 255 255 / 25%); border-radius: 6px; background: rgb(255 255 255 / 10%); color: white; padding: 0 8px;">
+          <option value="en">English</option>
+          <option value="fr">Français</option>
+          <option value="pt">Português</option>
+          <option value="sw">Swahili</option>
+          <option value="ar">العربية</option>
+          <option value="am">ኦም</option>
+        </select>
         <span id="storageMode" class="pill">storage: unknown</span>
         <button id="refreshButton" type="button">Refresh</button>
       </div>

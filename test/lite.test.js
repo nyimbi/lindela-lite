@@ -23,6 +23,7 @@ import { Pg0Manager } from '../src/pg0.js'
 import { createStoreFromEnv } from '../src/storage.js'
 import { JsonStore, mergeById } from '../src/store.js'
 import { toCsv, toGeoJson } from '../src/utils.js'
+import { t, isRtl, plainLanguage } from '../src/i18n.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -1317,6 +1318,90 @@ function rawGet(baseUrl, requestPath) {
     req.end()
   })
 }
+
+describe('Lindela Lite PWA and i18n', () => {
+  it('GET /manifest.webmanifest returns 200 with manifest+json content-type', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-pwa-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/manifest.webmanifest`)
+      assert.equal(res.status, 200)
+      assert.equal(res.headers.get('content-type'), 'application/manifest+json; charset=utf-8')
+      const json = await res.json()
+      assert.equal(json.name, 'Lindela Lite')
+      assert.equal(json.display, 'standalone')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /sw.js returns 200 with javascript content-type', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-sw-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/sw.js`)
+      assert.equal(res.status, 200)
+      assert.equal(res.headers.get('content-type'), 'text/javascript; charset=utf-8')
+      const text = await res.text()
+      assert.ok(text.includes('CACHE_NAME'))
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /i18n/en.json returns 200 with application/json content-type', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-i18n-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/i18n/en.json`)
+      assert.equal(res.status, 200)
+      assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8')
+      const json = await res.json()
+      assert.equal(json['app.title'], 'Lindela Lite')
+      assert.equal(json['action.refresh'], 'Refresh')
+    } finally {
+      listener.close()
+    }
+  })
+})
+
+describe('Lindela Lite i18n module', () => {
+  it('t() translates with key lookups and interpolation', () => {
+    const catalog = { greeting: 'Hi {name}', farewell: 'Goodbye' }
+    assert.equal(t(catalog, 'greeting', { name: 'Alice' }), 'Hi Alice')
+    assert.equal(t(catalog, 'farewell', {}), 'Goodbye')
+    assert.equal(t(catalog, 'missing'), 'missing')
+  })
+
+  it('isRtl() returns true for Arabic', () => {
+    assert.equal(isRtl('ar'), true)
+    assert.equal(isRtl('en'), false)
+    assert.equal(isRtl('fr'), false)
+  })
+
+  it('plainLanguage() simplifies long sentences and expands abbreviations', () => {
+    const text = 'The SITREP shows a flood risk situation. GIS data confirms high impact.'
+    const result = plainLanguage(text, { readingLevel: 'basic' })
+    assert.ok(result.text.includes('situation report'))
+    assert.ok(result.text.includes('geographic information system'))
+    assert.ok(Array.isArray(result.notes))
+  })
+})
 
 function rapidProEnv() {
   return {
