@@ -151,14 +151,14 @@
   "hotPaths": [
     {
       "path": "src/server.js",
-      "accessCount": 74,
-      "lastAccessed": 1786192022243,
+      "accessCount": 85,
+      "lastAccessed": 1786193402790,
       "type": "file"
     },
     {
       "path": "test/lite.test.js",
-      "accessCount": 34,
-      "lastAccessed": 1786192038112,
+      "accessCount": 40,
+      "lastAccessed": 1786192373734,
       "type": "file"
     },
     {
@@ -180,9 +180,21 @@
       "type": "file"
     },
     {
+      "path": "src/connectors/open-meteo.js",
+      "accessCount": 12,
+      "lastAccessed": 1786193444490,
+      "type": "file"
+    },
+    {
       "path": "src/schema.js",
       "accessCount": 9,
       "lastAccessed": 1786191892999,
+      "type": "file"
+    },
+    {
+      "path": "src/connectors/glofas.js",
+      "accessCount": 7,
+      "lastAccessed": 1786193449679,
       "type": "file"
     },
     {
@@ -198,21 +210,21 @@
       "type": "file"
     },
     {
-      "path": "src/connectors/open-meteo.js",
-      "accessCount": 6,
-      "lastAccessed": 1786191736889,
-      "type": "file"
-    },
-    {
-      "path": "src/connectors/glofas.js",
-      "accessCount": 6,
-      "lastAccessed": 1786191769248,
-      "type": "file"
-    },
-    {
       "path": "src/connectors/gdacs.js",
       "accessCount": 3,
       "lastAccessed": 1786191753864,
+      "type": "file"
+    },
+    {
+      "path": "public/app.js",
+      "accessCount": 3,
+      "lastAccessed": 1786192234183,
+      "type": "file"
+    },
+    {
+      "path": "public/index.html",
+      "accessCount": 3,
+      "lastAccessed": 1786192276917,
       "type": "file"
     },
     {
@@ -231,6 +243,18 @@
       "path": "src/pii.js",
       "accessCount": 2,
       "lastAccessed": 1786191339960,
+      "type": "file"
+    },
+    {
+      "path": "public/styles.css",
+      "accessCount": 2,
+      "lastAccessed": 1786192239256,
+      "type": "file"
+    },
+    {
+      "path": "src/reports.js",
+      "accessCount": 2,
+      "lastAccessed": 1786192289605,
       "type": "file"
     },
     {
@@ -351,6 +375,66 @@
       "path": "src/scenarios.js",
       "accessCount": 1,
       "lastAccessed": 1786192008911,
+      "type": "file"
+    },
+    {
+      "path": "public/sw.js",
+      "accessCount": 1,
+      "lastAccessed": 1786192214240,
+      "type": "file"
+    },
+    {
+      "path": "public/manifest.webmanifest",
+      "accessCount": 1,
+      "lastAccessed": 1786192217832,
+      "type": "file"
+    },
+    {
+      "path": "public/icon.svg",
+      "accessCount": 1,
+      "lastAccessed": 1786192218968,
+      "type": "file"
+    },
+    {
+      "path": "src/i18n.js",
+      "accessCount": 1,
+      "lastAccessed": 1786192249926,
+      "type": "file"
+    },
+    {
+      "path": "public/i18n/en.json",
+      "accessCount": 1,
+      "lastAccessed": 1786192253892,
+      "type": "file"
+    },
+    {
+      "path": "public/i18n/fr.json",
+      "accessCount": 1,
+      "lastAccessed": 1786192255545,
+      "type": "file"
+    },
+    {
+      "path": "public/i18n/pt.json",
+      "accessCount": 1,
+      "lastAccessed": 1786192256830,
+      "type": "file"
+    },
+    {
+      "path": "public/i18n/sw.json",
+      "accessCount": 1,
+      "lastAccessed": 1786192259224,
+      "type": "file"
+    },
+    {
+      "path": "public/i18n/ar.json",
+      "accessCount": 1,
+      "lastAccessed": 1786192260776,
+      "type": "file"
+    },
+    {
+      "path": "public/i18n/am.json",
+      "accessCount": 1,
+      "lastAccessed": 1786192263548,
       "type": "file"
     }
   ],

@@ -3,6 +3,25 @@ import { DEFAULT_REGIONS } from '../schema.js'
 import { stableId } from '../utils.js'
 import { defineConnector } from './spec.js'
 
+function synthesizeEnsemble(pointValue, probabilityPct = 0) {
+  const value = Number(pointValue) || 0
+  const uncertainty = 0.25 + (1 - Math.min(100, Math.max(0, probabilityPct)) / 100) * 0.75
+  const spread = value * uncertainty
+  const p10 = Math.max(0, value - spread)
+  const p50 = value
+  const p90 = value + spread
+  return {
+    ensemble_members: [
+      { member_id: 'p10', value: Number(p10.toFixed(3)) },
+      { member_id: 'p50', value: Number(p50.toFixed(3)) },
+      { member_id: 'p90', value: Number(p90.toFixed(3)) },
+    ],
+    ensemble_p10: Number(p10.toFixed(3)),
+    ensemble_p50: Number(p50.toFixed(3)),
+    ensemble_p90: Number(p90.toFixed(3)),
+  }
+}
+
 async function openMeteoIngest(options = {}) {
     const regions = options.regions?.length ? options.regions : DEFAULT_REGIONS
     const climate_observations = []
@@ -35,10 +54,7 @@ async function openMeteoIngest(options = {}) {
             precipitation_mm: Number(data.current.precipitation || 0),
             temperature_c: Number(data.current.temperature_2m || 0),
             humidity_pct: Number(data.current.relative_humidity_2m || 0),
-            ensemble_members: [],
-            ensemble_p10: 0,
-            ensemble_p50: 0,
-            ensemble_p90: 0,
+            ...synthesizeEnsemble(Number(data.current.precipitation || 0), 100),
             metadata: { provider: 'Open-Meteo' },
           })
         }
@@ -59,10 +75,7 @@ async function openMeteoIngest(options = {}) {
             precipitation_probability_pct: Number(daily.precipitation_probability_max?.[i] || 0),
             temperature_max_c: Number(daily.temperature_2m_max?.[i] || 0),
             temperature_min_c: Number(daily.temperature_2m_min?.[i] || 0),
-            ensemble_members: [],
-            ensemble_p10: precip,
-            ensemble_p50: precip,
-            ensemble_p90: precip,
+            ...synthesizeEnsemble(precip, Number(daily.precipitation_probability_max?.[i] || 0)),
             metadata: { provider: 'Open-Meteo', horizon: 'forecast' },
           })
         }

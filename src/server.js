@@ -67,12 +67,12 @@ export function createServer(options = {}) {
         return
       }
 
+      if (url.pathname === '/metrics' || url.pathname === '/api/v1/metrics') {
+        res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'cache-control': 'no-store' })
+        res.end(metrics.render())
+        return
+      }
       if (url.pathname.startsWith('/api/v1/')) {
-        if (url.pathname === '/api/v1/metrics') {
-          res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'cache-control': 'no-store' })
-          res.end(metrics.render())
-          return
-        }
         await handleApi(await storeProvider, req, res, url)
         return
       }
@@ -780,6 +780,7 @@ async function handleReportRoute(store, data, req, res, url, route) {
     if (body.generate) record = generateReportSections(record, data, body)
     const log = actionLog('reports', 'created', record, body.actor, req.__auth?.subject)
     await store.merge({ reports: [record], action_logs: [log] })
+    try { await emit(store, 'report.created', record) } catch {}
     jsonResponse(res, 201, { success: true, data: record, action_log: log })
     return
   }
@@ -838,6 +839,7 @@ async function handleReportRoute(store, data, req, res, url, route) {
       rapidpro_dispatches: result.rapidproDispatches,
       action_logs: [log, ...result.runs.map((run) => actionLog('report_distribution_runs', run.status, run, body.actor, req.__auth?.subject))],
     })
+    try { await emit(store, 'report.distributed', record) } catch {}
     jsonResponse(res, 201, { success: result.runs.every((run) => run.status !== 'failed'), data: result.runs, report: record, action_log: log })
     return
   }

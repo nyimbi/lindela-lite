@@ -2,16 +2,24 @@
   "version": 1,
   "entries": {
     "79a93d4a2f8f50b95f852280616242fee1855dc99a3c75211917f55e72e95fae": {
-      "last_emitted_at_ms": 1786192040613,
+      "last_emitted_at_ms": 1786193461503,
       "message": "Use parallel execution for independent tasks. Use run_in_background for long operations (npm install, builds, tests)."
     },
+    "445ed27a3872b681d98190bae61ccb84954e1bc4e140df5370be958dee776b3a": {
+      "last_emitted_at_ms": 1786193387056,
+      "message": "Verify changes work after editing. Test functionality before marking complete."
+    },
     "466399dafa2d20f60587180bad0a07358eb7f2bce724df0ff682f038ad33f5ad": {
-      "last_emitted_at_ms": 1786191971728,
+      "last_emitted_at_ms": 1786193363883,
       "message": "Read multiple files in parallel when possible for faster analysis."
     },
-    "445ed27a3872b681d98190bae61ccb84954e1bc4e140df5370be958dee776b3a": {
-      "last_emitted_at_ms": 1786191898559,
-      "message": "Verify changes work after editing. Test functionality before marking complete."
+    "249fe7c4560e0db404cbb4a066ddc53ebf539a7a364cf49718cc0d402e520540": {
+      "last_emitted_at_ms": 1786193122943,
+      "message": "Spawning agent: general-purpose (sonnet) | Task: Verify 20-item roadmap"
+    },
+    "451fade27a8b7197a91adf7bf63c5d8060af670f6921020fe6fd5b8baaac9ac6": {
+      "last_emitted_at_ms": 1786192156248,
+      "message": "[SLOP WARNING] Detected fallback/workaround language in this tool input. Do not make potential slop: avoid ad-hoc fallback layers, workaround shims, or environment-specific patches unless explicitly justified. For architecture concerns, consult the architect for a concrete design first. If this seems environment-specific, ask the user to confirm constraints before proceeding.\n\nSpawning agent: general-purpose (haiku) | Task: Batch 5: frontend"
     },
     "ffa29307d9c62fddc3da91561b32bf75f5d9929ba86754d43478fcd3a7470036": {
       "last_emitted_at_ms": 1786191526998,
@@ -32,11 +40,7 @@
     "d64a3743589baa678225969731dc8b9fad64c698bc542d610d2cdd55bbc1bb7d": {
       "last_emitted_at_ms": 1786190450657,
       "message": "Spawning agent: general-purpose (haiku) | Task: Batch 2: analytics science"
-    },
-    "23dafdb327284f4a87599bd9b2b5a7728bf8bb961ece1e62c6d2a817f28ee5d8": {
-      "last_emitted_at_ms": 1786189559736,
-      "message": "[SLOP WARNING] Detected fallback/workaround language in this tool input. Do not make potential slop: avoid ad-hoc fallback layers, workaround shims, or environment-specific patches unless explicitly justified. For architecture concerns, consult the architect for a concrete design first. If this seems environment-specific, ask the user to confirm constraints before proceeding.\n\nSpawning agent: general-purpose (haiku) | Task: Batch 1: foundation"
     }
   },
-  "updated_at": "2026-08-08T12:27:20.613Z"
+  "updated_at": "2026-08-08T12:51:01.503Z"
 }
