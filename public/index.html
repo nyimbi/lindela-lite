@@ -5,18 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Lindela Lite</title>
     <link rel="manifest" href="/manifest.webmanifest">
-    <meta name="theme-color" content="#0b1220">
+    <meta name="theme-color" content="#0e1520">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <h1>Lindela Lite</h1>
-        <p>Climate-conflict, flood, environmental, and service-delivery impact monitoring.</p>
+
+    <div id="offlineBanner" class="offline-banner" hidden>
+      <span data-i18n="banner.offline">Offline. Changes will sync when you reconnect.</span>
+      <span id="queuedBadge" class="queued-badge" hidden></span>
+    </div>
+
+    <header class="topbar" role="banner">
+      <div class="topbar-brand">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" fill="currentColor"/>
+          <circle cx="12" cy="12" r="7" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.5"/>
+          <circle cx="12" cy="12" r="11" stroke="currentColor" stroke-width="1" fill="none" opacity="0.25"/>
+          <line x1="12" y1="1" x2="12" y2="4" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="12" y1="20" x2="12" y2="23" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="1" y1="12" x2="4" y2="12" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="20" y1="12" x2="23" y2="12" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+        <span class="brand-name" data-i18n="app.title">Lindela Lite</span>
       </div>
-      <div class="topbar-actions">
-        <label class="api-key-field">API key <input id="apiKeyInput" type="password" autocomplete="off" placeholder="optional"></label>
-        <select id="locale-select" style="width: 100px; min-height: 32px; border: 1px solid rgb(255 255 255 / 25%); border-radius: 6px; background: rgb(255 255 255 / 10%); color: white; padding: 0 8px;">
+      <div class="topbar-controls">
+        <select id="locale-select" aria-label="Language">
           <option value="en">English</option>
           <option value="fr">Français</option>
           <option value="pt">Português</option>
@@ -24,259 +37,343 @@
           <option value="ar">العربية</option>
           <option value="am">ኦም</option>
         </select>
-        <span id="storageMode" class="pill">storage: unknown</span>
-        <button id="refreshButton" type="button">Refresh</button>
+        <span id="storageMode" class="badge badge-storage">json</span>
+        <span id="connectionStatus" class="badge badge-connection">online</span>
+        <button id="refreshButton" class="btn btn-icon" type="button" aria-label="Refresh" data-i18n-title="action.refresh" title="Refresh">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <polyline points="12,2 12.9,4.7 10.2,4.7" fill="currentColor"/>
+          </svg>
+        </button>
+        <button id="cmdPaletteButton" class="btn btn-icon" type="button" aria-label="Command palette" title="Cmd+K">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 8h10M8 3v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
       </div>
     </header>
 
-    <main class="layout">
-      <section class="panel controls">
-        <h2>Ingestion</h2>
-        <label>Latitude <input id="latInput" type="number" step="0.0001" value="3.1167"></label>
-        <label>Longitude <input id="lonInput" type="number" step="0.0001" value="35.6"></label>
-        <label>Region <input id="regionInput" type="text" value="Turkana"></label>
-        <label>Country <input id="countryInput" type="text" value="KE" maxlength="3"></label>
-        <div class="source-grid" id="sourceGrid"></div>
-        <div class="button-row wrap">
-          <button id="runButton" type="button">Run Selected Sources</button>
-          <button id="createIngestionSchedulesButton" type="button">Create Public Schedules</button>
-          <button id="runDueIngestionButton" type="button">Run Due Sources</button>
-        </div>
-        <p class="note">GDELT is intentionally unavailable in Lindela Lite.</p>
-      </section>
+    <div class="console-layout">
 
-      <section class="panel controls">
-        <h2>Service Assets</h2>
-        <textarea id="serviceAssetInput" rows="8" spellcheck="false" placeholder="CSV: name,service_type,country,latitude,longitude
-Clinic A,health,KE,3.13,35.63"></textarea>
-        <div class="button-row">
-          <button id="importCsvButton" type="button">Import CSV</button>
-          <button id="importGeoJsonButton" type="button">Import GeoJSON</button>
-        </div>
-        <p class="note">Required fields: service_type, country, latitude, longitude.</p>
-      </section>
-
-      <section class="panel controls">
-        <h2>Operations</h2>
-        <label>Incident title <input id="incidentTitleInput" type="text" placeholder="Flood access disruption"></label>
-        <label>Type <input id="incidentTypeInput" type="text" value="climate_disaster"></label>
-        <label>Priority
-          <select id="incidentPriorityInput">
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="critical">Critical</option>
-            <option value="low">Low</option>
-          </select>
-        </label>
-        <button id="createIncidentButton" type="button">Create Incident</button>
-        <hr>
-        <label>Incident ID <input id="interventionIncidentInput" type="text" placeholder="incident_..."></label>
-        <label>Intervention title <input id="interventionTitleInput" type="text" placeholder="Open alternate water route"></label>
-        <label>Lead org <input id="interventionLeadInput" type="text" placeholder="Ops team"></label>
-        <button id="createInterventionButton" type="button">Create Intervention</button>
-        <hr>
-        <label>Intervention ID <input id="taskInterventionInput" type="text" placeholder="intervention_..."></label>
-        <label>Task <input id="taskTitleInput" type="text" placeholder="Validate access route"></label>
-        <label>Owner <input id="taskOwnerInput" type="text" placeholder="Field lead"></label>
-        <button id="createTaskButton" type="button">Create Task</button>
-        <hr>
-        <label>Alert name <input id="alertNameInput" type="text" value="Open incidents watch"></label>
-        <label>Metric <input id="alertMetricInput" type="text" value="operations.counts.open_incidents"></label>
-        <label>Threshold <input id="alertThresholdInput" type="number" value="1"></label>
-        <div class="button-row">
-          <button id="createAlertRuleButton" type="button">Create Rule</button>
-          <button id="evaluateAlertsButton" type="button">Evaluate</button>
-        </div>
-        <hr>
-        <label>RapidPro URNs <input id="rapidProUrnsInput" type="text" placeholder="+254700000000,+254711111111"></label>
-        <button id="sendRapidProAlertButton" type="button">Send Latest Alert</button>
-      </section>
-
-      <section class="panel controls">
-        <h2>Reporting</h2>
-        <label>Template ID <input id="reportTemplateIdInput" type="text" placeholder="report_template_..."></label>
-        <label>Template name <input id="reportTemplateNameInput" type="text" value="Daily operations SITREP"></label>
-        <label>Report type
-          <select id="reportTypeInput">
-            <option value="situation_report">Situation Report</option>
-            <option value="incident_brief">Incident Brief</option>
-            <option value="intervention_update">Intervention Update</option>
-            <option value="data_quality_report">Data Quality Report</option>
-            <option value="alert_digest">Alert Digest</option>
-          </select>
-        </label>
-        <label>Report country <input id="reportCountryInput" type="text" value="KE" maxlength="3"></label>
-        <label>Incident ID <input id="reportIncidentInput" type="text" placeholder="incident_..."></label>
-        <label>Intervention ID <input id="reportInterventionInput" type="text" placeholder="intervention_..."></label>
-        <label>Sections <input id="reportSectionsInput" type="text" value="executive_summary,incident_summary,intervention_summary,field_report_summary,alert_summary,data_quality_summary,appendix_sources"></label>
-        <div class="button-row wrap">
-          <button id="createReportTemplateButton" type="button">Create Template</button>
-          <button id="generateReportButton" type="button">Generate Report</button>
-          <button id="approveReportButton" type="button">Approve Latest</button>
-          <button id="distributeReportButton" type="button">Prepare Markdown</button>
-        </div>
-        <hr>
-        <label>Schedule next run <input id="reportScheduleNextRunInput" type="datetime-local"></label>
-        <div class="button-row wrap">
-          <button id="createReportScheduleButton" type="button">Create Schedule</button>
-          <button id="runDueReportsButton" type="button">Run Due</button>
-        </div>
-      </section>
-
-      <section class="panel overview">
-        <h2>Overview</h2>
-        <div class="metrics" id="metrics"></div>
-        <div class="status" id="status"></div>
-      </section>
-
-      <section class="panel source-panel">
-        <h2>Source Freshness</h2>
-        <div id="sourceFreshness" class="freshness"></div>
-      </section>
-
-      <section class="panel">
-        <h2>Data Quality</h2>
-        <div id="dataQuality" class="cards"></div>
-      </section>
-
-      <section class="panel">
-        <h2>Operations Summary</h2>
-        <div class="metrics" id="operationsMetrics"></div>
-      </section>
-
-      <section class="panel">
-        <h2>RapidPro</h2>
-        <div id="rapidProStatus" class="cards"></div>
-      </section>
-
-      <section class="panel table-panel">
-        <h2>Reports</h2>
-        <table>
-          <thead>
-            <tr><th>Title</th><th>Type</th><th>Status</th><th>Generated</th></tr>
-          </thead>
-          <tbody id="reportsTable"></tbody>
-        </table>
-      </section>
-
-      <section class="panel table-panel">
-        <h2>Report Preview</h2>
-        <pre id="reportPreview" class="report-preview">No generated report yet.</pre>
-      </section>
-
-      <section class="panel table-panel">
-        <h2>Templates, Schedules, Distribution Runs</h2>
-        <div class="split-table three">
-          <table>
-            <thead>
-              <tr><th>Template</th><th>Type</th><th>ID</th></tr>
-            </thead>
-            <tbody id="reportTemplatesTable"></tbody>
-          </table>
-          <table>
-            <thead>
-              <tr><th>Schedule</th><th>Status</th><th>Next run</th></tr>
-            </thead>
-            <tbody id="reportSchedulesTable"></tbody>
-          </table>
-          <table>
-            <thead>
-              <tr><th>Channel</th><th>Status</th><th>Report</th></tr>
-            </thead>
-            <tbody id="reportDistributionsTable"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="panel map-panel">
-        <div class="panel-heading">
-          <h2>GeoJSON Viewer</h2>
-          <div class="button-row">
-            <button id="exportGeoJsonButton" type="button">GeoJSON</button>
-            <button id="exportCsvButton" type="button">CSV</button>
+      <section class="map-section" aria-label="Situational map">
+        <div class="map-container">
+          <svg id="situationMap" class="situation-map" viewBox="0 0 800 500"
+               preserveAspectRatio="xMidYMid meet" role="img" aria-label="Situation map">
+            <defs id="mapDefs"></defs>
+            <g id="mapTransform">
+              <g id="mapGraticule" class="graticule"></g>
+              <g id="mapRisk" class="risk-layer"></g>
+              <g id="mapHazards" class="hazard-layer"></g>
+              <g id="mapAssets" class="assets-layer"></g>
+            </g>
+            <g id="mapLegend" class="map-legend"></g>
+          </svg>
+          <div class="map-filters">
+            <label class="filter-label">
+              <span>Time</span>
+              <select id="mapTimeRange">
+                <option value="24h">24 h</option>
+                <option value="7d" selected>7 d</option>
+                <option value="30d">30 d</option>
+                <option value="all">All</option>
+              </select>
+            </label>
+            <label class="filter-label">
+              <span data-i18n="label.severity">Severity</span>
+              <select id="mapSeverity">
+                <option value="" data-i18n="filter.all">All</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </label>
+            <label class="filter-label">
+              <span>Source</span>
+              <select id="mapSource">
+                <option value="">All</option>
+              </select>
+            </label>
+            <span id="mapRecordCount" class="map-record-count"></span>
           </div>
         </div>
-        <div id="map" class="map" aria-label="GeoJSON point viewer"></div>
-        <div class="legend"><span class="dot critical"></span>Critical <span class="dot high"></span>High <span class="dot medium"></span>Medium <span class="dot low"></span>Low</div>
       </section>
 
-      <section class="panel">
-        <h2>Flood Risk</h2>
-        <div id="floodRisk" class="cards"></div>
-      </section>
+      <aside class="rail" role="complementary" aria-label="Operations rail">
+        <nav class="rail-tabs" role="tablist" aria-label="Console tabs">
+          <button class="rail-tab active" role="tab" id="tab-alerts"
+                  aria-controls="panel-alerts" aria-selected="true" data-tab="alerts">
+            <span data-i18n="tab.alerts">Alerts</span>
+            <span id="alertsBadge" class="tab-badge" hidden>0</span>
+          </button>
+          <button class="rail-tab" role="tab" id="tab-reports"
+                  aria-controls="panel-reports" aria-selected="false" data-tab="reports">
+            <span data-i18n="tab.reports">Reports</span>
+          </button>
+          <button class="rail-tab" role="tab" id="tab-ingestion"
+                  aria-controls="panel-ingestion" aria-selected="false" data-tab="ingestion">
+            <span data-i18n="tab.ingestion">Ingestion</span>
+          </button>
+          <button class="rail-tab" role="tab" id="tab-settings"
+                  aria-controls="panel-settings" aria-selected="false" data-tab="settings">
+            <span data-i18n="tab.settings">Settings</span>
+          </button>
+        </nav>
 
-      <section class="panel">
-        <h2>Climate-Conflict Risk</h2>
-        <div id="conflictRisk" class="cards"></div>
-      </section>
+        <div class="rail-content">
 
-      <section class="panel table-panel">
-        <h2>Incidents</h2>
-        <table>
-          <thead>
-            <tr><th>Title</th><th>Status</th><th>Priority</th><th>ID</th></tr>
-          </thead>
-          <tbody id="incidentsTable"></tbody>
-        </table>
-      </section>
+          <!-- Alerts -->
+          <div id="panel-alerts" class="rail-panel active" role="tabpanel" aria-labelledby="tab-alerts">
+            <div class="panel-header">
+              <h2 data-i18n="tab.alerts">Alerts</h2>
+              <div class="filter-chips" id="alertFilterChips" role="group" aria-label="Alert filters">
+                <button class="chip active" data-filter="all" data-i18n="filter.all">All</button>
+                <button class="chip" data-filter="open" data-i18n="filter.open">Open</button>
+                <button class="chip" data-filter="approved" data-i18n="filter.approved">Approved</button>
+                <button class="chip" data-filter="auto_approved" data-i18n="filter.auto_approved">Auto-approved</button>
+              </div>
+            </div>
+            <div id="alertsList" class="list-container" role="list"></div>
+          </div>
 
-      <section class="panel table-panel">
-        <h2>Interventions And Tasks</h2>
-        <div class="split-table">
-          <table>
-            <thead>
-              <tr><th>Intervention</th><th>Status</th><th>ID</th></tr>
-            </thead>
-            <tbody id="interventionsTable"></tbody>
-          </table>
-          <table>
-            <thead>
-              <tr><th>Task</th><th>Status</th><th>Owner</th></tr>
-            </thead>
-            <tbody id="tasksTable"></tbody>
-          </table>
+          <!-- Reports -->
+          <div id="panel-reports" class="rail-panel" role="tabpanel" aria-labelledby="tab-reports" hidden>
+            <div class="panel-header">
+              <h2 data-i18n="tab.reports">Reports</h2>
+              <button id="newReportButton" class="btn btn-sm" type="button" data-i18n="action.new_report">New report</button>
+            </div>
+            <form id="newReportForm" class="inline-form" hidden>
+              <label>Template
+                <select id="reportTemplateIdInput"><option value="">None (create new)</option></select>
+              </label>
+              <label>Country <input type="text" id="reportCountryInput" placeholder="KE"></label>
+              <label>Incident ID <input type="text" id="reportIncidentInput" placeholder="incident_..."></label>
+              <label>Intervention ID <input type="text" id="reportInterventionInput" placeholder="intervention_..."></label>
+              <label>Sections
+                <input type="text" id="reportSectionsInput"
+                  value="executive_summary,incident_summary,alert_summary,appendix_sources">
+              </label>
+              <div class="form-actions">
+                <button id="createReportTemplateButton" type="button" class="btn btn-sm">Save template</button>
+                <button id="generateReportButton" type="button" class="btn btn-primary btn-sm"
+                        data-i18n="action.generate">Generate</button>
+              </div>
+            </form>
+            <div id="reportsList" class="list-container" role="list"></div>
+          </div>
+
+          <!-- Ingestion -->
+          <div id="panel-ingestion" class="rail-panel" role="tabpanel" aria-labelledby="tab-ingestion" hidden>
+            <div class="panel-header">
+              <h2 data-i18n="tab.ingestion">Ingestion</h2>
+            </div>
+            <div class="ingestion-region">
+              <label>Lat <input id="latInput" type="number" step="0.0001" value="3.1167"></label>
+              <label>Lon <input id="lonInput" type="number" step="0.0001" value="35.6"></label>
+              <label>Region <input id="regionInput" type="text" value="Turkana"></label>
+              <label>Country <input id="countryInput" type="text" value="KE" maxlength="3"></label>
+            </div>
+            <div id="sourceGrid" class="source-grid" role="group" aria-label="Select sources to run"></div>
+            <div class="ingestion-actions">
+              <button id="runButton" type="button" class="btn btn-primary btn-sm"
+                      data-i18n="action.run_now">Run selected</button>
+              <button id="createIngestionSchedulesButton" type="button" class="btn btn-sm"
+                      data-i18n="action.create_defaults">Create schedules</button>
+              <button id="runDueIngestionButton" type="button" class="btn btn-sm"
+                      data-i18n="action.run_all_due">Run due</button>
+            </div>
+            <div id="sourceStatusList" class="list-container"></div>
+            <div class="service-asset-section">
+              <h3>Service assets</h3>
+              <textarea id="serviceAssetInput" rows="4" spellcheck="false"
+                placeholder="CSV: name,service_type,country,latitude,longitude&#10;or GeoJSON FeatureCollection"></textarea>
+              <div class="form-actions">
+                <button id="importCsvButton" type="button" class="btn btn-sm">Import CSV</button>
+                <button id="importGeoJsonButton" type="button" class="btn btn-sm">Import GeoJSON</button>
+                <button id="exportGeoJsonButton" type="button" class="btn btn-sm">Export GeoJSON</button>
+                <button id="exportCsvButton" type="button" class="btn btn-sm">Export CSV</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Settings -->
+          <div id="panel-settings" class="rail-panel" role="tabpanel" aria-labelledby="tab-settings" hidden>
+            <div class="panel-header">
+              <h2 data-i18n="tab.settings">Settings</h2>
+            </div>
+            <div class="settings-content">
+
+              <section class="settings-section">
+                <h3>API token</h3>
+                <p class="settings-note">Stored in localStorage. Sent as <code>x-api-key</code> on mutating requests.</p>
+                <label>Token
+                  <input id="apiKeyInput" type="password" autocomplete="off" placeholder="optional">
+                </label>
+              </section>
+
+              <section class="settings-section">
+                <h3>Trigger protocols</h3>
+                <div id="triggerProtocolsList" class="list-container"></div>
+              </section>
+
+              <section class="settings-section">
+                <h3>Webhooks</h3>
+                <div id="webhooksList" class="list-container"></div>
+                <form id="addWebhookForm" class="inline-form">
+                  <label>URL <input type="url" id="webhookUrlInput" placeholder="https://..."></label>
+                  <label>Events <input type="text" id="webhookEventsInput" placeholder="alert.*"></label>
+                  <button type="submit" class="btn btn-sm">Add webhook</button>
+                </form>
+              </section>
+
+              <section class="settings-section">
+                <h3>Operations</h3>
+                <div class="ops-forms">
+                  <details>
+                    <summary>Create incident</summary>
+                    <div class="details-body">
+                      <label>Title <input id="incidentTitleInput" type="text" placeholder="Incident title"></label>
+                      <label>Type <input id="incidentTypeInput" type="text" value="flood_access"></label>
+                      <label>Priority
+                        <select id="incidentPriorityInput">
+                          <option value="high">High</option>
+                          <option value="medium">Medium</option>
+                          <option value="low">Low</option>
+                        </select>
+                      </label>
+                      <button id="createIncidentButton" type="button" class="btn btn-sm">Create</button>
+                    </div>
+                  </details>
+                  <details>
+                    <summary>Create intervention</summary>
+                    <div class="details-body">
+                      <label>Incident ID <input id="interventionIncidentInput" type="text" placeholder="incident_..."></label>
+                      <label>Title <input id="interventionTitleInput" type="text" placeholder="Intervention title"></label>
+                      <label>Lead org <input id="interventionLeadInput" type="text" placeholder="Org name"></label>
+                      <button id="createInterventionButton" type="button" class="btn btn-sm">Create</button>
+                    </div>
+                  </details>
+                  <details>
+                    <summary>Create task</summary>
+                    <div class="details-body">
+                      <label>Intervention ID <input id="taskInterventionInput" type="text" placeholder="intervention_..."></label>
+                      <label>Title <input id="taskTitleInput" type="text" placeholder="Task title"></label>
+                      <label>Owner <input id="taskOwnerInput" type="text" placeholder="field-lead"></label>
+                      <button id="createTaskButton" type="button" class="btn btn-sm">Create</button>
+                    </div>
+                  </details>
+                  <details>
+                    <summary>Alert rules</summary>
+                    <div class="details-body">
+                      <label>Name <input id="alertNameInput" type="text" placeholder="Open incident alert"></label>
+                      <label>Metric <input id="alertMetricInput" type="text" value="operations.counts.open_incidents"></label>
+                      <label>Threshold <input id="alertThresholdInput" type="number" value="1"></label>
+                      <div class="form-actions">
+                        <button id="createAlertRuleButton" type="button" class="btn btn-sm">Create rule</button>
+                        <button id="evaluateAlertsButton" type="button" class="btn btn-sm">Evaluate</button>
+                      </div>
+                    </div>
+                  </details>
+                  <details>
+                    <summary>RapidPro</summary>
+                    <div class="details-body">
+                      <label>URNs (comma-separated) <input id="rapidProUrnsInput" type="text" placeholder="+254700000000"></label>
+                      <button id="sendRapidProAlertButton" type="button" class="btn btn-sm">Send latest alert</button>
+                    </div>
+                  </details>
+                  <details>
+                    <summary>Report schedules</summary>
+                    <div class="details-body">
+                      <label>Next run <input id="reportScheduleNextRunInput" type="datetime-local"></label>
+                      <div class="form-actions">
+                        <button id="createReportScheduleButton" type="button" class="btn btn-sm">Create schedule</button>
+                        <button id="runDueReportsButton" type="button" class="btn btn-sm">Run due</button>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <h3>About</h3>
+                <p class="settings-note">Lindela Lite v0.1.0 — open-source climate-conflict monitoring toolkit.</p>
+                <p class="settings-note">
+                  <a href="/docs/platform.md" target="_blank" rel="noopener">Documentation</a>
+                  &middot; GDELT excluded from public sources.
+                </p>
+                <p class="settings-note">Keyboard: <kbd>?</kbd> cheatsheet &middot; <kbd>Cmd K</kbd> command palette &middot; <kbd>1</kbd>–<kbd>4</kbd> tabs</p>
+              </section>
+
+            </div>
+          </div>
+
         </div>
-      </section>
+      </aside>
+    </div>
 
-      <section class="panel table-panel">
-        <h2>Alert Events</h2>
-        <table>
-          <thead>
-            <tr><th>Rule</th><th>Severity</th><th>Status</th><th>Message</th></tr>
-          </thead>
-          <tbody id="alertsTable"></tbody>
-        </table>
-      </section>
+    <footer class="statusbar" role="status" aria-live="polite" aria-atomic="false">
+      <div id="sourceDots" class="source-dots" aria-hidden="true"></div>
+      <span id="status" class="status-text"></span>
+      <span id="queuedCount" class="queued-count" hidden></span>
+    </footer>
 
-      <section class="panel table-panel">
-        <h2>RapidPro Activity</h2>
-        <div class="split-table">
-          <table>
-            <thead>
-              <tr><th>Dispatch</th><th>Status</th><th>Mode</th></tr>
-            </thead>
-            <tbody id="rapidProDispatchesTable"></tbody>
-          </table>
-          <table>
-            <thead>
-              <tr><th>From</th><th>Report</th><th>Text</th></tr>
-            </thead>
-            <tbody id="rapidProInboundTable"></tbody>
-          </table>
-        </div>
-      </section>
+    <!-- Command palette -->
+    <dialog id="commandPalette" class="command-palette" aria-label="Command palette">
+      <div class="palette-header">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;color:var(--ink-muted)">
+          <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="11" y1="11" x2="15" y2="15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <input id="paletteInput" type="search" autocomplete="off" aria-label="Command palette search"
+               data-i18n-placeholder="palette.placeholder" placeholder="Search actions, alerts, reports...">
+        <button class="btn btn-icon palette-close dialog-close" type="button" aria-label="Close">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <ul id="paletteResults" class="palette-results" role="listbox" aria-label="Commands"></ul>
+    </dialog>
 
-      <section class="panel table-panel">
-        <h2>Recent Events</h2>
-        <table>
-          <thead>
-            <tr><th>Type</th><th>Severity</th><th>Title</th><th>Source</th></tr>
-          </thead>
-          <tbody id="eventsTable"></tbody>
-        </table>
-      </section>
-    </main>
+    <!-- Keyboard shortcuts dialog -->
+    <dialog id="shortcutDialog" class="shortcut-dialog" aria-labelledby="shortcutTitle">
+      <div class="dialog-header">
+        <h2 id="shortcutTitle" data-i18n="shortcut.cheatsheet_title">Keyboard shortcuts</h2>
+        <button class="btn btn-icon dialog-close" type="button" aria-label="Close">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <table class="shortcut-table" role="table">
+        <tbody>
+          <tr><td><kbd>/</kbd></td><td>Focus filter</td></tr>
+          <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>Switch rail tab</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Close overlay</td></tr>
+          <tr><td><kbd>?</kbd></td><td>Show this cheatsheet</td></tr>
+          <tr><td><kbd>Cmd K</kbd></td><td>Command palette</td></tr>
+          <tr><td><kbd>R</kbd></td><td>Refresh data</td></tr>
+        </tbody>
+      </table>
+    </dialog>
 
-    <script src="/app.js" type="module"></script>
+    <!-- Detail overlay -->
+    <dialog id="detailDialog" class="detail-dialog" aria-labelledby="detailTitle">
+      <div class="dialog-header">
+        <h2 id="detailTitle">Detail</h2>
+        <button class="btn btn-icon dialog-close" type="button" aria-label="Close">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div id="detailBody" class="detail-body"></div>
+      <div id="detailActions" class="dialog-actions"></div>
+    </dialog>
+
+    <script type="module" src="/app.js"></script>
   </body>
 </html>
