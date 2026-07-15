@@ -34,6 +34,7 @@ export const COLLECTIONS = [
   'report_schedule_runs',
   'events_outbox',
   'webhook_subscriptions',
+  'workflow_instances',
 ]
 
 export class JsonStore {

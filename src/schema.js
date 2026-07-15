@@ -182,6 +182,7 @@ export function emptyStore() {
     data_lineage: [],
     events_outbox: [],
     webhook_subscriptions: [],
+    workflow_instances: [],
   }
 }
 
