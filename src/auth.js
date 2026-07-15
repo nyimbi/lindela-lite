@@ -75,3 +75,14 @@ export function scopeForRoute(method, pathname) {
 
   return 'read:hazards'
 }
+
+export function hasRole(auth, role) {
+  if (!auth) return false
+  if (auth.scopes.includes('*') || auth.scopes.includes('admin:*')) return true
+  return auth.scopes.includes(`role:${role}`)
+}
+
+export function scopeToPartnerOrg(records, auth, field = 'partner_org') {
+  if (!auth?.partner_org) return records
+  return records.filter((record) => record[field] === auth.partner_org || !record[field])
+}
