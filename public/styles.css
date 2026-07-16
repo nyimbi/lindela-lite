@@ -3,68 +3,7 @@
    OKLCH dark-first design system
    ============================================================= */
 
-/* --- Tokens -------------------------------------------------- */
-:root {
-  --bg:              oklch(15% 0.02 260);
-  --bg-elevated:     oklch(19% 0.02 260);
-  --surface:         oklch(22% 0.02 260);
-  --surface-hover:   oklch(26% 0.02 260);
-
-  --ink:             oklch(96% 0.005 260);
-  --ink-muted:       oklch(75% 0.02 260);
-  --ink-faint:       oklch(55% 0.02 260);
-
-  --brand:           oklch(70% 0.16 205);
-  --accent:          oklch(78% 0.15 90);
-
-  --sev-critical:    oklch(65% 0.22 25);
-  --sev-high:        oklch(72% 0.18 45);
-  --sev-medium:      oklch(80% 0.15 85);
-  --sev-low:         oklch(75% 0.10 190);
-
-  --ok:              oklch(72% 0.16 155);
-  --warn:            oklch(78% 0.15 75);
-  --danger:          oklch(65% 0.22 25);
-
-  --stroke:          oklch(30% 0.01 260);
-  --stroke-strong:   oklch(40% 0.015 260);
-
-  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, 'JetBrains Mono', Consolas, monospace;
-
-  --text-h1:   clamp(1.5rem, 1.3rem + 1vw, 2rem);
-  --text-h2:   1.125rem;
-  --text-body: 0.9375rem;
-  --text-sm:   0.8125rem;
-  --text-xs:   0.75rem;
-
-  --sp-1: 0.25rem;
-  --sp-2: 0.5rem;
-  --sp-3: 0.75rem;
-  --sp-4: 1rem;
-  --sp-5: 1.25rem;
-  --sp-6: 1.5rem;
-  --sp-8: 2rem;
-
-  --r-sm: 3px;
-  --r:    6px;
-  --r-lg: 10px;
-
-  --z-map:             1;
-  --z-controls:       10;
-  --z-rail:           20;
-  --z-topbar:         30;
-  --z-statusbar:      30;
-  --z-dropdown:       40;
-  --z-dialog-backdrop:50;
-  --z-dialog:         60;
-  --z-toast:          70;
-
-  --ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --dur-fast:   120ms;
-  --dur-normal: 180ms;
-  --dur-slow:   200ms;
-}
+@import url('/tokens.css');
 
 /* --- Reset --------------------------------------------------- */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
