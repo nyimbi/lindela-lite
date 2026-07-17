@@ -41,6 +41,7 @@ import { renderCapXml } from './cap.js'
 import { emit, dispatchPending } from './outbox.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
 import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.js'
+import { normalizeWorkflowInstance, transitionWorkflow, pendingForFocalPoint, workflowMetrics, WORKFLOW_TYPES, WORKFLOW_STATES, WORKFLOW_TRANSITIONS } from './workflows.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
@@ -449,6 +450,12 @@ async function handleApi(store, req, res, url) {
   const operationalRoute = matchOperationalRoute(url.pathname)
   if (operationalRoute) {
     await handleOperationalRoute(store, data, req, res, url, operationalRoute)
+    return
+  }
+
+  const workflowRoute = matchWorkflowRoute(url.pathname)
+  if (workflowRoute) {
+    await handleWorkflowRoute(store, data, req, res, url, workflowRoute)
     return
   }
 
@@ -1621,6 +1628,81 @@ function matchRapidProRoute(pathname) {
   const sendAlert = pathname.match(/^\/api\/v1\/rapidpro\/alert-events\/([^/]+)\/send$/)
   if (sendAlert) return { kind: 'send-alert', id: decodeURIComponent(sendAlert[1]) }
   return null
+}
+
+function matchWorkflowRoute(pathname) {
+  const transition = pathname.match(/^\/api\/v1\/workflows\/([^/]+)\/transition$/)
+  if (transition) return { id: decodeURIComponent(transition[1]), action: 'transition' }
+  if (pathname === '/api/v1/workflows/metrics') return { action: 'metrics' }
+  const match = pathname.match(/^\/api\/v1\/workflows(?:\/([^/]+))?$/)
+  if (!match) return null
+  return { id: match[1] ? decodeURIComponent(match[1]) : null }
+}
+
+async function handleWorkflowRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && !route.id && !route.action) {
+    const records = filterRecords(data.workflow_instances, url.searchParams)
+    jsonResponse(res, 200, { success: true, data: records })
+    return
+  }
+
+  if (req.method === 'GET' && route.id && !route.action) {
+    const record = data.workflow_instances.find((w) => w.id === route.id)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: 'Workflow not found' })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: record })
+    return
+  }
+
+  if (req.method === 'GET' && route.action === 'metrics') {
+    const metrics = workflowMetrics(data.workflow_instances)
+    jsonResponse(res, 200, { success: true, data: metrics })
+    return
+  }
+
+  if (req.method === 'POST' && !route.id && !route.action) {
+    const body = await readRequestJson(req)
+    const record = normalizeWorkflowInstance(body)
+    const outboxRecord = await emit(store, 'workflow.created', { workflow_id: record.id, type: record.type })
+    await store.merge({ workflow_instances: [record] })
+    metrics.counter('workflow_created', { type: record.type })
+    jsonResponse(res, 201, { success: true, data: record, outbox_event: outboxRecord.id })
+    return
+  }
+
+  if (req.method === 'POST' && route.id && route.action === 'transition') {
+    const existing = data.workflow_instances.find((w) => w.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Workflow not found' })
+      return
+    }
+    const body = await readRequestJson(req)
+    try {
+      const updated = transitionWorkflow(existing, {
+        to: body.to,
+        actor: req.__auth?.subject || 'anonymous',
+        reason: body.reason || '',
+        evidence: body.evidence || '',
+      })
+      const outboxRecord = await emit(store, 'workflow.transitioned', {
+        workflow_id: updated.id,
+        type: updated.type,
+        from: existing.state,
+        to: updated.state,
+      })
+      await store.merge({ workflow_instances: [updated] })
+      metrics.counter('workflow_transition_total', { type: updated.type, from: existing.state, to: updated.state })
+      jsonResponse(res, 200, { success: true, data: updated, outbox_event: outboxRecord.id })
+      return
+    } catch (error) {
+      jsonResponse(res, error.statusCode || 400, { success: false, error: error.message })
+      return
+    }
+  }
+
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
 async function handleStatic(res, pathname) {
