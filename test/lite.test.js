@@ -24,6 +24,8 @@ import { createStoreFromEnv } from '../src/storage.js'
 import { JsonStore, mergeById } from '../src/store.js'
 import { toCsv, toGeoJson } from '../src/utils.js'
 import { t, isRtl, plainLanguage } from '../src/i18n.js'
+import { normalizeWorkflowInstance, transitionWorkflow, workflowMetrics } from '../src/workflows.js'
+import { hasRole, scopeToPartnerOrg } from '../src/auth.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -1380,6 +1382,203 @@ describe('Lindela Lite PWA and i18n', () => {
   })
 })
 
+describe('Lindela Lite workflows', () => {
+  it('normalizeWorkflowInstance accepts valid type and initial state', () => {
+    const workflow = normalizeWorkflowInstance({
+      type: 'anticipatory_alert',
+      subject_kind: 'alert_event',
+      subject_id: 'alert_123',
+      district: 'Turkana',
+    })
+    assert.equal(workflow.type, 'anticipatory_alert')
+    assert.equal(workflow.state, 'signal_detected')
+    assert.equal(workflow.subject_kind, 'alert_event')
+    assert.ok(workflow.id)
+    assert.ok(workflow.created_at)
+  })
+
+  it('normalizeWorkflowInstance rejects invalid type', () => {
+    assert.throws(
+      () => normalizeWorkflowInstance({ type: 'invalid_type' }),
+      /type must be one of/,
+    )
+  })
+
+  it('transitionWorkflow moves from signal_detected to focal_point_review', () => {
+    const workflow = normalizeWorkflowInstance({
+      type: 'anticipatory_alert',
+      subject_kind: 'alert_event',
+      subject_id: 'alert_123',
+      district: 'Turkana',
+    })
+    const transitioned = transitionWorkflow(workflow, {
+      to: 'focal_point_review',
+      actor: 'operator_1',
+      reason: 'Severity check passed',
+    })
+    assert.equal(transitioned.state, 'focal_point_review')
+    assert.equal(transitioned.transitions.length, 1)
+    assert.equal(transitioned.transitions[0].from, 'signal_detected')
+    assert.equal(transitioned.transitions[0].to, 'focal_point_review')
+  })
+
+  it('transitionWorkflow throws 409 for invalid transitions', () => {
+    const workflow = normalizeWorkflowInstance({
+      type: 'anticipatory_alert',
+      subject_kind: 'alert_event',
+      subject_id: 'alert_123',
+      district: 'Turkana',
+    })
+    assert.throws(
+      () => transitionWorkflow(workflow, { to: 'closed' }),
+      /Cannot transition/,
+    )
+  })
+
+  it('transitionWorkflow sets closed_at when transitioning to terminal state', () => {
+    let workflow = normalizeWorkflowInstance({
+      type: 'anticipatory_alert',
+      subject_kind: 'alert_event',
+      subject_id: 'alert_123',
+      district: 'Turkana',
+    })
+    workflow = transitionWorkflow(workflow, { to: 'focal_point_review' })
+    workflow = transitionWorkflow(workflow, { to: 'rejected' })
+    workflow = transitionWorkflow(workflow, { to: 'closed' })
+    assert.ok(workflow.closed_at)
+    assert.equal(workflow.state, 'closed')
+  })
+
+  it('POST /api/v1/workflows creates and emits workflow', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-workflows-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    store.mode = 'json'
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://127.0.0.1:${listener.address().port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/workflows`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'anticipatory_alert',
+          subject_kind: 'alert_event',
+          subject_id: 'alert_123',
+          district: 'Turkana',
+        }),
+      })
+      assert.equal(res.status, 201)
+      const json = await res.json()
+      assert.equal(json.success, true)
+      assert.ok(json.data.id)
+      assert.equal(json.data.state, 'signal_detected')
+      const outbox = await fetch(`${baseUrl}/api/v1/outbox`)
+      const outboxJson = await outbox.json()
+      assert.ok(outboxJson.data.some((e) => e.event === 'workflow.created'))
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('POST /api/v1/workflows/:id/transition updates state and emits', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-workflow-transition-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    store.mode = 'json'
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://127.0.0.1:${listener.address().port}`
+
+    try {
+      const createRes = await fetch(`${baseUrl}/api/v1/workflows`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'anticipatory_alert',
+          subject_kind: 'alert_event',
+          subject_id: 'alert_123',
+          district: 'Turkana',
+        }),
+      })
+      const created = await createRes.json()
+      const workflowId = created.data.id
+
+      const transRes = await fetch(`${baseUrl}/api/v1/workflows/${workflowId}/transition`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          to: 'focal_point_review',
+          reason: 'Severity check passed',
+        }),
+      })
+      assert.equal(transRes.status, 200)
+      const transJson = await transRes.json()
+      assert.equal(transJson.data.state, 'focal_point_review')
+      const outbox = await fetch(`${baseUrl}/api/v1/outbox`)
+      const outboxJson = await outbox.json()
+      assert.ok(outboxJson.data.some((e) => e.event === 'workflow.transitioned'))
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('workflowMetrics counts open, closed, and rejected instances', () => {
+    const instances = [
+      { type: 'anticipatory_alert', state: 'signal_detected' },
+      { type: 'anticipatory_alert', state: 'closed' },
+      { type: 'anticipatory_alert', state: 'rejected' },
+      { type: 'cold_chain_protection', state: 'action_taken' },
+    ]
+    const metrics = workflowMetrics(instances)
+    assert.equal(metrics.open, 2)
+    assert.equal(metrics.closed, 1)
+    assert.equal(metrics.rejected, 1)
+    assert.equal(metrics.by_type.anticipatory_alert.open, 1)
+    assert.equal(metrics.by_type.anticipatory_alert.closed, 1)
+  })
+})
+
+describe('Lindela Lite auth', () => {
+  it('hasRole returns true when role:focal_point present', () => {
+    const auth = { scopes: ['role:focal_point', 'read:hazards'] }
+    assert.equal(hasRole(auth, 'focal_point'), true)
+    assert.equal(hasRole(auth, 'operator'), false)
+  })
+
+  it('hasRole returns true for admin:* scope', () => {
+    const auth = { scopes: ['admin:*'] }
+    assert.equal(hasRole(auth, 'focal_point'), true)
+    assert.equal(hasRole(auth, 'operator'), true)
+  })
+
+  it('hasRole returns false for null auth', () => {
+    assert.equal(hasRole(null, 'focal_point'), false)
+  })
+
+  it('scopeToPartnerOrg filters records when partner_org set', () => {
+    const records = [
+      { id: 'r1', partner_org: 'org_a' },
+      { id: 'r2', partner_org: 'org_b' },
+      { id: 'r3' },
+    ]
+    const auth = { partner_org: 'org_a' }
+    const filtered = scopeToPartnerOrg(records, auth)
+    assert.equal(filtered.length, 2)
+    assert.ok(filtered.some((r) => r.id === 'r1'))
+    assert.ok(filtered.some((r) => r.id === 'r3'))
+  })
+
+  it('scopeToPartnerOrg returns all records when partner_org not set', () => {
+    const records = [
+      { id: 'r1', partner_org: 'org_a' },
+      { id: 'r2', partner_org: 'org_b' },
+    ]
+    const auth = {}
+    const filtered = scopeToPartnerOrg(records, auth)
+    assert.equal(filtered.length, 2)
+  })
+})
+
 describe('Lindela Lite i18n module', () => {
   it('t() translates with key lookups and interpolation', () => {
     const catalog = { greeting: 'Hi {name}', farewell: 'Goodbye' }
@@ -1391,7 +1590,7 @@ describe('Lindela Lite i18n module', () => {
   it('isRtl() returns true for Arabic', () => {
     assert.equal(isRtl('ar'), true)
     assert.equal(isRtl('en'), false)
-    assert.equal(isRtl('fr'), false)
+    assert.equal(isRtl('sw'), false)
   })
 
   it('plainLanguage() simplifies long sentences and expands abbreviations', () => {
