@@ -41,5 +41,21 @@
   "filter.approved": "Approved",
   "filter.auto_approved": "Auto-approved",
   "shortcut.cheatsheet_title": "Keyboard shortcuts",
-  "palette.placeholder": "Search actions, alerts, reports..."
+  "palette.placeholder": "Search actions, alerts, reports...",
+  "action.cancel": "Cancel",
+  "label.rule": "Rule",
+  "label.metric": "Metric",
+  "label.threshold": "Threshold",
+  "label.district": "District",
+  "label.timestamp": "Time",
+  "tab.equity": "Equity",
+  "focal-point.pending": "Pending review",
+  "focal-point.protocols": "Active pre-authorised protocols",
+  "focal-point.decisions": "Recent decisions",
+  "focal-point.no_pending": "No pending workflows.",
+  "focal-point.no_protocols": "No active protocols.",
+  "focal-point.no_decisions": "No recent decisions.",
+  "focal-point.confirm_approve": "Approve workflow?",
+  "focal-point.confirm_reject": "Reject workflow?",
+  "focal-point.reason": "Reason"
 }

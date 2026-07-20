@@ -41,5 +41,21 @@
   "filter.approved": "Koc",
   "filter.auto_approved": "Koc dhuol",
   "shortcut.cheatsheet_title": "Yalkar pane",
-  "palette.placeholder": "Rakal dhalmic, ranyieth..."
+  "palette.placeholder": "Rakal dhalmic, ranyieth...",
+  "action.cancel": "Nek",
+  "label.rule": "Pane",
+  "label.metric": "Dim",
+  "label.threshold": "Nyak",
+  "label.district": "Kou",
+  "label.timestamp": "Koc",
+  "tab.equity": "Mit",
+  "focal-point.pending": "E pok koc",
+  "focal-point.protocols": "Pane ma koc",
+  "focal-point.decisions": "Koc ma cak",
+  "focal-point.no_pending": "Pok kir e pok koc.",
+  "focal-point.no_protocols": "Pok pane ma koc.",
+  "focal-point.no_decisions": "Pok koc ma cak.",
+  "focal-point.confirm_approve": "Ma koc kir?",
+  "focal-point.confirm_reject": "Ma nek kir?",
+  "focal-point.reason": "Dhok"
 }

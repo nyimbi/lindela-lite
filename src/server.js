@@ -1763,6 +1763,23 @@ async function handleStatic(res, pathname) {
     }
   }
 
+  // Handle focal-point surface routing
+  if (pathname === '/focal-point' || pathname === '/focal-point/' || pathname.startsWith('/focal-point/')) {
+    const target = pathname === '/focal-point' || pathname === '/focal-point/' ? 'focal-point/index.html' : pathname.replace(/^\/+/, '')
+    const filePath = safeJoin(publicDir, target)
+    try {
+      const content = await fs.readFile(filePath)
+      res.writeHead(200, { 'content-type': contentType(filePath) })
+      res.end(content)
+      return
+    } catch {
+      const index = await fs.readFile(path.join(publicDir, 'focal-point/index.html'))
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(index)
+      return
+    }
+  }
+
   const target = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '')
   const filePath = safeJoin(publicDir, target)
   try {
@@ -1875,7 +1892,7 @@ function contentType(filePath) {
   if (filePath.endsWith('.svg')) return 'image/svg+xml'
   if (filePath.endsWith('.md')) return 'text/markdown; charset=utf-8'
   if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) return 'text/yaml; charset=utf-8'
-  if (filePath.endsWith('.json')) return 'application/json; charset=utf-8'
+  if (filePath.endsWith('.json') || filePath.endsWith('.webmanifest')) return 'application/json; charset=utf-8'
   return 'text/html; charset=utf-8'
 }
 

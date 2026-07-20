@@ -1538,6 +1538,293 @@ describe('Lindela Lite workflows', () => {
   })
 })
 
+describe('Lindela Lite Focal Point', () => {
+  it('GET /focal-point returns 200 HTML', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-focal-point-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/focal-point`)
+      assert.equal(res.status, 200)
+      assert.ok(res.headers.get('content-type').includes('text/html'))
+      const html = await res.text()
+      assert.ok(html.includes('Lindela Lite'))
+      assert.ok(html.includes('Focal Point'))
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /focal-point/manifest.webmanifest returns 200', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-focal-manifest-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/focal-point/manifest.webmanifest`)
+      assert.equal(res.status, 200)
+      assert.ok(res.headers.get('content-type').includes('json'))
+      const json = await res.json()
+      assert.equal(json.name, 'Lindela Focal Point')
+      assert.equal(json.start_url, '/focal-point')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('Focal-point-scoped workflow list returns workflows', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-fp-workflows-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await store.merge({
+      workflow_instances: [
+        {
+          id: 'w1',
+          type: 'anticipatory_alert',
+          state: 'focal_point_review',
+          district: 'turkana',
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: 'w2',
+          type: 'anticipatory_alert',
+          state: 'signal_detected',
+          district: 'turkana',
+          created_at: new Date().toISOString(),
+        },
+      ],
+    })
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/workflows`)
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.ok(json.success)
+      assert.equal(json.data.length, 2)
+      assert.ok(json.data.some((w) => w.id === 'w1'))
+      assert.ok(json.data.some((w) => w.id === 'w2'))
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('Workflow transition returns 409 for invalid state change', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-wf-invalid-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const workflow = normalizeWorkflowInstance({
+      type: 'anticipatory_alert',
+      state: 'closed',
+      district: 'turkana',
+    })
+    await store.merge({ workflow_instances: [workflow] })
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/workflows/${workflow.id}/transition`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ to: 'dispatched' }),
+      })
+      assert.equal(res.status, 409)
+      const json = await res.json()
+      assert.equal(json.success, false)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /api/v1/workflows/metrics returns with data', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-metrics-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const now = new Date().toISOString()
+    const w1 = {
+      id: 'w_metrics_1',
+      type: 'anticipatory_alert',
+      state: 'signal_detected',
+      subject_kind: 'alert_event',
+      subject_id: '',
+      district: '',
+      owner: '',
+      created_at: now,
+      updated_at: now,
+      closed_at: null,
+      transitions: [],
+      metadata: {},
+    }
+    const w2 = {
+      id: 'w_metrics_2',
+      type: 'equity_audit_action',
+      state: 'closed',
+      subject_kind: 'alert_event',
+      subject_id: '',
+      district: '',
+      owner: '',
+      created_at: now,
+      updated_at: now,
+      closed_at: now,
+      transitions: [],
+      metadata: {},
+    }
+    await store.merge({ workflow_instances: [w1, w2] })
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/workflows/metrics`)
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.ok(json.success)
+      assert.ok(json.data.open >= 1)
+      assert.ok(json.data.closed >= 1)
+      assert.ok(json.data.by_type)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('High-severity alert dispatch without prior approval returns 409', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-high-severity-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const now = new Date().toISOString()
+    const alert = {
+      id: 'alert_high_1',
+      rule_id: 'rule_1',
+      rule_name: 'High severity test',
+      status: 'open',
+      severity: 'high',
+      metric: 'test.metric',
+      value: 100,
+      threshold: 50,
+      operator: '>=',
+      message: 'Test alert',
+      actions: [],
+      scope: { country: 'KE', district: 'turkana' },
+      created_at: now,
+      updated_at: now,
+      suppression_bucket: 'b1',
+      approval: { state: 'proposed' },
+      metadata: {},
+    }
+    await store.merge({ alert_events: [alert] })
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/rapidpro/alert-events/${alert.id}/send`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ actor: 'test_operator' }),
+      })
+      assert.equal(res.status, 409)
+      const json = await res.json()
+      assert.equal(json.success, false)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('Cold-chain-tagged asset appears in filtered service-assets response', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-coldchain-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const coldChainAsset = {
+      id: 'asset_cc_1',
+      name: 'Cold Chain Facility A',
+      service_type: 'health',
+      country: 'KE',
+      latitude: 3.1,
+      longitude: 35.6,
+      metadata: { cold_chain: true },
+    }
+    const regularAsset = {
+      id: 'asset_reg_1',
+      name: 'Health Facility B',
+      service_type: 'health',
+      country: 'KE',
+      latitude: 3.2,
+      longitude: 35.7,
+      metadata: {},
+    }
+    await store.merge({ service_assets: [coldChainAsset, regularAsset] })
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/service-assets?service_type=health`)
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.ok(json.success)
+      assert.ok(json.data.length >= 2)
+      assert.ok(json.data.some((a) => a.id === 'asset_cc_1' && a.metadata?.cold_chain))
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('Signal-to-action timeline: assessments endpoint returns recent events and dispatches', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-signal-action-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const now = new Date().toISOString()
+    const hazardEvent = {
+      id: 'hazard_1',
+      event_type: 'flood',
+      severity: 'high',
+      headline: 'Test flood',
+      country: 'KE',
+      latitude: 3.1,
+      longitude: 35.6,
+      observed_at: now,
+    }
+    const dispatch = {
+      id: 'dispatch_1',
+      alert_id: 'alert_1',
+      flow_uuid: 'flow_1',
+      urns: ['+254700000000'],
+      status: 'sent',
+      sent_at: now,
+      created_at: now,
+    }
+    await store.merge({ hazard_events: [hazardEvent], rapidpro_dispatches: [dispatch] })
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const resAssess = await fetch(`${baseUrl}/api/v1/assessments`)
+      assert.equal(resAssess.status, 200)
+      const jsonAssess = await resAssess.json()
+      assert.ok(jsonAssess.data && jsonAssess.data.recent_events)
+      assert.ok(jsonAssess.data.recent_events.length >= 1)
+
+      const resDispatches = await fetch(`${baseUrl}/api/v1/rapidpro/dispatches`)
+      assert.equal(resDispatches.status, 200)
+      const jsonDispatches = await resDispatches.json()
+      assert.ok(jsonDispatches.data && jsonDispatches.data.length >= 1)
+    } finally {
+      listener.close()
+    }
+  })
+})
+
 describe('Lindela Lite auth', () => {
   it('hasRole returns true when role:focal_point present', () => {
     const auth = { scopes: ['role:focal_point', 'read:hazards'] }

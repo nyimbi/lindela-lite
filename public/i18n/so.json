@@ -41,5 +41,21 @@
   "filter.approved": "Gogollamiyay",
   "filter.auto_approved": "Loo-gogolamiye",
   "shortcut.cheatsheet_title": "Qorshaha qaybta",
-  "palette.placeholder": "Raadig ogeysiisyo, warbixino..."
+  "palette.placeholder": "Raadig ogeysiisyo, warbixino...",
+  "action.cancel": "Diid",
+  "label.rule": "Sharciga",
+  "label.metric": "Cabira",
+  "label.threshold": "Xadka",
+  "label.district": "Degmada",
+  "label.timestamp": "Waqti",
+  "tab.equity": "Sinaan",
+  "focal-point.pending": "Inasubira la bixitaanka",
+  "focal-point.protocols": "Itifaaqada la oga ogolaadey",
+  "focal-point.decisions": "Go'aannada la soo dhaweye",
+  "focal-point.no_pending": "Ma jiraan shuruudka inasubira.",
+  "focal-point.no_protocols": "Ma jiraan itifaaqada fala.",
+  "focal-point.no_decisions": "Ma jiraan go'aanno la soo dhaweye.",
+  "focal-point.confirm_approve": "Ma ogolaataa shaqada?",
+  "focal-point.confirm_reject": "Ma diidaysaa shaqada?",
+  "focal-point.reason": "Sababta"
 }
