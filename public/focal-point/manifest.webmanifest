@@ -1,0 +1,27 @@
+{
+  "name": "Lindela Focal Point",
+  "short_name": "Focal Point",
+  "description": "Approval surface for pre-authorised trigger protocols",
+  "start_url": "/focal-point",
+  "scope": "/focal-point",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0e1520",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/icon.svg",
+      "sizes": "540x720",
+      "type": "image/svg+xml",
+      "form_factor": "narrow"
+    }
+  ]
+}

@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lindela Focal Point</title>
+    <link rel="manifest" href="/focal-point/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1520">
+    <style>
+      @import '/tokens.css';
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html { font-size: 16px; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.5;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--border);
+        padding: 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .header-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-weight: 600;
+        font-size: 1.125rem;
+      }
+
+      .header-brand svg {
+        width: 24px;
+        height: 24px;
+      }
+
+      .header-controls {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      select {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--ink);
+        font-size: 0.875rem;
+      }
+
+      .signout-btn {
+        padding: 0.5rem 1rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 0.875rem;
+      }
+
+      .signout-btn:hover {
+        background: var(--bg-hover);
+      }
+
+      main {
+        flex: 1;
+        padding: 2rem 1rem;
+        max-width: 640px;
+        margin: 0 auto;
+        width: 100%;
+      }
+
+      .pending-queue {
+        margin-bottom: 2rem;
+      }
+
+      .pending-queue h2 {
+        font-size: 1.25rem;
+        margin-bottom: 1rem;
+      }
+
+      .queue-empty {
+        padding: 2rem;
+        text-align: center;
+        background: var(--surface);
+        border-radius: 8px;
+        color: var(--ink-muted);
+      }
+
+      .workflow-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+      }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+      }
+
+      .severity-chip {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      .severity-critical { background: #fecaca; color: #7f1d1d; }
+      .severity-high { background: #fed7aa; color: #92400e; }
+      .severity-medium { background: #fcd34d; color: #713f12; }
+      .severity-low { background: #d1fae5; color: #065f46; }
+
+      .workflow-details {
+        margin-bottom: 1rem;
+        font-size: 0.9375rem;
+      }
+
+      .detail-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 0.5rem;
+      }
+
+      .detail-label {
+        color: var(--ink-muted);
+      }
+
+      .detail-value {
+        font-weight: 500;
+      }
+
+      .action-buttons {
+        display: flex;
+        gap: 0.75rem;
+      }
+
+      button {
+        flex: 1;
+        padding: 0.75rem;
+        border: none;
+        border-radius: 4px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 1rem;
+        min-height: var(--tap-target-min, 44px);
+      }
+
+      .btn-approve {
+        background: var(--focal-point-approve-bg, #10b981);
+        color: white;
+      }
+
+      .btn-approve:hover {
+        opacity: 0.9;
+      }
+
+      .btn-reject {
+        background: var(--focal-point-reject-bg, #ef4444);
+        color: white;
+      }
+
+      .btn-reject:hover {
+        opacity: 0.9;
+      }
+
+      .protocols-section {
+        margin-bottom: 2rem;
+      }
+
+      .protocols-section h3 {
+        font-size: 1.125rem;
+        margin-bottom: 1rem;
+      }
+
+      .protocol-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        margin-bottom: 0.5rem;
+        font-size: 0.9375rem;
+      }
+
+      .protocol-name {
+        font-weight: 500;
+      }
+
+      .protocol-expiry {
+        color: var(--ink-muted);
+        font-size: 0.875rem;
+      }
+
+      .audit-trail {
+        margin-bottom: 2rem;
+      }
+
+      .audit-trail h3 {
+        font-size: 1.125rem;
+        margin-bottom: 1rem;
+      }
+
+      .audit-item {
+        padding: 0.75rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        margin-bottom: 0.5rem;
+        font-size: 0.875rem;
+      }
+
+      .audit-decision {
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+      }
+
+      .audit-detail {
+        color: var(--ink-muted);
+      }
+
+      dialog {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 1.5rem;
+        max-width: 90%;
+      }
+
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.5);
+      }
+
+      .dialog-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+      }
+
+      .dialog-header h2 {
+        font-size: 1.25rem;
+      }
+
+      .dialog-close {
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: var(--ink-muted);
+        font-size: 1.5rem;
+        padding: 0;
+        min-height: auto;
+      }
+
+      .dialog-close:hover {
+        color: var(--ink);
+      }
+
+      .dialog-body {
+        margin-bottom: 1.5rem;
+      }
+
+      .form-group {
+        margin-bottom: 1rem;
+      }
+
+      .form-group label {
+        display: block;
+        font-weight: 500;
+        margin-bottom: 0.5rem;
+      }
+
+      .form-group select,
+      .form-group input {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--ink);
+        font-size: 1rem;
+      }
+
+      .dialog-actions {
+        display: flex;
+        gap: 0.75rem;
+      }
+
+      .btn-cancel {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--ink);
+      }
+
+      footer {
+        padding: 1rem;
+        border-top: 1px solid var(--border);
+        text-align: center;
+        font-size: 0.875rem;
+        color: var(--ink-muted);
+      }
+
+      .offline-banner {
+        background: #fef3c7;
+        color: #b45309;
+        padding: 0.75rem 1rem;
+        text-align: center;
+        font-size: 0.875rem;
+      }
+
+      @media (max-width: 640px) {
+        main { padding: 1rem; }
+        header { flex-direction: column; gap: 1rem; }
+        .header-controls { width: 100%; }
+        select { width: 100%; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="offlineBanner" class="offline-banner" hidden>
+      <span data-i18n="banner.offline">Offline. Changes will sync when you reconnect.</span>
+    </div>
+
+    <header>
+      <div class="header-brand">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" fill="currentColor"/>
+          <circle cx="12" cy="12" r="7" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.5"/>
+          <circle cx="12" cy="12" r="11" stroke="currentColor" stroke-width="1" fill="none" opacity="0.25"/>
+        </svg>
+        <span data-i18n="app.title">Lindela Lite</span>
+      </div>
+      <div class="header-controls">
+        <select id="locale-select" aria-label="Language">
+          <option value="en">English</option>
+          <option value="sw">Swahili</option>
+          <option value="so">Somali</option>
+          <option value="din">Dinka</option>
+          <option value="km">Karimojong</option>
+          <option value="nk">Ngakarimojong</option>
+        </select>
+        <span id="fp-identity" style="padding: 0 1rem; color: var(--ink-muted); font-size: 0.875rem;"></span>
+        <button class="signout-btn" id="signoutBtn">Sign out</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="pending-queue">
+        <h2 data-i18n="focal-point.pending">Pending review</h2>
+        <div id="pendingList"></div>
+      </div>
+
+      <div class="protocols-section">
+        <h3 data-i18n="focal-point.protocols">Active pre-authorised protocols</h3>
+        <div id="protocolsList"></div>
+      </div>
+
+      <div class="audit-trail">
+        <h3 data-i18n="focal-point.decisions">Recent decisions</h3>
+        <div id="auditList"></div>
+      </div>
+    </main>
+
+    <footer>
+      <span id="connectionStatus" style="color: var(--ink-muted);">●</span>
+      <span id="statusText" style="margin-left: 0.5rem; font-size: 0.875rem;"></span>
+    </footer>
+
+    <!-- Approval/Rejection Dialog -->
+    <dialog id="decisionDialog" aria-labelledby="decisionTitle">
+      <div class="dialog-header">
+        <h2 id="decisionTitle"></h2>
+        <button class="dialog-close" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="form-group">
+          <label for="reasonSelect" data-i18n="focal-point.reason">Reason</label>
+          <select id="reasonSelect" required></select>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn-cancel" id="dialogCancelBtn" type="button" data-i18n="action.cancel">Cancel</button>
+        <button id="dialogConfirmBtn" type="button" style="background: var(--focal-point-approve-bg, #10b981); color: white;"></button>
+      </div>
+    </dialog>
+
+    <script type="module" src="/focal-point/app.js"></script>
+  </body>
+</html>
