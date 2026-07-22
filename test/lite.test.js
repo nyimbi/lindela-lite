@@ -1984,6 +1984,166 @@ describe('Lindela Lite client UI', () => {
   })
 })
 
+describe('Lindela Lite CHW Mobile Web', () => {
+  it('GET /chw returns 200 HTML with CHW title', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-chw-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/chw`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      assert.ok(html.includes('Lindela CHW'))
+      assert.ok(html.includes('class='), 'HTML elements missing')
+      assert.ok(html.includes('data-i18n='), 'i18n attributes missing')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /chw/manifest.webmanifest returns 200', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-chw-manifest-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/chw/manifest.webmanifest`)
+      assert.equal(res.status, 200)
+      const manifest = await res.json()
+      assert.equal(manifest.name, 'Lindela CHW')
+      assert.equal(manifest.start_url, '/chw/')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('POST /api/v1/chw/report creates field_reports with PII redaction', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-chw-report-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/chw/report`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'symptom',
+          category: 'fever',
+          description: 'High fever for 2 days',
+          location: { latitude: 3.1, longitude: 35.6 },
+          anonymous: true,
+        }),
+      })
+      assert.equal(res.status, 201)
+      const json = await res.json()
+      assert.ok(json.success)
+      assert.ok(json.data.id)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('POST /api/v1/chw/reply creates inbound message', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-chw-reply-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/chw/reply`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          alert_event_id: 'alert_123',
+          message: 'We received the alert and are responding',
+        }),
+      })
+      assert.equal(res.status, 201)
+      const json = await res.json()
+      assert.ok(json.success)
+      assert.ok(json.data.id)
+    } finally {
+      listener.close()
+    }
+  })
+})
+
+describe('Lindela Lite Partner Portal', () => {
+  it('GET /portal returns 200 HTML with Portal title', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-portal-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/portal`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      assert.ok(html.includes('Lindela Partner Portal'))
+      assert.ok(html.includes('class='), 'HTML elements missing')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /portal/manifest.webmanifest returns 200', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-portal-manifest-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/portal/manifest.webmanifest`)
+      assert.equal(res.status, 200)
+      const manifest = await res.json()
+      assert.equal(manifest.name, 'Lindela Partner Portal')
+      assert.equal(manifest.start_url, '/portal/')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('scopeToPartnerOrg filters records by partner_org claim', () => {
+    const records = [
+      { id: '1', name: 'Asset A', partner_org: 'orgA' },
+      { id: '2', name: 'Asset B', partner_org: 'orgB' },
+      { id: '3', name: 'Asset C' },
+    ]
+    const auth = { partner_org: 'orgA' }
+    const filtered = scopeToPartnerOrg(records, auth)
+    assert.equal(filtered.length, 2)
+    assert.ok(filtered.some((r) => r.id === '1'))
+    assert.ok(filtered.some((r) => r.id === '3'))
+    assert.ok(!filtered.some((r) => r.id === '2'))
+  })
+
+  it('scopeToPartnerOrg returns all records when no partner_org claim', () => {
+    const records = [
+      { id: '1', name: 'Asset A', partner_org: 'orgA' },
+      { id: '2', name: 'Asset B', partner_org: 'orgB' },
+    ]
+    const auth = { partner_org: null }
+    const filtered = scopeToPartnerOrg(records, auth)
+    assert.equal(filtered.length, 2)
+  })
+})
+
 function rapidProEnv() {
   return {
     RAPIDPRO_API_TOKEN: process.env.RAPIDPRO_API_TOKEN,

@@ -34,7 +34,7 @@ import {
 } from './reports.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
-import { filterRecords, jsonResponse, readRequestJson, toCsv, toGeoJson } from './utils.js'
+import { filterRecords, jsonResponse, readRequestJson, toCsv, toGeoJson, stableId } from './utils.js'
 import { redactPii, applyRetention, loadPolicy } from './pii.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
@@ -450,6 +450,12 @@ async function handleApi(store, req, res, url) {
   const operationalRoute = matchOperationalRoute(url.pathname)
   if (operationalRoute) {
     await handleOperationalRoute(store, data, req, res, url, operationalRoute)
+    return
+  }
+
+  const chwRoute = matchChwRoute(url.pathname)
+  if (chwRoute) {
+    await handleChwRoute(store, data, req, res, url, chwRoute)
     return
   }
 
@@ -1544,6 +1550,80 @@ function matchScenarioRoute(pathname) {
   return null
 }
 
+function matchChwRoute(pathname) {
+  if (pathname === '/api/v1/chw/report') return { kind: 'report' }
+  if (pathname === '/api/v1/chw/reply') return { kind: 'reply' }
+  return null
+}
+
+async function handleChwRoute(store, data, req, res, url, route) {
+  const policy = await loadPolicy()
+
+  if (req.method === 'POST' && route.kind === 'report') {
+    const body = await readRequestJson(req)
+    const now = new Date().toISOString()
+    const record = {
+      id: stableId('report', [body.description, body.location?.latitude, body.location?.longitude, now]),
+      summary: body.description,
+      category: body.category || body.kind,
+      status: 'new',
+      source: 'chw_web',
+      latitude: body.location?.latitude || 0,
+      longitude: body.location?.longitude || 0,
+      reported_by: req.__auth?.subject,
+      created_at: now,
+      updated_at: now,
+    }
+
+    const redacted = redactPii(record, {
+      redactNames: body.anonymous,
+      redactPhone: true,
+      coarsenGeoToH3Cell: 3,
+    })
+
+    const inbound = {
+      id: stableId('inbound', [redacted.id, now]),
+      text: body.description,
+      contact_urn: body.reporter_phone || '',
+      contact_name: body.reporter_name || '',
+      event_type: 'field_report',
+      field_report_id: redacted.id,
+      created_at: now,
+    }
+
+    const log = actionLog('field_reports', 'created', redacted, 'chw_web', req.__auth?.subject)
+    await store.merge({
+      field_reports: [redacted],
+      rapidpro_inbound_messages: [inbound],
+      action_logs: [log],
+    })
+    jsonResponse(res, 201, { success: true, data: redacted })
+    return
+  }
+
+  if (req.method === 'POST' && route.kind === 'reply') {
+    const body = await readRequestJson(req)
+    const now = new Date().toISOString()
+    const inbound = {
+      id: stableId('inbound', [body.alert_event_id, body.message, now]),
+      text: body.message,
+      event_type: 'chw_reply',
+      alert_event_id: body.alert_event_id,
+      created_at: now,
+    }
+
+    const log = actionLog('rapidpro_inbound_messages', 'created', inbound, 'chw_web', req.__auth?.subject)
+    await store.merge({
+      rapidpro_inbound_messages: [inbound],
+      action_logs: [log],
+    })
+    jsonResponse(res, 201, { success: true, data: inbound })
+    return
+  }
+
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
 function matchOperationalRoute(pathname) {
   const routes = {
     incidents: 'incidents',
@@ -1774,6 +1854,40 @@ async function handleStatic(res, pathname) {
       return
     } catch {
       const index = await fs.readFile(path.join(publicDir, 'focal-point/index.html'))
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(index)
+      return
+    }
+  }
+
+  // Handle CHW surface routing
+  if (pathname === '/chw' || pathname === '/chw/' || pathname.startsWith('/chw/')) {
+    const target = pathname === '/chw' || pathname === '/chw/' ? 'chw/index.html' : pathname.replace(/^\/+/, '')
+    const filePath = safeJoin(publicDir, target)
+    try {
+      const content = await fs.readFile(filePath)
+      res.writeHead(200, { 'content-type': contentType(filePath) })
+      res.end(content)
+      return
+    } catch {
+      const index = await fs.readFile(path.join(publicDir, 'chw/index.html'))
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(index)
+      return
+    }
+  }
+
+  // Handle Portal surface routing
+  if (pathname === '/portal' || pathname === '/portal/' || pathname.startsWith('/portal/')) {
+    const target = pathname === '/portal' || pathname === '/portal/' ? 'portal/index.html' : pathname.replace(/^\/+/, '')
+    const filePath = safeJoin(publicDir, target)
+    try {
+      const content = await fs.readFile(filePath)
+      res.writeHead(200, { 'content-type': contentType(filePath) })
+      res.end(content)
+      return
+    } catch {
+      const index = await fs.readFile(path.join(publicDir, 'portal/index.html'))
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       res.end(index)
       return

@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lindela CHW</title>
+    <link rel="manifest" href="/chw/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1520">
+    <style>
+      @import '/tokens.css';
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html { font-size: 16px; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.6;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--border);
+        padding: 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .header-brand {
+        font-weight: 600;
+        font-size: 1.25rem;
+      }
+
+      .header-controls {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .status-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #10b981;
+      }
+
+      .status-dot.offline {
+        background: #ef4444;
+      }
+
+      select {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--ink);
+        font-size: 0.875rem;
+      }
+
+      main {
+        flex: 1;
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .privacy-toggle {
+        width: 100%;
+        max-width: 420px;
+        margin-bottom: 2rem;
+        padding: 1rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .privacy-toggle input[type=checkbox] {
+        width: 20px;
+        height: 20px;
+        cursor: pointer;
+      }
+
+      .privacy-info {
+        font-size: 0.875rem;
+        color: var(--ink-muted);
+      }
+
+      .screen {
+        width: 100%;
+        max-width: 420px;
+        display: none;
+      }
+
+      .screen.active {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+
+      .home-screen {
+        gap: 1rem;
+      }
+
+      .home-screen .button-group {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      button {
+        padding: 1.5rem 1rem;
+        border: none;
+        border-radius: 8px;
+        font-size: var(--chw-font-size-base, 1.125rem);
+        font-weight: 600;
+        cursor: pointer;
+        min-height: var(--tap-target-min, 44px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        background: var(--surface);
+        color: var(--ink);
+        border: 2px solid var(--border);
+        transition: all 0.2s;
+      }
+
+      button:active {
+        transform: scale(0.98);
+        opacity: 0.9;
+      }
+
+      .btn-primary {
+        background: #10b981;
+        color: white;
+        border: none;
+      }
+
+      .btn-secondary {
+        background: #3b82f6;
+        color: white;
+        border: none;
+      }
+
+      .btn-danger {
+        background: #ef4444;
+        color: white;
+        border: none;
+      }
+
+      .screen-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        text-align: center;
+      }
+
+      .progress-dots {
+        display: flex;
+        justify-content: center;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+      }
+
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--border);
+      }
+
+      .dot.active {
+        background: var(--ink);
+      }
+
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+      }
+
+      .form-group label {
+        font-weight: 600;
+        font-size: 1rem;
+      }
+
+      .form-group input,
+      .form-group select,
+      .form-group textarea {
+        padding: 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--ink);
+        font-size: 1rem;
+        font-family: inherit;
+      }
+
+      .form-group textarea {
+        resize: vertical;
+        min-height: 100px;
+      }
+
+      .icon-button-group {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+
+      .icon-button {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: var(--tap-target-min, 44px);
+        padding: 1rem;
+        background: var(--surface);
+        border: 2px solid var(--border);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--ink);
+        gap: 0.5rem;
+      }
+
+      .icon-button.selected {
+        background: #10b981;
+        border-color: #10b981;
+        color: white;
+      }
+
+      .icon-button svg {
+        width: 32px;
+        height: 32px;
+      }
+
+      .action-buttons {
+        display: flex;
+        gap: 1rem;
+        margin-top: 1rem;
+      }
+
+      .action-buttons button {
+        flex: 1;
+        min-height: var(--tap-target-min, 44px);
+      }
+
+      .toast {
+        position: fixed;
+        bottom: 1rem;
+        left: 1rem;
+        right: 1rem;
+        max-width: 420px;
+        margin: 0 auto;
+        padding: 1rem;
+        background: #10b981;
+        color: white;
+        border-radius: 8px;
+        display: none;
+        text-align: center;
+        font-weight: 600;
+      }
+
+      .toast.show {
+        display: block;
+        animation: slideUp 0.3s ease-out;
+      }
+
+      @keyframes slideUp {
+        from {
+          transform: translateY(100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+
+      .offline-banner {
+        background: #fef3c7;
+        color: #b45309;
+        padding: 0.75rem 1rem;
+        text-align: center;
+        font-size: 0.875rem;
+        display: none;
+      }
+
+      .offline-banner.show {
+        display: block;
+      }
+
+      footer {
+        padding: 1rem;
+        border-top: 1px solid var(--border);
+        text-align: center;
+        font-size: 0.75rem;
+        color: var(--ink-muted);
+      }
+
+      @media (max-width: 640px) {
+        body { font-size: 1rem; }
+        header { gap: 0.5rem; }
+        main { padding: 1rem; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="offline-banner" id="offlineBanner" data-i18n="banner.offline">
+      Offline. Changes will sync when you reconnect.
+    </div>
+
+    <header>
+      <div class="header-brand" data-i18n="chw.title">Lindela CHW</div>
+      <div class="header-controls">
+        <div class="status-dot" id="statusDot"></div>
+        <select id="locale-select" aria-label="Language">
+          <option value="en">English</option>
+          <option value="sw">Swahili</option>
+          <option value="so">Somali</option>
+          <option value="din">Dinka</option>
+          <option value="km">Karimojong</option>
+          <option value="nk">Ngakarimojong</option>
+        </select>
+      </div>
+    </header>
+
+    <div class="privacy-toggle">
+      <input type="checkbox" id="includeNameToggle">
+      <label for="includeNameToggle" class="privacy-info">
+        <span data-i18n="chw.include_name">Include my name</span> — <span data-i18n="chw.privacy_note">Your identity stays private.</span>
+      </label>
+    </div>
+
+    <main>
+      <!-- Home screen -->
+      <div id="homeScreen" class="screen active home-screen">
+        <h1 class="screen-title" data-i18n="chw.home">Health Report</h1>
+        <div class="button-group">
+          <button class="btn-primary" id="reportSymptomBtn" data-i18n="chw.report_symptom">Report symptom</button>
+          <button class="btn-secondary" id="reportIncidentBtn" data-i18n="chw.report_incident">Report incident</button>
+          <button id="replyAlertBtn" data-i18n="chw.reply_alert">Reply to alert</button>
+        </div>
+      </div>
+
+      <!-- Symptom report screen -->
+      <div id="symptomScreen" class="screen">
+        <div class="progress-dots">
+          <div class="dot active"></div>
+          <div class="dot"></div>
+          <div class="dot"></div>
+          <div class="dot"></div>
+        </div>
+        <h2 class="screen-title" data-i18n="chw.report_symptom">Report symptom</h2>
+        <div class="form-group">
+          <label data-i18n="chw.symptom_who">Who has this symptom?</label>
+          <div class="icon-button-group">
+            <button class="icon-button" data-symptom-who="self" data-i18n="chw.who_self">Self</button>
+            <button class="icon-button" data-symptom-who="child" data-i18n="chw.who_child">Child</button>
+            <button class="icon-button" data-symptom-who="other" data-i18n="chw.who_other">Other</button>
+          </div>
+        </div>
+        <div class="action-buttons">
+          <button class="btn-primary" id="symptomNextBtn" data-i18n="chw.next">Next</button>
+          <button id="symptomBackBtn" data-i18n="chw.back">Back</button>
+        </div>
+      </div>
+
+      <!-- Symptom type screen -->
+      <div id="symptomTypeScreen" class="screen">
+        <div class="progress-dots">
+          <div class="dot active"></div>
+          <div class="dot active"></div>
+          <div class="dot"></div>
+          <div class="dot"></div>
+        </div>
+        <h2 class="screen-title" data-i18n="chw.report_symptom">Report symptom</h2>
+        <div class="form-group">
+          <label data-i18n="chw.symptom_type">Which symptom?</label>
+          <div class="icon-button-group">
+            <button class="icon-button" data-symptom-type="fever" data-i18n="chw.symptom_fever">Fever</button>
+            <button class="icon-button" data-symptom-type="cough" data-i18n="chw.symptom_cough">Cough</button>
+            <button class="icon-button" data-symptom-type="diarrhea" data-i18n="chw.symptom_diarrhea">Diarrhea</button>
+            <button class="icon-button" data-symptom-type="rash" data-i18n="chw.symptom_rash">Rash</button>
+            <button class="icon-button" data-symptom-type="other" data-i18n="chw.symptom_other">Other</button>
+          </div>
+        </div>
+        <div class="action-buttons">
+          <button class="btn-primary" id="symptomTypeNextBtn" data-i18n="chw.next">Next</button>
+          <button id="symptomTypeBackBtn" data-i18n="chw.back">Back</button>
+        </div>
+      </div>
+
+      <!-- Symptom duration screen -->
+      <div id="symptomDurationScreen" class="screen">
+        <div class="progress-dots">
+          <div class="dot active"></div>
+          <div class="dot active"></div>
+          <div class="dot active"></div>
+          <div class="dot"></div>
+        </div>
+        <h2 class="screen-title" data-i18n="chw.report_symptom">Report symptom</h2>
+        <div class="form-group">
+          <label data-i18n="chw.symptom_duration">How long has it been?</label>
+          <div class="icon-button-group">
+            <button class="icon-button" data-symptom-duration="hours" data-i18n="chw.duration_hours">Hours</button>
+            <button class="icon-button" data-symptom-duration="days" data-i18n="chw.duration_days">Days</button>
+          </div>
+        </div>
+        <div class="action-buttons">
+          <button class="btn-primary" id="symptomDurationNextBtn" data-i18n="chw.next">Next</button>
+          <button id="symptomDurationBackBtn" data-i18n="chw.back">Back</button>
+        </div>
+      </div>
+
+      <!-- Symptom location screen -->
+      <div id="symptomLocationScreen" class="screen">
+        <div class="progress-dots">
+          <div class="dot active"></div>
+          <div class="dot active"></div>
+          <div class="dot active"></div>
+          <div class="dot active"></div>
+        </div>
+        <h2 class="screen-title" data-i18n="chw.report_symptom">Report symptom</h2>
+        <div class="form-group">
+          <label data-i18n="chw.symptom_location">Where is the person?</label>
+          <div class="icon-button-group">
+            <button class="icon-button" id="autoLocationBtn" data-symptom-location="auto" data-i18n="chw.location_auto">Auto-detect</button>
+            <button class="icon-button" id="hereLocationBtn" data-symptom-location="here" data-i18n="chw.location_here">Here</button>
+          </div>
+        </div>
+        <div class="action-buttons">
+          <button class="btn-primary" id="symptomSubmitBtn" data-i18n="chw.submit">Submit</button>
+          <button id="symptomLocationBackBtn" data-i18n="chw.back">Back</button>
+        </div>
+      </div>
+
+      <!-- Incident report screen -->
+      <div id="incidentScreen" class="screen">
+        <h2 class="screen-title" data-i18n="chw.report_incident">Report incident</h2>
+        <div class="form-group">
+          <label for="incidentCategory" data-i18n="chw.incident_category">Category</label>
+          <select id="incidentCategory">
+            <option value="">Select category</option>
+            <option value="flood" data-i18n="chw.incident_flood">Flood</option>
+            <option value="drought" data-i18n="chw.incident_drought">Drought</option>
+            <option value="disease" data-i18n="chw.incident_disease">Disease</option>
+            <option value="conflict" data-i18n="chw.incident_conflict">Conflict</option>
+            <option value="other" data-i18n="chw.incident_other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="incidentDescription" data-i18n="chw.incident_description">Description</label>
+          <textarea id="incidentDescription" placeholder="What happened?"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="incidentPhoto" data-i18n="chw.incident_photo">Photo (optional)</label>
+          <input type="file" id="incidentPhoto" capture="environment" accept="image/*">
+        </div>
+        <div class="form-group">
+          <label data-i18n="chw.incident_location">Location</label>
+          <div class="icon-button-group">
+            <button class="icon-button" id="incidentAutoLocationBtn" data-incident-location="auto" data-i18n="chw.location_auto">Auto-detect</button>
+            <button class="icon-button" id="incidentHereLocationBtn" data-incident-location="here" data-i18n="chw.location_here">Here</button>
+          </div>
+        </div>
+        <div class="action-buttons">
+          <button class="btn-primary" id="incidentSubmitBtn" data-i18n="chw.submit">Submit</button>
+          <button id="incidentBackBtn" data-i18n="chw.back">Back</button>
+        </div>
+      </div>
+
+      <!-- Alert reply screen -->
+      <div id="replyScreen" class="screen">
+        <h2 class="screen-title" data-i18n="chw.reply_alert">Reply to alert</h2>
+        <div id="alertCard" class="form-group" style="padding: 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;">
+          <p id="alertText" style="font-size: 0.875rem; color: var(--ink-muted);">Loading alert...</p>
+        </div>
+        <div class="form-group">
+          <label for="replyMessage" data-i18n="chw.reply_message">Your reply</label>
+          <textarea id="replyMessage" placeholder="Your response..."></textarea>
+        </div>
+        <div class="action-buttons">
+          <button class="btn-primary" id="replySubmitBtn" data-i18n="chw.submit">Submit</button>
+          <button id="replyBackBtn" data-i18n="chw.back">Back</button>
+        </div>
+      </div>
+    </main>
+
+    <div class="toast" id="toast"></div>
+
+    <footer>
+      <span data-i18n="footer.version">v0.1.0</span> — <span data-i18n="footer.powered">Powered by Lindela Lite</span>
+    </footer>
+
+    <script type="module" src="/chw/app.js"></script>
+  </body>
+</html>
