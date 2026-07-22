@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lindela Partner Portal</title>
+    <link rel="manifest" href="/portal/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1520">
+    <style>
+      @import '/tokens.css';
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html { font-size: 16px; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.5;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--border);
+        padding: 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+
+      .header-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-weight: 600;
+        font-size: 1.125rem;
+      }
+
+      .header-brand svg {
+        width: 24px;
+        height: 24px;
+      }
+
+      .header-org {
+        font-size: 0.875rem;
+        color: var(--ink-muted);
+      }
+
+      .header-controls {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      select {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--ink);
+        font-size: 0.875rem;
+      }
+
+      .signout-btn {
+        padding: 0.5rem 1rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 0.875rem;
+      }
+
+      .signout-btn:hover {
+        background: var(--bg-hover);
+      }
+
+      .tab-bar {
+        display: flex;
+        gap: 0;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+        position: sticky;
+        top: 60px;
+        z-index: 99;
+      }
+
+      .tab-button {
+        flex: 1;
+        padding: 1rem;
+        border: none;
+        background: transparent;
+        color: var(--ink-muted);
+        cursor: pointer;
+        font-size: 0.875rem;
+        font-weight: 600;
+        text-align: center;
+        border-bottom: 3px solid transparent;
+      }
+
+      .tab-button.active {
+        color: var(--ink);
+        border-bottom-color: #3b82f6;
+      }
+
+      main {
+        flex: 1;
+        padding: 2rem 1rem;
+        max-width: 1400px;
+        margin: 0 auto;
+        width: 100%;
+      }
+
+      .auth-panel {
+        text-align: center;
+        padding: 2rem;
+      }
+
+      .auth-panel h2 {
+        margin-bottom: 1rem;
+      }
+
+      .auth-panel p {
+        color: var(--ink-muted);
+        margin-bottom: 1.5rem;
+      }
+
+      .auth-panel .btn-primary {
+        padding: 0.75rem 1.5rem;
+        background: #3b82f6;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      .tab-content {
+        display: none;
+      }
+
+      .tab-content.active {
+        display: block;
+      }
+
+      .content-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1.5rem;
+      }
+
+      .content-header h2 {
+        font-size: 1.5rem;
+      }
+
+      .export-buttons {
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      button.export-btn {
+        padding: 0.5rem 1rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 0.875rem;
+        font-weight: 600;
+      }
+
+      button.export-btn:hover {
+        background: var(--bg-hover);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 2rem;
+      }
+
+      thead {
+        background: var(--surface);
+      }
+
+      th {
+        padding: 0.75rem;
+        text-align: left;
+        font-weight: 600;
+        border-bottom: 2px solid var(--border);
+        font-size: 0.875rem;
+      }
+
+      td {
+        padding: 0.75rem;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.875rem;
+      }
+
+      tr:hover {
+        background: var(--surface);
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 2rem;
+        background: var(--surface);
+        border-radius: 8px;
+        color: var(--ink-muted);
+      }
+
+      .offline-banner {
+        background: #fef3c7;
+        color: #b45309;
+        padding: 0.75rem 1rem;
+        text-align: center;
+        font-size: 0.875rem;
+        display: none;
+      }
+
+      .offline-banner.show {
+        display: block;
+      }
+
+      footer {
+        padding: 1rem;
+        border-top: 1px solid var(--border);
+        text-align: center;
+        font-size: 0.875rem;
+        color: var(--ink-muted);
+      }
+
+      @media (max-width: 768px) {
+        .tab-bar { gap: 0; }
+        .tab-button { padding: 0.75rem 0.5rem; font-size: 0.75rem; }
+        main { padding: 1rem; }
+        table { font-size: 0.75rem; }
+        th, td { padding: 0.5rem; }
+        .export-buttons { flex-direction: column; }
+        .export-btn { width: 100%; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="offline-banner" id="offlineBanner" data-i18n="banner.offline">
+      Offline. Changes will sync when you reconnect.
+    </div>
+
+    <header>
+      <div>
+        <div class="header-brand">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" fill="currentColor"/>
+            <circle cx="12" cy="12" r="7" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.5"/>
+            <circle cx="12" cy="12" r="11" stroke="currentColor" stroke-width="1" fill="none" opacity="0.25"/>
+          </svg>
+          <span data-i18n="portal.title">Lindela Partner Portal</span>
+        </div>
+        <div class="header-org" id="partnerOrg"></div>
+      </div>
+      <div class="header-controls">
+        <select id="locale-select" aria-label="Language">
+          <option value="en">English</option>
+          <option value="sw">Swahili</option>
+          <option value="so">Somali</option>
+          <option value="din">Dinka</option>
+        </select>
+        <button class="signout-btn" id="signoutBtn" data-i18n="action.signout">Sign out</button>
+      </div>
+    </header>
+
+    <div id="authPanel" class="auth-panel" style="display: none;">
+      <h2 data-i18n="portal.auth_required">Authentication required</h2>
+      <p data-i18n="portal.auth_message">Sign in with your partner credentials to access the portal.</p>
+      <button class="btn-primary" onclick="window.location.href='/'" data-i18n="portal.sign_in">Sign in</button>
+    </div>
+
+    <div id="contentArea" style="display: none;">
+      <div class="tab-bar">
+        <button class="tab-button active" data-tab="risk" data-i18n="portal.tab_risk">Risk Overview</button>
+        <button class="tab-button" data-tab="hazards" data-i18n="portal.tab_hazards">Hazard Events</button>
+        <button class="tab-button" data-tab="assets" data-i18n="portal.tab_assets">Service Assets</button>
+        <button class="tab-button" data-tab="alerts" data-i18n="portal.tab_alerts">Alerts Sent to Me</button>
+      </div>
+
+      <main>
+        <!-- Risk Overview Tab -->
+        <div id="riskTab" class="tab-content active">
+          <div class="content-header">
+            <h2 data-i18n="portal.tab_risk">Risk Overview</h2>
+            <div class="export-buttons">
+              <button class="export-btn" id="riskExportCsv" data-i18n="portal.export_csv">CSV</button>
+              <button class="export-btn" id="riskExportGeojson" data-i18n="portal.export_geojson">GeoJSON</button>
+            </div>
+          </div>
+          <div id="riskTableContainer">
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="label.district">District</th>
+                  <th data-i18n="label.risk">Risk Score</th>
+                  <th data-i18n="label.confidence">Confidence</th>
+                </tr>
+              </thead>
+              <tbody id="riskTableBody">
+                <tr><td colspan="3" class="empty-state" data-i18n="portal.no_data">No data available</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Hazard Events Tab -->
+        <div id="hazardsTab" class="tab-content">
+          <div class="content-header">
+            <h2 data-i18n="portal.tab_hazards">Hazard Events</h2>
+            <div class="export-buttons">
+              <button class="export-btn" id="hazardsExportCsv" data-i18n="portal.export_csv">CSV</button>
+              <button class="export-btn" id="hazardsExportGeojson" data-i18n="portal.export_geojson">GeoJSON</button>
+            </div>
+          </div>
+          <div id="hazardsTableContainer">
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="label.event">Event</th>
+                  <th data-i18n="label.type">Type</th>
+                  <th data-i18n="label.timestamp">Date</th>
+                  <th data-i18n="label.severity">Severity</th>
+                </tr>
+              </thead>
+              <tbody id="hazardsTableBody">
+                <tr><td colspan="4" class="empty-state" data-i18n="portal.no_data">No data available</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Service Assets Tab -->
+        <div id="assetsTab" class="tab-content">
+          <div class="content-header">
+            <h2 data-i18n="portal.tab_assets">Service Assets</h2>
+            <div class="export-buttons">
+              <button class="export-btn" id="assetsExportCsv" data-i18n="portal.export_csv">CSV</button>
+              <button class="export-btn" id="assetsExportGeojson" data-i18n="portal.export_geojson">GeoJSON</button>
+            </div>
+          </div>
+          <div id="assetsTableContainer">
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="label.name">Name</th>
+                  <th data-i18n="label.type">Type</th>
+                  <th data-i18n="label.location">Location</th>
+                </tr>
+              </thead>
+              <tbody id="assetsTableBody">
+                <tr><td colspan="3" class="empty-state" data-i18n="portal.no_data">No data available</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Alerts Tab -->
+        <div id="alertsTab" class="tab-content">
+          <div class="content-header">
+            <h2 data-i18n="portal.tab_alerts">Alerts Sent to Me</h2>
+            <div class="export-buttons">
+              <button class="export-btn" id="alertsExportCsv" data-i18n="portal.export_csv">CSV</button>
+              <button class="export-btn" id="alertsExportGeojson" data-i18n="portal.export_geojson">GeoJSON</button>
+            </div>
+          </div>
+          <div id="alertsTableContainer">
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="label.event">Event</th>
+                  <th data-i18n="label.severity">Severity</th>
+                  <th data-i18n="label.timestamp">Sent</th>
+                </tr>
+              </thead>
+              <tbody id="alertsTableBody">
+                <tr><td colspan="3" class="empty-state" data-i18n="portal.no_data">No data available</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <footer>
+      <span data-i18n="footer.version">v0.1.0</span> — <span data-i18n="footer.powered">Powered by Lindela Lite</span>
+    </footer>
+
+    <script type="module" src="/portal/app.js"></script>
+  </body>
+</html>

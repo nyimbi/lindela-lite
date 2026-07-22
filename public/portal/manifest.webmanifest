@@ -1,0 +1,17 @@
+{
+  "name": "Lindela Partner Portal",
+  "short_name": "Portal",
+  "start_url": "/portal/",
+  "display": "standalone",
+  "background_color": "#0e1520",
+  "theme_color": "#0e1520",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
