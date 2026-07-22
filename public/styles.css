@@ -1089,6 +1089,194 @@ dialog[open] {
 /* Detail dialog */
 .detail-dialog { max-width: min(90vw, 520px); }
 
+/* --- Workflow tray ----------------------------------------- */
+.workflow-tray {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+}
+
+.workflow-card {
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  padding: var(--sp-3);
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--dur-normal) var(--ease);
+}
+
+.workflow-card:hover {
+  background: var(--surface-hover);
+  border-color: var(--brand);
+}
+
+.workflow-card-name {
+  display: block;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--ink-muted);
+  margin-bottom: var(--sp-2);
+  text-transform: capitalize;
+}
+
+.workflow-card-count {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: var(--sp-1);
+}
+
+.workflow-card-meta {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+/* --- Equity table ------------------------------------------ */
+.equity-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.equity-table thead {
+  background: var(--surface);
+  border-bottom: 1px solid var(--stroke-strong);
+}
+
+.equity-table th {
+  padding: var(--sp-2) var(--sp-3);
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.equity-table td {
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--stroke);
+  color: var(--ink);
+}
+
+.equity-table tbody tr:hover {
+  background: var(--surface);
+}
+
+/* --- Dispatch gate dialog ---------------------------------- */
+.dispatch-gate-dialog {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  padding: 1.25rem;
+  max-width: 420px;
+}
+
+.dispatch-gate-dialog::backdrop {
+  background: oklch(0% 0 0 / 0.6);
+}
+
+.dispatch-gate-dialog label {
+  display: flex;
+  flex-direction: column;
+  margin: var(--sp-3) 0;
+  font-size: var(--text-sm);
+}
+
+.dispatch-gate-dialog label span:first-child {
+  font-weight: 500;
+  color: var(--ink-muted);
+  margin-bottom: var(--sp-1);
+}
+
+.dispatch-gate-dialog select {
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-sm);
+  padding: var(--sp-2);
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+}
+
+.dispatch-gate-dialog .warning {
+  background: color-mix(in oklch, var(--warn) 14%, transparent);
+  color: var(--ink);
+  padding: var(--sp-2);
+  border-radius: var(--r-sm);
+  font-size: var(--text-sm);
+  margin: var(--sp-3) 0;
+}
+
+/* --- Statusbar metrics ------------------------------------ */
+.statusbar-metrics {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: center;
+  margin-left: auto;
+  font-size: var(--text-xs);
+}
+
+.statusbar-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--ink-muted);
+}
+
+.statusbar-metric span:first-child {
+  font-weight: 500;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-ok {
+  background: var(--ok);
+}
+
+.dot-warn {
+  background: var(--warn);
+}
+
+.dot-danger {
+  background: var(--danger);
+}
+
+/* --- Cold chain toggle ------------------------------------ */
+#coldChainToggle {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease);
+  margin: 0;
+}
+
+#coldChainToggle:hover {
+  background: var(--surface-hover);
+  border-color: var(--brand);
+}
+
+#coldChainToggle:checked {
+  background: var(--brand);
+  border-color: var(--brand);
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 8l3 3 7-7' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 12px;
+}
+
 /* --- RTL ---------------------------------------------------- */
 [dir="rtl"] .topbar             { flex-direction: row-reverse; }
 [dir="rtl"] .topbar-brand       { flex-direction: row-reverse; }

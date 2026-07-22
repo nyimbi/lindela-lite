@@ -95,6 +95,10 @@
                 <option value="">All</option>
               </select>
             </label>
+            <label class="filter-label">
+              <input type="checkbox" id="coldChainToggle">
+              <span data-i18n="filter.cold_chain">Cold-chain nodes</span>
+            </label>
             <span id="mapRecordCount" class="map-record-count"></span>
           </div>
         </div>
@@ -102,14 +106,22 @@
 
       <aside class="rail" role="complementary" aria-label="Operations rail">
         <nav class="rail-tabs" role="tablist" aria-label="Console tabs">
-          <button class="rail-tab active" role="tab" id="tab-alerts"
-                  aria-controls="panel-alerts" aria-selected="true" data-tab="alerts">
+          <button class="rail-tab active" role="tab" id="tab-workflows"
+                  aria-controls="panel-workflows" aria-selected="true" data-tab="workflows">
+            <span data-i18n="tab.workflows">Workflows</span>
+          </button>
+          <button class="rail-tab" role="tab" id="tab-alerts"
+                  aria-controls="panel-alerts" aria-selected="false" data-tab="alerts">
             <span data-i18n="tab.alerts">Alerts</span>
             <span id="alertsBadge" class="tab-badge" hidden>0</span>
           </button>
           <button class="rail-tab" role="tab" id="tab-reports"
                   aria-controls="panel-reports" aria-selected="false" data-tab="reports">
             <span data-i18n="tab.reports">Reports</span>
+          </button>
+          <button class="rail-tab" role="tab" id="tab-equity"
+                  aria-controls="panel-equity" aria-selected="false" data-tab="equity">
+            <span data-i18n="tab.equity">Equity</span>
           </button>
           <button class="rail-tab" role="tab" id="tab-ingestion"
                   aria-controls="panel-ingestion" aria-selected="false" data-tab="ingestion">
@@ -123,8 +135,17 @@
 
         <div class="rail-content">
 
+          <!-- Workflows -->
+          <div id="panel-workflows" class="rail-panel active" role="tabpanel" aria-labelledby="tab-workflows">
+            <div class="panel-header">
+              <h2 data-i18n="tab.workflows">Workflows</h2>
+            </div>
+            <div id="workflowMetricsGrid" class="workflow-tray" role="list"></div>
+            <div id="workflowInstancesList" class="list-container" role="list"></div>
+          </div>
+
           <!-- Alerts -->
-          <div id="panel-alerts" class="rail-panel active" role="tabpanel" aria-labelledby="tab-alerts">
+          <div id="panel-alerts" class="rail-panel" role="tabpanel" aria-labelledby="tab-alerts">
             <div class="panel-header">
               <h2 data-i18n="tab.alerts">Alerts</h2>
               <div class="filter-chips" id="alertFilterChips" role="group" aria-label="Alert filters">
@@ -135,6 +156,26 @@
               </div>
             </div>
             <div id="alertsList" class="list-container" role="list"></div>
+          </div>
+
+          <!-- Equity -->
+          <div id="panel-equity" class="rail-panel" role="tabpanel" aria-labelledby="tab-equity" hidden>
+            <div class="panel-header">
+              <h2 data-i18n="tab.equity">Equity</h2>
+              <button id="triggerEquityAuditButton" class="btn btn-sm" type="button" data-i18n="equity.trigger_audit">Trigger audit workflow</button>
+            </div>
+            <table id="equityTable" class="equity-table" role="table">
+              <thead>
+                <tr>
+                  <th data-i18n="equity.district_column">District</th>
+                  <th data-i18n="equity.dispatched">Dispatched</th>
+                  <th data-i18n="equity.acknowledged">Acknowledged</th>
+                  <th data-i18n="equity.false_positive_rate">False positive rate</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div id="equityEmptyState" class="empty-state" hidden><p data-i18n="equity.empty">No equity data yet. Alerts must be dispatched and reviewed.</p></div>
           </div>
 
           <!-- Reports -->
@@ -316,6 +357,18 @@
       <div id="sourceDots" class="source-dots" aria-hidden="true"></div>
       <span id="status" class="status-text"></span>
       <span id="queuedCount" class="queued-count" hidden></span>
+      <div class="statusbar-metrics">
+        <span class="statusbar-metric">
+          <span data-i18n="statusbar.last_signal">Last signal</span>: <span id="lastSignalTime">—</span>
+        </span>
+        <span class="statusbar-metric">
+          <span data-i18n="statusbar.last_action">Last action</span>: <span id="lastActionTime">—</span>
+        </span>
+        <span class="statusbar-metric">
+          <span data-i18n="statusbar.median_lag">Median lag</span>: <span id="medianLag">—</span>
+          <span id="lagDot" class="dot dot-ok"></span>
+        </span>
+      </div>
     </footer>
 
     <!-- Command palette -->
@@ -358,6 +411,43 @@
           <tr><td><kbd>R</kbd></td><td>Refresh data</td></tr>
         </tbody>
       </table>
+    </dialog>
+
+    <!-- Dispatch gate dialog -->
+    <dialog id="dispatchGateDialog" class="dispatch-gate-dialog" aria-labelledby="dispatchGateTitle">
+      <div class="dialog-header">
+        <h2 id="dispatchGateTitle" data-i18n="dispatch.gate_title">Approve high-severity dispatch</h2>
+        <button class="btn btn-icon dialog-close" type="button" aria-label="Close">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <p><span data-i18n="label.severity">Severity</span>: <strong id="dispatchGateSeverity">—</strong> · <span data-i18n="label.rule">Rule</span>: <span id="dispatchGateRule">—</span></p>
+        <p class="warning" data-i18n="dispatch.gate_warning">This will dispatch via RapidPro. Confirm below.</p>
+        <label data-i18n="dispatch.focal_point_label">
+          <span>Focal-point identifier</span>
+          <select id="dispatchFocalPoint">
+            <option value="turkana-focal">Turkana</option>
+            <option value="juba-focal">Juba</option>
+            <option value="mogadishu-focal">Mogadishu</option>
+          </select>
+        </label>
+        <label data-i18n="dispatch.reason_label">
+          <span>Reason</span>
+          <select id="dispatchReason">
+            <option value="confirmed_threat">Confirmed threat</option>
+            <option value="pre_authorized_protocol">Pre-authorized protocol</option>
+            <option value="manual_override">Manual override</option>
+          </select>
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-action="cancel" data-i18n="dispatch.cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" data-action="confirm" data-i18n="dispatch.confirm">Approve and send</button>
+      </div>
     </dialog>
 
     <!-- Detail overlay -->

@@ -12,16 +12,21 @@ if ('serviceWorker' in navigator) {
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
   catalog: {},
-  activeTab: 'alerts',
+  activeTab: 'workflows',
   alertFilter: 'all',
+  workflowTypeFilter: null,
   mapTransform: { x: 0, y: 0, scale: 1 },
   mapDragging: false,
   mapDragStart: null,
   data: {},
   reports: [],
   templates: [],
+  filters: {
+    coldChain: false,
+  },
   _paletteItems: [],
   _paletteIndex: 0,
+  _dispatchGateAlert: null,
 }
 
 // =============================================================
@@ -466,10 +471,13 @@ async function refresh() {
     ...(assets.data || []),
   ])
 
-  if (state.activeTab === 'alerts')    renderAlertsPanel()
+  if (state.activeTab === 'workflows')   loadWorkflowMetrics()
+  else if (state.activeTab === 'alerts')    renderAlertsPanel()
   else if (state.activeTab === 'reports')   renderReportsPanel()
+  else if (state.activeTab === 'equity')    renderEquityTab()
   else if (state.activeTab === 'ingestion') renderIngestionPanel()
 
+  loadSignalToAction()
   setStatus(`Updated ${new Date().toLocaleString()}. GDELT excluded.`)
 }
 
@@ -497,6 +505,165 @@ function renderSourceDots(healthData) {
 }
 
 // =============================================================
+// Workflows panel
+// =============================================================
+async function loadWorkflowMetrics() {
+  try {
+    const response = await fetch('/api/v1/workflows/metrics')
+    const payload = await response.json()
+    const metrics = payload.data || []
+    renderWorkflowsTab(metrics)
+  } catch (err) {
+    console.error('Failed to load workflow metrics:', err)
+  }
+}
+
+function renderWorkflowsTab(metrics) {
+  const grid = $('workflowMetricsGrid')
+  if (!grid) return
+
+  const WORKFLOW_TYPES = [
+    'anticipatory_alert',
+    'cold_chain_protection',
+    'school_feeding_continuity',
+    'school_health_decision',
+    'chw_outbreak_triage',
+    'community_feedback_loop',
+    'equity_audit_action',
+    'parametric_disbursement',
+  ]
+
+  grid.innerHTML = WORKFLOW_TYPES.map((type) => {
+    const m = metrics.find((x) => x.type === type) || { type, open_count: 0, dispatched_today: 0 }
+    const i18nKey = `workflow.${type}`
+    return `<div class="workflow-card" data-type="${escapeHtml(type)}" role="listitem">
+      <span class="workflow-card-name" data-i18n="${escapeHtml(i18nKey)}">${t(i18nKey)}</span>
+      <span class="workflow-card-count">${escapeHtml(String(m.open_count || 0))}</span>
+      <span class="workflow-card-meta">dispatched today: ${escapeHtml(String(m.dispatched_today || 0))}</span>
+    </div>`
+  }).join('')
+
+  grid.querySelectorAll('.workflow-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      state.workflowTypeFilter = card.dataset.type
+      renderWorkflowsTab(metrics)
+    })
+  })
+}
+
+// =============================================================
+// Equity panel
+// =============================================================
+function renderEquityTab() {
+  const alerts = state.data.alerts?.data || []
+  const table = $('equityTable')
+  const emptyState = $('equityEmptyState')
+  if (!table) return
+
+  const grouped = {}
+  alerts.forEach((a) => {
+    const district = a.scope?.district || 'unknown'
+    if (!grouped[district]) grouped[district] = { dispatched: 0, acknowledged: 0 }
+    if (a.dispatch_status === 'sent') grouped[district].dispatched++
+    if (a.status === 'acknowledged' || a.status === 'resolved') grouped[district].acknowledged++
+  })
+
+  const districts = Object.entries(grouped)
+  if (!districts.length) {
+    emptyState.hidden = false
+    table.hidden = true
+    return
+  }
+
+  emptyState.hidden = true
+  table.hidden = false
+  const tbody = table.querySelector('tbody')
+  if (tbody) {
+    tbody.innerHTML = districts.map(([district, data]) => {
+      const rate = data.dispatched > 0 ? ((data.dispatched - data.acknowledged) / data.dispatched * 100).toFixed(1) : '—'
+      return `<tr>
+        <td>${escapeHtml(district)}</td>
+        <td>${escapeHtml(String(data.dispatched))}</td>
+        <td>${escapeHtml(String(data.acknowledged))}</td>
+        <td>${escapeHtml(String(rate))}%</td>
+      </tr>`
+    }).join('')
+  }
+}
+
+// =============================================================
+// Signal to action metrics
+// =============================================================
+async function loadSignalToAction() {
+  try {
+    const [eventsRes, dispatchesRes] = await Promise.all([
+      fetch('/api/v1/events?limit=1&order=desc'),
+      fetch('/api/v1/rapidpro/dispatches?limit=50'),
+    ])
+
+    const events = await eventsRes.json()
+    const dispatches = await dispatchesRes.json()
+
+    const lastEvent = events.data?.[0]
+    const lastDispatch = dispatches.data?.sort((a, b) =>
+      new Date(b.sent_at || 0) - new Date(a.sent_at || 0))[0]
+
+    // Format times
+    const lastSignalEl = $('lastSignalTime')
+    if (lastSignalEl && lastEvent?.observed_at) {
+      const diff = Math.round((Date.now() - new Date(lastEvent.observed_at)) / 1000 / 60)
+      lastSignalEl.textContent = diff < 60 ? `${diff}m ago` : `${Math.round(diff / 60)}h ago`
+    }
+
+    const lastActionEl = $('lastActionTime')
+    if (lastActionEl && lastDispatch?.sent_at) {
+      const diff = Math.round((Date.now() - new Date(lastDispatch.sent_at)) / 1000 / 60)
+      lastActionEl.textContent = diff < 60 ? `${diff}m ago` : `${Math.round(diff / 60)}h ago`
+    }
+
+    // Median lag
+    if (dispatches.data && dispatches.data.length > 0) {
+      const lags = dispatches.data
+        .filter((d) => d.dispatched_at && d.matched_signal_at)
+        .map((d) => (new Date(d.dispatched_at) - new Date(d.matched_signal_at)) / 1000 / 60)
+        .sort((a, b) => a - b)
+      if (lags.length > 0) {
+        const median = lags[Math.floor(lags.length / 2)]
+        const medianEl = $('medianLag')
+        const dotEl = $('lagDot')
+        if (medianEl) medianEl.textContent = `${Math.round(median)}m`
+        if (dotEl) {
+          dotEl.className = 'dot '
+          if (median < 1440) dotEl.classList.add('dot-ok')
+          else if (median < 2880) dotEl.classList.add('dot-warn')
+          else dotEl.classList.add('dot-danger')
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load signal-to-action metrics:', err)
+  }
+}
+
+// =============================================================
+// Dispatch gate dialog
+// =============================================================
+function openDispatchGateDialog(alert) {
+  const dialog = $('dispatchGateDialog')
+  if (!dialog) return
+  state._dispatchGateAlert = alert
+  $('dispatchGateSeverity').textContent = escapeHtml(alert.severity || '—')
+  $('dispatchGateRule').textContent = escapeHtml(alert.rule_name || alert.metric || '—')
+  dialog.showModal()
+}
+
+function closeDispatchGateDialog() {
+  const dialog = $('dispatchGateDialog')
+  if (dialog) dialog.close()
+  state._dispatchGateAlert = null
+}
+
+// =============================================================
 // Tabs
 // =============================================================
 function switchTab(name) {
@@ -511,8 +678,10 @@ function switchTab(name) {
     panel.classList.toggle('active', active)
     panel.hidden = !active
   })
-  if (name === 'alerts')    renderAlertsPanel()
+  if (name === 'workflows')   { loadWorkflowMetrics() }
+  else if (name === 'alerts')    renderAlertsPanel()
   else if (name === 'reports')   renderReportsPanel()
+  else if (name === 'equity')    renderEquityTab()
   else if (name === 'ingestion') renderIngestionPanel()
   else if (name === 'settings')  renderSettingsPanel()
 }
@@ -596,6 +765,11 @@ async function handleAlertAction(id, action) {
     const payload = await postJson(`/api/v1/alert-events/${safeId}`, { status: 'rejected' })
     setStatus(payload.success ? `Alert rejected.` : (payload.error || 'Reject failed'))
   } else if (action === 'send') {
+    const alert = (state.data.alerts?.data || []).find((a) => a.id === id)
+    if (alert && (alert.severity === 'high' || alert.severity === 'critical')) {
+      openDispatchGateDialog(alert)
+      return
+    }
     const urns = prompt('URNs (comma-separated, e.g. +254700000000):')
     if (!urns) return
     const payload = await postJson(`/api/v1/rapidpro/alert-events/${safeId}/send`, {
@@ -1198,6 +1372,60 @@ $('importCsvButton')?.addEventListener('click', () => importServiceAssets('csv')
 $('importGeoJsonButton')?.addEventListener('click', () => importServiceAssets('geojson'))
 $('exportGeoJsonButton')?.addEventListener('click', () => window.open('/api/v1/export.geojson', '_blank'))
 $('exportCsvButton')?.addEventListener('click', () => window.open('/api/v1/export.csv', '_blank'))
+
+// =============================================================
+// Dispatch gate dialog handlers
+// =============================================================
+$('dispatchGateDialog')?.querySelector('[data-action="cancel"]')?.addEventListener('click', closeDispatchGateDialog)
+$('dispatchGateDialog')?.querySelector('[data-action="confirm"]')?.addEventListener('click', async () => {
+  const alert = state._dispatchGateAlert
+  if (!alert) return
+  const focalPoint = $('dispatchFocalPoint')?.value || 'unknown'
+  const reason = $('dispatchReason')?.value || 'manual_override'
+  const safeId = encodeURIComponent(alert.id)
+  try {
+    await postJson(`/api/v1/alert-events/${safeId}/approve`, {
+      decision: 'approved',
+      actor: focalPoint,
+      note: reason,
+    })
+    const payload = await postJson(`/api/v1/rapidpro/alert-events/${safeId}/send`, {
+      urns: [],
+    })
+    setStatus(payload.success ? 'High-severity alert approved and dispatched.' : (payload.error || 'Dispatch failed'))
+  } catch (err) {
+    setStatus('Dispatch failed: ' + err.message)
+  }
+  closeDispatchGateDialog()
+  await refresh()
+})
+
+const dialogClose = $('dispatchGateDialog')?.querySelector('.dialog-close')
+if (dialogClose) dialogClose.addEventListener('click', closeDispatchGateDialog)
+
+// =============================================================
+// Cold chain toggle
+// =============================================================
+$('coldChainToggle')?.addEventListener('change', (e) => {
+  state.filters.coldChain = e.target.checked
+  reRenderMapFromState()
+})
+
+// =============================================================
+// Equity audit trigger
+// =============================================================
+$('triggerEquityAuditButton')?.addEventListener('click', async () => {
+  const district = prompt('Enter district for equity audit:')
+  if (!district) return
+  setStatus('Triggering equity audit workflow...')
+  const payload = await postJson('/api/v1/workflows', {
+    type: 'equity_audit_action',
+    state: 'threshold_breached',
+    district: district,
+  })
+  setStatus(payload.success ? `Equity audit workflow triggered for ${district}.` : (payload.error || 'Workflow trigger failed'))
+  await refresh()
+})
 
 // =============================================================
 // Auto-refresh (30s)

@@ -1889,6 +1889,101 @@ describe('Lindela Lite i18n module', () => {
   })
 })
 
+describe('Lindela Lite client UI', () => {
+  it('GET / HTML contains id="dispatchGateDialog"', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-client-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      assert.ok(html.includes('id="dispatchGateDialog"'), 'dispatchGateDialog missing from HTML')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET / HTML contains data-i18n="tab.workflows"', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-workflows-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      assert.ok(html.includes('data-i18n="tab.workflows"'), 'tab.workflows i18n missing from HTML')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET / HTML contains id="coldChainToggle"', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-coldchain-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      assert.ok(html.includes('id="coldChainToggle"'), 'coldChainToggle missing from HTML')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET / HTML contains workflow-related elements', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-workflows-i18n-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      assert.ok(html.includes('id="workflowMetricsGrid"'), 'workflow metrics grid missing')
+      assert.ok(html.includes('id="workflowInstancesList"'), 'workflow instances list missing')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET / HTML contains equity panel elements', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-equity-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      assert.ok(html.includes('id="panel-equity"'), 'equity panel missing')
+      assert.ok(html.includes('id="equityTable"'), 'equity table missing')
+      assert.ok(html.includes('data-i18n="tab.equity"'), 'tab.equity i18n missing')
+    } finally {
+      listener.close()
+    }
+  })
+})
+
 function rapidProEnv() {
   return {
     RAPIDPRO_API_TOKEN: process.env.RAPIDPRO_API_TOKEN,
