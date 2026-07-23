@@ -183,6 +183,7 @@ export function emptyStore() {
     events_outbox: [],
     webhook_subscriptions: [],
     workflow_instances: [],
+    community_feedback: [],
   }
 }
 

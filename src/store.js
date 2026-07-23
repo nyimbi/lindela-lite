@@ -35,6 +35,7 @@ export const COLLECTIONS = [
   'events_outbox',
   'webhook_subscriptions',
   'workflow_instances',
+  'community_feedback',
 ]
 
 export class JsonStore {
