@@ -40,6 +40,10 @@ import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './s
 import { renderCapXml } from './cap.js'
 import { emit, dispatchPending } from './outbox.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
+import { computeQuarterlyKpi } from './kpi.js'
+import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from './equity.js'
+import { normalizeCommunityFeedback, feedbackSummaryByAlert } from './community.js'
+import { renderQuarterlyReportPdf } from './pdf.js'
 import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.js'
 import { normalizeWorkflowInstance, transitionWorkflow, pendingForFocalPoint, workflowMetrics, WORKFLOW_TYPES, WORKFLOW_STATES, WORKFLOW_TRANSITIONS } from './workflows.js'
 
@@ -463,6 +467,87 @@ async function handleApi(store, req, res, url) {
   if (workflowRoute) {
     await handleWorkflowRoute(store, data, req, res, url, workflowRoute)
     return
+  }
+
+  // KPI routes
+  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly.pdf') {
+    const quarter = url.searchParams.get('quarter') || undefined
+    const year = url.searchParams.get('year') || undefined
+    let kpi
+    try {
+      kpi = computeQuarterlyKpi(data, { quarter, year })
+    } catch (err) {
+      jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
+      return
+    }
+    const buf = renderQuarterlyReportPdf(kpi)
+    const filename = `unicef-kpi-${kpi.period.year}-${kpi.period.quarter}.pdf`
+    res.writeHead(200, {
+      'content-type': 'application/pdf',
+      'content-disposition': `attachment; filename="${filename}"`,
+      'content-length': buf.length,
+    })
+    res.end(buf)
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly') {
+    const quarter = url.searchParams.get('quarter') || undefined
+    const year = url.searchParams.get('year') || undefined
+    try {
+      const kpi = computeQuarterlyKpi(data, { quarter, year })
+      jsonResponse(res, 200, { success: true, data: kpi })
+    } catch (err) {
+      jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
+    }
+    return
+  }
+
+  // Equity routes
+  if (req.method === 'GET' && url.pathname === '/api/v1/equity/by-district') {
+    jsonResponse(res, 200, { success: true, data: equityByDistrict(data) })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/equity/breaches') {
+    const threshold = url.searchParams.has('threshold')
+      ? Number(url.searchParams.get('threshold'))
+      : undefined
+    jsonResponse(res, 200, { success: true, data: detectAccuracyBreaches(data, threshold !== undefined ? { threshold } : {}) })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/v1/equity/scan') {
+    const ids = await createEquityAuditWorkflows(store, data)
+    jsonResponse(res, 201, { success: true, created: ids.length, ids })
+    return
+  }
+
+  // Community feedback routes
+  if (req.method === 'GET' && url.pathname === '/api/v1/community-feedback/summary') {
+    jsonResponse(res, 200, { success: true, data: feedbackSummaryByAlert(data) })
+    return
+  }
+
+  if (url.pathname === '/api/v1/community-feedback') {
+    if (req.method === 'GET') {
+      jsonResponse(res, 200, { success: true, data: filterRecords(data.community_feedback || [], url.searchParams) })
+      return
+    }
+    if (req.method === 'POST') {
+      const body = await readRequestJson(req)
+      let record
+      try {
+        record = normalizeCommunityFeedback(body)
+      } catch (err) {
+        jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
+        return
+      }
+      const outboxRecord = await emit(store, 'community_feedback.created', { feedback_id: record.id })
+      await store.merge({ community_feedback: [record] })
+      jsonResponse(res, 201, { success: true, data: record, outbox_event: outboxRecord.id })
+      return
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/assessments') {
@@ -1839,6 +1924,23 @@ async function handleStatic(res, pathname) {
       return
     } catch {
       jsonResponse(res, 404, { success: false, error: 'Not found' })
+      return
+    }
+  }
+
+  // Handle CO/Donor surface routing
+  if (pathname === '/co' || pathname === '/co/' || pathname.startsWith('/co/')) {
+    const target = pathname === '/co' || pathname === '/co/' ? 'co/index.html' : pathname.replace(/^\/+/, '')
+    const filePath = safeJoin(publicDir, target)
+    try {
+      const content = await fs.readFile(filePath)
+      res.writeHead(200, { 'content-type': contentType(filePath) })
+      res.end(content)
+      return
+    } catch {
+      const index = await fs.readFile(path.join(publicDir, 'co/index.html'))
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(index)
       return
     }
   }

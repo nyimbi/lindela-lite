@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lindela CO Dashboard</title>
+    <link rel="manifest" href="/co/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1520">
+    <style>
+      @import '/tokens.css';
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html { font-size: 16px; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.5;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--border);
+        padding: 0.75rem 1.25rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+
+      .header-brand {
+        font-weight: 600;
+        font-size: 1.05rem;
+        color: var(--ink);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .header-controls {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+
+      select {
+        background: var(--bg);
+        color: var(--ink);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+        cursor: pointer;
+      }
+
+      main {
+        flex: 1;
+        padding: 1.25rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+        max-width: 1200px;
+        width: 100%;
+        margin: 0 auto;
+      }
+
+      section h2 {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--ink-muted);
+        margin-bottom: 0.75rem;
+        letter-spacing: 0.03em;
+      }
+
+      /* KPI grid */
+      .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 0.75rem;
+      }
+
+      .kpi-tile {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.875rem 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+
+      .kpi-tile-label {
+        font-size: 0.75rem;
+        color: var(--ink-muted);
+      }
+
+      .kpi-tile-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--ink);
+        line-height: 1.1;
+      }
+
+      .kpi-tile-unit {
+        font-size: 0.75rem;
+        color: var(--ink-muted);
+      }
+
+      .kpi-tile-annotation {
+        font-size: 0.7rem;
+        color: var(--accent, #4a9eff);
+        margin-top: 0.25rem;
+      }
+
+      .chip-data-gap {
+        display: inline-block;
+        font-size: 0.65rem;
+        background: var(--border);
+        color: var(--ink-muted);
+        border-radius: 3px;
+        padding: 0 0.4rem;
+        line-height: 1.6;
+      }
+
+      /* Tables */
+      .table-wrap {
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+      }
+
+      th {
+        text-align: left;
+        padding: 0.4rem 0.6rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--ink-muted);
+        border-bottom: 1px solid var(--border);
+      }
+
+      td {
+        padding: 0.4rem 0.6rem;
+        border-bottom: 1px solid var(--border);
+        vertical-align: middle;
+      }
+
+      tr:last-child td { border-bottom: none; }
+
+      .breach-row td { color: var(--danger, #e05252); }
+
+      .chip-breach {
+        display: inline-block;
+        font-size: 0.65rem;
+        background: #e05252;
+        color: #fff;
+        border-radius: 3px;
+        padding: 0 0.4rem;
+        line-height: 1.6;
+        margin-left: 0.25rem;
+      }
+
+      /* Histogram */
+      .histogram {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.4rem;
+        height: 80px;
+        padding: 0 0.25rem;
+      }
+
+      .hist-bar-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.2rem;
+        flex: 1;
+      }
+
+      .hist-bar {
+        width: 100%;
+        background: var(--accent, #4a9eff);
+        border-radius: 2px 2px 0 0;
+        min-height: 2px;
+        transform-origin: bottom;
+        transition: transform 0.3s;
+      }
+
+      .hist-label {
+        font-size: 0.65rem;
+        color: var(--ink-muted);
+        white-space: nowrap;
+      }
+
+      .hist-count {
+        font-size: 0.65rem;
+        color: var(--ink-muted);
+      }
+
+      /* Buttons */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.4rem 0.875rem;
+        background: var(--bg-elevated);
+        color: var(--ink);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        font-size: 0.85rem;
+        cursor: pointer;
+        text-decoration: none;
+      }
+
+      .btn:hover { background: var(--border); }
+
+      .btn-primary {
+        background: var(--accent, #4a9eff);
+        color: #fff;
+        border-color: transparent;
+      }
+
+      .btn-primary:hover { opacity: 0.9; }
+
+      /* Footer */
+      footer {
+        padding: 0.75rem 1.25rem;
+        border-top: 1px solid var(--border);
+        font-size: 0.75rem;
+        color: var(--ink-muted);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+
+      #loading-banner {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 1rem;
+        text-align: center;
+        color: var(--ink-muted);
+        font-size: 0.875rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="header-brand">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <span data-i18n="co.title">Lindela CO Dashboard</span>
+      </div>
+      <div class="header-controls">
+        <label for="quarter-select" class="visually-hidden" data-i18n="co.select_quarter">Quarter</label>
+        <select id="quarter-select" class="quarter-select" aria-label="Quarter">
+          <option value="Q1">Q1</option>
+          <option value="Q2">Q2</option>
+          <option value="Q3">Q3</option>
+          <option value="Q4">Q4</option>
+        </select>
+        <label for="year-select" class="visually-hidden" data-i18n="co.select_year">Year</label>
+        <select id="year-select" class="year-select" aria-label="Year">
+          <option value="2026">2026</option>
+          <option value="2027">2027</option>
+        </select>
+        <label for="locale-select" class="visually-hidden">Locale</label>
+        <select id="locale-select" class="locale-select" aria-label="Language">
+          <option value="en">EN</option>
+          <option value="sw">SW</option>
+          <option value="ar">AR</option>
+        </select>
+        <a id="export-btn" href="#" class="btn btn-primary" data-i18n="co.download_pdf">Download quarterly PDF</a>
+      </div>
+    </header>
+
+    <main>
+      <div id="loading-banner">Loading...</div>
+
+      <section id="kpi-section" hidden>
+        <h2 data-i18n="co.title">KPI Summary</h2>
+        <div class="kpi-grid" id="kpi-grid"></div>
+      </section>
+
+      <section id="cohort-section" hidden>
+        <h2>Cohort</h2>
+        <div class="table-wrap">
+          <table class="cohort-table" id="cohort-table">
+            <thead>
+              <tr>
+                <th data-i18n="co.cohort_total">Total</th>
+                <th data-i18n="co.cohort_u18">Under 18</th>
+                <th data-i18n="co.cohort_women">Women and Girls</th>
+                <th data-i18n="co.cohort_pwd">PwD</th>
+                <th data-i18n="co.cohort_refugees">Refugees/IDPs</th>
+              </tr>
+            </thead>
+            <tbody id="cohort-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="equity-section" hidden>
+        <h2 data-i18n="co.equity_title">Equity by District</h2>
+        <div class="table-wrap">
+          <table id="equity-table">
+            <thead>
+              <tr>
+                <th data-i18n="equity.district_column">District</th>
+                <th data-i18n="equity.dispatched">Dispatched</th>
+                <th data-i18n="equity.acknowledged">Acknowledged</th>
+                <th>Accuracy %</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="equity-body" class="equity-row"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="histogram-section" hidden>
+        <h2 data-i18n="co.signal_histogram">Signal-to-Action Lag</h2>
+        <div class="histogram" id="histogram" aria-label="Dispatch lag histogram"></div>
+      </section>
+
+      <section id="feedback-section" hidden>
+        <h2 data-i18n="co.feedback_title">Community Feedback</h2>
+        <div class="table-wrap">
+          <table id="feedback-table">
+            <thead>
+              <tr>
+                <th>Alert</th>
+                <th>Count</th>
+                <th data-i18n="feedback.positive">Positive</th>
+                <th data-i18n="feedback.negative">Negative</th>
+                <th data-i18n="feedback.unclear">Unclear</th>
+                <th data-i18n="feedback.was_action_taken">Action taken</th>
+              </tr>
+            </thead>
+            <tbody id="feedback-body" class="feedback-summary"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span id="sig-hash"></span>
+      <span id="gen-time"></span>
+    </footer>
+
+    <script type="module" src="/co/app.js"></script>
+  </body>
+</html>
