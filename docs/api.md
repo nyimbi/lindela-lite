@@ -223,6 +223,313 @@ Create a due schedule and run it:
 }
 ```
 
+## Trigger Protocols
+
+### `GET /api/v1/trigger-protocols`
+
+Auth: none required. Returns list of all trigger protocol objects.
+
+Response: `{ success, data: TriggerProtocol[] }`
+
+### `POST /api/v1/trigger-protocols/:id/backtest`
+
+Auth: `write:incidents` or `*`. Runs the trigger protocol against historical data.
+
+Body: `{ from: ISO, to: ISO }`
+
+Response: `{ success, data: { hits, misses, false_positives, threshold, events: [] } }`
+
+### `POST /api/v1/trigger-protocols/:id/shadow-run`
+
+Auth: `write:incidents` or `*`. Evaluates the protocol against current conditions without dispatching.
+
+Response: `{ success, data: { would_trigger: bool, score, conditions } }`
+
+---
+
+## CAP Export
+
+### `GET /api/v1/alert-events/:id.cap`
+
+Auth: none required. Returns a CAP 1.2 XML document for the specified alert event.
+
+Response: `Content-Type: application/xml` with valid CAP 1.2 envelope.
+
+Precondition: alert event with `:id` must exist; returns 404 otherwise.
+
+---
+
+## Scenarios
+
+### `POST /api/v1/scenarios`
+
+Auth: none required. Creates a shareable scenario token encoding a set of filter/view parameters.
+
+Body: `{ params: Record<string,string> }`
+
+Response: `{ success, token, url }` where `url` is `/api/v1/scenarios/<token>`.
+
+### `GET /api/v1/scenarios/:token`
+
+Auth: none required. Decodes and returns the scenario params embedded in the token.
+
+Response: `{ success, data: { params } }`
+
+---
+
+## Bias Correction
+
+### `POST /api/v1/analytics/bias-correct`
+
+Auth: none required. Applies quantile-mapping bias correction to a climate observation series.
+
+Body: `{ observations: [{ value, date }], reference: [{ value }] }`
+
+Response: `{ success, data: { corrected: [number], method: 'quantile_map' } }`
+
+---
+
+## Population at Risk
+
+### `GET /api/v1/impact/population-at-risk`
+
+Auth: none required. Returns the latest population-at-risk assessments.
+
+Query: standard `filterRecords` params (`district`, `country`, `limit`, `offset`, `sort`).
+
+Response: `{ success, data: PopulationAtRisk[] }`
+
+---
+
+## Data Lineage
+
+### `GET /api/v1/data-lineage`
+
+Auth: none required. Returns lineage records tracking provenance of derived data.
+
+Response: `{ success, data: DataLineage[] }`
+
+---
+
+## Outbox
+
+### `GET /api/v1/outbox`
+
+Auth: none required. Returns pending and sent outbox events.
+
+Response: `{ success, data: OutboxEvent[] }`
+
+### `POST /api/v1/outbox/dispatch`
+
+Auth: `admin:*` or `*`. Flushes pending outbox events to registered webhook subscribers.
+
+Response: `{ success, dispatched: int }`
+
+---
+
+## Webhooks
+
+### `POST /api/v1/webhooks`
+
+Auth: none required. Registers a webhook subscription.
+
+Body: `{ url, events: string[], secret?: string }`
+
+Response: `{ success, data: WebhookSubscription }` — 201 on create.
+
+### `GET /api/v1/webhooks`
+
+Auth: none required. Lists registered webhook subscriptions.
+
+Response: `{ success, data: WebhookSubscription[] }`
+
+### `PATCH /api/v1/webhooks/:id`
+
+Auth: none required. Updates url or events list of an existing subscription.
+
+Body: `{ url?, events? }`
+
+Response: `{ success, data: WebhookSubscription }`
+
+---
+
+## Connectors Registry
+
+### `GET /api/v1/connectors`
+
+Auth: none required. Returns the list of available ingestion connector definitions (from `connectors.registry.json`).
+
+Response: `{ success, data: ConnectorSpec[] }`
+
+---
+
+## PII Maintenance
+
+### `POST /api/v1/maintenance/apply-retention`
+
+Auth: `admin:*`. Applies configured data-retention policy: anonymises or deletes PII fields on records older than the retention window.
+
+Body: `{ dry_run?: bool, actor?: string }`
+
+Response: `{ success, affected: int, dry_run: bool }`
+
+Side effect: modifies field_reports, rapidpro_inbound_messages, and action_logs in-place. Writes an action_log entry per affected collection.
+
+---
+
+## OGC Features
+
+### `GET /ogc/collections/:id/items`
+
+Auth: none required. Returns GeoJSON FeatureCollection for the specified collection id.
+
+Supported ids: `alert_events`, `hazard_events`, `service_assets`, `field_reports`.
+
+Query: `bbox` (minLon,minLat,maxLon,maxLat), `limit`, `offset`.
+
+Response: `Content-Type: application/geo+json` with a standard OGC Features response envelope.
+
+---
+
+## Phase 1c routes (CHW Mobile Web)
+
+### `POST /api/v1/chw/report`
+
+Auth: `role:chw` or `*`. Submits a CHW field report.
+
+Body: `{ description, category, location?: { latitude, longitude }, reporter_phone?, reporter_name?, anonymous? }`
+
+Response: `{ success, data: FieldReport }` — 201.
+
+Side effects: creates field_report and rapidpro_inbound_message. PII redacted per policy.
+
+### `POST /api/v1/chw/reply`
+
+Auth: `role:chw` or `*`. Submits a CHW reply to an active alert.
+
+Body: `{ alert_event_id, message }`
+
+Response: `{ success, data: RapidProInboundMessage }` — 201.
+
+---
+
+## Phase 1d routes (KPI, Equity, Community Feedback, CO Dashboard)
+
+### `GET /api/v1/kpi/quarterly`
+
+Auth: none required. Returns quarterly KPI computation matched to UNICEF bid indicators.
+
+Query: `quarter` (Q1|Q2|Q3|Q4, default current), `year` (int, default current).
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "people_reached": 0,
+    "percent_children_u18": null,
+    "percent_women_and_girls": null,
+    "percent_pwd": null,
+    "community_reporters_count": 0,
+    "youth_mappers_count": 0,
+    "oss_releases_count": 3,
+    "warning_to_action_median_hours": null,
+    "feeding_supply_repositioning_rate": null,
+    "cold_chain_protection_rate": null,
+    "false_alert_rate": null,
+    "api_uptime_pct": 100.0,
+    "cohort": { "total": 0, "u18": null, "women_and_girls": null, "pwd": null, "refugees_idps": null },
+    "period": { "quarter": "Q3", "year": 2026, "from": "...", "to": "..." },
+    "data_gaps": [{ "field": "percent_children_u18", "reason": "..." }],
+    "generated_at": "2026-08-09T..."
+  }
+}
+```
+
+Result is cached 5 minutes keyed on quarter/year/record-counts. Null fields denote missing demographic data; see `data_gaps` for explanation.
+
+### `GET /api/v1/kpi/quarterly.pdf`
+
+Auth: none required. Returns the quarterly KPI report as a minimal PDF 1.4 document (Helvetica, single page, title + KPI table + cohort table + SHA-256 signature footer).
+
+Query: same as `/api/v1/kpi/quarterly`.
+
+Response: `Content-Type: application/pdf`, `Content-Disposition: attachment; filename="unicef-kpi-<year>-<quarter>.pdf"`.
+
+### `GET /api/v1/equity/by-district`
+
+Auth: none required. Returns per-district accuracy metrics grouped from alert_events and rapidpro_dispatches.
+
+Response: `{ success, data: EquityDistrict[] }` where each row includes `district`, `dispatched`, `acknowledged`, `false_positive`, `accuracy_pct`, `alerts_by_severity`, and `data_gaps`.
+
+### `GET /api/v1/equity/breaches`
+
+Auth: none required. Returns districts where `accuracy_pct < threshold` AND `dispatched >= 5`.
+
+Query: `threshold` (float, default 80).
+
+Response: `{ success, data: [{ district, accuracy_pct, dispatched }] }`
+
+### `POST /api/v1/equity/scan`
+
+Auth: none required. Idempotently creates `equity_audit_action` workflow instances for each accuracy breach district.
+
+Response: `{ success, created: int, ids: string[] }` — 201.
+
+Side effect: writes workflow_instances to store. Idempotent: districts with an existing open audit workflow are skipped.
+
+### `POST /api/v1/community-feedback`
+
+Auth: `role:chw`, `write:incidents`, or `*`. Creates a community feedback record.
+
+Body:
+
+```json
+{
+  "alert_event_id": "ae-...",
+  "source": "chw",
+  "reporter_urn": "tel:+254700000001",
+  "sentiment": "positive",
+  "message": "Alert was accurate",
+  "was_action_taken": true
+}
+```
+
+`reporter_urn` is hashed on write (SHA-256/16 chars); the raw value is never stored.
+
+Response: `{ success, data: CommunityFeedback, outbox_event: string }` — 201.
+
+### `GET /api/v1/community-feedback`
+
+Auth: none required. Returns filtered list of feedback records.
+
+Query: standard filterRecords params.
+
+Response: `{ success, data: CommunityFeedback[] }`
+
+### `GET /api/v1/community-feedback/summary`
+
+Auth: none required. Returns feedback grouped by alert_event_id with count and sentiment distribution.
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "alert_event_id": "ae-001",
+      "count": 2,
+      "sentiment": { "positive": 1, "negative": 1, "unclear": 0 },
+      "action_taken_count": 1
+    }
+  ]
+}
+```
+
+---
+
 ## OpenAPI
 
 The OpenAPI 3.1 contract is available at [openapi.yaml](openapi.yaml).

@@ -26,6 +26,9 @@ import { toCsv, toGeoJson } from '../src/utils.js'
 import { t, isRtl, plainLanguage } from '../src/i18n.js'
 import { normalizeWorkflowInstance, transitionWorkflow, workflowMetrics } from '../src/workflows.js'
 import { hasRole, scopeToPartnerOrg } from '../src/auth.js'
+import { computeQuarterlyKpi } from '../src/kpi.js'
+import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from '../src/equity.js'
+import { normalizeCommunityFeedback } from '../src/community.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -2077,6 +2080,252 @@ describe('Lindela Lite CHW Mobile Web', () => {
     } finally {
       listener.close()
     }
+  })
+})
+
+describe('Lindela Lite Phase 1d - KPI, Equity, Community Feedback, CO Dashboard', () => {
+  it('computeQuarterlyKpi on empty data returns object with data_gaps non-empty and people_reached 0', () => {
+    const emptyData = {
+      rapidpro_dispatches: [],
+      field_reports: [],
+      alert_events: [],
+      hazard_events: [],
+      interventions: [],
+      workflow_instances: [],
+      report_templates: [],
+    }
+    const kpi = computeQuarterlyKpi(emptyData, { quarter: 'Q3', year: 2026 })
+    assert.equal(kpi.people_reached, 0)
+    assert.ok(Array.isArray(kpi.data_gaps) && kpi.data_gaps.length > 0, 'data_gaps must be non-empty')
+    assert.equal(kpi.period.quarter, 'Q3')
+  })
+
+  it('equityByDistrict on empty data returns empty array', () => {
+    const result = equityByDistrict({ alert_events: [], rapidpro_dispatches: [] })
+    assert.deepEqual(result, [])
+  })
+
+  it('detectAccuracyBreaches returns empty when no district meets minimum sample', () => {
+    const data = {
+      alert_events: [
+        { id: 'a1', status: 'resolved', resolution_note: 'false positive', scope: { district: 'Turkana' } },
+      ],
+      rapidpro_dispatches: [{ id: 'd1', alert_event_id: 'a1' }],
+    }
+    // Only 1 dispatch, minimum is 5
+    const breaches = detectAccuracyBreaches(data)
+    assert.deepEqual(breaches, [])
+  })
+
+  it('createEquityAuditWorkflows is idempotent (second call returns empty)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-equity-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+
+    // Create enough dispatches and false alerts to trigger breach
+    const alertEvents = Array.from({ length: 6 }, (_, i) => ({
+      id: `ae${i}`,
+      status: 'resolved',
+      resolution_note: 'false positive',
+      scope: { district: 'TestDistrict' },
+    }))
+    const dispatches = alertEvents.map((ae) => ({ id: `d${ae.id}`, alert_event_id: ae.id }))
+    const data = { alert_events: alertEvents, rapidpro_dispatches: dispatches, workflow_instances: [] }
+
+    const ids1 = await createEquityAuditWorkflows(store, data)
+    assert.ok(ids1.length >= 1, 'first call creates workflows')
+
+    // Second call: read updated data from store
+    const data2 = await store.read()
+    const ids2 = await createEquityAuditWorkflows(store, data2)
+    assert.equal(ids2.length, 0, 'second call is idempotent')
+  })
+
+  it('POST /api/v1/community-feedback creates a record and returns 201', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-feedback-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/community-feedback`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          alert_event_id: 'ae-001',
+          source: 'chw',
+          reporter_urn: 'tel:+254700000001',
+          sentiment: 'positive',
+          message: 'Alert was accurate',
+        }),
+      })
+      assert.equal(res.status, 201)
+      const body = await res.json()
+      assert.ok(body.success)
+      assert.ok(body.data.id)
+      assert.equal(body.data.source, 'chw')
+      assert.equal(body.data.sentiment, 'positive')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /api/v1/community-feedback/summary returns array grouped by alert_event_id', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-feedback-summary-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    // Pre-seed feedback
+    await store.merge({
+      community_feedback: [
+        { id: 'f1', alert_event_id: 'ae-001', source: 'chw', sentiment: 'positive', message: 'ok', was_action_taken: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), metadata: {} },
+        { id: 'f2', alert_event_id: 'ae-001', source: 'web', sentiment: 'negative', message: 'late', was_action_taken: false, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), metadata: {} },
+        { id: 'f3', alert_event_id: 'ae-002', source: 'sms', sentiment: 'unclear', message: '?', was_action_taken: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), metadata: {} },
+      ],
+    })
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/community-feedback/summary`)
+      assert.equal(res.status, 200)
+      const body = await res.json()
+      assert.ok(Array.isArray(body.data))
+      const ae1 = body.data.find((r) => r.alert_event_id === 'ae-001')
+      assert.ok(ae1, 'ae-001 group must exist')
+      assert.equal(ae1.count, 2)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /api/v1/kpi/quarterly?quarter=Q3&year=2026 returns 200 with period.quarter Q3', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-kpi-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/kpi/quarterly?quarter=Q3&year=2026`)
+      assert.equal(res.status, 200)
+      const body = await res.json()
+      assert.ok(body.success)
+      assert.equal(body.data.period.quarter, 'Q3')
+      assert.equal(body.data.period.year, 2026)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /api/v1/kpi/quarterly.pdf returns 200 with application/pdf content-type', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-kpipdf-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/kpi/quarterly.pdf?quarter=Q3&year=2026`)
+      assert.equal(res.status, 200)
+      const ct = res.headers.get('content-type') || ''
+      assert.ok(ct.includes('application/pdf') || ct.includes('text/html'), `Unexpected content-type: ${ct}`)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /api/v1/equity/by-district returns 200 array', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-equity2-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/equity/by-district`)
+      assert.equal(res.status, 200)
+      const body = await res.json()
+      assert.ok(Array.isArray(body.data))
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('POST /api/v1/equity/scan returns 201 with created field', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-scan-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/equity/scan`, { method: 'POST' })
+      assert.equal(res.status, 201)
+      const body = await res.json()
+      assert.ok(body.success)
+      assert.ok('created' in body)
+      assert.ok(Array.isArray(body.ids))
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /co returns 200 HTML', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-co-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/co`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      assert.ok(html.includes('Lindela CO Dashboard'))
+      assert.ok(html.includes('class='), 'HTML must have class attributes')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /co/manifest.webmanifest returns 200', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-co-manifest-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/co/manifest.webmanifest`)
+      assert.equal(res.status, 200)
+      const manifest = await res.json()
+      assert.equal(manifest.name, 'Lindela CO Dashboard')
+      assert.equal(manifest.start_url, '/co/')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('normalizeCommunityFeedback hashes reporter_urn (raw urn never appears in stored record)', () => {
+    const rawUrn = 'tel:+254700000099'
+    const record = normalizeCommunityFeedback({
+      source: 'sms',
+      reporter_urn: rawUrn,
+      sentiment: 'positive',
+      message: 'All good',
+    })
+    assert.ok(!JSON.stringify(record).includes(rawUrn), 'raw URN must not appear in record')
+    assert.ok(record.reporter_urn_hash, 'reporter_urn_hash must be set')
+    assert.ok(record.reporter_urn_hash.length <= 16, 'hash truncated to 16 chars')
+    assert.ok(!('reporter_urn' in record), 'reporter_urn field must not exist on record')
   })
 })
 
