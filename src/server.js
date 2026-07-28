@@ -45,7 +45,9 @@ import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } 
 import { normalizeCommunityFeedback, feedbackSummaryByAlert } from './community.js'
 import { renderQuarterlyReportPdf } from './pdf.js'
 import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.js'
+import { normalizeParametricRule, simulateDisbursement } from './parametric.js'
 import { normalizeWorkflowInstance, transitionWorkflow, pendingForFocalPoint, workflowMetrics, WORKFLOW_TYPES, WORKFLOW_STATES, WORKFLOW_TRANSITIONS } from './workflows.js'
+import { recordRequestOutcome } from './observability.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
@@ -92,6 +94,7 @@ export function createServer(options = {}) {
       const statusCode = res.statusCode || 500
       metrics.counter('http_requests_total', { method: req.method, route, status: String(statusCode) })
       metrics.histogram('http_request_duration_ms', elapsed, { method: req.method, route, status: String(statusCode) })
+      recordRequestOutcome(statusCode < 500)
       logger.info('http_request', { method: req.method, route, status: statusCode, elapsed_ms: elapsed })
     }
   })
@@ -448,6 +451,13 @@ async function handleApi(store, req, res, url) {
   const triggerRoute = matchTriggerRoute(url.pathname)
   if (triggerRoute) {
     await handleTriggerRoute(store, data, req, res, url, triggerRoute)
+    return
+  }
+
+  // Parametric disbursement routes
+  const parametricRoute = matchParametricRoute(url.pathname)
+  if (parametricRoute) {
+    await handleParametricRoute(store, data, req, res, url, parametricRoute)
     return
   }
 
@@ -1635,6 +1645,107 @@ function matchScenarioRoute(pathname) {
   return null
 }
 
+function matchParametricRoute(pathname) {
+  if (pathname === '/api/v1/parametric-rules') return { kind: 'rules-list' }
+  const ruleMatch = pathname.match(/^\/api\/v1\/parametric-rules\/([^/]+)$/)
+  if (ruleMatch) return { kind: 'rule-detail', id: decodeURIComponent(ruleMatch[1]) }
+  const simMatch = pathname.match(/^\/api\/v1\/parametric-rules\/([^/]+)\/simulate$/)
+  if (simMatch) return { kind: 'simulate', id: decodeURIComponent(simMatch[1]) }
+  if (pathname === '/api/v1/parametric-disbursements') return { kind: 'disbursements-list' }
+  return null
+}
+
+async function handleParametricRoute(store, data, req, res, url, route) {
+  const auth = req.__auth || {}
+  const isAdmin = auth.scope === 'admin:*' || (Array.isArray(auth.scopes) && auth.scopes.includes('admin:*'))
+  const isOperator = isAdmin || auth.scope === 'role:operator' || (Array.isArray(auth.scopes) && auth.scopes.includes('role:operator'))
+
+  if (route.kind === 'rules-list') {
+    if (req.method === 'GET') {
+      const rules = data.parametric_rules || []
+      jsonResponse(res, 200, { success: true, data: rules, count: rules.length })
+      return
+    }
+    if (req.method === 'POST') {
+      const body = await readRequestJson(req)
+      try {
+        const rule = normalizeParametricRule(body)
+        const updated = { ...data, parametric_rules: [...(data.parametric_rules || []), rule] }
+        await store.write(updated)
+        jsonResponse(res, 201, { success: true, data: rule })
+      } catch (err) {
+        jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
+      }
+      return
+    }
+    jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+    return
+  }
+
+  if (route.kind === 'rule-detail') {
+    const existing = (data.parametric_rules || []).find((r) => r.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Parametric rule not found' })
+      return
+    }
+    if (req.method === 'GET') {
+      jsonResponse(res, 200, { success: true, data: existing })
+      return
+    }
+    if (req.method === 'PATCH') {
+      const body = await readRequestJson(req)
+      try {
+        const updated_rule = normalizeParametricRule(body, existing)
+        const rules = (data.parametric_rules || []).map((r) => r.id === route.id ? updated_rule : r)
+        await store.write({ ...data, parametric_rules: rules })
+        jsonResponse(res, 200, { success: true, data: updated_rule })
+      } catch (err) {
+        jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
+      }
+      return
+    }
+    jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+    return
+  }
+
+  if (route.kind === 'simulate') {
+    if (req.method !== 'POST') {
+      jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+      return
+    }
+    const rule = (data.parametric_rules || []).find((r) => r.id === route.id)
+    if (!rule) {
+      jsonResponse(res, 404, { success: false, error: 'Parametric rule not found' })
+      return
+    }
+    const body = await readRequestJson(req)
+    try {
+      const result = simulateDisbursement(rule, {
+        actor: body.actor || auth.subject || null,
+        focal_point_approved: Boolean(body.focal_point_approved),
+      })
+      const disbursements = [...(data.parametric_disbursements || []), result]
+      await store.write({ ...data, parametric_disbursements: disbursements })
+      jsonResponse(res, 201, { success: true, data: result })
+    } catch (err) {
+      jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
+    }
+    return
+  }
+
+  if (route.kind === 'disbursements-list') {
+    if (req.method === 'GET') {
+      const disbursements = data.parametric_disbursements || []
+      jsonResponse(res, 200, { success: true, data: disbursements, count: disbursements.length })
+      return
+    }
+    jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+    return
+  }
+
+  jsonResponse(res, 404, { success: false, error: 'Not found' })
+}
+
 function matchChwRoute(pathname) {
   if (pathname === '/api/v1/chw/report') return { kind: 'report' }
   if (pathname === '/api/v1/chw/reply') return { kind: 'reply' }
@@ -1973,6 +2084,40 @@ async function handleStatic(res, pathname) {
       return
     } catch {
       const index = await fs.readFile(path.join(publicDir, 'chw/index.html'))
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(index)
+      return
+    }
+  }
+
+  // Handle Parametric surface routing
+  if (pathname === '/parametric' || pathname === '/parametric/' || pathname.startsWith('/parametric/')) {
+    const target = pathname === '/parametric' || pathname === '/parametric/' ? 'parametric/index.html' : pathname.replace(/^\/+/, '')
+    const filePath = safeJoin(publicDir, target)
+    try {
+      const content = await fs.readFile(filePath)
+      res.writeHead(200, { 'content-type': contentType(filePath) })
+      res.end(content)
+      return
+    } catch {
+      const index = await fs.readFile(path.join(publicDir, 'parametric/index.html'))
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(index)
+      return
+    }
+  }
+
+  // Handle Scenario Workbench routing
+  if (pathname === '/scenarios' || pathname === '/scenarios/' || pathname.startsWith('/scenarios/')) {
+    const target = pathname === '/scenarios' || pathname === '/scenarios/' ? 'scenarios/index.html' : pathname.replace(/^\/+/, '')
+    const filePath = safeJoin(publicDir, target)
+    try {
+      const content = await fs.readFile(filePath)
+      res.writeHead(200, { 'content-type': contentType(filePath) })
+      res.end(content)
+      return
+    } catch {
+      const index = await fs.readFile(path.join(publicDir, 'scenarios/index.html'))
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       res.end(index)
       return

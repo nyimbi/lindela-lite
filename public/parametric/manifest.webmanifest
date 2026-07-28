@@ -1,0 +1,11 @@
+{
+  "name": "Lindela Parametric — Testnet",
+  "short_name": "Parametric",
+  "start_url": "/parametric",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "/icon.svg", "type": "image/svg+xml", "sizes": "any" }
+  ]
+}

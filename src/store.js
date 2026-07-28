@@ -36,6 +36,8 @@ export const COLLECTIONS = [
   'webhook_subscriptions',
   'workflow_instances',
   'community_feedback',
+  'parametric_rules',
+  'parametric_disbursements',
 ]
 
 export class JsonStore {

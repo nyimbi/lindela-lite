@@ -7,6 +7,7 @@ export const SOURCE_IDS = Object.freeze([
   'service_assets',
   'acled_csv',
   'conflict_csv',
+  'dhis2',
 ])
 
 export const BLOCKED_SOURCE_IDS = Object.freeze(['gdelt'])
@@ -184,6 +185,8 @@ export function emptyStore() {
     webhook_subscriptions: [],
     workflow_instances: [],
     community_feedback: [],
+    parametric_rules: [],
+    parametric_disbursements: [],
   }
 }
 

@@ -530,6 +530,52 @@ Response:
 
 ---
 
+## Parametric disbursement (testnet only)
+
+See [parametric.md](parametric.md) for full details. All chains are testnets; mainnet chains are rejected explicitly.
+
+### `GET /api/v1/parametric-rules`
+
+List all parametric rules.
+
+Response: `{ success, data: ParametricRule[], count }`
+
+### `POST /api/v1/parametric-rules`
+
+Create a parametric rule. Scope: `admin:*`.
+
+Body: `{ name, chain, trigger_metric, trigger_threshold, disbursement_amount_local_currency, currency, recipient_group_id, requires_focal_point_approval, status? }`
+
+Response: `{ success, data: ParametricRule }` — HTTP 201.
+
+`chain` must be one of `ethereum-sepolia`, `polygon-mumbai`, `celo-alfajores`. Mainnet chains return HTTP 400 with a "testnet-only per pilot commitment" message.
+
+### `PATCH /api/v1/parametric-rules/:id`
+
+Update a parametric rule. Scope: `admin:*`.
+
+### `POST /api/v1/parametric-rules/:id/simulate`
+
+Simulate a disbursement against the given rule. Scope: `role:operator` or `admin:*`.
+
+Body: `{ focal_point_approved: bool, actor: string }`
+
+Returns HTTP 409 when `requires_focal_point_approval` is true and `focal_point_approved` is false.
+
+Response: `{ success, data: { simulated: true, disbursement_id, chain, tx_hash, amount, currency, recipient_group_id, rule_id, status: 'simulated', simulated_at } }`
+
+`tx_hash` always begins with `sim_`. No on-chain transaction is made.
+
+The disbursement is persisted to the `parametric_disbursements` collection.
+
+### `GET /api/v1/parametric-disbursements`
+
+List all simulated disbursements.
+
+Response: `{ success, data: ParametricDisbursement[], count }`
+
+---
+
 ## OpenAPI
 
 The OpenAPI 3.1 contract is available at [openapi.yaml](openapi.yaml).
