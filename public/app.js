@@ -1428,6 +1428,78 @@ $('triggerEquityAuditButton')?.addEventListener('click', async () => {
 })
 
 // =============================================================
+// DHIS2 settings (localStorage only; no credential backend)
+// =============================================================
+;(function dhis2Settings() {
+  const LS_KEY = 'lindela_lite_dhis2'
+  const fields = ['dhis2BaseUrl', 'dhis2ApiToken', 'dhis2OrgUnits', 'dhis2DataElements', 'dhis2Period']
+  const saveBtn = $('dhis2SaveBtn')
+  const testBtn = $('dhis2TestBtn')
+  const resultEl = $('dhis2TestResult')
+  if (!saveBtn) return
+
+  // Restore from localStorage
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_KEY) || '{}')
+    if (saved.base_url) $('dhis2BaseUrl').value = saved.base_url
+    if (saved.api_token) $('dhis2ApiToken').value = saved.api_token
+    if (saved.org_units) $('dhis2OrgUnits').value = saved.org_units.join('\n')
+    if (saved.data_elements) $('dhis2DataElements').value = saved.data_elements.join('\n')
+    if (saved.period) $('dhis2Period').value = saved.period
+  } catch {}
+
+  saveBtn.addEventListener('click', () => {
+    const cfg = {
+      base_url: $('dhis2BaseUrl').value.trim(),
+      api_token: $('dhis2ApiToken').value.trim(),
+      org_units: $('dhis2OrgUnits').value.split('\n').map((s) => s.trim()).filter(Boolean),
+      data_elements: $('dhis2DataElements').value.split('\n').map((s) => s.trim()).filter(Boolean),
+      period: $('dhis2Period').value.trim(),
+    }
+    localStorage.setItem(LS_KEY, JSON.stringify(cfg))
+    if (resultEl) {
+      resultEl.textContent = 'Settings saved to localStorage.'
+      resultEl.style.color = 'var(--color-success, #16a34a)'
+      resultEl.style.display = ''
+    }
+  })
+
+  testBtn.addEventListener('click', async () => {
+    if (resultEl) {
+      resultEl.textContent = 'Testing...'
+      resultEl.style.color = 'inherit'
+      resultEl.style.display = ''
+    }
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_KEY) || '{}')
+      const payload = await postJson('/api/v1/ingest/run', {
+        sources: ['dhis2'],
+        base_url: saved.base_url || null,
+        api_token: saved.api_token || null,
+        org_units: saved.org_units || [],
+        data_elements: saved.data_elements || [],
+        period: saved.period || null,
+      })
+      const errors = payload.source_runs?.[0]?.errors || payload.errors || []
+      if (resultEl) {
+        if (errors.length) {
+          resultEl.textContent = `DHIS2: ${errors.join('; ')}`
+          resultEl.style.color = '#b45309'
+        } else {
+          resultEl.textContent = 'DHIS2 connection OK.'
+          resultEl.style.color = 'var(--color-success, #16a34a)'
+        }
+      }
+    } catch (err) {
+      if (resultEl) {
+        resultEl.textContent = `Error: ${err.message}`
+        resultEl.style.color = '#dc2626'
+      }
+    }
+  })
+})()
+
+// =============================================================
 // Auto-refresh (30s)
 // =============================================================
 setInterval(refresh, 30_000)

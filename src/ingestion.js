@@ -8,6 +8,7 @@ import { glofasConnector } from './connectors/glofas.js'
 import { chirpsConnector } from './connectors/chirps.js'
 import { nasaFirmsConnector } from './connectors/nasa-firms.js'
 import { acledCsvConnector, conflictCsvConnector, serviceAssetsConnector } from './connectors/uploads.js'
+import { dhis2Connector } from './connectors/dhis2.js'
 
 const CONNECTORS = Object.freeze({
   open_meteo: openMeteoConnector,
@@ -18,6 +19,7 @@ const CONNECTORS = Object.freeze({
   service_assets: serviceAssetsConnector,
   acled_csv: acledCsvConnector,
   conflict_csv: conflictCsvConnector,
+  dhis2: dhis2Connector,
 })
 
 export const PUBLIC_INGESTION_SOURCES = Object.freeze([
@@ -37,6 +39,7 @@ export const SOURCE_POLICIES = Object.freeze({
   service_assets: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   acled_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   conflict_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
+  dhis2: { interval_minutes: 360, timeout_ms: 20000, retries: 1, stale_after_minutes: 720, minimum_records: 0, regular: false },
 })
 
 export function getConnector(sourceId) {

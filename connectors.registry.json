@@ -160,5 +160,27 @@
     "tags": ["conflict", "events", "upload"],
     "contributor": "core",
     "since": "0.1.0"
+  },
+  {
+    "id": "dhis2",
+    "module": "src/connectors/dhis2.js",
+    "description": "DHIS2 bidirectional sync scaffold (configure base_url and api_token to activate)",
+    "schemas": {
+      "input": {
+        "base_url": "string — DHIS2 instance root URL",
+        "api_token": "string — personal access token",
+        "org_units": "array of string — org unit UIDs",
+        "data_elements": "array of string — data element UIDs",
+        "period": "string — DHIS2 period e.g. 2026Q3"
+      },
+      "output": ["climate_observations"]
+    },
+    "defaults": {
+      "timeout_ms": 20000,
+      "retries": 1
+    },
+    "tags": ["dhis2", "health", "bidirectional", "scaffold"],
+    "contributor": "core",
+    "since": "0.2.0"
   }
 ]

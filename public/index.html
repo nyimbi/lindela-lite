@@ -37,6 +37,9 @@
           <option value="din">Dinka</option>
           <option value="km">Karimojong</option>
           <option value="nk">Ngakarimojong</option>
+          <option value="fr">Français</option>
+          <option value="pt">Português</option>
+          <option value="am">አማርኛ</option>
         </select>
         <span id="storageMode" class="badge badge-storage">json</span>
         <span id="connectionStatus" class="badge badge-connection">online</span>
@@ -334,6 +337,26 @@
                     </div>
                   </details>
                 </div>
+              </section>
+
+              <section class="settings-section" id="dhis2-settings-section">
+                <h3>DHIS2 sync scaffold</h3>
+                <p class="settings-note">Configure and test. Real bidirectional sync requires network wiring. See <a href="/docs/dhis2-integration.md" target="_blank">docs/dhis2-integration.md</a>.</p>
+                <label for="dhis2BaseUrl">Base URL</label>
+                <input type="url" id="dhis2BaseUrl" placeholder="https://play.dhis2.org/40.2.2" autocomplete="off">
+                <label for="dhis2ApiToken">API token</label>
+                <input type="password" id="dhis2ApiToken" placeholder="Personal access token" autocomplete="off">
+                <label for="dhis2OrgUnits">Org units (one per line)</label>
+                <textarea id="dhis2OrgUnits" rows="3" placeholder="DiszpKrYNg8&#10;YuQRtpLP10I" style="width:100%;resize:vertical;padding:0.3rem;border:1px solid var(--color-border,#e5e7eb);border-radius:0.25rem"></textarea>
+                <label for="dhis2DataElements">Data elements (one per line)</label>
+                <textarea id="dhis2DataElements" rows="3" placeholder="fbfJHSPpUQD&#10;cYeuwXTCPkU" style="width:100%;resize:vertical;padding:0.3rem;border:1px solid var(--color-border,#e5e7eb);border-radius:0.25rem"></textarea>
+                <label for="dhis2Period">Period</label>
+                <input type="text" id="dhis2Period" placeholder="2026Q3">
+                <div style="display:flex;gap:0.5rem;margin-top:0.75rem;flex-wrap:wrap">
+                  <button class="btn-secondary" id="dhis2SaveBtn">Save to localStorage</button>
+                  <button class="btn-secondary" id="dhis2TestBtn">Test connection</button>
+                </div>
+                <p id="dhis2TestResult" style="font-size:0.8rem;margin-top:0.5rem;display:none"></p>
               </section>
 
               <section class="settings-section">
