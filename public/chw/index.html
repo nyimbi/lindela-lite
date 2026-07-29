@@ -331,6 +331,9 @@
           <option value="din">Dinka</option>
           <option value="km">Karimojong</option>
           <option value="nk">Ngakarimojong</option>
+          <option value="fr">Français</option>
+          <option value="pt">Português</option>
+          <option value="am">አማርኛ</option>
         </select>
       </div>
     </header>
@@ -440,8 +443,46 @@
           </div>
         </div>
         <div class="action-buttons">
-          <button class="btn-primary" id="symptomSubmitBtn" data-i18n="chw.submit">Submit</button>
+          <button class="btn-primary" id="symptomLocationNextBtn" data-i18n="chw.next">Next</button>
           <button id="symptomLocationBackBtn" data-i18n="chw.back">Back</button>
+        </div>
+      </div>
+
+      <!-- Symptom about-who screen (demographics — step 5) -->
+      <div id="symptomAboutWhoScreen" class="screen">
+        <div class="progress-dots">
+          <div class="dot active"></div>
+          <div class="dot active"></div>
+          <div class="dot active"></div>
+          <div class="dot active"></div>
+          <div class="dot active"></div>
+        </div>
+        <h2 class="screen-title" data-i18n="chw.about_who">About who</h2>
+        <p style="font-size:0.8rem;color:#6b7280;margin-bottom:0.75rem" data-i18n="chw.demographics_note">
+          Aggregate-only. Used for equity reporting, not individual tracking.
+        </p>
+        <div class="form-group">
+          <label for="demoAgeBand" data-i18n="chw.age_band">Age group</label>
+          <select id="demoAgeBand" style="width:100%;padding:0.5rem;border:1px solid var(--color-border,#e5e7eb);border-radius:0.375rem">
+            <option value="unknown" data-i18n="chw.prefer_not_say">Prefer not to say</option>
+            <option value="u5">Under 5</option>
+            <option value="5-17">5 – 17</option>
+            <option value="18-59">18 – 59</option>
+            <option value="60+">60 +</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="demoGender" data-i18n="chw.gender">Gender</label>
+          <select id="demoGender" style="width:100%;padding:0.5rem;border:1px solid var(--color-border,#e5e7eb);border-radius:0.375rem">
+            <option value="unknown" data-i18n="chw.prefer_not_say">Prefer not to say</option>
+            <option value="female" data-i18n="chw.gender_female">Female</option>
+            <option value="male" data-i18n="chw.gender_male">Male</option>
+            <option value="other" data-i18n="chw.gender_other">Other</option>
+          </select>
+        </div>
+        <div class="action-buttons">
+          <button class="btn-primary" id="symptomSubmitBtn" data-i18n="chw.submit">Submit</button>
+          <button id="symptomAboutWhoBackBtn" data-i18n="chw.back">Back</button>
         </div>
       </div>
 

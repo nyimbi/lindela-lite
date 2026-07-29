@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const i18nDir = path.resolve(__dirname, '../public/i18n')
 const catalogCache = {}
 
-export const SUPPORTED_LOCALES = ['en', 'sw', 'ar', 'so', 'din', 'km', 'nk']
+export const SUPPORTED_LOCALES = ['en', 'sw', 'ar', 'so', 'din', 'km', 'nk', 'fr', 'pt', 'am']
 
 export async function loadCatalog(locale = 'en') {
 	if (catalogCache[locale]) return catalogCache[locale]
