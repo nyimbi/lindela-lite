@@ -163,12 +163,30 @@ function normalizeTask(input, data, existing = null) {
   })
 }
 
+const DEMOGRAPHIC_AGE_BANDS = ['u5', '5-17', '18-59', '60+', 'unknown']
+const DEMOGRAPHIC_GENDERS = ['female', 'male', 'other', 'unknown']
+
+function normalizeDemographics(input) {
+  if (!input) return undefined
+  const age_band = DEMOGRAPHIC_AGE_BANDS.includes(input.age_band) ? input.age_band : 'unknown'
+  const gender = DEMOGRAPHIC_GENDERS.includes(input.gender) ? input.gender : 'unknown'
+  const pwd = input.pwd == null ? null : Boolean(input.pwd)
+  const refugee_or_idp = input.refugee_or_idp == null ? null : Boolean(input.refugee_or_idp)
+  return { age_band, gender, pwd, refugee_or_idp }
+}
+
 function normalizeFieldReport(input, data, existing = null) {
   if (!input.incident_id && !input.intervention_id) {
     throw Object.assign(new Error('incident_id or intervention_id is required'), { statusCode: 400 })
   }
   const intervention = findById(data.interventions, input.intervention_id)
   const now = new Date().toISOString()
+
+  // Demographics: accept from input or preserve existing; aggregate-safe categoricals, not PII
+  const demographics = input.demographics != null
+    ? normalizeDemographics(input.demographics)
+    : existing?.demographics
+
   return stripUndefined({
     id: input.id || stableId('report', [input.incident_id, input.intervention_id, input.summary, input.observed_at || now]),
     incident_id: input.incident_id || intervention?.incident_id || null,
@@ -180,6 +198,7 @@ function normalizeFieldReport(input, data, existing = null) {
     impact: objectValue(input.impact || existing?.impact),
     latitude: toNumber(input.latitude ?? input.lat ?? existing?.latitude),
     longitude: toNumber(input.longitude ?? input.lon ?? input.lng ?? existing?.longitude),
+    demographics,
     created_at: existing?.created_at || input.created_at || now,
     updated_at: now,
     metadata: objectValue(input.metadata),

@@ -45,6 +45,7 @@ async function init() {
   setupSymptomTypeScreen()
   setupSymptomDurationScreen()
   setupSymptomLocationScreen()
+  setupSymptomAboutWhoScreen()
   setupIncidentScreen()
   setupReplyScreen()
 
@@ -149,13 +150,28 @@ function setupSymptomDurationScreen() {
 function setupSymptomLocationScreen() {
   $('autoLocationBtn').addEventListener('click', () => {
     state.symptom.location = userLocation
-    submitSymptomReport()
   })
   $('hereLocationBtn').addEventListener('click', () => {
     state.symptom.location = { latitude: 0, longitude: 0 }
-    submitSymptomReport()
+  })
+  $('symptomLocationNextBtn').addEventListener('click', () => {
+    if (!state.symptom.location) state.symptom.location = { latitude: 0, longitude: 0 }
+    showScreen('symptomAboutWho')
   })
   $('symptomLocationBackBtn').addEventListener('click', () => showScreen('symptomDuration'))
+}
+
+function setupSymptomAboutWhoScreen() {
+  $('symptomSubmitBtn').addEventListener('click', () => {
+    state.symptom.demographics = {
+      age_band: $('demoAgeBand').value || 'unknown',
+      gender: $('demoGender').value || 'unknown',
+      pwd: null,
+      refugee_or_idp: null,
+    }
+    submitSymptomReport()
+  })
+  $('symptomAboutWhoBackBtn').addEventListener('click', () => showScreen('symptomLocation'))
 }
 
 async function submitSymptomReport() {
@@ -165,6 +181,7 @@ async function submitSymptomReport() {
     description: `${state.symptom.who} with ${state.symptom.type} for ${state.symptom.duration}`,
     location: state.symptom.location,
     anonymous: state.anonymous,
+    demographics: state.symptom.demographics || undefined,
   }
 
   try {

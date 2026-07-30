@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { computeShortTermSuccessRate } from './observability.js'
 
 // In-memory KPI cache: key -> {value, expires}
 const _cache = new Map()
@@ -60,6 +61,8 @@ export function kpiSnapshotForPeriod(records, from, to, dateField = null) {
 export function computeApiUptime() {
   const override = process.env.LINDELA_LITE_UPTIME_OVERRIDE
   if (override !== undefined) return parseFloat(override)
+  const ringRate = computeShortTermSuccessRate()
+  if (ringRate !== null) return Math.round(ringRate * 100) / 100
   return 100.0
 }
 
@@ -109,15 +112,26 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   // OSS releases: count of report_templates (proxy heuristic per plan)
   const oss_releases_count = reportTemplates.length
 
-  // Warning-to-action median hours: hazard_event.observed_at -> first matching dispatch.sent_at
+  // Warning-to-action median hours: prefer matched_signal_at -> sent_at on dispatches
   const lags = []
-  for (const haz of hazardEvents) {
-    const matchingDispatch = (data.rapidpro_dispatches || []).find(
-      (d) => d.hazard_event_id === haz.id || d.trigger_id === haz.id
-    )
-    if (matchingDispatch && matchingDispatch.sent_at && haz.observed_at) {
-      const lagMs = new Date(matchingDispatch.sent_at).getTime() - new Date(haz.observed_at).getTime()
+  for (const d of (data.rapidpro_dispatches || [])) {
+    const signalAt = d.matched_signal_at
+    const sentAt = d.sent_at
+    if (signalAt && sentAt) {
+      const lagMs = new Date(sentAt).getTime() - new Date(signalAt).getTime()
       if (lagMs >= 0) lags.push(lagMs / 3600000)
+    }
+  }
+  // Fallback: hazard_event.observed_at -> first matching dispatch.sent_at
+  if (!lags.length) {
+    for (const haz of hazardEvents) {
+      const matchingDispatch = (data.rapidpro_dispatches || []).find(
+        (d) => d.hazard_event_id === haz.id || d.trigger_id === haz.id || d.matched_signal_id === haz.id
+      )
+      if (matchingDispatch && matchingDispatch.sent_at && haz.observed_at) {
+        const lagMs = new Date(matchingDispatch.sent_at).getTime() - new Date(haz.observed_at).getTime()
+        if (lagMs >= 0) lags.push(lagMs / 3600000)
+      }
     }
   }
   lags.sort((a, b) => a - b)
@@ -150,24 +164,51 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
     ? (100 * falseAlerts.length) / alertEvents.length
     : null
 
-  // Demographic fields - not computable from current schema
-  const data_gaps = [
-    { field: 'percent_children_u18', reason: 'field_reports has no age demographic field' },
-    { field: 'percent_women_and_girls', reason: 'field_reports has no gender demographic field' },
-    { field: 'percent_pwd', reason: 'field_reports has no disability status field' },
-    { field: 'cohort.u18', reason: 'no age breakdown in rapidpro_dispatches' },
-    { field: 'cohort.women_and_girls', reason: 'no gender breakdown in rapidpro_dispatches' },
-    { field: 'cohort.pwd', reason: 'no disability breakdown in rapidpro_dispatches' },
-    { field: 'cohort.refugees_idps', reason: 'no displacement status in field_reports' },
-    { field: 'youth_mappers_count', reason: 'role=mapper flag rarely set on field_reports' },
-    { field: 'warning_to_action_median_hours', reason: 'dispatches rarely linked to hazard_event_id; returns null when no matches' },
-  ]
+  // Demographic KPIs from field_reports.demographics
+  const reportsWithDemo = fieldReports.filter((r) => r.demographics != null)
+  const demoTotal = reportsWithDemo.length
+  const demographics_coverage_pct = fieldReports.length
+    ? Math.round((demoTotal / fieldReports.length) * 10000) / 100
+    : null
+
+  let percent_children_u18 = null
+  let percent_women_and_girls = null
+  let percent_pwd = null
+  let cohort_u18 = null
+  let cohort_women_and_girls = null
+  let cohort_pwd = null
+  let cohort_refugees_idps = null
+
+  if (demoTotal > 0) {
+    const u18Count = reportsWithDemo.filter((r) => ['u5', '5-17'].includes(r.demographics.age_band)).length
+    const womenCount = reportsWithDemo.filter((r) => r.demographics.gender === 'female').length
+    const pwdCount = reportsWithDemo.filter((r) => r.demographics.pwd === true).length
+    const refugeeCount = reportsWithDemo.filter((r) => r.demographics.refugee_or_idp === true).length
+    percent_children_u18 = Math.round((u18Count / demoTotal) * 10000) / 100
+    percent_women_and_girls = Math.round((womenCount / demoTotal) * 10000) / 100
+    percent_pwd = Math.round((pwdCount / demoTotal) * 10000) / 100
+    cohort_u18 = u18Count
+    cohort_women_and_girls = womenCount
+    cohort_pwd = pwdCount
+    cohort_refugees_idps = refugeeCount
+  }
+
+  const data_gaps = []
+  if (percent_children_u18 === null) data_gaps.push({ field: 'percent_children_u18', reason: 'no demographics recorded yet' })
+  if (percent_women_and_girls === null) data_gaps.push({ field: 'percent_women_and_girls', reason: 'no demographics recorded yet' })
+  if (percent_pwd === null) data_gaps.push({ field: 'percent_pwd', reason: 'no demographics recorded yet' })
+  if (cohort_u18 === null) data_gaps.push({ field: 'cohort.u18', reason: 'no demographics recorded yet' })
+  if (cohort_women_and_girls === null) data_gaps.push({ field: 'cohort.women_and_girls', reason: 'no demographics recorded yet' })
+  if (cohort_pwd === null) data_gaps.push({ field: 'cohort.pwd', reason: 'no demographics recorded yet' })
+  if (cohort_refugees_idps === null) data_gaps.push({ field: 'cohort.refugees_idps', reason: 'no demographics recorded yet' })
+  if (!youth_mappers_count) data_gaps.push({ field: 'youth_mappers_count', reason: 'role=mapper flag rarely set on field_reports' })
+  if (warning_to_action_median_hours === null) data_gaps.push({ field: 'warning_to_action_median_hours', reason: 'dispatches rarely linked to matched_signal_at; returns null when no matches' })
 
   const result = {
     people_reached,
-    percent_children_u18: null,
-    percent_women_and_girls: null,
-    percent_pwd: null,
+    percent_children_u18,
+    percent_women_and_girls,
+    percent_pwd,
     community_reporters_count,
     youth_mappers_count,
     oss_releases_count,
@@ -178,11 +219,12 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
     api_uptime_pct: computeApiUptime(),
     cohort: {
       total: people_reached,
-      u18: null,
-      women_and_girls: null,
-      pwd: null,
-      refugees_idps: null,
+      u18: cohort_u18,
+      women_and_girls: cohort_women_and_girls,
+      pwd: cohort_pwd,
+      refugees_idps: cohort_refugees_idps,
     },
+    demographics_coverage_pct,
     period: { quarter: q, year: Number(y), from, to },
     data_gaps,
     generated_at: new Date().toISOString(),
