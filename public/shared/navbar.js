@@ -105,7 +105,8 @@ const NAVBAR_CSS = `
   padding: 0;
 }
 .l-hamburger:hover { background: var(--surface-hover); color: var(--ink); }
-.l-navbar-dialog {
+.l-navbar-dialog:not([open]) { display: none; }
+.l-navbar-dialog[open] {
   position: fixed;
   inset: 0;
   z-index: 1000;

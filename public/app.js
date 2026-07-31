@@ -507,46 +507,46 @@ function renderSourceDots(healthData) {
 // =============================================================
 // Workflows panel
 // =============================================================
+const WORKFLOW_TYPES = [
+  'anticipatory_alert',
+  'cold_chain_protection',
+  'school_feeding_continuity',
+  'school_health_decision',
+  'chw_outbreak_triage',
+  'community_feedback_loop',
+  'equity_audit_action',
+  'parametric_disbursement',
+]
+
 async function loadWorkflowMetrics() {
+  let byType = {}
   try {
     const response = await fetch('/api/v1/workflows/metrics')
     const payload = await response.json()
-    const metrics = payload.data || []
-    renderWorkflowsTab(metrics)
+    byType = payload?.data?.by_type || {}
   } catch (err) {
     console.error('Failed to load workflow metrics:', err)
   }
+  renderWorkflowsTab(byType)
 }
 
-function renderWorkflowsTab(metrics) {
+function renderWorkflowsTab(byType) {
   const grid = $('workflowMetricsGrid')
   if (!grid) return
 
-  const WORKFLOW_TYPES = [
-    'anticipatory_alert',
-    'cold_chain_protection',
-    'school_feeding_continuity',
-    'school_health_decision',
-    'chw_outbreak_triage',
-    'community_feedback_loop',
-    'equity_audit_action',
-    'parametric_disbursement',
-  ]
-
   grid.innerHTML = WORKFLOW_TYPES.map((type) => {
-    const m = metrics.find((x) => x.type === type) || { type, open_count: 0, dispatched_today: 0 }
+    const m = byType[type] || { open: 0, closed: 0, rejected: 0 }
     const i18nKey = `workflow.${type}`
     return `<div class="workflow-card" data-type="${escapeHtml(type)}" role="listitem">
       <span class="workflow-card-name" data-i18n="${escapeHtml(i18nKey)}">${t(i18nKey)}</span>
-      <span class="workflow-card-count">${escapeHtml(String(m.open_count || 0))}</span>
-      <span class="workflow-card-meta">dispatched today: ${escapeHtml(String(m.dispatched_today || 0))}</span>
+      <span class="workflow-card-count">${escapeHtml(String(m.open || 0))}</span>
+      <span class="workflow-card-meta">closed: ${escapeHtml(String(m.closed || 0))}</span>
     </div>`
   }).join('')
 
   grid.querySelectorAll('.workflow-card').forEach((card) => {
     card.addEventListener('click', () => {
       state.workflowTypeFilter = card.dataset.type
-      renderWorkflowsTab(metrics)
     })
   })
 }

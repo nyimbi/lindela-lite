@@ -22,7 +22,7 @@
     }
     .chain-badge {
       display: inline-block;
-      background: var(--color-primary, #2563eb);
+      background: var(--brand);
       color: #fff;
       font-size: 0.75rem;
       padding: 0.125rem 0.5rem;
@@ -30,7 +30,7 @@
       font-family: monospace;
     }
     .rule-card {
-      border: 1px solid var(--color-border, #e5e7eb);
+      border: 1px solid var(--stroke);
       border-radius: 0.5rem;
       padding: 1rem;
       margin-bottom: 0.75rem;
@@ -38,7 +38,7 @@
     .sim-tx {
       font-family: monospace;
       font-size: 0.75rem;
-      background: var(--color-surface, #f9fafb);
+      background: var(--surface);
       padding: 0.5rem;
       border-radius: 0.25rem;
       word-break: break-all;
@@ -47,24 +47,24 @@
       font-size: 1.5rem;
       font-weight: 700;
       margin: 1.5rem 0 0.75rem;
-      border-bottom: 2px solid var(--color-primary, #2563eb);
+      border-bottom: 2px solid var(--brand);
       padding-bottom: 0.25rem;
     }
     table { width: 100%; border-collapse: collapse; font-size: 1rem; }
-    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--color-border, #e5e7eb); }
-    th { background: var(--color-surface, #f9fafb); font-weight: 600; }
-    select, input { width: 100%; padding: 0.4rem 0.5rem; border: 1px solid var(--color-border, #e5e7eb); border-radius: 0.25rem; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--stroke); }
+    th { background: var(--surface); font-weight: 600; }
+    select, input { width: 100%; padding: 0.4rem 0.5rem; border: 1px solid var(--stroke); border-radius: 0.25rem; }
     label { display: block; font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; margin-top: 0.5rem; }
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
     @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-  <header class="site-header" style="display:flex;align-items:center;gap:1rem;padding:0.75rem 1rem;background:var(--color-surface,#f9fafb);border-bottom:1px solid var(--color-border,#e5e7eb)">
+  <header class="site-header" style="display:flex;align-items:center;gap:1rem;padding:0.75rem 1rem;background:var(--surface);border-bottom:1px solid var(--stroke)">
     <img src="/icon.svg" alt="Lindela" width="32" height="32">
-    <h1 style="font-size:1.1rem;font-weight:700;margin:0">Lindela Parametric <span style="font-weight:400;color:#6b7280">— Testnet</span></h1>
+    <h1 style="font-size:1.1rem;font-weight:700;margin:0">Lindela Parametric <span style="font-weight:400;color: var(--ink-muted)">— Testnet</span></h1>
     <nav style="margin-left:auto;display:flex;align-items:center;gap:0.75rem">
-      <select id="locale-select" aria-label="Language" style="font-size:0.8rem;padding:0.2rem 0.4rem;border:1px solid var(--color-border,#e5e7eb);border-radius:0.25rem">
+      <select id="locale-select" aria-label="Language" style="font-size:0.8rem;padding:0.2rem 0.4rem;border:1px solid var(--stroke);border-radius:0.25rem">
         <option value="en">English</option>
         <option value="sw">Swahili</option>
         <option value="ar">العربية</option>
@@ -76,7 +76,7 @@
         <option value="pt">Português</option>
         <option value="am">አማርኛ</option>
       </select>
-      <a href="/" style="font-size:0.85rem;color:var(--color-primary,#2563eb)">Operator Console</a>
+      <a href="/" style="font-size:0.85rem;color:var(--brand)">Operator Console</a>
     </nav>
   </header>
 
@@ -88,7 +88,7 @@
     <!-- Section 1: Rules -->
     <div class="section-title">Parametric Rules</div>
     <div id="rulesList">
-      <p style="color:#6b7280;font-size:0.875rem">No rules yet.</p>
+      <p style="color: var(--ink-muted);font-size:0.875rem">No rules yet.</p>
     </div>
 
     <details style="margin-top:1rem">
@@ -140,7 +140,7 @@
     <!-- Section 2: Simulate -->
     <div class="section-title">Simulate a Disbursement</div>
     <div id="simSection">
-      <p style="color:#6b7280;font-size:0.875rem">Create a rule first, then simulate here.</p>
+      <p style="color: var(--ink-muted);font-size:0.875rem">Create a rule first, then simulate here.</p>
     </div>
 
     <form id="simForm" style="display:none">
@@ -175,7 +175,7 @@
           </tr>
         </thead>
         <tbody id="historyBody">
-          <tr><td colspan="7" style="color:#6b7280;text-align:center">No simulations yet.</td></tr>
+          <tr><td colspan="7" style="color: var(--ink-muted);text-align:center">No simulations yet.</td></tr>
         </tbody>
       </table>
     </div>
