@@ -57,6 +57,10 @@
       </div>
     </header>
 
+    <section id="workflowOverview" class="workflow-ribbon" aria-label="Workflow overview">
+      <div id="workflowMetricsGrid" class="workflow-tray" role="list"></div>
+    </section>
+
     <div class="console-layout">
 
       <section class="map-section" aria-label="Situational map">
@@ -109,12 +113,8 @@
 
       <aside class="rail" role="complementary" aria-label="Operations rail">
         <nav class="rail-tabs" role="tablist" aria-label="Console tabs">
-          <button class="rail-tab active" role="tab" id="tab-workflows"
-                  aria-controls="panel-workflows" aria-selected="true" data-tab="workflows">
-            <span data-i18n="tab.workflows">Workflows</span>
-          </button>
-          <button class="rail-tab" role="tab" id="tab-alerts"
-                  aria-controls="panel-alerts" aria-selected="false" data-tab="alerts">
+          <button class="rail-tab active" role="tab" id="tab-alerts"
+                  aria-controls="panel-alerts" aria-selected="true" data-tab="alerts">
             <span data-i18n="tab.alerts">Alerts</span>
             <span id="alertsBadge" class="tab-badge" hidden>0</span>
           </button>
@@ -138,17 +138,8 @@
 
         <div class="rail-content">
 
-          <!-- Workflows -->
-          <div id="panel-workflows" class="rail-panel active" role="tabpanel" aria-labelledby="tab-workflows">
-            <div class="panel-header">
-              <h2 data-i18n="tab.workflows">Workflows</h2>
-            </div>
-            <div id="workflowMetricsGrid" class="workflow-tray" role="list"></div>
-            <div id="workflowInstancesList" class="list-container" role="list"></div>
-          </div>
-
           <!-- Alerts -->
-          <div id="panel-alerts" class="rail-panel" role="tabpanel" aria-labelledby="tab-alerts">
+          <div id="panel-alerts" class="rail-panel active" role="tabpanel" aria-labelledby="tab-alerts">
             <div class="panel-header">
               <h2 data-i18n="tab.alerts">Alerts</h2>
               <div class="filter-chips" id="alertFilterChips" role="group" aria-label="Alert filters">

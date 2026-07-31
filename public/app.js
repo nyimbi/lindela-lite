@@ -12,7 +12,7 @@ if ('serviceWorker' in navigator) {
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
   catalog: {},
-  activeTab: 'workflows',
+  activeTab: 'alerts',
   alertFilter: 'all',
   workflowTypeFilter: null,
   mapTransform: { x: 0, y: 0, scale: 1 },
@@ -471,8 +471,8 @@ async function refresh() {
     ...(assets.data || []),
   ])
 
-  if (state.activeTab === 'workflows')   loadWorkflowMetrics()
-  else if (state.activeTab === 'alerts')    renderAlertsPanel()
+  loadWorkflowMetrics()
+  if (state.activeTab === 'alerts')    renderAlertsPanel()
   else if (state.activeTab === 'reports')   renderReportsPanel()
   else if (state.activeTab === 'equity')    renderEquityTab()
   else if (state.activeTab === 'ingestion') renderIngestionPanel()

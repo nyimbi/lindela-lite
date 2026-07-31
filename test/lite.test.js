@@ -1911,7 +1911,7 @@ describe('Lindela Lite client UI', () => {
     }
   })
 
-  it('GET / HTML contains data-i18n="tab.workflows"', async () => {
+  it('GET / HTML contains workflow ribbon overview', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-workflows-'))
     const store = new JsonStore(path.join(dir, 'store.json'))
     const server = createServer({ store })
@@ -1923,7 +1923,8 @@ describe('Lindela Lite client UI', () => {
       const res = await fetch(`${baseUrl}/`)
       assert.equal(res.status, 200)
       const html = await res.text()
-      assert.ok(html.includes('data-i18n="tab.workflows"'), 'tab.workflows i18n missing from HTML')
+      assert.ok(html.includes('id="workflowOverview"'), 'workflow ribbon missing from HTML')
+      assert.ok(html.includes('class="workflow-ribbon"'), 'workflow-ribbon class missing')
     } finally {
       listener.close()
     }
@@ -1960,7 +1961,6 @@ describe('Lindela Lite client UI', () => {
       assert.equal(res.status, 200)
       const html = await res.text()
       assert.ok(html.includes('id="workflowMetricsGrid"'), 'workflow metrics grid missing')
-      assert.ok(html.includes('id="workflowInstancesList"'), 'workflow instances list missing')
     } finally {
       listener.close()
     }
