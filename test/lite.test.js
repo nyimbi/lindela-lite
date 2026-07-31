@@ -2393,6 +2393,255 @@ describe('Lindela Lite Partner Portal', () => {
   })
 })
 
+// =============================================================
+// Phase 2 tests
+// =============================================================
+import { normalizeParametricRule, simulateDisbursement, PARAMETRIC_CHAINS } from '../src/parametric.js'
+import { dhis2Connector } from '../src/connectors/dhis2.js'
+import { buildCreate } from '../src/operations.js'
+import { computeApiUptime } from '../src/kpi.js'
+import { uptimeStats } from '../src/observability.js'
+import { sendRapidProAlert } from '../src/rapidpro.js'
+
+describe('Lindela Lite Phase 2 — Parametric, DHIS2, Demographics, Observability', () => {
+  it('normalizeParametricRule rejects mainnet chain name with explicit error', () => {
+    assert.throws(
+      () => normalizeParametricRule({ name: 'Test', chain: 'ethereum' }),
+      (err) => err.message.includes('testnet-only') && err.statusCode === 400
+    )
+  })
+
+  it('normalizeParametricRule rejects ethereum-mainnet as a mainnet chain', () => {
+    assert.throws(
+      () => normalizeParametricRule({ name: 'Test', chain: 'ethereum-mainnet' }),
+      (err) => err.message.includes('testnet-only')
+    )
+  })
+
+  it('simulateDisbursement returns tx_hash with sim_ prefix', () => {
+    const rule = normalizeParametricRule({ name: 'Flood', chain: 'ethereum-sepolia', requires_focal_point_approval: false })
+    const result = simulateDisbursement(rule, { actor: 'test_actor' })
+    assert.ok(result.simulated === true)
+    assert.ok(result.tx_hash.startsWith('sim_'), `Expected sim_ prefix, got: ${result.tx_hash}`)
+    assert.ok(result.disbursement_id)
+    assert.equal(result.status, 'simulated')
+  })
+
+  it('simulateDisbursement throws 409 when focal_point_approval required but not approved', () => {
+    const rule = normalizeParametricRule({ name: 'Protected', chain: 'celo-alfajores', requires_focal_point_approval: true })
+    assert.throws(
+      () => simulateDisbursement(rule, { focal_point_approved: false }),
+      (err) => err.statusCode === 409
+    )
+  })
+
+  it('POST /api/v1/parametric-rules returns 201', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-parametric-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/parametric-rules`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Rain trigger', chain: 'polygon-mumbai', trigger_metric: 'precip_mm', trigger_threshold: 50 }),
+      })
+      assert.equal(res.status, 201)
+      const json = await res.json()
+      assert.ok(json.success)
+      assert.equal(json.data.chain, 'polygon-mumbai')
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('POST /api/v1/parametric-rules/:id/simulate records a disbursement', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-sim-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+    try {
+      // Create a rule first
+      const ruleRes = await fetch(`${baseUrl}/api/v1/parametric-rules`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Sim rule', chain: 'celo-alfajores', requires_focal_point_approval: false }),
+      })
+      const ruleJson = await ruleRes.json()
+      const ruleId = ruleJson.data.id
+
+      // Simulate
+      const simRes = await fetch(`${baseUrl}/api/v1/parametric-rules/${ruleId}/simulate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ focal_point_approved: false, actor: 'test_op' }),
+      })
+      assert.equal(simRes.status, 201)
+      const simJson = await simRes.json()
+      assert.ok(simJson.data.tx_hash.startsWith('sim_'))
+      assert.equal(simJson.data.status, 'simulated')
+
+      // Check disbursements list
+      const listRes = await fetch(`${baseUrl}/api/v1/parametric-disbursements`)
+      const listJson = await listRes.json()
+      assert.equal(listJson.data.length, 1)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /parametric returns 200 HTML', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-para-static-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+    try {
+      const res = await fetch(`${baseUrl}/parametric`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      assert.ok(html.includes('Lindela Parametric'), `Expected Lindela Parametric title, got: ${html.slice(0, 200)}`)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('GET /scenarios returns 200 HTML', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-scenarios-static-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+    try {
+      const res = await fetch(`${baseUrl}/scenarios`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      assert.ok(html.includes('Scenario Workbench'), `Expected Scenario Workbench in title, got: ${html.slice(0, 200)}`)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('POST /api/v1/ingest/run with sources dhis2 returns errors about base_url when absent', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-dhis2-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/ingest/run`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sources: ['dhis2'] }),
+      })
+      assert.ok(res.status === 200 || res.status === 201)
+      const json = await res.json()
+      assert.ok(json.success)
+      const run = json.source_runs?.find((r) => r.source === 'dhis2')
+      assert.ok(run, 'Expected dhis2 source run in response')
+      assert.ok(Array.isArray(run.errors) && run.errors.length > 0, 'Expected errors array with base_url message')
+      assert.ok(run.errors[0].includes('base_url') || run.errors[0].includes('scaffold'), `Error message: ${run.errors[0]}`)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('dhis2Connector spec.id equals dhis2', () => {
+    assert.equal(dhis2Connector.id, 'dhis2')
+  })
+
+  it('normalizeFieldReport accepts demographics and preserves them', () => {
+    const emptyData = { interventions: [], incidents: [] }
+    const input = {
+      incident_id: 'inc_001',
+      summary: 'Test report',
+      demographics: { age_band: 'u5', gender: 'female', pwd: false, refugee_or_idp: null },
+    }
+    const result = buildCreate('field_reports', input, emptyData)
+    assert.ok(result.demographics, 'Expected demographics field')
+    assert.equal(result.demographics.age_band, 'u5')
+    assert.equal(result.demographics.gender, 'female')
+    assert.equal(result.demographics.pwd, false)
+  })
+
+  it('normalizeFieldReport without demographics returns record unchanged (back-compat)', () => {
+    const emptyData = { interventions: [], incidents: [] }
+    const input = { incident_id: 'inc_002', summary: 'Legacy report' }
+    const result = buildCreate('field_reports', input, emptyData)
+    assert.ok(!('demographics' in result) || result.demographics == null, 'demographics should be absent or null for legacy reports')
+  })
+
+  it('computeQuarterlyKpi on field_reports with demographics returns non-null percent_children_u18', () => {
+    const now = new Date().toISOString()
+    const data = {
+      rapidpro_dispatches: [],
+      field_reports: [
+        { id: 'r1', incident_id: 'i1', summary: 's', created_at: now, demographics: { age_band: 'u5', gender: 'female', pwd: false, refugee_or_idp: null } },
+        { id: 'r2', incident_id: 'i1', summary: 's', created_at: now, demographics: { age_band: '18-59', gender: 'male', pwd: false, refugee_or_idp: null } },
+      ],
+      alert_events: [],
+      hazard_events: [],
+      interventions: [],
+      workflow_instances: [],
+      report_templates: [],
+    }
+    const quarter = new Date().getUTCMonth() < 3 ? 'Q1' : new Date().getUTCMonth() < 6 ? 'Q2' : new Date().getUTCMonth() < 9 ? 'Q3' : 'Q4'
+    const year = new Date().getUTCFullYear()
+    const result = computeQuarterlyKpi(data, { quarter, year: String(year) })
+    assert.ok(result.percent_children_u18 !== null, 'percent_children_u18 should be non-null when demographics present')
+    assert.equal(result.percent_children_u18, 50, 'One of two reports is u5 => 50%')
+    assert.ok(result.demographics_coverage_pct !== null)
+  })
+
+  it('sendRapidProAlert stamps queued_at on dispatch record', async () => {
+    const originalFetch = global.fetch
+    global.fetch = async () => ({
+      ok: true,
+      status: 200,
+      text: async () => '{"id":"mock"}',
+    })
+    const env = {
+      RAPIDPRO_API_TOKEN: 'test_token_for_unit',
+      RAPIDPRO_BASE_URL: 'https://mock.rapidpro.io',
+      RAPIDPRO_ALERT_MODE: 'broadcast',
+      RAPIDPRO_ALERT_URNS: '+254700000001',
+    }
+    try {
+      const alert = { id: 'alert_test_01', rule_name: 'Test alert', severity: 'high', message: 'Test', metric: 'precip', value: 60, threshold: 50, operator: '>' }
+      const dispatch = await sendRapidProAlert(alert, {}, env)
+      assert.ok(dispatch.queued_at, 'dispatch.queued_at should be set')
+      assert.ok(typeof dispatch.queued_at === 'string' && dispatch.queued_at.length > 0)
+    } finally {
+      global.fetch = originalFetch
+    }
+  })
+
+  it('computeApiUptime respects LINDELA_LITE_UPTIME_OVERRIDE', () => {
+    const orig = process.env.LINDELA_LITE_UPTIME_OVERRIDE
+    process.env.LINDELA_LITE_UPTIME_OVERRIDE = '97.5'
+    try {
+      assert.equal(computeApiUptime(), 97.5)
+    } finally {
+      if (orig === undefined) delete process.env.LINDELA_LITE_UPTIME_OVERRIDE
+      else process.env.LINDELA_LITE_UPTIME_OVERRIDE = orig
+    }
+  })
+
+  it('uptimeStats returns uptime_seconds as a positive number', () => {
+    const stats = uptimeStats()
+    assert.ok(typeof stats.uptime_seconds === 'number', 'uptime_seconds should be a number')
+    assert.ok(stats.uptime_seconds >= 0, 'uptime_seconds should be non-negative')
+    assert.ok(stats.started_at, 'started_at should be set')
+  })
+})
+
 function rapidProEnv() {
   return {
     RAPIDPRO_API_TOKEN: process.env.RAPIDPRO_API_TOKEN,

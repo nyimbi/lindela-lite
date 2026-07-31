@@ -23,7 +23,8 @@ export async function sendRapidProAlert(alert, options = {}, env = process.env) 
   const message = formatAlertMessage(alert, options.text)
   const mode = options.mode || config.alertMode
   const request = buildRapidProRequest(mode, config, recipients, alert, message, options)
-  const startedAt = new Date().toISOString()
+  const queuedAt = new Date().toISOString()
+  const startedAt = queuedAt
 
   try {
     const response = await fetch(request.url, {
@@ -35,6 +36,7 @@ export async function sendRapidProAlert(alert, options = {}, env = process.env) 
       body: JSON.stringify(request.body),
     })
     const responseBody = await readResponseBody(response)
+    const sentAt = new Date().toISOString()
     const dispatch = rapidProDispatchRecord({
       alert,
       mode,
@@ -44,6 +46,10 @@ export async function sendRapidProAlert(alert, options = {}, env = process.env) 
       response,
       responseBody,
       startedAt,
+      queuedAt,
+      sentAt,
+      matchedSignalId: options.matched_signal_id || null,
+      matchedSignalAt: options.matched_signal_at || null,
     })
     if (!response.ok) {
       dispatch.status = 'failed'
@@ -58,6 +64,10 @@ export async function sendRapidProAlert(alert, options = {}, env = process.env) 
       recipients,
       request,
       startedAt,
+      queuedAt,
+      sentAt: null,
+      matchedSignalId: options.matched_signal_id || null,
+      matchedSignalAt: options.matched_signal_at || null,
       error,
     })
   }
@@ -297,7 +307,7 @@ function buildRapidProRequest(mode, config, recipients, alert, message, options)
   throw Object.assign(new Error('mode must be flow_start or broadcast'), { statusCode: 400 })
 }
 
-function rapidProDispatchRecord({ alert, mode, message, recipients, request, response = null, responseBody = null, startedAt, error = null }) {
+function rapidProDispatchRecord({ alert, mode, message, recipients, request, response = null, responseBody = null, startedAt, queuedAt = null, sentAt = null, matchedSignalId = null, matchedSignalAt = null, error = null }) {
   const status = error ? 'failed' : 'sent'
   return {
     id: stableId('rapidpro_dispatch', [alert.id, mode, recipients, startedAt]),
@@ -312,6 +322,10 @@ function rapidProDispatchRecord({ alert, mode, message, recipients, request, res
     response_status: response?.status || null,
     response_body: responseBody,
     error: error?.message || null,
+    queued_at: queuedAt || startedAt,
+    sent_at: sentAt || (error ? null : new Date().toISOString()),
+    matched_signal_id: matchedSignalId,
+    matched_signal_at: matchedSignalAt,
     created_at: startedAt,
     updated_at: new Date().toISOString(),
   }

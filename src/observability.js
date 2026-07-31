@@ -1,3 +1,31 @@
+const processStartAt = Date.now()
+
+export function uptimeStats() {
+  return {
+    started_at: new Date(processStartAt).toISOString(),
+    uptime_seconds: Math.floor((Date.now() - processStartAt) / 1000),
+  }
+}
+
+// Ring buffer of last 100 request outcomes for short-term success rate
+const REQUEST_RING_SIZE = 100
+const _requestRing = []
+
+export function recordRequestOutcome(ok) {
+  _requestRing.push({ ts: Date.now(), ok: Boolean(ok) })
+  if (_requestRing.length > REQUEST_RING_SIZE) _requestRing.shift()
+}
+
+export function recentRequestOutcomes() {
+  return [..._requestRing]
+}
+
+export function computeShortTermSuccessRate() {
+  if (!_requestRing.length) return null
+  const successful = _requestRing.filter((r) => r.ok).length
+  return (successful / _requestRing.length) * 100
+}
+
 const LOG_LEVEL = process.env.LINDELA_LITE_LOG_LEVEL || 'info'
 const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 }
 
