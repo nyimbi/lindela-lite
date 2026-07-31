@@ -488,6 +488,10 @@
       <div id="detailActions" class="dialog-actions"></div>
     </dialog>
 
+    <script type="module">
+      import { mountNavbar } from '/shared/navbar.js'
+      mountNavbar({ activePath: '/' })
+    </script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

@@ -1,4 +1,6 @@
 import { initI18n, t, apiFetch, initOfflineBanner, initServiceWorker } from '/shared/runtime.js'
+import { mountNavbar } from '/shared/navbar.js'
+mountNavbar({ activePath: '/focal-point' })
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})

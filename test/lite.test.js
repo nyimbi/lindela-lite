@@ -2640,6 +2640,46 @@ describe('Lindela Lite Phase 2 — Parametric, DHIS2, Demographics, Observabilit
     assert.ok(stats.uptime_seconds >= 0, 'uptime_seconds should be non-negative')
     assert.ok(stats.started_at, 'started_at should be set')
   })
+
+  it('GET /shared/navbar.js returns 200 text/javascript', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-navbar-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+    try {
+      const res = await fetch(`${baseUrl}/shared/navbar.js`)
+      assert.equal(res.status, 200)
+      const ct = res.headers.get('content-type') || ''
+      assert.ok(ct.includes('javascript'), `Expected content-type javascript, got: ${ct}`)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('every sub-surface HTML contains mountNavbar import', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-navbar-check-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+    const surfaces = ['/focal-point', '/chw', '/portal', '/co', '/scenarios', '/parametric']
+    try {
+      for (const surface of surfaces) {
+        const res = await fetch(`${baseUrl}${surface}`)
+        assert.equal(res.status, 200, `${surface} should return 200`)
+        const html = await res.text()
+        assert.ok(
+          html.includes("from '/shared/navbar.js'"),
+          `${surface} HTML must import from /shared/navbar.js`
+        )
+      }
+    } finally {
+      listener.close()
+    }
+  })
 })
 
 function rapidProEnv() {

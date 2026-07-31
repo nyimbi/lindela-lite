@@ -1,4 +1,6 @@
 import { initI18n, t, apiFetch, initOfflineBanner, initOfflineQueue } from '/shared/runtime.js'
+import { mountNavbar } from '/shared/navbar.js'
+mountNavbar({ activePath: '/chw' })
 
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
