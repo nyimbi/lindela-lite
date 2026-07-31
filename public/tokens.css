@@ -65,4 +65,9 @@
   --chw-font-size-base: 1.125rem;
   --focal-point-approve-bg: var(--ok);
   --focal-point-reject-bg: var(--danger);
+
+  /* Backward-compat aliases — canonical names are --stroke / --surface-hover */
+  --border: var(--stroke);
+  --border-strong: var(--stroke-strong);
+  --bg-hover: var(--surface-hover);
 }

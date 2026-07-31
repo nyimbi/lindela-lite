@@ -23,7 +23,7 @@
 
       header {
         background: var(--bg-elevated);
-        border-bottom: 1px solid var(--border);
+        border-bottom: 1px solid var(--stroke);
         padding: 1rem;
         display: flex;
         align-items: center;
@@ -51,7 +51,7 @@
 
       select {
         padding: 0.5rem 0.75rem;
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         background: var(--bg);
         color: var(--ink);
@@ -61,7 +61,7 @@
       .signout-btn {
         padding: 0.5rem 1rem;
         background: var(--surface);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         color: var(--ink);
         cursor: pointer;
@@ -69,7 +69,7 @@
       }
 
       .signout-btn:hover {
-        background: var(--bg-hover);
+        background: var(--surface-hover);
       }
 
       main {
@@ -99,7 +99,7 @@
 
       .workflow-card {
         background: var(--surface);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 8px;
         padding: 1.5rem;
         margin-bottom: 1rem;
@@ -194,7 +194,7 @@
         align-items: center;
         padding: 0.75rem;
         background: var(--surface);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         margin-bottom: 0.5rem;
         font-size: 0.9375rem;
@@ -221,7 +221,7 @@
       .audit-item {
         padding: 0.75rem;
         background: var(--surface);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         margin-bottom: 0.5rem;
         font-size: 0.875rem;
@@ -237,7 +237,7 @@
       }
 
       dialog {
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 8px;
         background: var(--surface);
         padding: 1.5rem;
@@ -291,7 +291,7 @@
       .form-group input {
         width: 100%;
         padding: 0.75rem;
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         background: var(--bg);
         color: var(--ink);
@@ -305,13 +305,13 @@
 
       .btn-cancel {
         background: var(--surface);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         color: var(--ink);
       }
 
       footer {
         padding: 1rem;
-        border-top: 1px solid var(--border);
+        border-top: 1px solid var(--stroke);
         text-align: center;
         font-size: 0.875rem;
         color: var(--ink-muted);
@@ -404,6 +404,10 @@
       </div>
     </dialog>
 
+    <script type="module">
+      import { mountNavbar } from '/shared/navbar.js'
+      mountNavbar({ activePath: '/focal-point' })
+    </script>
     <script type="module" src="/focal-point/app.js"></script>
   </body>
 </html>

@@ -23,7 +23,7 @@
 
       header {
         background: var(--bg-elevated);
-        border-bottom: 1px solid var(--border);
+        border-bottom: 1px solid var(--stroke);
         padding: 1rem;
         display: flex;
         align-items: center;
@@ -54,7 +54,7 @@
 
       select {
         padding: 0.5rem 0.75rem;
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         background: var(--bg);
         color: var(--ink);
@@ -76,7 +76,7 @@
         margin-bottom: 2rem;
         padding: 1rem;
         background: var(--surface);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 8px;
         display: flex;
         align-items: center;
@@ -130,7 +130,7 @@
         gap: 1rem;
         background: var(--surface);
         color: var(--ink);
-        border: 2px solid var(--border);
+        border: 2px solid var(--stroke);
         transition: all 0.2s;
       }
 
@@ -174,7 +174,7 @@
         width: 12px;
         height: 12px;
         border-radius: 50%;
-        background: var(--border);
+        background: var(--stroke);
       }
 
       .dot.active {
@@ -197,7 +197,7 @@
       .form-group select,
       .form-group textarea {
         padding: 0.75rem;
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         background: var(--bg);
         color: var(--ink);
@@ -224,7 +224,7 @@
         min-height: var(--tap-target-min, 44px);
         padding: 1rem;
         background: var(--surface);
-        border: 2px solid var(--border);
+        border: 2px solid var(--stroke);
         border-radius: 8px;
         cursor: pointer;
         font-size: 0.875rem;
@@ -302,7 +302,7 @@
 
       footer {
         padding: 1rem;
-        border-top: 1px solid var(--border);
+        border-top: 1px solid var(--stroke);
         text-align: center;
         font-size: 0.75rem;
         color: var(--ink-muted);
@@ -524,7 +524,7 @@
       <!-- Alert reply screen -->
       <div id="replyScreen" class="screen">
         <h2 class="screen-title" data-i18n="chw.reply_alert">Reply to alert</h2>
-        <div id="alertCard" class="form-group" style="padding: 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;">
+        <div id="alertCard" class="form-group" style="padding: 1rem; background: var(--surface); border: 1px solid var(--stroke); border-radius: 8px;">
           <p id="alertText" style="font-size: 0.875rem; color: var(--ink-muted);">Loading alert...</p>
         </div>
         <div class="form-group">
@@ -544,6 +544,10 @@
       <span data-i18n="footer.version">v0.1.0</span> — <span data-i18n="footer.powered">Powered by Lindela Lite</span>
     </footer>
 
+    <script type="module">
+      import { mountNavbar } from '/shared/navbar.js'
+      mountNavbar({ activePath: '/chw' })
+    </script>
     <script type="module" src="/chw/app.js"></script>
   </body>
 </html>

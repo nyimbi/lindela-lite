@@ -23,7 +23,7 @@
 
       header {
         background: var(--bg-elevated);
-        border-bottom: 1px solid var(--border);
+        border-bottom: 1px solid var(--stroke);
         padding: 0.75rem 1.25rem;
         display: flex;
         align-items: center;
@@ -54,7 +54,7 @@
       select {
         background: var(--bg);
         color: var(--ink);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         padding: 0.25rem 0.5rem;
         font-size: 0.875rem;
@@ -89,7 +89,7 @@
 
       .kpi-tile {
         background: var(--bg-elevated);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 6px;
         padding: 0.875rem 1rem;
         display: flex;
@@ -123,7 +123,7 @@
       .chip-data-gap {
         display: inline-block;
         font-size: 0.65rem;
-        background: var(--border);
+        background: var(--stroke);
         color: var(--ink-muted);
         border-radius: 3px;
         padding: 0 0.4rem;
@@ -147,12 +147,12 @@
         font-size: 0.75rem;
         font-weight: 600;
         color: var(--ink-muted);
-        border-bottom: 1px solid var(--border);
+        border-bottom: 1px solid var(--stroke);
       }
 
       td {
         padding: 0.4rem 0.6rem;
-        border-bottom: 1px solid var(--border);
+        border-bottom: 1px solid var(--stroke);
         vertical-align: middle;
       }
 
@@ -216,14 +216,14 @@
         padding: 0.4rem 0.875rem;
         background: var(--bg-elevated);
         color: var(--ink);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         font-size: 0.85rem;
         cursor: pointer;
         text-decoration: none;
       }
 
-      .btn:hover { background: var(--border); }
+      .btn:hover { background: var(--stroke); }
 
       .btn-primary {
         background: var(--accent, #4a9eff);
@@ -236,7 +236,7 @@
       /* Footer */
       footer {
         padding: 0.75rem 1.25rem;
-        border-top: 1px solid var(--border);
+        border-top: 1px solid var(--stroke);
         font-size: 0.75rem;
         color: var(--ink-muted);
         display: flex;
@@ -248,7 +248,7 @@
 
       #loading-banner {
         background: var(--bg-elevated);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 6px;
         padding: 1rem;
         text-align: center;
@@ -365,6 +365,10 @@
       <span id="gen-time"></span>
     </footer>
 
+    <script type="module">
+      import { mountNavbar } from '/shared/navbar.js'
+      mountNavbar({ activePath: '/co' })
+    </script>
     <script type="module" src="/co/app.js"></script>
   </body>
 </html>

@@ -23,7 +23,7 @@
 
       header {
         background: var(--bg-elevated);
-        border-bottom: 1px solid var(--border);
+        border-bottom: 1px solid var(--stroke);
         padding: 1rem;
         display: flex;
         align-items: center;
@@ -59,7 +59,7 @@
 
       select {
         padding: 0.5rem 0.75rem;
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         background: var(--bg);
         color: var(--ink);
@@ -69,7 +69,7 @@
       .signout-btn {
         padding: 0.5rem 1rem;
         background: var(--surface);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         color: var(--ink);
         cursor: pointer;
@@ -77,13 +77,13 @@
       }
 
       .signout-btn:hover {
-        background: var(--bg-hover);
+        background: var(--surface-hover);
       }
 
       .tab-bar {
         display: flex;
         gap: 0;
-        border-bottom: 1px solid var(--border);
+        border-bottom: 1px solid var(--stroke);
         background: var(--surface);
         position: sticky;
         top: 60px;
@@ -167,7 +167,7 @@
       button.export-btn {
         padding: 0.5rem 1rem;
         background: var(--surface);
-        border: 1px solid var(--border);
+        border: 1px solid var(--stroke);
         border-radius: 4px;
         color: var(--ink);
         cursor: pointer;
@@ -176,7 +176,7 @@
       }
 
       button.export-btn:hover {
-        background: var(--bg-hover);
+        background: var(--surface-hover);
       }
 
       table {
@@ -193,13 +193,13 @@
         padding: 0.75rem;
         text-align: left;
         font-weight: 600;
-        border-bottom: 2px solid var(--border);
+        border-bottom: 2px solid var(--stroke);
         font-size: 0.875rem;
       }
 
       td {
         padding: 0.75rem;
-        border-bottom: 1px solid var(--border);
+        border-bottom: 1px solid var(--stroke);
         font-size: 0.875rem;
       }
 
@@ -230,7 +230,7 @@
 
       footer {
         padding: 1rem;
-        border-top: 1px solid var(--border);
+        border-top: 1px solid var(--stroke);
         text-align: center;
         font-size: 0.875rem;
         color: var(--ink-muted);
@@ -400,6 +400,10 @@
       <span data-i18n="footer.version">v0.1.0</span> — <span data-i18n="footer.powered">Powered by Lindela Lite</span>
     </footer>
 
+    <script type="module">
+      import { mountNavbar } from '/shared/navbar.js'
+      mountNavbar({ activePath: '/portal' })
+    </script>
     <script type="module" src="/portal/app.js"></script>
   </body>
 </html>
