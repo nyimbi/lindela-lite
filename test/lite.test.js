@@ -2682,6 +2682,42 @@ describe('Lindela Lite Phase 2 — Parametric, DHIS2, Demographics, Observabilit
   })
 })
 
+describe('Demo seed', () => {
+  it('seedAll populates at least 12 non-empty collections in a temp store', async () => {
+    const { seedAll, summary } = await import('../scripts/seed-demo.mjs')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-demo-seed-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await seedAll(store)
+    const counts = await summary(store)
+    const nonEmpty = Object.values(counts).filter(n => n > 0).length
+    assert.ok(nonEmpty >= 12, `Expected at least 12 non-empty collections, got ${nonEmpty}: ${JSON.stringify(counts)}`)
+    assert.ok(counts.field_reports >= 30, `field_reports ${counts.field_reports} < 30`)
+    assert.ok(counts.workflow_instances >= 10, `workflow_instances ${counts.workflow_instances} < 10`)
+    assert.ok(counts.alert_events >= 5, `alert_events ${counts.alert_events} < 5`)
+    assert.ok(counts.trigger_protocols >= 5, `trigger_protocols ${counts.trigger_protocols} < 5`)
+  })
+
+  it('POST /api/v1/demo/seed returns 200 with counts.field_reports >= 30 and counts.workflow_instances >= 10', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-demo-endpoint-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    store.mode = 'json'
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://127.0.0.1:${addr.port}`
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/demo/seed`, { method: 'POST' })
+      assert.equal(res.status, 200)
+      const body = await res.json()
+      assert.ok(body.success, 'success should be true')
+      assert.ok(body.counts.field_reports >= 30, `field_reports ${body.counts.field_reports} < 30`)
+      assert.ok(body.counts.workflow_instances >= 10, `workflow_instances ${body.counts.workflow_instances} < 10`)
+    } finally {
+      listener.close()
+    }
+  })
+})
+
 function rapidProEnv() {
   return {
     RAPIDPRO_API_TOKEN: process.env.RAPIDPRO_API_TOKEN,
