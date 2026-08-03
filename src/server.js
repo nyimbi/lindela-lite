@@ -2252,6 +2252,12 @@ function counts(data) {
     report_distribution_runs: data.report_distribution_runs.length,
     report_schedules: data.report_schedules.length,
     report_schedule_runs: data.report_schedule_runs.length,
+    workflow_instances: data.workflow_instances?.length || 0,
+    community_feedback: data.community_feedback?.length || 0,
+    parametric_rules: data.parametric_rules?.length || 0,
+    parametric_disbursements: data.parametric_disbursements?.length || 0,
+    webhook_subscriptions: data.webhook_subscriptions?.length || 0,
+    events_outbox: data.events_outbox?.length || 0,
   }
 }
 
