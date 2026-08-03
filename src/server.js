@@ -338,6 +338,21 @@ async function handleApi(store, req, res, url) {
     return
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/v1/demo/seed') {
+    try {
+      const { seedAll, ingestPublicSources, summary } = await import('../scripts/seed-demo.mjs')
+      await ingestPublicSources(store)
+      await seedAll(store)
+      await refreshAnalytics(store)
+      const counts = await summary(store)
+      jsonResponse(res, 200, { success: true, counts })
+    } catch (e) {
+      logger.error({ err: e }, 'demo seed failed')
+      jsonResponse(res, 500, { success: false, error: e.message })
+    }
+    return
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/v1/service-assets') {
     jsonResponse(res, 200, { success: true, data: filterRecords(data.service_assets, url.searchParams) })
     return
