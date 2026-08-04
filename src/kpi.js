@@ -89,8 +89,8 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   const workflowInstances = kpiSnapshotForPeriod(data.workflow_instances || [], from, to, 'created_at')
   const reportTemplates = data.report_templates || []
 
-  // People reached: sum of recipients_count across dispatches
-  const people_reached = dispatches.reduce((sum, d) => sum + (d.recipients_count || 0), 0)
+  // People reached: sum of recipients_count across dispatches (may live on d.metadata in some providers)
+  const people_reached = dispatches.reduce((sum, d) => sum + (d.recipients_count || d.metadata?.recipients_count || 0), 0)
 
   // Community reporters: distinct reporter identifiers in field_reports
   const reporterIds = new Set(
@@ -218,7 +218,7 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
     false_alert_rate,
     api_uptime_pct: computeApiUptime(),
     cohort: {
-      total: people_reached,
+      total: demoTotal,
       u18: cohort_u18,
       women_and_girls: cohort_women_and_girls,
       pwd: cohort_pwd,
