@@ -328,6 +328,7 @@ function buildFieldReports(incidents, interventions) {
         age_band: ageBands[i % ageBands.length],
         gender: genders[i % genders.length],
         pwd: isPwd,
+        refugee_or_idp: isRefugee,
       },
       metadata: {
         category: categories[i % categories.length],
