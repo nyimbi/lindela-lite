@@ -54,13 +54,17 @@ async function loadData() {
     connectionStatus.style.color = '#10b981'
     statusText.textContent = 'Loading...'
 
-    const [workflows, protocols] = await Promise.all([
+    const [workflows, protocols, alertsResp] = await Promise.all([
       apiFetch(`/api/v1/workflows?type=anticipatory_alert&state=focal_point_review`),
-      apiFetch(`/api/v1/trigger-protocols`)
+      apiFetch(`/api/v1/trigger-protocols`),
+      apiFetch(`/api/v1/alert-events`),
     ])
 
+    // Index alert events by id for O(1) card hydration
+    const alertIndex = new Map((alertsResp.data || []).map((a) => [a.id, a]))
+
     fpIdentity.textContent = `${state.identity} (${state.locale})`
-    await renderPending(workflows.data || [])
+    await renderPending(workflows.data || [], alertIndex)
     await renderProtocols(protocols.data || [])
     await renderAuditTrail(workflows.data || [])
     statusText.textContent = 'Ready'
@@ -97,29 +101,39 @@ function getReasonOptions(mode) {
   }
 }
 
-async function renderPending(workflows) {
+async function renderPending(workflows, alertIndex = new Map()) {
   if (workflows.length === 0) {
     pendingList.innerHTML = '<div class="queue-empty" data-i18n="focal-point.no_pending">No pending workflows.</div>'
     return
   }
 
-  pendingList.innerHTML = workflows.map((w) => `
+  pendingList.innerHTML = workflows.map((w) => {
+    // Hydrate display fields from the linked alert_event when available
+    const alert = (w.subject_kind === 'alert_event' && w.subject_id)
+      ? (alertIndex.get(w.subject_id) || null)
+      : null
+    const ruleName = alert?.rule_name || w.metadata?.rule_name || 'Unknown'
+    const metric   = alert?.metric   || w.metadata?.metric   || ''
+    const threshold = alert?.threshold ?? w.metadata?.threshold
+    const value     = alert?.value     ?? w.metadata?.value
+    const severity  = alert?.severity  || w.metadata?.severity || 'medium'
+    return `
     <div class="workflow-card">
       <div class="card-header">
-        <span class="severity-chip ${severityClass(w.metadata?.severity || 'medium')}">${w.metadata?.severity || 'medium'}</span>
+        <span class="severity-chip ${severityClass(severity)}">${severity}</span>
       </div>
       <div class="workflow-details">
         <div class="detail-row">
           <span class="detail-label" data-i18n="label.rule">Rule</span>
-          <span class="detail-value">${escapeHtml(w.metadata?.rule_name || 'Unknown')}</span>
+          <span class="detail-value">${escapeHtml(ruleName)}</span>
         </div>
         <div class="detail-row">
           <span class="detail-label" data-i18n="label.metric">Metric</span>
-          <span class="detail-value">${escapeHtml(w.metadata?.metric || '')}</span>
+          <span class="detail-value">${escapeHtml(metric)}</span>
         </div>
         <div class="detail-row">
           <span class="detail-label" data-i18n="label.threshold">Threshold</span>
-          <span class="detail-value">${w.metadata?.threshold} (value: ${w.metadata?.value})</span>
+          <span class="detail-value">${threshold != null ? threshold : '—'} (value: ${value != null ? value : '—'})</span>
         </div>
         <div class="detail-row">
           <span class="detail-label" data-i18n="label.district">District</span>
@@ -135,7 +149,8 @@ async function renderPending(workflows) {
         <button class="btn-reject" data-workflow-id="${w.id}" data-mode="reject" data-i18n="action.reject">Reject</button>
       </div>
     </div>
-  `).join('')
+  `
+  }).join('')
 
   document.querySelectorAll('[data-workflow-id]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
