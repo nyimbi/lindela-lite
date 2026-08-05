@@ -187,6 +187,7 @@ export function emptyStore() {
     community_feedback: [],
     parametric_rules: [],
     parametric_disbursements: [],
+    kpi_snapshots: [],
   }
 }
 

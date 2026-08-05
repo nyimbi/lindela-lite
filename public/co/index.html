@@ -120,6 +120,24 @@
         margin-top: 0.25rem;
       }
 
+      /* Sparkline tiles */
+      .spark-tile {
+        background: var(--bg-elevated);
+        border: 1px solid var(--stroke);
+        border-radius: 6px;
+        padding: 0.875rem 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+      }
+      .spark-label { font-size: 0.75rem; color: var(--ink-muted); }
+      .spark-value { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
+      .spark-delta { font-size: 0.75rem; margin-bottom: 0.35rem; }
+      .spark-delta.up { color: var(--ok, #27ae60); }
+      .spark-delta.down { color: var(--danger, #e05252); }
+      .spark-delta.neutral { color: var(--ink-muted); }
+      .spark-svg { display: block; overflow: visible; }
+
       .chip-data-gap {
         display: inline-block;
         font-size: 0.65rem;
@@ -294,6 +312,11 @@
     <main>
       <div id="loading-banner">Loading...</div>
 
+      <section id="trend-section" hidden>
+        <h2 data-i18n="co.trend_title">Trend (last 12 months)</h2>
+        <div class="kpi-grid" id="trend-grid"></div>
+      </section>
+
       <section id="kpi-section" hidden>
         <h2 data-i18n="co.title">KPI Summary</h2>
         <div class="kpi-grid" id="kpi-grid"></div>
@@ -331,6 +354,24 @@
               </tr>
             </thead>
             <tbody id="equity-body" class="equity-row"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="qoq-section" hidden>
+        <h2 data-i18n="co.qoq_title">Quarter-over-quarter</h2>
+        <div class="table-wrap">
+          <table id="qoq-table">
+            <thead>
+              <tr>
+                <th data-i18n="co.qoq_quarter">Quarter</th>
+                <th data-i18n="co.trend_people_reached">People reached</th>
+                <th data-i18n="co.trend_warning_to_action">Warning-to-action (h)</th>
+                <th data-i18n="co.trend_false_alert">False alert %</th>
+                <th data-i18n="co.trend_cold_chain">Cold-chain %</th>
+              </tr>
+            </thead>
+            <tbody id="qoq-body"></tbody>
           </table>
         </div>
       </section>

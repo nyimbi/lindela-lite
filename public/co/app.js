@@ -103,8 +103,9 @@ function renderEquity(rows) {
       const isBreach = r.accuracy_pct !== null && r.dispatched >= 5 && r.accuracy_pct < 80
       const breachChip = isBreach ? `<span class="chip-breach" data-i18n="co.equity_breach">${t('co.equity_breach', 'breach')}</span>` : ''
       const rowClass = isBreach ? 'breach-row' : ''
+      const slug = (r.district || '').toLowerCase().replace(/\s+/g, '-')
       return `<tr class="${rowClass}">
-        <td>${r.district}</td>
+        <td><a href="/districts#/${slug}" style="color:inherit">${r.district}</a></td>
         <td>${r.dispatched}</td>
         <td>${r.acknowledged}</td>
         <td>${acc}</td>
@@ -170,6 +171,104 @@ function renderFeedback(summary) {
   document.getElementById('feedback-section').hidden = false
 }
 
+function buildSparkline(values, w = 200, h = 40, pad = 4) {
+  if (!values || values.length < 2) return ''
+  const nonNull = values.filter(v => v !== null && v !== undefined)
+  if (!nonNull.length) return ''
+  const filled = values.map(v => v ?? 0)
+  const min = Math.min(...filled)
+  const max = Math.max(...filled)
+  const range = max - min || 1
+  const xStep = (w - pad * 2) / (filled.length - 1)
+  const pts = filled.map((v, i) => {
+    const x = pad + i * xStep
+    const y = h - pad - ((v - min) / range) * (h - pad * 2)
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  const last = filled[filled.length - 1]
+  const lx = (pad + (filled.length - 1) * xStep).toFixed(1)
+  const ly = (h - pad - ((last - min) / range) * (h - pad * 2)).toFixed(1)
+  return `<svg class="spark-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+    `<polyline points="${pts}" fill="none" stroke="var(--brand)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>` +
+    `<circle cx="${lx}" cy="${ly}" r="3" fill="var(--accent,#4a9eff)"/>` +
+    `</svg>`
+}
+
+function sparkCard(label, series, field, unit = '') {
+  const values = [...series].reverse().map(s => s[field] ?? null)
+  const latest = values[values.length - 1]
+  const prev = values[values.length - 2]
+  let deltaHtml = ''
+  if (latest !== null && prev !== null && prev !== undefined) {
+    const pct = prev === 0 ? null : ((latest - prev) / Math.abs(prev)) * 100
+    if (pct !== null) {
+      const sign = pct >= 0 ? '+' : ''
+      const cls = pct >= 0 ? 'up' : 'down'
+      const arrow = pct >= 0 ? '&#8593;' : '&#8595;'
+      deltaHtml = `<span class="spark-delta ${cls}">${arrow} ${sign}${pct.toFixed(1)}% vs prev month</span>`
+    }
+  }
+  const displayVal = latest !== null && latest !== undefined
+    ? (typeof latest === 'number' ? latest.toFixed(latest % 1 === 0 ? 0 : 1) : latest)
+    : '—'
+  return `<div class="spark-tile">
+    <span class="spark-label">${label}</span>
+    <span class="spark-value">${displayVal}<span style="font-size:0.8rem;font-weight:400;color:var(--ink-muted)">${unit ? ' ' + unit : ''}</span></span>
+    ${deltaHtml}
+    ${buildSparkline(values)}
+  </div>`
+}
+
+function renderTrend(series) {
+  const grid = document.getElementById('trend-grid')
+  if (!grid || !series || !series.length) return
+  grid.innerHTML = [
+    sparkCard(t('co.trend_people_reached', 'People reached'), series, 'people_reached', 'people'),
+    sparkCard(t('co.trend_warning_to_action', 'Warning-to-action'), series, 'warning_to_action_median_hours', 'h'),
+    sparkCard(t('co.trend_false_alert', 'False alert rate'), series, 'false_alert_rate', '%'),
+    sparkCard(t('co.trend_cold_chain', 'Cold-chain rate'), series, 'cold_chain_protection_rate', '%'),
+  ].join('')
+  document.getElementById('trend-section').hidden = false
+}
+
+function renderQoQ(series) {
+  const body = document.getElementById('qoq-body')
+  if (!body || !series || series.length < 3) return
+  // Group by quarter: Q1=Jan-Mar, Q2=Apr-Jun, Q3=Jul-Sep, Q4=Oct-Dec
+  const quarterMap = {}
+  for (const s of series) {
+    const [y, m] = s.month.split('-').map(Number)
+    const q = Math.ceil(m / 3)
+    const key = `${y}-Q${q}`
+    if (!quarterMap[key]) quarterMap[key] = { label: key, months: [] }
+    quarterMap[key].months.push(s)
+  }
+  const quarters = Object.values(quarterMap)
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .slice(-4)
+
+  function avg(months, field) {
+    const vals = months.map(m => m[field]).filter(v => v !== null && v !== undefined)
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null
+  }
+  function sum(months, field) {
+    return months.reduce((s, m) => s + (m[field] ?? 0), 0)
+  }
+  function fmtCell(v) {
+    if (v === null || v === undefined) return '<td>—</td>'
+    return `<td>${typeof v === 'number' ? v.toFixed(v % 1 === 0 ? 0 : 1) : v}</td>`
+  }
+
+  body.innerHTML = quarters.map(q => `<tr>
+    <td><strong>${q.label}</strong></td>
+    ${fmtCell(sum(q.months, 'people_reached'))}
+    ${fmtCell(avg(q.months, 'warning_to_action_median_hours'))}
+    ${fmtCell(avg(q.months, 'false_alert_rate'))}
+    ${fmtCell(avg(q.months, 'cold_chain_protection_rate'))}
+  </tr>`).join('')
+  document.getElementById('qoq-section').hidden = false
+}
+
 function updateExportBtn(quarter, year) {
   const btn = document.getElementById('export-btn')
   if (btn) btn.href = `/api/v1/kpi/quarterly.pdf?quarter=${quarter}&year=${year}`
@@ -188,11 +287,12 @@ async function load() {
   if (loading) loading.hidden = false
 
   try {
-    const [kpiRes, equityRes, dispatchRes, feedbackRes] = await Promise.all([
+    const [kpiRes, equityRes, dispatchRes, feedbackRes, trendRes] = await Promise.all([
       fetch(`/api/v1/kpi/quarterly?quarter=${q}&year=${y}`),
       fetch('/api/v1/equity/by-district'),
       fetch('/api/v1/rapidpro/dispatches'),
       fetch('/api/v1/community-feedback/summary'),
+      fetch('/api/v1/kpi/monthly-series'),
     ])
 
     if (kpiRes.ok) {
@@ -218,6 +318,14 @@ async function load() {
     if (feedbackRes.ok) {
       const { data: summary } = await feedbackRes.json()
       renderFeedback(summary || [])
+    }
+
+    if (trendRes.ok) {
+      const { data: series } = await trendRes.json()
+      if (series && series.length) {
+        renderTrend(series)
+        renderQoQ(series)
+      }
     }
   } catch (err) {
     console.error('CO dashboard load error:', err)

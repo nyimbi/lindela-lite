@@ -239,3 +239,106 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
 
   return result
 }
+
+function _monthDateRange(year, month) {
+  const y = String(year).padStart(4, '0')
+  const m = String(month).padStart(2, '0')
+  const from = `${y}-${m}-01T00:00:00.000Z`
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  const to = `${y}-${m}-${String(lastDay).padStart(2, '0')}T23:59:59.999Z`
+  return { from, to }
+}
+
+export function computeMonthlyKpiSeries(data, { monthsBack = 12 } = {}) {
+  const now = new Date()
+  const series = []
+
+  for (let i = 0; i < monthsBack; i++) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1))
+    const year = d.getUTCFullYear()
+    const month = d.getUTCMonth() + 1
+    const monthStr = `${year}-${String(month).padStart(2, '0')}`
+    const { from, to } = _monthDateRange(year, month)
+
+    const dispatches = kpiSnapshotForPeriod(data.rapidpro_dispatches || [], from, to, 'sent_at')
+    const fieldReports = kpiSnapshotForPeriod(data.field_reports || [], from, to, 'created_at')
+    const alertEvents = kpiSnapshotForPeriod(data.alert_events || [], from, to, 'created_at')
+    const interventions = kpiSnapshotForPeriod(data.interventions || [], from, to, 'created_at')
+    const workflowInstances = kpiSnapshotForPeriod(data.workflow_instances || [], from, to, 'created_at')
+
+    const people_reached = dispatches.reduce(
+      (s, d) => s + (d.recipients_count || d.metadata?.recipients_count || 0), 0
+    )
+
+    const reporterIds = new Set(
+      fieldReports.map(r => r.reported_by || r.reporter_urn_hash || r.reporter_id).filter(Boolean)
+    )
+    const community_reporters_count = reporterIds.size
+
+    const lags = []
+    for (const d of dispatches) {
+      if (d.matched_signal_at && d.sent_at) {
+        const ms = new Date(d.sent_at).getTime() - new Date(d.matched_signal_at).getTime()
+        if (ms >= 0) lags.push(ms / 3600000)
+      }
+    }
+    lags.sort((a, b) => a - b)
+    const warning_to_action_median_hours = lags.length ? lags[Math.floor(lags.length / 2)] : null
+
+    const feedingInterventions = interventions.filter(iv => iv.type === 'feeding')
+    const feedingCompleted = feedingInterventions.filter(iv => ['completed', 'verified'].includes(iv.status))
+    const feeding_repositioning_rate = feedingInterventions.length
+      ? (100 * feedingCompleted.length) / feedingInterventions.length : null
+
+    const coldChainWorkflows = workflowInstances.filter(w => w.type === 'cold_chain_protection')
+    const coldChainTerminal = coldChainWorkflows.filter(w => ['closed', 'verified'].includes(w.state))
+    const cold_chain_protection_rate = coldChainWorkflows.length
+      ? (100 * coldChainTerminal.length) / coldChainWorkflows.length : null
+
+    const resolved = alertEvents.filter(a => a.status === 'resolved')
+    const falseAlerts = resolved.filter(a => a.resolution_note && /false|invalid|noop/i.test(a.resolution_note))
+    const false_alert_rate = alertEvents.length
+      ? (100 * falseAlerts.length) / alertEvents.length : null
+
+    series.push({
+      month: monthStr,
+      from,
+      to,
+      people_reached,
+      warning_to_action_median_hours,
+      false_alert_rate,
+      feeding_repositioning_rate,
+      cold_chain_protection_rate,
+      community_reporters_count,
+    })
+  }
+
+  return series
+}
+
+export function computeSparklineData(series, field) {
+  return [...series].reverse().map(s => s[field] ?? 0)
+}
+
+export async function refreshKpiSnapshots(store) {
+  const data = await store.read()
+  const { stableId } = await import('./utils.js')
+  const series = computeMonthlyKpiSeries(data, { monthsBack: 12 })
+  const snapshots = series.map(s => ({
+    id: stableId('kpi', [s.month]),
+    month: s.month,
+    from: s.from,
+    to: s.to,
+    indicators: {
+      people_reached: s.people_reached,
+      warning_to_action_median_hours: s.warning_to_action_median_hours,
+      false_alert_rate: s.false_alert_rate,
+      feeding_repositioning_rate: s.feeding_repositioning_rate,
+      cold_chain_protection_rate: s.cold_chain_protection_rate,
+      community_reporters_count: s.community_reporters_count,
+    },
+    generated_at: new Date().toISOString(),
+  }))
+  await store.merge({ kpi_snapshots: snapshots })
+  return snapshots
+}

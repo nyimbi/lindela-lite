@@ -38,6 +38,7 @@ export const COLLECTIONS = [
   'community_feedback',
   'parametric_rules',
   'parametric_disbursements',
+  'kpi_snapshots',
 ]
 
 export class JsonStore {
