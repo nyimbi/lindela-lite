@@ -8,6 +8,7 @@ const SURFACES = [
   { path: '/co', key: 'nav.co', label: 'CO' },
   { path: '/scenarios', key: 'nav.scenarios', label: 'Scenarios' },
   { path: '/parametric', key: 'nav.parametric', label: 'Parametric' },
+  { path: '/districts', key: 'nav.districts', label: 'Districts' },
 ]
 
 const NAVBAR_CSS = `

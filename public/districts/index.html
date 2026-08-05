@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lindela Districts</title>
+    <link rel="manifest" href="/districts/manifest.webmanifest">
+    <meta name="theme-color" content="#0e1520">
+    <style>
+      @import '/tokens.css';
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html { font-size: 16px; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.5;
+        min-height: 100vh;
+      }
+
+      main {
+        padding: 1.25rem;
+        max-width: 1100px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+
+      /* List page */
+      .district-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 0.75rem;
+      }
+
+      .district-card {
+        background: var(--bg-elevated);
+        border: 1px solid var(--stroke);
+        border-radius: 8px;
+        padding: 1rem;
+        cursor: pointer;
+        text-decoration: none;
+        color: var(--ink);
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        transition: border-color 0.15s;
+      }
+      .district-card:hover { border-color: var(--brand); }
+      .district-card-name { font-weight: 700; font-size: 1.1rem; }
+      .district-card-meta { font-size: 0.8rem; color: var(--ink-muted); }
+      .district-card-counts { font-size: 0.78rem; color: var(--ink-muted); margin-top: 0.25rem; }
+
+      /* Overview page */
+      .back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        color: var(--ink-muted);
+        text-decoration: none;
+        font-size: 0.85rem;
+        margin-bottom: 0.5rem;
+      }
+      .back-link:hover { color: var(--ink); }
+
+      .ribbon {
+        background: var(--bg-elevated);
+        border: 1px solid var(--stroke);
+        border-radius: 8px;
+        padding: 1rem 1.25rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .ribbon-title {
+        font-size: 1.4rem;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+      .ribbon-subtitle { font-size: 0.85rem; color: var(--ink-muted); }
+      .counts-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 1.25rem;
+        font-size: 0.8rem;
+        margin-top: 0.25rem;
+      }
+      .counts-strip span { color: var(--ink-muted); }
+      .counts-strip strong { color: var(--ink); }
+
+      /* Sections */
+      .section { display: flex; flex-direction: column; gap: 0.75rem; }
+      .section-title {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--ink-muted);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      /* Hazard table */
+      .table-wrap { overflow-x: auto; }
+      table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+      th {
+        text-align: left;
+        padding: 0.35rem 0.6rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--ink-muted);
+        border-bottom: 1px solid var(--stroke);
+      }
+      td {
+        padding: 0.35rem 0.6rem;
+        border-bottom: 1px solid var(--stroke);
+        vertical-align: middle;
+      }
+      tr:last-child td { border-bottom: none; }
+
+      /* Chips */
+      .chip {
+        display: inline-block;
+        font-size: 0.68rem;
+        border-radius: 3px;
+        padding: 0 0.4rem;
+        line-height: 1.7;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+      }
+      .chip-critical { background: var(--sev-critical, #c0392b); color: #fff; }
+      .chip-high { background: var(--sev-high, #e67e22); color: #fff; }
+      .chip-medium { background: var(--sev-medium, #f1c40f); color: #000; }
+      .chip-low { background: var(--sev-low, #27ae60); color: #fff; }
+      .chip-unknown { background: var(--stroke); color: var(--ink-muted); }
+      .chip-ok { background: var(--ok, #27ae60); color: #fff; }
+      .chip-neutral { background: var(--stroke); color: var(--ink); }
+
+      /* Collapsibles */
+      .collapsible {
+        background: var(--bg-elevated);
+        border: 1px solid var(--stroke);
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .collapsible summary {
+        padding: 0.6rem 0.875rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        list-style: none;
+        user-select: none;
+      }
+      .collapsible summary::-webkit-details-marker { display: none; }
+      .collapsible summary::before {
+        content: '▶';
+        font-size: 0.65rem;
+        color: var(--ink-muted);
+        transition: transform 0.15s;
+      }
+      .collapsible[open] summary::before { transform: rotate(90deg); }
+      .collapsible-body { padding: 0 0.875rem 0.75rem; }
+
+      /* Record item */
+      .record-item {
+        border-bottom: 1px solid var(--stroke);
+        padding: 0.4rem 0;
+        font-size: 0.83rem;
+        cursor: pointer;
+      }
+      .record-item:last-child { border-bottom: none; }
+      .record-item summary {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        list-style: none;
+        user-select: none;
+      }
+      .record-item summary::-webkit-details-marker { display: none; }
+      .record-item-title { flex: 1; color: var(--ink); }
+      .record-full {
+        background: var(--bg);
+        border-radius: 4px;
+        padding: 0.5rem 0.75rem;
+        margin-top: 0.35rem;
+        font-size: 0.78rem;
+        color: var(--ink-muted);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      /* KPI tiles */
+      .kpi-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      .kpi-tile {
+        background: var(--bg-elevated);
+        border: 1px solid var(--stroke);
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        min-width: 160px;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+      }
+      .kpi-label { font-size: 0.72rem; color: var(--ink-muted); }
+      .kpi-value { font-size: 1.5rem; font-weight: 700; }
+      .kpi-unit { font-size: 0.72rem; color: var(--ink-muted); }
+
+      /* SVG map */
+      .map-inset {
+        background: var(--bg-elevated);
+        border: 1px solid var(--stroke);
+        border-radius: 6px;
+        overflow: hidden;
+        width: 100%;
+        max-width: 420px;
+      }
+      .map-inset svg { display: block; width: 100%; height: auto; }
+
+      .situation-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        align-items: flex-start;
+      }
+      .situation-table { flex: 1; min-width: 260px; }
+
+      #loading-msg {
+        color: var(--ink-muted);
+        font-size: 0.9rem;
+        padding: 2rem;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="app">
+      <div id="loading-msg">Loading...</div>
+    </main>
+
+    <script type="module">
+      import { mountNavbar } from '/shared/navbar.js'
+      mountNavbar({ activePath: '/districts' })
+    </script>
+    <script type="module" src="/districts/app.js"></script>
+  </body>
+</html>

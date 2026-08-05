@@ -1,0 +1,9 @@
+{
+  "name": "Lindela Districts",
+  "short_name": "Districts",
+  "start_url": "/districts",
+  "display": "standalone",
+  "background_color": "#0e1520",
+  "theme_color": "#0e1520",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

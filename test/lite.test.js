@@ -2718,6 +2718,140 @@ describe('Demo seed', () => {
   })
 })
 
+import { KNOWN_DISTRICTS, resolveDistrict, districtOverview } from '../src/districts.js'
+import { computeMonthlyKpiSeries, computeSparklineData, refreshKpiSnapshots } from '../src/kpi.js'
+
+describe('Lindela Lite districts API', () => {
+  async function makeServer() {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-districts-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    store.mode = 'json'
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://127.0.0.1:${listener.address().port}`
+    return { listener, baseUrl, store }
+  }
+
+  it('GET /api/v1/districts returns 200 with data.length === 5', async () => {
+    const { listener, baseUrl } = await makeServer()
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/districts`)
+      assert.equal(res.status, 200)
+      const { data } = await res.json()
+      assert.equal(data.length, 5)
+    } finally { listener.close() }
+  })
+
+  it('GET /api/v1/districts/turkana returns 200 with data.district.name === Turkana', async () => {
+    const { listener, baseUrl } = await makeServer()
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/districts/turkana`)
+      assert.equal(res.status, 200)
+      const { data } = await res.json()
+      assert.equal(data.district.name, 'Turkana')
+    } finally { listener.close() }
+  })
+
+  it('GET /api/v1/districts/karamoja and /moroto resolve to the same district', async () => {
+    const { listener, baseUrl } = await makeServer()
+    try {
+      const [r1, r2] = await Promise.all([
+        fetch(`${baseUrl}/api/v1/districts/karamoja`).then(r => r.json()),
+        fetch(`${baseUrl}/api/v1/districts/moroto`).then(r => r.json()),
+      ])
+      assert.equal(r1.data.district.slug, 'karamoja')
+      assert.equal(r2.data.district.slug, 'karamoja')
+      assert.equal(r1.data.district.name, r2.data.district.name)
+    } finally { listener.close() }
+  })
+
+  it('GET /api/v1/districts/unknown returns 404', async () => {
+    const { listener, baseUrl } = await makeServer()
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/districts/unknown-xyz`)
+      assert.equal(res.status, 404)
+    } finally { listener.close() }
+  })
+
+  it('GET /districts returns 200 HTML', async () => {
+    const { listener, baseUrl } = await makeServer()
+    try {
+      const res = await fetch(`${baseUrl}/districts`)
+      assert.equal(res.status, 200)
+      const ct = res.headers.get('content-type') || ''
+      assert.ok(ct.includes('text/html'), `expected html, got ${ct}`)
+    } finally { listener.close() }
+  })
+
+  it('GET /districts/manifest.webmanifest returns 200', async () => {
+    const { listener, baseUrl } = await makeServer()
+    try {
+      const res = await fetch(`${baseUrl}/districts/manifest.webmanifest`)
+      assert.equal(res.status, 200)
+    } finally { listener.close() }
+  })
+
+  it('resolveDistrict accepts moroto synonym', () => {
+    const d = resolveDistrict('moroto')
+    assert.ok(d, 'should resolve')
+    assert.equal(d.slug, 'karamoja')
+  })
+
+  it('districtOverview returns null for unknown slug', () => {
+    const result = districtOverview({}, 'nowhere')
+    assert.equal(result, null)
+  })
+})
+
+describe('Lindela Lite KPI monthly series', () => {
+  it('computeMonthlyKpiSeries on empty data returns array with monthsBack entries', () => {
+    const series = computeMonthlyKpiSeries({}, { monthsBack: 12 })
+    assert.equal(series.length, 12)
+    assert.equal(series[0].people_reached, 0)
+  })
+
+  it('computeSparklineData extracts oldest-first numeric array', () => {
+    const series = [
+      { month: '2026-08', people_reached: 10 },
+      { month: '2026-07', people_reached: 5 },
+    ]
+    const vals = computeSparklineData(series, 'people_reached')
+    assert.deepEqual(vals, [5, 10])
+  })
+
+  it('GET /api/v1/kpi/monthly-series returns 200 with data.length >= 6', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-kpi-series-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    store.mode = 'json'
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://127.0.0.1:${listener.address().port}`
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/kpi/monthly-series`)
+      assert.equal(res.status, 200)
+      const { data } = await res.json()
+      assert.ok(Array.isArray(data) && data.length >= 6, `expected >=6 months, got ${data?.length}`)
+    } finally { listener.close() }
+  })
+
+  it('POST /api/v1/kpi/refresh-snapshots then GET /api/v1/kpi/snapshots returns non-empty array', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-kpi-snap-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    store.mode = 'json'
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://127.0.0.1:${listener.address().port}`
+    try {
+      const postRes = await fetch(`${baseUrl}/api/v1/kpi/refresh-snapshots`, { method: 'POST' })
+      assert.equal(postRes.status, 200)
+      const getRes = await fetch(`${baseUrl}/api/v1/kpi/snapshots`)
+      assert.equal(getRes.status, 200)
+      const { data } = await getRes.json()
+      assert.ok(Array.isArray(data) && data.length > 0, 'snapshots should be non-empty after refresh')
+    } finally { listener.close() }
+  })
+})
+
 function rapidProEnv() {
   return {
     RAPIDPRO_API_TOKEN: process.env.RAPIDPRO_API_TOKEN,

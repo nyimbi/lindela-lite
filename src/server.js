@@ -40,7 +40,8 @@ import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './s
 import { renderCapXml } from './cap.js'
 import { emit, dispatchPending } from './outbox.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
-import { computeQuarterlyKpi } from './kpi.js'
+import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots } from './kpi.js'
+import { KNOWN_DISTRICTS, resolveDistrict, districtOverview } from './districts.js'
 import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from './equity.js'
 import { normalizeCommunityFeedback, feedbackSummaryByAlert } from './community.js'
 import { renderQuarterlyReportPdf } from './pdf.js'
@@ -494,7 +495,38 @@ async function handleApi(store, req, res, url) {
     return
   }
 
+  // District routes
+  if (req.method === 'GET' && url.pathname === '/api/v1/districts') {
+    jsonResponse(res, 200, { success: true, data: KNOWN_DISTRICTS })
+    return
+  }
+  const districtMatch = url.pathname.match(/^\/api\/v1\/districts\/([^/]+)$/)
+  if (districtMatch && req.method === 'GET') {
+    const overview = districtOverview(data, districtMatch[1])
+    if (!overview) {
+      jsonResponse(res, 404, { success: false, error: 'District not found' })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: overview })
+    return
+  }
+
   // KPI routes
+  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/monthly-series') {
+    const monthsBack = Number(url.searchParams.get('monthsBack')) || 12
+    jsonResponse(res, 200, { success: true, data: computeMonthlyKpiSeries(data, { monthsBack }) })
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/snapshots') {
+    jsonResponse(res, 200, { success: true, data: data.kpi_snapshots || [] })
+    return
+  }
+  if (req.method === 'POST' && url.pathname === '/api/v1/kpi/refresh-snapshots') {
+    const snapshots = await refreshKpiSnapshots(store)
+    jsonResponse(res, 200, { success: true, count: snapshots.length })
+    return
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly.pdf') {
     const quarter = url.searchParams.get('quarter') || undefined
     const year = url.searchParams.get('year') || undefined
@@ -2150,6 +2182,22 @@ async function handleStatic(res, pathname) {
       return
     } catch {
       const index = await fs.readFile(path.join(publicDir, 'portal/index.html'))
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(index)
+      return
+    }
+  }
+
+  if (pathname === '/districts' || pathname === '/districts/' || pathname.startsWith('/districts/')) {
+    const target = pathname === '/districts' || pathname === '/districts/' ? 'districts/index.html' : pathname.replace(/^\/+/, '')
+    const filePath = safeJoin(publicDir, target)
+    try {
+      const content = await fs.readFile(filePath)
+      res.writeHead(200, { 'content-type': contentType(filePath) })
+      res.end(content)
+      return
+    } catch {
+      const index = await fs.readFile(path.join(publicDir, 'districts/index.html'))
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       res.end(index)
       return
