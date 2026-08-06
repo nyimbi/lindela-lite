@@ -17,6 +17,7 @@ import { normalizeWebhookSubscription } from '../src/webhooks.js'
 import { normalizeCommunityFeedback } from '../src/community.js'
 import { normalizeParametricRule, simulateDisbursement } from '../src/parametric.js'
 import { stableId, nowIso } from '../src/utils.js'
+import { refreshKpiSnapshots } from '../src/kpi.js'
 
 const REGIONS = [
   { name: 'Turkana', country: 'KE', lat: 3.1167, lon: 35.6, admin1: 'Turkana' },
@@ -43,6 +44,18 @@ function daysAgo(n) {
 
 function hoursAgo(n) {
   return new Date(Date.now() - n * 3600 * 1000).toISOString()
+}
+
+// Spread timestamp across the last 365 days, denser in final 90.
+// i/total drives position: first records -> ~365 days ago, last -> recent.
+function spreadTs(i, total) {
+  const frac = total > 1 ? i / (total - 1) : 0
+  // Bias toward recent: square the fraction so more records land in last 90 days
+  const biased = frac ** 0.55
+  const maxDays = 365
+  const minDays = 0
+  const daysBack = Math.round(maxDays - biased * (maxDays - minDays))
+  return daysAgo(daysBack)
 }
 
 function coordNear(lat, lon, spread = 0.12) {
@@ -159,7 +172,7 @@ function buildAlertEvents(rules) {
 
   return events.map((e, i) => {
     const rule = ruleMap[e.ruleId] || {}
-    const createdAt = daysAgo(e.daysAgoN)
+    const createdAt = spreadTs(i, events.length)
     return {
       id: stableId('alert_event', [e.ruleId, e.district, e.daysAgoN]),
       rule_id: e.ruleId,
@@ -312,7 +325,6 @@ function buildFieldReports(incidents, interventions) {
     const ctx = incInt[i % incInt.length]
     const coords = coordNear(ctx.region.lat, ctx.region.lon)
     const reporter = reporters[i % reporters.length]
-    const daysN = Math.max(0, 30 - Math.floor(i * 0.7))
     const isRefugee = i % 7 === 0
     const isPwd = i % 13 === 0
     reports.push(buildCreate('field_reports', {
@@ -321,7 +333,8 @@ function buildFieldReports(incidents, interventions) {
       intervention_id: ctx.intervention_id,
       summary: summaries[i % summaries.length],
       reported_by: reporter || 'operator',
-      observed_at: daysAgo(daysN),
+      observed_at: spreadTs(i, 40),
+      created_at: spreadTs(i, 40),
       latitude: coords.lat,
       longitude: coords.lon,
       demographics: {
@@ -369,7 +382,7 @@ function buildRapidProDispatches(alertEvents) {
   for (let i = 0; i < 20; i++) {
     const alertEventId = alertIds[i % alertIds.length]
     const region = regNames[i % regNames.length]
-    const queuedAt = daysAgo(Math.max(0, 28 - i))
+    const queuedAt = spreadTs(i, 20)
     const sentAt = new Date(Date.parse(queuedAt) + 120000 + i * 15000).toISOString()
     const matchedAt = new Date(Date.parse(queuedAt) - 300000).toISOString()
     dispatches.push({
@@ -672,6 +685,7 @@ export async function seedAll(store) {
 
   const data = await store.read()
   await createEquityAuditWorkflows(store, data, 'seed-demo')
+  await refreshKpiSnapshots(store)
 }
 
 export async function summary(store) {
