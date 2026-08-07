@@ -142,7 +142,7 @@ function renderOverlay() {
         <div class="l-demo-counter"></div>
         <div class="l-demo-title"></div>
         <div class="l-demo-narration"></div>
-        <div class="l-demo-hint">← prev &nbsp;·&nbsp; → next &nbsp;·&nbsp; Esc exit</div>
+        <div class="l-demo-hint">← prev &nbsp;·&nbsp; → next &nbsp;·&nbsp; ↑ first &nbsp;·&nbsp; ↓ last &nbsp;·&nbsp; Esc exit</div>
       </div>
     `
     document.body.appendChild(overlay)
@@ -167,12 +167,10 @@ function exitDemo() {
   window.history.replaceState({}, '', url.toString())
 }
 
-function advance(delta) {
-  const idx = currentStepIndex()
-  const next = idx + delta
-  if (next < 0 || next >= STEPS.length) return
-  setStepIndex(next)
-  const step = STEPS[next]
+function goToStep(index) {
+  if (index < 0 || index >= STEPS.length) return
+  setStepIndex(index)
+  const step = STEPS[index]
   if (stepMatchesCurrent(step)) {
     renderOverlay()
     activateTabIfNeeded(step)
@@ -182,9 +180,15 @@ function advance(delta) {
   }
 }
 
+function advance(delta) {
+  goToStep(currentStepIndex() + delta)
+}
+
 function onKey(e) {
   if (e.key === 'ArrowRight') { e.preventDefault(); advance(1) }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); advance(-1) }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); goToStep(0) }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); goToStep(STEPS.length - 1) }
   else if (e.key === 'Escape') { e.preventDefault(); exitDemo() }
 }
 
