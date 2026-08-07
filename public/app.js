@@ -296,17 +296,19 @@ function renderMap(records) {
   const assets  = visible.filter((r) => r.service_type)
   const risks   = visible.filter((r) => Number.isFinite(r.score))
 
-  // Risk blobs (radial gradient fills)
+  // Risk blobs (radial gradient fills). Score is 0..100; normalize to 0..1.
   risks.forEach((r, i) => {
     const { x, y } = project(r.latitude, r.longitude, bbox)
+    const normalized = Math.max(0, Math.min(1, (Number(r.score) || 0) / 100))
+    if (normalized === 0) return
     const gradId = `rg${i}`
-    const opacity = Math.min(0.45, (r.score ?? 0) * 0.45)
+    const opacity = normalized * 0.45
     const grad = svgEl('radialGradient', { id: gradId, cx: '50%', cy: '50%', r: '50%' })
     const s1 = svgEl('stop', { offset: '0%',   'stop-color': 'oklch(65% 0.22 25)', 'stop-opacity': String(opacity) })
     const s2 = svgEl('stop', { offset: '100%', 'stop-color': 'oklch(65% 0.22 25)', 'stop-opacity': '0' })
     grad.append(s1, s2)
     if (mapDefsEl) mapDefsEl.append(grad)
-    const radius = Math.max(18, (r.score ?? 0.5) * 55)
+    const radius = 18 + normalized * 42
     mapRiskEl.append(svgEl('ellipse', {
       cx: x, cy: y, rx: radius, ry: radius * 0.55,
       fill: `url(#${gradId})`,
