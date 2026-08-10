@@ -7,3 +7,5 @@ coverage/
 !.env.example
 .omc/
 .omx/
+.playwright-mcp/
+*.png
