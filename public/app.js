@@ -1,6 +1,7 @@
 // =============================================================
 // Lindela Lite — Operations Console
 // =============================================================
+import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS } from '/shared/basemap.js'
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})
@@ -190,6 +191,9 @@ const DEFAULT_BBOX = { minLat: -2, maxLat: 12, minLon: 29, maxLon: 46 }
 
 const mapEl           = $('situationMap')
 const mapTransformEl  = $('mapTransform')
+const mapOceanEl      = $('mapOcean')
+const mapLandEl       = $('mapLand')
+const mapDistrictsEl  = $('mapDistricts')
 const mapGraticuleEl  = $('mapGraticule')
 const mapHazardsEl    = $('mapHazards')
 const mapAssetsEl     = $('mapAssets')
@@ -250,6 +254,59 @@ function renderGraticule(bbox) {
   }
 }
 
+// Convert a closed ring [[lon,lat],...] to an SVG path d string.
+function ringToPath(ring, bbox) {
+  return ring.map(([lon, lat], i) => {
+    const { x, y } = project(lat, lon, bbox)
+    return `${i === 0 ? 'M' : 'L'}${x},${y}`
+  }).join(' ') + ' Z'
+}
+
+// Approximate km radius to viewBox units, averaging x/y scale at given latitude.
+function kmToViewBoxUnits(km, latitude, bbox) {
+  const latRad = latitude * Math.PI / 180
+  const degLat = km / 111
+  const degLon = km / (111 * Math.cos(latRad))
+  const xUnits = degLon * SVG_W / (bbox.maxLon - bbox.minLon)
+  const yUnits = degLat * SVG_H / (bbox.maxLat - bbox.minLat)
+  return (xUnits + yUnits) / 2
+}
+
+function renderBasemap(bbox) {
+  // Ocean layer
+  if (mapOceanEl) {
+    mapOceanEl.innerHTML = ''
+    for (const ring of [INDIAN_OCEAN_POLYGON, LAKE_VICTORIA]) {
+      mapOceanEl.append(svgEl('path', { d: ringToPath(ring, bbox) }))
+    }
+  }
+
+  // Land layer
+  if (mapLandEl) {
+    mapLandEl.innerHTML = ''
+    for (const [, { name, ring }] of Object.entries(REGION_POLYGONS)) {
+      const path = svgEl('path', { d: ringToPath(ring, bbox) })
+      const titleEl = svgEl('title')
+      titleEl.textContent = name
+      path.append(titleEl)
+      mapLandEl.append(path)
+    }
+  }
+
+  // District rings
+  if (mapDistrictsEl) {
+    mapDistrictsEl.innerHTML = ''
+    for (const d of PILOT_DISTRICTS) {
+      const { x, y } = project(d.center[1], d.center[0], bbox)
+      const r = kmToViewBoxUnits(d.radius_km, d.center[1], bbox)
+      mapDistrictsEl.append(svgEl('circle', { cx: x, cy: y, r: Math.round(r * 10) / 10 }))
+      const lbl = svgEl('text', { x: x + 4, y: y - r - 3 })
+      lbl.textContent = d.name
+      mapDistrictsEl.append(lbl)
+    }
+  }
+}
+
 function sevRadius(severity) {
   return { critical: 13, high: 10, medium: 7, low: 5 }[String(severity).toLowerCase()] ?? 5
 }
@@ -272,9 +329,19 @@ function assetClass(serviceType) {
   return 'asset-default'
 }
 
+const HORN_BBOX = { minLat: -6, maxLat: 15, minLon: 27, maxLon: 52 }
+
 function renderMap(records) {
   const geo = records.filter((r) => Number.isFinite(r.latitude) && Number.isFinite(r.longitude))
-  const bbox = computeBbox(geo)
+  const dataBbox = computeBbox(geo)
+
+  // Expand to always show full Horn of Africa land context.
+  const bbox = {
+    minLat: Math.min(dataBbox.minLat, HORN_BBOX.minLat),
+    maxLat: Math.max(dataBbox.maxLat, HORN_BBOX.maxLat),
+    minLon: Math.min(dataBbox.minLon, HORN_BBOX.minLon),
+    maxLon: Math.max(dataBbox.maxLon, HORN_BBOX.maxLon),
+  }
 
   // Apply map severity filter
   const sevFilter = $('mapSeverity')?.value || ''
@@ -286,6 +353,7 @@ function renderMap(records) {
     return true
   })
 
+  renderBasemap(bbox)
   renderGraticule(bbox)
   mapHazardsEl.innerHTML = ''
   mapAssetsEl.innerHTML = ''
