@@ -185,11 +185,15 @@ function advance(delta) {
 }
 
 function onKey(e) {
-  if (e.key === 'ArrowRight') { e.preventDefault(); advance(1) }
-  else if (e.key === 'ArrowLeft') { e.preventDefault(); advance(-1) }
-  else if (e.key === 'ArrowUp') { e.preventDefault(); goToStep(0) }
-  else if (e.key === 'ArrowDown') { e.preventDefault(); goToStep(STEPS.length - 1) }
-  else if (e.key === 'Escape') { e.preventDefault(); exitDemo() }
+  // Ignore keystrokes typed into text inputs so users can still type
+  const tag = (e.target?.tagName || '').toUpperCase()
+  const editable = tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable
+  if (editable) return
+  if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); advance(1) }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); advance(-1) }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); goToStep(0) }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); goToStep(STEPS.length - 1) }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); exitDemo() }
 }
 
 function injectStyles() {
@@ -283,7 +287,7 @@ function bootstrap() {
   const active = STEPS[currentStepIndex()]
   setTimeout(() => activateTabIfNeeded(active), 100)
   setTimeout(() => applyHighlight(active), 400)
-  window.addEventListener('keydown', onKey)
+  document.addEventListener('keydown', onKey, true)
   window.addEventListener('hashchange', () => {
     const i = STEPS.findIndex(stepMatchesCurrent)
     if (i >= 0 && i !== currentStepIndex()) {
