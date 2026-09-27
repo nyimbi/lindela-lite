@@ -9,3 +9,6 @@ coverage/
 .omx/
 .playwright-mcp/
 *.png
+
+# zvec-grep local workspace index
+.zvec-grep/
