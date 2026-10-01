@@ -79,12 +79,65 @@ describe('public source connector fixtures', () => {
     assert.equal(result.hazard_events[0].event_type, 'flood_forecast')
   })
 
-  it('parses CHIRPS dataset index entries', async () => {
-    mockFetch('chirps.html', 'text/html')
+  it('walks CHIRPS year directories to find daily files', async () => {
+    // The product root lists year directories, not files. Matching filenames
+    // on the root listing returned zero records while reporting no error, so
+    // the connector looked healthy and ingested nothing.
+    mockChirpsIndex()
     const result = await chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 })
     assert.equal(result.errors.length, 0)
-    assert.equal(result.climate_observations.length, 2)
+    assert.equal(result.climate_observations.length, 5)
+    // Newest first: the connector exists to find recent daily files.
+    assert.equal(result.climate_observations[0].observed_at, '2026-08-31')
     assert.equal(result.climate_observations[0].source, 'chirps')
+    const dates = result.climate_observations.map((o) => o.observed_at)
+    assert.deepEqual([...dates].sort().reverse(), dates, 'observations must be newest first')
+  })
+
+  it('records the CHIRPS raster URL and admits it holds no rainfall values', async () => {
+    mockChirpsIndex()
+    const result = await chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 })
+    const newest = result.climate_observations[0]
+    assert.equal(
+      newest.metadata.file_url,
+      'https://fixture.test/chirps/2026/chirps-v2.0.2026.08.31.tif.gz',
+    )
+    // A null must never read as "no rainfall fell".
+    assert.equal(newest.precipitation_mm, null)
+    assert.equal(newest.metadata.values_included, false)
+    assert.match(newest.metadata.values_note, /not pixel values/i)
+    assert.equal(newest.type, 'rainfall_dataset_available')
+  })
+
+  it('reports an error when the CHIRPS index has no year directories', async () => {
+    // Guards the silent-zero failure mode: an empty result with no error reads
+    // as "no recent rainfall data", which is a different and wrong claim.
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'text/html']]),
+      text: async () => '<html><body>maintenance</body></html>',
+      json: async () => ({}),
+    })
+    const result = await chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 })
+    assert.equal(result.climate_observations.length, 0)
+    assert.equal(result.errors.length, 1)
+    assert.match(result.errors[0], /no year directories/)
+  })
+
+  it('reports an error when year directories exist but hold no daily files', async () => {
+    globalThis.fetch = async (url) => ({
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'text/html']]),
+      text: async () => (String(url).includes('2026')
+        ? '<html><body><a href="something-else.tif">something-else.tif</a></body></html>'
+        : '<html><body><a href="2026/">2026/</a></body></html>'),
+      json: async () => ({}),
+    })
+    const result = await chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 })
+    assert.equal(result.errors.length, 1)
+    assert.match(result.errors[0], /found no daily files/)
   })
 
   it('parses NASA FIRMS CSV rows', async () => {
@@ -302,4 +355,26 @@ function mockFetch(fileName, contentType) {
     text: async () => fs.readFileSync(path.join(fixtureDir.pathname, fileName), 'utf8'),
     json: async () => JSON.parse(fs.readFileSync(path.join(fixtureDir.pathname, fileName), 'utf8')),
   })
+}
+
+/**
+ * Mocks the two-level CHIRPS layout: the root lists year directories, and each
+ * year directory lists daily rasters.
+ */
+function mockChirpsIndex() {
+  globalThis.fetch = async (url) => {
+    const target = String(url)
+    const file = target.includes('2026')
+      ? 'chirps-2026.html'
+      : target.includes('2025')
+        ? 'chirps-2025.html'
+        : 'chirps-index.html'
+    return {
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'text/html']]),
+      text: async () => fs.readFileSync(path.join(fixtureDir.pathname, file), 'utf8'),
+      json: async () => ({}),
+    }
+  }
 }
