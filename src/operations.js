@@ -73,16 +73,20 @@ export function buildUpdate(collection, existing, patch, data) {
  * downstream references (tasks -> interventions, field_reports -> incidents)
  * stay resolvable.
  */
-export function buildSoftDelete(collection, existing, actor) {
+export function buildSoftDelete(collection, existing, actor, data = null) {
   if (!existing) throw Object.assign(new Error('Record not found'), { statusCode: 404 })
   if (existing.deleted_at) {
     throw Object.assign(new Error('Record is already deleted'), { statusCode: 409 })
   }
   const merged = { ...existing, deleted_at: new Date().toISOString(), deleted_by: actor || null }
-  if (collection === 'incidents') return normalizeIncident(merged, null, existing)
-  if (collection === 'interventions') return normalizeIntervention(merged, null, existing)
-  if (collection === 'intervention_tasks') return normalizeTask(merged, null, existing)
-  if (collection === 'field_reports') return normalizeFieldReport(merged, null, existing)
+  // `data` is required by the normalizers that cross-reference a parent
+  // record (task -> intervention, field report -> incident). Callers must
+  // supply the store snapshot; the record being deleted already carries its
+  // own parent id, so this is only used to backfill derived fields.
+  if (collection === 'incidents') return normalizeIncident(merged, data, existing)
+  if (collection === 'interventions') return normalizeIntervention(merged, data, existing)
+  if (collection === 'intervention_tasks') return normalizeTask(merged, data, existing)
+  if (collection === 'field_reports') return normalizeFieldReport(merged, data, existing)
   if (collection === 'response_resources') return normalizeResource(merged, existing)
   throw new Error(`Unsupported operational collection: ${collection}`)
 }

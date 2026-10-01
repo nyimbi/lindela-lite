@@ -817,6 +817,60 @@ describe('Lindela Lite API', () => {
     assert.ok(geojson.features.length >= 1)
   })
 
+  it('soft-deletes records that reference a parent collection', async () => {
+    // Regression: tasks and field reports cross-reference a parent record, so
+    // their normalizers need the store snapshot. Deleting a leaf that has no
+    // parent reference passed and hid this.
+    const incident = await (await fetch(`${baseUrl}/api/v1/incidents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Parent incident', incident_type: 'flood_access' }),
+    })).json()
+
+    const intervention = await (await fetch(`${baseUrl}/api/v1/interventions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ incident_id: incident.data.id, title: 'Parent intervention' }),
+    })).json()
+
+    const task = await (await fetch(`${baseUrl}/api/v1/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ intervention_id: intervention.data.id, title: 'Nested task' }),
+    })).json()
+    assert.equal(task.status, undefined)
+
+    const delTask = await fetch(`${baseUrl}/api/v1/tasks/${task.data.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ actor: 'ops-lead' }),
+    })
+    const delTaskBody = await delTask.json()
+    assert.equal(delTask.status, 200, `task delete failed: ${JSON.stringify(delTaskBody)}`)
+    assert.ok(delTaskBody.data.deleted_at)
+    // Parent linkage survives the delete.
+    assert.equal(delTaskBody.data.intervention_id, intervention.data.id)
+    assert.equal(delTaskBody.data.incident_id, incident.data.id)
+
+    const report = await (await fetch(`${baseUrl}/api/v1/field-reports`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ incident_id: incident.data.id, summary: 'Nested report' }),
+    })).json()
+
+    const delReport = await fetch(`${baseUrl}/api/v1/field-reports/${report.data.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ actor: 'ops-lead' }),
+    })
+    assert.equal(delReport.status, 200)
+    assert.ok((await delReport.json()).data.deleted_at)
+
+    // Parents remain intact and undeleted.
+    const stillThere = await fetchJson(`${baseUrl}/api/v1/interventions/${intervention.data.id}`)
+    assert.equal(stillThere.data.deleted_at, null)
+  })
+
   it('soft-deletes operational records and hides them by default', async () => {
     const create = await fetch(`${baseUrl}/api/v1/response-resources`, {
       method: 'POST',

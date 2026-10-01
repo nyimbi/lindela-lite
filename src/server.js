@@ -1641,7 +1641,7 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
     }
     const body = await readRequestJson(req)
     const existing = data[route.collection].find((item) => item.id === route.id)
-    const record = buildSoftDelete(route.collection, existing, body.actor || req.__auth?.subject)
+    const record = buildSoftDelete(route.collection, existing, body.actor || req.__auth?.subject, data)
     const log = actionLog(route.collection, 'deleted', record, body.actor || req.__auth?.subject)
     await store.merge({ [route.collection]: [record], action_logs: [log] })
     jsonResponse(res, 200, { success: true, data: record, action_log: log })
