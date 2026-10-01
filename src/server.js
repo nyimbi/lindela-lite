@@ -40,6 +40,7 @@ import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './s
 import { renderCapXml } from './cap.js'
 import { emit, dispatchPending } from './outbox.js'
 import { summarizeRoadAccess } from './road-access.js'
+import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
 import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots } from './kpi.js'
 import { KNOWN_DISTRICTS, resolveDistrict, districtOverview } from './districts.js'
@@ -431,6 +432,11 @@ async function handleApi(store, req, res, url) {
   if (url.pathname === '/api/v1/road-access/summary') {
     jsonResponse(res, 200, { success: true, data: summarizeRoadAccess(data.road_access || []) })
     return
+  }
+
+  if (url.pathname === '/api/v1/flood-depth') {
+    const result = await handleFloodDepth(url, res)
+    if (result !== undefined) return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/data-quality') {
@@ -1664,6 +1670,107 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
   }
 
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+}
+
+/**
+ * GET /api/v1/flood-depth
+ *
+ * Query:
+ *   lat, lon            point probe (returns depth at each requested level)
+ *   level_m             repeat or comma-separated water levels, metres
+ *   south,west,north,east  box mode, returns a depth grid + GeoJSON extent
+ *   grid_size           grid resolution in cells (default 32, max 256)
+ *   terrain=1           include local terrain context around the point
+ *
+ * Returns 400 for malformed input and 200 with data_available=false when no
+ * terrain covers the location, rather than guessing.
+ */
+async function handleFloodDepth(url, res) {
+  // Number(null) is 0, so a missing or blank parameter would silently become
+  // a valid-looking coordinate. Read raw strings and validate explicitly.
+  const rawLat = url.searchParams.get('lat')
+  const rawLon = url.searchParams.get('lon')
+  const lat = rawLat === null || rawLat.trim() === '' ? NaN : Number(rawLat)
+  const lon = rawLon === null || rawLon.trim() === '' ? NaN : Number(rawLon)
+
+  const rawLevels = url.searchParams.getAll('level_m').length
+    ? url.searchParams.getAll('level_m')
+    : (url.searchParams.get('levels_m') || url.searchParams.get('level_m') || '')
+  const levels = parseLevels(rawLevels)
+  const rawGridSize = url.searchParams.get('grid_size')
+  const gridSize = rawGridSize === null || rawGridSize.trim() === '' ? 32 : Number(rawGridSize)
+
+  const hasPoint = Number.isFinite(lat) && Number.isFinite(lon)
+  const boxParams = ['south', 'west', 'north', 'east'].map((key) => {
+    const raw = url.searchParams.get(key)
+    return raw === null || raw.trim() === '' ? NaN : Number(raw)
+  })
+  const [south, west, north, east] = boxParams
+  const hasBox = boxParams.every(Number.isFinite)
+  const wantsTerrain = url.searchParams.get('terrain') === '1'
+
+  if (!hasPoint && !hasBox) {
+    jsonResponse(res, 400, {
+      success: false,
+      error: 'Provide lat and lon for a point probe, or south/west/north/east for an area grid',
+    })
+    return true
+  }
+  if (levels === null) {
+    jsonResponse(res, 400, { success: false, error: 'level_m must be a number, or a comma-separated list of numbers' })
+    return true
+  }
+  if (!levels.length) {
+    jsonResponse(res, 400, { success: false, error: 'Provide at least one level_m (water surface elevation, metres)' })
+    return true
+  }
+  if (levels.some((level) => level < -500 || level > 9000)) {
+    jsonResponse(res, 400, {
+      success: false,
+      error: 'level_m out of range: expected a plausible water surface elevation between -500 and 9000 metres',
+    })
+    return true
+  }
+
+  try {
+    if (hasPoint && wantsTerrain) {
+      const [context, profile] = await Promise.all([
+        terrainContext(lat, lon),
+        depthProfile(lat, lon, { levels_m: levels }),
+      ])
+      jsonResponse(res, 200, { success: true, data: { ...profile, terrain: context } })
+      return true
+    }
+
+    if (hasPoint) {
+      const profile = await depthProfile(lat, lon, { levels_m: levels })
+      jsonResponse(res, 200, { success: true, data: profile })
+      return true
+    }
+
+    const grid = await depthGrid({ south, west, north, east, levelM: levels, gridSize })
+    jsonResponse(res, 200, { success: true, data: grid })
+  } catch (error) {
+    jsonResponse(res, error.statusCode || 400, { success: false, error: error.message })
+  }
+  return true
+}
+
+/**
+ * Parses a comma-separated list of levels. Returns null when the caller asked
+ * for a level list that contains something unparseable, so a typo is reported
+ * rather than silently treated as "no levels given" and then defaulted to 0.
+ */
+function parseLevels(raw) {
+  const parts = String(raw || '').split(',').map((part) => part.trim()).filter(Boolean)
+  if (!parts.length) return []
+  const values = []
+  for (const part of parts) {
+    const value = Number(part)
+    if (!Number.isFinite(value)) return null
+    values.push(value)
+  }
+  return values
 }
 
 async function handleWebhookRoute(store, data, req, res, url, route) {

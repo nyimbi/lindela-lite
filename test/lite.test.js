@@ -31,6 +31,8 @@ import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } 
 import { normalizeCommunityFeedback } from '../src/community.js'
 import { computeRoadAccess, summarizeRoadAccess } from '../src/road-access.js'
 import { readNamespacedTag } from '../src/connectors/spec.js'
+import { lonLatToTile, tileBounds, loadTile, clearTileCache } from '../src/terrain.js'
+import { depthAtPoint, depthGrid, depthProfile, terrainContext } from '../src/flood-depth.js'
 import { normalizeServiceAsset } from '../src/connectors/uploads.js'
 
 const execFileAsync = promisify(execFile)
@@ -2532,6 +2534,151 @@ import { buildCreate } from '../src/operations.js'
 import { computeApiUptime } from '../src/kpi.js'
 import { uptimeStats } from '../src/observability.js'
 import { sendRapidProAlert } from '../src/rapidpro.js'
+
+describe('Lindela Lite terrain and flood depth', () => {
+  it('decodes a Terrarium tile into elevations and interpolates a point', async () => {
+    // Verified against an independent decode of the same tile: 439-831 m.
+    const tile = lonLatToTile(35.6, 3.1, 10)
+    const decoded = await loadTile(tile.x, tile.y, 10)
+    assert.equal(decoded.width, 256)
+    assert.equal(decoded.height, 256)
+
+    let min = Infinity
+    let max = -Infinity
+    let valid = 0
+    for (const value of decoded.grid) {
+      if (Number.isNaN(value)) continue
+      valid += 1
+      if (value < min) min = value
+      if (value > max) max = value
+    }
+    assert.equal(valid, 65536)
+    assert.ok(Math.abs(min - 439) < 2, `expected min ~439 m, got ${min}`)
+    assert.ok(Math.abs(max - 831) < 2, `expected max ~831 m, got ${max}`)
+    // Centre pixel must match the known value for this tile.
+    assert.ok(Math.abs(decoded.grid[128 * 256 + 128] - 511) < 1)
+  })
+
+  it('maps slippy tile coordinates and their bounds consistently', () => {
+    const tile = lonLatToTile(35.6, 3.1, 12)
+    assert.equal(tile.z, 12)
+    const bounds = tileBounds(tile.x, tile.y, 12)
+    assert.ok(35.6 > bounds.west && 35.6 < bounds.east)
+    assert.ok(3.1 > bounds.south && 3.1 < bounds.north)
+  })
+
+  it('reports depth at a point relative to the water surface', async () => {
+    const result = await depthAtPoint(3.1, 35.6, 530)
+    assert.equal(result.data_available, true)
+    assert.ok(result.elevation_m > 400)
+    assert.equal(Math.round(result.depth_m), Math.round(result.level_m - result.elevation_m))
+    assert.equal(result.flooded, true)
+    assert.equal(result.passability, 'impassable_severe')
+  })
+
+  it('reports a dry point below the water level rather than a negative depth', async () => {
+    const result = await depthAtPoint(3.1, 35.6, 100)
+    assert.equal(result.flooded, false)
+    assert.equal(result.passability, 'dry')
+    assert.ok(result.depth_m < 0)
+  })
+
+  it('refuses to invent depth where elevation data is void', async () => {
+    // Middle of the Pacific: Terrarium has no bathymetry there, so the tile is
+    // a no-data sentinel. Reporting "0 m level means -5126 m of water" would
+    // read as catastrophic inundation rather than missing data.
+    const result = await depthAtPoint(0, -160, 0)
+    assert.equal(result.data_available, false)
+    assert.equal(result.depth_m, null)
+    assert.equal(result.flooded, null)
+    assert.match(result.reason, /void|terrain data/i)
+  })
+
+  it('rejects implausible water levels', async () => {
+    const tooLow = await depthAtPoint(3.1, 35.6, -9000)
+    assert.equal(tooLow.data_available, false)
+    assert.match(tooLow.reason, /floor/i)
+
+    const tooHigh = await depthAtPoint(3.1, 35.6, 50000)
+    assert.equal(tooHigh.data_available, false)
+    assert.match(tooHigh.reason, /exceeds/i)
+  })
+
+  it('finds the onset level for a point from a level sweep', async () => {
+    const profile = await depthProfile(3.1, 35.6, { levels_m: [100, 500, 515, 520, 540] })
+    assert.equal(profile.inundated, true)
+    assert.ok(profile.onset_level_m >= 515 && profile.onset_level_m <= 520)
+  })
+
+  it('classifies terrain as basin, slope, or flat from the surrounding window', async () => {
+    const context = await terrainContext(3.1, 35.6)
+    assert.equal(context.available, true)
+    assert.ok(['basin', 'slope', 'undulating', 'flat'].includes(context.terrain))
+    assert.ok(context.local_relief_m >= 0)
+    assert.ok(context.surrounding_higher_pct >= 0 && context.surrounding_higher_pct <= 100)
+  })
+
+  it('builds a depth grid with per-level coverage and extent polygons', async () => {
+    const grid = await depthGrid({
+      south: 3.05, west: 35.55, north: 3.15, east: 35.65,
+      levelM: [510, 520], gridSize: 16,
+    })
+    assert.equal(grid.size, 16)
+    assert.equal(grid.depth_grid.length, 256)
+    assert.equal(grid.per_level.length, 2)
+    assert.ok(grid.coverage_pct > 0)
+    // Coverage must increase as the water level rises.
+    assert.ok(grid.per_level[1].coverage_pct > grid.per_level[0].coverage_pct)
+    assert.equal(grid.extent_geojson.type, 'FeatureCollection')
+    assert.ok(grid.extent_geojson.features.length > 0)
+    // Must state its own limits rather than implying a hydraulic simulation.
+    assert.match(grid.model, /no flow routing/i)
+  })
+
+  it('rejects degenerate bounds', async () => {
+    await assert.rejects(
+      () => depthGrid({ south: 3.2, west: 35.5, north: 3.1, east: 35.6, levelM: 510 }),
+      /non-degenerate/,
+    )
+  })
+
+  it('validates flood-depth request parameters over HTTP', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-flood-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://localhost:${listener.address().port}`
+    try {
+      // No coordinates at all.
+      const noCoords = await fetch(`${baseUrl}/api/v1/flood-depth?level_m=510`)
+      assert.equal(noCoords.status, 400)
+      assert.match((await noCoords.json()).error, /lat and lon/)
+
+      // Coordinates but no water level.
+      const noLevel = await fetch(`${baseUrl}/api/v1/flood-depth?lat=3.1&lon=35.6`)
+      assert.equal(noLevel.status, 400)
+      assert.match((await noLevel.json()).error, /level_m/)
+
+      // Unparseable level must be reported, not silently defaulted to zero.
+      const badLevel = await fetch(`${baseUrl}/api/v1/flood-depth?lat=3.1&lon=35.6&level_m=abc`)
+      assert.equal(badLevel.status, 400)
+      assert.match((await badLevel.json()).error, /number/)
+
+      // Out-of-range level.
+      const wildLevel = await fetch(`${baseUrl}/api/v1/flood-depth?lat=3.1&lon=35.6&level_m=99999`)
+      assert.equal(wildLevel.status, 400)
+
+      // A valid request succeeds.
+      const ok = await fetch(`${baseUrl}/api/v1/flood-depth?lat=3.1&lon=35.6&level_m=520`)
+      assert.equal(ok.status, 200)
+      const body = await ok.json()
+      assert.equal(body.success, true)
+      assert.ok(Array.isArray(body.data.profile))
+    } finally {
+      listener.close()
+    }
+  })
+})
 
 describe('Lindela Lite road access', () => {
   const baseData = () => ({
