@@ -48,6 +48,7 @@ for (const requiredLink of [
   '(rapidpro.md)',
   '(developer-guide.md)',
   '(open-source-boundary.md)',
+  '(flood-probability-model-basis.md)',
 ]) {
   if (!docsIndex.includes(requiredLink)) throw new Error(`Docs index missing ${requiredLink}`)
 }
@@ -188,6 +189,15 @@ for (const sourceId of Object.keys(SOURCE_POLICIES)) {
   if (!ingestion.includes(`\`${sourceId}\``)) {
     throw new Error(`Ingestion guide does not mention non-regular source ${sourceId}`)
   }
+}
+
+// The flood-probability model-basis proposal must stay linked and must
+// keep saying it is a proposal. If implementation ever lands, this is the
+// place that documents the agreed basis, and it should be rewritten rather
+// than deleted.
+const modelBasis = fs.readFileSync('docs/flood-probability-model-basis.md', 'utf8')
+if (!/Status: proposal for review/i.test(modelBasis)) {
+  throw new Error('flood-probability-model-basis.md must state its status; a proposal that reads as settled is worse than none')
 }
 
 console.log('validation ok')

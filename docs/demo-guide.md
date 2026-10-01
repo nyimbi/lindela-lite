@@ -247,6 +247,19 @@ needs an agreed hydrological model basis and a long validated annual-maxima
 record. Inventing coefficients that look authoritative is worse than returning
 nothing, so the endpoint does not exist.
 
+If a panel presses on this, the honest answer is in
+[flood-probability-model-basis.md](flood-probability-model-basis.md). The short
+version: the only long rainfall record reachable without a licence is 36
+complete years of ERA5, and published evaluation finds ERA5 underestimates
+tropical extreme daily rainfall by roughly 40% — precisely the tail a flood
+model depends on. Catchment delineation is additionally blocked on MERIT Hydro,
+which is EULA-gated and unreachable.
+
+What *is* shipped answers the downstream question honestly: given a forecast
+water level, which facilities are under water and how deep. That is the
+operational question relief logistics asks first, and it is answerable from a
+DEM alone.
+
 ## Key demo watchpoints
 
 | Surface | What to highlight |
