@@ -143,6 +143,25 @@ Validation:
 npm run validate
 ```
 
+Coverage, with enforced thresholds over `src/**`:
+
+```bash
+npm run test:coverage
+```
+
+Thresholds are 75% line, 60% branch, 75% function. The command exits non-zero if
+coverage falls below them, so a regression fails CI rather than going unnoticed.
+Current baseline is roughly 77.9% line, 63.9% branch, 79.3% function — raise the
+thresholds as coverage improves.
+
+Dependency audit:
+
+```bash
+npm run audit
+```
+
+Fails on high or critical advisories in the dependency tree.
+
 Syntax checks:
 
 ```bash

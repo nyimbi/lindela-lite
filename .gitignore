@@ -12,3 +12,6 @@ coverage/
 
 # zvec-grep local workspace index
 .zvec-grep/
+
+# Internal tender analysis — never publish bid requirements or scoring
+docs/unicef-requirements-traceability.md

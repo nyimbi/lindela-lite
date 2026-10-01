@@ -16,6 +16,29 @@ jobs:
         with:
           node-version: '20'
       - run: npm test
+      - run: npm run validate
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # Enforced thresholds fail the build if coverage regresses. Current
+      # baseline is ~77.9% line / 63.9% branch / 79.3% function.
+      - run: npm run test:coverage
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm audit --audit-level=high
+      - name: Scan source for known vulnerabilities
+        run: npx --yes trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --no-progress .
 
   sbom:
     runs-on: ubuntu-latest
@@ -31,7 +54,7 @@ jobs:
           path: sbom.cdx.json
 
   provenance:
-    needs: [test, sbom]
+    needs: [test, coverage, audit, sbom]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
