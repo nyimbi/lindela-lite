@@ -203,16 +203,22 @@ function buildDemoHazards() {
       source_id: 'demo-hazard-turkana-slide',
       event_type: 'landslide',
       severity: 'high',
-      title: 'Demo: slope failure on the Turkana escarpment road',
-      description: 'Seeded demonstration event, not a live observation. Simulates debris across the escarpment road so road-access can be shown applying the wider landslide clearance radius.',
-      // Sits on the Turkana B4 supply route, about 1.5 km off its centreline, so
-      // it falls inside the 5 km landslide clearance radius. An earlier version
-      // placed it near the escarpment and it blocked nothing, which made the
-      // seeded event decorative rather than demonstrative.
-      latitude: 3.0467,
-      longitude: 35.6900,
-      bbox: { south: 3.0417, north: 3.0517, west: 35.685, east: 35.695 },
-      country: 'KE',
+      title: 'Demo: slope failure blocking the Aweil north access road',
+      description: 'Seeded demonstration event, not a live observation. Simulates debris across the Aweil north access road so road-access can be shown applying the wider landslide clearance radius that landslide gets and flood does not.',
+      // Sits on the Aweil North Access Road, on its centreline, so it falls
+      // inside the 5 km landslide clearance radius and demonstrably severs that
+      // road. Two earlier placements were rejected as decorative rather than
+      // demonstrative: one 16 km from the nearest road blocked nothing, and one
+      // on the Turkana supply route sat 12 km from the seeded flood, which at the
+      // default Horn framing is under two pixels — the two hazards drew on top of
+      // each other and only one was readable.
+      //
+      // Aweil also puts the two access-blocking hazards in different districts,
+      // so the demo can show a flood and a landslide cutting separate places.
+      latitude: 8.6470,
+      longitude: 27.3300,
+      bbox: { south: 8.637, north: 8.657, west: 27.32, east: 27.34 },
+      country: 'SS',
       occurred_at: daysAgo(3),
       affected_population: null,
       metadata: { demo_data: true, source_note: 'seeded to exercise the landslide clearance radius' },

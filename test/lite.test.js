@@ -3684,6 +3684,40 @@ describe('Demo seed', () => {
     assert.ok(counts.trigger_protocols >= 5, `trigger_protocols ${counts.trigger_protocols} < 5`)
   })
 
+  it('every count the demo guide states matches the seeded store', async () => {
+    // validate.mjs only checks that the guide *mentions* these numbers, so a
+    // number could be wrong as long as it was written down. This compares each
+    // one against the data a panel will actually be looking at. The guide drifted
+    // three times before this existed, once because I widened the risk surface
+    // and twice because figures were simply wrong.
+    const { seedAll } = await import('../scripts/seed-demo.mjs')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-guide-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await seedAll(store)
+    const data = await store.read()
+    const guide = await fs.readFile('docs/demo-guide.md', 'utf8')
+
+    const claims = [
+      { phrase: 'active alert rules', stated: 5, actual: data.alert_rules?.length, name: 'alert_rules' },
+      { phrase: 'alert events spanning', stated: 10, actual: data.alert_events?.length, name: 'alert_events' },
+      { phrase: 'trigger protocols with backtest', stated: 10, actual: data.trigger_protocols?.length, name: 'trigger_protocols' },
+      { phrase: 'incidents covering', stated: 8, actual: data.incidents?.length, name: 'incidents' },
+      { phrase: 'field reports with demographics', stated: 40, actual: data.field_reports?.length, name: 'field_reports' },
+      { phrase: 'feedback items linked', stated: 15, actual: data.community_feedback?.length, name: 'community_feedback' },
+      { phrase: 'community_feedback_loop instances', stated: 2, actual: (data.workflow_instances || []).filter((w) => w.type === 'community_feedback_loop').length, name: 'community_feedback_loop' },
+    ]
+
+    const wrong = []
+    for (const { phrase, stated, actual, name } of claims) {
+      const found = new RegExp(`\\b${stated}\\b`).test(
+        guide.split('\n').filter((l) => l.includes(phrase)).join(' '),
+      )
+      assert.ok(found, `demo guide no longer states ${stated} for "${phrase}"`)
+      if (actual !== stated) wrong.push(`${name}: guide says ${stated}, store has ${actual}`)
+    }
+    assert.deepEqual(wrong, [], `demo guide contradicts the seeded store -> ${wrong.join('; ')}`)
+  })
+
   it('seeds a connected road corridor so routing has a network to route over', async () => {
     // The four district roads sit hundreds of km apart, so buildRoadGraph links
     // them at the 5 km default radius and the graph comes out with no edges.
