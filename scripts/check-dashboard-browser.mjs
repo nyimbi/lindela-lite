@@ -23,6 +23,9 @@
 const ENDPOINT = process.env.LINDELA_LITE_URL || 'http://127.0.0.1:4177/'
 // Base for constructing sibling surface URLs (the dashboard root has a trailing slash).
 const BASE = ENDPOINT.replace(/\/$/, '')
+
+/** The viewport a panel sees. Desktop, not headless Chrome's default. */
+const LAYOUT_VIEWPORT = Object.freeze({ width: 1440, height: 900 })
 const CDP = process.env.LINDELA_LITE_CDP || 'http://127.0.0.1:9222'
 
 let socket
@@ -120,6 +123,14 @@ async function main() {
 
   await send('Network.enable')
   await send('Network.setCacheDisabled', { cacheDisabled: true })
+  // Pin a laptop viewport. Without this the suite inherited headless Chrome's
+  // default of about 756x469, which is the mobile breakpoint: the console is a
+  // single column and the rail is full width. Every layout check therefore ran
+  // against a layout no panel will ever see — and a table 29px wider than the
+  // 360px rail passed, because at 756px wide there was nothing to overflow.
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: LAYOUT_VIEWPORT.width, height: LAYOUT_VIEWPORT.height, deviceScaleFactor: 1, mobile: false,
+  })
   await send('Page.navigate', { url: `${ENDPOINT}${ENDPOINT.includes('?') ? '&' : '?'}cachebust=${Date.now()}` })
   await new Promise((r) => setTimeout(r, 4500))
 
@@ -475,7 +486,8 @@ async function main() {
   await send('Page.navigate', { url: `${BASE}/?cb=${Date.now()}` })
   await new Promise((r) => setTimeout(r, 3500))
 
-  // Every rail tab must render content and produce no console errors. Two
+  // Every rail tab must render content, produce no console errors, and keep its
+  // table inside the panel. Two
   // defects were found this way: the equity panel read dispatch status from
   // alert_events (which carry no such field) so "dispatched" was always 0 and
   // the rate column showed "—" everywhere; and unavailable sources rendered as
@@ -499,6 +511,28 @@ async function main() {
     check(`rail tab "${tab}" produces no console errors`,
       pageErrors.length === errorsBefore,
       (pageErrors[pageErrors.length - 1] || '').slice(0, 70))
+
+    // Content that renders outside its container is invisible, not wrong, so no
+    // amount of "the element exists and has text" catches it. The equity table
+    // overflowed the rail by 29px behind overflow-x: hidden, cutting off the
+    // "Not acknowledged" column entirely — the column that says who was not
+    // reached, on the surface whose whole purpose is that.
+    const clipped = await evaluate(`(() => {
+      const panel = document.getElementById('panel-${tab}')
+      if (!panel) return { count: 0, sample: '' }
+      const pr = panel.getBoundingClientRect()
+      const bad = []
+      for (const n of panel.querySelectorAll('table, thead, tbody, tr, th, td')) {
+        const r = n.getBoundingClientRect()
+        if (r.width > 1 && r.right > pr.right + 1) {
+          bad.push((n.tagName + ':' + (n.textContent || '').trim().slice(0, 24)))
+        }
+      }
+      return { count: bad.length, sample: bad.slice(0, 3).join(' | ') }
+    })()`)
+    check(`rail tab "${tab}" keeps its table inside the panel`,
+      clipped.count === 0,
+      clipped.count ? `${clipped.count} clipped: ${clipped.sample}` : 'no clipped cells')
   }
 
   // Back to the equity tab for the specific assertions.

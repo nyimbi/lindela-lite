@@ -63,6 +63,15 @@ no existing endpoint changed shape.
   with GDACS and USGS both live is always the same Pacific and Caribbean
   earthquakes: the seeded flood and landslide that the road-access and routing
   walkthrough depends on were paginated out and never drawn.
+- The browser check now runs at a **1440x900 laptop viewport**. It previously
+  inherited headless Chrome's default of about 756x469, which is the mobile
+  breakpoint: the console is a single column and the rail is full width. Every
+  layout assertion therefore ran against a layout no panel will see.
+- The **equity table overflowed the 360px rail** on a laptop, and the last
+  column — "Not acknowledged", the one that says who was not reached, on the
+  surface whose purpose is that — was clipped behind `overflow-x: hidden` and
+  unreachable. Headers now wrap and cells are right-aligned with tabular figures
+  so the table fits. Confirmed to fail without the change.
 - Planning a route now **frames the map on that route**, the way a flood
   simulation frames on its extent. The Lodwar corridor is four roads inside six
   kilometres, so a region-wide frame collapsed the reroute into one unreadable

@@ -115,6 +115,12 @@ depends on.
   operational area.
 - Everything else on the map is live global context and is drawn small.
 
+The equity rail lists, per district, how many dispatches were sent, how many
+were acknowledged, and **"Not acknowledged" — the share nobody acted on**. That
+last column is the point of the surface; it is what a coverage metric would hide.
+The caption says plainly that it does not distinguish a poor alert from a missed
+response, so it is not a false-positive rate.
+
 ### 2. Alerts surface
 
 Navigate to Alerts. You should see:

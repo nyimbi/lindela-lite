@@ -1303,6 +1303,40 @@ dialog[open] {
   background: var(--surface);
 }
 
+/*
+ * The equity table lives in the 360px rail and was overflowing it by 29px with
+ * overflow-x: hidden on the wrapper, which silently cut off the last column:
+ * "Not acknowledged" — the one that says who was not reached, and the reason
+ * the surface exists. The numbers were in the DOM and unreachable on screen.
+ *
+ * Tightened here rather than given a scrollbar: a horizontally scrolling table
+ * in a side rail hides the fact that there is more to read, which is the same
+ * failure in a different shape. If a column is ever added that genuinely does
+ * not fit, this needs a real redesign, not tighter padding.
+ */
+.equity-table th,
+.equity-table td {
+  padding: var(--sp-2) var(--sp-1);
+}
+
+/* Headers wrap; data cells do not. Wrapping the headers is what lets the table
+   fit the rail at all — nowrap on both was pinning it at its content width,
+   which is 29px wider than the rail and invisible behind overflow-x: hidden. */
+.equity-table td {
+  white-space: nowrap;
+}
+
+.equity-table th:first-child,
+.equity-table td:first-child {
+  padding-left: var(--sp-2);
+}
+
+.equity-table th:not(:first-child),
+.equity-table td:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- Dispatch gate dialog ---------------------------------- */
 .dispatch-gate-dialog {
   background: var(--surface);
