@@ -209,4 +209,9 @@ if (!/Status: proposal for review/i.test(modelBasis)) {
   throw new Error('flood-probability-model-basis.md must state its status; a proposal that reads as settled is worse than none')
 }
 
+// Model boundaries are enforced, not merely documented. Importing for the side
+// effect: this throws if a flood-probability or return-period field appears
+// anywhere in the shipped surface while no model basis has been agreed.
+await import('./check-no-flood-probability.mjs')
+
 console.log('validation ok')

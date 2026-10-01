@@ -129,6 +129,28 @@ Rules:
 - Ensure mobile layouts do not overlap.
 - Add tests or validation checks for security-sensitive rendering.
 
+### Model Boundaries Are Enforced
+
+`npm run check:model-boundaries` (also run inside `npm run validate`) fails the
+build if a flood-probability or return-period field appears anywhere in
+`src/`, `public/`, `scripts/`, or `test/` while no model basis has been agreed.
+
+This exists because the rule was otherwise only author discipline. The rule is
+real: rainfall intensity/duration to flood probability is not implemented, and
+may only be against an explicit documented and agreed basis. A number shaped
+like a probability that no model supports is worse than no output, and that
+failure mode is exactly what a test suite will not catch.
+
+To lift the guard legitimately: agree the basis first, record it in
+`docs/flood-probability-model-basis.md`, and set `AGREED_MODEL_BASIS` in
+`scripts/check-no-flood-probability.mjs` to that document. Do not lift it by
+deleting the script. Confirmed to fail when a `return_period_years` field is
+injected into the flood-depth response.
+
+The same discipline applies to the risk-score bands, which are named
+`sensitivity_*` and carry `calibrated_uncertainty: false` precisely because
+they are not calibrated.
+
 ### Keeping The DOM Contract
 
 `$('id')` returns `null` for a missing element, and the failure surfaces later

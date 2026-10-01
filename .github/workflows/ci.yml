@@ -17,6 +17,9 @@ jobs:
           node-version: '20'
       - run: npm test
       - run: npm run validate
+      # Model boundaries: no flood-probability or return-period field may ship
+      # without an agreed model basis. Runs inside validate as well.
+      - run: npm run check:model-boundaries
 
   coverage:
     runs-on: ubuntu-latest
