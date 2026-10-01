@@ -129,6 +129,33 @@ Rules:
 - Ensure mobile layouts do not overlap.
 - Add tests or validation checks for security-sensitive rendering.
 
+### Keeping The DOM Contract
+
+`$('id')` returns `null` for a missing element, and the failure surfaces later
+as a property access on `null` rather than at load. Three tests in
+`test/lite.test.js` hold this contract, so run them after touching either file:
+
+- `resolves every element the dashboard looks up by id` — every `$(...)` and
+  `getElementById(...)` in `app.js` must have a matching `id` in `index.html`.
+- `imports the flood-bands module the dashboard actually loads` — a rename of
+  `/shared/flood-bands.js` breaks the browser bundle silently, since Node
+  resolves the test import from a different path than the browser request.
+- `styles every flood depth band class it renders` — an unstyled band renders
+  as invisible fill, so the operator sees no water and no error.
+
+Rendering logic that can be isolated from the DOM belongs in
+`public/shared/*.js` and gets tested directly. `test/flood-bands.test.js` is the
+worked example: the band cut points, grid stride, and coverage maths are all
+verified as pure functions instead of by matching source text with a regex.
+
+### Overlays That Recompute
+
+Layers drawn over the basemap (flood depth, road status) are cleared and
+redrawn on every map render, because a filter change re-renders the whole map.
+They therefore read their content from `state` and re-render from it, rather
+than assuming their layer survives. Keep any such layer's data in `state`, and
+have `renderMap` redraw it after clearing.
+
 ## Testing
 
 Default suite:

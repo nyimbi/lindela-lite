@@ -2,6 +2,7 @@
 // Lindela Lite — Operations Console
 // =============================================================
 import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS } from '/shared/basemap.js'
+import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage } from '/shared/flood-bands.js'
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})
@@ -28,6 +29,12 @@ const state = {
   _paletteItems: [],
   _paletteIndex: 0,
   _dispatchGateAlert: null,
+  // Flood simulation and road status overlays. lastMapBbox is set by renderMap
+  // so the simulation requests terrain for exactly what is on screen.
+  floodGrid: null,
+  lastMapBbox: null,
+  roadAccess: [],
+  showRoads: false,
 }
 
 // =============================================================
@@ -126,6 +133,177 @@ function applyI18n() {
 }
 
 // =============================================================
+// Flood depth overlay
+// =============================================================
+
+/**
+ * Single writer for the flood status line. Routed through one function so the
+ * live-region text and the visible text cannot drift, and so a missing element
+ * degrades to console output instead of throwing mid-render.
+ */
+function setFloodStatus(message) {
+  if (floodStatusEl) floodStatusEl.textContent = message
+  else console.warn('[flood]', message)
+}
+
+/**
+ * Draws the depth grid as SVG rects in map space, so it stays crisp under the
+ * existing pan/zoom transform instead of being rasterised once.
+ *
+ * Geometry and banding live in shared/flood-bands.js so they can be tested
+ * without a DOM; this function only turns cells into elements.
+ */
+function renderFloodLayer(grid, bbox) {
+  if (!mapFloodEl) return
+  mapFloodEl.innerHTML = ''
+  const cells = floodCellsForGrid(grid, (lat, lon) => project(lat, lon, bbox))
+  for (const cell of cells) {
+    const rect = svgEl('rect', {
+      x: cell.x,
+      y: cell.y,
+      width: cell.width,
+      height: cell.height,
+      class: `flood-cell flood-${safeClass(cell.band.key)}`,
+    })
+    const title = svgEl('title')
+    title.textContent = `${cell.depth.toFixed(2)} m deep — ${cell.band.note}`
+    rect.append(title)
+    mapFloodEl.append(rect)
+  }
+}
+
+/** Road status overlay: cut-off segments need to read as impassable at a glance. */
+function renderRoadLayer(roads, bbox) {
+  if (!mapRoadsEl) return
+  mapRoadsEl.innerHTML = ''
+  for (const r of roads) {
+    if (!Number.isFinite(r.latitude) || !Number.isFinite(r.longitude)) continue
+    const { x, y } = project(r.latitude, r.longitude, bbox)
+    const status = r.access_status || 'passable'
+    const dot = svgEl('circle', {
+      cx: x, cy: y,
+      r: status === 'impassable' ? 5 : status === 'restricted' ? 4 : 2.5,
+      class: `road-marker road-${safeClass(status)}`,
+    })
+    const title = svgEl('title')
+    title.textContent = `${r.road_name || 'Road'} — ${status}${r.access_reason ? `: ${r.access_reason}` : ''}`
+    dot.append(title)
+    mapRoadsEl.append(dot)
+  }
+}
+
+/**
+ * Fetches a flood-depth grid for the current map extent and renders it.
+ *
+ * The water level is an operator input, not a forecast: this shades ground
+ * that would sit below a given surface elevation. The UI labels it as a
+ * simulation so nobody reads the shading as a prediction.
+ */
+async function loadFloodSimulation() {
+  if (!floodLevelInput || !floodSimulateBtn) return
+  const raw = floodLevelInput.value.trim()
+  // Number('') is 0, so an empty field would otherwise silently simulate sea
+  // level and shade the coastline. Require a value the operator actually typed.
+  if (raw === '') {
+    setFloodStatus('Enter a water surface elevation in metres')
+    floodLevelInput.focus()
+    return
+  }
+  const levelM = Number(raw)
+  if (!Number.isFinite(levelM)) {
+    setFloodStatus(`"${raw}" is not a number. Enter a water level in metres.`)
+    return
+  }
+
+  floodSimulateBtn.disabled = true
+  setFloodStatus('Simulating…')
+  try {
+    const bbox = state.lastMapBbox || DEFAULT_BBOX
+    // Pad so the grid covers a little beyond the data frame, and cap the
+    // extent so terrain requests stay bounded. A continent-wide request would
+    // exhaust the tile budget and degrade to zoom 5, where cell depths are
+    // averaged across whole landscapes.
+    const pad = 0.15
+    const maxSpan = 2
+    const midLat = (bbox.minLat + bbox.maxLat) / 2
+    const midLon = (bbox.minLon + bbox.maxLon) / 2
+    const spanLat = Math.min(bbox.maxLat - bbox.minLat + pad * 2, maxSpan)
+    const spanLon = Math.min(bbox.maxLon - bbox.minLon + pad * 2, maxSpan)
+    const query = new URLSearchParams({
+      south: String(Math.max(-89, midLat - spanLat / 2)),
+      north: String(Math.min(89, midLat + spanLat / 2)),
+      west: String(midLon - spanLon / 2),
+      east: String(midLon + spanLon / 2),
+      level_m: String(levelM),
+      grid_size: '64',
+    })
+    const body = await fetchJson(`/api/v1/flood-depth?${query}`)
+    if (!body?.success || !body.data?.depth_grid) {
+      state.floodGrid = null
+      setFloodStatus(body?.error || 'No flood data for this area')
+      reRenderMapFromState()
+      return
+    }
+
+    state.floodGrid = body.data
+    const level = body.data.per_level?.[0]
+    const coverage = floodCoverage(body.data.depth_grid)
+    setFloodStatus(
+      level
+        ? `At ${levelM} m: ${level.coverage_pct}% of the area (${level.area_sq_km} km²) below water, `
+          + `deepest cell ${coverage.max_depth_m.toFixed(2)} m. ${body.data.model}. `
+          + `Elevation ±${body.data.vertical_resolution_m} m.`
+        : 'Simulation complete.',
+    )
+    reRenderMapFromState()
+    renderFloodLegendBox(body.data)
+  } catch (error) {
+    setFloodStatus(`Flood simulation failed: ${error.message}`)
+  } finally {
+    floodSimulateBtn.disabled = false
+  }
+}
+
+function renderFloodLegendBox(grid) {
+  if (!floodLegendEl) return
+  if (!grid) { floodLegendEl.hidden = true; floodLegendEl.innerHTML = ''; return }
+  floodLegendEl.hidden = false
+  const rows = FLOOD_DEPTH_BANDS.map((b) =>
+    `<li><span class="flood-swatch flood-${b.key}"></span><span class="flood-band">${escapeHtml(b.label)}</span><span class="flood-note">${escapeHtml(b.note)}</span></li>`
+  ).join('')
+  floodLegendEl.innerHTML = `
+    <h3 class="legend-title">Flood depth at ${escapeHtml(grid.level_m)} m</h3>
+    <ul class="flood-legend-list">${rows}</ul>
+    <p class="legend-note">${escapeHtml(grid.model)}. Elevation ±${escapeHtml(grid.vertical_resolution_m)} m from SRTM.</p>`
+}
+
+function clearFloodSimulation() {
+  state.floodGrid = null
+  if (floodLegendEl) { floodLegendEl.hidden = true; floodLegendEl.innerHTML = '' }
+  setFloodStatus('Flood overlay cleared')
+  reRenderMapFromState()
+}
+
+/** Loads road status so cut-off segments appear on the map. */
+async function loadRoadStatus() {
+  try {
+    const body = await fetchJson('/api/v1/road-access')
+    if (body?.success) {
+      state.roadAccess = body.data || []
+      const cut = body.summary?.impassable || 0
+      if (roadStatusEl && roadOverlayToggle?.checked) {
+        roadStatusEl.textContent = cut
+          ? `${cut} of ${body.summary.total_roads} roads impassable`
+          : `All ${body.summary.total_roads} roads passable`
+      }
+      if (roadOverlayToggle?.checked) reRenderMapFromState()
+    }
+  } catch {
+    state.roadAccess = []
+  }
+}
+
+// =============================================================
 // Fetch helpers
 // =============================================================
 async function fetchJson(path) {
@@ -198,8 +376,17 @@ const mapGraticuleEl  = $('mapGraticule')
 const mapHazardsEl    = $('mapHazards')
 const mapAssetsEl     = $('mapAssets')
 const mapRiskEl       = $('mapRisk')
+const mapFloodEl      = $('mapFlood')
+const mapRoadsEl      = $('mapRoads')
 const mapLegendEl     = $('mapLegend')
 const mapDefsEl       = $('mapDefs')
+const floodLegendEl   = $('floodLegend')
+const floodStatusEl   = $('floodStatus')
+const floodLevelInput = $('floodLevelInput')
+const floodSimulateBtn = $('floodSimulate')
+const floodClearBtn   = $('floodClear')
+const roadOverlayToggle = $('roadOverlayToggle')
+const roadStatusEl       = $('roadStatus')
 
 function svgEl(tag, attrs = {}) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', tag)
@@ -343,6 +530,12 @@ function renderMap(records) {
     maxLon: Math.max(dataBbox.maxLon, HORN_BBOX.maxLon),
   }
 
+  // The simulation targets the data extent, not the drawn extent: the map
+  // always expands to the full Horn of Africa for land context, and asking the
+  // terrain service for a continent would either time out or silently drop
+  // back to zoom 5, where a "flood depth" is meaningless.
+  if (dataBbox) state.lastMapBbox = dataBbox
+
   // Apply map severity filter
   const sevFilter = $('mapSeverity')?.value || ''
   const srcFilter = $('mapSource')?.value || ''
@@ -358,7 +551,15 @@ function renderMap(records) {
   mapHazardsEl.innerHTML = ''
   mapAssetsEl.innerHTML = ''
   mapRiskEl.innerHTML = ''
+  if (mapFloodEl) mapFloodEl.innerHTML = ''
+  if (mapRoadsEl) mapRoadsEl.innerHTML = ''
   if (mapDefsEl) mapDefsEl.innerHTML = ''
+
+  // The simulation overlay and road status persist across filter changes, so
+  // a severity or source filter must not silently discard the flood extent the
+  // operator just computed.
+  if (state.floodGrid) renderFloodLayer(state.floodGrid, bbox)
+  if (state.roadAccess?.length) renderRoadLayer(state.roadAccess, bbox)
 
   const hazards = visible.filter((r) => r.event_type || r.source === 'gdacs' || r.source === 'glofas' || r.source === 'nasa_firms')
   const assets  = visible.filter((r) => r.service_type)
@@ -494,6 +695,23 @@ mapEl?.addEventListener('dblclick', () => {
 // Map filter triggers re-render
 $('mapSeverity')?.addEventListener('change', reRenderMapFromState)
 $('mapSource')?.addEventListener('change', reRenderMapFromState)
+
+// Flood simulation and road overlay controls
+floodSimulateBtn?.addEventListener('click', loadFloodSimulation)
+floodClearBtn?.addEventListener('click', clearFloodSimulation)
+floodLevelInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') loadFloodSimulation()
+})
+roadOverlayToggle?.addEventListener('change', async () => {
+  state.showRoads = roadOverlayToggle.checked
+  if (state.showRoads) {
+    await loadRoadStatus()
+  } else {
+    state.roadAccess = []
+    if (roadStatusEl) roadStatusEl.textContent = ''
+    reRenderMapFromState()
+  }
+})
 
 function reRenderMapFromState() {
   const d = state.data

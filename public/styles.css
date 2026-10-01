@@ -278,6 +278,7 @@ kbd {
 .hazard-marker:hover { fill-opacity: 1; }
 
 .hazard-flood    { fill: oklch(60% 0.20 220); stroke: oklch(72% 0.20 220); }
+.hazard-landslide { fill: oklch(52% 0.16 55);  stroke: oklch(66% 0.16 55); }
 .hazard-storm    { fill: oklch(65% 0.18 195); stroke: oklch(75% 0.18 195); }
 .hazard-fire     { fill: var(--sev-critical); stroke: var(--sev-high); }
 .hazard-disaster { fill: var(--sev-high);     stroke: var(--sev-medium); }
@@ -296,6 +297,107 @@ kbd {
 .asset-default   { fill: var(--ink-muted);    stroke: var(--stroke-strong); }
 
 .risk-blob { pointer-events: none; }
+
+/* Flood depth shading. Sequential blues, deliberately not a rainbow: depth is
+   ordinal, and a hue ramp would imply a meaningful "red" that is just
+   "deeper". Deeper water is darker and more saturated. */
+.flood-layer { pointer-events: none; }
+
+.flood-cell {
+  stroke: none;
+  shape-rendering: crispEdges;
+}
+
+.flood-d0 { fill: oklch(72% 0.10 230); fill-opacity: 0.30; }
+.flood-d1 { fill: oklch(64% 0.14 232); fill-opacity: 0.42; }
+.flood-d2 { fill: oklch(55% 0.18 236); fill-opacity: 0.54; }
+.flood-d3 { fill: oklch(46% 0.20 242); fill-opacity: 0.66; }
+.flood-d4 { fill: oklch(36% 0.20 250); fill-opacity: 0.78; }
+
+/* Road status: impassable must read instantly at map scale. */
+.roads-layer { pointer-events: none; }
+
+.road-marker {
+  fill: var(--ok);
+  fill-opacity: 0.9;
+  stroke: none;
+}
+
+.road-restricted { fill: var(--sev-medium); }
+.road-impassable {
+  fill: var(--sev-critical);
+  stroke: oklch(88% 0.10 25);
+  stroke-width: 1;
+}
+
+.map-sim {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--stroke);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.map-sim-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.map-sim-status {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+
+.flood-legend {
+  border-top: 1px solid var(--stroke);
+  padding-top: 6px;
+}
+
+.flood-legend-list {
+  display: grid;
+  gap: 2px;
+  margin: 4px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flood-legend-list li {
+  display: grid;
+  grid-template-columns: 14px 76px 1fr;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+
+.flood-swatch {
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.flood-band  { font-family: var(--font-mono); color: var(--ink); }
+.flood-note  { color: var(--ink-faint); }
+.legend-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.legend-note {
+  margin: 2px 0 0;
+  font-size: 9px;
+  line-height: 1.4;
+  color: var(--ink-faint);
+}
 
 @keyframes marker-pulse {
   0%, 100% { stroke-width: 2; stroke-opacity: 0.9; }

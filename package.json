@@ -10,7 +10,7 @@
     "deploy:one-click": "deploy/one-click.sh",
     "validate": "node scripts/validate.mjs",
     "test": "node --test test/*.test.js",
-    "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=75 --test-coverage-branches=60 --test-coverage-functions=75 --test-coverage-include='src/**' test/lite.test.js test/fixtures.test.js",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=75 --test-coverage-branches=60 --test-coverage-functions=75 --test-coverage-include='src/**' test/lite.test.js test/fixtures.test.js test/flood-bands.test.js",
     "audit": "npm audit --audit-level=high",
     "test:postgres": "node --test test/database.integration.test.js",
     "test:pg0": "LINDELA_LITE_TEST_PG0=1 node --test test/database.integration.test.js",

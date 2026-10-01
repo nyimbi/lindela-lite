@@ -592,6 +592,52 @@ describe('Lindela Lite API', () => {
     assert.doesNotMatch(app, /<td>\$\{record\.(title|message|text|name|source|status|id|owner)/)
   })
 
+  it('resolves every element the dashboard looks up by id', async () => {
+    // A getElementById miss returns null, which then fails at the first
+    // property access rather than at load. This asserts the contract instead:
+    // every id app.js asks for is declared in index.html.
+    const [app, html] = await Promise.all([
+      fs.readFile(path.join(process.cwd(), 'public/app.js'), 'utf8'),
+      fs.readFile(path.join(process.cwd(), 'public/index.html'), 'utf8'),
+    ])
+    const declared = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]))
+    const looked = new Set([
+      ...[...app.matchAll(/\$\('([^']+)'\)/g)].map((m) => m[1]),
+      ...[...app.matchAll(/getElementById\('([^']+)'\)/g)].map((m) => m[1]),
+    ])
+    const missing = [...looked].filter((id) => !declared.has(id)).sort()
+    assert.deepEqual(missing, [], `index.html is missing ids referenced by app.js: ${missing.join(', ')}`)
+    assert.ok(looked.size > 20, `expected the dashboard to bind many ids, found ${looked.size}`)
+  })
+
+  it('imports the flood-bands module the dashboard actually loads', async () => {
+    // Guards against a rename that silently breaks the browser bundle: the
+    // module must exist at the path app.js requests and export what it uses.
+    const app = await fs.readFile(path.join(process.cwd(), 'public/app.js'), 'utf8')
+    const match = app.match(/from '(\/shared\/flood-bands\.js)'/)
+    assert.ok(match, 'app.js must import /shared/flood-bands.js')
+    const onDisk = path.join(process.cwd(), 'public', match[1])
+    const names = [...(await fs.readFile(onDisk, 'utf8')).matchAll(/export (?:const|function) (\w+)/g)]
+      .map((m) => m[1])
+    for (const used of ['FLOOD_DEPTH_BANDS', 'floodCellsForGrid', 'floodCoverage']) {
+      assert.ok(names.includes(used), `flood-bands.js must export ${used}`)
+    }
+  })
+
+  it('styles every flood depth band class it renders', async () => {
+    // An unstyled band renders as invisible fill, so the operator sees no
+    // water at all with no error to explain it.
+    const [css, bands] = await Promise.all([
+      fs.readFile(path.join(process.cwd(), 'public/styles.css'), 'utf8'),
+      fs.readFile(path.join(process.cwd(), 'public/shared/flood-bands.js'), 'utf8'),
+    ])
+    const keys = [...bands.matchAll(/key: '(\w+)'/g)].map((m) => m[1])
+    assert.ok(keys.length >= 5, `expected depth bands in the module, found ${keys.length}`)
+    for (const key of keys) {
+      assert.match(css, new RegExp(`\\.flood-${key}\\b`), `styles.css must define .flood-${key}`)
+    }
+  })
+
   it('ingests user-supplied conflict and service data through the API', async () => {
     const response = await fetch(`${baseUrl}/api/v1/ingest/run`, {
       method: 'POST',
@@ -2923,6 +2969,67 @@ describe('Lindela Lite road access', () => {
     } finally {
       listener.close()
     }
+  })
+
+  it('ships the road status fields the map overlay renders', async () => {
+    // renderRoadLayer reads these four fields directly; if the API stops
+    // emitting one the overlay silently draws an unstyled or invisible marker.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-road-shape-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await store.merge({
+      service_assets: [
+        { id: 'r1', name: 'Cut Road', service_type: 'road', country: 'KE', latitude: 3.1, longitude: 35.6, road_class: 'unpaved' },
+      ],
+      hazard_events: [{ id: 'h1', event_type: 'flood', severity: 'critical', title: 'Flood', latitude: 3.1, longitude: 35.6 }],
+    })
+    const { refreshAnalytics } = await import('../src/analytics.js')
+    await refreshAnalytics(store)
+
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://localhost:${listener.address().port}`
+    try {
+      const body = await fetchJson(`${baseUrl}/api/v1/road-access`)
+      const road = body.data[0]
+      assert.equal(typeof road.latitude, 'number', 'overlay needs a plottable latitude')
+      assert.equal(typeof road.longitude, 'number', 'overlay needs a plottable longitude')
+      assert.equal(typeof road.access_status, 'string', 'overlay keys its class off access_status')
+      assert.equal(typeof road.access_reason, 'string', 'overlay puts access_reason in the marker tooltip')
+      // access_status must be one the stylesheet actually defines, otherwise the
+      // marker renders with the default passable colour while reporting a cut.
+      const css = await fs.readFile(path.join(process.cwd(), 'public/styles.css'), 'utf8')
+      for (const status of new Set(body.data.map((r) => r.access_status))) {
+        // Anchored on the brace: a `\b` after the name also matches inside
+        // `.road-impassable-something`, which would hide a renamed class.
+        assert.match(css, new RegExp(`\\.road-${status}\\s*\\{`), `styles.css must define .road-${status}`)
+      }
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('survives a road with no coordinates without failing the overlay', async () => {
+    // Fixtures and partial imports produce rows without geometry. The overlay
+    // must skip those rather than draw NaN coordinates into the SVG.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-road-nogeom-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await store.merge({
+      service_assets: [
+        { id: 'r1', name: 'Road A', service_type: 'road', country: 'KE', latitude: 3.1, longitude: 35.6, road_class: 'unpaved' },
+      ],
+      hazard_events: [],
+    })
+    const { refreshAnalytics } = await import('../src/analytics.js')
+    await refreshAnalytics(store)
+    const access = computeRoadAccess(store.state?.service_assets || [], store.state?.hazard_events || [])
+    assert.ok(Array.isArray(access))
+
+    const app = await fs.readFile(path.join(process.cwd(), 'public/app.js'), 'utf8')
+    assert.match(
+      app,
+      /if \(!Number\.isFinite\(r\.latitude\) \|\| !Number\.isFinite\(r\.longitude\)\) continue/,
+      'renderRoadLayer must skip rows without finite coordinates',
+    )
   })
 })
 
