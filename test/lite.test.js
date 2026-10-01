@@ -4226,3 +4226,31 @@ describe('Lindela Lite README source list', () => {
     }
   })
 })
+
+describe('Lindela Lite OpenAPI contract', () => {
+  it('documents every field the health endpoint returns', async () => {
+    // The health payload gained `version` and the contract was not updated, so
+    // the published API described a response that no longer existed. validate.mjs
+    // checks the document parses; it cannot know the document is behind.
+    const { createServer } = await import('../src/server.js')
+    const { JsonStore } = await import('../src/store.js')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-openapi-'))
+    const server = createServer({ store: new JsonStore(path.join(dir, 'store.json')) })
+    const listener = server.listen(0)
+    const baseUrl = `http://localhost:${listener.address().port}`
+    let payload
+    try {
+      payload = await (await fetch(`${baseUrl}/api/v1/health`)).json()
+    } finally {
+      await new Promise((r) => listener.close(r))
+    }
+
+    const spec = await fs.readFile('docs/openapi.yaml', 'utf8')
+    const block = spec.slice(spec.indexOf('HealthResponse:'), spec.indexOf('HealthResponse:') + 1200)
+    const documented = new Set([...block.matchAll(/^ {8}(\w+):/gm)].map((m) => m[1]))
+
+    const undocumented = Object.keys(payload).filter((k) => !documented.has(k))
+    assert.deepEqual(undocumented, [],
+      `health returns these fields the OpenAPI contract does not document: ${undocumented.join(', ')}`)
+  })
+})

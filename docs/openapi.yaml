@@ -903,12 +903,20 @@ components:
   schemas:
     HealthResponse:
       type: object
-      required: [success, status, counts, sources, exclusions, storage]
+      required: [success, status, version, counts, sources, exclusions, storage]
       properties:
         success:
           type: boolean
         status:
           type: string
+        version:
+          type: string
+          description: >-
+            Released build version, read from package.json at startup. The
+            dashboards display this rather than carrying their own literal,
+            because a hardcoded version drifted behind the release and would
+            report a build that was not the one running.
+          example: 0.2.0
         updated_at:
           type: string
         counts:
