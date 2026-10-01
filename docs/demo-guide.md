@@ -193,7 +193,21 @@ know; the numbered hop list carries the sequence instead.
 
 ### Seasonal context
 
-The ENSO connector is keyless and verified live:
+**In the dashboard**, a strip sits above the map filters. It reads, as of
+2026-10-01: `+2.17 °C`, badge `El Niño advisory`, three of five season pips
+filled, and the period.
+
+The badge says **advisory**, not "El Niño". That is the point worth making to
+a panel: CPC declares an ENSO episode only after ±0.5 °C holds for five
+consecutive *overlapping three-month seasons*. Three qualifying seasons is an
+advisory, not an event. The strip shows how many of the five currently qualify
+instead of asserting a phase.
+
+The note also states what the number is not — a monthly SST anomaly index, not a
+rainfall forecast and not a flood probability — and that this is the **ONI**,
+not the RONI CPC now uses for official monitoring.
+
+To refresh it:
 
 ```
 curl -s -X POST http://127.0.0.1:4177/api/v1/ingest/run \
@@ -201,17 +215,8 @@ curl -s -X POST http://127.0.0.1:4177/api/v1/ingest/run \
 curl -s "http://127.0.0.1:4177/api/v1/climate?source=noaa_enso&limit=3"
 ```
 
-Expect recent Niño 3.4 anomalies in °C with phase `el_nino_advisory` or
-`la_nina_advisory`. Three things to be ready to explain:
-
-- `episode_declared` stays **false** until five consecutive overlapping
-  three-month seasons clear ±0.5 °C. `overlapping_seasons` shows the count out
-  of five. A warm month is not an ENSO event.
-- `latitude` and `longitude` are `null` on purpose. Niño 3.4 is a basin-wide
-  Pacific index; attaching it to the nearest district would misrepresent it.
-- This is the **ONI**, not the RONI CPC now uses for official monitoring. RONI
-  has no stable keyless monthly feed, so the connector reads ONI and says so
-  rather than mislabelling it.
+If the connector has never run, the strip reads `not ingested` rather than
+`Neutral`. Those are different claims and only one is evidenced.
 
 ### Flood-depth simulation
 

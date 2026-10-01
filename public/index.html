@@ -90,6 +90,30 @@
             </g>
             <g id="mapLegend" class="map-legend"></g>
           </svg>
+          <div class="seasonal-strip" role="group" aria-label="Seasonal context">
+            <div class="seasonal-head">
+              <span class="seasonal-label">Seasonal context</span>
+              <span id="seasonalIndex" class="seasonal-index">Niño 3.4 SST anomaly</span>
+              <span id="seasonalPhase" class="seasonal-phase seasonal-phase-unknown">not ingested</span>
+            </div>
+            <div class="seasonal-value">
+              <span id="seasonalAnomaly" class="seasonal-anomaly">—</span>
+              <span id="seasonalPeriod" class="seasonal-period"></span>
+            </div>
+            <!-- CPC declares an ENSO episode only after five consecutive
+                 overlapping three-month seasons clear ±0.5 °C. The strip shows
+                 how many currently qualify rather than asserting a phase, so a
+                 warm month is never presented as a declared event. -->
+            <div class="seasonal-seasonbar" role="img" aria-labelledby="seasonalSeasonLabel">
+              <span id="seasonalSeasonLabel" class="seasonal-seasonlabel">Overlapping seasons</span>
+              <span class="seasonal-pips" id="seasonalPips"></span>
+              <span id="seasonalSeasonsText" class="seasonal-seasonstext"></span>
+            </div>
+            <p id="seasonalNote" class="seasonal-note">
+              Monthly SST anomaly index. Not a rainfall forecast and not a flood probability.
+            </p>
+          </div>
+
           <div class="map-filters">
             <label class="filter-label">
               <span>Time</span>

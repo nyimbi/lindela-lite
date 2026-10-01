@@ -4,6 +4,7 @@
 import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS } from '/shared/basemap.js'
 import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage } from '/shared/flood-bands.js'
 import { isFinitePoint, mapFrame } from '/shared/map-frame.js'
+import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState } from '/shared/seasonal.js'
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})
@@ -38,6 +39,7 @@ const state = {
   floodFocus: null,
   roadAccess: [],
   showRoads: false,
+  climate: [],
   routePlan: null,
   roadsById: new Map(),
 }
@@ -365,6 +367,46 @@ function renderRouteLayer(plan, bbox) {
   })
 }
 
+/**
+ * Renders the seasonal-context strip.
+ *
+ * The wording is the point. This reports an advisory and how many of CPC's five
+ * consecutive overlapping seasons currently qualify. It never says "El Ni\u00f1o"
+ * on its own, because one warm month is not a declared ENSO event and a panel
+ * reading a bare phase name would reasonably assume it was.
+ */
+function renderSeasonalStrip(observations) {
+  if (!seasonalPhaseEl) return
+  const state = readSeasonalState(observations)
+
+  if (seasonalPhaseEl) {
+    seasonalPhaseEl.textContent = seasonalPhaseLabel(state)
+    seasonalPhaseEl.className = `seasonal-phase seasonal-phase-${state ? state.phase : 'unknown'}`
+  }
+  if (seasonalAnomalyEl) {
+    seasonalAnomalyEl.textContent = state ? `${state.anomalyC > 0 ? '+' : ''}${state.anomalyC.toFixed(2)} \u00b0C` : '\u2014'
+    seasonalAnomalyEl.className = `seasonal-anomaly ${state ? (state.anomalyC >= 0 ? 'is-warm' : 'is-cold') : ''}`
+  }
+  if (seasonalPeriodEl) seasonalPeriodEl.textContent = state ? state.period : ''
+
+  if (seasonalPipsEl) {
+    const required = state ? state.seasonsRequired : 5
+    const met = state ? Math.min(state.overlappingSeasons, required) : 0
+    seasonalPipsEl.innerHTML = Array.from({ length: required }, (_, i) => (
+      `<span class="seasonal-pip${i < met ? ' is-met' : ''}"></span>`
+    )).join('')
+  }
+  if (seasonalSeasonsEl) {
+    seasonalSeasonsEl.textContent = state
+      ? `${Math.min(state.overlappingSeasons, state.seasonsRequired)} of ${state.seasonsRequired} seasons`
+      : ''
+  }
+  if (seasonalNoteEl) seasonalNoteEl.textContent = seasonalNarrative(state)
+  if (seasonalIndexEl && state?.indexUsed) {
+    seasonalIndexEl.textContent = `Niño 3.4 SST anomaly (${state.indexUsed})`
+  }
+}
+
 /** Fills the origin and destination selects from the imported road assets. */
 function populateRouteEndpoints(roads) {
   if (!routeFromEl || !routeToEl) return
@@ -564,6 +606,13 @@ const mapRiskEl       = $('mapRisk')
 const mapFloodEl      = $('mapFlood')
 const mapRoadsEl      = $('mapRoads')
 const mapRouteEl      = $('mapRoute')
+const seasonalIndexEl    = $('seasonalIndex')
+const seasonalPhaseEl    = $('seasonalPhase')
+const seasonalAnomalyEl  = $('seasonalAnomaly')
+const seasonalPeriodEl   = $('seasonalPeriod')
+const seasonalPipsEl     = $('seasonalPips')
+const seasonalSeasonsEl  = $('seasonalSeasonsText')
+const seasonalNoteEl     = $('seasonalNote')
 const routeFromEl      = $('routeFrom')
 const routeToEl        = $('routeTo')
 const routePlanBtn     = $('routePlan')
@@ -913,7 +962,7 @@ function reRenderMapFromState() {
 // Data refresh
 // =============================================================
 async function refresh() {
-  const [health, sources, ingestionHealth, flood, conflict, events, assets, alerts, reports, reportTemplates] =
+  const [health, sources, ingestionHealth, flood, conflict, events, assets, alerts, reports, reportTemplates, climate] =
     await Promise.all([
       fetchJson('/api/v1/health'),
       fetchJson('/api/v1/sources'),
@@ -925,9 +974,11 @@ async function refresh() {
       fetchJson('/api/v1/alert-events?limit=30'),
       fetchJson('/api/v1/reports?limit=20'),
       fetchJson('/api/v1/report-templates?limit=20'),
+      fetchJson('/api/v1/climate?limit=200'),
     ])
 
-  state.data = { health, sources, ingestionHealth, flood, conflict, events, assets, alerts, reports, reportTemplates }
+  state.data = { health, sources, ingestionHealth, flood, conflict, events, assets, alerts, reports, reportTemplates, climate }
+  state.climate = climate.data || []
   state.reports   = reports.data || []
   state.templates = reportTemplates.data || []
 
@@ -938,6 +989,7 @@ async function refresh() {
   // Populate map source filter
   populateMapSourceFilter(sources.data || [])
   populateRouteEndpoints(assets.data || [])
+  renderSeasonalStrip(state.climate)
 
   renderMap([
     ...(flood.data || []),

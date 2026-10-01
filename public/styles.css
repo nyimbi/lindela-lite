@@ -1516,3 +1516,121 @@ dialog[open] {
   font-size: 10px;
   color: var(--ink-faint);
 }
+
+/* Seasonal context strip.
+   Colour encodes warm/cool, but the phase label always carries "advisory":
+   a warm month is not a declared ENSO event, and a red badge reading
+   "El Niño" would assert something the connector deliberately does not. */
+.seasonal-strip {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--stroke);
+  border-left: 3px solid oklch(55% 0.04 220);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+}
+
+.seasonal-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.seasonal-label {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.seasonal-index {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.seasonal-phase {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  background: oklch(35% 0.02 220);
+  color: var(--ink-muted);
+}
+
+.seasonal-phase-el_nino_advisory {
+  background: oklch(48% 0.14 35);
+  color: oklch(92% 0.05 35);
+}
+
+.seasonal-phase-la_nina_advisory {
+  background: oklch(48% 0.12 230);
+  color: oklch(92% 0.04 230);
+}
+
+.seasonal-phase-neutral { background: oklch(35% 0.02 220); }
+.seasonal-phase-unknown { background: oklch(30% 0.02 220); color: var(--ink-faint); }
+
+.seasonal-value {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.seasonal-anomaly {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.seasonal-anomaly.is-warm { color: oklch(72% 0.13 38); }
+.seasonal-anomaly.is-cold { color: oklch(70% 0.11 230); }
+
+.seasonal-period {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.seasonal-seasonbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.seasonal-seasonlabel {
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.seasonal-pips {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.seasonal-pip {
+  width: 14px;
+  height: 5px;
+  border-radius: 2px;
+  background: oklch(30% 0.02 220);
+}
+
+.seasonal-pip.is-met { background: oklch(62% 0.13 200); }
+
+.seasonal-seasonstext {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+
+.seasonal-note {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}

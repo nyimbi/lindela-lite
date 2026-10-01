@@ -281,6 +281,34 @@ async function main() {
   check('clearing the route removes the overlay',
     routeCleared.markers === 0 && routeCleared.hops === 0)
 
+  // Seasonal context. The wording is the assertion: a bare "El Nino" would
+  // assert a declared event the connector deliberately refuses to declare.
+  const seasonal = await evaluate(`(() => ({
+    phase: (document.getElementById('seasonalPhase')||{}).textContent || '',
+    anomaly: (document.getElementById('seasonalAnomaly')||{}).textContent || '',
+    period: (document.getElementById('seasonalPeriod')||{}).textContent || '',
+    pips: document.querySelectorAll('#seasonalPips .seasonal-pip').length,
+    met: document.querySelectorAll('#seasonalPips .seasonal-pip.is-met').length,
+    note: (document.getElementById('seasonalNote')||{}).textContent || '',
+    index: (document.getElementById('seasonalIndex')||{}).textContent || '',
+  }))()`)
+
+  check('seasonal strip reports the Nino 3.4 state',
+    /°C/.test(seasonal.anomaly) && /^\d{4}-\d{2}$/.test(seasonal.period),
+    `${seasonal.period} ${seasonal.anomaly} ${seasonal.phase}`)
+  check('the phase label is qualified as an advisory',
+    seasonal.phase === 'Neutral' || seasonal.phase.endsWith('advisory'),
+    seasonal.phase)
+  check('five season pips are shown, with the qualifying ones filled',
+    seasonal.pips === 5 && seasonal.met <= 5, `${seasonal.met} of 5 filled`)
+  check('the note states how close it is to a declared episode',
+    /of 5 consecutive overlapping seasons|episode criterion is met/i.test(seasonal.note),
+    seasonal.note.slice(0, 130))
+  check('the note says what the index is not',
+    /not a rainfall forecast/i.test(seasonal.note))
+  check('the index identity is preserved rather than relabelled',
+    /\(ONI\)/.test(seasonal.index), seasonal.index)
+
   const fatal = pageErrors.filter((e) => !/favicon|ERR_FAILED.*favicon/i.test(e))
   check('no unhandled page errors', fatal.length === 0, fatal.slice(0, 2).join(' | ') || 'none')
 
