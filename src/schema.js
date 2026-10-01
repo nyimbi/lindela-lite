@@ -5,6 +5,7 @@ export const SOURCE_IDS = Object.freeze([
   'chirps',
   'nasa_firms',
   'usgs_earthquake',
+  'noaa_enso',
   'service_assets',
   'acled_csv',
   'conflict_csv',
@@ -291,6 +292,15 @@ export function publicSourceCatalog() {
         type: 'csv_api',
         requires_credentials: false,
         outputs: ['hazard_events'],
+      }
+    }
+    if (id === 'noaa_enso') {
+      return {
+        ...common,
+        name: 'NOAA CPC Niño 3.4 index (ONI)',
+        type: 'ascii_index',
+        requires_credentials: false,
+        outputs: ['climate_observations'],
       }
     }
     if (id === 'usgs_earthquake') {

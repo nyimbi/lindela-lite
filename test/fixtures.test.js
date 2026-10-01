@@ -8,6 +8,12 @@ import { glofasConnector } from '../src/connectors/glofas.js'
 import { nasaFirmsConnector } from '../src/connectors/nasa-firms.js'
 import { openMeteoConnector } from '../src/connectors/open-meteo.js'
 import { usgsEarthquakeConnector } from '../src/connectors/usgs-earthquake.js'
+import {
+  OCEANIC_NINO_THRESHOLD_C,
+  classifyNino34,
+  noaaNinoConnector,
+  parseNino34,
+} from '../src/connectors/noaa-enso.js'
 
 const fixtureDir = new URL('./fixtures/', import.meta.url)
 const originalFetch = globalThis.fetch
@@ -114,6 +120,177 @@ describe('public source connector fixtures', () => {
     assert.equal(result.hazard_events.length, 0)
     assert.equal(result.errors.length, 1)
     assert.match(result.errors[0], /usgs_earthquake/)
+  })
+})
+
+describe('NOAA CPC Nino 3.4 index', () => {
+  it('parses the fixed-width CPC rows and ignores the header', () => {
+    const rows = parseNino34(fs.readFileSync(path.join(fixtureDir.pathname, 'nino34.txt'), 'utf8'))
+    assert.equal(rows.length, 10)
+    assert.deepEqual(rows[0], { year: 1949, month: 12, anomaly_c: -1.15 })
+    assert.deepEqual(rows.at(-1), { year: 2026, month: 8, anomaly_c: 2.17 })
+  })
+
+  it('returns no rows for empty or non-string input', () => {
+    assert.deepEqual(parseNino34(''), [])
+    assert.deepEqual(parseNino34(null), [])
+    assert.deepEqual(parseNino34(undefined), [])
+    assert.deepEqual(parseNino34('not a table'), [])
+  })
+
+  it('ingests recent monthly anomalies and reports an advisory phase', async () => {
+    mockFetch('nino34.txt', 'text/plain')
+    const result = await noaaNinoConnector.ingest({
+      enso_feed: 'https://fixture.test/nino34.txt',
+      enso_window_months: 4,
+      retries: 0,
+    })
+    assert.equal(result.errors.length, 0)
+    assert.equal(result.climate_observations.length, 4)
+    const latest = result.climate_observations[0]
+    assert.equal(latest.source, 'noaa_enso')
+    assert.equal(latest.source_id, '2026-08')
+    assert.equal(latest.value, 2.17)
+    assert.equal(latest.unit, 'degC')
+    assert.equal(latest.metadata.phase, 'el_nino_advisory')
+    assert.equal(latest.metadata.index_used, 'ONI')
+  })
+
+  it('leaves coordinates null so the index is not attributed to a district', async () => {
+    mockFetch('nino34.txt', 'text/plain')
+    const result = await noaaNinoConnector.ingest({ enso_feed: 'https://fixture.test/nino34.txt', retries: 0 })
+    for (const observation of result.climate_observations) {
+      // Nino 3.4 is a basin-wide Pacific index. Assigning nearest-region
+      // coordinates would make a global signal look like a district reading.
+      assert.equal(observation.latitude, null)
+      assert.equal(observation.longitude, null)
+    }
+  })
+
+  it('does not declare an episode from a short warm run', async () => {
+    mockFetch('nino34.txt', 'text/plain')
+    const result = await noaaNinoConnector.ingest({ enso_feed: 'https://fixture.test/nino34.txt', retries: 0 })
+    // The fixture's newest run is 4 months (2026-05 to 2026-08), which is 2
+    // overlapping seasons. CPC needs five, so nothing may claim an episode.
+    for (const observation of result.climate_observations) {
+      assert.equal(observation.metadata.episode_declared, false)
+      assert.match(observation.metadata.episode_note, /CPC declares an ENSO episode/)
+    }
+    assert.equal(classifyNino34(parseNino34('2026 7 29.0 27.2 1.78')).episode_declared, false)
+  })
+
+  it('breaks runs and seasons at a gap in the series', () => {
+    // Three warm months in 2021 and three in 2024 are not one six-month run.
+    // Treating them as contiguous would let two unrelated warm periods
+    // manufacture an ENSO episode.
+    const gapped = parseNino34([
+      '2021 11 29.0 27.0 0.90',
+      '2021 12 29.0 27.0 0.90',
+      '2022 1 29.0 27.0 0.90',
+      '2024 1 29.0 27.0 0.90',
+      '2024 2 29.0 27.0 0.90',
+      '2024 3 29.0 27.0 0.90',
+    ].join('\n'))
+    const classification = classifyNino34(gapped)
+    assert.equal(classification.advisory_run_months, 3, 'the 2021 months must not extend the run')
+    assert.equal(classification.overlapping_seasons, 1)
+    assert.equal(classification.episode_declared, false)
+  })
+
+  it('handles a run that crosses a year boundary', () => {
+    const wrapped = parseNino34([
+      '2021 10 29.0 27.0 0.90',
+      '2021 11 29.0 27.0 0.90',
+      '2021 12 29.0 27.0 0.90',
+      '2022 1 29.0 27.0 0.90',
+    ].join('\n'))
+    const classification = classifyNino34(wrapped)
+    assert.equal(classification.advisory_run_months, 4, 'December to January is consecutive')
+    assert.equal(classification.period, '2022-01')
+  })
+
+  it('counts overlapping three-month seasons, not consecutive months', () => {
+    // CPC's rule is five consecutive overlapping seasons, and five seasons
+    // span seven distinct months because consecutive seasons share two.
+    // Counting months instead would wrongly require fifteen.
+    const seven = [0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9].map((v, i) => ({ year: 2020, month: i + 1, anomaly_c: v }))
+    assert.equal(classifyNino34(seven).overlapping_seasons, 5)
+    assert.equal(classifyNino34(seven).episode_declared, true)
+
+    const six = seven.slice(0, 6)
+    assert.equal(classifyNino34(six).overlapping_seasons, 4, 'six months is only four seasons')
+    assert.equal(classifyNino34(six).episode_declared, false)
+  })
+
+  it('survives a neutral latest month without inventing a run length', () => {
+    const rows = [0.9, 0.9, 0.1].map((v, i) => ({ year: 2020, month: i + 1, anomaly_c: v }))
+    const classification = classifyNino34(rows)
+    assert.equal(classification.phase, 'neutral')
+    // "One consecutive month above threshold" would be a false statement when
+    // the latest month is below it.
+    assert.equal(classification.advisory_run_months, 0)
+    assert.equal(classification.overlapping_seasons, 0)
+  })
+
+  it('cannot declare an episode from fewer than three months of history', () => {
+    const short = [1.5, 1.5].map((v, i) => ({ year: 2020, month: i + 1, anomaly_c: v }))
+    assert.equal(classifyNino34(short).phase, 'el_nino')
+    assert.equal(classifyNino34(short).overlapping_seasons, 0, 'no complete three-month season exists')
+    assert.equal(classifyNino34(short).episode_declared, false)
+  })
+
+  it('counts the advisory run in months and stops at the threshold', () => {
+    const rows = parseNino34([
+      '2026 3 29.0 27.0 0.03',
+      '2026 4 29.0 27.0 0.43',
+      '2026 5 29.0 27.0 0.94',
+      '2026 6 29.0 27.0 1.47',
+      '2026 7 29.0 27.0 1.78',
+      '2026 8 29.0 27.0 2.17',
+    ].join('\n'))
+    const classification = classifyNino34(rows)
+    assert.equal(classification.phase, 'el_nino')
+    assert.equal(classification.advisory_run_months, 4, 'April 0.43 is below the 0.5 threshold')
+    assert.equal(classification.period, '2026-08')
+  })
+
+  it('classifies La Nina and neutral against CPC threshold', () => {
+    const laNina = classifyNino34(parseNino34('2020 10 27.0 26.0 -0.60\n2020 11 27.0 26.0 -0.70'))
+    assert.equal(laNina.phase, 'la_nina')
+    assert.equal(laNina.advisory_run_months, 2)
+    assert.equal(classifyNino34(parseNino34('2020 10 27.0 26.0 -0.20')).phase, 'neutral')
+  })
+
+  it('treats exactly +/-0.5 as meeting the threshold, per CPC wording', () => {
+    assert.equal(OCEANIC_NINO_THRESHOLD_C, 0.5)
+    assert.equal(classifyNino34(parseNino34('2020 10 27.0 26.0 0.50')).phase, 'el_nino')
+    assert.equal(classifyNino34(parseNino34('2020 10 27.0 26.0 -0.50')).phase, 'la_nina')
+  })
+
+  it('reports unknown for an empty series rather than defaulting to neutral', () => {
+    // "neutral" is a real reading and must not be used as a stand-in for
+    // "no data", which would quietly assert conditions that were never measured.
+    assert.equal(classifyNino34([]).phase, 'unknown')
+    assert.equal(classifyNino34([]).anomaly_c, null)
+  })
+
+  it('surfaces an upstream failure as an error instead of zero records', async () => {
+    globalThis.fetch = async () => ({ ok: false, status: 503, text: async () => '', json: async () => ({}) })
+    const result = await noaaNinoConnector.ingest({ enso_feed: 'https://fixture.test/nino34.txt', retries: 0 })
+    assert.equal(result.climate_observations.length, 0)
+    assert.equal(result.errors.length, 1)
+    assert.match(result.errors[0], /noaa_enso/)
+  })
+
+  it('reports a parse failure when the feed is reachable but unreadable', async () => {
+    globalThis.fetch = async () => ({
+      ok: true, status: 200, headers: new Map([['content-type', 'text/html']]),
+      text: async () => '<html><body>maintenance</body></html>', json: async () => ({}),
+    })
+    const result = await noaaNinoConnector.ingest({ enso_feed: 'https://fixture.test/nino34.txt', retries: 0 })
+    assert.equal(result.climate_observations.length, 0)
+    assert.equal(result.errors.length, 1)
+    assert.match(result.errors[0], /no parseable/)
   })
 })
 

@@ -11,14 +11,25 @@
         "timeout_ms": "number",
         "retries": "number"
       },
-      "output": ["climate_observations"]
+      "output": [
+        "climate_observations"
+      ]
     },
     "defaults": {
-      "rateLimit": {"perMinute": 60},
-      "retry": {"max": 2, "backoffMs": 1000},
+      "rateLimit": {
+        "perMinute": 60
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
       "timeout_ms": 20000
     },
-    "tags": ["climate", "forecast", "weather"],
+    "tags": [
+      "climate",
+      "forecast",
+      "weather"
+    ],
     "contributor": "core",
     "since": "0.1.0"
   },
@@ -32,14 +43,25 @@
         "timeout_ms": "number",
         "retries": "number"
       },
-      "output": ["hazard_events"]
+      "output": [
+        "hazard_events"
+      ]
     },
     "defaults": {
-      "rateLimit": {"perMinute": 120},
-      "retry": {"max": 2, "backoffMs": 1000},
+      "rateLimit": {
+        "perMinute": 120
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
       "timeout_ms": 20000
     },
-    "tags": ["hazards", "disaster", "rss"],
+    "tags": [
+      "hazards",
+      "disaster",
+      "rss"
+    ],
     "contributor": "core",
     "since": "0.1.0"
   },
@@ -53,14 +75,25 @@
         "timeout_ms": "number",
         "retries": "number"
       },
-      "output": ["hazard_events"]
+      "output": [
+        "hazard_events"
+      ]
     },
     "defaults": {
-      "rateLimit": {"perMinute": 120},
-      "retry": {"max": 2, "backoffMs": 1000},
+      "rateLimit": {
+        "perMinute": 120
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
       "timeout_ms": 20000
     },
-    "tags": ["flood", "forecast", "rss"],
+    "tags": [
+      "flood",
+      "forecast",
+      "rss"
+    ],
     "contributor": "core",
     "since": "0.1.0"
   },
@@ -74,14 +107,25 @@
         "timeout_ms": "number",
         "retries": "number"
       },
-      "output": ["climate_observations"]
+      "output": [
+        "climate_observations"
+      ]
     },
     "defaults": {
-      "rateLimit": {"perMinute": 60},
-      "retry": {"max": 2, "backoffMs": 1000},
+      "rateLimit": {
+        "perMinute": 60
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
       "timeout_ms": 20000
     },
-    "tags": ["rainfall", "precipitation", "climate"],
+    "tags": [
+      "rainfall",
+      "precipitation",
+      "climate"
+    ],
     "contributor": "core",
     "since": "0.1.0"
   },
@@ -95,14 +139,25 @@
         "timeout_ms": "number",
         "retries": "number"
       },
-      "output": ["hazard_events"]
+      "output": [
+        "hazard_events"
+      ]
     },
     "defaults": {
-      "rateLimit": {"perMinute": 60},
-      "retry": {"max": 2, "backoffMs": 1000},
+      "rateLimit": {
+        "perMinute": 60
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
       "timeout_ms": 30000
     },
-    "tags": ["fire", "detection", "satellite"],
+    "tags": [
+      "fire",
+      "detection",
+      "satellite"
+    ],
     "contributor": "core",
     "since": "0.1.0"
   },
@@ -117,16 +172,65 @@
         "timeout_ms": "number",
         "retries": "number"
       },
-      "output": ["hazard_events"]
+      "output": [
+        "hazard_events"
+      ]
     },
     "defaults": {
-      "rateLimit": {"perMinute": 60},
-      "retry": {"max": 2, "backoffMs": 1000},
+      "rateLimit": {
+        "perMinute": 60
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
       "timeout_ms": 20000
     },
-    "tags": ["earthquake", "seismic", "hazard", "geojson"],
+    "tags": [
+      "earthquake",
+      "seismic",
+      "hazard",
+      "geojson"
+    ],
     "contributor": "core",
     "since": "0.2.0"
+  },
+  {
+    "id": "noaa_enso",
+    "module": "src/connectors/noaa-enso.js",
+    "description": "NOAA CPC Nino 3.4 SST anomaly index (ONI), fixed-width ASCII. Advisory strength only: CPC declares an ENSO episode only after five consecutive overlapping three-month seasons.",
+    "schemas": {
+      "input": {
+        "enso_window_months": "number - how many recent months to store (default 18)",
+        "enso_threshold_c": "number - advisory threshold in degC (default 0.5, CPC published value)",
+        "enso_feed": "string - override feed URL",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": [
+        "climate_observations"
+      ]
+    },
+    "defaults": {
+      "rateLimit": {
+        "perMinute": 30
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
+      "timeout_ms": 20000
+    },
+    "tags": [
+      "climate",
+      "enso",
+      "seasonal",
+      "index"
+    ],
+    "contributor": "core",
+    "source": "NOAA Climate Prediction Center",
+    "license": "U.S. Government work, public domain",
+    "since": "0.3.0"
   },
   {
     "id": "service_assets",
@@ -137,13 +241,19 @@
         "service_assets_csv": "string",
         "service_assets_geojson": "string"
       },
-      "output": ["service_assets"]
+      "output": [
+        "service_assets"
+      ]
     },
     "defaults": {
       "timeout_ms": 5000,
       "retries": 0
     },
-    "tags": ["infrastructure", "upload", "user-data"],
+    "tags": [
+      "infrastructure",
+      "upload",
+      "user-data"
+    ],
     "contributor": "core",
     "since": "0.1.0"
   },
@@ -155,13 +265,20 @@
       "input": {
         "acled_csv": "string (CSV data)"
       },
-      "output": ["conflict_events"]
+      "output": [
+        "conflict_events"
+      ]
     },
     "defaults": {
       "timeout_ms": 5000,
       "retries": 0
     },
-    "tags": ["conflict", "events", "upload", "licensed"],
+    "tags": [
+      "conflict",
+      "events",
+      "upload",
+      "licensed"
+    ],
     "contributor": "core",
     "since": "0.1.0"
   },
@@ -173,13 +290,19 @@
       "input": {
         "conflict_csv": "string (CSV data)"
       },
-      "output": ["conflict_events"]
+      "output": [
+        "conflict_events"
+      ]
     },
     "defaults": {
       "timeout_ms": 5000,
       "retries": 0
     },
-    "tags": ["conflict", "events", "upload"],
+    "tags": [
+      "conflict",
+      "events",
+      "upload"
+    ],
     "contributor": "core",
     "since": "0.1.0"
   },
@@ -189,19 +312,26 @@
     "description": "DHIS2 bidirectional sync scaffold (configure base_url and api_token to activate)",
     "schemas": {
       "input": {
-        "base_url": "string — DHIS2 instance root URL",
-        "api_token": "string — personal access token",
-        "org_units": "array of string — org unit UIDs",
-        "data_elements": "array of string — data element UIDs",
-        "period": "string — DHIS2 period e.g. 2026Q3"
+        "base_url": "string \u2014 DHIS2 instance root URL",
+        "api_token": "string \u2014 personal access token",
+        "org_units": "array of string \u2014 org unit UIDs",
+        "data_elements": "array of string \u2014 data element UIDs",
+        "period": "string \u2014 DHIS2 period e.g. 2026Q3"
       },
-      "output": ["climate_observations"]
+      "output": [
+        "climate_observations"
+      ]
     },
     "defaults": {
       "timeout_ms": 20000,
       "retries": 1
     },
-    "tags": ["dhis2", "health", "bidirectional", "scaffold"],
+    "tags": [
+      "dhis2",
+      "health",
+      "bidirectional",
+      "scaffold"
+    ],
     "contributor": "core",
     "since": "0.2.0"
   }
