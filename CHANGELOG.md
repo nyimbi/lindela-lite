@@ -52,6 +52,41 @@ no existing endpoint changed shape.
 - GDACS parsing reads namespaced RSS tags by local name and extracts event type
   codes, bbox, and country. The previous literal-prefix match returned null for
   all three.
+- **Risk score bands renamed to say what they are.** `score_p10` / `score_p50` /
+  `score_p90` / `interval_width` are a *sensitivity range driven by input
+  coverage*, not quantiles of a predictive distribution. A well-populated region
+  returned `p10 == p90` with `interval_width: 0`, which reads as certainty while
+  actually meaning inputs were sufficient. Responses now carry
+  `sensitivity_low` / `_mid` / `_high` / `_width`, `calibrated_uncertainty: false`,
+  and a `limits` string. The old names remain as aliases with identical values,
+  so stored records and consumers keep working. No calibrated bands ship with
+  this release and no Brier/CRPS calibration report exists.
+
+### Fixed
+
+- **Three connectors reported success while ingesting nothing.** CHIRPS matched
+  filenames against a product index that now lists year directories, so the
+  pattern matched zero times. GloFAS's published RSS URL serves the EFAS web app,
+  so the parse found no items. NASA FIRMS has no keyless access and the
+  placeholder key returned HTTP 400 per region while the catalog claimed no
+  credentials were needed. Each now reports an error instead of an empty success,
+  and their fixtures reproduce the real upstream responses.
+- **A source returning zero records can no longer report `success`.**
+  `minimum_records` was 0 on four regular sources, so an empty parse passed the
+  health check as fresh. Every regular public source now declares a floor of 1,
+  verified against live record counts first. User-supplied sources keep a floor
+  of 0, since uploading an empty CSV is a legitimate operator action.
+- **Country-scale hazard bboxes no longer block distant roads.** A GDACS green
+  flood alert for France arrived with a bbox spanning ~40°, and bbox containment
+  is authoritative in the road-access matcher — every road in the Horn of Africa
+  came back restricted by an alert 2,051 km away. Only hazard-scale boxes
+  (≤5°, ~555 km) may block on containment; wider ones fall back to proximity
+  matching around the reported centre.
+- `POST /api/v1/routing/plan` rejects coordinate objects with an error naming the
+  problem. They previously produced "Unknown origin or destination road", which
+  is indistinguishable from missing data.
+- The demo seed reports a degraded source as degraded. `runIngestion` does not
+  throw for one, so every source was labelled "ok".
 
 ## v0.2.0 - 2026-10-01
 

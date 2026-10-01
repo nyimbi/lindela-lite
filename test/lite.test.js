@@ -366,16 +366,58 @@ describe('Lindela Lite analytics', () => {
     assert.ok(quality.every((item) => Number.isFinite(item.confidence)))
   })
 
-  it('includes probabilistic bands in risk scores', () => {
+  it('labels risk bands as a sensitivity range, not calibrated uncertainty', () => {
+    // The bands are named score_p10/p50/p90, which reads as quantiles of a
+    // predictive distribution. They are a fixed function of input coverage, so
+    // a well-populated region returns a zero-width band that looks like
+    // certainty. The truthful names and the explicit flag prevent that
+    // misreading; the aliases stay for existing consumers.
     const flood = computeFloodRisk(data)
     assert.equal(flood.length, 1)
-    assert.ok(Number.isFinite(flood[0].score_p10))
-    assert.ok(Number.isFinite(flood[0].score_p50))
-    assert.ok(Number.isFinite(flood[0].score_p90))
-    assert.ok(Number.isFinite(flood[0].interval_width))
-    assert.ok(flood[0].score_p10 <= flood[0].score_p50)
-    assert.ok(flood[0].score_p50 <= flood[0].score_p90)
-    assert.ok(flood[0].interval_width >= 0)
+    const risk = flood[0]
+    for (const field of ['sensitivity_low', 'sensitivity_mid', 'sensitivity_high', 'sensitivity_width']) {
+      assert.ok(Number.isFinite(risk[field]), `missing ${field}`)
+    }
+    assert.ok(risk.sensitivity_low <= risk.sensitivity_mid)
+    assert.ok(risk.sensitivity_mid <= risk.sensitivity_high)
+    assert.ok(risk.sensitivity_width >= 0)
+    assert.equal(risk.calibrated_uncertainty, false)
+    assert.match(risk.limits, /not a calibrated predictive distribution/)
+    // Aliases must keep matching so stored records and consumers stay valid.
+    assert.equal(risk.score_p10, risk.sensitivity_low)
+    assert.equal(risk.score_p50, risk.sensitivity_mid)
+    assert.equal(risk.score_p90, risk.sensitivity_high)
+    assert.equal(risk.interval_width, risk.sensitivity_width)
+  })
+
+  it('explains a zero-width band rather than implying certainty', () => {
+    // With full input coverage the band collapses. That must not read as
+    // "no uncertainty" — the limits text has to say what it means.
+    const rich = {
+      ...data,
+      climate_observations: [
+        { ...data.climate_observations[0], precipitation_mm: 20, precipitation_probability_pct: 60 },
+        { ...data.climate_observations[0], id: 'c2', precipitation_mm: 15, precipitation_probability_pct: 55 },
+      ],
+      hazard_events: [
+        data.hazard_events[0],
+        { ...data.hazard_events[0], id: 'h2', severity: 'critical', latitude: 3.21, longitude: 35.71 },
+      ],
+    }
+    const [risk] = computeFloodRisk(rich)
+    assert.equal(risk.confidence, 100, 'all three confidence inputs must be present')
+    assert.equal(risk.sensitivity_width, 0)
+    assert.equal(risk.calibrated_uncertainty, false)
+    assert.match(risk.limits, /zero band means inputs were sufficient/i)
+  })
+
+  it('applies the same band labelling to climate-conflict risk', () => {
+    const conflict = computeClimateConflictRisk(data)
+    assert.ok(conflict.length >= 1)
+    const risk = conflict[0]
+    assert.ok(Number.isFinite(risk.sensitivity_low))
+    assert.equal(risk.calibrated_uncertainty, false)
+    assert.match(risk.limits, /weighted sum/i)
   })
 
   it('computes ensemble statistics with linear interpolation', () => {

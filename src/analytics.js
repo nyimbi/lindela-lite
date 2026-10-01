@@ -59,7 +59,16 @@ export function computeFloodRisk(data) {
       { count: climate.filter((item) => Number.isFinite(Number(item.precipitation_probability_pct))).length, weight: 15 },
     ])
 
-    // Probabilistic bands: narrower when confidence is high
+    // Sensitivity band around the point score, NOT a probabilistic interval.
+    //
+    // These fields were originally named score_p10/p50/p90, which reads as
+    // quantiles of a calibrated predictive distribution. They are not. The
+    // width is a fixed function of the input-coverage confidence score, so a
+    // well-populated region returns p10 == p50 == p90 with interval_width 0,
+    // which presents as "no uncertainty" when it means "enough inputs to
+    // compute a point score". Renamed to state what they are; the values and
+    // the p10/p50/p90 aliases are unchanged so existing consumers and stored
+    // records keep working.
     const halfWidth = Math.round((100 - confidence) * 0.4)
     const score_p50 = score
     const score_p10 = clamp(score - halfWidth, 0, 100)
@@ -82,15 +91,23 @@ export function computeFloodRisk(data) {
       latitude: region.latitude,
       longitude: region.longitude,
       score,
+      // Truthful names for what these are.
+      sensitivity_low: score_p10,
+      sensitivity_mid: score_p50,
+      sensitivity_high: score_p90,
+      sensitivity_width: interval_width,
+      // Retained aliases for existing consumers and stored records.
       score_p10,
       score_p50,
       score_p90,
       interval_width,
+      calibrated_uncertainty: false,
       risk_level: riskLevel(score),
       confidence,
       generated_at: new Date().toISOString(),
       drivers,
       methodology: 'Transparent baseline: precipitation forecast + flood/storm/disaster alerts near exposed locations.',
+      limits: 'Point score from input data, with a sensitivity band driven by input coverage, not a calibrated predictive distribution. A zero band means inputs were sufficient, not that the outcome is certain. Rainfall intensity/duration to flood probability is not modelled: that needs an agreed hydrological model basis and a validated record.',
     }
   })
 }
@@ -114,7 +131,8 @@ export function computeClimateConflictRisk(data) {
       { count: serviceAssets.length, weight: 15 },
     ])
 
-    // Probabilistic bands: narrower when confidence is high
+    // Sensitivity band, not a probabilistic interval. See the note in
+    // computeFloodRisk: the width reflects input coverage, not uncertainty.
     const halfWidth = Math.round((100 - confidence) * 0.4)
     const score_p50 = score
     const score_p10 = clamp(score - halfWidth, 0, 100)
@@ -129,10 +147,15 @@ export function computeClimateConflictRisk(data) {
       latitude: region.latitude,
       longitude: region.longitude,
       score,
+      sensitivity_low: score_p10,
+      sensitivity_mid: score_p50,
+      sensitivity_high: score_p90,
+      sensitivity_width: interval_width,
       score_p10,
       score_p50,
       score_p90,
       interval_width,
+      calibrated_uncertainty: false,
       risk_level: riskLevel(score),
       confidence,
       generated_at: new Date().toISOString(),
@@ -143,6 +166,7 @@ export function computeClimateConflictRisk(data) {
         nearby_service_assets: serviceAssets.length,
       },
       methodology: 'Transparent baseline: climate stress + hazard pressure + user-supplied or licensed conflict events + exposed service assets.',
+      limits: 'Weighted sum of input counts and severities, with a sensitivity band driven by input coverage rather than a calibrated predictive distribution. A zero band means inputs were sufficient, not that the outcome is certain.',
     }
   })
 }

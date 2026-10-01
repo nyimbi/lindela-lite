@@ -148,6 +148,7 @@ for (const endpoint of [
 // client while the paths themselves still validated.
 for (const requiredSchema of [
   'FloodDepthGrid:',
+  'RiskScore:',
   'RoadAccess:',
   'RoadAccessSummary:',
   'RoutingPlanInput:',

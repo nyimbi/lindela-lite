@@ -164,9 +164,27 @@ paths:
   /api/v1/flood-risk:
     get:
       summary: Flood risk scores
+      description: |
+        Decision-support signals, not automated determinations. The band fields
+        are a sensitivity range driven by input coverage, not a calibrated
+        predictive distribution, and `limits` states this in every response.
+
+        Rainfall intensity/duration to flood probability is not modelled: that
+        requires an agreed hydrological model basis and a validated record, and
+        invented coefficients would be worse than no output.
       responses:
         '200':
           description: Flood risk scores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RiskScore'
   /api/v1/flood-depth:
     get:
       summary: Static flood depth for a water surface elevation
@@ -1147,6 +1165,59 @@ components:
           description: Always states that flow routing and storage are not modelled.
         generated_at:
           type: string
+    RiskScore:
+      type: object
+      description: |
+        Decision-support signal. The band fields are a **sensitivity range
+        driven by input coverage, not a calibrated predictive distribution**.
+        `calibrated_uncertainty` is false and `limits` says so in the payload.
+        A zero-width band means inputs were sufficient, not that the outcome is
+        certain.
+      required: [type, region_name, score, calibrated_uncertainty, limits]
+      properties:
+        type:
+          type: string
+          enum: [flood_risk, climate_conflict_risk]
+        region_name: { type: string }
+        country: { type: string, nullable: true }
+        latitude: { type: number }
+        longitude: { type: number }
+        score: { type: number, minimum: 0, maximum: 100 }
+        sensitivity_low: { type: number }
+        sensitivity_mid: { type: number }
+        sensitivity_high: { type: number }
+        sensitivity_width:
+          type: number
+          description: Zero means input coverage was sufficient, not that uncertainty is absent.
+        calibrated_uncertainty:
+          type: boolean
+          enum: [false]
+          description: No calibrated bands ship with this release; no Brier or CRPS calibration report exists.
+        score_p10:
+          type: number
+          deprecated: true
+          description: Legacy alias for sensitivity_low. Retained so existing consumers keep working.
+        score_p50:
+          type: number
+          deprecated: true
+          description: Legacy alias for sensitivity_mid.
+        score_p90:
+          type: number
+          deprecated: true
+          description: Legacy alias for sensitivity_high.
+        interval_width:
+          type: number
+          deprecated: true
+          description: Legacy alias for sensitivity_width.
+        risk_level:
+          type: string
+        confidence:
+          type: number
+          description: Input-coverage score, not a calibrated probability.
+        drivers: { type: object }
+        methodology: { type: string }
+        limits: { type: string }
+        generated_at: { type: string }
     RoadAccess:
       type: object
       required: [road_id, access_status]

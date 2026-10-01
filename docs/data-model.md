@@ -161,11 +161,34 @@ Important fields:
 - `score`
 - `risk_level`
 - `confidence`
+- `sensitivity_low`, `sensitivity_mid`, `sensitivity_high`, `sensitivity_width`
+- `calibrated_uncertainty`: always `false` for the point scores shipped here
 - `drivers`
 - `methodology`
+- `limits`
 - `generated_at`
 
 Risk scores are decision-support signals. They are not automated determinations.
+
+#### The band fields are a sensitivity range, not a probability
+
+`sensitivity_low` / `_mid` / `_high` bracket the point score by an amount
+derived from **input coverage**, not from a fitted predictive distribution.
+`calibrated_uncertainty` is `false` and `limits` states this in the payload.
+
+A zero-width band means inputs were sufficient to compute a point score. It
+does **not** mean the outcome is certain. Reading a `p10 == p90` as "no
+uncertainty" is the specific misreading the explicit flag and `limits` text
+exist to prevent.
+
+The legacy `score_p10` / `score_p50` / `score_p90` / `interval_width` names
+remain as aliases with identical values so stored records and existing
+consumers keep working. Prefer the `sensitivity_*` names in new code: the `p`
+prefix reads as a calibrated quantile and is not one.
+
+Calibrated uncertainty bands require quantile outputs with a Brier or CRPS
+calibration report. That is not implemented, and no calibration artefact ships
+with this release.
 
 ### `impact_assessments`
 
