@@ -230,6 +230,10 @@ kbd {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Scroll rather than clip: the map now has a floor, so on a short window the
+     panels below it can exceed the row. Clipped silently is how the routing
+     panel disappeared on small screens. */
+  overflow-y: auto;
   background: var(--bg);
   border-right: 1px solid var(--stroke);
 }
@@ -244,7 +248,17 @@ kbd {
 }
 
 .situation-map {
+  /*
+   * min-height is load-bearing, not cosmetic. .map-container is a flex column
+   * that also holds the seasonal strip, the filters, the flood controls and the
+   * routing panel. With only `flex: 1` the map took whatever those left over:
+   * on a 1440x900 laptop that was 122px, so an 800x500 viewBox scaled to 0.24
+   * and rendered the map at 195x122 with 82% of the width wasted and legend text
+   * at 2.4px. Every DOM check passed, because the cells were present in the
+   * document — they were simply invisible.
+   */
   flex: 1;
+  min-height: 480px;
   width: 100%;
   height: 100%;
   cursor: grab;

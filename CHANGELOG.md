@@ -63,6 +63,16 @@ no existing endpoint changed shape.
   with GDACS and USGS both live is always the same Pacific and Caribbean
   earthquakes: the seeded flood and landslide that the road-access and routing
   walkthrough depends on were paginated out and never drawn.
+- The map has a **minimum rendered height**. `.map-container` is a flex column
+  that also holds the seasonal strip, filters, flood controls and routing panel,
+  so `flex: 1` gave the map only the leftover space: on a 1440x900 laptop it
+  rendered at 195x122 with 82% of the width unused and legend text at 2.4px. The
+  cells were present in the DOM, so every assertion passed while the map was
+  effectively invisible. `.map-section` now scrolls instead of clipping.
+- The flood status line reports the inundated area in km² and names the box the
+  percentage is a share of, stating that it is not a share of the district. It
+  previously read "40% of the area", which invites reading 40% of the district as
+  underwater.
 - Landslide hazards now render with their own class and appear in the map legend.
   `.hazard-landslide` was declared in CSS but no code path ever applied it, so a
   landslide fell through to the generic marker and looked like any other event

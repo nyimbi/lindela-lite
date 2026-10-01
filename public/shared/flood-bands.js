@@ -77,3 +77,20 @@ export function floodCoverage(depths) {
     max_depth_m: wet.length ? Math.max(...wet) : 0,
   }
 }
+/**
+ * Ground area of the box a flood grid covers, in km².
+ *
+ * The share reported by a flood simulation is a share of *surveyed grid cells*,
+ * not of the district that was named. Reporting it as "40% of the area" invited
+ * reading 40% of Turkana as underwater, which is a different and much larger
+ * claim. Any sentence quoting the share has to name this surveyed box.
+ */
+export function surveyedAreaKm2(bounds) {
+  if (!bounds) return null
+  const { south, north, west, east } = bounds
+  if (![south, north, west, east].every(Number.isFinite)) return null
+  const midLatRad = ((south + north) / 2) * (Math.PI / 180)
+  const heightKm = Math.abs(north - south) * 110.574
+  const widthKm = Math.abs(east - west) * 111.32 * Math.cos(midLatRad)
+  return Math.round(heightKm * widthKm)
+}

@@ -2,7 +2,7 @@
 // Lindela Lite — Operations Console
 // =============================================================
 import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS } from '/shared/basemap.js'
-import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage } from '/shared/flood-bands.js'
+import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage, surveyedAreaKm2 } from '/shared/flood-bands.js'
 import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets } from '/shared/map-frame.js'
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState } from '/shared/seasonal.js'
 
@@ -274,11 +274,19 @@ async function loadFloodSimulation() {
     state.floodGrid = body.data
     const level = body.data.per_level?.[0]
     const coverage = floodCoverage(body.data.depth_grid)
+    // The grid covers a box around the area, not the area itself, so the share
+    // has to name what it is a share of. Labelling it "of the area" invited
+    // reading 40% of Turkana as underwater when the flooded footprint is a
+    // specific and much smaller part of the district.
+    const b = body.data.bounds
+    const surveyedKm2 = surveyedAreaKm2(b)
     setFloodStatus(
       level
-        ? `${area.name} at ${levelM} m: ${level.coverage_pct}% of the area `
-          + `(${level.area_sq_km} km²) below water, deepest cell `
-          + `${coverage.max_depth_m.toFixed(2)} m. ${body.data.model}. `
+        ? `${area.name} at ${levelM} m: ${level.area_sq_km.toFixed(0)} km² below water `
+          + `— ${level.coverage_pct}% of the ${surveyedKm2} km² surveyed around `
+          + `${area.name}, deepest cell ${coverage.max_depth_m.toFixed(1)} m. `
+          + `This is the flooded footprint within the surveyed box, not a share `
+          + `of the district. ${body.data.model}. `
           + `Elevation ±${body.data.vertical_resolution_m} m.`
         : 'Simulation complete.',
     )

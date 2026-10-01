@@ -4092,3 +4092,23 @@ describe('Lindela Lite bbox queries and map event sourcing', () => {
     assert.equal(merged[1].note, undefined, 'the local copy must win over the global one')
   })
 })
+
+describe('Lindela Lite flood share wording', () => {
+  it('reports the surveyed box a share refers to, not a district', async () => {
+    // The share is a fraction of surveyed grid cells. Labelling it "of the area"
+    // next to a district name invited reading "40% of Turkana is underwater",
+    // which is a different and far larger claim than the flooded footprint.
+    const { surveyedAreaKm2 } = await import('../public/shared/flood-bands.js')
+
+    const equator = surveyedAreaKm2({ south: 0, west: 0, north: 1, east: 1 })
+    assert.ok(Math.abs(equator - 12300) < 60, `1x1 degree at the equator is ~12300 km2, got ${equator}`)
+
+    // Converging meridians: the same longitude span covers less ground further
+    // from the equator, so using a single flat width would misstate the box.
+    const near = surveyedAreaKm2({ south: 3, west: 35, north: 4, east: 36 })
+    const far = surveyedAreaKm2({ south: 33, west: 35, north: 34, east: 36 })
+    assert.ok(near > far, 'a degree of longitude must cover less ground further from the equator')
+    assert.equal(surveyedAreaKm2(null), null)
+    assert.equal(surveyedAreaKm2({ south: 0, west: 0, north: 1 }), null, 'a partial box has no area')
+  })
+})

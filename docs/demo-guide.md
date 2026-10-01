@@ -288,6 +288,14 @@ The map frames on the simulated extent, so the shading fills the viewport
 rather than sitting as a few pixels in a region-wide view. Clear returns the
 frame to the whole pilot region.
 
+Read the status line carefully — **it names what the percentage is a share of.**
+It reports the flooded area in km², then the share of the *surveyed box around
+the area*, and says explicitly that this is not a share of the district. An
+earlier version said "40% of the area", which reads as "40% of Turkana is
+underwater" when the flooded footprint is a few thousand km². If a panel member
+asks how much of the district is affected, the honest answer is the km² figure,
+because the grid covers a window around the district centroid, not the district.
+
 Say this before anyone asks: it is a **static water-surface calculation**. No
 flow routing, no channel geometry, no storage. A surface at *L* shades ground
 below *L* that is hydraulically connected, which is only some of it — a closed

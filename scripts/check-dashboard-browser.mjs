@@ -197,6 +197,28 @@ async function main() {
     document.getElementById('floodSimulate').click(); true`)
   await new Promise((r) => setTimeout(r, 12000))
 
+  // The map must actually be usable on screen, not merely present in the DOM.
+  // It once rendered at 195x122 on a 1440x900 laptop because the SVG shares a
+  // flex column with every panel below it, which put the legend text at 2.4px.
+  // No assertion caught that: the cells existed, they were simply invisible.
+  const mapBox = await evaluate(`(() => {
+    const s = document.getElementById('situationMap')
+    const r = s.getBoundingClientRect()
+    const vb = s.getAttribute('viewBox').split(' ').map(Number)
+    const scale = Math.min(r.width / vb[2], r.height / vb[3])
+    const label = document.querySelector('#mapLegend .legend-label')
+    return {
+      w: r.width, h: r.height, scale,
+      legendPx: label ? parseFloat(getComputedStyle(label).fontSize) * scale : null,
+    }
+  })()`)
+  check('map renders large enough to read on a laptop',
+    mapBox.h >= 300 && mapBox.w >= 600,
+    `map ${Math.round(mapBox.w)}x${Math.round(mapBox.h)}`)
+  check('map legend text stays legible after viewBox scaling',
+    mapBox.legendPx !== null && mapBox.legendPx >= 7,
+    `legend text ~${Math.round(mapBox.legendPx * 10) / 10}px on screen`)
+
   const sim = await evaluate(`(() => {
     const rects = [...document.querySelectorAll('#mapFlood rect')];
     const fills = new Map();
@@ -218,6 +240,16 @@ async function main() {
   check('status line reports the model and resolution',
     /static water-surface|no flow routing/i.test(sim.status) && /±?\s*15\s*m|15 m/i.test(sim.status),
     sim.status.trim().slice(0, 110))
+  // A share of surveyed grid cells presented as a share of a district is a
+  // much larger and wrong claim: "40% of Turkana underwater" against a flooded
+  // footprint of a few thousand km2. The sentence has to name what it is a
+  // share of, and say so explicitly.
+  check('flood share names the surveyed box, not the district',
+    /surveyed/i.test(sim.status) && !/% of the area\b/i.test(sim.status),
+    sim.status.trim().slice(0, 120))
+  check('flood share states it is not a share of the district',
+    /not a share of the district/i.test(sim.status),
+    sim.status.trim().slice(0, 120))
   check('legend becomes visible and names the depth bands',
     sim.legendVisible && /0\s*[–-]\s*0\.3 m/.test(sim.legendText.replace(/\s+/g, ' ')),
     sim.legendVisible ? 'visible' : 'still hidden')
