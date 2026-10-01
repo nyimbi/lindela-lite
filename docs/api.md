@@ -16,6 +16,10 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 - `GET /api/v1/events` returns hazard and conflict events.
 - `GET /api/v1/climate` returns climate observations.
 - `GET /api/v1/flood-risk` returns flood risk scores.
+- `GET /api/v1/flood-depth` returns static flood depth for a water surface elevation, with per-level coverage, extent polygons, and model limits stated in the payload.
+- `GET /api/v1/road-access` returns passage status for every road asset, plus a summary.
+- `GET /api/v1/road-access/summary` returns road access counts and cut-off rate.
+- `POST /api/v1/routing/plan` plans delivery routes over current road access, returning per-leg routes and severed-segment diagnostics.
 - `GET /api/v1/conflict-risk` returns climate-conflict risk scores.
 - `GET /api/v1/service-assets` returns imported service assets.
 - `POST /api/v1/service-assets` imports service assets from JSON, CSV, or GeoJSON.
@@ -222,6 +226,94 @@ Create a due schedule and run it:
   "auto_distribute": false
 }
 ```
+
+## Flood Depth, Road Access, and Routing
+
+These four endpoints answer the logistics question: given a flood, can we still
+reach the facility, and how?
+
+### `GET /api/v1/flood-depth`
+
+Auth: none required. Keyless; fetches terrain from AWS Terrarium (SRTM).
+
+Query: `south`, `north`, `west`, `east` (required), `level_m` (water surface
+elevation, default 500), `grid_size` (default 64).
+
+Response: `{ success, data: FloodDepthGrid }`
+
+```
+curl "http://127.0.0.1:4177/api/v1/flood-depth?south=3.0&north=3.3&west=35.4&east=35.7&level_m=500&grid_size=32"
+```
+
+What it computes: `depth = level_m - elevation` on a grid, with `null` where
+terrain data is void.
+
+What it is not: a hydraulic simulation or a forecast. The water level is an
+input. No flow routing, channel geometry, or storage is modelled, so a surface
+at *L* shades ground below *L* that is hydraulically connected, which in
+reality is only some of it — a closed basin below *L* does not become a lake.
+Every response carries `model` and `vertical_resolution_m` (±15 m, inherited
+from SRTM) so a caller can judge whether the question is answerable at their
+margin.
+
+Rainfall intensity/duration to flood probability is deliberately **not**
+implemented. It needs an agreed hydrological model basis and a long validated
+annual-maxima record; coefficients that look authoritative without validation
+are worse than no output.
+
+### `GET /api/v1/road-access`
+
+Auth: none required.
+
+Response: `{ success, data: RoadAccess[], summary: RoadAccessSummary }`
+
+One record per road asset whether or not it is obstructed, so "clear" is an
+observable state rather than an absence. Each carries `access_status`,
+`access_reason`, `access_score`, and `access_level`.
+
+Matching rules: a hazard obstructs a road when the road falls inside a
+hazard-scale bbox, or within the block radius of the reported centre (2 km for
+flood, 5 km for landslide, since debris travels further). Bounding boxes wider
+than ~5° are administrative extents rather than inundation footprints and fall
+back to proximity matching, so a country-level GDACS alert cannot restrict
+distant roads.
+
+### `GET /api/v1/road-access/summary`
+
+Auth: none required. Returns `{ success, summary: RoadAccessSummary }` with
+`total_roads`, `cut_off_rate_pct`, and `blocked_by_hazard_type`.
+
+### `POST /api/v1/routing/plan`
+
+Auth: `write:incidents` or `*`.
+
+Body: `{ from, to, link_radius_km?, max_minutes? }`
+
+`from` and `to` are **road asset ids**, not coordinates. Get them from
+`GET /api/v1/service-assets?service_type=road`. Coordinate objects are rejected
+with an explicit error rather than reported as an unknown road.
+
+```
+curl -X POST http://127.0.0.1:4177/api/v1/routing/plan \
+  -H 'content-type: application/json' \
+  -d '{"from":"asset_c2f1b7f06baeda8e","to":["asset_87445d3f0f60540e"]}'
+```
+
+Response: `{ success, data: RoutingPlan }`
+
+An impassable segment is removed from the graph rather than penalised, because
+no finite cost is a barrier. Restricted segments multiply cost by a
+class-dependent penalty, so a truck detouring onto an unpaved track is priced
+differently from a bicycle on a cycleway, and any leg relying on one is flagged
+`degraded`.
+
+`fully_deliverable` is false when any destination is unreachable, with a
+plain-language `caveat`. A plan that cannot reach every site is not a plan, so
+the response does not quietly return a straight line.
+
+Not modelled: bridges, culverts, ferry crossings, seasonal causeways, load
+limits. If the operator has not imported them as assets, the router cannot
+reason about them. Each leg reports the `road_classes` it relied on.
 
 ## Trigger Protocols
 

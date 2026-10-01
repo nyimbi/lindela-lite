@@ -167,6 +167,139 @@ paths:
       responses:
         '200':
           description: Flood risk scores
+  /api/v1/flood-depth:
+    get:
+      summary: Static flood depth for a water surface elevation
+      description: |
+        Ground depth below an operator-supplied water surface elevation, using
+        keyless AWS Terrarium (SRTM) terrain.
+
+        This is **not** a hydraulic simulation and **not** a forecast: the water
+        level is an input, not a prediction. No flow routing, channel geometry,
+        or storage is modelled, so a surface at L shades ground below L that is
+        hydraulically connected, which in reality is only some of it. Vertical
+        resolution is inherited from SRTM and returned in the payload so a
+        caller can judge whether the question is answerable at their margin.
+
+        Rainfall intensity/duration to flood probability is deliberately not
+        implemented: it needs an agreed hydrological model basis, and
+        coefficients that look authoritative without being validated are worse
+        than no output.
+      parameters:
+        - name: south
+          in: query
+          required: true
+          schema: { type: number, minimum: -90, maximum: 90 }
+        - name: north
+          in: query
+          required: true
+          schema: { type: number, minimum: -90, maximum: 90 }
+        - name: west
+          in: query
+          required: true
+          schema: { type: number, minimum: -180, maximum: 180 }
+        - name: east
+          in: query
+          required: true
+          schema: { type: number, minimum: -180, maximum: 180 }
+        - name: level_m
+          in: query
+          description: Water surface elevation in metres above sea level.
+          schema: { type: number, minimum: -500, maximum: 9000 }
+        - name: grid_size
+          in: query
+          description: Cells per axis of the returned depth grid.
+          schema: { type: integer, minimum: 4, maximum: 256, default: 64 }
+      responses:
+        '200':
+          description: Depth grid with per-level coverage, extent polygons, and model limits
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/FloodDepthGrid'
+        '400':
+          description: Invalid bounds, grid size, or water level
+  /api/v1/road-access:
+    get:
+      summary: Road passage status against current hazards
+      description: |
+        One record per road asset whether or not it is obstructed, so "clear" is
+        an observable state rather than an absence.
+
+        A hazard obstructs a road when the road falls inside a hazard-scale
+        bounding box, or within the block radius of the reported centre. Bounding
+        boxes wider than about 5 degrees are administrative extents rather than
+        inundation footprints and fall back to proximity matching, so a
+        country-level alert cannot restrict distant roads.
+      responses:
+        '200':
+          description: Road access records and a summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RoadAccess'
+                  summary:
+                    $ref: '#/components/schemas/RoadAccessSummary'
+  /api/v1/road-access/summary:
+    get:
+      summary: Road access counts and cut-off rate
+      responses:
+        '200':
+          description: Aggregate road access summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  summary:
+                    $ref: '#/components/schemas/RoadAccessSummary'
+  /api/v1/routing/plan:
+    post:
+      summary: Plan delivery routes over current road access
+      description: |
+        Dijkstra over imported road assets, respecting access status.
+
+        Endpoints are **road asset ids**, not coordinates; see
+        `GET /api/v1/service-assets?service_type=road`. An impassable segment is
+        removed from the graph entirely rather than penalised, because no finite
+        cost is a barrier. A plan that cannot reach every destination reports
+        `fully_deliverable: false` with a plain-language caveat rather than
+        quietly returning a straight line.
+
+        Bridges, culverts, ferry crossings, seasonal causeways, and load limits
+        are not modelled unless the operator imports them as assets. Every leg
+        reports the road classes it relied on.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoutingPlanInput'
+      responses:
+        '200':
+          description: Route plan with per-leg legs and a coverage summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/RoutingPlan'
+        '400':
+          description: Missing endpoints, endpoints that are not road asset ids, or an unsatisfiable request
   /api/v1/conflict-risk:
     get:
       summary: Climate-conflict risk scores
@@ -952,3 +1085,228 @@ components:
           type: string
         auto_distribute:
           type: boolean
+    FloodDepthGrid:
+      type: object
+      description: |
+        Depth grid for one water surface elevation. `model` states the
+        limitation in the payload itself so a caller can judge answerability
+        without reading the docs.
+      required: [bounds, size, level_m, depth_grid, model, vertical_resolution_m]
+      properties:
+        bounds:
+          type: object
+          properties:
+            south: { type: number }
+            west: { type: number }
+            north: { type: number }
+            east: { type: number }
+        size:
+          type: integer
+          description: Cells per axis; depth_grid is row-major and north-first.
+        zoom:
+          type: integer
+          description: Terrain tile zoom used, lowered automatically when the tile budget is exceeded.
+        level_m:
+          type: number
+        levels_m:
+          type: array
+          items: { type: number }
+        coverage_pct:
+          type: number
+          description: Share of cells with terrain data, not share flooded.
+        elevation_range_m:
+          type: object
+          properties:
+            min: { type: number }
+            max: { type: number }
+        per_level:
+          type: array
+          description: Flooded cells, coverage, and area per requested level.
+          items:
+            type: object
+            properties:
+              level_m: { type: number }
+              flooded_cells: { type: integer }
+              coverage_pct: { type: number }
+              area_sq_km: { type: number }
+        depth_grid:
+          type: array
+          description: Cell depth in metres; null where terrain data is void.
+          items:
+            type: number
+            nullable: true
+        extent_geojson:
+          type: object
+          description: Coarse inundated-extent polygons, one per contiguous run per row.
+        vertical_resolution_m:
+          type: number
+        source:
+          type: string
+        model:
+          type: string
+          description: Always states that flow routing and storage are not modelled.
+        generated_at:
+          type: string
+    RoadAccess:
+      type: object
+      required: [road_id, access_status]
+      properties:
+        id: { type: string }
+        road_id: { type: string }
+        road_name: { type: string }
+        road_class:
+          type: string
+          enum: [trunk, primary, secondary, tertiary, unpaved, track]
+        country: { type: string }
+        admin1: { type: string, nullable: true }
+        latitude: { type: number }
+        longitude: { type: number }
+        access_status:
+          type: string
+          enum: [passable, restricted, impassable]
+        access_reason:
+          type: string
+          description: Plain-language cause, so "clear" is distinguishable from "not assessed".
+        access_score:
+          type: number
+          description: 0-100, weighted by road class criticality.
+        access_level:
+          type: string
+          enum: [open, constrained, severely_constrained, cut_off]
+        reported_passability:
+          type: string
+          nullable: true
+          description: Field-reported status, kept separate from hazard-derived status.
+        width_m:
+          type: number
+          nullable: true
+        obstruction_count: { type: integer }
+        primary_hazard_type:
+          type: string
+          nullable: true
+        confidence: { type: number }
+        generated_at: { type: string }
+    RoadAccessSummary:
+      type: object
+      required: [total_roads, cut_off_rate_pct]
+      properties:
+        generated_at: { type: string }
+        total_roads: { type: integer }
+        passable: { type: integer }
+        restricted: { type: integer }
+        impassable: { type: integer }
+        cut_off_rate_pct: { type: number }
+        blocked_by_hazard_type:
+          type: object
+          additionalProperties: { type: integer }
+        cut_off_roads:
+          type: array
+          items:
+            type: object
+            properties:
+              road_id: { type: string }
+              road_name: { type: string }
+              road_class: { type: string }
+              reason: { type: string }
+              primary_hazard_type: { type: string, nullable: true }
+    RoutingPlanInput:
+      type: object
+      required: [from, to]
+      properties:
+        from:
+          type: string
+          description: Road asset id of the distribution origin.
+        to:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+          description: One or more destination road asset ids.
+        link_radius_km:
+          type: number
+          description: Max distance at which two road segments are treated as connected.
+          default: 5
+        max_minutes:
+          type: number
+          description: Drop legs exceeding this budget rather than reporting them as reachable.
+    RoutingPlan:
+      type: object
+      required: [from, network, legs, summary, fully_deliverable]
+      properties:
+        from: { type: object }
+        network:
+          type: object
+          properties:
+            roads: { type: integer }
+            links: { type: integer }
+            link_radius_km: { type: number }
+            cut_off_roads:
+              type: integer
+              description: Impassable nodes, whose links are removed from the graph entirely.
+        legs:
+          type: array
+          items:
+            type: object
+            properties:
+              to: { type: object }
+              feasible: { type: boolean }
+              reason:
+                type: string
+                nullable: true
+                description: Present when infeasible; names the severed segment rather than failing silently.
+              mode:
+                type: string
+                enum: [vehicle, foot]
+              total_minutes: { type: number }
+              total_distance_km: { type: number }
+              hops:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    road_class: { type: string }
+                    access_status: { type: string }
+              road_classes:
+                type: array
+                items: { type: string }
+              restricted_hops: { type: integer }
+              degraded:
+                type: boolean
+                description: True when the route relies on a restricted segment.
+              blocked_by: { type: string, nullable: true }
+              severed_by:
+                type: array
+                description: Cut-off segments plausibly responsible for the severance.
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    blocked_by: { type: string, nullable: true }
+              reachable_from_origin:
+                type: array
+                description: Other roads reachable from the origin but not connecting onward.
+                items: { type: string }
+              suggestion: { type: string, nullable: true }
+        summary:
+          type: object
+          properties:
+            destinations: { type: integer }
+            reachable: { type: integer }
+            unreachable: { type: integer }
+            coverage_pct: { type: number }
+            total_minutes: { type: number }
+            total_distance_km: { type: number }
+            any_degraded: { type: boolean }
+            requires_foot: { type: integer }
+            blocked_by:
+              type: object
+              additionalProperties: { type: integer }
+        fully_deliverable:
+          type: boolean
+          description: False when any destination is unreachable. A plan that cannot reach every site is not a plan.
+        caveat:
+          type: string
+          nullable: true

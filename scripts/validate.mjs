@@ -135,8 +135,58 @@ for (const endpoint of [
   '/api/v1/events',
   '/api/v1/export.geojson',
   '/api/v1/export.csv',
+  '/api/v1/flood-depth',
+  '/api/v1/road-access',
+  '/api/v1/road-access/summary',
+  '/api/v1/routing/plan',
 ]) {
   if (!openapi.includes(endpoint)) throw new Error(`OpenAPI contract missing ${endpoint}`)
+}
+
+// Schemas the hazard and access responses depend on. These are named in
+// $ref from the paths above, so a rename would silently break any generated
+// client while the paths themselves still validated.
+for (const requiredSchema of [
+  'FloodDepthGrid:',
+  'RoadAccess:',
+  'RoadAccessSummary:',
+  'RoutingPlanInput:',
+  'RoutingPlan:',
+]) {
+  if (!openapi.includes(requiredSchema)) throw new Error(`OpenAPI schema missing ${requiredSchema}`)
+}
+
+// Every $ref in the spec must resolve. A dangling reference is invisible in
+// review and breaks every consumer that resolves the document.
+const specRefs = [...openapi.matchAll(/\$ref:\s*'#\/components\/schemas\/([A-Za-z0-9_]+)'/g)].map((m) => m[1])
+const declaredSchemas = new Set(
+  [...openapi.matchAll(/^ {4}([A-Za-z0-9_]+):$/gm)].map((m) => m[1]),
+)
+const danglingRefs = [...new Set(specRefs)].filter((name) => !declaredSchemas.has(name))
+if (danglingRefs.length) {
+  throw new Error(`OpenAPI has dangling schema references: ${danglingRefs.join(', ')}`)
+}
+
+// The ingestion guide lists every source with its default policy. This reads
+// the real policies from src/ingestion.js rather than a hard-coded copy, so a
+// changed interval cannot drift away from the table unnoticed.
+const { SOURCE_POLICIES, PUBLIC_INGESTION_SOURCES } = await import('../src/ingestion.js')
+for (const sourceId of PUBLIC_INGESTION_SOURCES) {
+  const policy = SOURCE_POLICIES[sourceId]
+  if (!policy) throw new Error(`Ingestion guide lists ${sourceId} but SOURCE_POLICIES has no entry`)
+  const row = `| \`${sourceId}\` | ${policy.interval_minutes} min | ${policy.timeout_ms / 1000} sec | ${policy.retries} | ${policy.stale_after_minutes} min |`
+  if (!ingestion.includes(row)) {
+    throw new Error(`Ingestion guide policy row is stale or missing for ${sourceId}; expected:\n  ${row}`)
+  }
+}
+
+// Sources with regular: false have no schedule by default, so the guide should
+// not claim one, and the source must still be documented somewhere.
+for (const sourceId of Object.keys(SOURCE_POLICIES)) {
+  if (SOURCE_POLICIES[sourceId].regular) continue
+  if (!ingestion.includes(`\`${sourceId}\``)) {
+    throw new Error(`Ingestion guide does not mention non-regular source ${sourceId}`)
+  }
 }
 
 console.log('validation ok')

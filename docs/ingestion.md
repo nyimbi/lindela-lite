@@ -13,14 +13,43 @@ Regular public/open-source sources:
 - `glofas`
 - `chirps`
 - `nasa_firms`
+- `usgs_earthquake`
+- `noaa_enso`
 
 User-supplied sources:
 
 - `service_assets`
 - `conflict_csv`
 - `acled_csv`
+- `dhis2`
 
 `gdelt` is intentionally excluded.
+
+### Seasonal Context: `noaa_enso`
+
+NOAA CPC Niño 3.4 SST anomaly index, from a keyless fixed-width ASCII feed
+verified live on 2026-10-01:
+`https://www.cpc.ncep.noaa.gov/data/indices/detrend.nino34.ascii.txt`
+
+Emits `climate_observations` with the anomaly in °C. Three behaviours are
+deliberate and worth knowing before using the output:
+
+- **Coordinates are `null`.** Niño 3.4 is a basin-wide equatorial Pacific
+  index. The nearest-region assignment that other climate connectors use would
+  make a global signal look like a district reading.
+- **`episode_declared` requires five consecutive overlapping three-month
+  seasons** at ±0.5 °C, per CPC's published definition. `overlapping_seasons`
+  reports the count out of five, and `advisory_run_months` counts consecutive
+  months on one side of the threshold. One warm month is not an ENSO event.
+  Runs break at any gap in the series, so a feed that skips months cannot
+  manufacture an episode out of two unrelated warm periods.
+- **The field is the ONI, not the RONI.** Per NWS Public Information Statement
+  26-05, CPC now uses the Relative Oceanic Niño Index for official ENSO
+  monitoring, but RONI has no stable keyless monthly feed. Each record carries
+  `index_used: 'ONI'` and an `index_note` rather than mislabelling the data.
+
+This is a monthly SST anomaly index. It is not a rainfall forecast and not a
+flood probability, and nothing downstream treats it as one.
 
 ## Connector Responsibilities
 
@@ -101,8 +130,12 @@ Regular sources have default policies in `src/ingestion.js`:
 | `glofas` | 180 min | 20 sec | 2 | 360 min |
 | `chirps` | 720 min | 20 sec | 2 | 1440 min |
 | `nasa_firms` | 360 min | 30 sec | 2 | 720 min |
+| `usgs_earthquake` | 60 min | 20 sec | 2 | 180 min |
+| `noaa_enso` | 720 min | 20 sec | 2 | 1440 min |
 
-User-supplied sources do not have regular schedules by default.
+User-supplied sources do not have regular schedules by default. `dhis2` has a
+policy but `regular: false`, because activation depends on an operator
+configuring an instance URL and token.
 
 ## Run Status
 
