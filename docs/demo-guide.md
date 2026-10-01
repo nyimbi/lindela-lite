@@ -103,11 +103,14 @@ depends on.
 
 - **Flood**: one marker on the Lodwar lowland B4 segment — the seeded flood
   that severs the corridor in section 6.
-- **Landslide**: one marker on the Turkana B4 supply route. Landslide is
+- **Landslide**: one marker on the Aweil north access road. Landslide is
   access-blocking in its own right and road-access gives it a **wider**
   clearance radius than flood (5 km vs 2 km), because debris flow travels
   further than standing water. At the same distance a road is passable for
-  flood and impassable for landslide.
+  flood and impassable for landslide. It is in Aweil rather than beside the
+  flood on purpose: the two sit 600 km apart so both are readable on the
+  region frame, and the demo shows a flood and a landslide cutting separate
+  districts.
 - **Footprints**: dashed boxes for regional events whose area covers the
   operational area.
 - Everything else on the map is live global context and is drawn small.
@@ -245,6 +248,11 @@ an unknown road.
 The map shows numbered markers rather than a drawn line. Road assets are
 points, so a polyline between hops would invent geometry the router does not
 know; the numbered hop list carries the sequence instead.
+
+Planning also **frames the map on the route**. The Lodwar corridor is four
+roads inside six kilometres, so on a region-wide frame the reroute — the entire
+point of the feature — collapsed into one unreadable cluster. Clear returns the
+frame to the whole pilot region.
 
 ### Seasonal context
 

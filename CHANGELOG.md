@@ -63,6 +63,12 @@ no existing endpoint changed shape.
   with GDACS and USGS both live is always the same Pacific and Caribbean
   earthquakes: the seeded flood and landslide that the road-access and routing
   walkthrough depends on were paginated out and never drawn.
+- Planning a route now **frames the map on that route**, the way a flood
+  simulation frames on its extent. The Lodwar corridor is four roads inside six
+  kilometres, so a region-wide frame collapsed the reroute into one unreadable
+  cluster. The frame is derived from the returned hops, not the requested
+  endpoints, because a plan that detours around a cut segment passes through
+  neither. Clearing the route returns the region frame.
 - The map has a **minimum rendered height**. `.map-container` is a flex column
   that also holds the seasonal strip, filters, flood controls and routing panel,
   so `flex: 1` gave the map only the leftover space: on a 1440x900 laptop it

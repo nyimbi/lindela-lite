@@ -319,12 +319,27 @@ async function main() {
   })()`)
   await new Promise((r) => setTimeout(r, 5000))
 
-  const route = await evaluate(`(() => ({
-    status: document.getElementById('routeStatus').textContent,
-    hops: [...document.querySelectorAll('#routeHops li')].map(li => li.querySelector('.route-hop-name')?.textContent),
-    markers: document.querySelectorAll('#mapRoute .route-hop').length,
-    numbered: document.querySelectorAll('#mapRoute .route-hop-order').length,
-  }))()`)
+  const route = await evaluate(`(() => {
+    const pts = [...document.querySelectorAll('#mapRoute .route-hop-order')]
+      .map(n => [parseFloat(n.getAttribute('x')), parseFloat(n.getAttribute('y'))])
+    let spanX = 0, spanY = 0
+    if (pts.length >= 2) {
+      spanX = Math.max(...pts.map(p => p[0])) - Math.min(...pts.map(p => p[0]))
+      spanY = Math.max(...pts.map(p => p[1])) - Math.min(...pts.map(p => p[1]))
+    }
+    return {
+      status: document.getElementById('routeStatus').textContent,
+      hops: [...document.querySelectorAll('#routeHops li')].map(li => li.querySelector('.route-hop-name')?.textContent),
+      markers: document.querySelectorAll('#mapRoute .route-hop').length,
+      numbered: document.querySelectorAll('#mapRoute .route-hop-order').length,
+      // How much of the viewBox the hops occupy. Planning a route has to frame
+      // on it: the Lodwar corridor is four roads inside six kilometres, so on a
+      // region-wide frame the reroute that is the whole point of the feature
+      // collapsed into one unreadable cluster.
+      spread: Math.max(spanX, spanY),
+      viewBox: (document.getElementById('situationMap').getAttribute('viewBox') || '').split(' ').map(Number),
+    }
+  })()`)
 
   check('route plan produces an ordered hop list',
     route.hops.length >= 2, route.hops.join(' → '))
@@ -333,6 +348,10 @@ async function main() {
     `${route.markers} markers, ${route.numbered} numbers`)
   check('the route avoids the flooded segment',
     !route.hops.some((h) => /floodplain/i.test(h)), route.hops.join(' → '))
+  const routeRefW = route.viewBox[2] || 800
+  check('planning a route frames the map on that route',
+    route.spread > routeRefW * 0.2,
+    `hops span ${Math.round(route.spread)} of ${routeRefW} viewBox units`)
   check('route status reports distance, mode, and the impassable-segment rule',
     /km/.test(route.status) && /(vehicle|foot)/.test(route.status) && /not penalised/i.test(route.status),
     route.status.trim().slice(0, 130))
@@ -363,9 +382,18 @@ async function main() {
   const routeCleared = await evaluate(`(() => ({
     markers: document.querySelectorAll('#mapRoute .route-hop').length,
     hops: document.querySelectorAll('#routeHops li').length,
+    // Clearing must also give the region frame back, not leave the map stuck
+    // on a corridor the operator is no longer planning through. The graticule
+    // is the honest signal: it is drawn every 5 degrees, so a region-wide frame
+    // has labelled lines and a 0.08-degree corridor frame has none.
+    graticuleLines: document.querySelectorAll('#mapGraticule line').length,
+    graticuleLabels: document.querySelectorAll('#mapGraticule text').length,
   }))()`)
   check('clearing the route removes the overlay',
     routeCleared.markers === 0 && routeCleared.hops === 0)
+  check('clearing the route returns the map to the region frame',
+    routeCleared.graticuleLabels > 0,
+    `${routeCleared.graticuleLines} graticule lines, ${routeCleared.graticuleLabels} labels after clear`)
 
   // Seasonal context. The wording is the assertion: a bare "El Nino" would
   // assert a declared event the connector deliberately refuses to declare.

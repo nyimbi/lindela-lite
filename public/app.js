@@ -37,6 +37,7 @@ const state = {
   floodGrid: null,
   floodAreaKey: null,
   floodFocus: null,
+  routeFocus: null,
   roadAccess: [],
   showRoads: false,
   climate: [],
@@ -332,6 +333,45 @@ function clearFloodSimulation() {
  * roads on the path in route order, and the numbered hop list carries the
  * sequence.
  */
+/**
+ * The extent a planned route should frame on, from the roads it actually uses.
+ *
+ * Derived from the returned hops rather than the requested endpoints, because a
+ * plan that reroutes around a cut segment does not pass through either. Falls
+ * back to the requested endpoints when the plan carries no usable hops, which is
+ * the infeasible case: the map should still show where the operator asked to go.
+ */
+function routeFocusFor(plan, requested) {
+  const leg = plan?.legs?.find((l) => l.feasible) || plan?.legs?.[0]
+  const points = []
+  for (const hop of leg?.hops || []) {
+    const road = state.roadsById.get(hop.id)
+    if (road && Number.isFinite(road.latitude) && Number.isFinite(road.longitude)) {
+      points.push({ lat: road.latitude, lon: road.longitude })
+    }
+  }
+  if (!points.length) {
+    for (const id of [requested?.from, ...(requested?.to || [])]) {
+      const road = state.roadsById.get(id)
+      if (road && Number.isFinite(road.latitude) && Number.isFinite(road.longitude)) {
+        points.push({ lat: road.latitude, lon: road.longitude })
+      }
+    }
+  }
+  if (points.length < 2) return null
+
+  // A little padding so the first and last hop markers are not on the frame edge.
+  const spanLat = Math.max(...points.map((p) => p.lat)) - Math.min(...points.map((p) => p.lat))
+  const spanLon = Math.max(...points.map((p) => p.lon)) - Math.min(...points.map((p) => p.lon))
+  const pad = Math.max(spanLat, spanLon) * 0.35 || 0.05
+  return {
+    minLat: Math.min(...points.map((p) => p.lat)) - pad,
+    maxLat: Math.max(...points.map((p) => p.lat)) + pad,
+    minLon: Math.min(...points.map((p) => p.lon)) - pad,
+    maxLon: Math.max(...points.map((p) => p.lon)) + pad,
+  }
+}
+
 function renderRouteLayer(plan, bbox) {
   if (!mapRouteEl) return
   mapRouteEl.innerHTML = ''
@@ -446,6 +486,7 @@ async function planRoute() {
   if (!from || !to) return
   if (from === to) {
     state.routePlan = null
+    state.routeFocus = null
     renderRouteHops(null)
     setRouteStatus('Origin and destination must be different roads.')
     reRenderMapFromState()
@@ -460,6 +501,11 @@ async function planRoute() {
     const body = await postJson('/api/v1/routing/plan', { from, to: [to] })
     const plan = body.data || body
     state.routePlan = plan
+    // Frame on the route the way a flood simulation frames on its extent.
+    // Without this the map stayed on the whole Horn, where the Lodwar corridor
+    // is four roads inside six kilometres and the reroute that is the entire
+    // point of the feature collapsed into one unreadable cluster.
+    state.routeFocus = routeFocusFor(plan, { from, to: [to] })
     renderRouteHops(plan)
     setRouteStatus(describeRoutePlan(plan))
     reRenderMapFromState()
@@ -515,6 +561,7 @@ function setRouteStatus(message) {
 
 function clearRoutePlan() {
   state.routePlan = null
+  state.routeFocus = null
   renderRouteHops(null)
   setRouteStatus('Route cleared. Routing works over imported road assets.')
   reRenderMapFromState()
@@ -773,7 +820,9 @@ function renderMap(records) {
   // was found by screenshotting the running dashboard.
   // Frame on the active simulation when there is one, so the shaded extent
   // fills the viewport instead of sitting as a few pixels in a Horn-wide view.
-  const bbox = mapFrame(geo, undefined, state.floodFocus || null).frame
+  // A route frame is an explicit operator request too: zoom to the planned
+  // corridor rather than letting a region-wide view swallow it.
+  const bbox = mapFrame(geo, undefined, state.floodFocus || state.routeFocus || null).frame
 
   // Apply map severity filter
   const sevFilter = $('mapSeverity')?.value || ''
