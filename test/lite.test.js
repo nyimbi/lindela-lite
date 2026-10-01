@@ -29,6 +29,9 @@ import { hasRole, scopeToPartnerOrg } from '../src/auth.js'
 import { computeQuarterlyKpi } from '../src/kpi.js'
 import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from '../src/equity.js'
 import { normalizeCommunityFeedback } from '../src/community.js'
+import { computeRoadAccess, summarizeRoadAccess } from '../src/road-access.js'
+import { readNamespacedTag } from '../src/connectors/spec.js'
+import { normalizeServiceAsset } from '../src/connectors/uploads.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -2529,6 +2532,153 @@ import { buildCreate } from '../src/operations.js'
 import { computeApiUptime } from '../src/kpi.js'
 import { uptimeStats } from '../src/observability.js'
 import { sendRapidProAlert } from '../src/rapidpro.js'
+
+describe('Lindela Lite road access', () => {
+  const baseData = () => ({
+    service_assets: [
+      { id: 'r-flooded', name: 'Turkana Road A', service_type: 'road', country: 'KE', latitude: 3.10, longitude: 35.60, road_class: 'unpaved' },
+      { id: 'r-clear', name: 'Northern Bypass', service_type: 'road', country: 'KE', latitude: 3.10, longitude: 35.90, road_class: 'trunk' },
+      { id: 'c-clinic', name: 'Lodwar Clinic', service_type: 'health', country: 'KE', latitude: 3.13, longitude: 35.63 },
+    ],
+    hazard_events: [
+      { id: 'h-flood', event_type: 'flood', severity: 'critical', title: 'Flood on Road A', latitude: 3.10, longitude: 35.60 },
+      // Earthquake is a precursor, not an obstruction.
+      { id: 'h-eq', event_type: 'earthquake', severity: 'high', title: 'EQ', latitude: 3.10, longitude: 35.60 },
+    ],
+  })
+
+  it('blocks a road under a hazard at the same location and leaves others passable', () => {
+    const rows = computeRoadAccess(baseData())
+    const flooded = rows.find((r) => r.road_id === 'r-flooded')
+    const clear = rows.find((r) => r.road_id === 'r-clear')
+
+    assert.equal(flooded.access_status, 'impassable')
+    assert.match(flooded.access_reason, /flood/i)
+    assert.equal(clear.access_status, 'passable')
+    // Only roads get a row; health facilities are excluded.
+    assert.equal(rows.length, 2)
+  })
+
+  it('matches a hazard bbox even when the hazard centre is far away', () => {
+    const data = baseData()
+    // A country-scale flood whose centroid is nowhere near the road, but whose
+    // bbox covers it. Distance alone would have missed this.
+    data.hazard_events = [{
+      id: 'h-wide',
+      event_type: 'flood',
+      severity: 'high',
+      title: 'Regional flood',
+      latitude: 10.0,
+      longitude: 40.0,
+      bbox: { west: 35.0, south: 2.0, east: 36.5, north: 4.0 },
+    }]
+    const rows = computeRoadAccess(data)
+    const flooded = rows.find((r) => r.road_id === 'r-flooded')
+    assert.equal(flooded.access_status, 'impassable')
+    assert.equal(flooded.obstructions[0].matched_by, 'bbox')
+  })
+
+  it('treats a road with no road_class as unpaved rather than assuming all-weather', () => {
+    const data = baseData()
+    delete data.service_assets[0].road_class
+    const rows = computeRoadAccess(data)
+    assert.equal(rows.find((r) => r.road_id === 'r-flooded').road_class, 'unpaved')
+  })
+
+  it('weights an all-weather trunk route losing access above an unpaved track', () => {
+    const data = baseData()
+    data.hazard_events = [{ id: 'h1', event_type: 'landslide', severity: 'critical', title: 'S', latitude: 3.10, longitude: 35.60 }]
+    const rows = computeRoadAccess(data)
+    const unpavedScore = rows.find((r) => r.road_id === 'r-flooded').access_score
+
+    data.service_assets[0].road_class = 'trunk'
+    data.service_assets[0].latitude = 35.60
+    const trunkRows = computeRoadAccess(data)
+    const trunkScore = trunkRows.find((r) => r.road_id === 'r-flooded').access_score
+    assert.ok(trunkScore > unpavedScore, `expected trunk criticality to raise the penalty: ${trunkScore} vs ${unpavedScore}`)
+  })
+
+  it('honours a field-reported closure even with no hazard in the model', () => {
+    const data = baseData()
+    data.hazard_events = []
+    data.service_assets[0].passability = 'impassable'
+    const rows = computeRoadAccess(data)
+    const road = rows.find((r) => r.road_id === 'r-flooded')
+    assert.equal(road.access_status, 'impassable')
+    assert.match(road.access_reason, /field source/i)
+  })
+
+  it('summarises cut-off rate and hazard attribution', () => {
+    const summary = summarizeRoadAccess(computeRoadAccess(baseData()))
+    assert.equal(summary.total_roads, 2)
+    assert.equal(summary.impassable, 1)
+    assert.equal(summary.cut_off_rate_pct, 50)
+    assert.equal(summary.blocked_by_hazard_type.flood, 1)
+    assert.equal(summary.cut_off_roads.length, 1)
+  })
+
+  it('normalizes road attributes and rejects unknown enum values', () => {
+    const road = normalizeServiceAsset(
+      { name: 'R', service_type: 'road', country: 'KE', latitude: 1, longitude: 2, road_class: 'gravel', passability: 'blocked', width_m: 5 },
+      0,
+    )
+    assert.equal(road.error, undefined)
+    assert.equal(road.value.road_class, 'unpaved')
+    assert.equal(road.value.passability, 'impassable')
+    assert.equal(road.value.width_m, 5)
+
+    // Road attributes must not leak onto non-road assets.
+    const clinic = normalizeServiceAsset(
+      { name: 'C', service_type: 'health', country: 'KE', latitude: 1, longitude: 2, road_class: 'trunk', passability: 'closed' },
+      0,
+    )
+    assert.equal(clinic.value.road_class, null)
+    assert.equal(clinic.value.passability, null)
+
+    const bad = normalizeServiceAsset(
+      { name: 'B', service_type: 'road', country: 'KE', latitude: 1, longitude: 2, road_class: 'floating' },
+      0,
+    )
+    assert.match(bad.error, /road_class must be one of/)
+  })
+
+  it('reads namespaced RSS tags by local name', () => {
+    const xml = '<item><gdacs:bbox>1 2 3 4</gdacs:bbox><ns:country>KE</ns:country><bbox>5 6 7 8</bbox></item>'
+    assert.equal(readNamespacedTag(xml, 'bbox'), '1 2 3 4')
+    assert.equal(readNamespacedTag(xml, 'country'), 'KE')
+  })
+
+  it('exposes road access over the API after an analytics refresh', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-road-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await store.merge({
+      service_assets: [
+        { id: 'r1', name: 'Road A', service_type: 'road', country: 'KE', latitude: 3.1, longitude: 35.6, road_class: 'unpaved' },
+        { id: 'c1', name: 'Clinic', service_type: 'health', country: 'KE', latitude: 3.11, longitude: 35.61 },
+      ],
+      hazard_events: [{ id: 'h1', event_type: 'flood', severity: 'critical', title: 'Flood', latitude: 3.1, longitude: 35.6 }],
+    })
+    const { refreshAnalytics } = await import('../src/analytics.js')
+    await refreshAnalytics(store)
+
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://localhost:${listener.address().port}`
+    try {
+      const body = await fetchJson(`${baseUrl}/api/v1/road-access`)
+      assert.equal(body.success, true)
+      assert.equal(body.data.length, 1)
+      assert.equal(body.data[0].access_status, 'impassable')
+      assert.equal(body.summary.cut_off_rate_pct, 100)
+
+      const summary = await fetchJson(`${baseUrl}/api/v1/road-access/summary`)
+      assert.equal(summary.data.total_roads, 1)
+      assert.equal(summary.data.impassable, 1)
+    } finally {
+      listener.close()
+    }
+  })
+})
 
 describe('Lindela Lite Phase 2 — Parametric, DHIS2, Demographics, Observability', () => {
   it('normalizeParametricRule rejects mainnet chain name with explicit error', () => {

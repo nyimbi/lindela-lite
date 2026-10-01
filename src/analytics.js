@@ -5,6 +5,7 @@ import { clamp, haversineKm, stableId } from './utils.js'
 import { computeEnsembleStats } from './analytics/ensemble.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
 import { biasCorrectClimate } from './analytics/downscaling.js'
+import { computeRoadAccess } from './road-access.js'
 
 export async function refreshAnalytics(store) {
   const data = await store.read()
@@ -16,7 +17,8 @@ export async function refreshAnalytics(store) {
   const data_quality = computeDataQuality(data)
   const population_at_risk = computePopulationAtRisk(data)
   const facilities_at_risk = computeFacilitiesAtRisk(data)
-  await store.replaceAnalytics({ risk_scores, impact_assessments, data_quality, population_at_risk, facilities_at_risk })
+  const road_access = computeRoadAccess(data)
+  await store.replaceAnalytics({ risk_scores, impact_assessments, data_quality, population_at_risk, facilities_at_risk, road_access })
 
   // Persist calibration snapshot (best-effort, don't fail refresh)
   if (process.env.LINDELA_LITE_CALIBRATION_DIR !== 'off' && process.env.NODE_ENV !== 'test') {

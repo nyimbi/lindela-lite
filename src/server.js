@@ -39,6 +39,7 @@ import { redactPii, applyRetention, loadPolicy } from './pii.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
 import { emit, dispatchPending } from './outbox.js'
+import { summarizeRoadAccess } from './road-access.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
 import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots } from './kpi.js'
 import { KNOWN_DISTRICTS, resolveDistrict, districtOverview } from './districts.js'
@@ -415,6 +416,20 @@ async function handleApi(store, req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/v1/impact/facilities-at-risk') {
     jsonResponse(res, 200, { success: true, data: filterRecords(data.facilities_at_risk || [], url.searchParams) })
+    return
+  }
+
+  if (url.pathname === '/api/v1/road-access') {
+    const includeDeleted = url.searchParams.get('include_deleted') === 'true'
+    const records = includeDeleted
+      ? (data.road_access || [])
+      : (data.road_access || []).filter((item) => !isDeleted(item))
+    jsonResponse(res, 200, { success: true, data: records, summary: summarizeRoadAccess(records) })
+    return
+  }
+
+  if (url.pathname === '/api/v1/road-access/summary') {
+    jsonResponse(res, 200, { success: true, data: summarizeRoadAccess(data.road_access || []) })
     return
   }
 

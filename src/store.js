@@ -39,6 +39,7 @@ export const COLLECTIONS = [
   'parametric_rules',
   'parametric_disbursements',
   'kpi_snapshots',
+  'road_access',
 ]
 
 export class JsonStore {
@@ -75,7 +76,7 @@ export class JsonStore {
     return this.write(next)
   }
 
-  async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [], population_at_risk = [], facilities_at_risk = [] }) {
+  async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [], population_at_risk = [], facilities_at_risk = [], road_access = [] }) {
     const current = await this.read()
     return this.write({
       ...current,
@@ -84,6 +85,7 @@ export class JsonStore {
       data_quality,
       population_at_risk,
       facilities_at_risk,
+      road_access,
     })
   }
 }

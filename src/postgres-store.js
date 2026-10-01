@@ -161,8 +161,8 @@ export class PostgresStore {
     )
   }
 
-  async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [] }) {
-    return this.merge({ risk_scores, impact_assessments, data_quality })
+  async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [], road_access = [] }) {
+    return this.merge({ risk_scores, impact_assessments, data_quality, road_access })
   }
 
   async close() {

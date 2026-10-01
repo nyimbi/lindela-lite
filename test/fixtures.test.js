@@ -25,13 +25,44 @@ describe('public source connector fixtures', () => {
     assert.equal(result.climate_observations[0].source, 'open_meteo')
   })
 
-  it('parses GDACS disaster alerts', async () => {
+  it('parses GDACS disaster alerts with bbox, alert level, and event type code', async () => {
     mockFetch('gdacs.xml', 'application/xml')
     const result = await gdacsConnector.ingest({ gdacs_feeds: ['https://fixture.test/gdacs.xml'], retries: 0 })
     assert.equal(result.errors.length, 0)
+    assert.equal(result.hazard_events.length, 2)
+
+    const flood = result.hazard_events[0]
+    assert.equal(flood.event_type, 'flood')
+    assert.equal(flood.severity, 'high')
+    assert.equal(flood.country, 'Kenya')
+    assert.equal(flood.metadata.event_type_code, 'FL')
+    assert.equal(flood.metadata.alert_level, 'orange')
+    assert.equal(flood.metadata.alert_score, 2)
+    // gdacs:bbox is "south west north east"; the centre becomes the point.
+    assert.deepEqual(flood.bbox, { west: 35.2, south: 2.9, east: 35.9, north: 3.5 })
+    assert.ok(Math.abs(flood.latitude - 3.2) < 0.001)
+    assert.ok(Math.abs(flood.longitude - 35.55) < 0.001)
+
+    // Landslide must be recognised from the LS code, not keyword sniffing.
+    const slide = result.hazard_events[1]
+    assert.equal(slide.event_type, 'landslide')
+    assert.equal(slide.metadata.event_type_code, 'LS')
+    assert.ok(Number.isFinite(slide.latitude))
+  })
+
+  it('falls back to keyword detection when GDACS omits the event type code', async () => {
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      text: async () => `<?xml version="1.0"?><rss><channel><item>
+        <title>Mudslide warning in Nepal</title>
+        <pubDate>Mon, 18 May 2026 00:00:00 GMT</pubDate>
+        <guid>MS1</guid>
+      </item></channel></rss>`,
+    })
+    const result = await gdacsConnector.ingest({ gdacs_feeds: ['https://fixture.test/x.xml'], retries: 0 })
     assert.equal(result.hazard_events.length, 1)
-    assert.equal(result.hazard_events[0].event_type, 'flood')
-    assert.equal(result.hazard_events[0].severity, 'high')
+    assert.equal(result.hazard_events[0].event_type, 'landslide')
   })
 
   it('parses GloFAS flood forecast RSS', async () => {

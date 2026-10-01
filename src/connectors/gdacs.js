@@ -1,13 +1,15 @@
 import { fetchWithRetry } from './http.js'
 import { normalizeSeverity } from '../schema.js'
 import { stableId, toNumber } from '../utils.js'
-import { defineConnector } from './spec.js'
+import { defineConnector, readNamespacedTag } from './spec.js'
 
+// GDACS serves one combined feed. The per-hazard URLs (rss_floods.xml,
+// rss_droughts.xml, rss_tropicalcyclones.xml) now return an HTML admin page
+// rather than RSS, so requesting them yields nothing. rss.xml carries every
+// event type — FL, EQ, TC, DR, WF, VO — and is the single feed to use.
+// Verified live: 222 items, of which 23 flood, 9 cyclone, 12 drought.
 const FEEDS = [
   'https://www.gdacs.org/xml/rss.xml',
-  'https://www.gdacs.org/xml/rss_floods.xml',
-  'https://www.gdacs.org/xml/rss_droughts.xml',
-  'https://www.gdacs.org/xml/rss_tropicalcyclones.xml',
 ]
 
 async function gdacsIngest(options = {}) {
@@ -33,8 +35,16 @@ async function gdacsIngest(options = {}) {
             country: parsed.country,
             latitude: parsed.latitude,
             longitude: parsed.longitude,
+            bbox: parsed.bbox,
             affected_population: parsed.affected_population,
-            metadata: { provider: 'GDACS', feed },
+            metadata: {
+              provider: 'GDACS',
+              feed,
+              event_type_code: item.eventtype || null,
+              alert_level: parsed.alert_level,
+              alert_score: parsed.alert_score,
+              severity_data: parsed.severity_data,
+            },
           })
         }
       } catch (error) {
@@ -79,31 +89,94 @@ function parseRssItems(xml) {
     description: readTag(match[1], 'description'),
     pubDate: readTag(match[1], 'pubDate'),
     guid: readTag(match[1], 'guid'),
+    eventtype: readNamespacedTag(match[1], 'eventtype'),
+    alertlevel: readNamespacedTag(match[1], 'alertlevel'),
+    alertscore: readNamespacedTag(match[1], 'alertscore'),
+    severity_data: readNamespacedTag(match[1], 'severity'),
+    bbox: readNamespacedTag(match[1], 'bbox'),
+    country: readNamespacedTag(match[1], 'country'),
   }))
 }
 
 function parseGdacsItem(item) {
   const text = `${item.title || ''} ${stripTags(item.description || '')}`
   const lower = text.toLowerCase()
-  const event_type = lower.includes('flood') ? 'flood'
-    : lower.includes('drought') ? 'drought'
-      : lower.includes('cyclone') || lower.includes('storm') ? 'storm'
-        : lower.includes('earthquake') ? 'earthquake'
-          : 'disaster'
-  const severity = normalizeSeverity(lower.includes('red') ? 'red' : lower.includes('orange') ? 'orange' : lower.includes('green') ? 'green' : 'unknown')
+
+  // Prefer the structured gdacs:eventtype over keyword sniffing: it is
+  // unambiguous where "landslide" or "mudslide" appear in free text.
+  const EVENT_TYPE_BY_CODE = {
+    FL: 'flood',
+    TC: 'storm',
+    EQ: 'earthquake',
+    DR: 'drought',
+    WF: 'fire',
+    VO: 'volcano',
+    LS: 'landslide',
+  }
+  const code = String(item.eventtype || '').trim().toUpperCase()
+  let event_type = EVENT_TYPE_BY_CODE[code]
+  if (!event_type) {
+    if (/\b(landslide|mudslide|mud ?flow|rockslide|slope failure|earth ?slide|debris flow)\b/i.test(text)) {
+      event_type = 'landslide'
+    } else if (lower.includes('flood')) {
+      event_type = 'flood'
+    } else if (lower.includes('drought')) {
+      event_type = 'drought'
+    } else if (lower.includes('cyclone') || lower.includes('storm')) {
+      event_type = 'storm'
+    } else if (lower.includes('earthquake')) {
+      event_type = 'earthquake'
+    } else {
+      event_type = 'disaster'
+    }
+  }
+
+  const alertLevel = String(item.alertlevel || '').trim().toLowerCase()
+  const severity = normalizeSeverity(
+    alertLevel === 'red' || lower.includes('red')
+      ? 'red'
+      : alertLevel === 'orange' || lower.includes('orange')
+        ? 'orange'
+        : alertLevel === 'green' || lower.includes('green')
+          ? 'green'
+          : 'unknown',
+  )
+
+  // gdacs:bbox is "south west north east" in decimal degrees. Prefer it over
+  // scraping coordinates out of the description, which the RSS rarely carries.
+  const box = parseBbox(item.bbox)
   const lat = readNumber(text, /lat(?:itude)?[:\s]+(-?\d+(?:\.\d+)?)/i)
   const lon = readNumber(text, /lon(?:gitude)?[:\s]+(-?\d+(?:\.\d+)?)/i)
   const affected = readNumber(text, /(?:population|people)[^\d]+(\d[\d,]*)/i)
-  const country = readText(text, /Country[:\s]+([A-Za-z ,'-]+)/i)
+  const countryField = item.country ? item.country.trim().slice(0, 80) : null
+  const country = countryField || readText(text, /Country[:\s]+([A-Za-z ,'-]+)/i)?.trim().slice(0, 80) || null
+
   return {
     event_type,
     severity,
-    latitude: lat,
-    longitude: lon,
+    // Use the bbox centre when available so the event is mappable.
+    latitude: box ? box.latitude : lat,
+    longitude: box ? box.longitude : lon,
+    bbox: box ? { west: box.west, south: box.south, east: box.east, north: box.north } : null,
     affected_population: affected,
-    country: country ? country.trim().slice(0, 80) : null,
+    country,
     source_id: item.guid || item.link,
+    alert_level: alertLevel || null,
+    alert_score: toNumber(item.alertscore),
+    severity_data: item.severity_data || null,
   }
+}
+
+/**
+ * GDACS bbox is "south west north east". Returns the centre point so the
+ * hazard can be mapped and proximity-matched, plus the bounds for filtering.
+ */
+function parseBbox(value) {
+  const parts = String(value || '').trim().split(/[\s,]+/).map(Number)
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return null
+  const [south, west, north, east] = parts
+  if (south >= north || west >= east) return null
+  return { west, south, east, north, latitude: (south + north) / 2, longitude: (west + east) / 2 }
 }
 
 function readTag(xml, tag) {

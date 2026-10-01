@@ -30,6 +30,58 @@ export const SERVICE_TYPES = Object.freeze([
   'other',
 ])
 
+/**
+ * How passable a road segment is to light vehicles. Non-road assets leave this
+ * null; anything with a road classification is expected to carry one.
+ */
+export const ROAD_PASSABILITY = Object.freeze([
+  'passable',
+  'restricted',
+  'impassable',
+])
+
+/**
+ * Road classes, from all-weather trunk routes down to unpaved tracks. Used to
+ * reason about which alternate routes exist when a segment is blocked.
+ */
+export const ROAD_CLASSES = Object.freeze([
+  'trunk',
+  'primary',
+  'secondary',
+  'tertiary',
+  'unpaved',
+  'track',
+])
+
+/**
+ * Hazard event types recognised by the platform. Connectors may emit any of
+ * these; unknown types are preserved rather than rejected, so a new upstream
+ * feed does not silently lose events.
+ */
+export const HAZARD_EVENT_TYPES = Object.freeze([
+  'flood',
+  'landslide',
+  'storm',
+  'earthquake',
+  'drought',
+  'fire',
+  'volcano',
+  'eruption',
+  'flood_forecast',
+  'disaster',
+])
+
+/**
+ * Hazards that physically obstruct a road. A landslide covering a carriageway
+ * and a flood over a bridge are both access-blocking; an earthquake is a
+ * precursor, not an obstruction, unless it has produced one of the former.
+ */
+export const ACCESS_BLOCKING_HAZARDS = Object.freeze([
+  'flood',
+  'landslide',
+  'eruption',
+])
+
 export const INCIDENT_STATUSES = Object.freeze([
   'open',
   'monitoring',
@@ -189,6 +241,7 @@ export function emptyStore() {
     parametric_rules: [],
     parametric_disbursements: [],
     kpi_snapshots: [],
+    road_access: [],
   }
 }
 

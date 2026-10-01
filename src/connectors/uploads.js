@@ -1,4 +1,4 @@
-import { SERVICE_TYPES, normalizeSeverity } from '../schema.js'
+import { ROAD_CLASSES, ROAD_PASSABILITY, SERVICE_TYPES, normalizeSeverity } from '../schema.js'
 import { parseCsv, stableId, toNumber } from '../utils.js'
 
 export const serviceAssetsConnector = {
@@ -80,6 +80,19 @@ export function normalizeServiceAsset(asset, index = 0) {
   if (!serviceType) return { error: `${label}: service_type is required` }
   if (!SERVICE_TYPES.includes(serviceType)) return { error: `${label}: service_type must be one of ${SERVICE_TYPES.join(', ')}` }
   if (!country) return { error: `${label}: country is required` }
+
+  // Road-specific attributes only apply to road assets. A health clinic with a
+  // stray "road_class" field should not silently acquire road semantics.
+  const isRoad = serviceType === 'road'
+  const roadClass = isRoad ? normalizeRoadClass(asset.road_class ?? asset.roadClass ?? asset.class) : null
+  const passability = isRoad ? normalizePassability(asset.passability ?? asset.access ?? asset.access_status) : null
+  if (isRoad && asset.road_class && !roadClass) {
+    return { error: `${label}: road_class must be one of ${ROAD_CLASSES.join(', ')}` }
+  }
+  if (isRoad && asset.passability && !passability) {
+    return { error: `${label}: passability must be one of ${ROAD_PASSABILITY.join(', ')}` }
+  }
+
   return {
     value: {
       id: asset.id || stableId('asset', [asset.name, serviceType, latitude, longitude]),
@@ -92,10 +105,73 @@ export function normalizeServiceAsset(asset, index = 0) {
       latitude,
       longitude,
       capacity: toNumber(asset.capacity),
+      road_class: roadClass,
+      passability: passability,
+      // Metres of carriageway width, when known. Used to judge whether an
+      // obstruction fully blocks a segment or can be worked around.
+      width_m: toNumber(asset.width_m ?? asset.widthM ?? asset.width),
       updated_at: asset.updated_at || new Date().toISOString(),
       metadata: asset.metadata || {},
     },
   }
+}
+
+/**
+ * Accepts common spellings and aliases for road class, defaulting to
+ * 'unpaved' rather than guessing 'trunk'.
+ */
+function normalizeRoadClass(value) {
+  if (value == null || value === '') return null
+  const raw = String(value).trim().toLowerCase().replace(/[\s-]+/g, '_')
+  const ALIASES = {
+    highway: 'trunk',
+    motorway: 'trunk',
+    a_road: 'trunk',
+    b_road: 'primary',
+    main: 'primary',
+    all_weather: 'trunk',
+    tarmac: 'paved',
+    paved: 'primary',
+    gravel: 'unpaved',
+    dirt: 'unpaved',
+    earth: 'unpaved',
+    footpath: 'track',
+    path: 'track',
+    trail: 'track',
+  }
+  const candidate = ALIASES[raw] || raw
+  return ROAD_CLASSES.includes(candidate) ? candidate : null
+}
+
+/**
+ * Accepts common spellings for passability. Defaults to 'passable' when a road
+ * asset gives no access information, so absence of data never invents a
+ * closure.
+ */
+function normalizePassability(value) {
+  if (value == null || value === '') return null
+  const raw = String(value).trim().toLowerCase().replace(/[\s-]+/g, '_')
+  const ALIASES = {
+    open: 'passable',
+    clear: 'passable',
+    accessible: 'passable',
+    ok: 'passable',
+    partial: 'restricted',
+    limited: 'restricted',
+    difficult: 'restricted',
+    congested: 'restricted',
+    blocked: 'impassable',
+    closed: 'impassable',
+    impassable: 'impassable',
+    submerged: 'impassable',
+    flooded: 'impassable',
+    washed_out: 'impassable',
+    buried: 'impassable',
+    landslide: 'impassable',
+    obstructed: 'impassable',
+  }
+  const candidate = ALIASES[raw] || raw
+  return ROAD_PASSABILITY.includes(candidate) ? candidate : null
 }
 
 function normalizeConflictEvent(row, source) {

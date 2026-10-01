@@ -1,3 +1,20 @@
+/**
+ * Reads a namespaced RSS/Atom element by local name.
+ *
+ * Namespaced tags must be matched by local name: writing "gdacs:bbox" into a
+ * RegExp and flagging it as a literal would match nothing, which is how bbox
+ * and country silently came back null. Matching on the local part also keeps
+ * the parser working if a provider changes its namespace prefix.
+ */
+export function readNamespacedTag(xml, localName) {
+  const pattern = new RegExp(
+    `<(?:[a-z0-9-]+:)?${localName}\\b[^>]*>([\\s\\S]*?)</(?:[a-z0-9-]+:)?${localName}>`,
+    'i',
+  )
+  const match = xml.match(pattern)
+  return match ? match[1].trim() : ''
+}
+
 export function defineConnector(input) {
   const errors = validateConnectorInput(input)
   if (errors.length) {
