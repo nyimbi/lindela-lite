@@ -166,38 +166,30 @@ reported centre.
 
 ### Routing over the severed segment
 
-`from` and `to` are road **asset ids**, not coordinates. List them first:
+**In the dashboard**, under the map: pick a **From** and **To** road and press
+Plan route. The selects are populated from the imported road assets, and the
+demo corridor is the interesting pair:
 
-```
-curl -s "http://127.0.0.1:4177/api/v1/service-assets?service_type=road"
-```
+- From `Lodwar Distribution Depot Access` → To `Lodwar Clinic Approach`
+  succeeds: 1 Depot Access → 2 Kibish Plateau Bypass → 3 Clinic Approach,
+  6.8 km, about 10 minutes by vehicle. The flooded lowland segment is skipped.
+- From Depot Access → To `Lowland B4 Floodplain Segment` fails explicitly:
+  *"No feasible road route: Destination road 'Lowland B4 Floodplain Segment' is
+  impassable: Blocked by flood (critical)"*, followed by what that would
+  require instead.
 
-The corridor ids are stable across seeds (derived from name, type, and country),
-so on a fresh store:
+The point to make: the router does not treat the flooded road as usable
+because a faster neighbour exists. An impassable segment is removed from the
+network entirely rather than penalised, because no finite cost is a barrier.
 
-| Role | id |
-|---|---|
-| Depot Access | `asset_c2f1b7f06baeda8e` |
-| Lowland B4 (flooded) | `asset_d7ad6b6d56e2cb66` |
-| Kibish Plateau Bypass | `asset_e777848541dc75e8` |
-| Clinic Approach | `asset_87445d3f0f60540e` |
+**Over HTTP**, `from` and `to` are road **asset ids**, not coordinates. List
+them first with `GET /api/v1/service-assets?service_type=road`. Coordinate
+objects are rejected with an error naming the problem rather than reported as
+an unknown road.
 
-```
-curl -s -X POST http://127.0.0.1:4177/api/v1/routing/plan \
-  -H 'content-type: application/json' \
-  -d '{"from":"asset_c2f1b7f06baeda8e","to":["asset_87445d3f0f60540e"]}'
-```
-
-Expect `network: {roads: 8, links: 2, cut_off_roads: 1}` and a feasible leg:
-Depot → Kibish Plateau Bypass → Clinic Approach, 10 minutes, 6.8 km, mode
-`vehicle`. The point to make: the router does not treat the flooded road as
-usable because a faster neighbour exists. An impassable node severs every link
-touching it.
-
-For the failure mode, plan a leg that *must* cross the flooded segment — for
-example depot → Lowland B4. The response is `feasible: false` with
-`severed_by` naming the blocking segment and a plain-language `suggestion`. It
-does not silently return a straight line.
+The map shows numbered markers rather than a drawn line. Road assets are
+points, so a polyline between hops would invent geometry the router does not
+know; the numbered hop list carries the sequence instead.
 
 ### Seasonal context
 

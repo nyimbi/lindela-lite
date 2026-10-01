@@ -1447,3 +1447,72 @@ dialog[open] {
 
   .topbar-controls { gap: var(--sp-1); }
 }
+
+/* Route planning overlay.
+   Roads are points, not lines, so no polyline is drawn: a straight line
+   between hops would invent road geometry the router does not know. The
+   sequence is carried by the numbered hop list and the numbered rings. */
+.route-layer { pointer-events: none; }
+
+.route-halo {
+  fill: none;
+  stroke: oklch(80% 0.16 195);
+  stroke-width: 2;
+  stroke-opacity: 0.9;
+}
+
+.route-hop {
+  fill: oklch(80% 0.16 195);
+  stroke: oklch(20% 0.04 195);
+  stroke-width: 1.5;
+}
+
+.route-hop-restricted {
+  fill: oklch(78% 0.15 75);
+}
+
+.route-hop-order {
+  fill: oklch(20% 0.04 195);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.route-hops {
+  display: grid;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: none;
+}
+
+.route-hop-row {
+  display: grid;
+  grid-template-columns: 16px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--bg-elevated) 70%, transparent);
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.route-hop-row.is-restricted {
+  background: color-mix(in oklab, oklch(78% 0.15 75) 18%, transparent);
+}
+
+.route-hop-index {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: oklch(80% 0.16 195);
+}
+
+.route-hop-name { color: var(--ink); }
+.route-hop-class,
+.route-hop-status {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+}

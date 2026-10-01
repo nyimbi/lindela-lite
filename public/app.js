@@ -38,6 +38,8 @@ const state = {
   floodFocus: null,
   roadAccess: [],
   showRoads: false,
+  routePlan: null,
+  roadsById: new Map(),
 }
 
 // =============================================================
@@ -310,6 +312,164 @@ function clearFloodSimulation() {
 }
 
 /** Loads road status so cut-off segments appear on the map. */
+/**
+ * Draws the planned route.
+ *
+ * Road assets are points, not lines, so this does NOT draw a polyline between
+ * hops. A straight line between two road markers would be an invented geometry
+ * claim — the routing module refuses to return one, and the overlay must not
+ * imply the router knows where the road physically runs. Instead it rings the
+ * roads on the path in route order, and the numbered hop list carries the
+ * sequence.
+ */
+function renderRouteLayer(plan, bbox) {
+  if (!mapRouteEl) return
+  mapRouteEl.innerHTML = ''
+  const leg = plan?.legs?.find((l) => l.feasible) || plan?.legs?.[0]
+  if (!leg) return
+
+  const ring = svgEl('circle', {
+    cx: 0, cy: 0, r: 11,
+    class: 'route-halo',
+  })
+  const title = svgEl('title')
+  title.textContent = `Planned route: ${leg.hops?.map((h) => h.name).join(' -> ')}`
+  ring.append(title)
+
+  leg.hops?.forEach((hop, index) => {
+    const road = state.roadsById.get(hop.id)
+    if (!road || !Number.isFinite(road.latitude) || !Number.isFinite(road.longitude)) return
+    const { x, y } = project(road.latitude, road.longitude, bbox)
+    ring.setAttribute('cx', x)
+    ring.setAttribute('cy', y)
+
+    const marker = svgEl('circle', {
+      cx: x,
+      cy: y,
+      r: 8,
+      class: `route-hop${hop.access_status === 'restricted' ? ' route-hop-restricted' : ''}`,
+    })
+    const order = svgEl('text', {
+      x, y: y + 3.5,
+      class: 'route-hop-order',
+      'text-anchor': 'middle',
+    })
+    order.textContent = String(index + 1)
+    const hopTitle = svgEl('title')
+    hopTitle.textContent = `${index + 1}. ${hop.name} (${hop.road_class})`
+    marker.append(hopTitle)
+
+    mapRouteEl.append(ring)
+    mapRouteEl.append(marker)
+    mapRouteEl.append(order)
+  })
+}
+
+/** Fills the origin and destination selects from the imported road assets. */
+function populateRouteEndpoints(roads) {
+  if (!routeFromEl || !routeToEl) return
+  state.roadsById = new Map((roads || []).map((r) => [r.id, r]))
+  const options = (roads || [])
+    .filter((r) => Number.isFinite(r.latitude) && Number.isFinite(r.longitude))
+    .map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`)
+    .join('')
+  if (!options) return
+
+  const previousFrom = routeFromEl.value
+  const previousTo = routeToEl.value
+  routeFromEl.innerHTML = options
+  routeToEl.innerHTML = options
+  if (previousFrom) routeFromEl.value = previousFrom
+  if (previousTo) routeToEl.value = previousTo
+  // Default to the first two distinct roads so the control is usable
+  // immediately rather than requiring two selections before anything happens.
+  if (!routeFromEl.value) routeFromEl.selectedIndex = 0
+  if (!routeToEl.value || routeToEl.value === routeFromEl.value) {
+    routeToEl.selectedIndex = routeFromEl.selectedIndex === 0 ? 1 : 0
+  }
+}
+
+async function planRoute() {
+  if (!routeFromEl || !routeToEl || !routePlanBtn) return
+  const from = routeFromEl.value
+  const to = routeToEl.value
+  if (!from || !to) return
+  if (from === to) {
+    state.routePlan = null
+    renderRouteHops(null)
+    setRouteStatus('Origin and destination must be different roads.')
+    reRenderMapFromState()
+    return
+  }
+
+  routePlanBtn.disabled = true
+  setRouteStatus('Planning…')
+  try {
+    // postJson, not fetchJson: fetchJson only forwards a path, so passing
+    // request options to it silently issued a GET and got a 404 back.
+    const body = await postJson('/api/v1/routing/plan', { from, to: [to] })
+    const plan = body.data || body
+    state.routePlan = plan
+    renderRouteHops(plan)
+    setRouteStatus(describeRoutePlan(plan))
+    reRenderMapFromState()
+  } catch (error) {
+    state.routePlan = null
+    renderRouteHops(null)
+    setRouteStatus(`Routing failed: ${error.message}`)
+    reRenderMapFromState()
+  } finally {
+    routePlanBtn.disabled = false
+  }
+}
+
+/** Plain-language summary, including the honest failure case. */
+function describeRoutePlan(plan) {
+  const leg = plan?.legs?.[0]
+  if (!leg) return 'No route returned.'
+  if (!leg.feasible) {
+    const severed = (leg.severed_by || []).map((b) => b.name).join(', ')
+    return `No feasible road route: ${leg.reason}. `
+      + (severed ? `Cut-off segment(s): ${severed}.` : '')
+      + ' Needs an alternative modality, a different distribution point, or the obstruction cleared.'
+  }
+  const via = leg.hops.map((h) => h.name).join(' → ')
+  return `${via}. ${leg.total_distance_km} km, about ${leg.total_minutes} min by `
+    + `${leg.mode}${leg.degraded ? ' — degraded, relies on a restricted segment' : ''}. `
+    + `Road classes used: ${[...new Set(leg.road_classes)].join(', ')}. `
+    + 'Impassable segments are removed from the network, not penalised.'
+}
+
+function renderRouteHops(plan) {
+  if (!routeHopsEl) return
+  const leg = plan?.legs?.[0]
+  if (!leg?.hops?.length) {
+    routeHopsEl.hidden = true
+    routeHopsEl.innerHTML = ''
+    return
+  }
+  routeHopsEl.hidden = false
+  routeHopsEl.innerHTML = leg.hops.map((hop, index) => `
+    <li class="route-hop-row${hop.access_status === 'restricted' ? ' is-restricted' : ''}">
+      <span class="route-hop-index">${index + 1}</span>
+      <span class="route-hop-name">${escapeHtml(hop.name)}</span>
+      <span class="route-hop-class">${escapeHtml(hop.road_class)}</span>
+      <span class="route-hop-status">${escapeHtml(hop.access_status)}</span>
+    </li>`).join('')
+}
+
+function setRouteStatus(message) {
+  if (routeStatusEl) routeStatusEl.textContent = message
+  else console.warn('[route]', message)
+}
+
+function clearRoutePlan() {
+  state.routePlan = null
+  renderRouteHops(null)
+  setRouteStatus('Route cleared. Routing works over imported road assets.')
+  reRenderMapFromState()
+}
+
 async function loadRoadStatus() {
   try {
     const body = await fetchJson('/api/v1/road-access')
@@ -403,6 +563,13 @@ const mapAssetsEl     = $('mapAssets')
 const mapRiskEl       = $('mapRisk')
 const mapFloodEl      = $('mapFlood')
 const mapRoadsEl      = $('mapRoads')
+const mapRouteEl      = $('mapRoute')
+const routeFromEl      = $('routeFrom')
+const routeToEl        = $('routeTo')
+const routePlanBtn     = $('routePlan')
+const routeClearBtn    = $('routeClear')
+const routeStatusEl    = $('routeStatus')
+const routeHopsEl      = $('routeHops')
 const mapLegendEl     = $('mapLegend')
 const mapDefsEl       = $('mapDefs')
 const floodLegendEl   = $('floodLegend')
@@ -556,6 +723,7 @@ function renderMap(records) {
   mapRiskEl.innerHTML = ''
   if (mapFloodEl) mapFloodEl.innerHTML = ''
   if (mapRoadsEl) mapRoadsEl.innerHTML = ''
+  if (mapRouteEl) mapRouteEl.innerHTML = ''
   if (mapDefsEl) mapDefsEl.innerHTML = ''
 
   // The simulation overlay and road status persist across filter changes, so
@@ -563,6 +731,7 @@ function renderMap(records) {
   // operator just computed.
   if (state.floodGrid) renderFloodLayer(state.floodGrid, bbox)
   if (state.roadAccess?.length) renderRoadLayer(state.roadAccess, bbox)
+  if (state.routePlan) renderRouteLayer(state.routePlan, bbox)
 
   const hazards = visible.filter((r) => r.event_type || r.source === 'gdacs' || r.source === 'glofas' || r.source === 'nasa_firms')
   const assets  = visible.filter((r) => r.service_type)
@@ -715,6 +884,10 @@ floodAreaEl?.addEventListener('change', () => {
     setFloodStatus(`${area.name}: enter a water surface elevation above the local ground to see inundation.`)
   }
 })
+routePlanBtn?.addEventListener('click', planRoute)
+routeClearBtn?.addEventListener('click', clearRoutePlan)
+routeFromEl?.addEventListener('change', clearRoutePlan)
+routeToEl?.addEventListener('change', clearRoutePlan)
 roadOverlayToggle?.addEventListener('change', async () => {
   state.showRoads = roadOverlayToggle.checked
   if (state.showRoads) {
@@ -764,6 +937,7 @@ async function refresh() {
 
   // Populate map source filter
   populateMapSourceFilter(sources.data || [])
+  populateRouteEndpoints(assets.data || [])
 
   renderMap([
     ...(flood.data || []),

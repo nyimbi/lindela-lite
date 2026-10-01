@@ -84,6 +84,7 @@
               <g id="mapRisk" class="risk-layer"></g>
               <g id="mapFlood" class="flood-layer"></g>
               <g id="mapHazards" class="hazard-layer"></g>
+              <g id="mapRoute" class="route-layer"></g>
               <g id="mapRoads" class="roads-layer"></g>
               <g id="mapAssets" class="assets-layer"></g>
             </g>
@@ -151,6 +152,25 @@
             </p>
             <p id="roadStatus" class="map-sim-status" role="status" aria-live="polite"></p>
             <div id="floodLegend" class="flood-legend" hidden></div>
+          </div>
+
+          <div class="map-sim" role="group" aria-label="Route planning">
+            <div class="map-sim-row">
+              <label class="filter-label" for="routeFrom">
+                <span>From</span>
+                <select id="routeFrom"></select>
+              </label>
+              <label class="filter-label" for="routeTo">
+                <span>To</span>
+                <select id="routeTo"></select>
+              </label>
+              <button type="button" id="routePlan" class="btn btn-primary">Plan route</button>
+              <button type="button" id="routeClear" class="btn">Clear</button>
+            </div>
+            <p id="routeStatus" class="map-sim-status" role="status" aria-live="polite">
+              Routing works over imported road assets. Pick an origin and a destination.
+            </p>
+            <ol id="routeHops" class="route-hops" hidden></ol>
           </div>
         </div>
       </section>

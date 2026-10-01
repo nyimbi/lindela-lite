@@ -208,6 +208,79 @@ async function main() {
   check('clear removes the shading and the legend',
     cleared.cells === 0 && cleared.legendHidden, cleared.status.trim().slice(0, 50))
 
+  // Route planning. This was API-only: a panel had no way to see a route
+  // without curl, so the check drives the real controls.
+  const routeReady = await evaluate(`(() => ({
+    from: !!document.getElementById('routeFrom'),
+    to: !!document.getElementById('routeTo'),
+    options: (document.getElementById('routeFrom')||{}).options?.length || 0,
+  }))()`)
+  check('route endpoint selects are populated from road assets',
+    routeReady.from && routeReady.to && routeReady.options >= 2,
+    `${routeReady.options} roads`)
+
+  // Depot -> clinic should detour via the bypass; depot -> flooded road must fail.
+  await evaluate(`(() => {
+    const from = document.getElementById('routeFrom');
+    const to = document.getElementById('routeTo');
+    const pick = (el, re) => { const o = [...el.options].find(x => re.test(x.textContent)); if (o) el.value = o.value; };
+    pick(from, /depot/i);
+    pick(to, /clinic approach/i);
+    from.dispatchEvent(new Event('change'));
+    to.dispatchEvent(new Event('change'));
+    document.getElementById('routePlan').click();
+    return true;
+  })()`)
+  await new Promise((r) => setTimeout(r, 5000))
+
+  const route = await evaluate(`(() => ({
+    status: document.getElementById('routeStatus').textContent,
+    hops: [...document.querySelectorAll('#routeHops li')].map(li => li.querySelector('.route-hop-name')?.textContent),
+    markers: document.querySelectorAll('#mapRoute .route-hop').length,
+    numbered: document.querySelectorAll('#mapRoute .route-hop-order').length,
+  }))()`)
+
+  check('route plan produces an ordered hop list',
+    route.hops.length >= 2, route.hops.join(' → '))
+  check('route markers are numbered to match the hop order',
+    route.markers === route.hops.length && route.numbered === route.hops.length,
+    `${route.markers} markers, ${route.numbered} numbers`)
+  check('the route avoids the flooded segment',
+    !route.hops.some((h) => /floodplain/i.test(h)), route.hops.join(' → '))
+  check('route status reports distance, mode, and the impassable-segment rule',
+    /km/.test(route.status) && /(vehicle|foot)/.test(route.status) && /not penalised/i.test(route.status),
+    route.status.trim().slice(0, 130))
+
+  // The failure mode must be explicit, not an empty success.
+  await evaluate(`(() => {
+    const from = document.getElementById('routeFrom');
+    const to = document.getElementById('routeTo');
+    const pick = (el, re) => { const o = [...el.options].find(x => re.test(x.textContent)); if (o) el.value = o.value; };
+    pick(from, /depot/i);
+    pick(to, /floodplain/i);
+    from.dispatchEvent(new Event('change'));
+    to.dispatchEvent(new Event('change'));
+    document.getElementById('routePlan').click();
+    return true;
+  })()`)
+  await new Promise((r) => setTimeout(r, 5000))
+  const blocked = await evaluate(`(() => ({
+    status: document.getElementById('routeStatus').textContent,
+    hops: document.querySelectorAll('#routeHops li').length,
+  }))()`)
+  check('an unreachable destination fails loudly and names the cause',
+    /no feasible road route/i.test(blocked.status) && blocked.hops === 0,
+    blocked.status.trim().slice(0, 120))
+
+  await evaluate(`document.getElementById('routeClear').click(); true`)
+  await new Promise((r) => setTimeout(r, 1200))
+  const routeCleared = await evaluate(`(() => ({
+    markers: document.querySelectorAll('#mapRoute .route-hop').length,
+    hops: document.querySelectorAll('#routeHops li').length,
+  }))()`)
+  check('clearing the route removes the overlay',
+    routeCleared.markers === 0 && routeCleared.hops === 0)
+
   const fatal = pageErrors.filter((e) => !/favicon|ERR_FAILED.*favicon/i.test(e))
   check('no unhandled page errors', fatal.length === 0, fatal.slice(0, 2).join(' | ') || 'none')
 
