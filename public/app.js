@@ -3,6 +3,7 @@
 // =============================================================
 import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS } from '/shared/basemap.js'
 import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage } from '/shared/flood-bands.js'
+import { isFinitePoint, mapFrame } from '/shared/map-frame.js'
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})
@@ -394,19 +395,6 @@ function svgEl(tag, attrs = {}) {
   return el
 }
 
-function computeBbox(records) {
-  const geo = records.filter((r) => Number.isFinite(r.latitude) && Number.isFinite(r.longitude))
-  if (geo.length < 2) return DEFAULT_BBOX
-  const lats = geo.map((r) => r.latitude)
-  const lons = geo.map((r) => r.longitude)
-  const pad = 1.5
-  return {
-    minLat: Math.min(...lats) - pad,
-    maxLat: Math.max(...lats) + pad,
-    minLon: Math.min(...lons) - pad,
-    maxLon: Math.max(...lons) + pad,
-  }
-}
 
 function project(lat, lon, bbox) {
   const x = ((lon - bbox.minLon) / (bbox.maxLon - bbox.minLon)) * SVG_W
@@ -516,25 +504,19 @@ function assetClass(serviceType) {
   return 'asset-default'
 }
 
-const HORN_BBOX = { minLat: -6, maxLat: 15, minLon: 27, maxLon: 52 }
-
 function renderMap(records) {
-  const geo = records.filter((r) => Number.isFinite(r.latitude) && Number.isFinite(r.longitude))
-  const dataBbox = computeBbox(geo)
+  const geo = records.filter(isFinitePoint)
 
-  // Expand to always show full Horn of Africa land context.
-  const bbox = {
-    minLat: Math.min(dataBbox.minLat, HORN_BBOX.minLat),
-    maxLat: Math.max(dataBbox.maxLat, HORN_BBOX.maxLat),
-    minLon: Math.min(dataBbox.minLon, HORN_BBOX.minLon),
-    maxLon: Math.max(dataBbox.maxLon, HORN_BBOX.maxLon),
-  }
+  // Frame the map around the region of interest rather than around whatever the
+  // global feeds contain. See shared/map-frame.js for the bug this fixes, which
+  // was found by screenshotting the running dashboard.
+  const framed = mapFrame(geo)
+  const bbox = framed.frame
 
-  // The simulation targets the data extent, not the drawn extent: the map
-  // always expands to the full Horn of Africa for land context, and asking the
-  // terrain service for a continent would either time out or silently drop
-  // back to zoom 5, where a "flood depth" is meaningless.
-  if (dataBbox) state.lastMapBbox = dataBbox
+  // The simulation targets the frame extent, which is the region of interest
+  // plus nearby data. Asking terrain for the whole globe would either time out
+  // or silently drop to a zoom where cell depths average across landscapes.
+  state.lastMapBbox = bbox
 
   // Apply map severity filter
   const sevFilter = $('mapSeverity')?.value || ''

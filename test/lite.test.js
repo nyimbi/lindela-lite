@@ -652,6 +652,30 @@ describe('Lindela Lite API', () => {
     assert.ok(looked.size > 20, `expected the dashboard to bind many ids, found ${looked.size}`)
   })
 
+  it('imports shared modules the dashboard loads, at the paths it requests', async () => {
+    // Node resolves a test import from a relative path while the browser
+    // requests an absolute one, so a rename silently breaks the bundle.
+    const app = await fs.readFile(path.join(process.cwd(), 'public/app.js'), 'utf8')
+    const sharedModules = [...app.matchAll(/from '(\/shared\/[^']+)'/g)].map((m) => m[1])
+    assert.ok(sharedModules.length >= 2, `expected several shared modules, found ${sharedModules.length}`)
+
+    for (const specifier of sharedModules) {
+      const onDisk = path.join(process.cwd(), 'public', specifier)
+      const source = await fs.readFile(onDisk, 'utf8')
+      const exported = new Set(
+        [...source.matchAll(/export (?:const|function|class) (\w+)/g)].map((m) => m[1]),
+      )
+      const block = app.match(new RegExp(`import \\{([^}]+)\\} from '${specifier.replace(/[/.]/g, '\\$&')}'`))
+      assert.ok(block, `app.js must import from ${specifier}`)
+      for (const name of block[1].split(',').map((n) => n.trim()).filter(Boolean)) {
+        assert.ok(
+          exported.has(name),
+          `${specifier} must export ${name}; app.js imports it, so a rename breaks the bundle`,
+        )
+      }
+    }
+  })
+
   it('imports the flood-bands module the dashboard actually loads', async () => {
     // Guards against a rename that silently breaks the browser bundle: the
     // module must exist at the path app.js requests and export what it uses.
