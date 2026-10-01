@@ -91,6 +91,27 @@ map shows fewer hazard dots than a naive count of GDACS events would suggest,
 and every dot it does show is a real location. Records still count in the
 filter and the status bar whether or not they can be drawn.
 
+The map asks for the operational area **and** recent global events, in two
+separate requests. It used to ask only for the 50 most recent events worldwide,
+which with GDACS and USGS both live is always the same Pacific and Caribbean
+earthquakes: the flood and landslide that the rest of this walkthrough depends
+on were paginated out and never reached the screen. Two requests means a busy
+day on the global feed can no longer hide a hazard on the road the response
+depends on.
+
+### What the map should show for hazards
+
+- **Flood**: one marker on the Lodwar lowland B4 segment — the seeded flood
+  that severs the corridor in section 6.
+- **Landslide**: one marker on the Turkana B4 supply route. Landslide is
+  access-blocking in its own right and road-access gives it a **wider**
+  clearance radius than flood (5 km vs 2 km), because debris flow travels
+  further than standing water. At the same distance a road is passable for
+  flood and impassable for landslide.
+- **Footprints**: dashed boxes for regional events whose area covers the
+  operational area.
+- Everything else on the map is live global context and is drawn small.
+
 ### 2. Alerts surface
 
 Navigate to Alerts. You should see:

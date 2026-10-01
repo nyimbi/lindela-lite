@@ -46,9 +46,27 @@ no existing endpoint changed shape.
 - Rainfall intensity and duration to flood probability is **not implemented.** It
   requires an explicitly agreed hydrological model basis and a long validated
   annual-maxima record; no coefficients were invented.
+- Landslide clearance is a **fixed 5 km radius** around the reported location,
+  not a run-out model. It is a screening radius chosen to reflect that debris
+  travels further than standing water, not a slope-stability or volume estimate.
+  Treat it as "this road needs checking", not "this road is safe".
 
 ### Changed
 
+- `?bbox=` now returns events the source reported as an **area** overlapping the
+  box, not only events with a point inside it. GDACS reports most events as a box
+  and the connector withholds a point when that box is regional, so a point-only
+  filter told a caller asking about a district that nothing was there for hazards
+  the source had explicitly placed there.
+- The map requests the operational area and recent global events as two separate
+  queries. It previously requested only the 50 most recent events worldwide, which
+  with GDACS and USGS both live is always the same Pacific and Caribbean
+  earthquakes: the seeded flood and landslide that the road-access and routing
+  walkthrough depends on were paginated out and never drawn.
+- Landslide hazards now render with their own class and appear in the map legend.
+  `.hazard-landslide` was declared in CSS but no code path ever applied it, so a
+  landslide fell through to the generic marker and looked like any other event
+  even though road-access models it differently from flood.
 - GDACS parsing reads namespaced RSS tags by local name and extracts event type
   codes, bbox, and country. The previous literal-prefix match returned null for
   all three.

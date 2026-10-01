@@ -3,7 +3,7 @@
 // =============================================================
 import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS } from '/shared/basemap.js'
 import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage } from '/shared/flood-bands.js'
-import { isFinitePoint, mapFrame } from '/shared/map-frame.js'
+import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets } from '/shared/map-frame.js'
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState } from '/shared/seasonal.js'
 
 if ('serviceWorker' in navigator) {
@@ -729,6 +729,9 @@ function sevRadius(severity) {
 
 function hazardClass(eventType) {
   const s = String(eventType || '').toLowerCase()
+  // Checked before 'flood' so a debris-flow alert, which is a landslide, is not
+  // painted as a flood. Both block roads, but they call for different responses.
+  if (s.includes('landslide') || s.includes('slide') || s.includes('debris') || s.includes('mud')) return 'hazard-landslide'
   if (s.includes('flood'))                       return 'hazard-flood'
   if (s.includes('storm') || s.includes('cycl')) return 'hazard-storm'
   if (s.includes('fire'))                        return 'hazard-fire'
@@ -884,11 +887,13 @@ function renderMap(records) {
 function renderMapLegend() {
   mapLegendEl.innerHTML = ''
   const items = [
-    { cls: 'hazard-flood',    label: 'Flood',   shape: 'circle' },
-    { cls: 'hazard-fire',     label: 'Fire',    shape: 'circle' },
-    { cls: 'hazard-conflict', label: 'Conflict',shape: 'circle' },
-    { cls: 'asset-health',    label: 'Health',  shape: 'rect' },
-    { cls: 'asset-water',     label: 'Water',   shape: 'rect' },
+    { cls: 'hazard-flood',     label: 'Flood',     shape: 'circle' },
+    { cls: 'hazard-landslide', label: 'Landslide', shape: 'circle' },
+    { cls: 'hazard-fire',      label: 'Fire',      shape: 'circle' },
+    { cls: 'hazard-conflict',  label: 'Conflict',  shape: 'circle' },
+    { cls: 'hazard-footprint', label: 'Area (box)',shape: 'footprint' },
+    { cls: 'asset-health',     label: 'Health',    shape: 'rect' },
+    { cls: 'asset-water',      label: 'Water',     shape: 'rect' },
   ]
   const pad = 8
   const rowH = 17
@@ -905,6 +910,13 @@ function renderMapLegend() {
     const y = bY + pad + i * rowH + rowH / 2
     if (item.shape === 'circle') {
       mapLegendEl.append(svgEl('circle', { cx: 18, cy: y, r: 5, class: `hazard-marker ${item.cls}` }))
+    } else if (item.shape === 'footprint') {
+      // Dashed, matching how a regional bbox is drawn on the map, and hollow so
+      // it cannot be mistaken for a point event with a location we actually know.
+      mapLegendEl.append(svgEl('rect', {
+        x: 12, y: y - 5, width: 12, height: 10,
+        class: 'hazard-footprint', fill: 'oklch(62% 0.12 260)', stroke: 'oklch(72% 0.12 260)',
+      }))
     } else {
       mapLegendEl.append(svgEl('rect', { x: 14, y: y - 4, width: 8, height: 8, class: `asset-marker ${item.cls}` }))
     }
@@ -1007,7 +1019,13 @@ async function refresh() {
       fetchJson('/api/v1/ingest/status'),
       fetchJson('/api/v1/flood-risk'),
       fetchJson('/api/v1/conflict-risk'),
-      fetchJson('/api/v1/events?limit=50'),
+      // Two requests, deliberately. The region the map is about, plus recent
+      // global events for context. Asking only for the most recent global events
+      // let a busy feed page out the local flood and landslide entirely.
+      fetchJson(localEventQuery()).then(async (local) => {
+        const global_ = await fetchJson(globalEventQuery())
+        return { data: mergeEventSets(local.data || [], global_.data || []) }
+      }),
       fetchJson('/api/v1/service-assets?limit=100'),
       fetchJson('/api/v1/alert-events?limit=30'),
       fetchJson('/api/v1/reports?limit=20'),

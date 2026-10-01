@@ -150,6 +150,36 @@ async function main() {
   check('flood status starts as an instruction, not a result',
     /water surface elevation/i.test(boot.status), JSON.stringify(boot.status.trim().slice(0, 60)))
 
+  // Hazard classes must match what road-access actually models. A landslide
+  // falling through to the default class did not break anything visible: it just
+  // looked generic, so no check failed and the gap sat there. These assert the
+  // taxonomy is wired to the map, not just declared in the schema.
+  await new Promise((r) => setTimeout(r, 1500))
+  const hazardTaxonomy = await evaluate(`(() => {
+    const classes = new Set([...document.querySelectorAll('#mapHazards *')]
+      .map((n) => n.getAttribute('class') || '')
+      .filter((c) => c.includes('hazard-')))
+    return {
+      classes: [...classes].sort(),
+      legendText: (document.getElementById('mapLegend')||{}).textContent || '',
+      slideMarkers: document.querySelectorAll('#mapHazards .hazard-marker.hazard-landslide').length,
+      floodMarkers: document.querySelectorAll('#mapHazards .hazard-marker.hazard-flood').length,
+      footprints: document.querySelectorAll('#mapHazards .hazard-footprint').length,
+    }
+  })()`)
+  check('landslide hazards are drawn as landslides, not as a generic marker',
+    hazardTaxonomy.slideMarkers > 0,
+    `landslide markers: ${hazardTaxonomy.slideMarkers}`)
+  check('flood hazards are still drawn as flood',
+    hazardTaxonomy.floodMarkers > 0,
+    `flood markers: ${hazardTaxonomy.floodMarkers}`)
+  check('map legend names landslide, which road-access models separately',
+    /Landslide/i.test(hazardTaxonomy.legendText),
+    hazardTaxonomy.legendText.replace(/\s+/g, ' ').trim().slice(0, 60))
+  check('map legend explains a reported area is not a located point',
+    /Area \(box\)/i.test(hazardTaxonomy.legendText),
+    hazardTaxonomy.legendText.replace(/\s+/g, ' ').trim().slice(0, 60))
+
   // An empty field must not be read as sea level.
   await evaluate(`document.getElementById('floodLevelInput').value = '';
     document.getElementById('floodSimulate').click(); true`)

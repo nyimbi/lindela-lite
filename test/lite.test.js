@@ -3076,6 +3076,34 @@ describe('Lindela Lite road access', () => {
     assert.equal(rows.find((r) => r.road_id === 'r-flooded').road_class, 'unpaved')
   })
 
+  it('gives landslide a wider clearance radius than flood, as its physics differs', () => {
+    // Debris flow travels beyond the mapped point more readily than standing
+    // water does, so the same hazard distance that leaves a road passable for
+    // flood makes it impassable for landslide. If this silently collapsed to one
+    // shared radius, landslides would be routed around too early and flooded
+    // roads driven into.
+    const road = { id: 'probe', service_type: 'road', latitude: 3.0467, longitude: 35.69, road_class: 'unpaved', country: 'KE' }
+    // ~4.8 km north: outside the 2 km flood radius, inside the 5 km landslide one.
+    const hazardAt = (event_type) => ({ id: 'h', event_type, severity: 'high', latitude: 3.0897, longitude: 35.69 })
+    const flooded = computeRoadAccess({ service_assets: [road], hazard_events: [hazardAt('flood')] })[0]
+    const slid = computeRoadAccess({ service_assets: [road], hazard_events: [hazardAt('landslide')] })[0]
+
+    assert.equal(flooded.access_status, 'passable', 'flood beyond its radius must not block')
+    assert.equal(slid.access_status, 'impassable', 'landslide within its wider radius must block')
+    assert.match(slid.access_reason, /landslide/i, 'the reason must name the hazard that blocked it')
+  })
+
+  it('classifies an event as a landslide only when the schema says so', async () => {
+    // The distinction is not cosmetic: it selects the clearance radius. An event
+    // typed as flood must not pick up the landslide radius and block roads that
+    // are merely wet.
+    const { ACCESS_BLOCKING_HAZARDS, HAZARD_EVENT_TYPES } = await import('../src/schema.js')
+    assert.ok(HAZARD_EVENT_TYPES.includes('landslide'), 'landslide must be a first-class hazard type')
+    assert.ok(ACCESS_BLOCKING_HAZARDS.includes('landslide'), 'a landslide across a road is an obstruction')
+    assert.ok(!ACCESS_BLOCKING_HAZARDS.includes('earthquake'),
+      'an earthquake is a precursor, not an obstruction, unless it has produced a slide or a flood')
+  })
+
   it('weights an all-weather trunk route losing access above an unpaved track', () => {
     const data = baseData()
     data.hazard_events = [{ id: 'h1', event_type: 'landslide', severity: 'critical', title: 'S', latitude: 3.10, longitude: 35.60 }]
@@ -3675,11 +3703,23 @@ describe('Demo seed', () => {
     const links = [...graph.adjacency.values()].reduce((sum, list) => sum + list.length, 0) / 2
     assert.ok(links >= 2, `expected a connected demo network, got ${links} links across ${graph.nodes.size} roads`)
 
-    // The seeded flood must actually sever one segment while leaving a bypass,
-    // otherwise the walkthrough has nothing to demonstrate.
-    const statuses = new Map(data.road_access.map((r) => [r.road_name, r.access_status]))
-    const blocked = [...statuses.values()].filter((s) => s === 'impassable')
-    assert.equal(blocked.length, 1, `expected exactly one impassable segment, got ${blocked.length}`)
+    // The seeded hazards must actually sever their segments while leaving a
+    // bypass, otherwise the walkthrough has nothing to demonstrate. Both
+    // access-blocking types are seeded: a flood on the corridor the routing
+    // demo reroutes around, and a landslide on the supply route. Asserting the
+    // type as well as the status is the point — a landslide that regressed into
+    // passing would still leave two blocked segments and pass a count-only check.
+    const rows = new Map(data.road_access.map((r) => [r.road_name, r]))
+    const blocked = [...rows.values()].filter((r) => r.access_status === 'impassable')
+    assert.equal(blocked.length, 2, `expected two impassable segments, got ${blocked.length}`)
+
+    const blockedByType = blocked.map((r) => {
+      assert.match(r.access_reason, /Blocked by (flood|landslide)/i,
+        `an impassable segment must name what blocked it: ${r.access_reason}`)
+      return /Blocked by (flood|landslide)/i.exec(r.access_reason)[1].toLowerCase()
+    }).sort()
+    assert.deepEqual(blockedByType, ['flood', 'landslide'],
+      'one segment must be cut by flood and one by landslide, so both models are demonstrable')
 
     const nodes = [...graph.nodes.values()]
     const depot = nodes.find((n) => /depot/i.test(n.name))
@@ -3959,3 +3999,62 @@ function restoreRapidProEnv(snapshot) {
     else process.env[key] = value
   }
 }
+
+describe('Lindela Lite bbox queries and map event sourcing', () => {
+  const box = (v) => new URLSearchParams(v)
+
+  it('asks for the operational area as west,south,east,north, not minLat order', async () => {
+    // The internal bbox objects are minLat/minLon; the API takes
+    // west,south,east,north. Sending the internal order produces a valid-looking
+    // query that matches nothing, which is how the map ended up drawing only
+    // Pacific earthquakes and no local hazards while reporting no error.
+    const { localEventQuery, REGION_OF_INTEREST } = await import('../public/shared/map-frame.js')
+    const q = new URL(localEventQuery(REGION_OF_INTEREST, 0), 'http://x')
+    const [west, south, east, north] = q.searchParams.get('bbox').split(',').map(Number)
+
+    assert.ok(west < east, 'west must be less than east')
+    assert.ok(south < north, 'south must be less than north')
+    assert.equal(west, REGION_OF_INTEREST.minLon)
+    assert.equal(south, REGION_OF_INTEREST.minLat)
+    assert.equal(east, REGION_OF_INTEREST.maxLon)
+    assert.equal(north, REGION_OF_INTEREST.maxLat)
+  })
+
+  it('includes a hazard the source reported only as an area overlapping the box', async () => {
+    // GDACS reports most events as a box, and the connector withholds a point
+    // when the box is regional. Filtering on points alone told a caller asking
+    // "what is in this district" that nothing was there, for hazards the source
+    // had explicitly placed there.
+    const { filterRecords } = await import('../src/utils.js')
+    const regional = {
+      // A regional box over the pilot area, reported without a point.
+      id: 'gd-1', event_type: 'flood', country: 'SS',
+      latitude: null, longitude: null,
+      bbox: { west: 24, south: 5, east: 36, north: 15 },
+    }
+    const elsewhere = { ...regional, id: 'gd-2', bbox: { west: -60, south: -30, east: -40, north: -10 } }
+    const hits = filterRecords([regional, elsewhere], box('bbox=24,-9,55,18'))
+
+    assert.equal(hits.length, 1, 'an overlapping reported area must be returned')
+    assert.equal(hits[0].id, 'gd-1')
+  })
+
+  it('still returns a point event inside the box and drops one outside it', async () => {
+    const { filterRecords } = await import('../src/utils.js')
+    const inside = { id: 'in', latitude: 3.05, longitude: 35.69 }
+    const outside = { id: 'out', latitude: 48.8, longitude: 2.4 }
+    const hits = filterRecords([inside, outside], box('bbox=24,-9,55,18'))
+    assert.deepEqual(hits.map((h) => h.id), ['in'])
+  })
+
+  it('merges the local and global event sets without duplicating an event', async () => {
+    // The local set is fetched first so that when the same event arrives in both
+    // it is the locally-scoped copy that survives.
+    const { mergeEventSets } = await import('../public/shared/map-frame.js')
+    const local = [{ id: 'a', note: 'local' }, { id: 'b' }]
+    const global_ = [{ id: 'b', note: 'global' }, { id: 'c' }]
+    const merged = mergeEventSets(local, global_)
+    assert.deepEqual(merged.map((m) => m.id), ['a', 'b', 'c'])
+    assert.equal(merged[1].note, undefined, 'the local copy must win over the global one')
+  })
+})

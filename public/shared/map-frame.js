@@ -93,3 +93,62 @@ export function mapFrame(records, regionOfInterest = REGION_OF_INTEREST, focus =
     framedBy: focus ? 'focus' : near.length ? 'region_of_interest_plus_nearby_data' : 'all_data',
   }
 }
+
+/**
+ * The event queries the map needs.
+ *
+ * The map used to fetch `/api/v1/events?limit=50` and nothing else. That is the
+ * 50 most recent events worldwide, and with GDACS and USGS both live it is
+ * always the same handful of Pacific and Caribbean earthquakes. The two hazards
+ * the entire road-access and routing walkthrough depends on — a flood cutting
+ * the Lodwar corridor and a landslide across the Turkana supply route — were
+ * paginated out and never reached the map. Nothing failed: the API answered,
+ * the map drew 33 circles, and the operational area looked free of hazards.
+ *
+ * So the map asks for two things: everything inside the region it is about, and
+ * a bounded slice of recent global events for context. Neither can starve the
+ * other, because they are separate requests. A busy day on the global feed can
+ * no longer hide a landslide on the road the response depends on.
+ */
+
+/** Degrees of margin around the region of interest to include as local context. */
+export const LOCAL_CONTEXT_MARGIN_DEG = 3
+
+/** How many recent global events to show alongside the local set. */
+export const GLOBAL_CONTEXT_LIMIT = 50
+
+/** How many events to accept from inside the region of interest. */
+export const LOCAL_CONTEXT_LIMIT = 400
+
+export function localEventQuery(regionOfInterest = REGION_OF_INTEREST, marginDeg = LOCAL_CONTEXT_MARGIN_DEG, limit = LOCAL_CONTEXT_LIMIT) {
+  const b = {
+    minLat: regionOfInterest.minLat - marginDeg,
+    maxLat: regionOfInterest.maxLat + marginDeg,
+    minLon: regionOfInterest.minLon - marginDeg,
+    maxLon: regionOfInterest.maxLon + marginDeg,
+  }
+  // The API takes west,south,east,north — not the minLat/minLon order used
+  // internally. Getting this order wrong yields a valid-looking query that
+  // silently matches nothing.
+  const bbox = [b.minLon, b.minLat, b.maxLon, b.maxLat].map((v) => Math.round(v * 100) / 100).join(',')
+  return `/api/v1/events?bbox=${bbox}&limit=${limit}`
+}
+
+export function globalEventQuery(limit = GLOBAL_CONTEXT_LIMIT) {
+  return `/api/v1/events?limit=${limit}`
+}
+
+/**
+ * Merge the local and global result sets by id, local first so that when the
+ * same event arrives in both it is the locally-scoped copy that wins.
+ */
+export function mergeEventSets(local = [], global_ = []) {
+  const seen = new Set()
+  const out = []
+  for (const item of [...local, ...global_]) {
+    if (!item?.id || seen.has(item.id)) continue
+    seen.add(item.id)
+    out.push(item)
+  }
+  return out
+}

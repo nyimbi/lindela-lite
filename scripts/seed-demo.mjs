@@ -192,6 +192,31 @@ function buildDemoHazards() {
       affected_population: null,
       metadata: { demo_data: true, source_note: 'seeded for the routing and road-access walkthrough' },
     },
+    {
+      // Landslide is an access-blocking hazard in its own right, and road-access
+      // already models it with a wider clearance radius than flood because debris
+      // travels further than standing water. Without a seeded event that path is
+      // never exercised, so the map showed no landslide and the walkthrough could
+      // not demonstrate the behaviour it claims to have.
+      id: 'demo-hazard-turkana-slide',
+      source: 'demo_seed',
+      source_id: 'demo-hazard-turkana-slide',
+      event_type: 'landslide',
+      severity: 'high',
+      title: 'Demo: slope failure on the Turkana escarpment road',
+      description: 'Seeded demonstration event, not a live observation. Simulates debris across the escarpment road so road-access can be shown applying the wider landslide clearance radius.',
+      // Sits on the Turkana B4 supply route, about 1.5 km off its centreline, so
+      // it falls inside the 5 km landslide clearance radius. An earlier version
+      // placed it near the escarpment and it blocked nothing, which made the
+      // seeded event decorative rather than demonstrative.
+      latitude: 3.0467,
+      longitude: 35.6900,
+      bbox: { south: 3.0417, north: 3.0517, west: 35.685, east: 35.695 },
+      country: 'KE',
+      occurred_at: daysAgo(3),
+      affected_population: null,
+      metadata: { demo_data: true, source_note: 'seeded to exercise the landslide clearance radius' },
+    },
   ]
 }
 

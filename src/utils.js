@@ -43,6 +43,40 @@ export function pointInBbox(item, bbox) {
   return item.longitude >= bbox.west && item.longitude <= bbox.east && item.latitude >= bbox.south && item.latitude <= bbox.north
 }
 
+/** Whether two west,south,east,north boxes overlap. */
+export function boxIntersectsBbox(inner, outer) {
+  if (!inner || !outer) return false
+  const [w, s, e, n] = [inner.west, inner.south, inner.east, inner.north]
+  if (![w, s, e, n].every(Number.isFinite)) return false
+  return w <= outer.east && e >= outer.west && s <= outer.north && n >= outer.south
+}
+
+/**
+ * Whether a record belongs in a bbox query.
+ *
+ * A point inside the box qualifies. So does a record the source reported as an
+ * *area* overlapping the box, even with no point at all.
+ *
+ * That second case is not hypothetical. GDACS reports most events as a bounding
+ * box, and the connector deliberately withholds a point when the box is
+ * regional, because a box centre can be hundreds of km from the event. Filtering
+ * on points alone therefore returned nothing for those events: a caller asking
+ * "what is in this district" was told there was nothing, for a hazard the source
+ * had explicitly placed there as an area.
+ */
+export function recordInBbox(item, bbox) {
+  if (!bbox) return true
+  if (pointInBbox(item, bbox)) return true
+  return boxIntersectsBbox(parseRecordBbox(item.bbox), bbox)
+}
+
+function parseRecordBbox(value) {
+  if (!value) return null
+  if (Array.isArray(value)) return parseBbox(value.join(','))
+  if (typeof value === 'object') return value
+  return null
+}
+
 export function filterRecords(records, query) {
   const bbox = parseBbox(query.get('bbox'))
   const country = query.get('country')
@@ -63,7 +97,7 @@ export function filterRecords(records, query) {
   const limit = Math.min(Math.max(Number(query.get('limit') || 500), 1), 5000)
 
   return records
-    .filter((item) => pointInBbox(item, bbox))
+    .filter((item) => recordInBbox(item, bbox))
     .filter((item) => !country || item.country === country || item.scope?.country === country)
     .filter((item) => !source || item.source === source || item.source_name === source)
     .filter((item) => !eventType || item.event_type === eventType || item.type === eventType)
