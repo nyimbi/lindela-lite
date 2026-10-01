@@ -40,6 +40,7 @@ import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './s
 import { renderCapXml } from './cap.js'
 import { emit, dispatchPending } from './outbox.js'
 import { summarizeRoadAccess } from './road-access.js'
+import { planDelivery } from './routing.js'
 import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
 import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots } from './kpi.js'
@@ -431,6 +432,35 @@ async function handleApi(store, req, res, url) {
 
   if (url.pathname === '/api/v1/road-access/summary') {
     jsonResponse(res, 200, { success: true, data: summarizeRoadAccess(data.road_access || []) })
+    return
+  }
+
+  // Route planning requires a POST body (origin plus one or more
+  // destinations), so it is handled by the mutating branch below rather than
+  // here in the GET-only section.
+  if (req.method === 'POST' && url.pathname === '/api/v1/routing/plan') {
+    const body = await readRequestJson(req)
+    const from = body.from || body.origin
+    const to = body.to || body.destination || body.destinations
+    if (!from) {
+      jsonResponse(res, 400, { success: false, error: 'from is required: the id of the distribution origin road' })
+      return
+    }
+    if (!to || (Array.isArray(to) && !to.length)) {
+      jsonResponse(res, 400, { success: false, error: 'to is required: one or more destination road ids' })
+      return
+    }
+    const plan = planDelivery(data, {
+      from,
+      to,
+      linkRadiusKm: Number.isFinite(body.link_radius_km) ? Number(body.link_radius_km) : undefined,
+      maxMinutes: Number.isFinite(body.max_minutes) ? Number(body.max_minutes) : undefined,
+    })
+    if (plan.feasible === false && plan.reason) {
+      jsonResponse(res, 400, plan)
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: plan })
     return
   }
 

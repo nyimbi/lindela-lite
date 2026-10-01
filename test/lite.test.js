@@ -30,6 +30,7 @@ import { computeQuarterlyKpi } from '../src/kpi.js'
 import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from '../src/equity.js'
 import { normalizeCommunityFeedback } from '../src/community.js'
 import { computeRoadAccess, summarizeRoadAccess } from '../src/road-access.js'
+import { buildRoadGraph, shortestPath, planDelivery } from '../src/routing.js'
 import { readNamespacedTag } from '../src/connectors/spec.js'
 import { lonLatToTile, tileBounds, loadTile, clearTileCache } from '../src/terrain.js'
 import { depthAtPoint, depthGrid, depthProfile, terrainContext } from '../src/flood-depth.js'
@@ -2534,6 +2535,104 @@ import { buildCreate } from '../src/operations.js'
 import { computeApiUptime } from '../src/kpi.js'
 import { uptimeStats } from '../src/observability.js'
 import { sendRapidProAlert } from '../src/rapidpro.js'
+
+describe('Lindela Lite routing', () => {
+  const road = (id, name, roadClass, lat, lon) => ({
+    id, name, service_type: 'road', country: 'KE', latitude: lat, longitude: lon, road_class: roadClass,
+  })
+
+  const chain = (statuses) => ({
+    service_assets: [
+      road('r-a', 'Depot', 'primary', 3.10, 35.60),
+      road('r-b', 'Mid', 'primary', 3.127, 35.60),
+      road('r-c', 'Clinic', 'tertiary', 3.154, 35.60),
+    ],
+    road_access: ['r-a', 'r-b', 'r-c'].map((roadId, i) => ({
+      road_id: roadId,
+      access_status: statuses[i],
+      access_reason: statuses[i] === 'impassable' ? 'Blocked by flood (critical)' : null,
+      primary_hazard_type: statuses[i] === 'impassable' ? 'flood' : null,
+    })),
+  })
+
+  it('routes across a clear network and reports time and distance', () => {
+    const result = shortestPath(buildRoadGraph(chain(['passable', 'passable', 'passable'])), 'r-a', 'r-c')
+    assert.equal(result.feasible, true)
+    assert.equal(result.mode, 'vehicle')
+    assert.ok(result.total_minutes > 0)
+    assert.ok(result.total_distance_km > 5)
+    assert.equal(result.degraded, false)
+    assert.equal(result.hops.length, 3)
+  })
+
+  it('severs the route when an intermediate segment is cut off', () => {
+    // Regression: cost was derived from the better of the two roads, which let
+    // a passable neighbour "rescue" an impassable node and the flooded road
+    // stayed drivable.
+    const graph = buildRoadGraph(chain(['passable', 'impassable', 'passable']))
+    const result = shortestPath(graph, 'r-a', 'r-c')
+    assert.equal(result.feasible, false)
+    assert.match(result.reason, /severed/i)
+    assert.equal(result.blocked_by, 'flood')
+  })
+
+  it('refuses to route to a destination that is itself cut off', () => {
+    const graph = buildRoadGraph(chain(['passable', 'passable', 'impassable']))
+    const result = shortestPath(graph, 'r-a', 'r-c')
+    assert.equal(result.feasible, false)
+    assert.match(result.reason, /impassable/i)
+    assert.equal(result.blocked_by, 'flood')
+  })
+
+  it('still routes through a restricted segment but flags it as degraded', () => {
+    const graph = buildRoadGraph(chain(['passable', 'restricted', 'passable']))
+    const result = shortestPath(graph, 'r-a', 'r-c')
+    assert.equal(result.feasible, true)
+    assert.equal(result.degraded, true)
+    assert.ok(result.restricted_hops > 0)
+    assert.match(result.note, /lower bound/i)
+  })
+
+  it('charges more time for a restricted segment than for a clear one', () => {
+    const clear = shortestPath(buildRoadGraph(chain(['passable', 'passable', 'passable'])), 'r-a', 'r-c')
+    const restricted = shortestPath(buildRoadGraph(chain(['passable', 'restricted', 'passable'])), 'r-a', 'r-c')
+    assert.ok(restricted.total_minutes > clear.total_minutes)
+  })
+
+  it('treats an all-track route as walking rather than drivable', () => {
+    const data = {
+      service_assets: [
+        road('t-a', 'Track A', 'track', 3.10, 35.60),
+        road('t-b', 'Track B', 'track', 3.127, 35.60),
+      ],
+      road_access: [
+        { road_id: 't-a', access_status: 'passable' },
+        { road_id: 't-b', access_status: 'passable' },
+      ],
+    }
+    const result = shortestPath(buildRoadGraph(data), 't-a', 't-b')
+    assert.equal(result.mode, 'foot')
+    assert.equal(result.degraded, true)
+  })
+
+  it('reports partial coverage honestly instead of a success rate', () => {
+    const data = chain(['passable', 'impassable', 'passable'])
+    const plan = planDelivery(data, { from: 'r-a', to: ['r-c', 'r-a'] })
+    assert.equal(plan.summary.destinations, 2)
+    assert.equal(plan.summary.reachable, 1)
+    assert.equal(plan.summary.unreachable, 1)
+    assert.equal(plan.summary.coverage_pct, 50)
+    assert.equal(plan.fully_deliverable, false)
+    assert.match(plan.caveat, /alternative modality|cleared/i)
+  })
+
+  it('rejects unknown endpoints and missing arguments', () => {
+    const graph = buildRoadGraph(chain(['passable', 'passable', 'passable']))
+    assert.equal(shortestPath(graph, 'nope', 'r-c').feasible, false)
+    assert.equal(shortestPath(graph, 'r-a', 'nope').feasible, false)
+    assert.equal(planDelivery(chain(['passable']), {}).feasible, false)
+  })
+})
 
 describe('Lindela Lite terrain and flood depth', () => {
   it('decodes a Terrarium tile into elevations and interpolates a point', async () => {
