@@ -573,6 +573,19 @@ async function main() {
   const fatal = pageErrors.filter((e) => !/favicon|ERR_FAILED.*favicon/i.test(e))
   check('no unhandled page errors', fatal.length === 0, fatal.slice(0, 2).join(' | ') || 'none')
 
+  // The build version a panel reads must be the released one. It used to be a
+  // literal in three places that drifted behind package.json, so "which build is
+  // this?" had a wrong answer. Sourced from the health endpoint, which reads
+  // package.json, so this cannot drift without the health endpoint changing.
+  const shownVersion = await evaluate(`(() => {
+    const n = document.querySelector('[data-app-version]');
+    return n ? n.textContent.trim() : null;
+  })()`)
+  const healthVersion = await (await fetch(`${BASE}/api/v1/health`)).json().then((b) => b.version)
+  check('the displayed build version is the released version',
+    Boolean(shownVersion) && healthVersion && shownVersion === `v${healthVersion}`,
+    `shown ${shownVersion || 'nothing'}, released v${healthVersion || 'unknown'}`)
+
   const failed = checks.filter((c) => !c.passed)
   console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`)
   if (failed.length) process.exitCode = 1

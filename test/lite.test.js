@@ -704,7 +704,10 @@ describe('Lindela Lite API', () => {
       const onDisk = path.join(process.cwd(), 'public', specifier)
       const source = await fs.readFile(onDisk, 'utf8')
       const exported = new Set(
-        [...source.matchAll(/export (?:const|function|class) (\w+)/g)].map((m) => m[1]),
+        // 'async' is optional: the guard must see an async export too, or a
+        // shared module that only exports async functions looks empty and every
+        // import of it fails here for the wrong reason.
+        [...source.matchAll(/export (?:async )?(?:const|function|class) (\w+)/g)].map((m) => m[1]),
       )
       const block = app.match(new RegExp(`import \\{([^}]+)\\} from '${specifier.replace(/[/.]/g, '\\$&')}'`))
       assert.ok(block, `app.js must import from ${specifier}`)
@@ -4110,5 +4113,76 @@ describe('Lindela Lite flood share wording', () => {
     assert.ok(near > far, 'a degree of longitude must cover less ground further from the equator')
     assert.equal(surveyedAreaKm2(null), null)
     assert.equal(surveyedAreaKm2({ south: 0, west: 0, north: 1 }), null, 'a partial box has no area')
+  })
+})
+
+describe('Lindela Lite build version', () => {
+  it('serves the version from package.json', async () => {
+    // The footers used to hardcode v0.1.0 in two HTML files and one translation
+    // file while the package was at 0.2.0, so a panel asking which build this is
+    // would have been told the wrong one.
+    const { APP_VERSION } = await import('../src/server.js')
+    const pkg = JSON.parse(await fs.readFile('package.json', 'utf8'))
+    assert.equal(APP_VERSION, pkg.version)
+    assert.match(APP_VERSION, /^\d+\.\d+\.\d+/, `version must look like a version, got "${APP_VERSION}"`)
+  })
+
+  it('reports it on the health endpoint so a client can display it', async () => {
+    const { APP_VERSION, createServer } = await import('../src/server.js')
+    const { JsonStore } = await import('../src/store.js')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-version-'))
+    const server = createServer({ store: new JsonStore(path.join(dir, 'store.json')) })
+    const listener = server.listen(0)
+    const baseUrl = `http://localhost:${listener.address().port}`
+    try {
+      const body = await (await fetch(`${baseUrl}/api/v1/health`)).json()
+      assert.equal(body.version, APP_VERSION)
+      assert.match(body.version, /^\d+\.\d+\.\d+/)
+    } finally {
+      await new Promise((r) => listener.close(r))
+    }
+  })
+
+  it('keeps every version literal in the UI in a sanctioned slot', async () => {
+    // Two rules, both learned the hard way:
+    //  - A version literal in HTML must sit inside a data-app-version element,
+    //    which is the one offline fallback we allow and which gets overwritten
+    //    from the health endpoint at runtime.
+    //  - A locale file must contain no version literal at all. A build fact in a
+    //    translation file is what drifted in the first place: three copies of an
+    //    older release, in two languages' worth of markup, all wrong at once.
+    const offenders = []
+
+    for (const dir of ['public']) {
+      const stack = [dir]
+      while (stack.length) {
+        const cur = stack.pop()
+        for (const entry of await fs.readdir(cur, { withFileTypes: true })) {
+          const full = `${cur}/${entry.name}`
+          if (entry.isDirectory()) { stack.push(full); continue }
+          const text = await fs.readFile(full, 'utf8')
+
+          if (full.endsWith('.html')) {
+            for (const m of text.matchAll(/\bv(\d+\.\d+\.\d+)\b/g)) {
+              const start = Math.max(0, m.index - 120)
+              const around = text.slice(start, m.index + m[0].length)
+              const inSlot = /data-app-version[^>]*>[^<]*$/.test(around)
+              if (!inSlot) offenders.push(`${full}: v${m[1]} outside a data-app-version slot`)
+            }
+          }
+
+          if (full.includes('i18n/') && full.endsWith('.json')) {
+            const locale = JSON.parse(text)
+            for (const [k, v] of Object.entries(locale)) {
+              if (typeof v === 'string' && /\bv?\d+\.\d+\.\d+\b/.test(v)) {
+                offenders.push(`${full}: "${k}" carries a version, which is not translatable`)
+              }
+            }
+          }
+        }
+      }
+    }
+
+    assert.deepEqual(offenders, [], `version drift -> ${offenders.join('; ')}`)
   })
 })

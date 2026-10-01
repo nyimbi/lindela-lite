@@ -5,6 +5,7 @@ import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS }
 import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage, surveyedAreaKm2 } from '/shared/flood-bands.js'
 import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets } from '/shared/map-frame.js'
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState } from '/shared/seasonal.js'
+import { fillAppVersion } from '/shared/app-version.js'
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})
@@ -2176,3 +2177,7 @@ setInterval(refresh, 30_000)
 await loadLocale(state.locale)
 await loadSources()
 await refresh()
+// The build version shown in the Settings panel comes from the health
+// endpoint, which reads package.json, rather than from a literal in the markup
+// that can drift behind the release.
+fillAppVersion()

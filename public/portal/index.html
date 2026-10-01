@@ -397,12 +397,14 @@
     </div>
 
     <footer>
-      <span data-i18n="footer.version">v0.1.0</span> — <span data-i18n="footer.powered">Powered by Lindela Lite</span>
+      <span data-app-version>v0.1.0</span> — <span data-i18n="footer.powered">Powered by Lindela Lite</span>
     </footer>
 
     <script type="module">
       import { mountNavbar } from '/shared/navbar.js'
+      import { fillAppVersion } from '/shared/app-version.js'
       mountNavbar({ activePath: '/portal' })
+      fillAppVersion()
     </script>
     <script type="module" src="/portal/app.js"></script>
     <script type="module" src="/shared/demo.js"></script>

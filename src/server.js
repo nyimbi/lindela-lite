@@ -1,5 +1,6 @@
 import http from 'node:http'
 import fs from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authenticate, requireScope, scopeForRoute } from './auth.js'
@@ -60,6 +61,18 @@ const docsDir = path.resolve(__dirname, '../docs')
 const registryPath = path.resolve(__dirname, '../connectors.registry.json')
 let defaultStorePromise
 let connectorRegistry = null
+
+/** The released version, read once so it cannot drift from package.json. */
+export const APP_VERSION = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    return pkg.version
+  } catch (error) {
+    // A wrong version is worse than a missing one: it invites a field team to
+    // file a report against a build that does not exist.
+    throw new Error(`cannot read version from package.json: ${error.message}`)
+  }
+})()
 
 export function createServer(options = {}) {
   const storeProvider = options.store ? Promise.resolve(options.store) : getDefaultStore()
@@ -233,6 +246,12 @@ async function handleApi(store, req, res, url) {
     jsonResponse(res, 200, {
       success: true,
       status: 'ok',
+      // One version, from package.json. The UI used to hardcode it in two HTML
+      // files and one translation file and it drifted behind the package, so a
+      // panel asking "which build is this?" would have been told the wrong one.
+      // Read once at startup and fail loudly if it cannot be read, rather than
+      // reporting a version we made up.
+      version: APP_VERSION,
       updated_at: data.updated_at,
       counts: counts(data),
       sources: publicSourceCatalog().map((source) => source.id),

@@ -63,6 +63,12 @@ no existing endpoint changed shape.
   with GDACS and USGS both live is always the same Pacific and Caribbean
   earthquakes: the seeded flood and landslide that the road-access and routing
   walkthrough depends on were paginated out and never drawn.
+- `GET /api/v1/health` now reports **`version`**, read from `package.json` at
+  startup and fatal if unreadable — a wrong version is worse than a missing one.
+  The footers in the partner portal, the CHW app and the Settings panel source it
+  from there instead of carrying their own literal, which had drifted: three
+  copies of an older release, including one in a translation file, all reporting
+  a build that was not the one running.
 - The browser check now runs at a **1440x900 laptop viewport**. It previously
   inherited headless Chrome's default of about 756x469, which is the mobile
   breakpoint: the console is a single column and the rail is full width. Every
