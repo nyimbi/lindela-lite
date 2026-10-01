@@ -193,7 +193,7 @@ function renderOverview(overview) {
           <tbody>${top10.map(h => `<tr>
             <td>${h.event_type || h.type || '—'}</td>
             <td>${sevChip(h.severity)}</td>
-            <td style="font-size:0.75rem;color:var(--ink-muted)">${(h.observed_at || h.created_at || '').slice(0, 10)}</td>
+            <td style="font-size:0.75rem;color:var(--ink-muted)">${(h.occurred_at || h.observed_at || h.created_at || '').slice(0, 10) || '—'}</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>`

@@ -287,6 +287,7 @@ DEM alone.
 | Workflows | Anticipatory alert in focal_point_review; full lifecycle on closed Aweil workflow |
 | Reports | Distributed SITREP with all sections rendered; failed distribution run (503) |
 | Equity | Per-district dispatch/acknowledged counts; explain why the column is not a false-positive rate |
+| Districts | Drill into a district: interventions, tasks, people reached, warning-to-action median |
 | Map | Flood-depth simulation with depth legend; road status overlay |
 | Road access | One impassable segment with `access_reason`; `cut_off_rate_pct` |
 | Routing | Detour via the plateau bypass; severed-route diagnostics on failure |

@@ -3740,6 +3740,55 @@ describe('Lindela Lite districts API', () => {
     } finally { listener.close() }
   })
 
+  it('reaches coordinate-less records through their parents', async () => {
+    // Interventions, tasks and dispatches carry no coordinates and no district
+    // field. Filtering them by proximity matched nothing, so every district
+    // reported 0 interventions, 0 tasks and 0 people reached while the records
+    // existed. A district overview reporting "no activity" when activity is
+    // attached to it reads as a finding rather than a bug.
+    const { listener, baseUrl, store } = await makeServer()
+    try {
+      await store.merge({
+        service_assets: [{ id: 'a1', name: 'Kakuma HC', service_type: 'health', country: 'KE', admin1: 'Turkana', latitude: 3.11, longitude: 35.60 }],
+        incidents: [{ id: 'inc-1', title: 'Flood', country: 'KE', admin1: 'Turkana', latitude: 3.10, longitude: 35.60, status: 'responding', severity: 'high' }],
+        interventions: [{ id: 'int-1', incident_id: 'inc-1', title: 'Reroute supplies', status: 'active' }],
+        intervention_tasks: [{ id: 'task-1', intervention_id: 'int-1', incident_id: 'inc-1', title: 'Confirm bypass', status: 'todo' }],
+        alert_events: [{ id: 'ae-1', source: 'open_meteo', metric: 'precipitation_mm', value: 52, status: 'open', severity: 'high', scope: { district: 'Turkana' } }],
+        rapidpro_dispatches: [{ id: 'dp-1', alert_event_id: 'ae-1', status: 'sent', recipients_count: 1234, sent_at: new Date().toISOString(), matched_signal_at: new Date(Date.now() - 3600000).toISOString() }],
+      })
+
+      const { data } = await fetch(`${baseUrl}/api/v1/districts/turkana`).then((r) => r.json())
+      assert.equal(data.counts.interventions, 1, 'intervention is reachable through its incident')
+      assert.equal(data.counts.tasks, 1, 'task is reachable through its intervention')
+      assert.equal(data.kpi_snapshot.people_reached, 1234, 'dispatch is reachable through its alert event')
+
+      // A district with none of this must report zero, not borrow a neighbour's.
+      const { data: other } = await fetch(`${baseUrl}/api/v1/districts/mandera`).then((r) => r.json())
+      assert.equal(other.counts.interventions, 0)
+      assert.equal(other.counts.tasks, 0)
+      assert.equal(other.kpi_snapshot.people_reached, 0)
+    } finally { listener.close() }
+  })
+
+  it('does not count more parent-linked records than exist', async () => {
+    // Parent-derived matching must not inflate totals beyond the records that
+    // exist, which a naive union across districts would.
+    const { listener, baseUrl } = await makeServer()
+    try {
+      const slugs = ['turkana', 'aweil', 'bor', 'karamoja', 'mandera']
+      let counted = 0
+      for (const slug of slugs) {
+        const { data } = await fetch(`${baseUrl}/api/v1/districts/${slug}`).then((r) => r.json())
+        counted += data.counts.interventions
+      }
+      const { data: all } = await fetch(`${baseUrl}/api/v1/interventions`).then((r) => r.json())
+      assert.ok(
+        counted <= all.length,
+        `district views counted ${counted} interventions but only ${all.length} exist`,
+      )
+    } finally { listener.close() }
+  })
+
   it('GET /api/v1/districts/turkana returns 200 with data.district.name === Turkana', async () => {
     const { listener, baseUrl } = await makeServer()
     try {

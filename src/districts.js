@@ -57,8 +57,19 @@ export function districtOverview(data, districtSlug) {
 
   const serviceAssets = filterForDistrict(district, data.service_assets || [])
   const incidents = filterForDistrict(district, data.incidents || [])
-  const interventions = filterForDistrict(district, data.interventions || [])
-  const interventionTasks = filterForDistrict(district, data.intervention_tasks || [])
+
+  // Interventions and tasks carry no coordinates. They are reached through
+  // the incident (and the task through the intervention), so filtering them by
+  // proximity found nothing and every district reported 0 interventions and 0
+  // tasks — while Turkana had an active supply reroute on its books. A district
+  // overview that says "no activity" when activity is attached to it is worse
+  // than one that says "unknown", because it reads as a finding.
+  const incidentIds = new Set(incidents.map((i) => i.id))
+  const interventions = (data.interventions || [])
+    .filter((i) => incidentIds.has(i.incident_id))
+  const interventionIds = new Set(interventions.map((i) => i.id))
+  const interventionTasks = (data.intervention_tasks || [])
+    .filter((t) => interventionIds.has(t.intervention_id))
   const fieldReports = filterForDistrict(district, data.field_reports || []).slice(0, 30)
   const alertEvents = filterForDistrict(district, data.alert_events || []).slice(0, 30)
   const workflowInstances = filterForDistrict(district, data.workflow_instances || [])
@@ -69,7 +80,16 @@ export function districtOverview(data, districtSlug) {
   const activeHazards = [...hazardEvents]
     .sort((a, b) => (SEV_ORDER[a.severity] ?? 4) - (SEV_ORDER[b.severity] ?? 4))
 
-  const dispatches = filterForDistrict(district, data.rapidpro_dispatches || [])
+  // Dispatches carry neither coordinates nor a district field. They are
+  // reached through the alert event they were sent for, which does carry
+  // scope.district. Filtering them directly matched nothing, so "People
+  // reached" read 0 in every district while 20 dispatches existed.
+  const alertById = new Map((data.alert_events || []).map((a) => [a.id, a]))
+  const dispatches = (data.rapidpro_dispatches || [])
+    .filter((d) => {
+      const alert = d.alert_event_id ? alertById.get(d.alert_event_id) : null
+      return alert ? inDistrict(district, alert) : false
+    })
   const people_reached = dispatches.reduce(
     (s, d) => s + (d.recipients_count || d.metadata?.recipients_count || 0), 0
   )

@@ -21,6 +21,8 @@
  */
 
 const ENDPOINT = process.env.LINDELA_LITE_URL || 'http://127.0.0.1:4177/'
+// Base for constructing sibling surface URLs (the dashboard root has a trailing slash).
+const BASE = ENDPOINT.replace(/\/$/, '')
 const CDP = process.env.LINDELA_LITE_CDP || 'http://127.0.0.1:9222'
 
 let socket
@@ -330,6 +332,58 @@ async function main() {
     /not a rainfall forecast/i.test(seasonal.note))
   check('the index identity is preserved rather than relabelled',
     /\(ONI\)/.test(seasonal.index), seasonal.index)
+
+  // Every top-level surface must render. The navbar exposes eight pages and only
+  // Ops had ever been opened in a browser; the district drill-down was found
+  // reporting zero interventions and zero people reached because it filtered
+  // coordinate-less records by proximity.
+  const PAGES = ['/', '/focal-point', '/chw', '/portal', '/co', '/scenarios', '/parametric', '/districts']
+  for (const path of PAGES) {
+    const before = pageErrors.length
+    await send('Page.navigate', { url: `${BASE}${path}${path.includes('?') ? '&' : '?'}cb=${Date.now()}` })
+    await new Promise((r) => setTimeout(r, 3000))
+    const page = await evaluate(`(() => ({
+      chars: document.body.innerText.trim().length,
+      nav: (document.querySelector('.l-navbar-links a[aria-current=page]') || {}).textContent || '',
+      suspect: /NaN|\\[object Object\\]|undefined/.test(document.body.innerText),
+    }))()`)
+    check(`surface "${path}" renders content and marks itself current`,
+      page.chars > 100 && page.nav.length > 0 && !page.suspect,
+      `${page.chars} chars, nav "${page.nav}"`)
+    check(`surface "${path}" produces no console errors`,
+      pageErrors.length === before, (pageErrors[pageErrors.length - 1] || '').slice(0, 60))
+  }
+
+  // District drill-down, reached the way a panel would.
+  await send('Page.navigate', { url: `${BASE}/districts?cb=${Date.now()}` })
+  await new Promise((r) => setTimeout(r, 3000))
+  const district = await evaluate(`(async () => {
+    const card = document.querySelector('a[href^="/districts#/"]');
+    if (!card) return { noCard: true };
+    card.click();
+    await new Promise(r => setTimeout(r, 2500));
+    const text = document.body.innerText;
+    return {
+      hash: location.hash,
+      chars: text.length,
+      interventions: (text.match(/Interventions \\((\\d+)\\)/) || [])[1],
+      tasks: (text.match(/Tasks \\((\\d+)\\)/) || [])[1],
+      reached: (text.match(/People reached\\s*\\n?\\s*([\\d,]+)/) || [])[1],
+      blankDate: /Hazard[\\s\\S]{0,80}\\n\\s*\\n\\s*\\n/.test(text),
+    };
+  })()`)
+  check('district drill-down opens from a card', !district.noCard && district.hash.startsWith('#/'),
+    district.hash || 'no card')
+  check('district shows non-zero interventions and tasks',
+    Number(district.interventions) > 0 && Number(district.tasks) > 0,
+    `interventions ${district.interventions}, tasks ${district.tasks}`)
+  check('district shows a non-zero people-reached figure',
+    Number(String(district.reached || '').replace(/,/g, '')) > 0,
+    `${district.reached} people`)
+  check('hazard rows render a date', district.blankDate === false)
+
+  await send('Page.navigate', { url: `${BASE}/?cb=${Date.now()}` })
+  await new Promise((r) => setTimeout(r, 3500))
 
   // Every rail tab must render content and produce no console errors. Two
   // defects were found this way: the equity panel read dispatch status from
