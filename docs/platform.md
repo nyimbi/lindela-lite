@@ -459,7 +459,7 @@ curl -X POST http://127.0.0.1:4177/api/v1/report-schedules/run-due
 
 | Variable | Purpose |
 | --- | --- |
-| `NASA_FIRMS_MAP_KEY` | Optional NASA FIRMS map key. Defaults to `OPEN_KEY`. |
+| `NASA_FIRMS_MAP_KEY` | NASA FIRMS MAP_KEY. Required — FIRMS has no keyless access. Free key by email from `firms.modaps.eosdis.nasa.gov/api/map_key`. Unset means the source reports an error and zero records. |
 
 Most source behavior is controlled per request or per ingestion schedule through `timeout_ms`, `retries`, `interval_minutes`, and source-specific options.
 

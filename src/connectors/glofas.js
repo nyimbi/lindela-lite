@@ -14,6 +14,17 @@ async function glofasIngest(options = {}) {
     for (const feed of feeds) {
       try {
         const text = await fetchWithRetry(feed, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2 })
+
+        // A feed that returns an HTML page still answers 200, so a naive parse
+        // finds zero items and reports success. Verified 2026-10-01: the
+        // published rss.xml path served the EFAS single-page app instead, and
+        // the connector ingested nothing while reporting no error. Say so
+        // rather than letting an empty result read as "no floods forecast".
+        if (!looksLikeFeed(text)) {
+          errors.push(`${feed}: response is not an RSS or Atom feed (${describeResponse(text)}); the endpoint likely moved or is serving a web app`)
+          continue
+        }
+
         const items = [...text.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)]
         for (const match of items) {
           const title = readTag(match[1], 'title') || 'GloFAS flood forecast update'
@@ -76,4 +87,20 @@ export const glofasConnector = {
 function readTag(xml, tag) {
   const match = xml.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'))
   return match ? match[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ''
+}
+
+/** Whether a response body is plausibly RSS, Atom, or RDF rather than a web page. */
+export function looksLikeFeed(text) {
+  if (typeof text !== 'string' || !text.trim()) return false
+  return /<rss[\s>]/i.test(text)
+    || /<feed[\s>]/i.test(text)
+    || /<rdf:RDF[\s>]/i.test(text)
+}
+
+/** Short description of what actually came back, for the error message. */
+function describeResponse(text) {
+  const head = String(text || '').trim().slice(0, 200)
+  if (/^\s*<(!doctype html|html)/i.test(head)) return 'received an HTML page'
+  if (!head) return 'empty response'
+  return `starts with ${JSON.stringify(head.slice(0, 60))}`
 }

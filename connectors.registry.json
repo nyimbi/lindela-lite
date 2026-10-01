@@ -68,7 +68,7 @@
   {
     "id": "glofas",
     "module": "src/connectors/glofas.js",
-    "description": "Copernicus GloFAS flood forecast RSS",
+    "description": "Copernicus GloFAS flood forecast RSS (feed endpoint unverified 2026-10-01: the published rss.xml path served the EFAS web app, so this source currently reports an error and zero records)",
     "schemas": {
       "input": {
         "glofas_feeds": "array of RSS feed URLs",
@@ -95,7 +95,8 @@
       "rss"
     ],
     "contributor": "core",
-    "since": "0.1.0"
+    "since": "0.1.0",
+    "status_note": "Feed URL unverified as of 2026-10-01. The connector now rejects non-feed responses instead of silently ingesting nothing."
   },
   {
     "id": "chirps",
@@ -132,7 +133,7 @@
   {
     "id": "nasa_firms",
     "module": "src/connectors/nasa-firms.js",
-    "description": "NASA FIRMS fire detections",
+    "description": "NASA FIRMS fire detections (requires a free MAP_KEY; no keyless access)",
     "schemas": {
       "input": {
         "regions": "array of {name, country, lat, lon}",
@@ -159,7 +160,9 @@
       "satellite"
     ],
     "contributor": "core",
-    "since": "0.1.0"
+    "since": "0.1.0",
+    "requires_credentials": true,
+    "credential_hint": "Set NASA_FIRMS_MAP_KEY; free key via firms.modaps.eosdis.nasa.gov/api/map_key"
   },
   {
     "id": "usgs_earthquake",

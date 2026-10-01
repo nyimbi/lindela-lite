@@ -53,6 +53,33 @@ jobs:
           name: sbom
           path: sbom.cdx.json
 
+  live-sources:
+    # Scheduled rather than on every push: this depends on third parties being
+    # reachable and on their rate limits, so a flaky upstream should not block
+    # a commit. Non-strict, so it reports rather than fails the build.
+    runs-on: ubuntu-latest
+    schedule:
+      - cron: '17 6 * * *'
+    workflow_dispatch:
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # Fixtures describe what the code expects, not what upstream serves.
+      # Three connectors reported success while ingesting nothing, and no
+      # fixture test caught any of them. This asks the real sources.
+      - name: Check public sources against live upstreams
+        run: node scripts/check-live-sources.mjs
+      - name: Upload live source report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-source-report
+          path: |
+            scripts/check-live-sources.mjs
+          retention-days: 7
+
   provenance:
     needs: [test, coverage, audit, sbom]
     if: startsWith(github.ref, 'refs/tags/')

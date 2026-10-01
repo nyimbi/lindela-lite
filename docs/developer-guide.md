@@ -189,6 +189,34 @@ npm run audit
 
 Fails on high or critical advisories in the dependency tree.
 
+Live source check:
+
+```bash
+npm run check:live-sources
+```
+
+Probes every public source against its real upstream. Add `--strict` to exit
+non-zero when any source errors or returns nothing.
+
+**Run this after touching any connector.** The fixture suite cannot catch a
+provider changing its response shape, because fixtures describe what the code
+expects. Three connectors shipped reporting success while ingesting nothing:
+CHIRPS (index moved to year subdirectories), GloFAS (RSS URL started serving a
+web app), and NASA FIRMS (no keyless access; the placeholder key produced HTTP
+400s). Every one looked healthy from the test suite.
+
+Treat these three states differently:
+
+- **ok** — records returned.
+- **error** — the connector reported why. Usually an upstream change or a
+  missing credential.
+- **empty** — records expected, none returned, no error. This is the dangerous
+  one: it reads as "no data right now" when it actually means "nothing was
+  ingested".
+
+When adding a connector, decide which of these an empty result should be. If
+it cannot be "no data", make it an error.
+
 Syntax checks:
 
 ```bash

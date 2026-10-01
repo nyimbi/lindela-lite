@@ -58,7 +58,7 @@ Mode behavior:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `NASA_FIRMS_MAP_KEY` | `OPEN_KEY` | NASA FIRMS map key. |
+| `NASA_FIRMS_MAP_KEY` | _(unset)_ | NASA FIRMS MAP_KEY. **Required** — FIRMS has no keyless access; the free key arrives by email from `firms.modaps.eosdis.nasa.gov/api/map_key`. When unset, the source reports an error and zero records rather than silently failing. |
 
 Most source options are passed in ingestion requests or schedules:
 

@@ -273,6 +273,10 @@ export function publicSourceCatalog() {
         name: 'Copernicus GloFAS flood forecast',
         type: 'rss_html',
         requires_credentials: false,
+        // Verified 2026-10-01: the published rss.xml path served the EFAS
+        // single-page app rather than a feed, so this source currently reports
+        // an error and zero records. Flagged rather than quietly empty.
+        status_note: 'Feed endpoint unverified as of 2026-10-01; reports an error until a working feed URL is confirmed',
         outputs: ['hazard_events'],
       }
     }
@@ -290,7 +294,11 @@ export function publicSourceCatalog() {
         ...common,
         name: 'NASA FIRMS fire detections',
         type: 'csv_api',
-        requires_credentials: false,
+        // FIRMS requires a free MAP_KEY from an email signup; there is no
+        // keyless access. Claiming otherwise let the source look healthy and
+        // keyless while every request returned HTTP 400.
+        requires_credentials: true,
+        credential_hint: 'Set NASA_FIRMS_MAP_KEY (free, via firms.modaps.eosdis.nasa.gov/api/map_key)',
         outputs: ['hazard_events'],
       }
     }

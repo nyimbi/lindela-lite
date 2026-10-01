@@ -25,6 +25,43 @@ User-supplied sources:
 
 `gdelt` is intentionally excluded.
 
+### Sources That Need Configuration
+
+`nasa_firms` is **not** keyless. FIRMS requires a free MAP_KEY delivered by
+email from `firms.modaps.eosdis.nasa.gov/api/map_key`. Set `NASA_FIRMS_MAP_KEY`
+and the source works; leave it unset and the connector reports an error and zero
+records rather than sending a placeholder key and reporting HTTP 400s. The
+source catalog marks it `requires_credentials: true` so this is visible before
+an operator runs anything.
+
+### Verifying Sources Against Live Upstreams
+
+Fixtures describe what the code expects, not what a provider actually serves.
+Three connectors reported success while ingesting nothing, and no fixture test
+caught any of them:
+
+| Source | Failure | Why fixtures missed it |
+|---|---|---|
+| `chirps` | Product index moved to year subdirectories, so the filename pattern matched zero times | The fixture encoded the old flat layout, confirming the bug |
+| `glofas` | Published RSS URL served the EFAS web app; parse found no items | Fixture was valid RSS, and the parse of valid RSS was correct |
+| `nasa_firms` | No keyless access; placeholder key returned HTTP 400 per region | Fixture supplied its own body, bypassing the key check |
+
+`npm run check:live-sources` probes every public source against its real
+upstream and reports records, errors, and timing. Pass `--strict` to exit
+non-zero when any source errors or returns nothing.
+
+```
+npm run check:live-sources
+```
+
+It runs on a daily CI schedule (not every push — it depends on third parties
+being reachable and on their rate limits) and is non-strict there, so an
+upstream outage is reported without blocking commits.
+
+A run distinguishes three states: **ok** (records returned), **error** (the
+connector said so), and **empty** (records expected, none returned, no error).
+That last one is the dangerous state and the reason this script exists.
+
 ### Seasonal Context: `noaa_enso`
 
 NOAA CPC Niño 3.4 SST anomaly index, from a keyless fixed-width ASCII feed

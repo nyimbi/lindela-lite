@@ -79,6 +79,72 @@ describe('public source connector fixtures', () => {
     assert.equal(result.hazard_events[0].event_type, 'flood_forecast')
   })
 
+  it('reports an error when the GloFAS feed returns a web page', async () => {
+    // Verified live 2026-10-01: the published rss.xml path served the EFAS
+    // single-page app. HTTP 200, so the connector parsed zero items and
+    // reported success. A web app at a feed URL must be an error, not an
+    // empty result, or "no floods forecast" is indistinguishable from
+    // "nothing ingested".
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'text/html']]),
+      text: async () => '<!doctype html>\n<html lang="en"><head><title>EFAS</title></head><body></body></html>',
+      json: async () => ({}),
+    })
+    const result = await glofasConnector.ingest({ glofas_feeds: ['https://fixture.test/glofas.xml'], retries: 0 })
+    assert.equal(result.hazard_events.length, 0)
+    assert.equal(result.errors.length, 1)
+    assert.match(result.errors[0], /not an RSS or Atom feed/)
+    assert.match(result.errors[0], /HTML page/)
+  })
+
+  it('accepts Atom and RDF feeds, not only RSS', async () => {
+    // Rejecting "not <rss>" would be a second silent failure waiting to
+    // happen if the provider switches feed format.
+    const atom = '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Flood watch</title><link href="https://example/1"/></entry></feed>'
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'application/atom+xml']]),
+      text: async () => atom,
+      json: async () => ({}),
+    })
+    const result = await glofasConnector.ingest({ glofas_feeds: ['https://fixture.test/glofas.atom'], retries: 0 })
+    assert.equal(result.errors.length, 0, 'an Atom feed must not be rejected as a web page')
+  })
+
+  it('reports an error when FIRMS has no MAP_KEY configured', async () => {
+    // FIRMS has no keyless access. The old code sent a placeholder key and
+    // got HTTP 400 per region, while the catalog claimed no credentials were
+    // required.
+    const previous = process.env.NASA_FIRMS_MAP_KEY
+    delete process.env.NASA_FIRMS_MAP_KEY
+    try {
+      let called = false
+      globalThis.fetch = async () => {
+        called = true
+        return { ok: true, status: 200, headers: new Map(), text: async () => '', json: async () => ({}) }
+      }
+      const result = await nasaFirmsConnector.ingest({ retries: 0 })
+      assert.equal(called, false, 'must not make a request without a key')
+      assert.equal(result.hazard_events.length, 0)
+      assert.equal(result.errors.length, 1)
+      assert.match(result.errors[0], /NASA_FIRMS_MAP_KEY is not set/)
+      assert.match(result.errors[0], /no keyless access/i)
+    } finally {
+      if (previous !== undefined) process.env.NASA_FIRMS_MAP_KEY = previous
+    }
+  })
+
+  it('marks FIRMS as requiring credentials in the source catalog', async () => {
+    // The catalog is what an operator reads to decide what needs configuring.
+    const { publicSourceCatalog } = await import('../src/schema.js')
+    const firms = publicSourceCatalog().find((s) => s.id === 'nasa_firms')
+    assert.equal(firms.requires_credentials, true)
+    assert.match(firms.credential_hint, /NASA_FIRMS_MAP_KEY/)
+  })
+
   it('walks CHIRPS year directories to find daily files', async () => {
     // The product root lists year directories, not files. Matching filenames
     // on the root listing returned zero records while reporting no error, so
@@ -141,8 +207,14 @@ describe('public source connector fixtures', () => {
   })
 
   it('parses NASA FIRMS CSV rows', async () => {
+    // Passes a key explicitly: FIRMS requires one, and a missing key now
+    // short-circuits with an error rather than attempting the request.
     mockFetch('firms.csv', 'text/csv')
-    const result = await nasaFirmsConnector.ingest({ firms_bboxes: [{ name: 'Fixture', bbox: '33,-5,52,15', country: 'KE' }], retries: 0 })
+    const result = await nasaFirmsConnector.ingest({
+      nasa_firms_key: 'test_key',
+      firms_bboxes: [{ name: 'Fixture', bbox: '33,-5,52,15', country: 'KE' }],
+      retries: 0,
+    })
     assert.equal(result.errors.length, 0)
     assert.equal(result.hazard_events.length, 1)
     assert.equal(result.hazard_events[0].event_type, 'fire')

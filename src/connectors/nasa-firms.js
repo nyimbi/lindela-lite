@@ -14,7 +14,23 @@ export const nasaFirmsConnector = {
   async ingest(options = {}) {
     const hazard_events = []
     const errors = []
-    const key = options.nasa_firms_key || process.env.NASA_FIRMS_MAP_KEY || 'OPEN_KEY'
+    // FIRMS requires a MAP_KEY obtained by email signup
+    // (firms.modaps.eosdis.nasa.gov/api/map_key). There is no keyless access,
+    // and there never was an "OPEN_KEY" sentinel that works — verified
+    // 2026-10-01, the API answers HTTP 400 "Invalid MAP_KEY." for it. Sending
+    // the placeholder produced three identical HTTP 400s per run while the
+    // catalog claimed requires_credentials: false, so the source looked
+    // healthy and keyless when it was neither.
+    const key = options.nasa_firms_key || process.env.NASA_FIRMS_MAP_KEY
+    if (!key) {
+      errors.push(
+        'nasa_firms: NASA_FIRMS_MAP_KEY is not set. FIRMS requires a free MAP_KEY '
+        + '(sign up at firms.modaps.eosdis.nasa.gov/api/map_key); there is no keyless access. '
+        + 'This source will report 0 records until a key is configured.',
+      )
+      return { hazard_events, errors }
+    }
+
     const regions = options.firms_bboxes?.length ? options.firms_bboxes : REGIONAL_BBOXES
     const days = Math.min(Math.max(Number(options.days || 1), 1), 10)
 
