@@ -56,11 +56,17 @@ export function normalizeParametricRule(input, existing = null) {
   }
 }
 
-export function simulateDisbursement(rule, { actor, focal_point_approved } = {}) {
+export function simulateDisbursement(rule, { actor, focal_point_approved, sanctions } = {}) {
   if (rule.requires_focal_point_approval && !focal_point_approved) {
     throw Object.assign(
       new Error('Focal point approval required before simulation can proceed'),
       { statusCode: 409 }
+    )
+  }
+  if (sanctions?.blocked) {
+    throw Object.assign(
+      new Error('Sanctions screening match blocks this disbursement; compliance review required'),
+      { statusCode: 409, sanctions }
     )
   }
   const tx_hash = 'sim_' + crypto.createHash('sha256').update(rule.id + Date.now()).digest('hex').slice(0, 20)
@@ -76,6 +82,8 @@ export function simulateDisbursement(rule, { actor, focal_point_approved } = {})
     rule_id: rule.id,
     actor: actor || null,
     status: 'simulated',
+    sanctions_screened: Boolean(sanctions?.screened),
+    sanctions_matches: sanctions?.matches?.length || 0,
     simulated_at: nowIso(),
   }
 }

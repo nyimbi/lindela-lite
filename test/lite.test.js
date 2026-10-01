@@ -2469,6 +2469,7 @@ describe('Lindela Lite Partner Portal', () => {
 // Phase 2 tests
 // =============================================================
 import { normalizeParametricRule, simulateDisbursement, PARAMETRIC_CHAINS } from '../src/parametric.js'
+import { parseSdnCsv, screenName } from '../src/sanctions.js'
 import { dhis2Connector } from '../src/connectors/dhis2.js'
 import { buildCreate } from '../src/operations.js'
 import { computeApiUptime } from '../src/kpi.js'
@@ -2505,6 +2506,52 @@ describe('Lindela Lite Phase 2 — Parametric, DHIS2, Demographics, Observabilit
       () => simulateDisbursement(rule, { focal_point_approved: false }),
       (err) => err.statusCode === 409
     )
+  })
+
+  it('simulateDisbursement throws 409 when sanctions screening blocks', () => {
+    const rule = normalizeParametricRule({ name: 'Blocked', chain: 'ethereum-sepolia' })
+    assert.throws(
+      () => simulateDisbursement(rule, {
+        sanctions: { screened: true, blocked: true, matches: [{ name: 'X', entry: { id: '1', name: 'X' } }] },
+      }),
+      (err) => err.statusCode === 409 && /sanctions/i.test(err.message)
+    )
+  })
+
+  it('simulateDisbursement records screening outcome when it runs', () => {
+    const rule = normalizeParametricRule({ name: 'Clean', chain: 'ethereum-sepolia' })
+    const result = simulateDisbursement(rule, {
+      sanctions: { screened: true, blocked: false, matches: [] },
+    })
+    assert.equal(result.sanctions_screened, true)
+    assert.equal(result.sanctions_matches, 0)
+  })
+
+  it('parses OFAC SDN CSV and normalizes names for screening', () => {
+    const csv = [
+      '36,"AEROCARIBBEAN AIRLINES",-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ',
+      '173,"ANGLO-CARIBBEAN CO., LTD.",-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ',
+      '13102,"MEMON, Ibrahim Abdul Razaaq","individual","SDNTK",-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,"notes"',
+    ].join('\n')
+
+    const entries = parseSdnCsv(csv)
+    assert.equal(entries.length, 3)
+    // Comma inside a quoted name must not truncate the entity name.
+    assert.equal(entries[1].name, 'ANGLO-CARIBBEAN CO., LTD.')
+    assert.equal(entries[2].type, 'individual')
+
+    const exact = screenName('AEROCARIBBEAN AIRLINES', entries)
+    assert.equal(exact.matched, true)
+    assert.equal(exact.reason, 'exact_normalized_match')
+
+    // Corporate suffixes and punctuation must not defeat a match.
+    assert.equal(screenName('Aerocaribbean Airlines, Inc.', entries).matched, true)
+    assert.equal(screenName('  aerocaribbean   airlines  ', entries).matched, true)
+
+    // Genuinely different names must not match.
+    assert.equal(screenName('Turkana Water Committee', entries).matched, false)
+    // Very short names are skipped rather than risk noisy matches.
+    assert.equal(screenName('AB', entries).reason, 'name_too_short')
   })
 
   it('POST /api/v1/parametric-rules returns 201', async () => {

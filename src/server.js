@@ -47,6 +47,7 @@ import { normalizeCommunityFeedback, feedbackSummaryByAlert } from './community.
 import { renderQuarterlyReportPdf } from './pdf.js'
 import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.js'
 import { normalizeParametricRule, simulateDisbursement } from './parametric.js'
+import { screenNames } from './sanctions.js'
 import { normalizeWorkflowInstance, transitionWorkflow, pendingForFocalPoint, workflowMetrics, WORKFLOW_TYPES, WORKFLOW_STATES, WORKFLOW_TRANSITIONS } from './workflows.js'
 import { recordRequestOutcome } from './observability.js'
 
@@ -1788,15 +1789,37 @@ async function handleParametricRoute(store, data, req, res, url, route) {
     }
     const body = await readRequestJson(req)
     try {
+      const recipientName = body.recipient_name || body.recipient || null
+      let sanctions = null
+      if (recipientName) {
+        try {
+          const screened = await screenNames([recipientName], { retries: 0 })
+          sanctions = {
+            screened: true,
+            matches: screened.matches,
+            blocked: screened.matches.length > 0,
+          }
+        } catch (screenError) {
+          // Screening is advisory: surface the failure but do not silently
+          // treat an unreachable list as a clean result.
+          sanctions = { screened: false, matches: [], blocked: false, error: screenError.message }
+        }
+      }
+
       const result = simulateDisbursement(rule, {
         actor: body.actor || auth.subject || null,
         focal_point_approved: Boolean(body.focal_point_approved),
+        sanctions,
       })
       const disbursements = [...(data.parametric_disbursements || []), result]
       await store.write({ ...data, parametric_disbursements: disbursements })
-      jsonResponse(res, 201, { success: true, data: result })
+      jsonResponse(res, 201, { success: true, data: result, sanctions })
     } catch (err) {
-      jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
+      jsonResponse(res, err.statusCode || 400, {
+        success: false,
+        error: err.message,
+        ...(err.sanctions ? { sanctions: err.sanctions } : {}),
+      })
     }
     return
   }
