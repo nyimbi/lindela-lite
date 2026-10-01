@@ -4,6 +4,7 @@ export const SOURCE_IDS = Object.freeze([
   'glofas',
   'chirps',
   'nasa_firms',
+  'usgs_earthquake',
   'service_assets',
   'acled_csv',
   'conflict_csv',
@@ -235,6 +236,15 @@ export function publicSourceCatalog() {
         ...common,
         name: 'NASA FIRMS fire detections',
         type: 'csv_api',
+        requires_credentials: false,
+        outputs: ['hazard_events'],
+      }
+    }
+    if (id === 'usgs_earthquake') {
+      return {
+        ...common,
+        name: 'USGS earthquake feed',
+        type: 'geojson_api',
         requires_credentials: false,
         outputs: ['hazard_events'],
       }

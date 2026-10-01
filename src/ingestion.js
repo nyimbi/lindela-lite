@@ -7,6 +7,7 @@ import { gdacsConnector } from './connectors/gdacs.js'
 import { glofasConnector } from './connectors/glofas.js'
 import { chirpsConnector } from './connectors/chirps.js'
 import { nasaFirmsConnector } from './connectors/nasa-firms.js'
+import { usgsEarthquakeConnector } from './connectors/usgs-earthquake.js'
 import { acledCsvConnector, conflictCsvConnector, serviceAssetsConnector } from './connectors/uploads.js'
 import { dhis2Connector } from './connectors/dhis2.js'
 
@@ -16,6 +17,7 @@ const CONNECTORS = Object.freeze({
   glofas: glofasConnector,
   chirps: chirpsConnector,
   nasa_firms: nasaFirmsConnector,
+  usgs_earthquake: usgsEarthquakeConnector,
   service_assets: serviceAssetsConnector,
   acled_csv: acledCsvConnector,
   conflict_csv: conflictCsvConnector,
@@ -28,6 +30,7 @@ export const PUBLIC_INGESTION_SOURCES = Object.freeze([
   'glofas',
   'chirps',
   'nasa_firms',
+  'usgs_earthquake',
 ])
 
 export const SOURCE_POLICIES = Object.freeze({
@@ -36,6 +39,7 @@ export const SOURCE_POLICIES = Object.freeze({
   glofas: { interval_minutes: 180, timeout_ms: 20000, retries: 2, stale_after_minutes: 360, minimum_records: 0, regular: true },
   chirps: { interval_minutes: 720, timeout_ms: 20000, retries: 2, stale_after_minutes: 1440, minimum_records: 1, regular: true },
   nasa_firms: { interval_minutes: 360, timeout_ms: 30000, retries: 2, stale_after_minutes: 720, minimum_records: 0, regular: true },
+  usgs_earthquake: { interval_minutes: 60, timeout_ms: 20000, retries: 2, stale_after_minutes: 180, minimum_records: 0, regular: true },
   service_assets: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   acled_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   conflict_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },

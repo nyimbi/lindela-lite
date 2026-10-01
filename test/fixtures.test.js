@@ -7,6 +7,7 @@ import { gdacsConnector } from '../src/connectors/gdacs.js'
 import { glofasConnector } from '../src/connectors/glofas.js'
 import { nasaFirmsConnector } from '../src/connectors/nasa-firms.js'
 import { openMeteoConnector } from '../src/connectors/open-meteo.js'
+import { usgsEarthquakeConnector } from '../src/connectors/usgs-earthquake.js'
 
 const fixtureDir = new URL('./fixtures/', import.meta.url)
 const originalFetch = globalThis.fetch
@@ -55,6 +56,33 @@ describe('public source connector fixtures', () => {
     assert.equal(result.errors.length, 0)
     assert.equal(result.hazard_events.length, 1)
     assert.equal(result.hazard_events[0].event_type, 'fire')
+  })
+
+  it('parses USGS earthquake GeoJSON features', async () => {
+    mockFetch('usgs-earthquake.json', 'application/geo+json')
+    const result = await usgsEarthquakeConnector.ingest({ usgs_feed: 'https://fixture.test/usgs.json', retries: 0 })
+    assert.equal(result.errors.length, 0)
+    assert.equal(result.hazard_events.length, 2)
+
+    const [moderate, major] = result.hazard_events
+    assert.equal(moderate.event_type, 'earthquake')
+    assert.equal(moderate.source, 'usgs_earthquake')
+    assert.equal(moderate.severity, 'medium')
+    assert.equal(major.severity, 'critical')
+    assert.equal(moderate.latitude, 2.19)
+    assert.equal(moderate.longitude, 44.31)
+    assert.equal(major.metadata.tsunami, true)
+    assert.equal(major.metadata.alert, 'red')
+    assert.equal(major.metadata.magnitude, 7.2)
+    assert.equal(major.metadata.felt_reports, 310)
+  })
+
+  it('reports connector errors instead of throwing on upstream failure', async () => {
+    globalThis.fetch = async () => ({ ok: false, status: 503, text: async () => '', json: async () => ({}) })
+    const result = await usgsEarthquakeConnector.ingest({ usgs_feed: 'https://fixture.test/usgs.json', retries: 0 })
+    assert.equal(result.hazard_events.length, 0)
+    assert.equal(result.errors.length, 1)
+    assert.match(result.errors[0], /usgs_earthquake/)
   })
 })
 

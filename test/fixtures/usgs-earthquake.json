@@ -1,0 +1,78 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "generated": 1767225600000,
+    "title": "USGS Feed",
+    "count": 2
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "us7000abcd",
+      "properties": {
+        "mag": 5.8,
+        "place": "120 km SSW of Thingy, Somalia",
+        "time": 1767222000000,
+        "updated": 1767223800000,
+        "tz": 0,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000abcd",
+        "detail": "https://earthquake.usgs.gov/fdsnws/event/1/query?eventid=us7000abcd",
+        "felt": 24,
+        "cdi": 4.2,
+        "mmi": 3.1,
+        "alert": "green",
+        "status": "reviewed",
+        "tsunami": 0,
+        "sig": 486,
+        "net": "us",
+        "code": "7000abcd",
+        "ids": "us7000abcd",
+        "sources": "us,ak",
+        "types": "felt,cdi",
+        "nst": 12,
+        "dmin": 1.4,
+        "rms": 0.9,
+        "gap": 88,
+        "title": "M 5.8 - 120 km SSW of Thingy, Somalia"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [44.31, 2.19, 10.0]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "us6000wxyz0",
+      "properties": {
+        "mag": 7.2,
+        "place": "68 km W of Nairobi, Kenya",
+        "time": 1767216000000,
+        "updated": 1767219000000,
+        "tz": 0,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us6000wxyz0",
+        "detail": "https://earthquake.usgs.gov/fdsnws/event/1/query?eventid=us6000wxyz0",
+        "felt": 310,
+        "cdi": 7.8,
+        "mmi": 6.4,
+        "alert": "red",
+        "status": "reviewed",
+        "tsunami": 1,
+        "sig": 1420,
+        "net": "us",
+        "code": "6000wxyz0",
+        "ids": "us6000wxyz0",
+        "sources": "us,ke",
+        "types": "felt,cdi,mmi,origin",
+        "nst": 38,
+        "dmin": 0.4,
+        "rms": 0.7,
+        "gap": 42,
+        "title": "M 7.2 - 68 km W of Nairobi, Kenya"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [36.72, -1.38, 12.5]
+      }
+    }
+  ]
+}

@@ -107,6 +107,28 @@
     "since": "0.1.0"
   },
   {
+    "id": "usgs_earthquake",
+    "module": "src/connectors/usgs-earthquake.js",
+    "description": "USGS real-time earthquake feed (GeoJSON)",
+    "schemas": {
+      "input": {
+        "usgs_window": "one of: hour, day, week, month (default day)",
+        "usgs_feed": "override feed URL",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": ["hazard_events"]
+    },
+    "defaults": {
+      "rateLimit": {"perMinute": 60},
+      "retry": {"max": 2, "backoffMs": 1000},
+      "timeout_ms": 20000
+    },
+    "tags": ["earthquake", "seismic", "hazard", "geojson"],
+    "contributor": "core",
+    "since": "0.2.0"
+  },
+  {
     "id": "service_assets",
     "module": "src/connectors/uploads.js",
     "description": "User-supplied service assets (CSV or GeoJSON)",
