@@ -962,7 +962,7 @@ function reRenderMapFromState() {
 // Data refresh
 // =============================================================
 async function refresh() {
-  const [health, sources, ingestionHealth, flood, conflict, events, assets, alerts, reports, reportTemplates, climate] =
+  const [health, sources, ingestionHealth, flood, conflict, events, assets, alerts, reports, reportTemplates, climate, dispatches] =
     await Promise.all([
       fetchJson('/api/v1/health'),
       fetchJson('/api/v1/sources'),
@@ -975,9 +975,10 @@ async function refresh() {
       fetchJson('/api/v1/reports?limit=20'),
       fetchJson('/api/v1/report-templates?limit=20'),
       fetchJson('/api/v1/climate?limit=200'),
+      fetchJson('/api/v1/rapidpro/dispatches?limit=200'),
     ])
 
-  state.data = { health, sources, ingestionHealth, flood, conflict, events, assets, alerts, reports, reportTemplates, climate }
+  state.data = { health, sources, ingestionHealth, flood, conflict, events, assets, alerts, reports, reportTemplates, climate, dispatches }
   state.climate = climate.data || []
   state.reports   = reports.data || []
   state.templates = reportTemplates.data || []
@@ -1083,17 +1084,30 @@ function renderWorkflowsTab(byType) {
 // =============================================================
 function renderEquityTab() {
   const alerts = state.data.alerts?.data || []
+  const dispatches = state.data.dispatches?.data || []
   const table = $('equityTable')
   const emptyState = $('equityEmptyState')
   if (!table) return
 
+  // Dispatched counts come from rapidpro_dispatches, joined to the alert event
+  // to recover the district. Alert events do not carry a dispatch_status field
+  // at all, so reading it from them yields zero dispatched for every district —
+  // which renders as a false-positive rate of "—" everywhere, and reads as
+  // "we never send" rather than "this was computed from the wrong table".
+  const dispatchedByAlert = new Map()
+  for (const dispatch of dispatches) {
+    if (!dispatch.alert_event_id) continue
+    if (dispatch.status !== 'sent') continue
+    dispatchedByAlert.set(dispatch.alert_event_id, (dispatchedByAlert.get(dispatch.alert_event_id) || 0) + 1)
+  }
+
   const grouped = {}
-  alerts.forEach((a) => {
+  for (const a of alerts) {
     const district = a.scope?.district || 'unknown'
     if (!grouped[district]) grouped[district] = { dispatched: 0, acknowledged: 0 }
-    if (a.dispatch_status === 'sent') grouped[district].dispatched++
+    grouped[district].dispatched += dispatchedByAlert.get(a.id) || 0
     if (a.status === 'acknowledged' || a.status === 'resolved') grouped[district].acknowledged++
-  })
+  }
 
   const districts = Object.entries(grouped)
   if (!districts.length) {
@@ -1486,13 +1500,25 @@ function renderIngestionPanel() {
     const nextRun = health.schedule?.next_run_at ? `next ${displayDate(health.schedule.next_run_at)}` : ''
     const records = run ? `${escapeHtml(String(run.records_processed))} records` : ''
     const meta = [displayDate(run?.completed_at), records, nextRun].filter(Boolean).join(' · ')
-    return `<div class="source-card">
+
+    // "never_run" with no explanation invites "is this broken?". For sources
+    // that are unavailable by design — no keyless access, or an upstream
+    // layout change — say which, from the catalog's own metadata rather than
+    // hard-coding it here.
+    const unavailable = source.requires_credentials
+      ? `Needs configuration: ${source.credential_hint || 'a credential is required'}`
+      : source.status_note || ''
+    const lastError = run?.errors?.length ? run.errors[run.errors.length - 1] : ''
+    const reason = unavailable || lastError || ''
+
+    return `<div class="source-card${reason ? ' is-unavailable' : ''}">
       <div class="source-card-header">
         <span class="health-dot ${dotCls}"></span>
         <span class="source-name">${escapeHtml(source.name)}</span>
         <span class="status-pill status-${safeClass(status)}">${escapeHtml(status)}</span>
       </div>
-      <div class="source-meta">${meta}</div>
+      <div class="source-meta">${meta || '<span class="source-idle">no runs recorded</span>'}</div>
+      ${reason ? `<div class="source-reason">${escapeHtml(reason)}</div>` : ''}
       <div class="item-actions">
         <button class="btn btn-xs" data-source="${escapeHtml(source.id)}" data-action="run-source"
                 data-i18n="action.run_now">Run now</button>

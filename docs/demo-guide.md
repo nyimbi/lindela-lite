@@ -113,8 +113,16 @@ Click the distributed Turkana SITREP to see the full report view.
 
 Navigate to Equity:
 
-- Dispatch accuracy computed per district from the 20 rapidpro_dispatches.
-- If any district accuracy falls below 80% with 5+ dispatches, an equity_audit_action workflow was auto-created.
+- Per-district **Dispatched** and **Acknowledged** counts, joined from the
+  RapidPro dispatch records to the alert event to recover the district. Expect
+  roughly 17 sent dispatches across 5 districts.
+- A **Not acknowledged** percentage. Be ready for the naming question: this is
+  the share of dispatches nobody acted on. It is deliberately *not* called a
+  false-positive rate, because an unactioned dispatch may be a poor alert or a
+  missed human response, and this data cannot tell those apart. The panel says
+  so underneath.
+- If any district falls below 80% acknowledged with 5+ dispatches, an
+  equity_audit_action workflow is auto-created.
 
 Navigate to Parametric:
 
@@ -278,7 +286,7 @@ DEM alone.
 | Operations | Blocked task "Aweil MUAC"; field report demographics distribution |
 | Workflows | Anticipatory alert in focal_point_review; full lifecycle on closed Aweil workflow |
 | Reports | Distributed SITREP with all sections rendered; failed distribution run (503) |
-| Equity | Per-district accuracy table; auto-created audit workflow if breach detected |
+| Equity | Per-district dispatch/acknowledged counts; explain why the column is not a false-positive rate |
 | Map | Flood-depth simulation with depth legend; road status overlay |
 | Road access | One impassable segment with `access_reason`; `cut_off_rate_pct` |
 | Routing | Detour via the plateau bypass; severed-route diagnostics on failure |

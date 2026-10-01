@@ -1634,3 +1634,27 @@ dialog[open] {
   line-height: 1.5;
   color: var(--ink-faint);
 }
+
+/* An unavailable source is not a broken one. Dimmed card plus the reason, so
+   "never_run" never reads as an unexplained failure. */
+.source-card.is-unavailable { opacity: 0.72; }
+
+.source-idle {
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
+.source-reason {
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: oklch(72% 0.11 70);
+}
+
+.panel-note {
+  margin: 8px 0 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+  max-width: 62ch;
+}

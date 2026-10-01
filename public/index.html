@@ -252,11 +252,24 @@
                   <th data-i18n="equity.district_column">District</th>
                   <th data-i18n="equity.dispatched">Dispatched</th>
                   <th data-i18n="equity.acknowledged">Acknowledged</th>
-                  <th data-i18n="equity.false_positive_rate">False positive rate</th>
+                  <!--
+                    Deliberately not labelled "false positive rate". The
+                    underlying figure is dispatched alerts that were never
+                    acknowledged, which is not the same claim: an unactioned
+                    dispatch may be a bad alert or a missed human response,
+                    and this data cannot tell those apart.
+                  -->
+                  <th data-i18n="equity.unacknowledged_rate" title="Dispatched alerts that were never acknowledged. Not a false-positive measure: an unactioned dispatch may be a poor alert or a missed response.">Not acknowledged</th>
                 </tr>
               </thead>
               <tbody></tbody>
             </table>
+            <p id="equityMethodNote" class="panel-note">
+              Dispatched counts come from RapidPro dispatch records, joined to the
+              alert event to recover the district. "Not acknowledged" is the share of
+              dispatches nobody acted on &mdash; it does not distinguish a poor alert
+              from a missed response, so it is not a false-positive rate.
+            </p>
             <div id="equityEmptyState" class="empty-state" hidden><p data-i18n="equity.empty">No equity data yet. Alerts must be dispatched and reviewed.</p></div>
           </div>
 

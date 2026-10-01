@@ -335,6 +335,7 @@ export function publicSourceCatalog() {
         name: 'ACLED-compatible user CSV',
         type: 'licensed_csv_upload',
         requires_credentials: true,
+        credential_hint: 'ACLED data is licensed; the operator uploads a file they are entitled to use. No account is bundled.',
         outputs: ['conflict_events'],
       }
     }
