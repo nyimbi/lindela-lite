@@ -64,15 +64,50 @@ function coordNear(lat, lon, spread = 0.12) {
   return { lat: lat + offsets[idx % 7], lon: lon + offsets[(idx + 3) % 7] }
 }
 
-export async function ingestPublicSources(store) {
+/**
+ * Sources the demo skips by default, and why.
+ *
+ * Both are genuinely unavailable rather than merely unconfigured: glofas
+ * serves a web app at its RSS URL, and nasa_firms requires a MAP_KEY that has
+ * to be requested by email. Attempting them on every demo run just produces two
+ * guaranteed-degraded source runs and a slow seed.
+ *
+ * Pass them explicitly (via `ingestPublicSources(store, { sources: [...] })` or
+ * `POST /api/v1/demo/seed` with a `sources` field) to see the failure reported,
+ * which is useful when diagnosing a deployment.
+ */
+const DEMO_SOURCE_EXCLUSIONS = new Set(['glofas', 'nasa_firms'])
+
+export async function ingestPublicSources(store, options = {}) {
   const results = {}
-  const sources = ['open_meteo', 'gdacs', 'glofas', 'chirps', 'nasa_firms']
+  // Explicit list rather than PUBLIC_INGESTION_SOURCES: the demo should not
+  // inherit a newly added source's failure into every seed run. Both remaining
+  // omissions are deliberate and documented — glofas has no working feed URL,
+  // nasa_firms needs a MAP_KEY. Adding noaa_enso (keyless, verified) and
+  // usgs_earthquake so the demo shows the seasonal and multi-hazard surface.
+  // An explicit request is honoured verbatim, so a caller can deliberately
+  // surface a degraded source. The exclusions only apply to the default set.
+  const sources = options.sources?.length
+    ? options.sources
+    : ['open_meteo', 'gdacs', 'glofas', 'chirps', 'nasa_firms', 'usgs_earthquake', 'noaa_enso']
+      .filter((source) => !DEMO_SOURCE_EXCLUSIONS.has(source))
   const regions = REGIONS.map(r => ({ name: r.name, country: r.country, lat: r.lat, lon: r.lon }))
 
   for (const source of sources) {
     try {
       const result = await runIngestion(store, { sources: [source], regions })
-      results[source] = { status: 'ok', records: result.counts }
+      // runIngestion does not throw for a degraded source: it records the run
+      // and returns counts. Reporting "ok" here regardless is how two broken
+      // sources looked healthy in the seed summary.
+      const runs = (await store.read()).source_runs.filter((r) => r.source === source)
+      const latest = runs.sort((a, b) => Date.parse(b.completed_at || 0) - Date.parse(a.completed_at || 0))[0]
+      results[source] = {
+        status: latest?.status === 'success' ? 'ok' : latest?.status || 'unknown',
+        records: result.counts,
+      }
+      if (latest?.status && latest.status !== 'success') {
+        for (const message of latest.errors || []) console.error(`[seed] ${source}: ${message}`)
+      }
     } catch (e) {
       results[source] = { status: 'error', error: e.message }
       console.error(`[seed] ${source} ingestion failed:`, e.message)

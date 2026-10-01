@@ -3026,6 +3026,44 @@ describe('Lindela Lite road access', () => {
     assert.match(bad.error, /road_class must be one of/)
   })
 
+  it('does not report success for a source that returned no records', async () => {
+    // Three connectors shipped reporting "success" while ingesting nothing.
+    // The systemic cause was minimum_records: 0 on sources that are expected
+    // to return records, so a zero result passed as healthy. Every regular
+    // public source must now declare a floor.
+    const { SOURCE_POLICIES, PUBLIC_INGESTION_SOURCES } = await import('../src/ingestion.js')
+    for (const source of PUBLIC_INGESTION_SOURCES) {
+      const policy = SOURCE_POLICIES[source]
+      assert.ok(policy, `${source} must have a policy`)
+      assert.ok(
+        policy.minimum_records >= 1,
+        `${source} must declare minimum_records >= 1 so an empty ingest is not reported as success`,
+      )
+    }
+  })
+
+  it('marks a run degraded when a source returns fewer records than its floor', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-minrecords-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    // glofas currently returns nothing upstream, so this exercises the real
+    // path rather than a stubbed one.
+    const { runIngestion, ingestionStatus } = await import('../src/ingestion.js')
+    await runIngestion(store, { sources: ['glofas'], retries: 0, timeout_ms: 15000 })
+    const status = ingestionStatus(await store.read()).find((s) => s.source === 'glofas')
+    assert.notEqual(status.status, 'fresh', 'an empty ingest must not read as fresh')
+    assert.match(JSON.stringify(status.last_run.errors || []), /Expected at least 1 records|not an RSS/)
+  })
+
+  it('does not hold user-supplied sources to a record floor', async () => {
+    // Uploading an empty CSV is legitimate; an empty ingest of a live feed is
+    // not. Flattening the two would make empty uploads look broken.
+    const { SOURCE_POLICIES } = await import('../src/ingestion.js')
+    for (const source of ['service_assets', 'conflict_csv', 'acled_csv', 'dhis2']) {
+      assert.equal(SOURCE_POLICIES[source].minimum_records, 0, `${source} is user-supplied`)
+      assert.equal(SOURCE_POLICIES[source].regular, false)
+    }
+  })
+
   it('reads namespaced RSS tags by local name', () => {
     const xml = '<item><gdacs:bbox>1 2 3 4</gdacs:bbox><ns:country>KE</ns:country><bbox>5 6 7 8</bbox></item>'
     assert.equal(readNamespacedTag(xml, 'bbox'), '1 2 3 4')
@@ -3566,6 +3604,29 @@ describe('Demo seed', () => {
       assert.equal(hazard.metadata.demo_data, true)
       assert.match(hazard.description, /not a live observation/i)
     }
+  })
+
+  it('reports a degraded source as degraded in the seed summary', async () => {
+    // runIngestion does not throw for a degraded source, so the seed used to
+    // label every source "ok" regardless. Two broken sources looked healthy in
+    // the demo output because of this.
+    const { ingestPublicSources } = await import('../scripts/seed-demo.mjs')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-demo-status-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const results = await ingestPublicSources(store, { sources: ['glofas'] })
+    assert.ok(results.glofas, 'the requested source must appear in the summary')
+    assert.notEqual(results.glofas.status, 'ok', 'glofas returns nothing upstream and must not read as ok')
+    assert.equal(results.glofas.status, 'degraded')
+  })
+
+  it('skips the two unavailable sources unless they are asked for explicitly', async () => {
+    const { ingestPublicSources } = await import('../scripts/seed-demo.mjs')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-demo-skip-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const results = await ingestPublicSources(store, { sources: ['nasa_firms'] })
+    // Asking for it runs it, so the failure is visible rather than hidden.
+    assert.ok(results.nasa_firms, 'an explicit request must be honoured')
+    assert.equal(results.nasa_firms.status, 'degraded')
   })
 
   it('POST /api/v1/demo/seed returns 200 with counts.field_reports >= 30 and counts.workflow_instances >= 10', async () => {

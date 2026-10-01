@@ -38,11 +38,16 @@ export const PUBLIC_INGESTION_SOURCES = Object.freeze([
 
 export const SOURCE_POLICIES = Object.freeze({
   open_meteo: { interval_minutes: 180, timeout_ms: 20000, retries: 2, stale_after_minutes: 360, minimum_records: 1, regular: true },
-  gdacs: { interval_minutes: 60, timeout_ms: 20000, retries: 2, stale_after_minutes: 180, minimum_records: 0, regular: true },
-  glofas: { interval_minutes: 180, timeout_ms: 20000, retries: 2, stale_after_minutes: 360, minimum_records: 0, regular: true },
+  // minimum_records is 1 rather than 0 for every source that is expected to
+  // return something. With 0, a connector that silently parses nothing still
+  // reports status "success", which is how CHIRPS, GloFAS, and NASA FIRMS all
+  // hid broken ingestion. Verified 2026-10-01 across repeated runs: gdacs
+  // returns 222 and usgs_earthquake 46, so a zero result means something broke.
+  gdacs: { interval_minutes: 60, timeout_ms: 20000, retries: 2, stale_after_minutes: 180, minimum_records: 1, regular: true },
+  glofas: { interval_minutes: 180, timeout_ms: 20000, retries: 2, stale_after_minutes: 360, minimum_records: 1, regular: true },
   chirps: { interval_minutes: 720, timeout_ms: 20000, retries: 2, stale_after_minutes: 1440, minimum_records: 1, regular: true },
-  nasa_firms: { interval_minutes: 360, timeout_ms: 30000, retries: 2, stale_after_minutes: 720, minimum_records: 0, regular: true },
-  usgs_earthquake: { interval_minutes: 60, timeout_ms: 20000, retries: 2, stale_after_minutes: 180, minimum_records: 0, regular: true },
+  nasa_firms: { interval_minutes: 360, timeout_ms: 30000, retries: 2, stale_after_minutes: 720, minimum_records: 1, regular: true },
+  usgs_earthquake: { interval_minutes: 60, timeout_ms: 20000, retries: 2, stale_after_minutes: 180, minimum_records: 1, regular: true },
   noaa_enso: { interval_minutes: 720, timeout_ms: 20000, retries: 2, stale_after_minutes: 1440, minimum_records: 1, regular: true },
   service_assets: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   acled_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },

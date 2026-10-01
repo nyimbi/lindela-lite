@@ -18,6 +18,24 @@ npm run demo:seed
 
 Prints a JSON counts object to stdout. Errors go to stderr per source.
 
+Five sources are ingested by default: `open_meteo`, `gdacs`, `chirps`,
+`usgs_earthquake`, `noaa_enso`. Two are skipped because they are genuinely
+unavailable rather than unconfigured — `glofas` (its RSS URL serves a web app)
+and `nasa_firms` (requires a MAP_KEY requested by email). Ask for them
+explicitly to see the failure reported:
+
+```
+node -e "import('./scripts/seed-demo.mjs').then(async m=>{
+  const { JsonStore } = await import('./src/store.js');
+  console.log(await m.ingestPublicSources(new JsonStore('/tmp/probe.json'),
+    { sources: ['glofas','nasa_firms'] }));
+})"
+```
+
+Both report `degraded`, and the run records the reason. A source that returns
+nothing and reports success is a failure this project treats as a bug — see
+"Minimum Records" in `docs/ingestion.md`.
+
 ### Option B: HTTP endpoint
 
 ```

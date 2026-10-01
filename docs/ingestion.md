@@ -174,6 +174,21 @@ User-supplied sources do not have regular schedules by default. `dhis2` has a
 policy but `regular: false`, because activation depends on an operator
 configuring an instance URL and token.
 
+### Minimum Records
+
+Every regular source declares `minimum_records: 1`. A run returning fewer
+records than that is recorded as `degraded` with an explanatory error, not
+`success`.
+
+This is load-bearing. Three connectors reported success while ingesting nothing
+partly because their floor was `0`, which made an empty parse indistinguishable
+from a healthy run. Verified 2026-10-01 across repeated live runs: `gdacs`
+returns 222 and `usgs_earthquake` 46, so a zero result means something broke.
+
+User-supplied sources keep `minimum_records: 0` on purpose. Uploading an empty
+CSV is a legitimate operator action; an empty ingest of a live feed is not.
+Holding the two to the same floor would make empty uploads look broken.
+
 ## Run Status
 
 `source_runs.status` can be:
