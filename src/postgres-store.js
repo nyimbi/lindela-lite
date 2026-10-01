@@ -1,5 +1,5 @@
 import { emptyStore } from './schema.js'
-import { COLLECTIONS, mergeById } from './store.js'
+import { COLLECTIONS } from './store.js'
 import { nowIso } from './utils.js'
 
 export class PostgresStore {
@@ -22,6 +22,7 @@ export class PostgresStore {
   async ensureSchema() {
     if (this.ready) return
     const pool = await this.connect()
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS lite_records (
         collection TEXT NOT NULL,
@@ -33,6 +34,24 @@ export class PostgresStore {
       CREATE INDEX IF NOT EXISTS lite_records_collection_updated_idx
         ON lite_records (collection, updated_at DESC);
     `)
+
+    // payload_hash gets its own column so merge() can dedupe upstream
+    // re-ingestion with an indexable lookup instead of loading every body.
+    await pool.query('ALTER TABLE lite_records ADD COLUMN IF NOT EXISTS payload_hash TEXT')
+
+    // Backfill rows written before the column existed. jsonb_exists() is used
+    // rather than the `?` operator, which is ambiguous with parameter
+    // placeholders in the extended query protocol.
+    await pool.query(
+      `UPDATE lite_records
+       SET payload_hash = body->>'payload_hash'
+       WHERE payload_hash IS NULL AND jsonb_exists(body, 'payload_hash')`,
+    )
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS lite_records_collection_hash_idx
+       ON lite_records (collection, payload_hash)
+       WHERE payload_hash IS NOT NULL`,
+    )
     this.ready = true
   }
 
@@ -76,24 +95,74 @@ export class PostgresStore {
   }
 
   async merge(partial) {
-    const current = await this.read()
-    const next = { ...current }
+    await this.ensureSchema()
+    const writes = []
     for (const collection of COLLECTIONS) {
-      const incoming = partial[collection] || []
-      if (!incoming.length) continue
-      next[collection] = mergeById(current[collection] || [], incoming)
+      const incoming = (partial[collection] || []).filter((item) => item?.id)
+      if (incoming.length) writes.push({ collection, items: incoming })
     }
-    return this.write(next)
+    if (!writes.length) return this.read()
+
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      for (const { collection, items } of writes) {
+        await this.upsertCollection(client, collection, items)
+      }
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
+    return this.read()
+  }
+
+  /**
+   * Upserts a batch of records for one collection without rewriting the table.
+   *
+   * Mirrors mergeById() semantics from store.js:
+   * - records carrying a payload_hash already present in the collection are
+   *   skipped, so re-ingesting identical upstream data is a no-op
+   * - otherwise the incoming body is shallow-merged over the stored body so
+   *   PATCH-style updates preserve fields the caller did not send
+   */
+  async upsertCollection(client, collection, items) {
+    const { rows: existingHashes } = await client.query(
+      `SELECT payload_hash FROM lite_records
+       WHERE collection = $1 AND payload_hash IS NOT NULL`,
+      [collection],
+    )
+    const seen = new Set(existingHashes.map((row) => row.payload_hash))
+    const fresh = []
+    for (const item of items) {
+      if (item.payload_hash && seen.has(item.payload_hash)) continue
+      if (item.payload_hash) seen.add(item.payload_hash)
+      fresh.push(item)
+    }
+    if (!fresh.length) return
+
+    await client.query(
+      `INSERT INTO lite_records (collection, id, body, payload_hash, updated_at)
+       SELECT u.collection, u.id, u.body, u.payload_hash, now()
+       FROM UNNEST($1::text[], $2::text[], $3::jsonb[], $4::text[])
+         AS u(collection, id, body, payload_hash)
+       ON CONFLICT (collection, id) DO UPDATE
+         SET body = lite_records.body || EXCLUDED.body,
+             payload_hash = COALESCE(EXCLUDED.payload_hash, lite_records.payload_hash),
+             updated_at = now()`,
+      [
+        fresh.map(() => collection),
+        fresh.map((item) => item.id),
+        fresh.map((item) => JSON.stringify(item)),
+        fresh.map((item) => item.payload_hash ?? null),
+      ],
+    )
   }
 
   async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [] }) {
-    const current = await this.read()
-    return this.write({
-      ...current,
-      risk_scores,
-      impact_assessments,
-      data_quality,
-    })
+    return this.merge({ risk_scores, impact_assessments, data_quality })
   }
 
   async close() {
