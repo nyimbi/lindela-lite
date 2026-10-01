@@ -2527,6 +2527,52 @@ describe('Lindela Lite Phase 2 — Parametric, DHIS2, Demographics, Observabilit
     assert.equal(result.sanctions_matches, 0)
   })
 
+  it('rejects oversized request bodies with 413', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-body-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+    try {
+      const big = JSON.stringify({
+        title: 'Flood incident',
+        description: 'x'.repeat(6 * 1024 * 1024),
+      })
+      const res = await fetch(`${baseUrl}/api/v1/incidents`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: big,
+      })
+      assert.equal(res.status, 413)
+      const body = await res.json()
+      assert.match(body.error, /too large/i)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('rejects malformed JSON bodies with 400', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-json-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/incidents`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{"title": "unterminated',
+      })
+      assert.equal(res.status, 400)
+      const body = await res.json()
+      assert.match(body.error, /valid JSON/i)
+    } finally {
+      listener.close()
+    }
+  })
+
   it('parses OFAC SDN CSV and normalizes names for screening', () => {
     const csv = [
       '36,"AEROCARIBBEAN AIRLINES",-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ',

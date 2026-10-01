@@ -180,12 +180,40 @@ export function jsonResponse(res, status, body, headers = {}) {
   res.end(payload)
 }
 
-export async function readRequestJson(req) {
+const DEFAULT_MAX_BODY_BYTES = Number(process.env.LINDELA_LITE_MAX_BODY_BYTES || 5 * 1024 * 1024)
+
+export async function readRequestJson(req, { maxBytes = DEFAULT_MAX_BODY_BYTES } = {}) {
+  // Check Content-Length first so an oversized upload is rejected before it
+  // is buffered. This is advisory: it can lie, so the streaming check below
+  // is the authoritative one.
+  const declaredLength = Number(req.headers?.['content-length'])
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw Object.assign(
+      new Error(`Request body too large: ${declaredLength} bytes exceeds limit of ${maxBytes}`),
+      { statusCode: 413 }
+    )
+  }
+
   const chunks = []
-  for await (const chunk of req) chunks.push(chunk)
+  let size = 0
+  for await (const chunk of req) {
+    size += chunk.length
+    if (size > maxBytes) {
+      throw Object.assign(
+        new Error(`Request body too large: exceeds limit of ${maxBytes} bytes`),
+        { statusCode: 413 }
+      )
+    }
+    chunks.push(chunk)
+  }
+
   const raw = Buffer.concat(chunks).toString('utf8')
   if (!raw.trim()) return {}
-  return JSON.parse(raw)
+  try {
+    return JSON.parse(raw)
+  } catch (error) {
+    throw Object.assign(new Error('Request body must be valid JSON'), { statusCode: 400 })
+  }
 }
 
 export function haversineKm(a, b) {

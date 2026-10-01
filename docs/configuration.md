@@ -8,6 +8,7 @@ This guide lists environment variables and configuration patterns for Lindela Li
 | --- | --- | --- |
 | `LINDELA_LITE_PORT` | `4177` | HTTP port used by the Node server. |
 | `LINDELA_LITE_API_KEY` | unset | Optional API key required as `x-api-key` for non-GET API requests. |
+| `LINDELA_LITE_MAX_BODY_BYTES` | `5242880` (5 MB) | Maximum accepted request body size. Larger bodies return HTTP 413. |
 | `NODE_ENV` | unset | Runtime environment flag. Docker sets `production`. |
 
 When `LINDELA_LITE_API_KEY` is set:
@@ -15,6 +16,11 @@ When `LINDELA_LITE_API_KEY` is set:
 - Mutating API calls require `x-api-key`.
 - Dashboard mutating actions require the key in the dashboard API-key field.
 - RapidPro inbound field-report webhooks can authenticate with `RAPIDPRO_WEBHOOK_SECRET`.
+
+Request bodies are capped at `LINDELA_LITE_MAX_BODY_BYTES` (default 5 MB).
+`Content-Length` is checked first to reject oversized uploads before they are
+buffered, then the streamed body is measured again so a missing or dishonest
+`Content-Length` cannot bypass the limit. Malformed JSON returns HTTP 400.
 
 ## Storage
 
