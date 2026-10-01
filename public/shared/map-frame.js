@@ -54,32 +54,42 @@ export function computeBbox(records, padDeg = 1.5) {
 /**
  * The extent to draw, and the extent to request terrain for.
  *
- * Returns `frame` (what the map shows, always at least the region of interest)
- * and `dataExtent` (what a flood-depth request should cover). They are the
- * same object: a terrain request for the globe would time out or silently drop
- * to a zoom where cell depths average across whole landscapes.
+ * `focus` is an optional box to frame on instead of the region of interest —
+ * used when a flood simulation is active, so the shaded extent actually fills
+ * the viewport rather than sitting as a few pixels in the corner of a
+ * Horn-wide view.
+ *
+ * Returns `frame` (what the map shows, always at least the focus or region of
+ * interest) and `dataExtent` (what a flood-depth request should cover). They
+ * are the same object: a terrain request for the globe would time out or
+ * silently drop to a zoom where cell depths average across whole landscapes.
  */
-export function mapFrame(records, regionOfInterest = REGION_OF_INTEREST) {
+export function mapFrame(records, regionOfInterest = REGION_OF_INTEREST, focus = null) {
   const geo = records.filter(isFinitePoint)
   const near = geo.filter((r) => withinBbox(r, regionOfInterest, NEAR_REGION_MARGIN_DEG))
   // Fall back to all data when nothing is near, so an empty region still draws
   // something rather than collapsing to a zero-area box.
   const driver = near.length ? near : geo
   const dataBbox = computeBbox(driver)
-  const frame = dataBbox
+  // A focus REPLACES the region-of-interest anchor rather than unioning with
+  // it. Unioning is what makes framing work when the anchor is derived from
+  // data, but an explicit focus is the operator saying "zoom here" — unioning
+  // it with a 25-degree region would leave the focus a no-op and the shaded
+  // district still a few pixels wide.
+  const frame = focus ? { ...focus } : (dataBbox
     ? {
       minLat: Math.min(dataBbox.minLat, regionOfInterest.minLat),
       maxLat: Math.max(dataBbox.maxLat, regionOfInterest.maxLat),
       minLon: Math.min(dataBbox.minLon, regionOfInterest.minLon),
       maxLon: Math.max(dataBbox.maxLon, regionOfInterest.maxLon),
     }
-    : { ...regionOfInterest }
+    : { ...regionOfInterest })
 
   return {
     frame,
     dataExtent: frame,
     nearCount: near.length,
     outOfRegionCount: geo.length - near.length,
-    framedBy: near.length ? 'region_of_interest_plus_nearby_data' : 'all_data',
+    framedBy: focus ? 'focus' : near.length ? 'region_of_interest_plus_nearby_data' : 'all_data',
   }
 }

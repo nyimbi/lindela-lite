@@ -300,7 +300,11 @@ kbd {
 
 /* Flood depth shading. Sequential blues, deliberately not a rainbow: depth is
    ordinal, and a hue ramp would imply a meaningful "red" that is just
-   "deeper". Deeper water is darker and more saturated. */
+   "deeper". Deeper water is darker and more saturated.
+
+   Opacity is raised when a simulation is active because the risk gradients
+   underneath are wide and saturated; at 0.30–0.78 the shallow bands vanished
+   into them entirely. */
 .flood-layer { pointer-events: none; }
 
 .flood-cell {
@@ -308,11 +312,11 @@ kbd {
   shape-rendering: crispEdges;
 }
 
-.flood-d0 { fill: oklch(72% 0.10 230); fill-opacity: 0.30; }
-.flood-d1 { fill: oklch(64% 0.14 232); fill-opacity: 0.42; }
-.flood-d2 { fill: oklch(55% 0.18 236); fill-opacity: 0.54; }
-.flood-d3 { fill: oklch(46% 0.20 242); fill-opacity: 0.66; }
-.flood-d4 { fill: oklch(36% 0.20 250); fill-opacity: 0.78; }
+.flood-d0 { fill: oklch(72% 0.10 230); fill-opacity: 0.45; }
+.flood-d1 { fill: oklch(64% 0.14 232); fill-opacity: 0.58; }
+.flood-d2 { fill: oklch(55% 0.18 236); fill-opacity: 0.70; }
+.flood-d3 { fill: oklch(46% 0.20 242); fill-opacity: 0.80; }
+.flood-d4 { fill: oklch(34% 0.22 250); fill-opacity: 0.90; }
 
 /* Road status: impassable must read instantly at map scale. */
 .roads-layer { pointer-events: none; }

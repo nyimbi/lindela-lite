@@ -30,10 +30,12 @@ const state = {
   _paletteItems: [],
   _paletteIndex: 0,
   _dispatchGateAlert: null,
-  // Flood simulation and road status overlays. lastMapBbox is set by renderMap
-  // so the simulation requests terrain for exactly what is on screen.
+  // Flood simulation and road status overlays. floodAreaKey records which
+  // district the current grid covers; the overlays survive map re-renders and
+  // are redrawn from here.
   floodGrid: null,
-  lastMapBbox: null,
+  floodAreaKey: null,
+  floodFocus: null,
   roadAccess: [],
   showRoads: false,
 }
@@ -194,12 +196,21 @@ function renderRoadLayer(roads, bbox) {
 }
 
 /**
- * Fetches a flood-depth grid for the current map extent and renders it.
+ * Pilot districts the flood simulation can be run over.
  *
- * The water level is an operator input, not a forecast: this shades ground
- * that would sit below a given surface elevation. The UI labels it as a
- * simulation so nobody reads the shading as a prediction.
+ * The area must be chosen explicitly. Framing the map on the whole region of
+ * interest and simulating its centre produces ocean — the pilot region spans
+ * roughly 25 degrees, which is far too large for the terrain service to serve
+ * at a meaningful zoom, and the middle of that box is Sudan and the Red Sea,
+ * not anywhere the operator is working.
  */
+const FLOOD_SIM_AREAS = {
+  turkana: { name: 'Turkana', country: 'KE', lat: 3.1167, lon: 35.6, spanDeg: 0.6, defaultLevelM: 500 },
+  karamoja: { name: 'Karamoja', country: 'UG', lat: 2.5333, lon: 34.6667, spanDeg: 0.6, defaultLevelM: 1000 },
+  bor: { name: 'Bor', country: 'SS', lat: 6.207, lon: 31.548, spanDeg: 0.6, defaultLevelM: 400 },
+  aweil: { name: 'Aweil', country: 'SS', lat: 8.767, lon: 27.4, spanDeg: 0.6, defaultLevelM: 400 },
+  mandera: { name: 'Mandera', country: 'KE', lat: 3.9366, lon: 41.8569, spanDeg: 0.6, defaultLevelM: 1000 },
+}
 async function loadFloodSimulation() {
   if (!floodLevelInput || !floodSimulateBtn) return
   const raw = floodLevelInput.value.trim()
@@ -216,28 +227,38 @@ async function loadFloodSimulation() {
     return
   }
 
+  const areaKey = floodAreaEl?.value || 'turkana'
+  const area = FLOOD_SIM_AREAS[areaKey]
+  if (!area) {
+    setFloodStatus('Choose an area to simulate')
+    return
+  }
+
   floodSimulateBtn.disabled = true
-  setFloodStatus('Simulating…')
+  setFloodStatus(`Simulating ${area.name} at ${levelM} m…`)
   try {
-    const bbox = state.lastMapBbox || DEFAULT_BBOX
-    // Pad so the grid covers a little beyond the data frame, and cap the
-    // extent so terrain requests stay bounded. A continent-wide request would
-    // exhaust the tile budget and degrade to zoom 5, where cell depths are
-    // averaged across whole landscapes.
-    const pad = 0.15
-    const maxSpan = 2
-    const midLat = (bbox.minLat + bbox.maxLat) / 2
-    const midLon = (bbox.minLon + bbox.maxLon) / 2
-    const spanLat = Math.min(bbox.maxLat - bbox.minLat + pad * 2, maxSpan)
-    const spanLon = Math.min(bbox.maxLon - bbox.minLon + pad * 2, maxSpan)
+    // The extent is the chosen district, NOT the map frame. The frame spans
+    // the whole pilot region, which is far too large for the terrain service
+    // to serve at a meaningful zoom, and its centre is ocean.
+    const half = area.spanDeg / 2
     const query = new URLSearchParams({
-      south: String(Math.max(-89, midLat - spanLat / 2)),
-      north: String(Math.min(89, midLat + spanLat / 2)),
-      west: String(midLon - spanLon / 2),
-      east: String(midLon + spanLon / 2),
+      south: String(area.lat - half),
+      north: String(area.lat + half),
+      west: String(area.lon - half),
+      east: String(area.lon + half),
       level_m: String(levelM),
       grid_size: '64',
     })
+    state.floodAreaKey = areaKey
+    // Remember the extent so the map can frame on it. Padding keeps the
+    // shoreline off the very edge of the viewport.
+    const pad = area.spanDeg * 0.6
+    state.floodFocus = {
+      minLat: area.lat - half - pad,
+      maxLat: area.lat + half + pad,
+      minLon: area.lon - half - pad,
+      maxLon: area.lon + half + pad,
+    }
     const body = await fetchJson(`/api/v1/flood-depth?${query}`)
     if (!body?.success || !body.data?.depth_grid) {
       state.floodGrid = null
@@ -251,8 +272,9 @@ async function loadFloodSimulation() {
     const coverage = floodCoverage(body.data.depth_grid)
     setFloodStatus(
       level
-        ? `At ${levelM} m: ${level.coverage_pct}% of the area (${level.area_sq_km} km²) below water, `
-          + `deepest cell ${coverage.max_depth_m.toFixed(2)} m. ${body.data.model}. `
+        ? `${area.name} at ${levelM} m: ${level.coverage_pct}% of the area `
+          + `(${level.area_sq_km} km²) below water, deepest cell `
+          + `${coverage.max_depth_m.toFixed(2)} m. ${body.data.model}. `
           + `Elevation ±${body.data.vertical_resolution_m} m.`
         : 'Simulation complete.',
     )
@@ -280,6 +302,8 @@ function renderFloodLegendBox(grid) {
 
 function clearFloodSimulation() {
   state.floodGrid = null
+  state.floodFocus = null
+  state.floodAreaKey = null
   if (floodLegendEl) { floodLegendEl.hidden = true; floodLegendEl.innerHTML = '' }
   setFloodStatus('Flood overlay cleared')
   reRenderMapFromState()
@@ -383,6 +407,7 @@ const mapLegendEl     = $('mapLegend')
 const mapDefsEl       = $('mapDefs')
 const floodLegendEl   = $('floodLegend')
 const floodStatusEl   = $('floodStatus')
+const floodAreaEl  = $('floodArea')
 const floodLevelInput = $('floodLevelInput')
 const floodSimulateBtn = $('floodSimulate')
 const floodClearBtn   = $('floodClear')
@@ -510,13 +535,9 @@ function renderMap(records) {
   // Frame the map around the region of interest rather than around whatever the
   // global feeds contain. See shared/map-frame.js for the bug this fixes, which
   // was found by screenshotting the running dashboard.
-  const framed = mapFrame(geo)
-  const bbox = framed.frame
-
-  // The simulation targets the frame extent, which is the region of interest
-  // plus nearby data. Asking terrain for the whole globe would either time out
-  // or silently drop to a zoom where cell depths average across landscapes.
-  state.lastMapBbox = bbox
+  // Frame on the active simulation when there is one, so the shaded extent
+  // fills the viewport instead of sitting as a few pixels in a Horn-wide view.
+  const bbox = mapFrame(geo, undefined, state.floodFocus || null).frame
 
   // Apply map severity filter
   const sevFilter = $('mapSeverity')?.value || ''
@@ -683,6 +704,16 @@ floodSimulateBtn?.addEventListener('click', loadFloodSimulation)
 floodClearBtn?.addEventListener('click', clearFloodSimulation)
 floodLevelInput?.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') loadFloodSimulation()
+})
+floodAreaEl?.addEventListener('change', () => {
+  // Offer a plausible starting level for the chosen district. Turkana sits
+  // around 500 m and Karamoja around 1,000 m, so a level that floods one is
+  // nowhere near flooding the other.
+  const area = FLOOD_SIM_AREAS[floodAreaEl.value]
+  if (area) {
+    floodLevelInput.value = String(area.defaultLevelM)
+    setFloodStatus(`${area.name}: enter a water surface elevation above the local ground to see inundation.`)
+  }
 })
 roadOverlayToggle?.addEventListener('change', async () => {
   state.showRoads = roadOverlayToggle.checked

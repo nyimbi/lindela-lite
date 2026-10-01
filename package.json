@@ -16,7 +16,8 @@
     "test:pg0": "LINDELA_LITE_TEST_PG0=1 node --test test/database.integration.test.js",
     "verify:pg0": "node scripts/verify-pg0.mjs",
     "demo:seed": "node scripts/seed-demo.mjs",
-    "check:live-sources": "node scripts/check-live-sources.mjs"
+    "check:live-sources": "node scripts/check-live-sources.mjs",
+    "check:dashboard": "node scripts/check-dashboard-browser.mjs"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -138,3 +138,31 @@ describe('map framing', () => {
     assert.ok(Number.isFinite(frame.maxLon))
   })
 })
+describe('map framing with an active simulation', () => {
+  const simFocus = { minLat: 2.9, maxLat: 3.4, minLon: 35.3, east: 35.9, maxLon: 35.9 }
+
+  it('frames on the simulation extent when one is supplied', () => {
+    // Without this the shaded district sat as a few pixels in a Horn-wide view.
+    const { frame, framedBy } = mapFrame(WORLDWIDE, R, simFocus)
+    assert.equal(framedBy, 'focus')
+    assert.ok(frame.maxLat - frame.minLat <= simFocus.maxLat - simFocus.minLat + 1e-9)
+    assert.ok(frame.maxLon - frame.minLon <= simFocus.maxLon - simFocus.minLon + 1e-9)
+  })
+
+  it('lets an explicit focus replace the region anchor entirely', () => {
+    // Unioning the focus with a 25-degree region would leave the focus a
+    // no-op, which is the bug: the shaded district stayed a few pixels wide
+    // inside a Horn-wide view.
+    const zoomIn = { minLat: 40, maxLat: 41, minLon: 10, maxLon: 11 }
+    const { frame, framedBy } = mapFrame([], R, zoomIn)
+    assert.equal(framedBy, 'focus')
+    assert.deepEqual(frame, zoomIn)
+    assert.ok(frame.maxLat - frame.minLat < R.maxLat - R.minLat)
+  })
+
+  it('ignores a null focus and frames normally', () => {
+    const { framedBy, frame } = mapFrame(PILOT, R, null)
+    assert.equal(framedBy, 'region_of_interest_plus_nearby_data')
+    assert.ok(frame.maxLat >= R.maxLat)
+  })
+})

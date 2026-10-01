@@ -223,15 +223,18 @@ Expect recent Niño 3.4 anomalies in °C with phase `el_nino_advisory` or
 
 ### Flood-depth simulation
 
-Needs outbound access to AWS Terrarium:
+Needs outbound access to AWS Terrarium.
 
-```
-curl -s "http://127.0.0.1:4177/api/v1/flood-depth?south=3.0&north=3.3&west=35.4&east=35.7&level_m=500&grid_size=32"
-```
+On the dashboard, pick an **area**, enter a water level, and press Simulate.
+Areas are the five pilot districts; each offers a plausible starting level,
+because Turkana sits around 500 m and Karamoja around 1,000 m, so a level that
+floods one is nowhere near flooding the other. Simulating with Turkana at 500 m
+shades 26% of the district.
 
-On the dashboard, enter a water level in the map's simulation control and press
-Simulate. Shading is by depth band (0.3 / 1 / 2 / 5 m) and the legend states the
-model.
+Shading is by depth band (0.3 / 1 / 2 / 5 m) and the legend states the model.
+The map frames on the simulated extent, so the shading fills the viewport
+rather than sitting as a few pixels in a region-wide view. Clear returns the
+frame to the whole pilot region.
 
 Say this before anyone asks: it is a **static water-surface calculation**. No
 flow routing, no channel geometry, no storage. A surface at *L* shades ground

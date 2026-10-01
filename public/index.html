@@ -68,13 +68,21 @@
           <svg id="situationMap" class="situation-map" viewBox="0 0 800 500"
                preserveAspectRatio="xMidYMid meet" role="img" aria-label="Situation map">
             <defs id="mapDefs"></defs>
+            <!--
+              Paint order is z-order. The flood depth layer sits above the risk
+              blobs, not below: an operator who asked for an inundation
+              simulation is looking for water, and the red risk gradients are
+              opaque enough to bury it entirely. Road markers stay on top of
+              both so a cut-off segment is never hidden by the shading it
+              caused.
+            -->
             <g id="mapTransform">
               <g id="mapOcean" class="ocean-layer"></g>
               <g id="mapLand" class="land-layer"></g>
               <g id="mapDistricts" class="districts-layer"></g>
               <g id="mapGraticule" class="graticule"></g>
-              <g id="mapFlood" class="flood-layer"></g>
               <g id="mapRisk" class="risk-layer"></g>
+              <g id="mapFlood" class="flood-layer"></g>
               <g id="mapHazards" class="hazard-layer"></g>
               <g id="mapRoads" class="roads-layer"></g>
               <g id="mapAssets" class="assets-layer"></g>
@@ -116,10 +124,20 @@
 
           <div class="map-sim" role="group" aria-label="Flood simulation">
             <div class="map-sim-row">
+              <label class="filter-label" for="floodArea">
+                <span>Area</span>
+                <select id="floodArea">
+                  <option value="turkana" selected>Turkana</option>
+                  <option value="karamoja">Karamoja</option>
+                  <option value="bor">Bor</option>
+                  <option value="aweil">Aweil</option>
+                  <option value="mandera">Mandera</option>
+                </select>
+              </label>
               <label class="filter-label" for="floodLevelInput">
                 <span>Water level (m)</span>
                 <input type="number" id="floodLevelInput" step="0.5" min="-100" max="9000"
-                       placeholder="e.g. 520" inputmode="decimal" autocomplete="off">
+                       placeholder="e.g. 500" inputmode="decimal" autocomplete="off">
               </label>
               <button type="button" id="floodSimulate" class="btn btn-primary">Simulate</button>
               <button type="button" id="floodClear" class="btn">Clear</button>
@@ -129,7 +147,7 @@
               </label>
             </div>
             <p id="floodStatus" class="map-sim-status" role="status" aria-live="polite">
-              Enter a water surface elevation to shade the ground beneath it.
+              Choose an area and a water surface elevation to shade the ground beneath it.
             </p>
             <p id="roadStatus" class="map-sim-status" role="status" aria-live="polite"></p>
             <div id="floodLegend" class="flood-legend" hidden></div>

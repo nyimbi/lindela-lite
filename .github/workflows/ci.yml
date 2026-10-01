@@ -80,6 +80,31 @@ jobs:
             scripts/check-live-sources.mjs
           retention-days: 7
 
+  dashboard:
+    # Manual and on-demand: needs a running server and a local Chrome, so it
+    # cannot gate a push the way the other jobs do. Catches what unit tests
+    # structurally cannot: whether the UI actually responds to a click.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Seed a demo store
+        run: |
+          LINDELA_LITE_STORE="$RUNNER_TEMP/store.json" npm run demo:seed
+      - name: Start the server
+        run: |
+          LINDELA_LITE_STORE="$RUNNER_TEMP/store.json" npm start &
+          npx --yes wait-on http://127.0.0.1:4177/api/v1/health --timeout 60000
+      - name: Drive the dashboard in a headless browser
+        run: |
+          google-chrome --headless --disable-gpu --no-sandbox \
+            --remote-debugging-port=9222 --user-data-dir="$RUNNER_TEMP/cdp" about:blank &
+          npx --yes wait-on http://127.0.0.1:9222/json/version --timeout 60000
+          node scripts/check-dashboard-browser.mjs
+
   provenance:
     needs: [test, coverage, audit, sbom]
     if: startsWith(github.ref, 'refs/tags/')

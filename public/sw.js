@@ -1,4 +1,7 @@
-const CACHE_NAME = 'lindela-lite-v1'
+// Bumped with every release. Cache-first static assets are only safe while
+// this changes: with a fixed name, a deployed fix never reaches an operator
+// who has the app open, because the old app.js is served from cache forever.
+const CACHE_NAME = 'lindela-lite-v2'
 const APP_SHELL = ['/', '/app.js', '/styles.css', '/manifest.webmanifest', '/i18n/en.json']
 
 self.addEventListener('install', (event) => {
@@ -51,18 +54,22 @@ self.addEventListener('fetch', (event) => {
 		return
 	}
 
-	// Cache-first for static assets
+	// Stale-while-revalidate for static assets: serve immediately from cache,
+	// then refresh in the background so the next load picks up a deploy.
+	// Previously cache-first with no revalidation, so app.js was pinned to
+	// whatever was cached first.
 	event.respondWith(
-		caches.match(event.request).then((cached) => {
-			return cached || fetch(event.request).then((response) => {
-				if (response.ok) {
-					caches.open(CACHE_NAME).then((cache) => {
-						cache.put(event.request, response.clone())
+		caches.open(CACHE_NAME).then((cache) =>
+			cache.match(event.request).then((cached) => {
+				const network = fetch(event.request)
+					.then((response) => {
+						if (response.ok) cache.put(event.request, response.clone())
+						return response
 					})
-				}
-				return response
+					.catch(() => cached || Promise.reject(new Error('offline and not cached')))
+				return cached || network
 			})
-		})
+		)
 	)
 })
 
