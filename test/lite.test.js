@@ -817,6 +817,78 @@ describe('Lindela Lite API', () => {
     assert.ok(geojson.features.length >= 1)
   })
 
+  it('soft-deletes operational records and hides them by default', async () => {
+    const create = await fetch(`${baseUrl}/api/v1/response-resources`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Disposable water tabs', resource_type: 'supply', quantity: 5 }),
+    })
+    const created = await create.json()
+    assert.equal(create.status, 201)
+
+    const beforeDelete = await fetchJson(`${baseUrl}/api/v1/operations/summary`)
+    assert.ok(beforeDelete.data.counts.deployed_resources >= 0)
+
+    const deleteResponse = await fetch(`${baseUrl}/api/v1/response-resources/${created.data.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ actor: 'ops-lead' }),
+    })
+    const deleted = await deleteResponse.json()
+    assert.equal(deleteResponse.status, 200)
+    assert.ok(deleted.data.deleted_at)
+    assert.equal(deleted.data.deleted_by, 'ops-lead')
+    assert.equal(deleted.action_log.action, 'deleted')
+
+    // Hidden from the default list
+    const list = await fetchJson(`${baseUrl}/api/v1/response-resources`)
+    assert.ok(!list.data.some((item) => item.id === created.data.id))
+
+    // Hidden from direct GET, and from writes
+    const missing = await fetchJson(`${baseUrl}/api/v1/response-resources/${created.data.id}`)
+    assert.equal(missing.error, 'Record not found')
+
+    const patchDeleted = await fetch(`${baseUrl}/api/v1/response-resources/${created.data.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ quantity: 99 }),
+    })
+    assert.equal(patchDeleted.status, 409)
+
+    // Double delete is rejected
+    const secondDelete = await fetch(`${baseUrl}/api/v1/response-resources/${created.data.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ actor: 'ops-lead' }),
+    })
+    assert.equal(secondDelete.status, 409)
+
+    // Still retrievable with include_deleted for audit
+    const withDeleted = await fetchJson(`${baseUrl}/api/v1/response-resources?include_deleted=true`)
+    assert.ok(withDeleted.data.some((item) => item.id === created.data.id && item.deleted_at))
+
+    const single = await fetchJson(`${baseUrl}/api/v1/response-resources/${created.data.id}?include_deleted=true`)
+    assert.equal(single.data.id, created.data.id)
+    assert.ok(single.data.deleted_at)
+
+    // Action log records the deletion
+    const logs = await fetchJson(`${baseUrl}/api/v1/action-logs?limit=50`)
+    assert.ok(logs.data.some((log) => log.record_id === created.data.id && log.action === 'deleted'))
+
+    // Other records are unaffected
+    const survivor = await fetch(`${baseUrl}/api/v1/response-resources`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Retained shelter tarps', resource_type: 'supply', quantity: 3 }),
+    })
+    const kept = await survivor.json()
+    assert.equal(survivor.status, 201)
+
+    const other = await fetchJson(`${baseUrl}/api/v1/response-resources/${kept.data.id}`)
+    assert.equal(other.data.id, kept.data.id)
+    assert.equal(other.data.deleted_at, null)
+  })
+
   it('evaluates alert rules into auditable alert events', async () => {
     const ruleResponse = await fetch(`${baseUrl}/api/v1/alert-rules`, {
       method: 'POST',

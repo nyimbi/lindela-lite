@@ -18,10 +18,16 @@ const OPERATIONAL_COLLECTIONS = Object.freeze({
 })
 
 export function operationalSummary(data) {
-  const openIncidents = data.incidents.filter((item) => !['closed', 'stabilized'].includes(item.status))
-  const activeInterventions = data.interventions.filter((item) => ['planned', 'active', 'paused'].includes(item.status))
-  const overdueTasks = data.intervention_tasks.filter((item) => !['done', 'cancelled'].includes(item.status) && item.due_at && Date.parse(item.due_at) < Date.now())
-  const deployedResources = data.response_resources.filter((item) => item.status === 'deployed')
+  // Soft-deleted records are retained for history but must not drive live counts.
+  const liveIncidents = data.incidents.filter((item) => !isDeleted(item))
+  const liveInterventions = data.interventions.filter((item) => !isDeleted(item))
+  const liveTasks = data.intervention_tasks.filter((item) => !isDeleted(item))
+  const liveResources = data.response_resources.filter((item) => !isDeleted(item))
+
+  const openIncidents = liveIncidents.filter((item) => !['closed', 'stabilized'].includes(item.status))
+  const activeInterventions = liveInterventions.filter((item) => ['planned', 'active', 'paused'].includes(item.status))
+  const overdueTasks = liveTasks.filter((item) => !['done', 'cancelled'].includes(item.status) && item.due_at && Date.parse(item.due_at) < Date.now())
+  const deployedResources = liveResources.filter((item) => item.status === 'deployed')
   return {
     generated_at: new Date().toISOString(),
     counts: {
@@ -29,14 +35,14 @@ export function operationalSummary(data) {
       active_interventions: activeInterventions.length,
       overdue_tasks: overdueTasks.length,
       deployed_resources: deployedResources.length,
-      field_reports: data.field_reports.length,
+      field_reports: data.field_reports.filter((item) => !isDeleted(item)).length,
     },
     critical_open_incidents: openIncidents.filter((item) => item.priority === 'critical').length,
     by_status: {
-      incidents: countBy(data.incidents, 'status'),
-      interventions: countBy(data.interventions, 'status'),
-      tasks: countBy(data.intervention_tasks, 'status'),
-      resources: countBy(data.response_resources, 'status'),
+      incidents: countBy(liveIncidents, 'status'),
+      interventions: countBy(liveInterventions, 'status'),
+      tasks: countBy(liveTasks, 'status'),
+      resources: countBy(liveResources, 'status'),
     },
   }
 }
@@ -59,6 +65,33 @@ export function buildUpdate(collection, existing, patch, data) {
   if (collection === 'field_reports') return normalizeFieldReport(merged, data, existing)
   if (collection === 'response_resources') return normalizeResource(merged, existing)
   throw new Error(`Unsupported operational collection: ${collection}`)
+}
+
+/**
+ * Soft-deletes an operational record by stamping deleted_at and deleted_by.
+ * Records are never removed from the store so action-log history and any
+ * downstream references (tasks -> interventions, field_reports -> incidents)
+ * stay resolvable.
+ */
+export function buildSoftDelete(collection, existing, actor) {
+  if (!existing) throw Object.assign(new Error('Record not found'), { statusCode: 404 })
+  if (existing.deleted_at) {
+    throw Object.assign(new Error('Record is already deleted'), { statusCode: 409 })
+  }
+  const merged = { ...existing, deleted_at: new Date().toISOString(), deleted_by: actor || null }
+  if (collection === 'incidents') return normalizeIncident(merged, null, existing)
+  if (collection === 'interventions') return normalizeIntervention(merged, null, existing)
+  if (collection === 'intervention_tasks') return normalizeTask(merged, null, existing)
+  if (collection === 'field_reports') return normalizeFieldReport(merged, null, existing)
+  if (collection === 'response_resources') return normalizeResource(merged, existing)
+  throw new Error(`Unsupported operational collection: ${collection}`)
+}
+
+/**
+ * Returns true when a record has been soft-deleted.
+ */
+export function isDeleted(record) {
+  return Boolean(record?.deleted_at)
 }
 
 export function actionLog(collection, action, record, actor = 'operator', subject = null) {
@@ -109,6 +142,8 @@ function normalizeIncident(input, data, existing = null) {
     tags: arrayValue(input.tags || existing?.tags),
     created_at: createdAt,
     updated_at: input.updated_at || now,
+    deleted_at: input.deleted_at || existing?.deleted_at || null,
+    deleted_by: input.deleted_by ?? existing?.deleted_by ?? null,
     metadata: objectValue(input.metadata || existing?.metadata),
   })
 }
@@ -136,6 +171,8 @@ function normalizeIntervention(input, data, existing = null) {
     outcome_summary: input.outcome_summary || existing?.outcome_summary || null,
     created_at: existing?.created_at || input.created_at || now,
     updated_at: input.updated_at || now,
+    deleted_at: input.deleted_at || existing?.deleted_at || null,
+    deleted_by: input.deleted_by ?? existing?.deleted_by ?? null,
     metadata: objectValue(input.metadata || existing?.metadata),
   })
 }
@@ -159,6 +196,8 @@ function normalizeTask(input, data, existing = null) {
     linked_asset_id: input.linked_asset_id || existing?.linked_asset_id || null,
     created_at: existing?.created_at || input.created_at || now,
     updated_at: input.updated_at || now,
+    deleted_at: input.deleted_at || existing?.deleted_at || null,
+    deleted_by: input.deleted_by ?? existing?.deleted_by ?? null,
     metadata: objectValue(input.metadata || existing?.metadata),
   })
 }
@@ -201,6 +240,8 @@ function normalizeFieldReport(input, data, existing = null) {
     demographics,
     created_at: existing?.created_at || input.created_at || now,
     updated_at: now,
+    deleted_at: input.deleted_at || existing?.deleted_at || null,
+    deleted_by: input.deleted_by ?? existing?.deleted_by ?? null,
     metadata: objectValue(input.metadata),
   })
 }
@@ -221,6 +262,8 @@ function normalizeResource(input, existing = null) {
     assigned_intervention_id: input.assigned_intervention_id || existing?.assigned_intervention_id || null,
     created_at: existing?.created_at || input.created_at || now,
     updated_at: input.updated_at || now,
+    deleted_at: input.deleted_at || existing?.deleted_at || null,
+    deleted_by: input.deleted_by ?? existing?.deleted_by ?? null,
     metadata: objectValue(input.metadata || existing?.metadata),
   })
 }

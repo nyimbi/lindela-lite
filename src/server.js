@@ -14,7 +14,7 @@ import {
   runDueIngestionSchedules,
   runIngestion,
 } from './ingestion.js'
-import { actionLog, buildCreate, buildUpdate, operationalSummary } from './operations.js'
+import { actionLog, buildCreate, buildSoftDelete, buildUpdate, isDeleted, operationalSummary } from './operations.js'
 import { parseRapidProFieldReport, rapidProStatus, responseMetrics, sendRapidProAlert, sendRapidProReportSummary, verifyRapidProWebhook } from './rapidpro.js'
 import {
   approveReport,
@@ -1577,14 +1577,17 @@ async function handleTriggerRoute(store, data, req, res, url, route) {
 }
 
 async function handleOperationalRoute(store, data, req, res, url, route) {
+  const includeDeleted = url.searchParams.get('include_deleted') === 'true'
+
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data[route.collection], url.searchParams) })
+    const records = includeDeleted ? data[route.collection] : data[route.collection].filter((item) => !isDeleted(item))
+    jsonResponse(res, 200, { success: true, data: filterRecords(records, url.searchParams) })
     return
   }
 
   if (req.method === 'GET' && route.id) {
     const record = data[route.collection].find((item) => item.id === route.id)
-    if (!record) {
+    if (!record || (isDeleted(record) && !includeDeleted)) {
       jsonResponse(res, 404, { success: false, error: 'Record not found' })
       return
     }
@@ -1619,8 +1622,26 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
     }
     const body = await readRequestJson(req)
     const existing = data[route.collection].find((item) => item.id === route.id)
+    if (isDeleted(existing)) {
+      jsonResponse(res, 409, { success: false, error: 'Record is deleted' })
+      return
+    }
     const record = buildUpdate(route.collection, existing, { ...body, id: route.id }, data)
     const log = actionLog(route.collection, 'updated', record, body.actor, req.__auth?.subject)
+    await store.merge({ [route.collection]: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+
+  if (req.method === 'DELETE' && route.id) {
+    if (route.collection === 'action_logs') {
+      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only' })
+      return
+    }
+    const body = await readRequestJson(req)
+    const existing = data[route.collection].find((item) => item.id === route.id)
+    const record = buildSoftDelete(route.collection, existing, body.actor || req.__auth?.subject)
+    const log = actionLog(route.collection, 'deleted', record, body.actor || req.__auth?.subject)
     await store.merge({ [route.collection]: [record], action_logs: [log] })
     jsonResponse(res, 200, { success: true, data: record, action_log: log })
     return
@@ -2271,6 +2292,11 @@ function getDefaultStore() {
 }
 
 function counts(data) {
+  // Soft-deleted operational records are retained for history but excluded
+  // from live counts so /api/v1/health and /api/v1/assessments agree with
+  // the operational summary.
+  const live = (collection) => (data[collection] || []).filter((item) => !isDeleted(item)).length
+
   return {
     source_runs: data.source_runs.length,
     ingestion_schedules: data.ingestion_schedules.length,
@@ -2284,11 +2310,11 @@ function counts(data) {
     population_at_risk: data.population_at_risk?.length || 0,
     facilities_at_risk: data.facilities_at_risk?.length || 0,
     data_lineage: data.data_lineage?.length || 0,
-    incidents: data.incidents.length,
-    interventions: data.interventions.length,
-    intervention_tasks: data.intervention_tasks.length,
-    field_reports: data.field_reports.length,
-    response_resources: data.response_resources.length,
+    incidents: live('incidents'),
+    interventions: live('interventions'),
+    intervention_tasks: live('intervention_tasks'),
+    field_reports: live('field_reports'),
+    response_resources: live('response_resources'),
     action_logs: data.action_logs.length,
     alert_rules: data.alert_rules.length,
     alert_events: data.alert_events.length,
