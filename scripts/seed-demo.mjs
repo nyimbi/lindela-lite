@@ -86,6 +86,80 @@ export async function ingestPublicSources(store) {
   return results
 }
 
+/**
+ * A connected road corridor around Lodwar, used to demonstrate routing.
+ *
+ * The four district roads elsewhere in the seed sit hundreds of kilometres
+ * apart, so buildRoadGraph links them at the default 5 km radius and the
+ * network comes out with zero edges — routing has nothing to route over. This
+ * corridor is deliberately a real topology: a lowland primary that floods, a
+ * longer highland bypass, and the segments joining them, so cutting the
+ * lowland road leaves a genuine alternate rather than an unreachable
+ * destination.
+ *
+ * Coordinates are approximate positions along the Lodwar approaches, chosen
+ * to sit inside the 5 km link radius of their neighbours.
+ */
+const LODWAR_CORRIDOR = [
+  { name: 'Lodwar Distribution Depot Access', cls: 'primary', lat: 3.0950, lon: 35.6000 },
+  { name: 'Lowland B4 Floodplain Segment', cls: 'primary', lat: 3.1150, lon: 35.6010 },
+  { name: 'Kibish Plateau Bypass', cls: 'unpaved', lat: 3.1300, lon: 35.6180 },
+  { name: 'Lodwar Clinic Approach', cls: 'tertiary', lat: 3.1500, lon: 35.6100 },
+]
+
+function buildRoadCorridor() {
+  return LODWAR_CORRIDOR.map((def) => {
+    const result = normalizeServiceAsset({
+      id: stableId('asset', [def.name, 'road', 'KE']),
+      name: def.name,
+      service_type: 'road',
+      country: 'KE',
+      admin1: 'Turkana',
+      latitude: def.lat,
+      longitude: def.lon,
+      road_class: def.cls,
+      status: 'operational',
+      metadata: { corridor: 'lodwar', demo_topology: true },
+    })
+    return result.value
+  })
+}
+
+/**
+ * A flood event on the lowland segment, so road access and routing have
+ * something to react to offline.
+ *
+ * Without a hazard, every road reads passable and the routing demonstration
+ * has no severed segment to reroute around. The bbox is authored rather than
+ * fetched so the demo works without network access; it is labelled as demo
+ * data so it is never mistaken for a live GDACS observation.
+ */
+function buildDemoHazards() {
+  const flood = LODWAR_CORRIDOR[1]
+  return [
+    {
+      id: 'demo-hazard-lodwar-flood',
+      source: 'demo_seed',
+      source_id: 'demo-hazard-lodwar-flood',
+      event_type: 'flood',
+      severity: 'critical',
+      title: 'Demo: seasonal flooding, Lodwar lowland B4',
+      description: 'Seeded demonstration event, not a live observation. Simulates the lowland B4 segment being under water so routing can be shown rerouting to the plateau bypass.',
+      latitude: flood.lat,
+      longitude: flood.lon,
+      // A tight bbox around the lowland segment only. The bounding box is
+      // authoritative in road-access matching, so a generous one would block
+      // the whole corridor and leave the demonstration with no alternate to
+      // route through.
+      bbox: { south: flood.lat - 0.008, north: flood.lat + 0.008, west: flood.lon - 0.008, east: flood.lon + 0.008 },
+      country: 'KE',
+      occurred_at: daysAgo(1),
+      affected_population: null,
+      metadata: { demo_data: true, source_note: 'seeded for the routing and road-access walkthrough' },
+    },
+  ]
+}
+
 function buildServiceAssets() {
   const assets = []
   const assetDefs = [
@@ -617,8 +691,10 @@ function buildOutboxEvents(alertEvents, reports) {
 }
 
 export async function seedAll(store) {
-  const serviceAssets = buildServiceAssets()
+  const serviceAssets = [...buildServiceAssets(), ...buildRoadCorridor()]
   await store.merge({ service_assets: serviceAssets })
+
+  await store.merge({ hazard_events: buildDemoHazards() })
 
   const alertRules = buildAlertRules()
   await store.merge({ alert_rules: alertRules })
@@ -697,7 +773,7 @@ export async function summary(store) {
     'rapidpro_dispatches', 'workflow_instances', 'community_feedback', 'report_templates',
     'reports', 'report_distribution_runs', 'report_schedules', 'report_schedule_runs',
     'parametric_rules', 'parametric_disbursements', 'webhook_subscriptions', 'events_outbox',
-    'risk_scores', 'impact_assessments', 'data_quality',
+    'risk_scores', 'impact_assessments', 'data_quality', 'road_access',
   ]
   return Object.fromEntries(cols.map(c => [c, (data[c] || []).length]))
 }

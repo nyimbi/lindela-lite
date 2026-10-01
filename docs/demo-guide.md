@@ -108,6 +108,127 @@ Navigate to Parametric:
 - 15 feedback items linked to alert events. Sentiment distribution: ~60% positive, ~27% negative, ~13% unclear.
 - The Bor AWD alert event has the highest feedback volume.
 
+## Flood, access, and routing walkthrough
+
+These are the newest capabilities and the ones a panel is most likely to probe.
+Road access and routing run entirely on seeded assets; only the flood-depth call
+needs outbound network access.
+
+### Seeded road corridor
+
+The seed includes a connected corridor on the Lodwar approaches so the router
+has a real network rather than four isolated district roads:
+
+| Segment | Class | Status |
+|---|---|---|
+| Lodwar Distribution Depot Access | primary | passable |
+| Lowland B4 Floodplain Segment | primary | **impassable** (seeded flood) |
+| Kibish Plateau Bypass | unpaved | passable |
+| Lodwar Clinic Approach | tertiary | passable |
+
+One flood event is seeded, labelled `source: demo_seed` with
+`metadata.demo_data: true`. It is authored demo data, not a live observation —
+say so if asked where it came from.
+
+### Road access
+
+```
+curl -s http://127.0.0.1:4177/api/v1/road-access/summary
+```
+
+Expect `total_roads: 8`, `impassable: 1`, `blocked_by_hazard_type.flood: 1`.
+The lowland segment is blocked, everything else is passable. Open
+`/api/v1/road-access` for per-road `access_reason`.
+
+Note on live GDACS data: if ingestion ran, real global alerts are also in the
+store. Only a hazard-scale bounding box may block a road on containment alone,
+so a country- or multi-country-level green alert does not mark distant roads as
+restricted. A box wider than ~5° falls back to proximity matching around its
+reported centre.
+
+### Routing over the severed segment
+
+`from` and `to` are road **asset ids**, not coordinates. List them first:
+
+```
+curl -s "http://127.0.0.1:4177/api/v1/service-assets?service_type=road"
+```
+
+The corridor ids are stable across seeds (derived from name, type, and country),
+so on a fresh store:
+
+| Role | id |
+|---|---|
+| Depot Access | `asset_c2f1b7f06baeda8e` |
+| Lowland B4 (flooded) | `asset_d7ad6b6d56e2cb66` |
+| Kibish Plateau Bypass | `asset_e777848541dc75e8` |
+| Clinic Approach | `asset_87445d3f0f60540e` |
+
+```
+curl -s -X POST http://127.0.0.1:4177/api/v1/routing/plan \
+  -H 'content-type: application/json' \
+  -d '{"from":"asset_c2f1b7f06baeda8e","to":["asset_87445d3f0f60540e"]}'
+```
+
+Expect `network: {roads: 8, links: 2, cut_off_roads: 1}` and a feasible leg:
+Depot → Kibish Plateau Bypass → Clinic Approach, 10 minutes, 6.8 km, mode
+`vehicle`. The point to make: the router does not treat the flooded road as
+usable because a faster neighbour exists. An impassable node severs every link
+touching it.
+
+For the failure mode, plan a leg that *must* cross the flooded segment — for
+example depot → Lowland B4. The response is `feasible: false` with
+`severed_by` naming the blocking segment and a plain-language `suggestion`. It
+does not silently return a straight line.
+
+### Seasonal context
+
+The ENSO connector is keyless and verified live:
+
+```
+curl -s -X POST http://127.0.0.1:4177/api/v1/ingest/run \
+  -H 'content-type: application/json' -d '{"sources":["noaa_enso"]}'
+curl -s "http://127.0.0.1:4177/api/v1/climate?source=noaa_enso&limit=3"
+```
+
+Expect recent Niño 3.4 anomalies in °C with phase `el_nino_advisory` or
+`la_nina_advisory`. Three things to be ready to explain:
+
+- `episode_declared` stays **false** until five consecutive overlapping
+  three-month seasons clear ±0.5 °C. `overlapping_seasons` shows the count out
+  of five. A warm month is not an ENSO event.
+- `latitude` and `longitude` are `null` on purpose. Niño 3.4 is a basin-wide
+  Pacific index; attaching it to the nearest district would misrepresent it.
+- This is the **ONI**, not the RONI CPC now uses for official monitoring. RONI
+  has no stable keyless monthly feed, so the connector reads ONI and says so
+  rather than mislabelling it.
+
+### Flood-depth simulation
+
+Needs outbound access to AWS Terrarium:
+
+```
+curl -s "http://127.0.0.1:4177/api/v1/flood-depth?south=3.0&north=3.3&west=35.4&east=35.7&level_m=500&grid_size=32"
+```
+
+On the dashboard, enter a water level in the map's simulation control and press
+Simulate. Shading is by depth band (0.3 / 1 / 2 / 5 m) and the legend states the
+model.
+
+Say this before anyone asks: it is a **static water-surface calculation**. No
+flow routing, no channel geometry, no storage. A surface at *L* shades ground
+below *L* that is hydraulically connected, which is only some of it — a closed
+basin below *L* does not become a lake. Vertical resolution is ±15 m, inherited
+from SRTM. It answers "the river is forecast to reach 512 m; which facilities
+are under water and how deep?", not "where will it flood?".
+
+### Not implemented, and why
+
+Rainfall intensity/duration → flood probability is **not** in the build. It
+needs an agreed hydrological model basis and a long validated annual-maxima
+record. Inventing coefficients that look authoritative is worse than returning
+nothing, so the endpoint does not exist.
+
 ## Key demo watchpoints
 
 | Surface | What to highlight |
@@ -118,3 +239,7 @@ Navigate to Parametric:
 | Workflows | Anticipatory alert in focal_point_review; full lifecycle on closed Aweil workflow |
 | Reports | Distributed SITREP with all sections rendered; failed distribution run (503) |
 | Equity | Per-district accuracy table; auto-created audit workflow if breach detected |
+| Map | Flood-depth simulation with depth legend; road status overlay |
+| Road access | One impassable segment with `access_reason`; `cut_off_rate_pct` |
+| Routing | Detour via the plateau bypass; severed-route diagnostics on failure |
+| Seasonal | Niño 3.4 advisory with `overlapping_seasons` count, not a declared event |

@@ -15,6 +15,11 @@ import { clamp, haversineKm, stableId } from './utils.js'
  *   box, or within `blockRadiusKm` of the hazard point when no box is known.
  *   Distance alone is not sufficient, because a bbox spanning a whole country
  *   would otherwise block every road inside it.
+ * - Only a hazard-scale bbox may block on containment alone. GDACS attaches a
+ *   bbox to every event, and for green/orange alerts that box is often
+ *   administrative rather than the inundation footprint; an oversized box falls
+ *   back to proximity matching against its centre. See
+ *   MAX_BLOCKING_BBOX_SPAN_DEG.
  * - Flood and landslide block the segment outright; a wider clearance threshold
  *   is used for landslide, since debris flow travels beyond the mapped point
  *   more readily than standing water does.
@@ -26,6 +31,24 @@ import { clamp, haversineKm, stableId } from './utils.js'
 
 const DEFAULT_FLOOD_BLOCK_RADIUS_KM = 2
 const DEFAULT_LANDSLIDE_BLOCK_RADIUS_KM = 5
+
+/**
+ * Largest bounding box, in degrees of latitude, that may block a road.
+ *
+ * GDACS publishes a bounding box for every event, but for green and orange
+ * alerts that box is frequently country- or multi-country-scale rather than the
+ * inundation footprint: a live green flood alert for France arrived with a box
+ * spanning ~40 degrees of latitude and ~40 of longitude. Matching that box as
+ * authoritative marked every road in the Horn of Africa "restricted" because of
+ * an alert 2,000 km away.
+ *
+ * Five degrees is roughly 555 km north-south, which comfortably contains a
+ * large flood plain or landslide run-out while excluding administrative and
+ * regional alerts. Beyond it the box is treated as non-local: it is still
+ * reported as an advisory, but it can only block a road through proximity to
+ * the box centre.
+ */
+const MAX_BLOCKING_BBOX_SPAN_DEG = 5
 
 /**
  * Computes passage status for every road asset against current hazards.
@@ -117,12 +140,19 @@ function obstructionFor(road, hazard, radiusKm) {
   const roadPoint = { latitude: road.latitude, longitude: road.longitude }
 
   // A bbox is authoritative: if the road falls inside it, the hazard covers
-  // the location regardless of how far the centre is.
+  // the location regardless of how far the centre is. That only holds for a
+  // hazard-scale box, though. An administrative-scale box is not a claim that
+  // the whole area is under water, so it is not allowed to block on its own.
   if (hazard.bbox && pointInBbox(roadPoint, hazard.bbox)) {
-    const distanceKm = Number.isFinite(hazard.latitude) && Number.isFinite(hazard.longitude)
-      ? haversineKm(roadPoint, { latitude: hazard.latitude, longitude: hazard.longitude })
-      : 0
-    return buildObstruction(hazard, distanceKm, 'bbox', roadPoint)
+    if (bboxIsHazardScale(hazard.bbox)) {
+      const distanceKm = Number.isFinite(hazard.latitude) && Number.isFinite(hazard.longitude)
+        ? haversineKm(roadPoint, { latitude: hazard.latitude, longitude: hazard.longitude })
+        : 0
+      return buildObstruction(hazard, distanceKm, 'bbox', roadPoint)
+    }
+    // Inside an oversized box: fall through to the proximity check below, so a
+    // road near the reported centre can still be blocked while one 2,000 km
+    // away is merely noted.
   }
 
   if (Number.isFinite(hazard.latitude) && Number.isFinite(hazard.longitude)) {
@@ -157,6 +187,18 @@ function pointInBbox(point, bbox) {
   if (![south, west, north, east].every(Number.isFinite)) return false
   return point.latitude >= south && point.latitude <= north
     && point.longitude >= west && point.longitude <= east
+}
+
+/**
+ * Whether a bbox is small enough to assert that everything inside it is
+ * affected. Anything wider than MAX_BLOCKING_BBOX_SPAN_DEG in either axis is
+ * treated as a regional or administrative extent.
+ */
+function bboxIsHazardScale(bbox) {
+  if (!bbox) return false
+  const { south, north, west, east } = bbox
+  if (![south, west, north, east].every(Number.isFinite)) return false
+  return (north - south) <= MAX_BLOCKING_BBOX_SPAN_DEG && (east - west) <= MAX_BLOCKING_BBOX_SPAN_DEG
 }
 
 function deriveAccess(worst, reportedPassability) {

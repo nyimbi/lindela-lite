@@ -112,6 +112,26 @@ function normalizeRoute(pathname) {
     .replace(/\/\d+/g, '/:id')
 }
 
+/**
+ * Rejects routing endpoints that are not road asset ids.
+ *
+ * Returns an error message when the caller clearly passed coordinates or an
+ * object instead of an id, else null. Distinguishing "you sent the wrong shape"
+ * from "no such road" matters: the latter is indistinguishable from a data
+ * problem the operator cannot act on.
+ */
+function validateRouteEndpoints(endpoints) {
+  const looksLikeCoordinate = (value) => value !== null && typeof value === 'object'
+  if (endpoints.some(looksLikeCoordinate)) {
+    return 'from and to must be road asset ids (see GET /api/v1/service-assets?service_type=road), not latitude/longitude objects'
+  }
+  const nonStrings = endpoints.filter((value) => typeof value !== 'string' || !value.trim())
+  if (nonStrings.length) {
+    return 'from and to must be non-empty road asset id strings'
+  }
+  return null
+}
+
 async function handleStacRoute(store, req, res, url) {
   const data = await store.read()
   const baseUrl = `http://${req.headers.host || 'localhost'}`
@@ -448,6 +468,14 @@ async function handleApi(store, req, res, url) {
     }
     if (!to || (Array.isArray(to) && !to.length)) {
       jsonResponse(res, 400, { success: false, error: 'to is required: one or more destination road ids' })
+      return
+    }
+    // Endpoints are road asset ids. A lat/lon pair here is a plausible mistake
+    // that otherwise surfaces as "Unknown origin or destination road", which
+    // reads like a broken router rather than a wrong argument.
+    const coordinateRejection = validateRouteEndpoints([from, ...(Array.isArray(to) ? to : [to])])
+    if (coordinateRejection) {
+      jsonResponse(res, 400, { success: false, error: coordinateRejection })
       return
     }
     const plan = planDelivery(data, {

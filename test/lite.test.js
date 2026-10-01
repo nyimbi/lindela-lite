@@ -2870,6 +2870,98 @@ describe('Lindela Lite road access', () => {
     assert.equal(flooded.obstructions[0].matched_by, 'bbox')
   })
 
+  it('refuses to let an administrative-scale bbox block a distant road', async () => {
+    // Live regression, 2026-10-01. A GDACS green flood alert for France arrived
+    // with a bbox spanning ~40 degrees, and bbox containment marked every road
+    // in the Horn of Africa "restricted" from an alert 2,000 km away. An
+    // oversized box is an administrative extent, not a claim that the whole
+    // area is under water.
+    const data = baseData()
+    data.hazard_events = [{
+      id: 'h-france',
+      event_type: 'flood',
+      severity: 'low',
+      title: 'Green flood alert in France',
+      latitude: 19.82,
+      longitude: 27.82,
+      bbox: { west: 7.71, south: -0.29, east: 47.93, north: 39.93 },
+    }]
+    const rows = computeRoadAccess(data)
+    for (const row of rows) {
+      assert.equal(row.access_status, 'passable', `${row.road_id} was restricted by a 2,000 km distant alert`)
+    }
+  })
+
+  it('rejects a coordinate pair where a road asset id is required', async () => {
+    // Routing takes asset ids, not lat/lon. Silently accepting coordinates and
+    // reporting "Unknown origin or destination road" is indistinguishable from
+    // a broken router, so the failure has to name the actual problem.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-route-args-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    store.mode = 'json'
+    await store.merge({
+      service_assets: [
+        { id: 'r-a', name: 'Depot', service_type: 'road', country: 'KE', latitude: 3.10, longitude: 35.60, road_class: 'primary' },
+        { id: 'r-b', name: 'Clinic', service_type: 'road', country: 'KE', latitude: 3.15, longitude: 35.61, road_class: 'tertiary' },
+      ],
+    })
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://127.0.0.1:${listener.address().port}`
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/routing/plan`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          from: { latitude: 3.10, longitude: 35.60 },
+          to: [{ latitude: 3.15, longitude: 35.61 }],
+        }),
+      })
+      assert.equal(res.status, 400)
+      const body = await res.json()
+      assert.equal(body.success, false)
+      assert.match(body.error, /road asset id|asset id/i)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('still blocks a road near the centre of an oversized bbox', () => {
+    // The fix must not throw the hazard away: proximity to the reported centre
+    // still applies, so a road genuinely inside the affected area is cut off.
+    const data = baseData()
+    data.hazard_events = [{
+      id: 'h-big-local',
+      event_type: 'flood',
+      severity: 'critical',
+      title: 'Flood with an oversized box but a local centre',
+      latitude: data.service_assets[0].latitude,
+      longitude: data.service_assets[0].longitude,
+      bbox: { west: -20, south: -20, east: 40, north: 40 },
+    }]
+    const rows = computeRoadAccess(data)
+    const flooded = rows.find((r) => r.road_id === 'r-flooded')
+    assert.equal(flooded.access_status, 'impassable')
+    assert.equal(flooded.obstructions[0].matched_by, 'proximity', 'must fall through to proximity matching')
+  })
+
+  it('accepts a hazard-scale bbox as authoritative even with a distant centre', () => {
+    const data = baseData()
+    // ~2 degrees across: a plausible flood plain, unlike an administrative box.
+    data.hazard_events = [{
+      id: 'h-hazard-scale',
+      event_type: 'flood',
+      severity: 'high',
+      title: 'Flood over a river basin',
+      latitude: 10.0,
+      longitude: 40.0,
+      bbox: { west: 35.0, south: 2.0, east: 36.5, north: 4.0 },
+    }]
+    const rows = computeRoadAccess(data)
+    const flooded = rows.find((r) => r.road_id === 'r-flooded')
+    assert.equal(flooded.obstructions[0].matched_by, 'bbox')
+  })
+
   it('treats a road with no road_class as unpaved rather than assuming all-weather', () => {
     const data = baseData()
     delete data.service_assets[0].road_class
@@ -3417,6 +3509,63 @@ describe('Demo seed', () => {
     assert.ok(counts.workflow_instances >= 10, `workflow_instances ${counts.workflow_instances} < 10`)
     assert.ok(counts.alert_events >= 5, `alert_events ${counts.alert_events} < 5`)
     assert.ok(counts.trigger_protocols >= 5, `trigger_protocols ${counts.trigger_protocols} < 5`)
+  })
+
+  it('seeds a connected road corridor so routing has a network to route over', async () => {
+    // The four district roads sit hundreds of km apart, so buildRoadGraph links
+    // them at the 5 km default radius and the graph comes out with no edges.
+    // Routing then reports every destination unreachable for want of a network,
+    // which reads as a broken router rather than missing demo data.
+    const { seedAll } = await import('../scripts/seed-demo.mjs')
+    const { refreshAnalytics } = await import('../src/analytics.js')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-demo-corridor-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await seedAll(store)
+    await refreshAnalytics(store)
+    const data = await store.read()
+
+    assert.ok(data.hazard_events.length > 0, 'the seed must include a hazard so access can be obstructed')
+
+    const graph = buildRoadGraph(data)
+    const links = [...graph.adjacency.values()].reduce((sum, list) => sum + list.length, 0) / 2
+    assert.ok(links >= 2, `expected a connected demo network, got ${links} links across ${graph.nodes.size} roads`)
+
+    // The seeded flood must actually sever one segment while leaving a bypass,
+    // otherwise the walkthrough has nothing to demonstrate.
+    const statuses = new Map(data.road_access.map((r) => [r.road_name, r.access_status]))
+    const blocked = [...statuses.values()].filter((s) => s === 'impassable')
+    assert.equal(blocked.length, 1, `expected exactly one impassable segment, got ${blocked.length}`)
+
+    const nodes = [...graph.nodes.values()]
+    const depot = nodes.find((n) => /depot/i.test(n.name))
+    const clinic = nodes.find((n) => /clinic approach/i.test(n.name))
+    assert.ok(depot && clinic, 'the corridor must have a depot and a clinic approach')
+
+    const route = shortestPath(graph, depot.id, clinic.id)
+    assert.equal(route.feasible, true, `expected a feasible detour, got: ${route.reason}`)
+    assert.ok(
+      route.hops.some((h) => /bypass/i.test(h.name)),
+      `route should use the plateau bypass, got ${route.hops.map((h) => h.name).join(' -> ')}`,
+    )
+    assert.ok(
+      !route.hops.some((h) => /floodplain/i.test(h.name)),
+      'the route must not include the flooded segment',
+    )
+  })
+
+  it('seeds demo hazards as explicitly labelled demo data', async () => {
+    // Demo hazards are authored, not observed. They must not be mistakable for
+    // live GDACS observations in a panel demo.
+    const { seedAll } = await import('../scripts/seed-demo.mjs')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-demo-hazard-label-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await seedAll(store)
+    const data = await store.read()
+    for (const hazard of data.hazard_events) {
+      assert.equal(hazard.source, 'demo_seed')
+      assert.equal(hazard.metadata.demo_data, true)
+      assert.match(hazard.description, /not a live observation/i)
+    }
   })
 
   it('POST /api/v1/demo/seed returns 200 with counts.field_reports >= 30 and counts.workflow_instances >= 10', async () => {
