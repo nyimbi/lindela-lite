@@ -3,12 +3,12 @@ import { normalizeSeverity } from '../schema.js'
 import { stableId, toNumber } from '../utils.js'
 import { defineConnector } from './spec.js'
 
-const ENDPOINT = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/geojson.php'
+const SUMMARY_BASE = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary'
 const FEEDS = {
-  hour: `${ENDPOINT}?format=geojson&limit=20000&minmagnitude=4.5&orderby=time`,
-  day: `${ENDPOINT}?format=geojson&limit=20000&minmagnitude=2.5&orderby=time`,
-  week: `${ENDPOINT}?format=geojson&minmagnitude=2.5&orderby=time`,
-  month: `${ENDPOINT}?format=geojson&minmagnitude=1.0&orderby=time`,
+  hour: `${SUMMARY_BASE}/4.5_hour.geojson`,
+  day: `${SUMMARY_BASE}/2.5_day.geojson`,
+  week: `${SUMMARY_BASE}/2.5_week.geojson`,
+  month: `${SUMMARY_BASE}/1.0_month.geojson`,
 }
 
 async function usgsEarthquakeIngest(options = {}) {
