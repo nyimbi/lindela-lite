@@ -44,6 +44,9 @@ async function gdacsIngest(options = {}) {
               alert_level: parsed.alert_level,
               alert_score: parsed.alert_score,
               severity_data: parsed.severity_data,
+              // Explains a null coordinate rather than leaving it to be
+              // mistaken for a location we failed to resolve.
+              geolocation_note: parsed.metadata_note,
             },
           })
         }
@@ -151,13 +154,28 @@ function parseGdacsItem(item) {
   const countryField = item.country ? item.country.trim().slice(0, 80) : null
   const country = countryField || readText(text, /Country[:\s]+([A-Za-z ,'-]+)/i)?.trim().slice(0, 80) || null
 
+  // A bbox centre is only a location when the box is small enough to be a
+  // plausible footprint. GDACS attaches a country- or region-scale box to many
+  // green alerts, and its centre can be hundreds of kilometres from the event:
+  // a live green flood alert for France carried a box spanning ~40 degrees of
+  // longitude, so its "centre" was at 27.8E — in Chad. That plotted a French
+  // event in the Sahel, where it then contributed to risk scores and to
+  // road-access matching.
+  //
+  // So: an oversized box keeps its coordinates null and relies on bbox
+  // containment, which is what road-access does anyway. The event stays
+  // geographically honest instead of acquiring a confident wrong point.
+  const bboxIsLocal = box && (box.north - box.south) <= 5 && (box.east - box.west) <= 5
+
   return {
     event_type,
     severity,
-    // Use the bbox centre when available so the event is mappable.
-    latitude: box ? box.latitude : lat,
-    longitude: box ? box.longitude : lon,
+    latitude: box ? (bboxIsLocal ? box.latitude : null) : lat,
+    longitude: box ? (bboxIsLocal ? box.longitude : null) : lon,
     bbox: box ? { west: box.west, south: box.south, east: box.east, north: box.north } : null,
+    metadata_note: box && !bboxIsLocal
+      ? 'Coordinates omitted: the source bbox is regional, and its centre is not the event location'
+      : null,
     affected_population: affected,
     country,
     source_id: item.guid || item.link,

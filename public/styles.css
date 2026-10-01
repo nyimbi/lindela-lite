@@ -1658,3 +1658,19 @@ dialog[open] {
   color: var(--ink-faint);
   max-width: 62ch;
 }
+
+/* Hazard footprint: a source that reports only a bounding box. Drawn as the
+   area the source claims, never as a dot at the box centre, because the centre
+   is not where the event is. */
+.hazard-footprint {
+  fill-opacity: 0.10;
+  stroke-opacity: 0.55;
+  stroke-width: 1.25;
+  stroke-dasharray: 4 3;
+  cursor: pointer;
+}
+
+.hazard-footprint:hover { fill-opacity: 0.18; stroke-opacity: 0.9; }
+
+.hazard-footprint-critical { stroke-opacity: 0.8; fill-opacity: 0.14; }
+.hazard-footprint-low { stroke-opacity: 0.35; fill-opacity: 0.06; }

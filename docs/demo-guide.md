@@ -63,10 +63,33 @@ LINDELA_LITE_STORE=/tmp/fresh-store.json npm start
 
 Open `http://127.0.0.1:4177`. The overview tiles should show:
 
-- **People reached**: derived from rapidpro_dispatches recipients_count. Expect 10,000+ across 20 dispatches.
-- **Active incidents**: 6 open or responding across 5 regions.
-- **Risk scores**: 12 entries covering flood and climate-conflict dimensions.
-- **Source health**: open_meteo (green), gdacs (green). GloFAS, CHIRPS, FIRMS may show zero records depending on network state.
+- **People reached**: sum of `metadata.recipients_count` across the 20
+  dispatches. Expect roughly 22,000.
+- **Active incidents**: 3 open, 2 responding, 2 monitoring, 1 stabilized.
+- **Risk scores**: one flood and one climate-conflict score per region *in the
+  operational area* — expect about 6 regions (the five pilot districts plus
+  Jonglei). Regional scope is deliberate: a global alert feed must not define
+  the risk surface. See "Hazard locations" below.
+- **Seasonal context strip**: Nino 3.4 at +2.17 °C, *El Nino advisory*, 3 of 5
+  overlapping seasons. Advisory, not a declared event.
+- **Source health**: open_meteo, gdacs, chirps, usgs_earthquake, and noaa_enso
+  show fresh. GloFAS and NASA FIRMS are shown as unavailable **with the reason**
+  — GloFAS's feed URL is unconfirmed, FIRMS needs a MAP_KEY. They are not
+  broken; they are unavailable, and the panel says which.
+
+### Hazard locations: points and footprints
+
+GDACS usually supplies a bounding box rather than a point. A **local** box
+(≤5 degrees) gets a point marker at its centre. A **regional** box gets no point
+at all, because the centre of a country-sized box is not where the event
+happened — a live green flood alert for France carries a box spanning ~40
+degrees, putting its centre in Chad.
+
+Those regional events are drawn on the map as a dashed **footprint** of the
+reported area instead, and carry `metadata.geolocation_note` in the API. So the
+map shows fewer hazard dots than a naive count of GDACS events would suggest,
+and every dot it does show is a real location. Records still count in the
+filter and the status bar whether or not they can be drawn.
 
 ### 2. Alerts surface
 
@@ -83,8 +106,9 @@ Click an open alert event to see the approval panel. The Bor flood event (severi
 Navigate to Operations:
 
 - 8 incidents covering flood, drought, disease outbreak, conflict, cold chain, school feeding.
-- 10 interventions linked to incidents. Three are completed; five active.
-- 15 tasks. Two are blocked: "Aweil MUAC compilation" is blocked pending CHW data.
+- 10 interventions linked to incidents: 7 active, 1 planned, 2 completed.
+- 15 tasks: 7 done, 5 in progress, 2 todo, **1 blocked** ("Compile MUAC
+  screening results for W32").
 - 40 field reports with demographics populated (age_band, gender, pwd).
 
 Filter field reports by category: diarrhea or fever shows disease-cluster pattern around Bor.
@@ -93,10 +117,12 @@ Filter field reports by category: diarrhea or fever shows disease-cluster patter
 
 Navigate to Workflows:
 
-- 13 workflow instances across all 8 types.
-- One anticipatory_alert in `focal_point_review` state (Turkana, owner: Achola Wanjiru): click to see the pending review panel.
-- One anticipatory_alert fully traversed to `closed` (Aweil): inspect the transitions log to see the full lifecycle.
-- Two community_feedback_loop instances: one closed, one awaiting review.
+- 13 workflow instances across 8 types.
+- 3 anticipatory_alert instances in different states: `focal_point_review`
+  (Turkana, owner: Achola Wanjiru) — click for the pending review panel,
+  `dispatched`, and `closed` (Aweil) — inspect the transitions log for the full
+  lifecycle.
+- 2 community_feedback_loop instances: one `feedback_received`, one `closed`.
 
 ### 5. Reports surface
 

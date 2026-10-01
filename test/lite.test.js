@@ -337,6 +337,47 @@ describe('Lindela Lite analytics', () => {
     ],
   }
 
+  it('scores risk only within the operational area, not wherever alerts are global', async () => {
+    // Every record with coordinates used to become a region, so a global alert
+    // feed defined the analytical surface: after a live GDACS pull the console
+    // computed risk for 87 regions across 25 countries, 82 of them outside the
+    // area the platform operates in. The risk surface then said almost nothing
+    // about the five pilot districts.
+    const { computeFloodRisk } = await import('../src/analytics.js')
+    const world = {
+      climate_observations: [],
+      hazard_events: [
+        { id: 'turkana', event_type: 'flood', severity: 'high', country: 'KE', region_name: 'Turkana', latitude: 3.11, longitude: 35.60 },
+        { id: 'aweil', event_type: 'flood', severity: 'high', country: 'SS', region_name: 'Aweil', latitude: 8.77, longitude: 27.40 },
+        { id: 'france', event_type: 'flood', severity: 'low', country: 'France', latitude: 46.6, longitude: 2.4 },
+        { id: 'brazil', event_type: 'flood', severity: 'low', country: 'Brazil', latitude: -15.8, longitude: -47.9 },
+        { id: 'japan', event_type: 'flood', severity: 'low', country: 'JPN', latitude: 35.6, longitude: 139.7 },
+      ],
+      conflict_events: [],
+      service_assets: [],
+    }
+    const names = computeFloodRisk(world).map((r) => r.region_name)
+    assert.ok(names.includes('Turkana'), 'pilot districts must be scored')
+    assert.ok(names.includes('Aweil'), 'pilot districts must be scored')
+    for (const foreign of ['France', 'Brazil', 'Japan']) {
+      assert.ok(!names.includes(foreign), `${foreign} is outside the operational area and must not be scored`)
+    }
+  })
+
+  it('keeps scoring everything when the scope is explicitly widened', async () => {
+    // The bound must be adjustable, not a permanent narrowing: a deployment
+    // covering other countries needs to widen it rather than lose the surface.
+    const { computeFloodRisk } = await import('../src/analytics.js')
+    const data = {
+      climate_observations: [],
+      hazard_events: [{ id: 'fr', event_type: 'flood', severity: 'low', country: 'France', latitude: 46.6, longitude: 2.4 }],
+      conflict_events: [],
+      service_assets: [],
+    }
+    const widened = computeFloodRisk(data, { scope: { minLat: -90, maxLat: 90, minLon: -180, maxLon: 180, marginDeg: 0 } })
+    assert.equal(widened.length, 1, 'an explicit global scope must score worldwide')
+  })
+
   it('computes flood and climate-conflict risk scores from real records', () => {
     const flood = computeFloodRisk(data)
     const conflict = computeClimateConflictRisk(data)

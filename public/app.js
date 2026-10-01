@@ -745,8 +745,17 @@ function assetClass(serviceType) {
   return 'asset-default'
 }
 
+/** Whether a record carries a bounding box with four finite edges. */
+function hasUsableBbox(record) {
+  const box = record?.bbox
+  return Boolean(box) && [box.west, box.south, box.east, box.north].every(Number.isFinite)
+}
+
 function renderMap(records) {
-  const geo = records.filter(isFinitePoint)
+  // Records count as plottable if they have a point OR a usable bounding box.
+  // Filtering on coordinates alone dropped every bbox-only hazard before the
+  // hazard loop could draw its footprint.
+  const geo = records.filter((r) => isFinitePoint(r) || hasUsableBbox(r))
 
   // Frame the map around the region of interest rather than around whatever the
   // global feeds contain. See shared/map-frame.js for the bug this fixes, which
@@ -806,8 +815,37 @@ function renderMap(records) {
     }))
   })
 
-  // Hazard circles
+  // Hazard markers.
+  //
+  // When the source gives only a bounding box, the box is drawn as a footprint
+  // rather than a dot at the box centre. A dot would place the event at a point
+  // the source never asserted: a live GDACS green flood alert for France
+  // carries a box spanning ~40 degrees, so its centre is in Chad. The
+  // connector now omits those coordinates, and the map shows the region the
+  // source actually claims.
   hazards.forEach((r) => {
+    if (!Number.isFinite(r.latitude) || !Number.isFinite(r.longitude)) {
+      const box = r.bbox
+      if (box && [box.west, box.south, box.east, box.north].every(Number.isFinite)) {
+        const nw = project(Math.min(box.north, 90), box.west, bbox)
+        const se = project(Math.max(box.south, -90), box.east, bbox)
+        const foot = svgEl('rect', {
+          x: Math.min(nw.x, se.x),
+          y: Math.min(nw.y, se.y),
+          width: Math.abs(se.x - nw.x),
+          height: Math.abs(se.y - nw.y),
+          class: `hazard-footprint ${hazardClass(r.event_type)} hazard-footprint-${safeClass(r.severity)}`,
+        })
+        const footTitle = svgEl('title')
+        footTitle.textContent = `${r.title || r.event_type || 'Hazard'} — reported area, not a point location`
+        foot.append(footTitle)
+        foot.addEventListener('click', () => openDetailDialog(r))
+        mapHazardsEl.append(foot)
+      }
+      // No point and no usable box: nothing to draw, and the record count in
+      // the filter and status bar still reflects it.
+      return
+    }
     const { x, y } = project(r.latitude, r.longitude, bbox)
     const circle = svgEl('circle', {
       cx: x, cy: y,

@@ -206,6 +206,48 @@ describe('public source connector fixtures', () => {
     assert.match(result.errors[0], /found no daily files/)
   })
 
+  it('omits a fabricated point when the GDACS bbox is regional', async () => {
+    // GDACS attaches a country- or region-scale box to many green alerts, and
+    // its centre can be hundreds of km from the event: a live green flood alert
+    // for France carried a box spanning ~40 degrees, putting its centre at
+    // 27.8E, in Chad. A point there plots a French event in the Sahel and feeds
+    // risk scoring and road-access matching a confidently wrong location.
+    const regional = '<item><title>Green flood alert in France</title>'
+      + '<gdacs:eventtype>FL</gdacs:eventtype><gdacs:alertlevel>green</gdacs:alertlevel>'
+      + '<gdacs:bbox>-0.29 7.71 39.93 47.93</gdacs:bbox><gdacs:country>France</gdacs:country></item>';
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'application/xml']]),
+      text: async () => `<rss><channel>${regional}</channel></rss>`,
+      json: async () => ({}),
+    });
+    const result = await gdacsConnector.ingest({ gdacs_feeds: ['https://fixture.test/gdacs.xml'], retries: 0 });
+    const event = result.hazard_events[0];
+    assert.equal(event.latitude, null, 'a regional bbox must not yield a point');
+    assert.equal(event.longitude, null);
+    assert.deepEqual(event.bbox, { west: 7.71, south: -0.29, east: 47.93, north: 39.93 });
+    assert.match(event.metadata.geolocation_note, /regional/i);
+  });
+
+  it('keeps the bbox centre when the box is a local footprint', async () => {
+    const local = '<item><title>Flash flood</title>'
+      + '<gdacs:eventtype>FL</gdacs:eventtype><gdacs:alertlevel>orange</gdacs:alertlevel>'
+      + '<gdacs:bbox>35.4 3.0 35.8 3.3</gdacs:bbox><gdacs:country>KE</gdacs:country></item>';
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'application/xml']]),
+      text: async () => `<rss><channel>${local}</channel></rss>`,
+      json: async () => ({}),
+    });
+    const result = await gdacsConnector.ingest({ gdacs_feeds: ['https://fixture.test/gdacs.xml'], retries: 0 });
+    const event = result.hazard_events[0];
+    assert.ok(Number.isFinite(event.latitude), 'a small box centre is a usable location');
+    assert.ok(Number.isFinite(event.longitude));
+    assert.equal(event.metadata.geolocation_note, null);
+  });
+
   it('parses NASA FIRMS CSV rows', async () => {
     // Passes a key explicitly: FIRMS requires one, and a missing key now
     // short-circuits with an error rather than attempting the request.

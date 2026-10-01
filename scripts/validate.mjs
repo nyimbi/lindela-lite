@@ -209,6 +209,41 @@ if (!/Status: proposal for review/i.test(modelBasis)) {
   throw new Error('flood-probability-model-basis.md must state its status; a proposal that reads as settled is worse than none')
 }
 
+// The demo guide's counts are claims a panel will check against the screen.
+// They drifted twice — once when regional GDACS ingestion widened the risk
+// surface, once when intervention and dispatch figures were simply wrong. A
+// guide that contradicts the app is worse than no guide, so the numbers it
+// states are asserted here against the seeded counts.
+//
+// `phrase` is how the guide words it, not the collection name.
+const demoGuide = fs.readFileSync('docs/demo-guide.md', 'utf8')
+const GUIDE_CLAIMS = [
+  { phrase: 'active alert rules', claimed: 5 },
+  { phrase: 'alert events', claimed: 10 },
+  { phrase: 'trigger protocols', claimed: 10 },
+  { phrase: 'interventions', claimed: 10 },
+  { phrase: 'dispatches', claimed: 20 },
+  { phrase: 'field reports', claimed: 40 },
+  { phrase: 'feedback items', claimed: 15 },
+  { phrase: 'community_feedback_loop instances', claimed: 2 },
+]
+for (const { phrase, claimed } of GUIDE_CLAIMS) {
+  // Counted within the same claim, which may wrap across lines: the phrase and
+  // the number can straddle a line break in normal prose.
+  const onOneLine = demoGuide
+    .split('\n')
+    .some((line, i, lines) => {
+      const window = [line, lines[i + 1], lines[i - 1]].filter(Boolean).join(' ')
+      return window.includes(phrase) && new RegExp(`\\b${claimed}\\b`).test(window)
+    })
+  if (!onOneLine) {
+    throw new Error(
+      `Demo guide no longer states ${claimed} for "${phrase}". `
+      + 'Update the guide to match the seeded store, or it now says something false.',
+    )
+  }
+}
+
 // Model boundaries are enforced, not merely documented. Importing for the side
 // effect: this throws if a flood-probability or return-period field appears
 // anywhere in the shipped surface while no model basis has been agreed.

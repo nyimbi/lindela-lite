@@ -34,8 +34,8 @@ export async function refreshAnalytics(store) {
   return { risk_scores, impact_assessments, data_quality, population_at_risk, facilities_at_risk }
 }
 
-export function computeFloodRisk(data) {
-  const regions = collectRegions(data)
+export function computeFloodRisk(data, options = {}) {
+  const regions = collectRegions(data, options)
   return regions.map((region) => {
     const climate = nearby(data.climate_observations, region, 125)
     const hazards = nearby(data.hazard_events.filter((event) => /flood|storm|disaster/i.test(event.event_type)), region, 250)
@@ -112,8 +112,8 @@ export function computeFloodRisk(data) {
   })
 }
 
-export function computeClimateConflictRisk(data) {
-  const regions = collectRegions(data)
+export function computeClimateConflictRisk(data, options = {}) {
+  const regions = collectRegions(data, options)
   return regions.map((region) => {
     const climate = nearby(data.climate_observations, region, 125)
     const hazards = nearby(data.hazard_events, region, 250)
@@ -301,13 +301,47 @@ export function computeDataQuality(data) {
   }).sort((a, b) => b.confidence - a.confidence)
 }
 
-function collectRegions(data) {
+/**
+ * Regions to score.
+ *
+ * Every record with coordinates used to become a region, so a global alert feed
+ * defined the analytical surface: after a live GDACS pull the console computed
+ * risk for 87 regions across 25 countries, 82 of them outside the area the
+ * platform operates in. The risk surface then said nothing about the five
+ * pilot districts, because it was 94% other places.
+ *
+ * Regions are now bounded to the operational area, using the same anchor the
+ * map framing uses. Records outside it are still ingested, still stored, and
+ * still drawn on the map — they simply do not generate risk scores for an
+ * operator who is not working there.
+ *
+ * `options.scope` can widen or narrow this. With no scope, the Horn of Africa
+ * pilot area is used.
+ */
+const RISK_SCOPE = Object.freeze({
+  minLat: -6,
+  maxLat: 15,
+  minLon: 27,
+  maxLon: 52,
+  marginDeg: 6,
+})
+
+function inRiskScope(point, scope) {
+  return point.latitude >= scope.minLat - scope.marginDeg
+    && point.latitude <= scope.maxLat + scope.marginDeg
+    && point.longitude >= scope.minLon - scope.marginDeg
+    && point.longitude <= scope.maxLon + scope.marginDeg
+}
+
+function collectRegions(data, options = {}) {
+  const scope = options.scope || RISK_SCOPE
   const points = [
     ...data.climate_observations,
     ...data.hazard_events,
     ...data.conflict_events,
     ...data.service_assets,
   ].filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude))
+    .filter((item) => inRiskScope(item, scope))
 
   const byKey = new Map()
   for (const point of points) {
