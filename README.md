@@ -22,7 +22,12 @@ This package is intentionally separate from the full Lindela platform. It does n
 
 - It does not ingest GDELT.
 - It does not copy or depend on WorldMonitor code.
-- It does not include Lindela's commercial models, calibrated coefficients, intelligence fusion, report distribution, AAR, or wargaming systems.
+- It does not include Lindela's commercial models, calibrated coefficients, intelligence fusion, AAR, or wargaming systems.
+
+Report generation and distribution **are** implemented in Lite — local download,
+webhook, and RapidPro summary, each recorded as a distribution run — so an older
+version of this list claiming otherwise has been corrected. What is absent is
+Lindela's commercial/hosted distribution infrastructure, not the capability.
 
 ## Run
 
@@ -81,14 +86,31 @@ See [docs/storage.md](docs/storage.md).
 
 Built-in source ids:
 
-- `open_meteo`
-- `gdacs`
-- `glofas`
-- `chirps`
-- `nasa_firms`
-- `service_assets`
-- `acled_csv`
-- `conflict_csv`
+| id | what it is | keyless? |
+|---|---|---|
+| `open_meteo` | forecast and historical precipitation and temperature | yes |
+| `gdacs` | GDACS global disaster alerts | yes |
+| `glofas` | Copernicus GloFAS river discharge | yes, **feed currently unverified** |
+| `chirps` | CHIRPS blended rainfall, monthly | yes |
+| `nasa_firms` | NASA FIRMS active fire detections | **no** — needs `NASA_FIRMS_MAP_KEY` |
+| `usgs_earthquake` | USGS earthquake catalogue | yes |
+| `noaa_enso` | NOAA CPC Niño 3.4 SST anomaly (ONI) | yes |
+| `dhis2` | DHIS2 data-quality aggregate | user-supplied instance |
+| `service_assets` | imported roads, clinics, boreholes | — |
+| `acled_csv` | ACLED-compatible conflict CSV, user-supplied | user licence |
+| `conflict_csv` | Lite conflict schema CSV, user-supplied | user licence |
+
+`GET /api/v1/sources` is the authority: it reports each source's credential
+requirement and the outcome of its last run. Two sources are **not** currently
+returning data, and the app says so rather than substituting something weaker:
+
+- `glofas` — the published RSS URL now serves the EFAS web app, not a feed. No
+  replacement endpoint has been confirmed, so no data is claimed.
+- `nasa_firms` — FIRMS has no keyless access. Without a MAP_KEY it reports zero
+  records and names the missing configuration.
+
+`npm run check:live-sources` reports live status for every source with the reason for
+any failure.
 
 ## Operations
 

@@ -4186,3 +4186,43 @@ describe('Lindela Lite build version', () => {
     assert.deepEqual(offenders, [], `version drift -> ${offenders.join('; ')}`)
   })
 })
+
+describe('Lindela Lite README source list', () => {
+  it('lists every source the API advertises, and claims no source that does not exist', async () => {
+    // The README listed 8 of 11 sources, omitting usgs_earthquake, noaa_enso and
+    // dhis2. A reader would conclude the earthquake and ENSO connectors were not
+    // part of the build, which is the opposite of true.
+    const readme = await fs.readFile('README.md', 'utf8')
+    const table = readme.slice(readme.indexOf('## Sources'), readme.indexOf('## Operations'))
+    const listed = new Set([...table.matchAll(/^\| `([a-z0-9_]+)`/gm)].map((m) => m[1]))
+    assert.ok(listed.size >= 8, `expected the README to table the sources, found ${listed.size}`)
+
+    const { publicSourceCatalog } = await import('../src/schema.js')
+    const actual = publicSourceCatalog().map((s) => s.id)
+
+    const missing = actual.filter((id) => !listed.has(id))
+    const phantom = [...listed].filter((id) => !actual.includes(id))
+    assert.deepEqual(missing, [], `sources the API offers but the README omits: ${missing.join(', ')}`)
+    assert.deepEqual(phantom, [], `sources the README lists that the API does not offer: ${phantom.join(', ')}`)
+  })
+
+  it('does not claim to lack a capability the build actually has', async () => {
+    // The README and docs/operations.md both said Lite does not include "report
+    // distribution" while the Reports rail can generate, distribute and export,
+    // and every distribution is recorded as a run. A false "does not do" is the
+    // most expensive kind of README line: it understates what a panel can see.
+    for (const file of ['README.md', 'docs/operations.md']) {
+      const text = await fs.readFile(file, 'utf8')
+      // Scoped to the absence clause only, up to the first full stop. A line may
+      // legitimately correct itself in the next sentence, and that correction
+      // must not read as the claim it is correcting.
+      const absence = text.split('\n')
+        .map((line) => (line.match(/does not (?:include|provide|support)[^.]*/i) || [])[0])
+        .filter(Boolean)
+      for (const clause of absence) {
+        assert.ok(!/report[- ]distribution/i.test(clause),
+          `${file} claims report distribution is absent: ${clause.trim().slice(0, 90)}`)
+      }
+    }
+  })
+})

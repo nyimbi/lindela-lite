@@ -29,6 +29,6 @@ The operations layer turns risk and impact monitoring into portable response coo
 - Scores and confidence are decision-support signals, not automated determinations.
 - Human review is still required for high-impact or resource-moving actions.
 - Action logs are append-only through the public API; do not edit them manually except for local test fixtures.
-- Lite does not include proprietary orchestration, source-reputation, report-distribution, AAR, or wargaming systems.
+- Lite does not include proprietary orchestration, source-reputation, AAR, or wargaming systems. Report distribution itself *is* implemented — local download, webhook and RapidPro summary, each recorded as a distribution run — so it is the commercial hosted service that is absent, not the capability.
 - Alert actions are declarative; Lite records intended actions but does not send external notifications by itself.
 - RapidPro dispatch is the built-in SMS sending path; failed RapidPro requests are recorded as dispatch records for follow-up.
