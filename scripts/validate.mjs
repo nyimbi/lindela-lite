@@ -48,6 +48,7 @@ for (const requiredLink of [
   '(rapidpro.md)',
   '(developer-guide.md)',
   '(open-source-boundary.md)',
+  '(outbreak-and-food-security-scoping.md)',
   '(flood-probability-model-basis.md)',
 ]) {
   if (!docsIndex.includes(requiredLink)) throw new Error(`Docs index missing ${requiredLink}`)
@@ -195,6 +196,14 @@ for (const sourceId of Object.keys(SOURCE_POLICIES)) {
 // keep saying it is a proposal. If implementation ever lands, this is the
 // place that documents the agreed basis, and it should be rewritten rather
 // than deleted.
+// Outbreak and food-security work is gated on policy and licensing, not on
+// engineering. This guard exists so neither capability quietly appears as a
+// connector or a dashboard surface without that decision being recorded.
+const outbreakScoping = fs.readFileSync('docs/outbreak-and-food-security-scoping.md', 'utf8')
+if (!/Status: scoping only/i.test(outbreakScoping)) {
+  throw new Error('outbreak-and-food-security-scoping.md must state that it is scoping only; a scoping doc that reads as an implementation record is worse than none')
+}
+
 const modelBasis = fs.readFileSync('docs/flood-probability-model-basis.md', 'utf8')
 if (!/Status: proposal for review/i.test(modelBasis)) {
   throw new Error('flood-probability-model-basis.md must state its status; a proposal that reads as settled is worse than none')

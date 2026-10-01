@@ -255,6 +255,15 @@ tropical extreme daily rainfall by roughly 40% — precisely the tail a flood
 model depends on. Catchment delineation is additionally blocked on MERIT Hydro,
 which is EULA-gated and unreachable.
 
+**Epidemic/outbreak surveillance and food-security (IPC) tracking are also not
+in the build**, for different reasons — see
+[outbreak-and-food-security-scoping.md](outbreak-and-food-security-scoping.md).
+Summary if asked: IPC data requires a licence we do not have and the site blocks
+automated access; WHO outbreak data *is* keyless, but what is available is
+country-level annual aggregates, which cannot drive district response. The
+remainder is a UNICEF policy judgement about publishing disease geography, and
+it is not ours to make.
+
 What *is* shipped answers the downstream question honestly: given a forecast
 water level, which facilities are under water and how deep. That is the
 operational question relief logistics asks first, and it is answerable from a
