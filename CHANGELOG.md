@@ -56,6 +56,23 @@ no existing endpoint changed shape.
 
 ### Fixed
 
+- **District filtering reported no activity for collections that carry no
+  location.** Interventions, their tasks and alert dispatches have no
+  coordinates and no district field. Filtered directly they matched nothing, so
+  `?district=Bor` returned 0 interventions while `/api/v1/districts/Bor` reported
+  3 — the same district, two different answers, depending on the endpoint. A
+  partner building a district view would have shown partners and responders an
+  empty list next to a populated summary.
+
+  They are now attributed through the record that does carry a location:
+  interventions through their incident, tasks through the intervention, dispatches
+  through the alert event. Every filterable list endpoint now agrees with the
+  district overview it sits beside — Bor returns 2 incidents, 3 interventions, 5
+  tasks, 6 service assets, 3 flood-risk and 3 conflict-risk scores, 10 field
+  reports and 3 alerts, matching `/api/v1/districts/Bor` exactly. Note that
+  `/risk-scores` is a STAC/OGC catalogue rather than a filterable list; the
+  filterable risk endpoints are `/flood-risk` and `/conflict-risk`.
+
 - **`?district=` on every list endpoint was a no-op that returned everything.**
   `filterRecords` ignores parameters it does not understand, and `district` and
   `region` were not among the ones it understood. `GET /api/v1/incidents?district=Bor`

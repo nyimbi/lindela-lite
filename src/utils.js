@@ -117,7 +117,13 @@ function parseRecordBbox(value) {
   return null
 }
 
-export function filterRecords(records, query) {
+/**
+ * @param {object} [context] optional `{ data, collection }`, used to resolve
+ *   records that carry no location of their own. Without it a district filter
+ *   matches nothing for those collections.
+ */
+export function filterRecords(records, query, context = {}) {
+  const districtRelations = buildDistrictRelations(context.data, context.collection, resolveDistrictFilter(query.get('district') || query.get('region')))
   const bbox = parseBbox(query.get('bbox'))
   const country = query.get('country')
   const source = query.get('source')
@@ -157,7 +163,7 @@ export function filterRecords(records, query) {
     .filter((item) => !owner || item.owner === owner)
     .filter((item) => !templateId || item.template_id === templateId)
     .filter((item) => !scheduleId || item.schedule_id === scheduleId)
-    .filter((item) => !districtFilter || recordInDistrict(item, districtFilter))
+    .filter((item) => !districtFilter || recordInDistrict(item, districtFilter, districtRelations))
     .filter((item) => {
       const timestamp = Date.parse(item.observed_at || item.occurred_at || item.event_date || item.generated_at || item.approved_at || item.distributed_at || item.updated_at || item.created_at || '')
       if (!Number.isFinite(timestamp)) return true
@@ -336,7 +342,7 @@ export function resolveDistrictFilter(value) {
  * the same rule the report scope uses, so an API filter and a report cannot
  * disagree about what is in Turkana.
  */
-export function recordInDistrict(item, district) {
+export function recordInDistrict(item, district, relations = null) {
   if (!district) return true
   const labels = [district.slug, district.name, String(district.name).toLowerCase()]
   const named = [item.district, item.region, item.region_name, item.admin1, item.scope?.district]
@@ -357,5 +363,59 @@ export function recordInDistrict(item, district) {
     )
     return distance <= district.radius_km
   }
+  // Interventions, their tasks and alert dispatches carry no coordinates and no
+  // district field. Filtered directly they match nothing, so every district
+  // reported no activity while interventions were attached to it — which reads
+  // as a finding rather than as an absence of data. They are reached through the
+  // record that does carry a location, the same way `districtOverview` does it,
+  // so the list endpoints and the district overview cannot disagree.
+  if (relations) {
+    for (const key of DISTRICT_RELATION_KEYS) {
+      const relatedId = item[key]
+      if (!relatedId) continue
+      const state = relations.get(relatedId)
+      if (state === true) return true
+      if (state === false) return false
+    }
+  }
   return false
+}
+
+const DISTRICT_RELATION_KEYS = ['incident_id', 'intervention_id', 'alert_event_id']
+
+/**
+ * Collections whose records carry no location of their own, and the chain of
+ * collections to attribute them through, nearest first. Interventions hang off
+ * an incident; their tasks hang off the intervention; dispatches hang off the
+ * alert event.
+ */
+const DISTRICT_PARENT_CHAINS = {
+  interventions: ['incidents', 'interventions'],
+  intervention_tasks: ['incidents', 'interventions', 'intervention_tasks'],
+  rapidpro_dispatches: ['alert_events', 'rapidpro_dispatches'],
+  rapidpro_inbound_messages: ['alert_events', 'rapidpro_inbound_messages'],
+}
+
+/**
+ * Map each record id in the chain's last collection to whether it falls in the
+ * district, so children with no location of their own are attributed through the
+ * nearest ancestor that has one.
+ */
+function buildDistrictRelations(data, collection, district) {
+  const chain = DISTRICT_PARENT_CHAINS[collection]
+  if (!data || !district || !chain) return null
+  // Every level but the last. The last entry is the collection being filtered,
+  // and its records are attributed by looking their parent id up in the map
+  // returned here — so returning that level's own map would key intervention ids
+  // where incident ids are looked for, and every lookup would miss.
+  let relations = null
+  for (const name of chain.slice(0, -1)) {
+    const next = new Map()
+    for (const record of data[name] || []) {
+      if (!record?.id) continue
+      next.set(record.id, recordInDistrict(record, district, relations))
+    }
+    relations = next
+  }
+  return relations
 }

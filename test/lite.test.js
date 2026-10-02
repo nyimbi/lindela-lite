@@ -336,6 +336,42 @@ describe('Lindela Lite report content and scope', () => {
     }
   })
 
+  it('attributes records that carry no location through their parent', () => {
+    // Interventions carry no coordinates and no district field. Filtered
+    // directly they matched nothing, so every district reported no activity
+    // while interventions were attached to it — which reads as a finding rather
+    // than an absence of data. They are attributed through their incident, and
+    // tasks through the intervention, the way districtOverview does.
+    const data = {
+      incidents: [
+        { id: 'inc-bor', latitude: 6.21, longitude: 31.55 },
+        { id: 'inc-aweil', latitude: 8.77, longitude: 27.41 },
+      ],
+      interventions: [
+        { id: 'int-bor-1', incident_id: 'inc-bor' },
+        { id: 'int-aweil-1', incident_id: 'inc-aweil' },
+      ],
+      intervention_tasks: [
+        { id: 'task-bor-1', intervention_id: 'int-bor-1' },
+        { id: 'task-aweil-1', intervention_id: 'int-aweil-1' },
+      ],
+      alert_events: [
+        { id: 'al-bor', scope: { district: 'Bor' } },
+        { id: 'al-aweil', scope: { district: 'Aweil' } },
+      ],
+      rapidpro_dispatches: [
+        { id: 'disp-bor', alert_event_id: 'al-bor' },
+        { id: 'disp-aweil', alert_event_id: 'al-aweil' },
+      ],
+    }
+    const q = new URLSearchParams('district=Bor')
+    const scoped = (records, collection) => filterRecords(records, q, { data, collection }).map((r) => r.id)
+    assert.deepEqual(scoped(data.interventions, 'interventions'), ['int-bor-1'])
+    // Two levels deep: the task is attributed through the intervention.
+    assert.deepEqual(scoped(data.intervention_tasks, 'intervention_tasks'), ['task-bor-1'])
+    assert.deepEqual(scoped(data.rapidpro_dispatches, 'rapidpro_dispatches'), ['disp-bor'])
+  })
+
   it('agrees with report scope on what is in a district', () => {
     // The API filter and the report scope must not disagree, or a partner
     // reading the report would see a different district than the API returns.

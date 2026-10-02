@@ -75,6 +75,7 @@ produced it. Two green suites had been passing for the wrong reason.
 | 25 | Every report was an empty document — `section_ids` set, `sections` empty — so exports had no content and SMS summaries announced "0 incidents, 0 open alerts". Two were marked `distributed`. | opening a distributed report | `see changelog` |
 | 26 | `filterRecords` ignores unknown parameters, so a `district`-scoped report applied no filter at all: the Turkana SITREP reported all 280 hazard events from 50+ countries as district figures. | comparing report scope against the store | `see changelog` |
 | 27 | The same ignored-parameter behaviour on the API: `?district=Bor` returned every incident in the collection, identical to sending no filter at all. | querying the list endpoints directly | `see changelog` |
+| 28 | District filtering matched nothing for interventions, tasks and dispatches, so `?district=Bor` reported 0 interventions while `/districts/Bor` reported 3 — one district, two answers. | comparing every endpoint against the district overview | `see changelog` |
 
 ## Two green suites passing for the wrong reason
 
