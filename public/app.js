@@ -8,6 +8,7 @@ import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState } from '/share
 import { fillAppVersion } from '/shared/app-version.js'
 import { apiFetch, apiSettled, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
 import { esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncateId } from '/shared/fmt.js'
+import { metricLabel } from '/shared/labels.js'
 
 initServiceWorker()
 
@@ -1524,14 +1525,14 @@ function renderWorkflowsTab(byType) {
   grid.innerHTML = WORKFLOW_TYPES.map((type) => {
     const m = byType[type] || { open: 0, closed: 0, rejected: 0 }
     const i18nKey = `workflow.${type}`
-    return `<div class="workflow-card" data-type="${escapeHtml(type)}" role="listitem">
-      <span class="workflow-card-name" data-i18n="${escapeHtml(i18nKey)}">${t(i18nKey)}</span>
-      <span class="workflow-card-count">${escapeHtml(String(m.open || 0))}</span>
-      <span class="workflow-card-meta">closed: ${escapeHtml(String(m.closed || 0))}</span>
+    return `<div class="workflow-metric" data-type="${escapeHtml(type)}" role="listitem">
+      <span class="workflow-metric-name" data-i18n="${escapeHtml(i18nKey)}">${t(i18nKey)}</span>
+      <span class="workflow-metric-count">${escapeHtml(String(m.open || 0))}</span>
+      <span class="workflow-metric-meta">closed: ${escapeHtml(String(m.closed || 0))}</span>
     </div>`
   }).join('')
 
-  grid.querySelectorAll('.workflow-card').forEach((card) => {
+  grid.querySelectorAll('.workflow-metric').forEach((card) => {
     card.addEventListener('click', () => {
       state.workflowTypeFilter = card.dataset.type
     })
@@ -1719,15 +1720,23 @@ function renderAlertsPanel() {
   container.innerHTML = filtered.map((alert, i) => {
     const delay = Math.min(i * 40, 320)
     const canSend = alert.status === 'approved' || alert.status === 'auto_approved' || alert.status === 'auto-approved'
+    // The metric was rendered straight from the API — `precipitation_mm`,
+    // `conflict_events_count_7d` — as the line that says why this alert fired.
+    // It is now the metric's name and unit.
+    const metric = alert.metric_expression || alert.metric || ''
+    const metricText = metric.includes(' ')
+      ? metric
+      : metricLabel(metric)
+    const statusText = String(alert.status || '').replace(/_/g, ' ')
     return `<div class="alert-item" style="animation-delay:${delay}ms" role="listitem">
       <div class="alert-item-row">
-        <span class="sev-chip sev-${safeClass(alert.severity || 'unknown')}">${escapeHtml(alert.severity || 'unknown')}</span>
-        <span class="alert-rule-name">${escapeHtml(alert.rule_name || alert.metric || alert.id || '')}</span>
+        <span class="sev-chip sev-${sevClass(alert.severity)}">${escapeHtml(alert.severity || 'unknown')}</span>
+        <span class="alert-rule-name">${escapeHtml(alert.rule_name || metricLabel(alert.metric) || alert.id || '')}</span>
         <span class="alert-timestamp">${displayDate(alert.created_at)}</span>
       </div>
       <div class="alert-item-meta">
-        <span class="alert-metric">${escapeHtml(alert.metric_expression || alert.metric || '')}</span>
-        <span class="status-pill status-${safeClass(alert.status || 'unknown')}">${escapeHtml(alert.status || '')}</span>
+        <span class="alert-metric">${escapeHtml(metricText)}</span>
+        <span class="status-pill status-${safeClass(alert.status || 'unknown')}">${escapeHtml(statusText)}</span>
       </div>
       <div class="item-actions">
         <button class="btn btn-xs btn-approve" data-id="${escapeHtml(alert.id)}" data-action="approve"

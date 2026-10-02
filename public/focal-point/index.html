@@ -123,10 +123,15 @@
         text-transform: uppercase;
       }
 
-      .severity-critical { background: #fecaca; color: #7f1d1d; }
-      .severity-high { background: #fed7aa; color: #92400e; }
-      .severity-medium { background: #fcd34d; color: #713f12; }
-      .severity-low { background: #d1fae5; color: #065f46; }
+      /* These were pastel light-mode chips (#fecaca on #7f1d1d) sitting on a
+         oklch(15%) dark page — the only light elements on the screen, and a
+         severity scale that matched nothing else in the product. Now they
+         resolve to the same --sev-* tokens every other surface uses, so one
+         severity reads identically everywhere. */
+      .severity-critical { background: color-mix(in oklch, var(--sev-critical) 18%, transparent); color: var(--ink); border-color: var(--sev-critical); }
+      .severity-high     { background: color-mix(in oklch, var(--sev-high) 18%, transparent);     color: var(--ink); border-color: var(--sev-high); }
+      .severity-medium   { background: color-mix(in oklch, var(--sev-medium) 18%, transparent);   color: var(--ink); border-color: var(--sev-medium); }
+      .severity-low      { background: color-mix(in oklch, var(--sev-low) 18%, transparent);      color: var(--ink); border-color: var(--sev-low); }
 
       .workflow-details {
         margin-bottom: 1rem;
@@ -333,6 +338,61 @@
         .header-controls { width: 100%; }
         select { width: 100%; }
       }
+
+      /* --- Approval card -----------------------------------------
+         The card a focal point approves a trigger from. It now states the
+         comparison being made and separates the reading from the threshold,
+         because "40 (value: 48)" made the reader do the arithmetic. */
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--sp-2);
+        margin-bottom: var(--sp-2);
+      }
+
+      .queue-position {
+        color: var(--ink-muted);
+        font-size: 0.8125rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .workflow-consequence {
+        margin-bottom: var(--sp-3);
+        padding: var(--sp-3);
+        border-inline-start: 3px solid var(--brand);
+        background: var(--surface);
+        border-radius: 0 var(--r) var(--r) 0;
+        color: var(--ink-muted);
+        font-size: 0.875rem;
+        line-height: 1.5;
+      }
+      .workflow-consequence strong { color: var(--ink); }
+
+      .reading { font-size: 1.125rem; font-weight: 600; font-variant-numeric: tabular-nums; margin-inline-end: 0.35rem; }
+      .threshold { color: var(--ink-muted); }
+      .verdict {
+        display: block;
+        margin-top: 0.15rem;
+        font-size: 0.8125rem;
+        font-weight: 600;
+      }
+      .reading-met .verdict   { color: var(--warn); }
+      .reading-unmet .verdict { color: var(--ink-muted); }
+
+      /* Approve is the primary action; Reject is the destructive one. They used
+         to be equally saturated green and red at equal size, so a safe action
+         and a destructive one carried identical visual weight. */
+      .action-buttons {
+        display: flex;
+        gap: var(--sp-2);
+        flex-wrap: wrap;
+      }
+      .action-buttons .btn { flex: 1 1 10rem; min-height: var(--tap-target-min); }
+      .btn-approve { background: var(--ok); color: var(--ink); border-color: var(--ok); font-weight: 600; }
+      .btn-approve:hover { background: color-mix(in oklch, var(--ok) 85%, white); }
+      .btn-reject { background: transparent; color: var(--danger); border-color: color-mix(in oklch, var(--danger) 45%, transparent); font-weight: 600; }
+      .btn-reject:hover { background: color-mix(in oklch, var(--danger) 12%, transparent); }
     </style>
   </head>
   <body>

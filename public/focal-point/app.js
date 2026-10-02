@@ -1,10 +1,12 @@
 import { initI18n, t, apiFetch, initOfflineBanner, initServiceWorker } from '/shared/runtime.js'
+import { esc as escapeHtml, formatTimestamp, sevClass } from '/shared/fmt.js'
+import { metricLabel } from '/shared/labels.js'
 import { mountNavbar } from '/shared/navbar.js'
 mountNavbar({ activePath: '/focal-point' })
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {})
-}
+// Registration used to be hand-rolled here *and* performed by initServiceWorker
+// further down: two registrations for one worker.
+initServiceWorker()
 
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
@@ -75,13 +77,14 @@ async function loadData() {
 }
 
 function severityClass(severity) {
-  return `severity-${severity || 'medium'}`
+  // Allowlisted: this value came off the API and was interpolated straight
+  // into a class name.
+  return `severity-${sevClass(severity)}`
 }
 
+/** Absolute, with its zone. `toLocaleString` gave "9/28/2026, 6:55:29 AM". */
 function formatTime(iso) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  return d.toLocaleString(state.locale)
+  return formatTimestamp(iso, { dash: '' })
 }
 
 function getReasonOptions(mode) {
@@ -107,7 +110,8 @@ async function renderPending(workflows, alertIndex = new Map()) {
     return
   }
 
-  pendingList.innerHTML = workflows.map((w) => {
+  const total = workflows.length
+  pendingList.innerHTML = workflows.map((w, i) => {
     // Hydrate display fields from the linked alert_event when available
     const alert = (w.subject_kind === 'alert_event' && w.subject_id)
       ? (alertIndex.get(w.subject_id) || null)
@@ -117,10 +121,20 @@ async function renderPending(workflows, alertIndex = new Map()) {
     const threshold = alert?.threshold ?? w.metadata?.threshold
     const value     = alert?.value     ?? w.metadata?.value
     const severity  = alert?.severity  || w.metadata?.severity || 'medium'
-    return `
+    // This card is the approval gate for an anticipatory trigger. It showed the
+  // raw metric key ("precipitation_mm") and left the reading, "40 (value: 48)",
+  // for the reader to interpret. It now states the comparison being made, in
+  // the metric's own units, and separates the reading from the threshold.
+  const above = value != null && threshold != null && Number(value) >= Number(threshold)
+  return `
     <div class="workflow-card">
       <div class="card-header">
-        <span class="severity-chip ${severityClass(severity)}">${severity}</span>
+        <span class="severity-chip ${severityClass(severity)}">${escapeHtml(severity)}</span>
+        <span class="queue-position">${i + 1} of ${total}</span>
+      </div>
+      <div class="workflow-consequence">
+        Approving releases pre-agreed finance for <strong>${escapeHtml(w.district || 'this district')}</strong>
+        if this trigger is met.
       </div>
       <div class="workflow-details">
         <div class="detail-row">
@@ -128,25 +142,29 @@ async function renderPending(workflows, alertIndex = new Map()) {
           <span class="detail-value">${escapeHtml(ruleName)}</span>
         </div>
         <div class="detail-row">
-          <span class="detail-label" data-i18n="label.metric">Metric</span>
-          <span class="detail-value">${escapeHtml(metric)}</span>
+          <span class="detail-label" data-i18n="label.metric">Trigger condition</span>
+          <span class="detail-value">${escapeHtml(metricLabel(metric))}</span>
         </div>
         <div class="detail-row">
-          <span class="detail-label" data-i18n="label.threshold">Threshold</span>
-          <span class="detail-value">${threshold != null ? threshold : '—'} (value: ${value != null ? value : '—'})</span>
+          <span class="detail-label" data-i18n="label.threshold">Latest reading</span>
+          <span class="detail-value ${above ? 'reading-met' : 'reading-unmet'}">
+            <span class="reading">${escapeHtml(String(value ?? '—'))}</span>
+            <span class="threshold">against a threshold of ${escapeHtml(String(threshold ?? '—'))}</span>
+            <span class="verdict">${above ? 'condition met' : 'condition not met'}</span>
+          </span>
         </div>
         <div class="detail-row">
           <span class="detail-label" data-i18n="label.district">District</span>
-          <span class="detail-value">${escapeHtml(w.district || '')}</span>
+          <span class="detail-value">${escapeHtml(w.district || '—')}</span>
         </div>
         <div class="detail-row">
-          <span class="detail-label" data-i18n="label.timestamp">Time</span>
-          <span class="detail-value">${formatTime(w.created_at)}</span>
+          <span class="detail-label" data-i18n="label.timestamp">Raised</span>
+          <span class="detail-value">${escapeHtml(formatTime(w.created_at))}</span>
         </div>
       </div>
       <div class="action-buttons">
-        <button class="btn-approve" data-workflow-id="${w.id}" data-mode="approve" data-i18n="action.approve">Approve</button>
-        <button class="btn-reject" data-workflow-id="${w.id}" data-mode="reject" data-i18n="action.reject">Reject</button>
+        <button class="btn btn-primary btn-approve" data-workflow-id="${escapeHtml(w.id)}" data-mode="approve" data-i18n="action.approve">Approve</button>
+        <button class="btn btn-secondary btn-reject" data-workflow-id="${escapeHtml(w.id)}" data-mode="reject" data-i18n="action.reject">Reject</button>
       </div>
     </div>
   `
@@ -256,17 +274,8 @@ dialogConfirmBtn.addEventListener('click', async () => {
   }
 })
 
-function escapeHtml(str) {
-  // `||` here dropped a legitimate 0 or false and rendered it as blank;
-  // `??` only replaces null and undefined.
-  return String(str ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[c]))
-}
+// escapeHtml now comes from /shared/fmt.js. It was a fourth copy of the
+// same function; this one used `||`, which dropped a legitimate 0 or false.
 
 window.addEventListener('online', () => {
   connectionStatus.style.color = '#10b981'
