@@ -69,7 +69,7 @@ describe('Lindela Lite STAC', () => {
 })
 
 describe('Lindela Lite CAP', () => {
-  it('renders valid CAP 1.2 XML', () => {
+  it('renders valid CAP 1.2 XML that names the real hazard', () => {
     const alert = {
       id: 'alert_123',
       event_type: 'flood',
@@ -83,7 +83,77 @@ describe('Lindela Lite CAP', () => {
     const xml = renderCapXml(alert)
     assert.ok(xml.startsWith('<?xml'))
     assert.ok(xml.includes('<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">'))
-    assert.ok(xml.includes('<event>flood</event>'))
+    // Asserts the event names the hazard. It used to assert <event>flood</event>
+    // verbatim, which passed only because <event> echoed event_type.
+    assert.match(xml, /<event>Flood<\/event>/)
+  })
+
+  it('carries the alert, not placeholder text', () => {
+    // The generator read headline, description, event_type, latitude, longitude,
+    // radius_km and lead_time_days. An alert event carries none of them, so every
+    // alert published as "Hazard Alert / A hazard alert has been issued".
+    const alert = {
+      id: 'alert_real',
+      rule_name: 'Conflict Proximity Alert',
+      metric: 'conflict_events_count_7d',
+      value: 4,
+      threshold: 3,
+      operator: '>=',
+      message: 'Conflict Proximity Alert: value 4 in Bor',
+      severity: 'high',
+      status: 'open',
+      scope: { district: 'Bor' },
+    }
+    const xml = renderCapXml(alert)
+    assert.ok(xml.includes('Conflict Proximity Alert: value 4 in Bor'), 'headline must be the real message')
+    assert.ok(!xml.includes('A hazard alert has been issued'), 'no placeholder description')
+    assert.ok(xml.includes('conflict_events_count_7d 4 &gt;= 3'), 'the trigger must be stated')
+    assert.ok(xml.includes('not an official forecast'), 'provenance must be stated')
+  })
+
+  it('never places an alert at Null Island', () => {
+    // It emitted `<circle>0,0 50</circle>` for every alert, because alert events
+    // carry no latitude or longitude. A 50 km circle at 0,0 is in the Gulf of
+    // Guinea; an external alerting system would place every alert in this system
+    // in open water.
+    const xml = renderCapXml({
+      id: 'alert_noname',
+      message: 'Unlocated alert',
+      severity: 'medium',
+      status: 'open',
+    })
+    assert.ok(!/<circle>0(\.0+)?,0(\.0+)?\s/.test(xml),
+      'no circle may be emitted at 0,0')
+    assert.ok(!xml.includes('<circle>0,0'), 'no circle may be emitted at 0,0')
+    assert.match(xml, /extent not established/i,
+      'an alert with no location must say so rather than assert one')
+    assert.ok(!xml.includes('<circle>'), 'no circle at all when nothing is known')
+  })
+
+  it('uses the district centroid when the alert names a district', () => {
+    const xml = renderCapXml({
+      id: 'alert_bor',
+      message: 'Flooding reported',
+      severity: 'critical',
+      status: 'open',
+      scope: { district: 'Bor' },
+    })
+    assert.match(xml, /<circle>6\.207,31\.548 150<\/circle>/,
+      'the circle must be the district centroid and its radius')
+    assert.match(xml, /Bor district extent/)
+  })
+
+  it('derives urgency from severity rather than a field that does not exist', () => {
+    // It read lead_time_days, which no alert event carries, so every alert
+    // published as Immediate including a low-severity observation.
+    assert.match(renderCapXml({ severity: 'critical', message: 'x' }), /<urgency>Immediate<\/urgency>/)
+    assert.match(renderCapXml({ severity: 'low', message: 'x' }), /<urgency>Future<\/urgency>/)
+  })
+
+  it('publishes a resolved alert as a Cancel so downstream systems retire it', () => {
+    const xml = renderCapXml({ id: 'a', message: 'Situation resolved', status: 'resolved', severity: 'high' })
+    assert.match(xml, /<msgType>Cancel<\/msgType>/)
+    assert.match(xml, /<status>Actual<\/status>/, 'the message itself remains true')
   })
 
   it('GET /api/v1/alert-events/:id.cap returns XML', async () => {

@@ -56,6 +56,27 @@ no existing endpoint changed shape.
 
 ### Fixed
 
+- **The CAP alert feed was placeholder content with a fabricated location.** CAP is
+  the interchange format external alerting systems, EWS gateways and SMS providers
+  consume. The generator read `headline`, `description`, `event_type`,
+  `latitude`, `longitude`, `radius_km` and `lead_time_days`; an alert event
+  carries none of them, so every field fell through to a default. Every alert
+  published as *"Hazard Alert / A hazard alert has been issued"*, every urgency was
+  `Immediate`, and the area was emitted as **`<circle>0,0 50</circle>`** — a 50 km
+  circle at Null Island in the Gulf of Guinea, for an alert about Bor. It was valid
+  XML in the correct namespace, so nothing failed: a downstream system would have
+  placed every humanitarian alert this product can produce in open water.
+
+  The feed now carries the real alert: headline and description from the alert's
+  own message, the rule and the trigger (`metric value operator threshold`), the
+  reviewed outcome where one exists, and a provenance line saying it is not an
+  official forecast. The area is resolved from the alert's district to that
+  district's real centroid and radius and labelled as a district extent; where no
+  district exists no circle is emitted and the feed says the extent is not
+  established. Urgency is derived from severity, a resolved alert is published as
+  a `Cancel` so downstream systems retire it, and the null-island circle is
+  impossible. Verified across all seeded alerts: 0 at (0,0), 0 placeholder texts.
+
 - **"Warning-to-action median" was this platform's own SMS latency, presented
   against the UNICEF bid target.** The figure is the median hours from a dispatch
   matching a signal to that dispatch being sent — how fast our own API enqueued an

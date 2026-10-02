@@ -1,32 +1,62 @@
-export function renderCapXml(alertEvent, options = {}) {
+import { KNOWN_DISTRICTS } from './districts.js'
+
+/**
+ * Render an alert event as CAP 1.2 XML.
+ *
+ * This is an interchange format: whatever an external alerting system, EWS
+ * gateway or SMS provider reads here is what a community may be told. It was
+ * previously almost entirely placeholder content.
+ *
+ * The generator asked for `headline`, `description`, `event_type`,
+ * `latitude`, `longitude`, `radius_km` and `lead_time_days`. An alert event
+ * carries none of them — it has `message`, `rule_name`, `metric`, `value`,
+ * `threshold`, `operator`, `severity`, `status` and `scope.district` — so every
+ * one of those reads fell through to a default. Every alert published as
+ * "Hazard Alert / A hazard alert has been issued", and the area was emitted as
+ * `<circle>0,0 50</circle>`: a 50 km circle at Null Island in the Gulf of
+ * Guinea, for an alert about Bor. It was valid XML in the correct namespace and
+ * would have placed every humanitarian alert in this system in open water.
+ *
+ * The area is now resolved from the alert's district, with that district's own
+ * centroid and radius, and the description says it is a district extent rather
+ * than a point. Where no district and no coordinates exist, no circle is emitted
+ * at all — an absent location is honest, a fabricated one is not.
+ */
+export function renderCapXml(alertEvent = {}, options = {}) {
   const {
     sender = 'lindela-lite@example.org',
     senderName = 'Lindela Lite',
-    area = 'Affected Region',
-    defaults = {},
+    scope: scopeOverride = null,
   } = options
 
   const identifier = alertEvent.id || `lindela-${Date.now()}`
   const sent = new Date().toISOString()
+
+  // CAP status reflects the alert lifecycle: a withdrawn or resolved alert is
+  // still `Actual` (the message is true) but is published as a Cancel, so a
+  // downstream system retires it rather than leaving it live.
   const status = 'Actual'
-  const msgType = 'Alert'
-  const scope = 'Public'
+  const msgType = ['resolved', 'rejected', 'cancelled'].includes(String(alertEvent.status || '').toLowerCase())
+    ? 'Cancel'
+    : 'Alert'
+  const scope = scopeOverride || 'Public'
 
-  const urgency = computeUrgency(alertEvent.lead_time_days)
-  const severity = mapSeverity(alertEvent.severity || defaults.severity || 'medium')
-  const certainty = alertEvent.confidence ? 'Observed' : (alertEvent.confidence > 70 ? 'Likely' : 'Possible')
+  const district = resolveDistrict(alertEvent)
+  const severity = mapSeverity(alertEvent.severity || 'medium')
+  const urgency = computeUrgency(alertEvent.severity)
+  const certainty = computeCertainty(alertEvent)
   const category = categorizeEvent(alertEvent)
+  const event = escapeXml(eventName(alertEvent))
 
-  const headline = escapeXml(alertEvent.headline || alertEvent.event_type || 'Hazard Alert')
-  const description = escapeXml(
-    alertEvent.description || alertEvent.event_type || 'A hazard alert has been issued.'
+  const headline = escapeXml(headlineFor(alertEvent))
+  const description = escapeXml(descriptionFor(alertEvent, district))
+
+  const areaDesc = escapeXml(
+    district ? `${district.name} district extent` : 'Affected area, extent not established'
   )
-
-  const lat = Number(alertEvent.latitude || 0)
-  const lon = Number(alertEvent.longitude || 0)
-  const radius = Number(alertEvent.radius_km || 50)
-
-  const areaDesc = escapeXml(area || 'Affected Area')
+  const circle = district
+    ? `      <circle>${district.center.lat},${district.center.lon} ${district.radius_km}</circle>`
+    : ''
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
@@ -38,7 +68,7 @@ export function renderCapXml(alertEvent, options = {}) {
   <scope>${scope}</scope>
   <info>
     <category>${category}</category>
-    <event>${escapeXml(alertEvent.event_type || 'Hazard')}</event>
+    <event>${event}</event>
     <urgency>${urgency}</urgency>
     <severity>${severity}</severity>
     <certainty>${certainty}</certainty>
@@ -46,17 +76,86 @@ export function renderCapXml(alertEvent, options = {}) {
     <description>${description}</description>
     <area>
       <areaDesc>${areaDesc}</areaDesc>
-      <circle>${lat},${lon} ${radius}</circle>
+${circle}
     </area>
   </info>
 </alert>`
 }
 
-function computeUrgency(leadTimeDays) {
-  const days = Number(leadTimeDays)
-  if (!Number.isFinite(days) || days <= 0) return 'Immediate'
-  if (days <= 2) return 'Expected'
-  return 'Future'
+/** The alert's district, if it names one we have a real extent for. */
+function resolveDistrict(alertEvent) {
+  const named = alertEvent?.scope?.district || alertEvent?.district || null
+  if (!named) return null
+  const key = String(named).trim().toLowerCase()
+  return KNOWN_DISTRICTS.find((d) => d.slug === key || d.name.toLowerCase() === key) || null
+}
+
+/** What the alert is, from the fields an alert event actually carries. */
+function eventName(alertEvent) {
+  // Hazard events carry `event_type`; alert events carry `metric` and
+  // `rule_name`. Both are matched so the generator works for either shape.
+  const metric = String(alertEvent.metric || '')
+  const rule = String(alertEvent.rule_name || '')
+  const type = String(alertEvent.event_type || '')
+  const text = `${metric} ${rule} ${type}`
+  if (/flood|precip|rain/i.test(text)) return 'Flood'
+  if (/fire|burn/i.test(text)) return 'Wildfire'
+  if (/heat|temperature|temp/i.test(text)) return 'Extreme heat'
+  if (/conflict|violence|attack/i.test(text)) return 'Conflict'
+  if (/disease|fever|case/i.test(text)) return 'Disease'
+  if (/earthquake|quake|seismic/i.test(text)) return 'Earthquake'
+  if (rule) return rule
+  return 'Hazard alert'
+}
+
+function headlineFor(alertEvent) {
+  const message = String(alertEvent.message || '').trim()
+  if (message) return message.length > 200 ? `${message.slice(0, 197)}...` : message
+  if (alertEvent.event_type) return String(alertEvent.event_type)
+  return eventName(alertEvent)
+}
+
+function descriptionFor(alertEvent, district) {
+  const parts = []
+  const rule = alertEvent.rule_name ? `Rule: ${alertEvent.rule_name}.` : null
+  if (rule) parts.push(rule)
+  if (alertEvent.metric) {
+    const v = alertEvent.value
+    const t = alertEvent.threshold
+    const op = alertEvent.operator || '>='
+    parts.push(`Trigger: ${alertEvent.metric} ${v ?? '—'} ${op} ${t ?? '—'}.`)
+  }
+  if (district) parts.push(`Area: ${district.name} district extent, ${district.radius_km} km from the district centroid.`)
+  else parts.push('Area: extent not established for this alert; no coordinates are asserted.')
+  if (alertEvent.false_alert === true) parts.push('Reviewed outcome: recorded as a false alarm.')
+  else if (alertEvent.false_alert === false) parts.push('Reviewed outcome: recorded as a warranted alert.')
+  else if (alertEvent.false_alert === null && ['resolved', 'rejected'].includes(String(alertEvent.status || '').toLowerCase())) {
+    parts.push('Reviewed outcome: not determined.')
+  }
+  parts.push('Generated by Lindela Lite from public monitoring data; not an official forecast.')
+  return parts.join(' ')
+}
+
+/**
+ * Urgency from severity.
+ *
+ * It previously read `lead_time_days`, which no alert event carries, so every
+ * alert published as `Immediate` — including a `low` severity observation.
+ */
+function computeUrgency(severity) {
+  const normalized = String(severity || '').toLowerCase()
+  if (normalized === 'critical' || normalized === 'extreme') return 'Immediate'
+  if (normalized === 'high' || normalized === 'severe') return 'Expected'
+  if (normalized === 'low' || normalized === 'minor') return 'Future'
+  return 'Expected'
+}
+
+function computeCertainty(alertEvent) {
+  const confidence = Number(alertEvent.confidence)
+  if (!Number.isFinite(confidence)) return 'Likely'
+  if (confidence >= 80) return 'Observed'
+  if (confidence >= 50) return 'Likely'
+  return 'Possible'
 }
 
 function mapSeverity(severity) {
@@ -69,7 +168,9 @@ function mapSeverity(severity) {
 }
 
 function categorizeEvent(alertEvent) {
-  const eventType = String(alertEvent.event_type || '').toLowerCase()
+  const eventType = String(
+    alertEvent.event_type || alertEvent.rule_name || alertEvent.metric || eventName(alertEvent)
+  ).toLowerCase()
   if (/flood|storm|cyclone|hurricane|typhoon/i.test(eventType)) return 'Met'
   if (/fire|wildfire|volcanic/i.test(eventType)) return 'Safety'
   if (/conflict|violence|attack/i.test(eventType)) return 'Security'

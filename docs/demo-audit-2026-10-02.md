@@ -24,7 +24,12 @@ Three methods, in increasing order of yield:
    headline KPI mislabelled against a UNICEF bid target. Every dashboard check
    passed, because the label is correct on the screen and wrong in the document
    that leaves the building.
-5. **Using the feature.** Walking a surface end to end found the scenario
+5. **Extracting the other artefacts.** The quarterly PDF found a mislabelled KPI
+   against a UNICEF bid target; the CAP feed — the format external alerting
+   systems consume — turned out to be placeholder text with every alert placed at
+   Null Island. Both are valid documents. Neither was wrong in any field a
+   dashboard check would read.
+6. **Using the feature.** Walking a surface end to end found the scenario
    workbench was entirely dead and the offline queue never replayed. Neither
    produced a console error, because both caught their own failures and printed
    them as text — the one class of breakage that is invisible to every assertion
@@ -60,6 +65,7 @@ produced it. Two green suites had been passing for the wrong reason.
 | 21 | The scenario workbench did not run at all: `json.data` on a top-level response, then a `null` element id. Errors were caught and shown as text, so every check passed. | exercising the last unexamined surface | `see changelog` |
 | 22 | Scenario deltas labelled "(mean %)" and coloured red, from an uncalibrated score. Every asset showed a fabricated +75 change because no baseline was ever attached. | reading the rendered result | see changelog |
 | 23 | "Warning-to-action median" was the platform's own SMS dispatch latency, labelled against the UNICEF <24h bid target — 0.16 h next to a humanitarian outcome the system never measures. | extracting text from the quarterly PDF | see changelog |
+| 24 | The CAP alert feed was placeholder text with a 50 km circle at (0,0) for every alert, because it read fields alert events do not carry. Valid XML, wrong location. | extracting the interchange artefact | `see changelog` |
 
 ## Two green suites passing for the wrong reason
 
