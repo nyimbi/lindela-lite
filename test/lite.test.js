@@ -222,6 +222,102 @@ describe('Lindela Lite connectors SDK', () => {
   })
 })
 
+describe('Lindela Lite report content and scope', () => {
+  it('refuses to mark an ungenerated report approved or distributed', async () => {
+    // POST and PATCH set `status` through normalizeReport, bypassing
+    // approveReport. A client could declare a report `distributed` with no
+    // sections: an empty SITREP that rendered as a title and four metadata lines
+    // and looked finished to every consumer.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-empty-report-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://localhost:${listener.address().port}`
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/reports`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          report_type: 'situation_report',
+          title: 'Empty distributed SITREP',
+          status: 'distributed',
+          sections: [],
+        }),
+      })
+      assert.equal(res.status, 400)
+      const body = await res.json()
+      assert.equal(body.success, false)
+      assert.match(body.error, /must be generated before approval or distribution/)
+    } finally {
+      listener.close()
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('never reports zero figures for a report with no content', () => {
+    // With no sections the metric lookups fall back to 0, so every ungenerated
+    // report announced "0 incidents, 0 open alerts" over SMS — a positive claim
+    // that the district was quiet, sent to the people meant to act on it.
+    const summary = formatReportSmsSummary({
+      id: 'report_empty',
+      title: 'Turkana Flood SITREP W37',
+      sections: [],
+    })
+    assert.match(summary, /not generated/i)
+    assert.ok(!/0 incidents/.test(summary), 'must not assert zero incidents')
+    assert.ok(!/0 open alerts/.test(summary), 'must not assert zero alerts')
+  })
+
+  it('renders a visible warning when a report has no sections', () => {
+    const md = renderReportMarkdown({ id: 'r', title: 'Empty', status: 'ready', sections: [] })
+    assert.match(md, /no generated sections/i)
+    assert.match(md, /must not be used as a situation picture/i)
+  })
+
+  it('scopes a district report to that district, not the whole store', () => {
+    // `district` is not a key filterRecords understands, so a district-scoped
+    // report fell through to no filtering: the "Turkana Flood SITREP" reported
+    // all 280 hazard events in the store, from Indonesia, Brazil and Australia.
+    const data = {
+      report_templates: [],
+      source_runs: [], climate_observations: [], risk_scores: [], data_quality: [],
+      service_assets: [], impact_assessments: [], interventions: [], intervention_tasks: [],
+      field_reports: [], response_resources: [], rapidpro_dispatches: [],
+      rapidpro_inbound_messages: [], alert_events: [],
+      incidents: [
+        { id: 'inc-turkana', latitude: 3.12, longitude: 35.6 },
+        { id: 'inc-bor', latitude: 6.21, longitude: 31.55 },
+      ],
+      hazard_events: [
+        { id: 'hz-turkana', latitude: 3.4, longitude: 35.9 },
+        { id: 'hz-brazil', latitude: -15.8, longitude: -47.9 },
+        { id: 'hz-unlocatable', event_type: 'flood' },
+      ],
+      conflict_events: [],
+    }
+    const context = resolveReportContext(data, { district: 'Turkana' })
+    assert.deepEqual(context.incidents.map((r) => r.id), ['inc-turkana'])
+    assert.deepEqual(context.events.map((r) => r.id), ['hz-turkana'])
+    // The unlocatable record is excluded from district counts, not silently counted.
+    assert.ok(!context.events.some((r) => r.id === 'hz-unlocatable'))
+    assert.ok(context.district_attribution.unlocatable >= 1)
+  })
+
+  it('warns when scope cannot be assessed for a district', () => {
+    const data = {
+      report_templates: [], source_runs: [], climate_observations: [], risk_scores: [],
+      service_assets: [], impact_assessments: [], interventions: [], intervention_tasks: [],
+      field_reports: [], response_resources: [], rapidpro_dispatches: [],
+      rapidpro_inbound_messages: [], alert_events: [], incidents: [], conflict_events: [],
+      hazard_events: [{ id: 'hz-unlocatable', event_type: 'flood' }],
+      data_quality: [{ id: 'dq-1', freshness: 'stale', confidence: 0.9 }],
+    }
+    const warnings = buildReportWarnings(resolveReportContext(data, { district: 'Turkana' }))
+    assert.ok(warnings.some((w) => /could not be attributed to this district/i.test(w)))
+    assert.ok(warnings.some((w) => /source freshness and confidence could not be assessed/i.test(w)))
+  })
+})
+
 describe('Lindela Lite scenario workbench', () => {
   const testData = {
     climate_observations: [
@@ -3906,6 +4002,7 @@ describe('Demo seed', () => {
 
 import { KNOWN_DISTRICTS, resolveDistrict, districtOverview } from '../src/districts.js'
 import { computeMonthlyKpiSeries, computeSparklineData, refreshKpiSnapshots } from '../src/kpi.js'
+import { resolveReportContext, buildReportWarnings, formatReportSmsSummary, renderReportMarkdown } from '../src/reports.js'
 
 describe('Lindela Lite districts API', () => {
   async function makeServer() {

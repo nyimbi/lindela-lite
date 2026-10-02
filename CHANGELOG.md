@@ -56,6 +56,42 @@ no existing endpoint changed shape.
 
 ### Fixed
 
+- **Every report was an empty document, and every district report contained the
+  whole store.** `scripts/seed-demo.mjs` built reports with `normalizeReport`
+  alone, which sets `section_ids` from the template and leaves `sections` empty.
+  All six demo reports therefore rendered as a title and four metadata lines with
+  no summary, no figures and no findings; their CSV and GeoJSON provenance
+  appendix exported zero records; and `formatReportSmsSummary` found no metrics to
+  read, so every SMS read *"0 incidents, 0 open alerts"* — a positive claim that a
+  district was quiet, sent to the people meant to act on it. Two of these were
+  marked `distributed` and one `approved`.
+
+  Reports are now generated before their lifecycle status is applied, so they
+  carry sections, source refs and warnings. A report with no sections cannot be
+  approved or distributed: `approveReport` already refused, but POST and PATCH set
+  `status` through `normalizeReport`, so a client could declare one `distributed`
+  with no content and no warnings. The SMS summary now says a report is not
+  generated instead of asserting zero, and an empty report renders a visible
+  warning that it must not be used as a situation picture.
+
+- **A district-scoped report reported global data as district figures.** `district`
+  is not a key `filterRecords` understands, and it ignores unknown parameters
+  silently, so a report scoped to `district=Turkana` fell through to *no filtering
+  at all*: the Turkana Flood SITREP presented all 280 hazard events in the store —
+  Indonesia, Brazil, Australia, Chad — as though they were Turkana's. Most
+  collections carry no district label, so a district cannot be read off a record
+  the way a country can. A district report now counts only records attributable to
+  that district, using the district extent for geo-located records and its label
+  otherwise, and reports how many records it excluded and why. Scope keys that are
+  not supported filters are named in the report's warnings rather than ignored.
+
+  Making the reports non-empty made this visible: the first regenerated Turkana
+  SITREP confidently reported 280 events, which is the global total. It now reports
+  what is attributable and states that 490 records carry no location or district
+  label. Source freshness could not be assessed for any district either — all nine
+  data-quality records are unattributed — and the reports say so instead of
+  implying the sources are fine.
+
 - **The CAP alert feed was placeholder content with a fabricated location.** CAP is
   the interchange format external alerting systems, EWS gateways and SMS providers
   consume. The generator read `headline`, `description`, `event_type`,

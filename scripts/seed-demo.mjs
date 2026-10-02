@@ -9,6 +9,7 @@ import { normalizeServiceAsset } from '../src/connectors/uploads.js'
 import {
   normalizeReportTemplate,
   normalizeReport,
+  generateReportSections,
   normalizeDistributionRun,
   normalizeReportSchedule,
   normalizeScheduleRun,
@@ -690,8 +691,10 @@ function buildReportTemplates() {
   ]
 }
 
-function buildReports(templates) {
-  const data = { report_templates: templates }
+function buildReports(templates, storeData) {
+  // The generator reads every collection to build section metrics and source
+  // refs, so it needs the store as it stands at this point in the seed.
+  const data = { ...storeData, report_templates: templates }
   const titledReports = [
     { template_id: 'tmpl-sitrep', title: 'Turkana Flood SITREP W37', status: 'distributed', scope: { district: 'Turkana' }, generated_at: daysAgo(3), approved_at: daysAgo(2), distributed_at: daysAgo(2) },
     { template_id: 'tmpl-sitrep', title: 'Bor Flood SITREP W37', status: 'approved', scope: { district: 'Bor' }, generated_at: daysAgo(2), approved_at: daysAgo(1) },
@@ -700,7 +703,31 @@ function buildReports(templates) {
     { template_id: 'tmpl-alert-digest', title: 'Weekly Alert Digest W37', status: 'ready', scope: {}, generated_at: daysAgo(1) },
     { template_id: 'tmpl-sitrep', title: 'Mandera Conflict SITREP W37', status: 'draft', scope: { district: 'Mandera' } },
   ]
-  return titledReports.map((r, i) => normalizeReport({ id: stableId('report', ['demo', r.title]), ...r, owner: FOCAL_POINTS[i % FOCAL_POINTS.length].name }, data))
+  // These reports used to be built with `normalizeReport` alone, which sets
+  // `section_ids` from the template and leaves `sections` empty. Every seeded
+  // report therefore rendered as a title and four metadata lines, its CSV and
+  // GeoJSON provenance appendix exported zero records, and its SMS summary read
+  // "0 incidents, 0 open alerts". Two were marked `distributed` and one
+  // `approved` — empty documents that every consumer read as finished.
+  //
+  // Sections are generated first, then the lifecycle status is applied, because
+  // generation promotes a draft to `ready` and a report cannot be approved or
+  // distributed without content.
+  return titledReports.map((r, i) => {
+    const draft = normalizeReport({
+      id: stableId('report', ['demo', r.title]),
+      ...r,
+      status: 'draft',
+      owner: FOCAL_POINTS[i % FOCAL_POINTS.length].name,
+    }, data)
+    const generated = generateReportSections(draft, data)
+    return normalizeReport({
+      ...generated,
+      status: r.status,
+      approved_at: r.approved_at ?? null,
+      distributed_at: r.distributed_at ?? null,
+    }, data, generated)
+  })
 }
 
 function buildDistributionRuns(reports) {
@@ -811,7 +838,7 @@ export async function seedAll(store) {
   const templates = buildReportTemplates()
   await store.merge({ report_templates: templates })
 
-  const reports = buildReports(templates)
+  const reports = buildReports(templates, await store.read())
   await store.merge({ reports })
 
   const scheduleRuns = [

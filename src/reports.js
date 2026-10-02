@@ -6,7 +6,8 @@ import {
   REPORT_TEMPLATE_STATUSES,
   REPORT_TYPES,
 } from './schema.js'
-import { filterRecords, stableId, toNumber } from './utils.js'
+import { filterRecords, stableId, toNumber, haversineKm } from './utils.js'
+import { resolveDistrict } from './districts.js'
 
 export const SECTION_LIBRARY = Object.freeze([
   'executive_summary',
@@ -103,15 +104,25 @@ export function normalizeReport(input = {}, data, existing = null) {
   const createdAt = existing?.created_at || input.created_at || now
   const title = input.title || existing?.title || renderTitle(template?.title_pattern || defaultTitlePattern(reportType), scope, now)
   const sectionIds = sectionList(input.section_ids || input.sections?.map?.((section) => section.id) || existing?.section_ids || template?.sections || DEFAULT_REPORT_SECTIONS[reportType])
+  const sections = arrayValue(input.sections ?? existing?.sections)
+  const status = enumValue(input.status || existing?.status || 'draft', REPORT_STATUSES, 'status')
+  // A report with no sections renders as a title and four metadata lines, and its
+  // SMS summary has no figures to draw. `approveReport` has always refused to
+  // approve one, but POST and PATCH set `status` directly through this function,
+  // so a client could declare a report `distributed` with no content and no
+  // warnings — an empty SITREP that looked finished to every consumer.
+  if (['approved', 'distributed'].includes(status) && !sections.length) {
+    throw Object.assign(new Error('Report must be generated before approval or distribution'), { statusCode: 400 })
+  }
   return stripUndefined({
     id: existing?.id || input.id || stableId('report', [template?.id, reportType, title, createdAt]),
     template_id: template?.id || input.template_id || existing?.template_id || null,
     report_type: reportType,
-    status: enumValue(input.status || existing?.status || 'draft', REPORT_STATUSES, 'status'),
+    status,
     title,
     scope,
     section_ids: sectionIds,
-    sections: arrayValue(input.sections ?? existing?.sections),
+    sections,
     source_refs: arrayValue(input.source_refs ?? existing?.source_refs),
     warnings: arrayValue(input.warnings ?? existing?.warnings),
     narrative: objectValue(input.narrative ?? existing?.narrative),
@@ -258,6 +269,13 @@ export function renderReportMarkdown(report, { locale = 'en', plain = false } = 
     `- Scope: ${Object.entries(report.scope || {}).map(([key, value]) => `${key}=${value}`).join(', ') || 'all records'}`,
     '',
   ]
+  if (!(report.sections || []).length) {
+    // Otherwise this renders as a title and four metadata lines, which reads as
+    // a complete but very short report rather than an ungenerated one.
+    lines.push('## Warnings', '')
+    lines.push('- This report has no generated sections. It contains no findings and must not be used as a situation picture.')
+    lines.push('')
+  }
   if (report.warnings?.length) {
     lines.push('## Warnings', '')
     for (const warning of report.warnings) lines.push(`- ${warning}`)
@@ -361,6 +379,14 @@ export function recordsForReportSources(report, data) {
 
 export function formatReportSmsSummary(report) {
   const sections = report.sections || []
+  // Without sections there are no metrics to read, so the counts below fall back
+  // to 0. That made every ungenerated report announce "0 incidents, 0 open
+  // alerts" over SMS — a positive claim that the district was quiet, sent to the
+  // people meant to act on it. An absent figure is reported as absent.
+  if (!sections.length) {
+    const title = report.title || 'Lindela report'
+    return `${title}: report not generated, no figures available. Report ${report.id}`.replace(/\s+/g, ' ').slice(0, 320)
+  }
   const incidentSection = sections.find((section) => section.id === 'incident_summary')
   const alertSection = sections.find((section) => section.id === 'alert_summary')
   const incidents = incidentSection?.content?.metrics?.open_incidents ?? incidentSection?.content?.metrics?.total_incidents ?? 0
@@ -369,29 +395,147 @@ export function formatReportSmsSummary(report) {
   return `${title}: ${incidents} incidents, ${alerts} open alerts. Report ${report.id}`.replace(/\s+/g, ' ').slice(0, 320)
 }
 
-function resolveReportContext(data, scope = {}) {
+/**
+ * Filter keys `filterRecords` actually honours. Anything else in a report scope
+ * is ignored by it — silently.
+ */
+const APPLIED_FILTER_KEYS = new Set([
+  'bbox', 'country', 'source', 'event_type', 'report_type', 'type', 'severity',
+  'status', 'priority', 'incident_id', 'intervention_id', 'service_type',
+  'owner', 'template_id', 'schedule_id', 'from', 'to', 'limit',
+])
+
+export function resolveReportContext(data, scope = {}) {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(scope || {})) {
     if (value !== null && value !== undefined && value !== '') query.set(key, value)
   }
-  return {
-    source_runs: filterRecords(data.source_runs, query),
-    climate_observations: filterRecords(data.climate_observations, query),
-    events: filterRecords([...data.hazard_events, ...data.conflict_events], query),
-    service_assets: filterRecords(data.service_assets, query),
-    impact_assessments: filterRecords(data.impact_assessments, query),
-    risk_scores: filterRecords(data.risk_scores, query),
-    data_quality: filterRecords(data.data_quality, query),
-    incidents: filterRecords(data.incidents, query),
-    interventions: filterRecords(data.interventions, query),
-    intervention_tasks: filterRecords(data.intervention_tasks, query),
-    field_reports: filterRecords(data.field_reports, query),
-    response_resources: filterRecords(data.response_resources, query),
-    alert_events: filterRecords(data.alert_events, query),
-    rapidpro_dispatches: filterRecords(data.rapidpro_dispatches, query),
-    rapidpro_inbound_messages: filterRecords(data.rapidpro_inbound_messages, query),
+
+  // `district` is not a key filterRecords understands, so a district-scoped
+  // report used to fall through to no filtering at all. The "Turkana Flood
+  // SITREP" then reported all 280 hazard events in the store — Indonesia,
+  // Brazil, Australia, Chad — as though they were Turkana's.
+  //
+  // Most collections carry no district label, so a district cannot be derived
+  // from the record the way a country can. Where a record is geo-located it is
+  // filtered against the district extent; where it is not, the count is
+  // unscoped and the report says so rather than presenting it as a district
+  // figure.
+  const districtSlug = scope?.district || null
+  const district = districtSlug ? resolveDistrict(districtSlug) : null
+  const scoped = (records = []) => (district ? filterByDistrict(records, district) : records)
+  const scopedLabels = (records = []) => (district ? filterByDistrict(records, district) : records)
+
+  const raw = {
+    source_runs: data.source_runs,
+    climate_observations: data.climate_observations,
+    events: [...data.hazard_events, ...data.conflict_events],
+    service_assets: data.service_assets,
+    impact_assessments: data.impact_assessments,
+    risk_scores: data.risk_scores,
+    data_quality: data.data_quality,
+    incidents: data.incidents,
+    interventions: data.interventions,
+    intervention_tasks: data.intervention_tasks,
+    field_reports: data.field_reports,
+    response_resources: data.response_resources,
+    alert_events: data.alert_events,
+    rapidpro_dispatches: data.rapidpro_dispatches,
+    rapidpro_inbound_messages: data.rapidpro_inbound_messages,
   }
+  const sources = {
+    source_runs: scoped(data.source_runs),
+    climate_observations: scopedLabels(data.climate_observations),
+    events: scopedLabels([...data.hazard_events, ...data.conflict_events]),
+    service_assets: scopedLabels(data.service_assets),
+    impact_assessments: scoped(data.impact_assessments),
+    risk_scores: scoped(data.risk_scores),
+    data_quality: scoped(data.data_quality),
+    incidents: scoped(data.incidents),
+    interventions: scoped(data.interventions),
+    intervention_tasks: scoped(data.intervention_tasks),
+    field_reports: scoped(data.field_reports),
+    response_resources: scoped(data.response_resources),
+    alert_events: scoped(data.alert_events),
+    rapidpro_dispatches: scoped(data.rapidpro_dispatches),
+    rapidpro_inbound_messages: scoped(data.rapidpro_inbound_messages),
+  }
+  const context = {}
+  for (const [key, records] of Object.entries(sources)) {
+    context[key] = key === 'events' ? records : filterRecords(records, query)
+  }
+
+  const ignored = Object.keys(scope || {}).filter(
+    (key) => !APPLIED_FILTER_KEYS.has(key) && key !== 'district',
+  )
+  if (ignored.length) context.ignored_scope_keys = ignored
+  if (districtSlug && !district) context.unresolved_district = String(districtSlug)
+  // Summarised from the raw collections: the filtered ones contain only
+  // attributable records, which would report nothing left unattributed.
+  context.district_attribution = summariseAttribution(raw, district)
+  if (district) context.raw_source_quality_count = (data.data_quality || []).length
+  return context
 }
+
+/**
+ * Keep a geo-located record only when it falls inside the district extent, and
+ * mark the rest so callers can tell an unscoped count from a district one.
+ *
+ * A record with no location is kept but marked: dropping it would quietly
+ * remove evidence, which is the opposite error. It is counted, and reported as
+ * not attributable to the district.
+ */
+function filterByDistrict(records, district) {
+  const names = districtLabels(district)
+  const marked = markDistrictAttribution(records, district, names)
+  // A district-scoped report counts only records attributable to that district.
+  //
+  // An unplaceable record is excluded from the district counts rather than kept:
+  // keeping it produced "Turkana Flood SITREP: 280 events" for a store holding
+  // 280 global hazard events from Indonesia, Brazil and Australia. A warning
+  // alongside that number did not stop it being read as Turkana's. The excluded
+  // records are still reported as a count, so nothing disappears silently.
+  return marked.filter((item) => item._district_attributed === true)
+}
+
+function markDistrictAttribution(records, district, names) {
+  return (records || []).map((item) => {
+    if (Number.isFinite(item.latitude) && Number.isFinite(item.longitude)) {
+      const distance = haversineKm(
+        { latitude: district.center.lat, longitude: district.center.lon },
+        { latitude: item.latitude, longitude: item.longitude },
+      )
+      return { ...item, _district_attributed: distance <= district.radius_km }
+    }
+    const labelled = [item.district, item.region, item.region_name, item.admin1, item.scope?.district]
+      .some((value) => typeof value === 'string' && names.includes(value.toLowerCase()))
+    return { ...item, _district_attributed: labelled ? true : null }
+  })
+}
+
+function districtLabels(district) {
+  return [district.slug, district.name, district.name.toLowerCase()].map((value) => String(value).toLowerCase())
+}
+
+function summariseAttribution(sources, district) {
+  if (!district) return null
+  const names = districtLabels(district)
+  let inDistrict = 0
+  let unlocatable = 0
+  let outside = 0
+  for (const records of Object.values(sources)) {
+    if (!Array.isArray(records)) continue
+    // Raw records carry no attribution marker; it is applied here rather than
+    // read off records that have already been through the filter.
+    for (const { _district_attributed: state } of markDistrictAttribution(records, district, names)) {
+      if (state === true) inDistrict += 1
+      else if (state === null) unlocatable += 1
+      else outside += 1
+    }
+  }
+  return { in_district: inDistrict, unlocatable, outside, total: inDistrict + unlocatable + outside }
+}
+
 
 function buildSection(id, context, report, generatedAt) {
   const builders = {
@@ -581,13 +725,32 @@ function content(summary, metrics = {}, sourceRefs = [], items = []) {
   return { summary, metrics, items, source_refs: uniqueRefs(sourceRefs), markdown: lines.join('\n') }
 }
 
-function buildReportWarnings(context) {
+export function buildReportWarnings(context) {
   const warnings = []
   const stale = context.data_quality.filter((item) => item.freshness === 'stale')
   const lowConfidence = context.data_quality.filter((item) => toNumber(item.confidence, 1) < 0.5)
   if (stale.length) warnings.push(`${stale.length} source quality records are stale.`)
   if (lowConfidence.length) warnings.push(`${lowConfidence.length} source quality records are below 0.5 confidence.`)
   if (!context.source_runs.length && !context.events.length && !context.incidents.length) warnings.push('Report has limited source data in scope.')
+  if (context.raw_source_quality_count && !context.data_quality.length) {
+    warnings.push(
+      `No source quality record could be attributed to this district, so source freshness and confidence could not be assessed for it. ` +
+      `${context.raw_source_quality_count} exist without district attribution.`,
+    )
+  }
+  if (context.unresolved_district) {
+    warnings.push(`Scope names district "${context.unresolved_district}", which is not a district this system knows. Scope was not applied.`)
+  }
+  if (context.ignored_scope_keys?.length) {
+    warnings.push(`Scope key(s) ${context.ignored_scope_keys.join(', ')} are not supported filters and were not applied.`)
+  }
+  const attribution = context.district_attribution
+  if (attribution && attribution.unlocatable) {
+    warnings.push(
+      `${attribution.unlocatable} record(s) carry no location or district label and could not be attributed to this district; ` +
+      `they are excluded from the figures below. ${attribution.in_district} record(s) were attributed.`,
+    )
+  }
   return warnings
 }
 

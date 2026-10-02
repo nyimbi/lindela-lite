@@ -29,7 +29,13 @@ Three methods, in increasing order of yield:
    systems consume — turned out to be placeholder text with every alert placed at
    Null Island. Both are valid documents. Neither was wrong in any field a
    dashboard check would read.
-6. **Using the feature.** Walking a surface end to end found the scenario
+6. **Reading the report artefacts.** Opening a report marked `distributed` gave a
+   title and four metadata lines; its SMS summary claimed zero incidents and zero
+   alerts. The fix that made reports non-empty then exposed the scope bug — the
+   regenerated Turkana SITREP reported all 280 events in the store, which is the
+   global total, not Turkana's. An absent document and a wrongly-scoped document
+   are the same failure wearing different clothes.
+7. **Using the feature.** Walking a surface end to end found the scenario
    workbench was entirely dead and the offline queue never replayed. Neither
    produced a console error, because both caught their own failures and printed
    them as text — the one class of breakage that is invisible to every assertion
@@ -66,6 +72,8 @@ produced it. Two green suites had been passing for the wrong reason.
 | 22 | Scenario deltas labelled "(mean %)" and coloured red, from an uncalibrated score. Every asset showed a fabricated +75 change because no baseline was ever attached. | reading the rendered result | see changelog |
 | 23 | "Warning-to-action median" was the platform's own SMS dispatch latency, labelled against the UNICEF <24h bid target — 0.16 h next to a humanitarian outcome the system never measures. | extracting text from the quarterly PDF | see changelog |
 | 24 | The CAP alert feed was placeholder text with a 50 km circle at (0,0) for every alert, because it read fields alert events do not carry. Valid XML, wrong location. | extracting the interchange artefact | `see changelog` |
+| 25 | Every report was an empty document — `section_ids` set, `sections` empty — so exports had no content and SMS summaries announced "0 incidents, 0 open alerts". Two were marked `distributed`. | opening a distributed report | `see changelog` |
+| 26 | `filterRecords` ignores unknown parameters, so a `district`-scoped report applied no filter at all: the Turkana SITREP reported all 280 hazard events from 50+ countries as district figures. | comparing report scope against the store | `see changelog` |
 
 ## Two green suites passing for the wrong reason
 
