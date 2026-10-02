@@ -90,6 +90,21 @@ export function sevChip(severity) {
   return `chip chip-${sevClass(severity)}`
 }
 
+/**
+ * A duration, in the largest unit that stays readable.
+ *
+ * The status bar rendered every lag in minutes — "2880m" for two days — because
+ * the unit was baked into the template rather than chosen.
+ */
+export function formatDuration(minutes, { dash = '—' } = {}) {
+  if (minutes === null || minutes === undefined || !Number.isFinite(Number(minutes))) return dash
+  const n = Number(minutes)
+  const abs = Math.abs(n)
+  if (abs < 60) return `${Math.round(n)} min`
+  if (abs < 1440) return `${(n / 60).toFixed(1)} h`
+  return `${(n / 1440).toFixed(1)} d`
+}
+
 // =============================================================
 // Time
 // =============================================================

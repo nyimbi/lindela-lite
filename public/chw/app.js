@@ -95,17 +95,47 @@ async function requestUserLocation() {
   )
 }
 
+/**
+ * Move to another wizard screen.
+ *
+ * This used to toggle a class and stop. A screen-reader user pressing "Next"
+ * heard nothing and focus stayed on the button they had just hidden, so the
+ * next thing they reached was the top of the document rather than the new
+ * screen. Focus now moves to the new screen's heading and the change is
+ * announced.
+ */
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'))
   const screen = $(`${name}Screen`)
-  if (screen) screen.classList.add('active')
+  if (!screen) return
+  screen.classList.add('active')
   state.currentScreen = name
+
+  const heading = screen.querySelector('.screen-title')
+  if (heading) {
+    // tabindex=-1 so the heading can take focus without joining the tab order.
+    if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1')
+    heading.focus({ preventScroll: true })
+    screen.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }
+
+  const announcer = $('screenAnnouncer')
+  if (announcer && heading) {
+    // Re-set to the same text does not re-announce; clear first.
+    announcer.textContent = ''
+    requestAnimationFrame(() => { announcer.textContent = heading.textContent.trim() })
+  }
 }
 
-function showToast(message) {
+let toastTimer = null
+
+function showToast(message, kind = 'info') {
   toast.textContent = message
+  toast.dataset.kind = kind
   toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 3000)
+  clearTimeout(toastTimer)
+  // Long enough to be read aloud by a screen reader before it is cleared.
+  toastTimer = setTimeout(() => toast.classList.remove('show'), kind === 'error' ? 8000 : 5000)
 }
 
 function setupHomeScreen() {
@@ -215,15 +245,15 @@ async function submitSymptomReport() {
   try {
     if (!navigator.onLine) {
       await window.lindelaQueue.enqueue('/api/v1/chw/report', { method: 'POST', body })
-      showToast(t('chw.queued') || 'Queued')
+      showToast(t('chw.report_queued', { what: 'symptom report' }), 'info')
     } else {
       const res = await apiFetch('/api/v1/chw/report', { method: 'POST', body })
-      showToast(t('chw.sent') || 'Sent')
+      showToast(t('chw.report_sent', { what: 'symptom report' }), 'ok')
     }
     state.symptom = { who: null, type: null, duration: null, location: null }
     showScreen('home')
   } catch (error) {
-    showToast(`Error: ${error.message}`)
+    showToast(t('chw.save_failed', { reason: error.message }), 'error')
   }
 }
 
@@ -257,10 +287,10 @@ function setupIncidentScreen() {
     try {
       if (!navigator.onLine) {
         await window.lindelaQueue.enqueue('/api/v1/chw/report', { method: 'POST', body })
-        showToast(t('chw.queued') || 'Queued')
+        showToast(t('chw.report_queued', { what: 'symptom report' }), 'info')
       } else {
         const res = await apiFetch('/api/v1/chw/report', { method: 'POST', body })
-        showToast(t('chw.sent') || 'Sent')
+        showToast(t('chw.report_sent', { what: 'symptom report' }), 'ok')
       }
       categorySelect.value = ''
       $('incidentDescription').value = ''
@@ -268,7 +298,7 @@ function setupIncidentScreen() {
       state.incident = { category: null, description: null, location: null }
       showScreen('home')
     } catch (error) {
-      showToast(`Error: ${error.message}`)
+      showToast(t('chw.save_failed', { reason: error.message }), 'error')
     }
   })
 
@@ -304,18 +334,18 @@ function setupReplyScreen() {
           method: 'POST',
           body: { alert_event_id: alertId, message },
         })
-        showToast(t('chw.queued') || 'Queued')
+        showToast(t('chw.report_queued', { what: 'symptom report' }), 'info')
       } else {
         const res = await apiFetch('/api/v1/chw/reply', {
           method: 'POST',
           body: { alert_event_id: alertId, message },
         })
-        showToast(t('chw.sent') || 'Sent')
+        showToast(t('chw.report_sent', { what: 'symptom report' }), 'ok')
       }
       $('replyMessage').value = ''
       showScreen('home')
     } catch (error) {
-      showToast(`Error: ${error.message}`)
+      showToast(t('chw.save_failed', { reason: error.message }), 'error')
     }
   })
 

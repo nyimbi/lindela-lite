@@ -780,8 +780,13 @@ body.app-shell {
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--ink);
-  flex: 1;
+  /* Takes the remaining width on its own line. Sharing the row with a
+     nowrap timestamp left ~150px for the title in a 360px rail, so
+     "Conflict Proximity Alert" wrapped across three lines and the alert list
+     read as a column of fragments. */
+  flex: 1 1 100%;
   min-width: 0;
+  line-height: 1.35;
 }
 
 .alert-item-meta {
@@ -800,9 +805,9 @@ body.app-shell {
 .alert-timestamp {
   font-size: var(--text-xs);
   color: var(--ink-faint);
-  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .item-actions {
@@ -1629,12 +1634,17 @@ dialog[open] {
   font-size: var(--text-xs);
 }
 
+/* inline-flex with a gap turned every text node into a flex item, so the
+   status bar read "Last signal : —" with a space on each side of every colon.
+   These are label/value pairs, not toolbars: they flow inline, and the only
+   gap is the one that belongs between metrics. */
 .statusbar-metric {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
+  display: inline;
   color: var(--ink-muted);
+  white-space: nowrap;
 }
+
+.statusbar-metric + .statusbar-metric { margin-inline-start: var(--sp-4); }
 
 .statusbar-metric span:first-child {
   font-weight: 500;
@@ -2030,4 +2040,135 @@ label:has(> input[type="radio"]) {
   input[type="radio"] { width: 1.5rem; height: 1.5rem; }
 
   .btn-icon { min-width: var(--tap-target-min); }
+}
+
+/* --- Workflow summary --------------------------------------------
+   The ribbon showed eight tiles labelled with alert-rule names, each carrying
+   an open count. They read as eight KPIs when they are one number split eight
+   ways, and the totals appeared nowhere. The summary leads; the tiles are
+   explicitly a breakdown. */
+.workflow-summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-1) var(--sp-2);
+  flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--stroke);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.workflow-summary-count {
+  font-size: var(--text-h2);
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.workflow-summary-sep { color: var(--ink-faint); }
+.workflow-summary-rejected { color: var(--warn); }
+.workflow-summary-breakdown {
+  margin-inline-start: auto;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+}
+
+.workflow-metric[tabindex] { cursor: pointer; }
+.workflow-metric.active {
+  border-color: var(--brand);
+  box-shadow: inset 0 0 0 1px var(--brand);
+}
+
+.workflow-empty { padding: var(--sp-3); color: var(--ink-muted); font-size: var(--text-sm); }
+
+/* --- Print ----------------------------------------------------
+   There was no print stylesheet anywhere in the product. For a tool where a
+   dispatch decision or an equity audit gets printed and filed, that means
+   printing a black rectangle: the dark background, the map chrome and the
+   filter controls all come out, and the alert list comes out on whatever paper
+   happens to be in the tray. */
+@media print {
+  :root {
+    /* Force light. The token layer is dark-only, so every surface is inverted
+       at the token level rather than by overriding hundreds of rules. */
+    --bg: #fff;
+    --bg-elevated: #fff;
+    --surface: #f4f4f5;
+    --surface-hover: #e9e9ec;
+    --ink: #111;
+    --ink-muted: #444;
+    --ink-faint: #555;
+    --stroke: #c9c9cf;
+    --stroke-strong: #9a9aa2;
+    --brand: #1a5f7a;
+    --brand-hover: #1a5f7a;
+    --on-brand: #fff;
+    --focus-ring: #1a5f7a;
+    --ok: #1f7a4d;
+    --warn: #8a5a00;
+    --danger: #a11;
+    --sev-critical: #a11;
+    --sev-high: #8a5a00;
+    --sev-medium: #6b6b00;
+    --sev-low: #1f7a4d;
+  }
+
+  /* Nothing that only makes sense on screen. */
+  .topbar, .l-navbar, .map-filters, .map-sim, .rail-tabs, .item-actions,
+  .filter-label, .statusbar, .offline-banner, .skip-link, .item-actions,
+  .workflow-tray, .item-actions, .toast, dialog, .cmd-palette-button,
+  #refreshButton, #cmdPaletteButton {
+    display: none !important;
+  }
+
+  html, body {
+    height: auto;
+    overflow: visible;
+    background: #fff;
+    color: #000;
+    font-size: 10.5pt;
+  }
+
+  body.app-shell { height: auto; overflow: visible; }
+
+  .console-layout {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+
+  main, .console-layout, .rail-content, .rail-panel {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 0;
+  }
+
+  /* Print every rail panel, not just the selected tab: the tab strip is gone,
+     so leaving the others hidden would silently drop two thirds of the page. */
+  .rail-panel { display: block !important; page-break-inside: avoid; }
+  .rail-panel + .rail-panel { page-break-before: always; }
+
+  a[href]::after { content: " (" attr(href) ")"; font-size: 8pt; color: #555; }
+
+  table { page-break-inside: auto; }
+  thead { display: table-header-group; }  /* repeat headers across pages */
+  tr    { page-break-inside: avoid; }
+  th, td { border-bottom: 1px solid #ccc; }
+
+  .alert-item, .kpi-tile, .workflow-card, .workflow-metric {
+    page-break-inside: avoid;
+    border: 1px solid #ccc;
+  }
+
+  /* The map is a picture of where something is. In monochrome it is a grey
+     rectangle, so print what it was describing instead. */
+  .map-section { page-break-after: always; }
+
+  .seasonal-strip, .statusbar-metric { page-break-inside: avoid; }
+
+  .table-wrap { overflow: visible !important; border: 1px solid #ccc; }
 }

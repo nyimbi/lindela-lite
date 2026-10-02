@@ -9,6 +9,7 @@ import { fillAppVersion } from '/shared/app-version.js'
 import { apiFetch, apiSettled, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
 import { esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncateId } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
+import { formatRelative } from '/shared/fmt.js'
 
 initServiceWorker()
 
@@ -1508,33 +1509,62 @@ const WORKFLOW_TYPES = [
 
 async function loadWorkflowMetrics() {
   let byType = {}
+  let totals = { open: 0, closed: 0, rejected: 0 }
   try {
-    const response = await fetch('/api/v1/workflows/metrics')
-    const payload = await response.json()
+    const payload = await apiFetch('/api/v1/workflows/metrics')
     byType = payload?.data?.by_type || {}
+    totals = {
+      open: payload?.data?.open ?? 0,
+      closed: payload?.data?.closed ?? 0,
+      rejected: payload?.data?.rejected ?? 0,
+    }
   } catch (err) {
+    // The tiles still render from whatever byType holds, so the breakdown stays
+    // useful even when the totals request fails.
     console.error('Failed to load workflow metrics:', err)
   }
-  renderWorkflowsTab(byType)
+  renderWorkflowsTab(byType, totals)
 }
 
-function renderWorkflowsTab(byType) {
+function renderWorkflowsTab(byType, totals = {}) {
   const grid = $('workflowMetricsGrid')
   if (!grid) return
 
-  grid.innerHTML = WORKFLOW_TYPES.map((type) => {
+  // Totals first. "9 open" is the number an operator can act on; eight tiles
+  // each saying "1" is a breakdown of it, not eight findings.
+  const open = totals.open ?? WORKFLOW_TYPES.reduce((n, k) => n + (byType[k]?.open || 0), 0)
+  const closed = totals.closed ?? WORKFLOW_TYPES.reduce((n, k) => n + (byType[k]?.closed || 0), 0)
+  const rejected = totals.rejected ?? WORKFLOW_TYPES.reduce((n, k) => n + (byType[k]?.rejected || 0), 0)
+
+  const set = (id, value) => { const el = $(id); if (el) el.textContent = String(value) }
+  set('workflowOpen', open)
+  set('workflowClosed', closed)
+  set('workflowRejected', rejected)
+  const rejectedWrap = $('workflowRejectedWrap')
+  if (rejectedWrap) rejectedWrap.hidden = !rejected
+
+  grid.innerHTML = WORKFLOW_TYPES.filter((type) => (byType[type]?.open || byType[type]?.closed || byType[type]?.rejected)).map((type) => {
     const m = byType[type] || { open: 0, closed: 0, rejected: 0 }
     const i18nKey = `workflow.${type}`
-    return `<div class="workflow-metric" data-type="${escapeHtml(type)}" role="listitem">
-      <span class="workflow-metric-name" data-i18n="${escapeHtml(i18nKey)}">${t(i18nKey)}</span>
+    return `<div class="workflow-metric" data-type="${escapeHtml(type)}" role="listitem" tabindex="0">
+      <span class="workflow-metric-name" data-i18n="${escapeHtml(i18nKey)}">${escapeHtml(t(i18nKey))}</span>
       <span class="workflow-metric-count">${escapeHtml(String(m.open || 0))}</span>
-      <span class="workflow-metric-meta">closed: ${escapeHtml(String(m.closed || 0))}</span>
+      <span class="workflow-metric-meta">${m.closed ? `closed: ${escapeHtml(String(m.closed))}` : 'none closed'}</span>
     </div>`
-  }).join('')
+  }).join('') || '<p class="workflow-empty">No workflow instances recorded.</p>'
+
+  const selectType = (card) => {
+    state.workflowTypeFilter = card.dataset.type
+    grid.querySelectorAll('.workflow-metric').forEach((c) => c.classList.toggle('active', c === card))
+    setStatus(`Filtering alerts by ${card.dataset.type.replace(/_/g, ' ')}.`)
+  }
 
   grid.querySelectorAll('.workflow-metric').forEach((card) => {
-    card.addEventListener('click', () => {
-      state.workflowTypeFilter = card.dataset.type
+    card.addEventListener('click', () => selectType(card))
+    // Clickable div with no keyboard path: the tiles were reachable by pointer
+    // only, and announced as list items with no action.
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectType(card) }
     })
   })
 }
@@ -1609,17 +1639,19 @@ async function loadSignalToAction() {
     const lastDispatch = dispatches.data?.sort((a, b) =>
       new Date(b.sent_at || 0) - new Date(a.sent_at || 0))[0]
 
-    // Format times
+    // A metric with no value used to render an em dash and stay there, so the
+    // status bar carried two permanently-empty readouts that looked broken. Each
+    // one now appears only once it has something to say.
     const lastSignalEl = $('lastSignalTime')
     if (lastSignalEl && lastEvent?.observed_at) {
-      const diff = Math.round((Date.now() - new Date(lastEvent.observed_at)) / 1000 / 60)
-      lastSignalEl.textContent = diff < 60 ? `${diff}m ago` : `${Math.round(diff / 60)}h ago`
+      lastSignalEl.textContent = formatRelative(lastEvent.observed_at)
+      $('lastSignalMetric')?.removeAttribute('hidden')
     }
 
     const lastActionEl = $('lastActionTime')
     if (lastActionEl && lastDispatch?.sent_at) {
-      const diff = Math.round((Date.now() - new Date(lastDispatch.sent_at)) / 1000 / 60)
-      lastActionEl.textContent = diff < 60 ? `${diff}m ago` : `${Math.round(diff / 60)}h ago`
+      lastActionEl.textContent = formatRelative(lastDispatch.sent_at)
+      $('lastActionMetric')?.removeAttribute('hidden')
     }
 
     // Median lag
@@ -1632,7 +1664,8 @@ async function loadSignalToAction() {
         const median = lags[Math.floor(lags.length / 2)]
         const medianEl = $('medianLag')
         const dotEl = $('lagDot')
-        if (medianEl) medianEl.textContent = `${Math.round(median)}m`
+        if (medianEl) medianEl.textContent = formatDuration(median)
+        $('medianLagMetric')?.removeAttribute('hidden')
         if (dotEl) {
           dotEl.className = 'dot '
           if (median < 1440) dotEl.classList.add('dot-ok')

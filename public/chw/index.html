@@ -570,7 +570,18 @@
       </div>
     </main>
 
-    <div class="toast" id="toast"></div>
+    <!-- The toast was the only completion signal this app had, and it was a
+         colour change plus text with no live region: a screen-reader user
+         received nothing when a report was queued or sent. This is the surface
+         whose whole job is submitting a report from a phone with no
+         connectivity and confirming it was accepted. -->
+    <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- Announced when the wizard moves between screens. showScreen used to
+         toggle a class and nothing else, so pressing "Next" gave a screen-reader
+         user no indication the screen had changed and left focus on the now
+         hidden button. -->
+    <p class="visually-hidden" id="screenAnnouncer" role="status" aria-live="polite"></p>
 
     <footer>
       <span data-app-version>v0.1.0</span> — <span data-i18n="footer.powered">Powered by Lindela Lite</span>

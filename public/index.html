@@ -58,7 +58,24 @@
       </div>
     </header>
 
+    <!-- The ribbon used to be eight tiles labelled with alert-rule names
+         ("Anticipatory Alert", "Cold Chain Protection") carrying an open count
+         and "closed: N". They read as eight KPIs when they are one number split
+         eight ways, and the actual totals — 9 open, 4 closed — appeared
+         nowhere. The summary leads; the breakdown is labelled as one. -->
     <section id="workflowOverview" class="workflow-ribbon" aria-label="Workflow overview">
+      <div class="workflow-summary">
+        <span class="workflow-summary-count" id="workflowOpen">—</span>
+        <span class="workflow-summary-label">open workflow instances</span>
+        <span class="workflow-summary-sep" aria-hidden="true">·</span>
+        <span class="workflow-summary-count" id="workflowClosed">—</span>
+        <span class="workflow-summary-label">closed</span>
+        <span class="workflow-summary-rejected" id="workflowRejectedWrap" hidden>
+          <span class="workflow-summary-sep" aria-hidden="true">·</span>
+          <span id="workflowRejected">0</span> rejected
+        </span>
+        <span class="workflow-summary-breakdown">by type</span>
+      </div>
       <div id="workflowMetricsGrid" class="workflow-tray" role="list"></div>
     </section>
 
@@ -528,14 +545,14 @@
       <span id="status" class="status-text"></span>
       <span id="queuedCount" class="queued-count" hidden></span>
       <div class="statusbar-metrics">
-        <span class="statusbar-metric">
-          <span data-i18n="statusbar.last_signal">Last signal</span>: <span id="lastSignalTime">—</span>
+        <span class="statusbar-metric" id="lastSignalMetric" hidden>
+          <span data-i18n="statusbar.last_signal">Last signal</span>: <span id="lastSignalTime"></span>
         </span>
-        <span class="statusbar-metric">
-          <span data-i18n="statusbar.last_action">Last action</span>: <span id="lastActionTime">—</span>
+        <span class="statusbar-metric" id="lastActionMetric" hidden>
+          <span data-i18n="statusbar.last_action">Last action</span>: <span id="lastActionTime"></span>
         </span>
-        <span class="statusbar-metric">
-          <span data-i18n="statusbar.median_lag">Median lag</span>: <span id="medianLag">—</span>
+        <span class="statusbar-metric" id="medianLagMetric" hidden>
+          <span data-i18n="statusbar.median_lag">Median lag</span>: <span id="medianLag"></span>
           <span id="lagDot" class="dot dot-ok"></span>
         </span>
       </div>
