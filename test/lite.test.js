@@ -513,6 +513,58 @@ describe('Lindela Lite invented-uncertainty guard', () => {
   })
 })
 
+describe('Lindela Lite missing-input handling', () => {
+  const base = {
+    regions: [{ name: 'Turkana', lat: 3.1167, lon: 35.6 }],
+    hazard_events: [], conflict_events: [], service_assets: [], impact_assessments: [],
+    incidents: [], interventions: [], intervention_tasks: [], field_reports: [],
+    response_resources: [], data_quality: [],
+  }
+  const observation = (precipitation, probability) => ([{
+    id: 'obs-1', region_name: 'Turkana', latitude: 3.12, longitude: 35.6,
+    precipitation_mm: precipitation, precipitation_probability_pct: probability,
+  }])
+
+  it('does not read a missing precipitation record as a measured dry spell', () => {
+    // `Number(x || 0)` cannot tell "no rain" from "no data". An absent
+    // observation became 0 mm, which is a confident reading that lowers flood
+    // risk — the worst direction for an absent input.
+    const missing = computeFloodRisk({ ...base, climate_observations: observation(null, null) })[0]
+    assert.equal(missing.drivers.missing_precipitation_records, 1)
+    assert.equal(missing.drivers.missing_probability_records, 1)
+    assert.equal(missing.drivers.climate_observations_in_scope, 1)
+    assert.match(missing.limits, /Incomplete input/)
+    assert.match(missing.limits, /may reflect missing data rather than low risk/)
+  })
+
+  it('lowers confidence rather than the score when an input is absent', () => {
+    // The score cannot be raised without inventing a value, so the honest move is
+    // to make how sure the score is depend on the readings that were actually used.
+    const present = computeFloodRisk({ ...base, climate_observations: observation(40, 60) })[0]
+    const absent = computeFloodRisk({ ...base, climate_observations: observation(null, null) })[0]
+    assert.equal(present.drivers.precipitation_mm, 40)
+    assert.ok(absent.confidence < present.confidence,
+      `confidence must fall when readings are missing: ${absent.confidence} vs ${present.confidence}`)
+    assert.equal(absent.confidence, 0)
+  })
+
+  it('reports a complete input as complete', () => {
+    const complete = computeFloodRisk({ ...base, climate_observations: observation(40, 60) })[0]
+    assert.equal(complete.drivers.missing_precipitation_records, 0)
+    assert.match(complete.limits, /All in-scope climate observations carried a precipitation reading/)
+    assert.ok(!/Incomplete input/.test(complete.limits))
+  })
+
+  it('keeps absent readings absent through the connector', async () => {
+    const source = await fs.readFile(new URL('../src/connectors/open-meteo.js', import.meta.url), 'utf8')
+    // A day the API did not report — `?.[i]` past the end of a shorter array —
+    // must not become a confident zero either.
+    assert.ok(!/precipitation_mm: Number\(/.test(source), 'no raw Number() coercion on precipitation')
+    assert.ok(!/Number\(daily\.precipitation_sum\?\.\[i\] \|\| 0\)/.test(source), 'an unreported day is not 0 mm')
+    assert.match(source, /function readMeasurement/)
+  })
+})
+
 describe('Lindela Lite scenario workbench', () => {
   const testData = {
     climate_observations: [

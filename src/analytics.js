@@ -53,22 +53,36 @@ export function computeFloodRisk(data, options = {}) {
       if (item.ensemble_source === 'open_meteo_ensemble' && Number.isFinite(item.ensemble_p90)) {
         return Number(item.ensemble_p90)
       }
-      return Number(item.precipitation_mm || 0)
+      // A missing reading is unknown, not zero. `|| 0` made an absent
+      // precipitation record look like a measured dry spell, which lowers the
+      // score — the worst direction for an absent input.
+      return Number.isFinite(item.precipitation_mm) ? Number(item.precipitation_mm) : null
     })
-    const precipitation = precipValues.reduce((sum, v) => sum + v, 0)
+    const usablePrecip = precipValues.filter((v) => v !== null)
+    const missingPrecip = precipValues.length - usablePrecip.length
+    const precipitation = usablePrecip.reduce((sum, v) => sum + v, 0)
     // Only a percentile from a genuine probabilistic forecast counts as ensemble
     // coverage. Percentiles previously synthesized from a point value would
     // otherwise always satisfy this and report uncertainty the data does not have.
     const hasEnsemble = climate.some((c) => c.ensemble_source === 'open_meteo_ensemble' && Number.isFinite(c.ensemble_p90))
     const hasBiasCorrection = climate.some((c) => Number.isFinite(c.bias_corrected_precipitation_mm))
 
-    const maxProbability = Math.max(0, ...climate.map((item) => Number(item.precipitation_probability_pct || 0)))
+    // Same rule for probability: an absent forecast is not a 0% chance of rain.
+    const probabilities = climate
+      .map((item) => (Number.isFinite(item.precipitation_probability_pct) ? Number(item.precipitation_probability_pct) : null))
+      .filter((v) => v !== null)
+    const missingProbability = climate.length - probabilities.length
+    const maxProbability = probabilities.length ? Math.max(0, ...probabilities) : null
     const hazardPressure = hazards.reduce((sum, event) => sum + severityWeight(event.severity) * 30, 0)
-    const score = clamp(Math.round(precipitation * 1.5 + maxProbability * 0.35 + hazardPressure), 0, 100)
+    const score = clamp(Math.round(precipitation * 1.5 + (maxProbability ?? 0) * 0.35 + hazardPressure), 0, 100)
+    // Confidence counts readings actually used, not records present. A region
+    // whose observations arrived without precipitation gets a lower confidence,
+    // so an absent input lowers how sure the score is rather than lowering the
+    // score — which is the only safe direction for missing data.
     const confidence = confidenceScore([
-      { count: climate.length, weight: 45 },
+      { count: usablePrecip.length, weight: 45 },
       { count: hazards.length, weight: 40 },
-      { count: climate.filter((item) => Number.isFinite(Number(item.precipitation_probability_pct))).length, weight: 15 },
+      { count: probabilities.length, weight: 15 },
     ])
 
     // Sensitivity band around the point score, NOT a probabilistic interval.
@@ -90,6 +104,11 @@ export function computeFloodRisk(data, options = {}) {
     const drivers = {
       precipitation_mm: Math.round(precipitation * 10) / 10,
       precipitation_probability_pct: maxProbability,
+      // Exposed so a caller can see how much of the input was missing rather than
+      // inferring completeness from a plausible-looking total.
+      climate_observations_in_scope: climate.length,
+      missing_precipitation_records: missingPrecip,
+      missing_probability_records: missingProbability,
       flood_hazard_events: hazards.length,
     }
     if (hasBiasCorrection) drivers.bias_corrected = true
@@ -119,7 +138,14 @@ export function computeFloodRisk(data, options = {}) {
       generated_at: new Date().toISOString(),
       drivers,
       methodology: 'Transparent baseline: precipitation forecast + flood/storm/disaster alerts near exposed locations.',
-      limits: 'Point score from input data, with a sensitivity band driven by input coverage, not a calibrated predictive distribution. A zero band means inputs were sufficient, not that the outcome is certain. Rainfall intensity/duration to flood probability is not modelled: that needs an agreed hydrological model basis and a validated record.',
+      limits: [
+        'Point score from input data, with a sensitivity band driven by input coverage, not a calibrated predictive distribution.',
+        'A zero band means inputs were sufficient, not that the outcome is certain.',
+        missingPrecip || missingProbability
+          ? `Incomplete input: ${missingPrecip} of ${climate.length} in-scope climate observation(s) carry no precipitation reading and ${missingProbability} carry no probability forecast. Those contribute nothing to the score, so a low score here may reflect missing data rather than low risk.`
+          : 'All in-scope climate observations carried a precipitation reading.',
+        'Rainfall intensity/duration to flood probability is not modelled: that needs an agreed hydrological model basis and a validated record.',
+      ].join(' '),
     }
   })
 }

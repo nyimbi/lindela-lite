@@ -21,6 +21,23 @@ import { defineConnector } from './spec.js'
  * ensemble endpoint and its real member set. Until that is wired up, the
  * observation states the limit and carries no percentiles.
  */
+/**
+ * Read a measurement, keeping "no reading" distinct from "a reading of zero".
+ *
+ * `Number(x || 0)` cannot tell those apart. A missing value became 0 mm of rain,
+ * which reads downstream as a measured dry spell and lowers flood risk. A day the
+ * API did not report — `?.[i]` past the end of a shorter array — likewise became
+ * a confident zero. Absence is preserved so the risk scorer can treat it as
+ * unknown, which reduces confidence, rather than as a measurement, which would
+ * silently reduce the risk.
+ */
+function readMeasurement(value) {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string' && value.trim() === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
 export const ENSEMBLE_MODEL_LIMIT =
   'Deterministic point forecast only; no ensemble members are produced. ' +
   'Percentile fields are absent because this connector does not fetch a probabilistic forecast.'
@@ -64,9 +81,9 @@ async function openMeteoIngest(options = {}) {
             latitude: Number(region.lat),
             longitude: Number(region.lon),
             observed_at: data.current.time,
-            precipitation_mm: Number(data.current.precipitation || 0),
-            temperature_c: Number(data.current.temperature_2m || 0),
-            humidity_pct: Number(data.current.relative_humidity_2m || 0),
+            precipitation_mm: readMeasurement(data.current.precipitation),
+            temperature_c: readMeasurement(data.current.temperature_2m),
+            humidity_pct: readMeasurement(data.current.relative_humidity_2m),
             ...withoutEnsemble(),
             metadata: { provider: 'Open-Meteo' },
           })
@@ -74,7 +91,7 @@ async function openMeteoIngest(options = {}) {
 
         const daily = data.daily || {}
         for (let i = 0; i < (daily.time || []).length; i += 1) {
-          const precip = Number(daily.precipitation_sum?.[i] || 0)
+          const precip = readMeasurement(daily.precipitation_sum?.[i])
           climate_observations.push({
             id: stableId('climate', ['open_meteo_daily', region, daily.time[i]]),
             source: 'open_meteo',
@@ -85,9 +102,9 @@ async function openMeteoIngest(options = {}) {
             longitude: Number(region.lon),
             observed_at: daily.time[i],
             precipitation_mm: precip,
-            precipitation_probability_pct: Number(daily.precipitation_probability_max?.[i] || 0),
-            temperature_max_c: Number(daily.temperature_2m_max?.[i] || 0),
-            temperature_min_c: Number(daily.temperature_2m_min?.[i] || 0),
+            precipitation_probability_pct: readMeasurement(daily.precipitation_probability_max?.[i]),
+            temperature_max_c: readMeasurement(daily.temperature_2m_max?.[i]),
+            temperature_min_c: readMeasurement(daily.temperature_2m_min?.[i]),
             ...withoutEnsemble(),
             metadata: { provider: 'Open-Meteo', horizon: 'forecast' },
           })
