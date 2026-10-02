@@ -22,7 +22,29 @@ import path from 'node:path'
 
 const AGREED_MODEL_BASIS = null
 
-const SURFACE_GLOBS = ['src', 'public', 'scripts', 'test']
+/**
+ * Where a claim can hide.
+ *
+ * Originally only .js files. That is where the code lives but not where the
+ * *claim* lives: a flood probability asserted in the OpenAPI contract, in a
+ * dashboard label, or in the README is the thing a panel would act on, and all
+ * three are outside a .js file. Documentation is the surface most likely to drift
+ * ahead of the code, so it is scanned too.
+ */
+const SURFACE_GLOBS = ['src', 'public', 'scripts', 'test', 'docs']
+const SURFACE_FILES = ['README.md', 'CHANGELOG.md', 'connectors.registry.json']
+
+const SURFACE_EXTS = /\.(js|mjs|ts|md|yaml|yml|html|json)$/
+
+/**
+ * Documents whose job is to discuss this constraint, so they may name the terms.
+ * Listed explicitly rather than pattern-matched so that adding a new document
+ * cannot quietly join the exemption.
+ */
+const MAY_NAME_TERMS = new Set([
+  'docs/flood-probability-model-basis.md',
+  'docs/developer-guide.md',
+])
 
 // Terms that assert a probability or a return level. Deliberately specific:
 // "risk", "score" and "probability" alone are too broad, and "precipitation_probability_pct"
@@ -40,17 +62,67 @@ const FORBIDDEN = [
   'gev_fitted',
   'idf_curve',
   'rational_method',
+  // The vocabulary a contributor would actually reach for. 'return_period_years'
+  // above is one spelling of "return period"; these are the others, plus the
+  // design-flood terms that read as authoritative without ever using the word
+  // "probability".
+  'return_period',
+  'returnperiod',
+  'probability_of_flood',
+  'probability_of_inundation',
+  'recurrence_interval',
+  'design_flood',
+  'design_flood_',
+  'hundred_year_flood',
+  '100_year_flood',
+  '1_in_100',
+  '1in100',
+  'annual_chance',
+  'aep_',
+  '_aep',
+  'exceedance_',
+  'hazard_curve',
+  'discharge_frequency',
+  'discharge_frequency',
 ]
 
-/** Recursively list source files under a directory. */
+/**
+ * Phrasings that cannot be caught as substrings because the number and the
+ * word are separated, or the whole expression varies. Enumerating "1 in 100"
+ * alone would miss "1 in 100 year", "1-in-100-year" and "1in1000", which is
+ * precisely how these are written in prose and in UI copy.
+ */
+const FORBIDDEN_PATTERNS = [
+  /\b1\s*[- ]?in\s*\d+\s*[- ]?year/i,
+  /\b\d+\s*[- ]?year\s*[- ]?return\s*period/i,
+  /\b\d+\s*[- ]?year\s*(?:flood|return\s*level|event)/i,
+  /\b(?:once|every)\s+(?:in|per)\s*\d+\s*years?\b/i,
+  /\breturn\s*period\b/i,
+  /\bdesign\s+flood\b/i,
+]
+
+
+/** Recursively list surface files under a directory. */
 function filesUnder(dir) {
   const out = []
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) out.push(...filesUnder(full))
-    else if (/\.(js|mjs|ts)$/.test(entry.name)) out.push(full)
+    else if (SURFACE_EXTS.test(entry.name)) out.push(full)
   }
   return out
+}
+
+/** Every file the guard reads, as repo-relative paths for exemption checks. */
+function surfaceFiles() {
+  const files = []
+  for (const dir of SURFACE_GLOBS) {
+    if (fs.existsSync(dir)) files.push(...filesUnder(dir))
+  }
+  for (const file of SURFACE_FILES) {
+    if (fs.existsSync(file)) files.push(file)
+  }
+  return files
 }
 
 if (AGREED_MODEL_BASIS) {
@@ -59,17 +131,21 @@ if (AGREED_MODEL_BASIS) {
   }
 } else {
   const offenders = []
-  for (const dir of SURFACE_GLOBS) {
-    if (!fs.existsSync(dir)) continue
-    for (const file of filesUnder(dir)) {
-      // This file necessarily contains every term it searches for.
-      if (path.resolve(file) === path.resolve(new URL(import.meta.url).pathname)) continue
-      const text = fs.readFileSync(file, 'utf8')
-      for (const term of FORBIDDEN) {
-        if (text.toLowerCase().includes(term)) {
-          offenders.push(`${file}: '${term}'`)
-        }
+  const self = path.resolve(new URL(import.meta.url).pathname)
+  for (const file of surfaceFiles()) {
+    // This file necessarily contains every term it searches for.
+    if (path.resolve(file) === self) continue
+    if (MAY_NAME_TERMS.has(file.split(path.sep).join('/'))) continue
+    const text = fs.readFileSync(file, 'utf8')
+    const lower = text.toLowerCase()
+    for (const term of FORBIDDEN) {
+      if (lower.includes(term)) {
+        offenders.push(`${file}: '${term}'`)
       }
+    }
+    for (const pattern of FORBIDDEN_PATTERNS) {
+      const hit = text.match(pattern)
+      if (hit) offenders.push(`${file}: matches /${pattern.source}/ ('${hit[0]}')`)
     }
   }
   if (offenders.length) {

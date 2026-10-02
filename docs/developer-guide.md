@@ -144,7 +144,16 @@ failure mode is exactly what a test suite will not catch.
 To lift the guard legitimately: agree the basis first, record it in
 `docs/flood-probability-model-basis.md`, and set `AGREED_MODEL_BASIS` in
 `scripts/check-no-flood-probability.mjs` to that document. Do not lift it by
-deleting the script. Confirmed to fail when a `return_period_years` field is
+deleting the script. It scans `src`, `public`, `scripts`, `test` and `docs`
+plus the root `README.md`, `CHANGELOG.md` and `connectors.registry.json`,
+because a claim asserted in the OpenAPI contract or a dashboard label is the
+thing a panel would act on and none of those are `.js` files. Both bare
+identifiers and prose phrasings are matched, since "1 in 100 year flood" and
+"50-year return period" are how these are actually written. Two documents may
+name the terms — this one and the model-basis proposal — and the exemption is an
+explicit list so a new document cannot quietly join it.
+
+Confirmed to fail when a `return_period_years` field is
 injected into the flood-depth response.
 
 The same discipline applies to the risk-score bands, which are named

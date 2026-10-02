@@ -63,6 +63,12 @@ no existing endpoint changed shape.
   with GDACS and USGS both live is always the same Pacific and Caribbean
   earthquakes: the seeded flood and landslide that the road-access and routing
   walkthrough depends on were paginated out and never drawn.
+- The flood-probability build guard now scans **documentation, the OpenAPI
+  contract and the dashboard markup**, not just `.js` files, and matches prose
+  phrasings as well as identifiers. A flood probability asserted in the contract
+  or a UI label is the claim a panel would act on; previously such a claim could
+  be added anywhere outside a `.js` file and pass. Two documents that exist to
+  discuss the constraint may name the terms, by explicit list.
 - `GET /api/v1/health` now reports **`version`**, read from `package.json` at
   startup and fatal if unreadable — a wrong version is worse than a missing one.
   The footers in the partner portal, the CHW app and the Settings panel source it
