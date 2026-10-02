@@ -12,7 +12,7 @@ import { computePopulationAtRisk, computeFacilitiesAtRisk } from '../src/analyti
 import { quantileMap } from '../src/analytics/downscaling.js'
 import { getConnector, runIngestion } from '../src/ingestion.js'
 import { createServer } from '../src/server.js'
-import { stacCatalog } from '../src/stac.js'
+import { stacCatalog, stacItem, stacCollection, ogcFeatureCollection } from '../src/stac.js'
 import { renderCapXml } from '../src/cap.js'
 import { spec as openMeteoSpec } from '../src/connectors/open-meteo.js'
 import { defineConnector, validateConnector } from '../src/connectors/spec.js'
@@ -185,6 +185,59 @@ describe('Lindela Lite CAP', () => {
     } finally {
       listener.close()
     }
+  })
+})
+
+describe('Lindela Lite STAC and OGC', () => {
+  it('does not place a location-less record at Null Island', () => {
+    // `Number(null)` is 0, so the isFinite guard passed for every record that
+    // explicitly had no location. 233 of 280 hazard events carry
+    // `latitude: null` and were each published with geometry Point [0, 0] and
+    // bbox [0,0,0,0] — a FIRMS forest-fire notification with no coordinates
+    // placed in the Gulf of Guinea for every STAC client to load.
+    const located = stacItem({ id: 'hz-1', latitude: 3.12, longitude: 35.6 }, 'hazard-events', 'http://x')
+    assert.deepEqual(located.geometry.coordinates, [35.6, 3.12])
+    assert.equal(located.properties.location_basis, 'point')
+
+    const unlocated = stacItem({ id: 'hz-2', latitude: null, longitude: null }, 'hazard-events', 'http://x')
+    assert.equal(unlocated.geometry, null, 'no geometry rather than an invented point')
+    assert.equal(unlocated.bbox, null, 'no degenerate zero-area bbox')
+    assert.equal(unlocated.properties.location_basis, 'none')
+    assert.match(unlocated.properties.location_status, /no coordinates/i)
+    assert.ok(!JSON.stringify(unlocated).includes('[0,0]'), 'never emit a null-island coordinate')
+  })
+
+  it('treats blank and non-numeric coordinates as absent', () => {
+    for (const value of ['', '   ', 'unknown', null, undefined, NaN]) {
+      const item = stacItem({ id: 'x', latitude: value, longitude: value }, 'hazard-events', 'http://x')
+      assert.equal(item.geometry, null, `latitude ${JSON.stringify(value)} must not become a coordinate`)
+    }
+  })
+
+  it('omits the spatial extent rather than fabricating a box', () => {
+    // computeBbox returned [0,0,1,1] for a collection with no coordinates — an
+    // extent in the Gulf of Guinea that no record occupies.
+    const empty = stacCollection('hazard-events', [], 'http://x')
+    assert.ok(!empty.extent || !empty.extent.spatial, 'no spatial extent for an empty collection')
+    const allNull = stacCollection('hazard-events', [{ id: 'a', latitude: null, longitude: null }], 'http://x')
+    assert.ok(!allNull.extent || !allNull.extent.spatial, 'no spatial extent when nothing has coordinates')
+
+    const real = stacCollection('hazard-events', [{ id: 'a', latitude: 1, longitude: 2 }], 'http://x')
+    assert.deepEqual(real.extent.spatial.bbox, [[2, 1, 2, 1]])
+  })
+
+  it('excludes location-less records from an OGC feature collection', () => {
+    const fc = ogcFeatureCollection([
+      { id: 'a', latitude: 3.12, longitude: 35.6 },
+      { id: 'b', latitude: null, longitude: null },
+      { id: 'c', latitude: '', longitude: '' },
+    ])
+    assert.equal(fc.numberMatched, 1)
+    assert.equal(fc.numberReturned, 1)
+    // OGC features carry the identifier inside properties; STAC items carry it
+    // at the top level.
+    assert.deepEqual(fc.features.map((f) => f.properties.id), ['a'])
+    assert.ok(!JSON.stringify(fc).includes('[0,0]'))
   })
 })
 

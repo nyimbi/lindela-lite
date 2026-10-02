@@ -58,7 +58,7 @@ export function stacCollection(collectionId, records, baseUrl) {
     'risk-scores': 'Computed flood and conflict risk scores',
   }
 
-  const filtered = records.filter((r) => Number.isFinite(r.latitude) && Number.isFinite(r.longitude))
+  const filtered = records.filter((r) => readCoordinate(r.latitude) !== null && readCoordinate(r.longitude) !== null)
   const bbox = computeBbox(filtered)
   const temporal = computeTemporal(filtered)
 
@@ -71,7 +71,9 @@ export function stacCollection(collectionId, records, baseUrl) {
     description: descriptions[collectionId],
     license: 'CC-BY-4.0',
     extent: {
-      spatial: { bbox: [bbox] },
+      // STAC permits a collection with no spatial extent. Emitting `[null]` is
+      // not valid, so the key is omitted rather than filled in.
+      ...(bbox ? { spatial: { bbox: [bbox] } } : {}),
       temporal: { interval: [temporal] },
     },
     links: [
@@ -103,13 +105,34 @@ export function stacCollection(collectionId, records, baseUrl) {
   }
 }
 
-export function stacItem(record, collectionId, baseUrl) {
-  const lat = Number(record.latitude)
-  const lon = Number(record.longitude)
+/**
+ * Read a coordinate, treating null and blank as absent.
+ *
+ * `Number(null)` is 0 and `Number('')` is 0, so the guard below passed for every
+ * record that explicitly had no location: 233 of 280 hazard events carry
+ * `latitude: null`, and each was published with `geometry: Point [0, 0]` and
+ * `bbox: [0,0,0,0]`. A STAC client loading these — QGIS, Earth Engine, anything
+ * planetary-computing — put every FIRMS forest-fire notification that has no
+ * coordinates into the Gulf of Guinea, one per event, at Null Island.
+ */
+function readCoordinate(value) {
+  if (value === null || value === undefined) return null
+  // Whitespace-only and other blank strings coerce to 0 just as `null` does, so
+  // they are trimmed away before the numeric check rather than after it.
+  if (typeof value === 'string' && value.trim() === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
 
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-    throw Object.assign(new Error('Record must have latitude and longitude'), { statusCode: 400 })
-  }
+export function stacItem(record, collectionId, baseUrl) {
+  const lat = readCoordinate(record.latitude)
+  const lon = readCoordinate(record.longitude)
+
+  // STAC permits a null geometry for an item with no spatial position. Refusing
+  // the whole collection listing over 233 location-less records is worse than
+  // serving them properly, so the geometry is omitted and the reason stated in
+  // `location_status` rather than being invented.
+  const hasGeometry = lat !== null && lon !== null
 
   const timestamp = (
     record.observed_at
@@ -124,13 +147,16 @@ export function stacItem(record, collectionId, baseUrl) {
     type: 'Feature',
     stac_version: '1.0.0',
     id: record.id,
-    geometry: {
-      type: 'Point',
-      coordinates: [lon, lat],
-    },
-    bbox: [lon, lat, lon, lat],
+    geometry: hasGeometry ? { type: 'Point', coordinates: [lon, lat] } : null,
+    bbox: hasGeometry ? [lon, lat, lon, lat] : null,
     properties: {
       'datetime': timestamp,
+      // Stated rather than implied, so a client can tell a measured position from
+      // one derived from an extent, a district centroid, or nothing at all.
+      'location_basis': hasGeometry ? 'point' : 'none',
+      'location_status': hasGeometry
+        ? 'point coordinates as provided by the source'
+        : 'the source reported no coordinates for this record; this item has no geometry',
       ...Object.fromEntries(
         Object.entries(record).filter(([key]) => key !== 'latitude' && key !== 'longitude')
       ),
@@ -188,7 +214,10 @@ export function ogcFeatureCollection(records) {
 }
 
 function computeBbox(records) {
-  if (!records.length) return [0, 0, 1, 1]
+  // No extent is not an extent of [0,0,1,1]. STAC allows a collection to carry no
+  // bbox, and an absent one is honest in a way that a box in the Gulf of Guinea
+  // is not.
+  if (!records.length) return null
 
   let minLon = Infinity
   let minLat = Infinity
@@ -196,24 +225,21 @@ function computeBbox(records) {
   let maxLat = -Infinity
 
   for (const record of records) {
-    const lon = Number(record.longitude)
-    const lat = Number(record.latitude)
-    if (Number.isFinite(lon)) {
+    const lon = readCoordinate(record.longitude)
+    const lat = readCoordinate(record.latitude)
+    if (lon !== null) {
       minLon = Math.min(minLon, lon)
       maxLon = Math.max(maxLon, lon)
     }
-    if (Number.isFinite(lat)) {
+    if (lat !== null) {
       minLat = Math.min(minLat, lat)
       maxLat = Math.max(maxLat, lat)
     }
   }
 
-  return [
-    Number.isFinite(minLon) ? minLon : 0,
-    Number.isFinite(minLat) ? minLat : 0,
-    Number.isFinite(maxLon) ? maxLon : 1,
-    Number.isFinite(maxLat) ? maxLat : 1,
-  ]
+  if (!Number.isFinite(minLon) || !Number.isFinite(minLat)) return null
+  if (!Number.isFinite(maxLon) || !Number.isFinite(maxLat)) return null
+  return [minLon, minLat, maxLon, maxLat]
 }
 
 function computeTemporal(records) {

@@ -56,6 +56,27 @@ no existing endpoint changed shape.
 
 ### Fixed
 
+- **233 of 280 hazard events were published to STAC at Null Island.** The STAC and
+  OGC Features catalogues are what GIS tooling loads — QGIS, Earth Engine,
+  planetary-computing clients — and `stacItem` guarded its coordinates with
+  `Number.isFinite(Number(record.latitude))`. `Number(null)` is `0`, so every
+  record that explicitly had *no* location passed the guard and was published with
+  `geometry: Point [0, 0]` and `bbox: [0,0,0,0]`. 233 hazard events carry
+  `latitude: null`; each was placed in the Gulf of Guinea. A FIRMS forest-fire
+  notification for Indonesia with no coordinates became a point at 0,0.
+
+  Coordinates are now read through a helper that treats null, blank and
+  whitespace-only values as absent, the same way `toNumber` does after the
+  field-report fix. A location-less record is published with `geometry: null`,
+  `bbox: null`, `location_basis: "none"` and a `location_status` saying the source
+  reported no coordinates — STAC permits a null geometry, and an honest absent one
+  beats an invented point. Real points carry `location_basis: "point"` so a client
+  can tell a measured position from a derived one.
+
+  `computeBbox` returned `[0, 0, 1, 1]` for a collection with no coordinates —
+  an extent in the Gulf of Guinea that no record occupied. The `spatial` extent
+  key is now omitted rather than filled in.
+
 - **District filtering reported no activity for collections that carry no
   location.** Interventions, their tasks and alert dispatches have no
   coordinates and no district field. Filtered directly they matched nothing, so
