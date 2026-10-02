@@ -56,6 +56,24 @@ no existing endpoint changed shape.
 
 ### Fixed
 
+- **`?district=` on every list endpoint was a no-op that returned everything.**
+  `filterRecords` ignores parameters it does not understand, and `district` and
+  `region` were not among the ones it understood. `GET /api/v1/incidents?district=Bor`
+  was byte-for-byte the same as no filter: all 8 records, including Aweil and
+  Turkana. A caller that asked to be scoped to one district received every
+  district's data with nothing to indicate the filter had been dropped.
+
+  Both are now real filters. A record matches on an explicit district label where
+  it has one — including multi-value labels such as `"Turkana, Bor"` — and
+  otherwise on its position within the district extent. A record with neither is
+  not in the district, which is the same rule report scoping uses, so the API and
+  a report cannot disagree about what is in Turkana. A misspelt district now
+  returns nothing rather than everything.
+
+  This was the API half of the report scoping bug, still live after the report
+  fix: the reports now count Bor's 2 incidents and Turkana's 3, and the endpoints
+  return the same 2 and 3.
+
 - **Every report was an empty document, and every district report contained the
   whole store.** `scripts/seed-demo.mjs` built reports with `normalizeReport`
   alone, which sets `section_ids` from the template and leaves `sections` empty.

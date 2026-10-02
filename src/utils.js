@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { KNOWN_DISTRICTS } from './districts.js'
 
 export function stableId(prefix, value) {
   const hash = crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16)
@@ -131,6 +132,12 @@ export function filterRecords(records, query) {
   const owner = query.get('owner')
   const templateId = query.get('template_id')
   const scheduleId = query.get('schedule_id')
+  // `district` and `region` used to be read by nothing here. filterRecords
+  // ignores parameters it does not understand, so `?district=Bor` was
+  // indistinguishable from no filter at all and returned every record in the
+  // collection — cross-district data handed to any caller that asked to be
+  // scoped to one district. Both are now real filters.
+  const districtFilter = resolveDistrictFilter(query.get('district') || query.get('region'))
   const from = query.get('from') ? Date.parse(query.get('from')) : null
   const to = query.get('to') ? Date.parse(query.get('to')) : null
   const limit = Math.min(Math.max(Number(query.get('limit') || 500), 1), 5000)
@@ -150,6 +157,7 @@ export function filterRecords(records, query) {
     .filter((item) => !owner || item.owner === owner)
     .filter((item) => !templateId || item.template_id === templateId)
     .filter((item) => !scheduleId || item.schedule_id === scheduleId)
+    .filter((item) => !districtFilter || recordInDistrict(item, districtFilter))
     .filter((item) => {
       const timestamp = Date.parse(item.observed_at || item.occurred_at || item.event_date || item.generated_at || item.approved_at || item.distributed_at || item.updated_at || item.created_at || '')
       if (!Number.isFinite(timestamp)) return true
@@ -301,4 +309,53 @@ export function haversineKm(a, b) {
 
 function radians(value) {
   return value * Math.PI / 180
+}
+
+/**
+ * Resolve a `district` or `region` filter value to a known district.
+ *
+ * An unknown value is returned as-is so `recordInDistrict` can match nothing,
+ * rather than being dropped and silently ignored the way it was before: a
+ * misspelled district should return nothing, not everything.
+ */
+export function resolveDistrictFilter(value) {
+  if (value === null || value === undefined || value === '') return null
+  const key = String(value).trim().toLowerCase()
+  if (!key) return null
+  const known = KNOWN_DISTRICTS.find(
+    (d) => d.slug === key || d.name.toLowerCase() === key,
+  )
+  return known || { slug: key, name: value, center: null, radius_km: null, unknown: true }
+}
+
+/**
+ * Does this record belong to the district?
+ *
+ * Matched on an explicit label where the record has one, otherwise spatially
+ * against the district extent. A record with neither is not in the district —
+ * the same rule the report scope uses, so an API filter and a report cannot
+ * disagree about what is in Turkana.
+ */
+export function recordInDistrict(item, district) {
+  if (!district) return true
+  const labels = [district.slug, district.name, String(district.name).toLowerCase()]
+  const named = [item.district, item.region, item.region_name, item.admin1, item.scope?.district]
+  for (const value of named) {
+    if (typeof value !== 'string') continue
+    if (labels.some((label) => label && label.toLowerCase() === value.toLowerCase())) return true
+  }
+  // Multi-value labels, e.g. an event covering "Turkana, Bor".
+  for (const value of named) {
+    if (typeof value !== 'string') continue
+    const parts = value.split(/[,;/]/).map((part) => part.trim().toLowerCase())
+    if (parts.some((part) => labels.some((label) => label && label.toLowerCase() === part))) return true
+  }
+  if (district.center && Number.isFinite(item.latitude) && Number.isFinite(item.longitude)) {
+    const distance = haversineKm(
+      { latitude: district.center.lat, longitude: district.center.lon },
+      { latitude: item.latitude, longitude: item.longitude },
+    )
+    return distance <= district.radius_km
+  }
+  return false
 }

@@ -303,6 +303,62 @@ describe('Lindela Lite report content and scope', () => {
     assert.ok(context.district_attribution.unlocatable >= 1)
   })
 
+  it('filters list endpoints by district instead of ignoring the parameter', async () => {
+    // filterRecords ignores parameters it does not understand, so `district` and
+    // `region` were indistinguishable from no filter: `?district=Bor` returned
+    // every incident in the collection, handing cross-district data to a caller
+    // that had asked to be scoped to one district.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-district-filter-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://localhost:${listener.address().port}`
+    try {
+      await store.merge({
+        incidents: [
+          { id: 'inc-turkana', latitude: 3.12, longitude: 35.6, severity: 'high', status: 'open' },
+          { id: 'inc-bor', latitude: 6.21, longitude: 31.55, severity: 'critical', status: 'open' },
+          { id: 'inc-brazil', latitude: -15.8, longitude: -47.9, severity: 'critical', status: 'open' },
+        ],
+      })
+      const count = async (qs) => (await (await fetch(`${baseUrl}/api/v1/incidents${qs}`)).json()).data.length
+      assert.equal(await count(''), 3, 'no filter returns everything')
+      assert.equal(await count('?district=Bor'), 1)
+      assert.equal(await count('?region=Turkana'), 1, 'region is a district alias')
+      // A misspelt district returns nothing rather than everything.
+      assert.equal(await count('?district=Nonexistentville'), 0)
+      // Filters compose.
+      assert.equal(await count('?district=Bor&severity=critical'), 1)
+      assert.equal(await count('?district=Bor&severity=high'), 0)
+    } finally {
+      listener.close()
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('agrees with report scope on what is in a district', () => {
+    // The API filter and the report scope must not disagree, or a partner
+    // reading the report would see a different district than the API returns.
+    const data = {
+      report_templates: [], source_runs: [], climate_observations: [], risk_scores: [],
+      service_assets: [], impact_assessments: [], interventions: [], intervention_tasks: [],
+      field_reports: [], response_resources: [], rapidpro_dispatches: [],
+      rapidpro_inbound_messages: [], alert_events: [], hazard_events: [], conflict_events: [],
+      data_quality: [],
+      incidents: [
+        { id: 'inc-turkana', latitude: 3.12, longitude: 35.6 },
+        { id: 'inc-bor', latitude: 6.21, longitude: 31.55 },
+        { id: 'inc-brazil', latitude: -15.8, longitude: -47.9 },
+        { id: 'inc-unlocatable' },
+      ],
+    }
+    const context = resolveReportContext(data, { district: 'Turkana' })
+    const query = new URLSearchParams('district=Turkana')
+    const viaFilter = filterRecords(data.incidents, query).map((r) => r.id)
+    assert.deepEqual(context.incidents.map((r) => r.id).sort(), viaFilter.sort())
+    assert.ok(!viaFilter.includes('inc-unlocatable'), 'an unplaceable record is not in any district')
+  })
+
   it('warns when scope cannot be assessed for a district', () => {
     const data = {
       report_templates: [], source_runs: [], climate_observations: [], risk_scores: [],
@@ -4003,6 +4059,7 @@ describe('Demo seed', () => {
 import { KNOWN_DISTRICTS, resolveDistrict, districtOverview } from '../src/districts.js'
 import { computeMonthlyKpiSeries, computeSparklineData, refreshKpiSnapshots } from '../src/kpi.js'
 import { resolveReportContext, buildReportWarnings, formatReportSmsSummary, renderReportMarkdown } from '../src/reports.js'
+import { filterRecords } from '../src/utils.js'
 
 describe('Lindela Lite districts API', () => {
   async function makeServer() {
