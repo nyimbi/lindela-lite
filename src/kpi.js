@@ -45,6 +45,30 @@ function _quarterDateRange(quarter, year) {
 }
 
 // Helper: filter records by date range using field names in order of priority
+/**
+ * Hours from a dispatch matching a signal to that dispatch being sent.
+ *
+ * The system's own dispatch latency. Not warning-to-action in the UNICEF sense,
+ * which runs from a warning reaching a household to a field action being
+ * completed and reported.
+ */
+export function signalToDispatchHours(dispatches) {
+  const lags = []
+  for (const d of dispatches || []) {
+    if (!d.matched_signal_at || !d.sent_at) continue
+    const ms = new Date(d.sent_at).getTime() - new Date(d.matched_signal_at).getTime()
+    if (ms >= 0) lags.push(ms / 3600000)
+  }
+  lags.sort((a, b) => a - b)
+  return lags.length ? lags[Math.floor(lags.length / 2)] : null
+}
+
+export const WARNING_TO_ACTION_MEASURE =
+  'median hours from a dispatch matching a signal (matched_signal_at) to that dispatch being sent (sent_at)'
+
+export const WARNING_TO_ACTION_LIMIT =
+  "System dispatch latency only: how long this platform took to send an SMS once a dispatch matched a signal. It is not warning-to-action in the UNICEF sense, which runs from a warning reaching a household to a field action being completed and reported. It is not comparable to the UNICEF bid target, and a low value does not mean the response was fast."
+
 export function kpiSnapshotForPeriod(records, from, to, dateField = null) {
   const fromTs = new Date(from).getTime()
   const toTs = new Date(to).getTime()
@@ -112,32 +136,21 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   // OSS releases: count of report_templates (proxy heuristic per plan)
   const oss_releases_count = reportTemplates.length
 
-  // Warning-to-action median hours: prefer matched_signal_at -> sent_at on dispatches
-  const lags = []
-  for (const d of (data.rapidpro_dispatches || [])) {
-    const signalAt = d.matched_signal_at
-    const sentAt = d.sent_at
-    if (signalAt && sentAt) {
-      const lagMs = new Date(sentAt).getTime() - new Date(signalAt).getTime()
-      if (lagMs >= 0) lags.push(lagMs / 3600000)
-    }
-  }
-  // Fallback: hazard_event.observed_at -> first matching dispatch.sent_at
-  if (!lags.length) {
-    for (const haz of hazardEvents) {
-      const matchingDispatch = (data.rapidpro_dispatches || []).find(
-        (d) => d.hazard_event_id === haz.id || d.trigger_id === haz.id || d.matched_signal_id === haz.id
-      )
-      if (matchingDispatch && matchingDispatch.sent_at && haz.observed_at) {
-        const lagMs = new Date(matchingDispatch.sent_at).getTime() - new Date(haz.observed_at).getTime()
-        if (lagMs >= 0) lags.push(lagMs / 3600000)
-      }
-    }
-  }
-  lags.sort((a, b) => a - b)
-  const warning_to_action_median_hours = lags.length
-    ? lags[Math.floor(lags.length / 2)]
-    : null
+  // Warning-to-action median hours.
+  //
+  // This measures how long the platform took to send an SMS once a dispatch
+  // matched a signal. It is not warning-to-action in the UNICEF sense, and the
+  // CO dashboard used to present it as such next to a "<24h" UNICEF bid target,
+  // which invites the conclusion that a fast-looking figure means the response
+  // was fast.
+  //
+  // There was also a silent fallback here that switched to a *different*
+  // interval — hazard observed_at to sent_at — whenever no matched_signal_at
+  // existed, so the same figure could quietly change meaning depending on the
+  // data. The monthly series had no such fallback. Both now use one helper and
+  // one interval; where the interval is unavailable the figure is null and says
+  // so, rather than becoming a different measurement under the same name.
+  const warning_to_action_median_hours = signalToDispatchHours(data.rapidpro_dispatches)
 
   // Feeding supply repositioning rate
   const feedingInterventions = interventions.filter((i) => i.type === 'feeding')
@@ -212,7 +225,7 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   if (cohort_pwd === null) data_gaps.push({ field: 'cohort.pwd', reason: 'no demographics recorded yet' })
   if (cohort_refugees_idps === null) data_gaps.push({ field: 'cohort.refugees_idps', reason: 'no demographics recorded yet' })
   if (!youth_mappers_count) data_gaps.push({ field: 'youth_mappers_count', reason: 'role=mapper flag rarely set on field_reports' })
-  if (warning_to_action_median_hours === null) data_gaps.push({ field: 'warning_to_action_median_hours', reason: 'dispatches rarely linked to matched_signal_at; returns null when no matches' })
+  if (warning_to_action_median_hours === null) data_gaps.push({ field: 'warning_to_action_median_hours', reason: 'no dispatch carries both matched_signal_at and sent_at, so the signal-to-dispatch interval cannot be measured; returns null rather than substituting a different interval' })
   if (false_alert_rate === null) data_gaps.push({ field: 'false_alert_rate', reason: 'no alert event carries a false_alert determination; the rate is measured over determined alerts only and is null rather than 0 until an outcome is recorded' })
 
   const result = {
@@ -224,6 +237,9 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
     youth_mappers_count,
     oss_releases_count,
     warning_to_action_median_hours,
+    warning_to_action_measure: WARNING_TO_ACTION_MEASURE,
+    warning_to_action_limit: WARNING_TO_ACTION_LIMIT,
+    warning_to_action_is_field_outcome: false,
     feeding_supply_repositioning_rate,
     cold_chain_protection_rate,
     false_alert_rate,
@@ -292,15 +308,7 @@ export function computeMonthlyKpiSeries(data, { monthsBack = 12 } = {}) {
     )
     const community_reporters_count = reporterIds.size
 
-    const lags = []
-    for (const d of dispatches) {
-      if (d.matched_signal_at && d.sent_at) {
-        const ms = new Date(d.sent_at).getTime() - new Date(d.matched_signal_at).getTime()
-        if (ms >= 0) lags.push(ms / 3600000)
-      }
-    }
-    lags.sort((a, b) => a - b)
-    const warning_to_action_median_hours = lags.length ? lags[Math.floor(lags.length / 2)] : null
+    const warning_to_action_median_hours = signalToDispatchHours(dispatches)
 
     const feedingInterventions = interventions.filter(iv => iv.type === 'feeding')
     const feedingCompleted = feedingInterventions.filter(iv => ['completed', 'verified'].includes(iv.status))
@@ -355,6 +363,7 @@ export async function refreshKpiSnapshots(store) {
     indicators: {
       people_reached: s.people_reached,
       warning_to_action_median_hours: s.warning_to_action_median_hours,
+      warning_to_action_is_field_outcome: s.warning_to_action_is_field_outcome,
       false_alert_rate: s.false_alert_rate,
       false_alert_determined: s.false_alert_determined,
       false_alert_of_total: s.false_alert_of_total,

@@ -543,6 +543,36 @@ async function main() {
     scenario.rows > 0 && scenario.baselineCells > 0,
     `${scenario.rows} rows, ${scenario.baselineCells} with a baseline`)
 
+  // The CO dashboard must not present the platform's own SMS latency as the
+  // UNICEF warning-to-action outcome.
+  //
+  // The figure is the median hours from a dispatch matching a signal to that
+  // dispatch being sent. It was labelled "Warning-to-action median" and annotated
+  // "target: <24h", with a value of 0.16 h, and the PDF printed the UNICEF bid
+  // target directly underneath it. Read quickly that is a system claiming to meet
+  // a humanitarian outcome target it does not measure.
+  await send('Page.navigate', { url: `${BASE}/co?cb=${Date.now()}` })
+  await new Promise((r) => setTimeout(r, 4000))
+  const latency = await evaluate(`(() => {
+    const tiles = [...document.querySelectorAll('#kpi-grid *')]
+      .map((n) => (n.textContent || '').trim()).filter(Boolean);
+    const i = tiles.findIndex((t) => /signal-to-dispatch/i.test(t));
+    const tile = i < 0 ? '' : tiles.slice(i, i + 5).join(' | ');
+    const body = document.body.innerText;
+    return {
+      tile,
+      namedCorrectly: /signal-to-dispatch median/i.test(body),
+      stillLabelledWarningToAction: /warning-to-action median/i.test(body),
+      carriesTarget: /target:\s*<\s*24h/i.test(body),
+    };
+  })()`)
+  check('the dispatch latency KPI is named for what it measures',
+    latency.namedCorrectly && !latency.stillLabelledWarningToAction,
+    latency.tile.slice(0, 90) || '(tile not found)')
+  check('the dispatch latency KPI is not annotated with the UNICEF bid target',
+    !latency.carriesTarget,
+    latency.carriesTarget ? 'found "target: <24h"' : 'no target annotation')
+
   // The false-alert rate must not present an absence as a zero. It was a keyword
   // scan of free-text resolution notes, which reported 0% — read as "no false
   // alerts occurred" when it means "nobody wrote the word false". The tile shows

@@ -4871,3 +4871,55 @@ describe('Lindela Lite scenario workbench', () => {
     assert.ok(a.region_name, 'region must resolve from drivers when the assessment has no region of its own')
   })
 })
+
+describe('Lindela Lite signal-to-dispatch latency', () => {
+  const dispatch = (over) => ({
+    id: 'd', matched_signal_at: '2026-08-01T00:00:00.000Z', sent_at: '2026-08-01T01:00:00.000Z', ...over,
+  })
+
+  it('measures signal-matched to sent, not hazard-observed to sent', async () => {
+    // A silent fallback switched to a different interval whenever no
+    // matched_signal_at existed, so the same figure could quietly change meaning
+    // depending on the data — and the monthly series had no such fallback.
+    const { signalToDispatchHours } = await import('../src/kpi.js')
+    assert.equal(signalToDispatchHours([dispatch({})]), 1)
+    // No matched_signal_at: the interval is unavailable, not substituted.
+    assert.equal(signalToDispatchHours([dispatch({ matched_signal_at: null })]), null)
+    assert.equal(signalToDispatchHours([]), null)
+    // A negative lag is a clock problem, not a fast dispatch.
+    assert.equal(signalToDispatchHours([dispatch({ sent_at: '2026-07-31T00:00:00.000Z' })]), null)
+  })
+
+  it('states that it is not a field outcome and not comparable to the bid target', async () => {
+    const { computeQuarterlyKpi, WARNING_TO_ACTION_LIMIT } = await import('../src/kpi.js')
+    const kpi = computeQuarterlyKpi({
+      rapidpro_dispatches: [dispatch({})],
+      hazard_events: [],
+      alert_events: [],
+      interventions: [],
+      workflow_instances: [],
+      field_reports: [],
+      dispatches: [dispatch({})],
+    }, { quarter: 'Q3', year: 2026 })
+    assert.equal(kpi.warning_to_action_is_field_outcome, false)
+    assert.match(WARNING_TO_ACTION_LIMIT, /not warning-to-action in the UNICEF sense/i)
+    assert.match(WARNING_TO_ACTION_LIMIT, /not comparable to the UNICEF bid target/i)
+    assert.match(kpi.warning_to_action_measure, /matched_signal_at.*sent_at/)
+  })
+
+  it('does not print the bid target beside it as if being assessed', async () => {
+    const pdf = await fs.readFile('src/pdf.js', 'utf8')
+    const app = await fs.readFile('public/co/app.js', 'utf8')
+    // The PDF row and the dashboard tile must both name what is measured.
+    assert.ok(/Signal-to-dispatch median/.test(pdf), 'the PDF row must not be labelled warning-to-action')
+    assert.ok(/Signal-to-dispatch median/.test(app), 'the CO tile must not be labelled warning-to-action')
+    assert.ok(!/target: <24h/.test(app),
+      "the '<24h' UNICEF target must not annotate a figure that does not measure it")
+    // Asserted on phrases that sit within a single template literal; the full
+    // sentence is split across lines for width, so matching the joined sentence
+    // against the source tests the layout rather than the claim.
+    assert.ok(/bid target for reference/.test(pdf), 'the PDF must keep the bid target as context')
+    assert.ok(/comparable to that target/.test(pdf),
+      'the PDF must say this figure is not comparable to the bid target')
+  })
+})

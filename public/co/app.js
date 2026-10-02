@@ -82,7 +82,14 @@ function renderKpi(kpi) {
     { key: 'co.kpi_reporters', label: t('co.kpi_reporters', 'Community reporters'), value: fmtVal(kpi.community_reporters_count, ''), unit: 'reporters', annotation: '', gap: false },
     { key: 'co.kpi_mappers', label: t('co.kpi_mappers', 'Youth mappers'), value: fmtVal(kpi.youth_mappers_count, ''), unit: 'mappers', annotation: '', gap: kpi.youth_mappers_count === 0 },
     { key: 'co.kpi_oss_releases', label: t('co.kpi_oss_releases', 'OSS releases'), value: fmtVal(kpi.oss_releases_count, ''), unit: 'releases', annotation: '', gap: false },
-    { key: 'co.kpi_warning_to_action', label: t('co.kpi_warning_to_action', 'Warning-to-action median'), value: fmtVal(kpi.warning_to_action_median_hours, ''), unit: 'hours', annotation: t('co.kpi_warning_to_action_target', 'target: <24h'), gap: kpi.warning_to_action_median_hours === null },
+    // Labelled "Warning-to-action median" against a "<24h" UNICEF bid target, a
+    // figure of 0.16 h sat right next to it. What it measures is how fast this
+    // platform sent an SMS once a dispatch matched a signal — our own dispatch
+    // latency. UNICEF's warning-to-action runs from a warning reaching a
+    // household to a field action being completed and reported, which this does
+    // not observe at all. Naming it accurately matters more than the comparison
+    // looking good next to a bid target.
+    { key: 'co.kpi_warning_to_action', label: t('co.kpi_warning_to_action', 'Signal-to-dispatch median'), value: fmtVal(kpi.warning_to_action_median_hours, ''), unit: 'hours', annotation: 'signal matched → SMS sent; not a field action', gap: kpi.warning_to_action_median_hours === null },
     { key: 'co.kpi_feeding_repositioning', label: t('co.kpi_feeding_repositioning', 'Feeding repositioning rate'), value: fmtVal(kpi.feeding_supply_repositioning_rate, ''), unit: '%', annotation: '', gap: kpi.feeding_supply_repositioning_rate === null },
     { key: 'co.kpi_cold_chain', label: t('co.kpi_cold_chain', 'Cold-chain protection rate'), value: fmtVal(kpi.cold_chain_protection_rate, ''), unit: '%', annotation: '', gap: kpi.cold_chain_protection_rate === null },
     // The denominator travels with the number. A proportion computed from one
@@ -260,7 +267,7 @@ function renderTrend(series) {
   if (!grid || !series || !series.length) return
   grid.innerHTML = [
     sparkCard(t('co.trend_people_reached', 'People reached'), series, 'people_reached', 'people'),
-    sparkCard(t('co.trend_warning_to_action', 'Warning-to-action'), series, 'warning_to_action_median_hours', 'h'),
+    sparkCard(t('co.trend_warning_to_action', 'Signal-to-dispatch'), series, 'warning_to_action_median_hours', 'h'),
     sparkCard(t('co.trend_false_alert', 'False alert rate'), series, 'false_alert_rate', '%'),
     sparkCard(t('co.trend_cold_chain', 'Cold-chain rate'), series, 'cold_chain_protection_rate', '%'),
   ].join('')

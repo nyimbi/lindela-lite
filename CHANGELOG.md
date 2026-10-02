@@ -56,6 +56,29 @@ no existing endpoint changed shape.
 
 ### Fixed
 
+- **"Warning-to-action median" was this platform's own SMS latency, presented
+  against the UNICEF bid target.** The figure is the median hours from a dispatch
+  matching a signal to that dispatch being sent — how fast our own API enqueued an
+  SMS. UNICEF's warning-to-action runs from a warning reaching a household to a
+  field action being completed and reported, which this system does not observe at
+  all. It was labelled "Warning-to-action median", annotated "target: <24h", showed
+  0.16 h, and the quarterly PDF printed "UNICEF bid target: warning-to-action < 24h"
+  directly beneath the number. Read quickly, that is a system asserting it meets a
+  humanitarian outcome target.
+
+  Renamed to "Signal-to-dispatch median" everywhere — payload, dashboard tile,
+  trend card, PDF row — with `warning_to_action_measure`,
+  `warning_to_action_limit` and `warning_to_action_is_field_outcome: false`. The
+  bid target is kept in the PDF as reference, explicitly separated, with a caveat
+  that a low value does not mean the response was fast.
+
+  The quarterly figure also carried a silent fallback: when no dispatch had
+  `matched_signal_at` it switched to measuring hazard-observed to sent, so the
+  same number could quietly change meaning depending on the data, and the monthly
+  series had no such fallback. Both paths now use one helper and one interval; where
+  the interval is unavailable the figure is null and says so, rather than becoming
+  a different measurement under the same name.
+
 - **The scenario workbench did not work at all.** "Run scenario" read `json.data`
   from a response that carries the scenario at the top level, so it threw on every
   run, rendered nothing and left all three delta cards on em dashes. A second

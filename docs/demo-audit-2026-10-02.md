@@ -20,7 +20,11 @@ Three methods, in increasing order of yield:
 3. **Comparing a computed value against its own output.** Found the payload-hash
    bug, which is the most consequential of the lot and was invisible to every
    check in the suite.
-4. **Using the feature.** Walking a surface end to end found the scenario
+4. **Extracting the artefact.** Reading the text out of the quarterly PDF found a
+   headline KPI mislabelled against a UNICEF bid target. Every dashboard check
+   passed, because the label is correct on the screen and wrong in the document
+   that leaves the building.
+5. **Using the feature.** Walking a surface end to end found the scenario
    workbench was entirely dead and the offline queue never replayed. Neither
    produced a console error, because both caught their own failures and printed
    them as text — the one class of breakage that is invisible to every assertion
@@ -55,6 +59,7 @@ produced it. Two green suites had been passing for the wrong reason.
 | 20 | The CO dashboard's "false alert rate" was a regex over free-text notes divided by all alerts: 0%, meaning nothing. | asking what the headline KPI measured | see changelog |
 | 21 | The scenario workbench did not run at all: `json.data` on a top-level response, then a `null` element id. Errors were caught and shown as text, so every check passed. | exercising the last unexamined surface | `see changelog` |
 | 22 | Scenario deltas labelled "(mean %)" and coloured red, from an uncalibrated score. Every asset showed a fabricated +75 change because no baseline was ever attached. | reading the rendered result | see changelog |
+| 23 | "Warning-to-action median" was the platform's own SMS dispatch latency, labelled against the UNICEF <24h bid target — 0.16 h next to a humanitarian outcome the system never measures. | extracting text from the quarterly PDF | see changelog |
 
 ## Two green suites passing for the wrong reason
 

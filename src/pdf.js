@@ -31,7 +31,7 @@ function buildTextLines(kpi) {
     ['Community reporters', fmt(kpi.community_reporters_count, '')],
     ['Youth mappers', fmt(kpi.youth_mappers_count, '')],
     ['OSS releases', fmt(kpi.oss_releases_count, '')],
-    ['Warning-to-action median', fmt(kpi.warning_to_action_median_hours, 'h')],
+    ['Signal-to-dispatch median', fmt(kpi.warning_to_action_median_hours, 'h')],
     ['Feeding repositioning rate', fmt(kpi.feeding_supply_repositioning_rate, '%')],
     ['Cold-chain protection rate', fmt(kpi.cold_chain_protection_rate, '%')],
     ['False alert rate', fmt(kpi.false_alert_rate, '%')],
@@ -63,10 +63,15 @@ function buildTextLines(kpi) {
     y -= 14
   }
 
-  const sig = signatureHash(kpi)
-  lines.push({ text: `Signature (SHA-256/16): ${sig}`, size: 8, y: 60 })
-  lines.push({ text: `UNICEF bid target: warning-to-action < 24h`, size: 8, y: 48 })
-  lines.push({ text: `Data gaps: ${(kpi.data_gaps || []).map((g) => g.field).join(', ')}`, size: 7, y: 36 })
+  // The bid target is real context, but it was printed immediately under a figure
+  // that does not measure the same thing, which reads as though this number were
+  // being assessed against it. Kept as reference, explicitly separated, with the
+  // caveat on its own lines so it cannot be skimmed past.
+  lines.push({ text: `Data gaps: ${(kpi.data_gaps || []).map((g) => g.field).join(', ') || 'none'}`, size: 7, y: 68 })
+  lines.push({ text: `UNICEF bid target for reference: warning-to-action < 24h. The signal-to-dispatch`, size: 7, y: 56 })
+  lines.push({ text: `median above is this platform's own SMS latency, not a field action, and is not`, size: 7, y: 48 })
+  lines.push({ text: `comparable to that target. A low value does not mean the response was fast.`, size: 7, y: 40 })
+  lines.push({ text: `Signature (SHA-256/16): ${signatureHash(kpi)}`, size: 8, y: 28 })
 
   return lines
 }
