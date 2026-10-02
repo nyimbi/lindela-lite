@@ -102,6 +102,18 @@ archive), not P(water reaches a given ground elevation)'`.
 Both are backfill sources (`regular: false`), ingested on demand so that a
 default ingestion run never issues a 40-year crawl.
 
+### Measured ceiling on real data (2026-10-02)
+
+A full 1985–2026 walk of the GDACS archive retains 93 Sub-Saharan flood
+events; matched at 150 km against the three pilot districts, that is exactly
+**1 flood-label month for Turkana, 2 for Mogadishu, 0 for Juba** in 41 years.
+Every pilot district therefore refuses at the MIN_EVENTS floor, and the
+refusal is not a temporary data gap — with this archive and this radius it is
+the ceiling. The model surfaces exist and are correct; a trained number for
+these districts needs a denser reported-flood record (a wider radius, a
+national flood registry, or another district chosen for its reporting density)
+and is an operator decision, not a code default.
+
 ## 3. Endpoints
 
 - `POST /api/v1/flood-probability/train` — fits per pilot district from the
