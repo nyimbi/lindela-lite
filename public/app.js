@@ -7,7 +7,7 @@ import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventS
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState } from '/shared/seasonal.js'
 import { fillAppVersion } from '/shared/app-version.js'
 import { apiFetch, apiSettled, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
-import { esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncateId } from '/shared/fmt.js'
+import { esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { formatRelative } from '/shared/fmt.js'
 
@@ -1184,7 +1184,101 @@ function renderMap(records) {
   renderMapLegend()
 
   const countEl = $('mapRecordCount')
-  if (countEl) countEl.textContent = `${visible.length} records`
+  if (countEl) countEl.textContent = `${visible.length} record${visible.length === 1 ? '' : 's'}`
+
+  // Classify the same way the draw loops above do, so the list says "asset" for
+  // exactly the records drawn as squares. Classifying twice with two predicates
+  // would let the list and the map disagree, which is worse than either.
+  const kindOf = (r) => {
+    if (r.service_type) return 'asset'
+    if (Number.isFinite(r.score)) return 'risk'
+    return 'hazard'
+  }
+  renderMapRecordList(visible.map((r) => ({ record: r, kind: kindOf(r) })))
+}
+
+/**
+ * The map's text alternative.
+ *
+ * Everything drawn above — hazards, assets, IPC areas — rendered as a click
+ * target with an SVG <title> child, and nothing anywhere listed them as text.
+ * A screen-reader user met the map as a single `role="img"` labelled "Situation
+ * map", which collapsed every marker into one atomic picture. This is the same
+ * data the map draws, in a table, with the same detail dialog behind each row.
+ */
+function renderMapRecordList(entries) {
+  const tbody = $('mapRecordListBody')
+  if (!tbody) return
+
+  const empty = $('mapRecordListEmpty')
+  if (empty) empty.hidden = entries.length > 0
+
+  if (!entries.length) {
+    tbody.innerHTML = ''
+    return
+  }
+
+  // Risk records name themselves with `type` and carry `risk_level`, not
+  // `severity`; reading severity off them gave every row "unknown" and every
+  // risk row read "risk — — Turkana", which is the same string 99 times.
+  const describe = ({ record, kind }) => {
+    if (kind === 'asset') {
+      return {
+        type: 'asset',
+        name: record.name || record.service_type || record.id || 'Asset',
+        detail: record.road_class || record.service_type || '',
+        severity: null,
+        when: record.updated_at || null,
+      }
+    }
+    if (kind === 'risk') {
+      // `type` is already "flood_risk", so metricLabel gives "Flood risk" and
+      // appending " risk" produced "Flood risk risk" on every row.
+      const hazard = metricLabel(record.type || record.metric)
+      return {
+        type: hazard,
+        name: `${record.region_name || record.country || 'region'} — score ${num(record.score, { int: true })}`,
+        detail: record.country || '',
+        severity: record.risk_level || null,
+        when: record.generated_at || null,
+      }
+    }
+    const typeLabel = metricLabel(record.event_type)
+    return {
+      type: typeLabel,
+      // A GDELS event can name forty countries in its title. The list is for
+      // scanning, so the row shows the leading phrase and the full text stays
+      // one click away in the detail dialog.
+      name: truncate(record.title || record.headline || record.id || 'Record', { max: 90 }),
+      detail: truncate(record.country || record.source || '', { max: 40 }),
+      severity: record.severity || null,
+      when: record.occurred_at || record.observed_at || record.first_seen_at || record.created_at || null,
+    }
+  }
+
+  // Actionable records first: a reviewer wants the hazards and the assets, not
+  // 99 region-level risk scores in generation order.
+  const order = { hazard: 0, asset: 1, risk: 2 }
+  const sorted = entries
+    .map((entry, i) => ({ ...describe(entry), record: entry.record, index: i, kind: entry.kind }))
+    .sort((a, b) => (order[a.kind] - order[b.kind]) || String(a.type).localeCompare(String(b.type)))
+
+  tbody.innerHTML = sorted.map((row) => `<tr>
+    <td>${escapeHtml(row.type)}</td>
+    <td>${escapeHtml(row.name)}${row.detail ? ` <span class="muted-sm">${escapeHtml(row.detail)}</span>` : ''}</td>
+    <td>${row.severity
+      ? `<span class="sev-chip sev-${sevClass(row.severity)}">${escapeHtml(row.severity)}</span>`
+      : '<span class="muted-sm">—</span>'}</td>
+    <td class="muted-sm nowrap">${escapeHtml(formatTimestamp(row.when, { style: 'date', dash: '—' }))}</td>
+    <td><button type="button" class="btn btn-xs" data-map-record="${row.index}">Details</button></td>
+  </tr>`).join('')
+
+  tbody.querySelectorAll('[data-map-record]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const entry = entries[Number(btn.dataset.mapRecord)]
+      if (entry) openDetailDialog(entry.record)
+    })
+  })
 }
 
 function renderMapLegend() {
@@ -1266,6 +1360,63 @@ mapEl?.addEventListener('dblclick', () => {
   state.mapTransform = { x: 0, y: 0, scale: 1 }
   applyMapTransform()
 })
+
+/**
+ * Keyboard control of the map.
+ *
+ * Pan and zoom were wheel and drag only. There was no keyboard path at all, and
+ * no `tabindex` anywhere in the codebase, so a keyboard user could not reach
+ * the map or any marker on it. The keys mirror what the mouse already does.
+ */
+const PAN_STEP = 40
+const ZOOM_STEP = 1.2
+
+mapEl?.addEventListener('keydown', (e) => {
+  // Let a modifier combination through; it is not a map gesture.
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+
+  switch (e.key) {
+    case 'ArrowLeft':  state.mapTransform.x += PAN_STEP; break
+    case 'ArrowRight': state.mapTransform.x -= PAN_STEP; break
+    case 'ArrowUp':    state.mapTransform.y += PAN_STEP; break
+    case 'ArrowDown':  state.mapTransform.y -= PAN_STEP; break
+    case '+': case '=': state.mapTransform.scale = Math.min(10, state.mapTransform.scale * ZOOM_STEP); break
+    case '-': case '_': state.mapTransform.scale = Math.max(0.3, state.mapTransform.scale / ZOOM_STEP); break
+    case '0':
+      state.mapTransform = { x: 0, y: 0, scale: 1 }
+      break
+    case 't': case 'T':
+      toggleMapRecordList()
+      break
+    default:
+      return
+  }
+  e.preventDefault()
+  applyMapTransform()
+  announceMapView()
+})
+
+let mapAnnounceTimer = null
+function announceMapView() {
+  const el = $('mapViewAnnouncer')
+  if (!el) return
+  el.textContent = `Map at ${Math.round(state.mapTransform.scale * 100)}% zoom.`
+  clearTimeout(mapAnnounceTimer)
+  mapAnnounceTimer = setTimeout(() => { el.textContent = '' }, 2000)
+}
+
+/** Show or hide the map's text alternative. */
+function toggleMapRecordList(force) {
+  const list = $('mapRecordList')
+  const toggle = $('mapListToggle')
+  if (!list || !toggle) return
+  const show = force !== undefined ? force : list.hidden
+  list.hidden = !show
+  toggle.setAttribute('aria-expanded', String(show))
+  toggle.textContent = show ? 'Show map' : 'Show as list'
+}
+
+$('mapListToggle')?.addEventListener('click', () => toggleMapRecordList())
 
 // Map filter triggers re-render
 $('mapSeverity')?.addEventListener('change', reRenderMapFromState)

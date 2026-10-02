@@ -82,9 +82,24 @@
     <main class="console-layout" id="main" tabindex="-1">
 
       <section class="map-section" aria-label="Situational map">
+        <p class="visually-hidden" id="mapKeyboardHelp">
+          The map can be panned with the arrow keys, zoomed with plus and minus,
+          and reset with 0. Press T to switch to the list of records shown on it.
+        </p>
         <div class="map-container">
+          <!--
+            The map was role="img" with no tabindex and pointer-only pan, zoom
+            and marker drill-down: a keyboard or screen-reader user could not
+            open a single hazard, asset or IPC area, and nothing anywhere listed
+            hazards, assets or routes as text. It is now focusable, takes arrow
+            keys to pan, +/- to zoom and 0 to reset, and announces what it is
+            showing. The record list below it is the alternative to the picture.
+          -->
           <svg id="situationMap" class="situation-map" viewBox="0 0 800 500"
-               preserveAspectRatio="xMidYMid meet" role="img" aria-label="Situation map">
+               preserveAspectRatio="xMidYMid meet" tabindex="0" role="application"
+               aria-label="Situation map. Arrow keys pan, plus and minus zoom, 0 resets the view."
+               aria-describedby="mapKeyboardHelp">
+            <title id="situationMapTitle">Situation map</title>
             <defs id="mapDefs"></defs>
             <!--
               Paint order is z-order. The flood depth layer sits above the risk
@@ -192,6 +207,30 @@
               <span data-i18n="filter.cold_chain">Cold-chain nodes</span>
             </label>
             <span id="mapRecordCount" class="map-record-count"></span>
+            <!-- The map's text alternative. Nothing in the product listed hazards,
+                 assets, flood extents or road state as text, so on both
+                 officer-facing surfaces the primary decision surface was a
+                 picture with no non-visual form. -->
+            <button type="button" class="btn btn-xs map-list-toggle" id="mapListToggle"
+                    aria-expanded="false" aria-controls="mapRecordList">Show as list</button>
+          </div>
+
+          <p class="visually-hidden" id="mapViewAnnouncer" role="status" aria-live="polite"></p>
+          <div id="mapRecordList" class="map-record-list" hidden>
+            <table>
+              <caption class="visually-hidden">Every record currently drawn on the situation map</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Type</th>
+                  <th scope="col">Name</th>
+                  <th scope="col">Severity</th>
+                  <th scope="col">When</th>
+                  <th scope="col"><span class="visually-hidden">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody id="mapRecordListBody"></tbody>
+            </table>
+            <p class="empty-note" id="mapRecordListEmpty" hidden>No records match the current filters.</p>
           </div>
 
           <div class="map-sim" role="group" aria-label="Flood simulation">

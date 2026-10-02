@@ -2172,3 +2172,49 @@ label:has(> input[type="radio"]) {
 
   .table-wrap { overflow: visible !important; border: 1px solid #ccc; }
 }
+
+/* --- Map as a list ------------------------------------------------
+   The map's text alternative. Nothing in the product listed hazards, assets or
+   road state as text, so on the officer-facing surfaces the primary decision
+   surface was a picture with no non-visual form. */
+.map-list-toggle { flex-shrink: 0; }
+
+.map-record-list {
+  max-height: 22rem;
+  overflow-y: auto;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-sm);
+  background: var(--bg-elevated);
+}
+
+.map-record-list table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.map-record-list th,
+.map-record-list td {
+  padding: var(--sp-2) var(--sp-3);
+  text-align: start;
+  border-bottom: 1px solid var(--stroke);
+  vertical-align: top;
+}
+
+.map-record-list thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.map-record-list tbody tr:last-child td { border-bottom: none; }
+.map-record-list tbody tr:hover { background: var(--surface); }
+
+.situation-map:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
