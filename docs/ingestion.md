@@ -132,6 +132,56 @@ Emits `disease_observations` as national-annual aggregates. Deliberate limits:
 - **Policy note on every record:** outbreak figures can move funding and
   stigmatise areas; decision-support context with attribution, not an alert trigger.
 
+### Flood Archive Backfill: `gdacs_archive`
+
+GDACS historical flood events via the event-search archive API, keyless,
+verified live 2026-10-02. Backfill source for flood-probability training; the
+live `gdacs` feed reaches back weeks, models need decades.
+
+Emits `hazard_events` (1985 onward, Sub-Saharan Africa scope, same country
+set as the IPC ingestion). Deliberate behaviour:
+
+- **Quarter-by-quarter walk.** A full-range archive query returns only the
+  most recent ~100 events, so the connector asks for one quarter at a
+  time and pages across ~160 windows. Slow by design; run on demand,
+  never on the regular schedule — do not re-crawl 40 years of a free
+  service hourly. Pass `archive_start_year` to narrow the walk.
+- **The upstream `eventtype` filter is ignored by the API** (verified:
+  `eventtype=FL` returns droughts, cyclones, earthquakes too). The flood
+  filter runs in this process, visible in review.
+- **Severity is null.** GDACS publishes flood `severitydata` as a fill-in
+  zero ("Magnitude 0.00"). Stored as null — a placeholder zero is not a
+  measurement.
+- **Event points are representative**, not observed flood locations; the
+  metadata says so, because downstream district matching runs on them.
+
+### Rainfall Archive Backfill: `open_meteo_archive`
+
+ERA5 reanalysis daily precipitation via the Open-Meteo archive API, keyless,
+verified live 2026-10-02, series from 1981. Backfill source for
+flood-probability training.
+
+Emits `climate_observations` — exactly one record per region carrying the
+whole daily array (`daily: [{date, precipitation_mm}]`). Null days are
+preserved as nulls, never zero-filled; a model reading gaps must treat them
+as unknown. Limits stated on every record:
+
+- **Reanalysis, not gauge observations** — in data-sparse regions ERA5 is
+  partially model-informed.
+- **A single point** cannot resolve district drainage or orography.
+- **The series ends at the archive's last complete day**; staleness is
+  stated, not hidden.
+
+Retraining the flood-probability model (`POST /api/v1/flood-probability/train`)
+reads these records plus GDACS flood events from the store; see
+`docs/flood-probability-model-basis.md`. Both backfills are `regular: false`
+and are excluded from default ingestion runs — request them explicitly:
+
+```bash
+curl -X POST http://127.0.0.1:4177/api/v1/ingest/run \
+  -d '{"sources": ["gdacs_archive", "open_meteo_archive"]}'
+```
+
 ## Connector Responsibilities
 
 Each connector returns normalized records grouped by collection:
@@ -215,10 +265,16 @@ Regular sources have default policies in `src/ingestion.js`:
 | `noaa_enso` | 720 min | 20 sec | 2 | 1440 min |
 | `ipc_hdx` | 1440 min | 30 sec | 2 | 2880 min |
 | `who_gho` | 1440 min | 20 sec | 2 | 20160 min |
+| `gdacs_archive` | 0 min | 30 sec | 2 | 43200 min |
+| `open_meteo_archive` | 0 min | 60 sec | 2 | 43200 min |
 
 User-supplied sources do not have regular schedules by default. `dhis2` has a
 policy but `regular: false`, because activation depends on an operator
-configuring an instance URL and token.
+uploading entitlement they hold. `gdacs_archive` and `open_meteo_archive`
+are also `regular: false` and carry a `0 min` interval on purpose: they are
+historical backfills for flood-probability training, run on demand, and an
+interval of 0 means no `next_run_at` is ever computed for them; DHIS2 needs
+an instance URL and token configured before it activates.
 
 ### Minimum Records
 

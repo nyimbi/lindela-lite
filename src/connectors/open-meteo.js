@@ -31,7 +31,9 @@ import { defineConnector } from './spec.js'
  * unknown, which reduces confidence, rather than as a measurement, which would
  * silently reduce the risk.
  */
-function readMeasurement(value) {
+// Exported so the archive connector keeps the same absence discipline: a
+// missing day is null in both, and the model treats them the same way.
+export function readMeasurement(value) {
   if (value === null || value === undefined) return null
   if (typeof value === 'string' && value.trim() === '') return null
   const number = Number(value)

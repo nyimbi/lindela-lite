@@ -97,6 +97,8 @@ Built-in source ids:
 | `noaa_enso` | NOAA CPC Niño 3.4 SST anomaly (ONI) | yes |
 | `ipc_hdx` | IPC acute food insecurity phases (national + subnational, via HDX) | yes — CC0 |
 | `who_gho` | WHO GHO outbreak indicators (cholera, meningitis, measles, yellow fever, plague; national-annual) | yes — attribution required |
+| `gdacs_archive` | GDACS historical flood archive (1985 onward) — flood-probability training backfill | yes |
+| `open_meteo_archive` | ERA5 reanalysis daily precipitation (1981 onward) — flood-probability training backfill; not gauge observations | yes — attribution required |
 | `dhis2` | DHIS2 data-quality aggregate | user-supplied instance |
 | `service_assets` | imported roads, clinics, boreholes | — |
 | `acled_csv` | ACLED-compatible conflict CSV, user-supplied | user licence |

@@ -45,6 +45,7 @@ import { summarizeFoodSecurity } from './connectors/ipc-hdx.js'
 import { summarizeDiseaseObservations } from './connectors/who-gho.js'
 import { planDelivery } from './routing.js'
 import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
+import { trainDistrictModels, predict } from './flood-probability.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
 import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots } from './kpi.js'
 import { KNOWN_DISTRICTS, resolveDistrict, districtOverview } from './districts.js'
@@ -500,6 +501,92 @@ async function handleApi(store, req, res, url) {
     // states must not be computed over an arbitrary page of the collection —
     // the dashboard strip therefore reads the whole store here.
     jsonResponse(res, 200, { success: true, data: summarizeDiseaseObservations(data.disease_observations || []) })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/flood-probability/models') {
+    jsonResponse(res, 200, {
+      success: true,
+      data: filterRecords(data.flood_probability_models || [], url.searchParams, { data, collection: 'flood_probability_models' }),
+    })
+    return
+  }
+
+  // Route planning requires a POST body (origin plus one or more
+  // destinations), so it is handled by the mutating branch below rather than
+  // here in the GET-only section.
+  if (req.method === 'POST' && url.pathname === '/api/v1/flood-probability/train') {
+    // Training is pure compute over the store: open_meteo_archive rainfall
+    // series plus GDACS flood events already held. It writes trained models
+    // into flood_probability_models and never reaches the network. A district
+    // that cannot support a fit lands in refusals with the reason, not as a
+    // model with no sample.
+    const body = await readRequestJson(req)
+    const { trained, refusals } = trainDistrictModels(data, body || {})
+    if (trained.length) await store.merge({ flood_probability_models: trained })
+    jsonResponse(res, 200, { success: true, data: trained, refusals })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/flood-probability/score') {
+    // A query param that is absent must not become Number(null) = 0 mm — one
+    // missing statistic would otherwise score against feature zeros that were
+    // never given. Absent or empty is unreadable and refused.
+    const featureValue = (name) => {
+      const raw = url.searchParams.get(name)
+      return raw === null || raw.trim() === '' ? Number.NaN : Number(raw)
+    }
+    const features = {
+      max_7_day: featureValue('max_7_day'),
+      sum_30_day: featureValue('sum_30_day'),
+      sum_90_day: featureValue('sum_90_day'),
+    }
+    const missing = Object.entries(features).filter(([, v]) => !Number.isFinite(v)).map(([k]) => k)
+    if (missing.length) {
+      jsonResponse(res, 400, { success: false, error: `missing or non-numeric rainfall features: ${missing.join(', ')}` })
+      return
+    }
+    const region = url.searchParams.get('region')
+    const models = (data.flood_probability_models || [])
+      .filter((m) => m.model)
+      .sort((a, b) => Date.parse(b.trained_at) - Date.parse(a.trained_at))
+    const latest = region
+      ? models.find((m) => String(m.region_name).toUpperCase() === region.toUpperCase())
+      : models[0]
+    if (!latest || !latest.model) {
+      // An absent model is an answer, not a 500: the refusal says what is
+      // missing, exactly as the training endpoint would have reported it.
+      jsonResponse(res, 200, {
+        success: true,
+        scored: false,
+        refusal: region
+          ? `no trained flood-probability model for ${region}; POST /api/v1/flood-probability/train first`
+          : 'no trained flood-probability model in the store; POST /api/v1/flood-probability/train first',
+        basis: latest?.basis || null,
+      })
+      return
+    }
+    const probability = predict(latest.model, features)
+    if (probability === null) {
+      jsonResponse(res, 200, { success: true, scored: false, refusal: 'cannot score: non-finite feature after standardization' })
+      return
+    }
+    jsonResponse(res, 200, {
+      success: true,
+      scored: true,
+      data: {
+        region_name: latest.region_name,
+        probability,
+        features,
+        trained_at: latest.trained_at,
+        model: latest.model,
+        folds: latest.folds,
+        basis: latest.basis,
+        months_kept: latest.months_kept,
+        events_matched: latest.events_matched,
+        metadata: latest.metadata,
+      },
+    })
     return
   }
 

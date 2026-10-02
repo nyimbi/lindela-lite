@@ -46,6 +46,7 @@ export const COLLECTIONS = [
   // had, caught first by the food-security API test.
   'food_security_records',
   'disease_observations',
+  'flood_probability_models',
 ]
 
 export class JsonStore {

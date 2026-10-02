@@ -251,8 +251,13 @@
       ]
     },
     "defaults": {
-      "rateLimit": { "perMinute": 20 },
-      "retry": { "max": 2, "backoffMs": 1000 },
+      "rateLimit": {
+        "perMinute": 20
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
       "timeout_ms": 30000
     },
     "tags": [
@@ -283,8 +288,13 @@
       ]
     },
     "defaults": {
-      "rateLimit": { "perMinute": 30 },
-      "retry": { "max": 2, "backoffMs": 1000 },
+      "rateLimit": {
+        "perMinute": 30
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
       "timeout_ms": 20000
     },
     "tags": [
@@ -399,6 +409,79 @@
       "scaffold"
     ],
     "contributor": "core",
+    "since": "0.2.0"
+  },
+  {
+    "id": "gdacs_archive",
+    "module": "src/connectors/gdacs-archive.js",
+    "description": "GDACS historical flood events (1985 onward, Sub-Saharan Africa) from the archive search API, walked quarter by quarter. Keyless. Backfill for flood-probability training; the eventtype filter is ignored upstream and runs in-process, flood severity upstream is a fill-in zero and is stored as null.",
+    "schemas": {
+      "input": {
+        "archive_start_year": "number (default 1985)",
+        "countries": "array of ISO3 codes (default Sub-Saharan Africa); 'all' for every country",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": [
+        "hazard_events"
+      ]
+    },
+    "defaults": {
+      "rateLimit": {
+        "perMinute": 30
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
+      "timeout_ms": 30000
+    },
+    "tags": [
+      "flood",
+      "hazard",
+      "archive",
+      "training-data"
+    ],
+    "contributor": "core",
+    "source": "GDACS archive, Joint Research Centre of the European Commission",
+    "license": "Attribution required (JRC)",
+    "since": "0.2.0"
+  },
+  {
+    "id": "open_meteo_archive",
+    "module": "src/connectors/open-meteo-archive.js",
+    "description": "ERA5 reanalysis daily precipitation per pilot district, 1981 onward, via the keyless Open-Meteo archive. One record per region with the whole daily array; nulls preserved. Backfill for flood-probability training; explicitly reanalysis, not gauge observations.",
+    "schemas": {
+      "input": {
+        "regions": "array of {name, country, lat, lon} (default the pilot regions)",
+        "archive_start_date": "date (default '1981-01-01')",
+        "archive_end_date": "date (default today)",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": [
+        "climate_observations"
+      ]
+    },
+    "defaults": {
+      "rateLimit": {
+        "perMinute": 60
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
+      "timeout_ms": 60000
+    },
+    "tags": [
+      "rainfall",
+      "era5",
+      "archive",
+      "training-data"
+    ],
+    "contributor": "core",
+    "source": "Open-Meteo (ERA5 reanalysis archive)",
+    "license": "CC BY 4.0, per open-meteo.com terms",
     "since": "0.2.0"
   }
 ]

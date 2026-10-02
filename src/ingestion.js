@@ -11,6 +11,8 @@ import { usgsEarthquakeConnector } from './connectors/usgs-earthquake.js'
 import { noaaNinoConnector } from './connectors/noaa-enso.js'
 import { ipcHdxConnector } from './connectors/ipc-hdx.js'
 import { whoGhoConnector } from './connectors/who-gho.js'
+import { gdacsArchiveConnector } from './connectors/gdacs-archive.js'
+import { openMeteoArchiveConnector } from './connectors/open-meteo-archive.js'
 import { acledCsvConnector, conflictCsvConnector, serviceAssetsConnector } from './connectors/uploads.js'
 import { dhis2Connector } from './connectors/dhis2.js'
 
@@ -24,6 +26,8 @@ const CONNECTORS = Object.freeze({
   noaa_enso: noaaNinoConnector,
   ipc_hdx: ipcHdxConnector,
   who_gho: whoGhoConnector,
+  gdacs_archive: gdacsArchiveConnector,
+  open_meteo_archive: openMeteoArchiveConnector,
   service_assets: serviceAssetsConnector,
   acled_csv: acledCsvConnector,
   conflict_csv: conflictCsvConnector,
@@ -40,6 +44,9 @@ export const PUBLIC_INGESTION_SOURCES = Object.freeze([
   'noaa_enso',
   'ipc_hdx',
   'who_gho',
+  // The two historical backfills are deliberately NOT here: PUBLIC sources
+  // are the default run set, and a default run must not re-walk 40 years of a
+  // free archive. They run on explicit request — see docs/ingestion.md.
 ])
 
 export const SOURCE_POLICIES = Object.freeze({
@@ -61,6 +68,12 @@ export const SOURCE_POLICIES = Object.freeze({
   // figure is "stale" here only when something breaks, not week to week.
   ipc_hdx: { interval_minutes: 1440, timeout_ms: 30000, retries: 2, stale_after_minutes: 2880, minimum_records: 1, regular: true },
   who_gho: { interval_minutes: 1440, timeout_ms: 20000, retries: 2, stale_after_minutes: 20160, minimum_records: 1, regular: true },
+  // Historical backfills, never on the regular schedule: a full gdacs_archive
+  // walk is a paginated quarter-by-quarter crawl of 40 years, and re-running
+  // it hourly would be abuse of a free service. They run on demand (public
+  // ingestion or the ingestion run API) to stock training data.
+  gdacs_archive: { interval_minutes: 0, timeout_ms: 30000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
+  open_meteo_archive: { interval_minutes: 0, timeout_ms: 60000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
   service_assets: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   acled_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   conflict_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },

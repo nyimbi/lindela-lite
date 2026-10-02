@@ -22,6 +22,9 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 - `GET /api/v1/food-security` returns IPC acute food insecurity classifications, plus a Phase 3+ summary.
 - `GET /api/v1/food-security/summary` returns the IPC Phase 3+ roll-up alone.
 - `GET /api/v1/disease-observations` returns WHO GHO outbreak indicators with staleness verdicts.
+- `POST /api/v1/flood-probability/train` fits the empirical rainfall–flood model per pilot district from the store, writing trained models and explicit refusals.
+- `GET /api/v1/flood-probability/score` scores rainfall statistics against a trained model, carrying model card, validation, and basis.
+- `GET /api/v1/flood-probability/models` lists trained models, refusals included.
 - `POST /api/v1/routing/plan` plans delivery routes over current road access, returning per-leg routes and severed-segment diagnostics.
 - `GET /api/v1/conflict-risk` returns climate-conflict risk scores.
 - `GET /api/v1/service-assets` returns imported service assets.
@@ -337,6 +340,46 @@ Deliberate constraints:
 - The summary marks each indicator series `current` / `aging` / `stale`
   against the calendar. Cholera's published series ends 2016 (verified); a
   stale series is a data fact, not a disease fact.
+
+### `POST /api/v1/flood-probability/train`
+
+Auth: API key. Trains the empirical rainfall–flood model per pilot district
+(`src/flood-probability.js`, basis documented in
+`docs/flood-probability-model-basis.md`). Pure compute over the store — the
+rainfall series from `open_meteo_archive` climate observations and flood
+labels from `gdacs`/`gdacs_archive` hazard events; no network calls.
+
+Optional body `{ regions: [{name, country, lat, lon}] }` (default the pilot
+regions).
+
+Response: `{ success, data: FloodProbabilityModel[], refusals: [{region, refusal, months_kept?, events_matched?}] }`
+
+Hard refusals (60-month / 5-flood-month floors, all-one-class samples, missing
+archive series) come back per district with the reason — no number without a
+sample. Trained models are written to `flood_probability_models` with their
+model card, contingency counts, leave-one-year-out scores, and the reporting
+condition: **P(flood enters the GDACS archive)**, not P(water at an elevation).
+
+### `GET /api/v1/flood-probability/score`
+
+Query parameters: `max_7_day`, `sum_30_day`, `sum_90_day` (mm; required),
+`region` (district name; optional — newest trained model otherwise).
+
+Auth: none. Scores rainfall statistics against the most recent trained model
+for `region` (or the newest model overall).
+
+Response (when trained): `{ success, scored: true, data: { region_name, probability, features, trained_at, model, folds, basis, months_kept, events_matched, metadata } }`
+
+The model card is the response, not hidden server state: coefficients,
+standardisation, λ, training months, base rate, and the Brier/skill folds all
+travel with every score so a reader can check what the number is standing on.
+Without a trained model or for non-finite features: `scored: false` with the
+refusal text — a refusal is an answer, not a 500.
+
+### `GET /api/v1/flood-probability/models`
+
+Auth: none. The trained models from `flood_probability_models`, including
+districts that refused with the refusal text, which the dashboard strip shows.
 
 ### `POST /api/v1/routing/plan`
 

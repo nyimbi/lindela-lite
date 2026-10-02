@@ -5,22 +5,22 @@ import path from 'node:path'
  * Flood-probability guard.
  *
  * The project rule is that rainfall intensity/duration to flood probability is
- * NOT implemented, and may only be implemented against an explicit, documented,
- * agreed model basis. Until that agreement exists, nothing in the shipped
- * surface may claim a flood probability or a return period.
+ * implemented ONLY against the explicit, documented, agreed model basis in
+ * docs/flood-probability-model-basis.md — empirical rainfall-flood
+ * co-occurrence with hard sample-size refusals, agreed 2026-10-02. Until that
+ * agreement existed this file scanned the shipped surface and refused the word
+ * "flood_probability" outright; that scan is now lifted by setting
+ * AGREED_MODEL_BASIS below, exactly the legitimate path this file documented.
  *
- * This turns that rule from a comment into a build gate. Without it the rule
- * survives only as author discipline, and the exact failure it exists to
- * prevent — a number shaped like a probability that no model supports — could
- * be added by anyone and would pass every test.
- *
- * To lift the guard legitimately: agree the model basis first, record it in
- * docs/flood-probability-model-basis.md (which validate.mjs already requires to
- * declare its status), and set AGREED_MODEL_BASIS below to that document. Do
- * not lift it by deleting this file.
+ * What is still scanned, even with the basis agreed: the vocabulary of the
+ * BLOCKED routes — return periods, GEV fits, IDF curves, rational method,
+ * design floods. Those were rejected on data grounds (no validated discharge
+ * record; MERIT unreachable) and stay forbidden anywhere outside the basis
+ * document, which records why. A return-period capability silently appearing
+ * in a README would pass every functional test; it must not pass the build.
  */
 
-const AGREED_MODEL_BASIS = null
+const AGREED_MODEL_BASIS = 'docs/flood-probability-model-basis.md'
 
 /**
  * Where a claim can hide.
@@ -125,9 +125,61 @@ function surfaceFiles() {
   return files
 }
 
+/**
+ * Terms of the BLOCKED hydrological routes. Every one of these implies a fit
+ * against a discharge record we do not have. Scanned always, agreement or no
+ * agreement.
+ */
+const BLOCKED_ROUTES = [
+  'return_period',
+  'returnperiod',
+  'recurrence_interval',
+  'exceedance_probability',
+  'annual_exceedance',
+  'exceedance_',
+  'annual_chance',
+  'aep_',
+  '_aep',
+  'design_flood',
+  'design_flood_',
+  'hundred_year_flood',
+  '100_year_flood',
+  'hazard_curve',
+  'discharge_frequency',
+  'gevfitted',
+  'gev_fitted',
+  'idf_curve',
+  'rational_method',
+]
+
 if (AGREED_MODEL_BASIS) {
   if (!fs.existsSync(AGREED_MODEL_BASIS)) {
     throw new Error(`AGREED_MODEL_BASIS points at a missing document: ${AGREED_MODEL_BASIS}`)
+  }
+  const offenders = []
+  const self = path.resolve(new URL(import.meta.url).pathname)
+  for (const file of surfaceFiles()) {
+    if (path.resolve(file) === self) continue
+    if (MAY_NAME_TERMS.has(file.split(path.sep).join('/'))) continue
+    const lower = fs.readFileSync(file, 'utf8').toLowerCase()
+    for (const term of BLOCKED_ROUTES) {
+      if (lower.includes(term)) {
+        offenders.push(`${file}: '${term}'`)
+      }
+    }
+    for (const pattern of FORBIDDEN_PATTERNS) {
+      const hit = lower.match(pattern)
+      if (hit) offenders.push(`${file}: matches /${pattern.source}/i ('${hit[0]}')`)
+    }
+  }
+  if (offenders.length) {
+    throw new Error(
+      'Blocked hydrological-route surface present outside the basis document.\n'
+      + `  ${offenders.join('\n  ')}\n`
+      + 'Return periods, GEV/IDF/rational-method fits are rejected by the agreed basis —\n'
+      + 'no validated discharge record backs them. Name them only when recording why\n'
+      + 'they are blocked, in docs/flood-probability-model-basis.md.',
+    )
   }
 } else {
   const offenders = []

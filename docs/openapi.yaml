@@ -696,6 +696,88 @@ paths:
                       $ref: '#/components/schemas/DiseaseObservation'
                   summary:
                     $ref: '#/components/schemas/DiseaseObservationsSummary'
+  /api/v1/flood-probability/train:
+    post:
+      summary: Train the empirical rainfall-flood model per pilot district
+      description: |
+        Fits the empirical co-occurrence model (contingency counts plus an
+        L2-regularised logistic fit, leave-one-year-out validated) from
+        open_meteo_archive rainfall series and GDACS flood events already in
+        the store. No network calls.
+
+        Refusals are per district with a reason — fewer than 60 months of
+        valid features, fewer than 5 flood months, all-one-class samples, or
+        no archive series. A trained model always carries its basis and the
+        reporting condition: P(flood enters the GDACS archive), not the
+        physical flood rate.
+      responses:
+        '200':
+          description: Trained models and refusals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FloodProbabilityModel'
+                  refusals:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        region: { type: string }
+                        refusal: { type: string }
+                        months_kept: { type: integer, nullable: true }
+                        events_matched: { type: integer, nullable: true }
+  /api/v1/flood-probability/score:
+    get:
+      summary: Score rainfall statistics against a trained flood-probability model
+      description: |
+        Uses the most recent trained model for the requested region (or the
+        newest overall). Without a trained model the response is
+        `scored: false` with the refusal text — a refusal is an answer, not a
+        500. Every score carries the full model card, leave-one-year-out
+        scores, and the reporting condition.
+      parameters:
+        - { name: max_7_day, in: query, required: true, schema: { type: number }, description: Largest 7-day precipitation total inside the month (mm) }
+        - { name: sum_30_day, in: query, required: true, schema: { type: number }, description: Trailing 30-day precipitation total at month end (mm) }
+        - { name: sum_90_day, in: query, required: true, schema: { type: number }, description: Trailing 90-day precipitation total at month end (mm) }
+        - { name: region, in: query, required: false, schema: { type: string }, description: District name; default the newest trained model overall }
+      responses:
+        '200':
+          description: Scored probability with model card, or an explicit refusal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  scored: { type: boolean }
+                  refusal: { type: string, nullable: true }
+                  basis: { type: object, nullable: true, description: The frozen MODEL_BASIS object when a model exists }
+                  data:
+                    $ref: '#/components/schemas/FloodProbabilityScore'
+        '400':
+          description: Missing or non-numeric rainfall features
+  /api/v1/flood-probability/models:
+    get:
+      summary: Trained flood-probability models, refusals included
+      responses:
+        '200':
+          description: Stored trained models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FloodProbabilityModel'
   /api/v1/routing/plan:
     post:
       summary: Plan delivery routes over current road access
@@ -1817,6 +1899,109 @@ components:
               year: { type: integer }
               value: { type: number }
               unit: { type: string }
+    FittedModelCard:
+      type: object
+      description: The fitted model — coefficients are per standardized feature unit
+      required: [type, features, coefficients, training]
+      properties:
+        type: { type: string, enum: [logistic_l2_empirical] }
+        features: { type: array, items: { type: string } }
+        coefficients:
+          type: array
+          items:
+            type: object
+            properties:
+              feature: { type: string }
+              value: { type: number }
+        intercept: { type: number }
+        standardization:
+          type: array
+          items:
+            type: object
+            properties:
+              feature: { type: string }
+              mean: { type: number }
+              sd: { type: number }
+        lambda: { type: number }
+        training:
+          type: object
+          properties:
+            months: { type: integer }
+            flood_months: { type: integer }
+            base_rate: { type: number }
+    FloodProbabilityModel:
+      type: object
+      required: [region_name, trained_at, basis, months_kept, events_matched]
+      properties:
+        id: { type: string }
+        region_name: { type: string }
+        country: { type: string, nullable: true }
+        latitude: { type: number, nullable: true }
+        longitude: { type: number, nullable: true }
+        trained_at: { type: string, format: date-time }
+        model:
+          allOf:
+            - $ref: '#/components/schemas/FittedModelCard'
+          nullable: true
+          description: Fitted card, null only for a refusal record
+        folds:
+          type: object
+          nullable: true
+          description: Leave-one-year-out validation scores
+          properties:
+            brier_score: { type: number }
+            brier_of_base_rate: { type: number }
+            skill_over_base_rate: { type: number }
+            validated_months: { type: integer }
+            n_folds: { type: integer }
+        contingency:
+          type: array
+          description: Per-feature contingency counts with Wilson intervals
+          items:
+            type: object
+            properties:
+              feature: { type: string }
+              percentile: { type: number }
+              threshold_mm: { type: number }
+              months_above_threshold: { type: integer }
+              flood_months_above_threshold: { type: integer }
+              conditional_probability: { type: number }
+              conditional_probability_wilson:
+                type: object
+                properties:
+                  low: { type: number }
+                  high: { type: number }
+              lift_over_base_rate: { type: number, nullable: true }
+        basis:
+          type: object
+          description: The frozen MODEL_BASIS object — sources, label definition, rejection reasons, reporting condition
+        months_kept: { type: integer }
+        events_matched: { type: integer }
+        rainfall:
+          type: object
+          description: Provenance of the rainfall series trained on
+          properties:
+            record_id: { type: string }
+            series_start: { type: string }
+            series_end: { type: string }
+            series_days: { type: integer }
+            days_missing_precipitation: { type: integer }
+            provider: { type: string }
+    FloodProbabilityScore:
+      type: object
+      required: [region_name, probability, model]
+      properties:
+        region_name: { type: string }
+        probability: { type: number, description: Reporting-conditioned P(flood enters the GDACS archive in the calendar month) }
+        features:
+          type: object
+          properties:
+            max_7_day: { type: number }
+            sum_30_day: { type: number }
+            sum_90_day: { type: number }
+        trained_at: { type: string, format: date-time }
+        model:
+          $ref: '#/components/schemas/FittedModelCard'
     RoutingPlanInput:
       type: object
       required: [from, to]

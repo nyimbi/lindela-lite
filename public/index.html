@@ -8,7 +8,8 @@
     <meta name="theme-color" content="#0e1520">
     <link rel="stylesheet" href="/styles.css">
   </head>
-  <body>
+  <body class="app-shell">
+    <a class="skip-link" href="#railPanel">Skip to alerts and panels</a>
 
     <div id="offlineBanner" class="offline-banner" hidden>
       <span data-i18n="banner.offline">Offline. Changes will sync when you reconnect.</span>
@@ -212,6 +213,23 @@
             <div id="floodLegend" class="flood-legend" hidden></div>
           </div>
 
+          <div class="seasonal-strip" id="floodProbStrip" role="group" aria-label="Flood probability models" hidden>
+            <div class="seasonal-head">
+              <span class="seasonal-label">Flood probability (trained)</span>
+              <span id="floodProbRegions" class="seasonal-phase seasonal-phase-unknown">no model</span>
+            </div>
+            <div class="seasonal-value">
+              <span id="floodProbBest" class="seasonal-anomaly">—</span>
+              <span id="floodProbBestMeta" class="seasonal-period"></span>
+            </div>
+            <p id="floodProbNote" class="seasonal-note">
+              Empirical rainfall–flood co-occurrence trained on ERA5 daily
+              precipitation and reported GDACS floods. Reporting-conditioned:
+              the probability is a flood entering the archive, not water at a
+              given elevation.
+            </p>
+          </div>
+
           <div class="map-sim" role="group" aria-label="Route planning">
             <div class="map-sim-row">
               <label class="filter-label" for="routeFrom">
@@ -233,7 +251,7 @@
         </div>
       </section>
 
-      <aside class="rail" role="complementary" aria-label="Operations rail">
+      <aside class="rail" id="railPanel" role="complementary" aria-label="Operations rail" tabindex="-1">
         <nav class="rail-tabs" role="tablist" aria-label="Console tabs">
           <button class="rail-tab active" role="tab" id="tab-alerts"
                   aria-controls="panel-alerts" aria-selected="true" data-tab="alerts">

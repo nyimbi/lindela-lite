@@ -57,6 +57,37 @@ All additions are additive; no existing endpoint changed shape.
   a series that stopped publishing (cholera ends 2016, verified) is labelled,
   not hidden.
 - IPC area bbox overlay and food-security/outbreak surfaces on the dashboard.
+
+Flood probability, on an agreed empirical basis (the operator's directive:
+implement the most functional defensible option, never invented coefficients):
+
+- `open_meteo_archive` connector → `climate_observations`: one record per pilot
+  district carrying the whole ERA5 daily precipitation series (1981 onward)
+  from the keyless Open-Meteo archive, verified live 2026-10-02. Null days
+  stay null; the record states that this is reanalysis, not gauge data, at a
+  single point.
+- `gdacs_archive` connector → `hazard_events`: GDACS historical floods (1985
+  onward, Sub-Saharan Africa) via quarter-by-quarter archive walk, verified
+  live. The upstream `eventtype` filter is accepted and ignored, so floods are
+  filtered in-process; flood `severitydata` is a fill-in zero upstream and is
+  stored as null. Both connectors run on demand (`regular: false`) so a
+  default ingestion run never issues a 40-year crawl.
+- `src/flood-probability.js` + `POST /api/v1/flood-probability/train` and
+  `GET /api/v1/flood-probability/score`. Empirical rainfall–flood
+  co-occurrence: month-grain contingency counts (Wilson intervals, lift over
+  base rate) plus an L2-regularised logistic fit (full-matrix Newton with
+  step-halving on collinear standardized rainfall features), validated
+  leave-one-year-out (Brier vs always-base-rate skill). Hard refusals are part
+  of the model: under 60 valid months, under 5 flood months, or all-one-class
+  data return no probability. Every model and score carries its basis, sample
+  counts, and the reporting condition — the label is *GDACS-reported*, so the
+  probability is for a flood entering the archive, not for water reaching a
+  given elevation. Basis and the rejected MERIT-Hydro/GEV route are documented
+  in `docs/flood-probability-model-basis.md` (Status: agreed and implemented).
+- Trained-model strip on the dashboard: per district, the base rate/skill card
+  or the refusal text — a district with 34 months shows why it has no model.
+- `docs/flood-probability-model-basis.md` rewritten from proposal to the
+  implemented record; the validator's status check updated in the same change.
 - `docs/outbreak-and-food-security-scoping.md` amended 2026-10-02: its "no
   keyless IPC feed" conclusion never checked HDX; the original verification
   record is kept, with the supersession stated.
@@ -77,9 +108,13 @@ All additions are additive; no existing endpoint changed shape.
   26-05, CPC now uses RONI for official ENSO monitoring, but RONI is not published
   as a stable keyless monthly feed, so reading ONI and labelling it RONI would be
   a fabricated capability. Recorded in each record's `index_used` and `index_note`.
-- Rainfall intensity and duration to flood probability is **not implemented.** It
-  requires an explicitly agreed hydrological model basis and a long validated
-  annual-maxima record; no coefficients were invented.
+- Rainfall intensity and duration to flood probability now **is** implemented,
+  but only as the **empirical co-occurrence model** agreed in
+  `docs/flood-probability-model-basis.md`, with hard sample-size refusals and
+  reporting-conditioned labels. It is not a hydrological model: no return
+  periods, no depth, no water-surface mapping. The Merit-Hydro/GEV route that
+  would produce those remains blocked (MERIT unreachable and EULA-gated; no
+  validated 36-year gauge discharge for the pilot basins).
 - Landslide clearance is a **fixed 5 km radius** around the reported location,
   not a run-out model. It is a screening radius chosen to reflect that debris
   travels further than standing water, not a slope-stability or volume estimate.

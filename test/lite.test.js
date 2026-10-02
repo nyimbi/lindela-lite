@@ -1083,7 +1083,11 @@ describe('Lindela Lite API', () => {
     const app = await fs.readFile(path.join(process.cwd(), 'public/app.js'), 'utf8')
     assert.match(app, /function authHeaders/)
     assert.match(app, /'x-api-key': apiKey/)
-    assert.match(app, /function escapeHtml/)
+    // Escaping now lives in /shared/fmt.js and is imported under its escape
+    // name; a local `function escapeHtml` would mean the shared module drifted.
+    const fmt = await fs.readFile(path.join(process.cwd(), 'public/shared/fmt.js'), 'utf8')
+    assert.match(fmt, /export function esc\(/)
+    assert.match(app, /esc as escapeHtml/)
     assert.match(app, /title="\$\{escapeHtml\(source\.name\)\}"/)
     assert.doesNotMatch(app, /<td>\$\{record\.(title|message|text|name|source|status|id|owner)/)
   })
@@ -1124,7 +1128,12 @@ describe('Lindela Lite API', () => {
       )
       const block = app.match(new RegExp(`import \\{([^}]+)\\} from '${specifier.replace(/[/.]/g, '\\$&')}'`))
       assert.ok(block, `app.js must import from ${specifier}`)
-      for (const name of block[1].split(',').map((n) => n.trim()).filter(Boolean)) {
+      // `{ original as alias }` imports bind the alias in app.js but resolve
+      // against the ORIGINAL export in the module: the check must follow the
+      // `as`, or an aliased import looks missing and the module looks broken.
+      const names = block[1].split(',').map((n) => n.trim()).filter(Boolean)
+        .map((n) => (n.match(/^(.+?)\s+as\s+\w+$/) || [null, n])[1])
+      for (const name of names) {
         assert.ok(
           exported.has(name),
           `${specifier} must export ${name}; app.js imports it, so a rename breaks the bundle`,
@@ -5557,6 +5566,422 @@ describe('Lindela Lite food security and disease API', () => {
       assert.equal(disease.data[0].unit, 'cases')
       assert.equal(disease.data[0].latitude, null)
       assert.equal(disease.summary.series_state[0].state, 'stale')
+    } finally {
+      listener.close()
+    }
+  })
+})
+
+// =============================================================
+// Flood probability — empirical basis (agreed 2026-10-02)
+// =============================================================
+// The model trains rainfall statistics against GDACS-reported floods and must
+// refuse to produce a number when the sample cannot back one. Every test here
+// holds the refusals up alongside the numbers: a build that regressed to
+// "return a probability anyway" would have to make an unambiguous refusal
+// assertion fail first.
+
+describe('Lindela Lite flood probability model basis', () => {
+  // Imported inside the tests: this describe body is synchronous.
+  const fpImport = () => import('../src/flood-probability.js')
+
+  // Five dry months, two wet seasons, one 7-day deluge. Rainfall starts 90
+  // days before the first kept month so the trailing windows reach real data.
+  function deterministicDaily(years, { startYear = 2005 } = {}) {
+    const daily = []
+    const start = Date.UTC(startYear, 0, 1)
+    const end = new Date(Date.UTC(startYear, 0, 1))
+    end.setUTCFullYear(end.getUTCFullYear() + years)
+    end.setUTCDate(end.getUTCDate() - 1)
+    for (let t = start; t <= end.getTime(); t += 86400000) {
+      const date = new Date(t).toISOString().slice(0, 10)
+      const month = new Date(t).getUTCMonth()
+      const day = new Date(t).getUTCDate()
+      let mm = 2
+      if (month >= 5 && month <= 8) mm = 12
+      if (month === 7) mm = 25
+      if (month === 7 && day >= 14 && day <= 20) mm = 60
+      daily.push({ date, precipitation_mm: mm })
+    }
+    return daily
+  }
+
+  function floodEvent(year, month, day, { lat = 0, lon = 0, country = 'TL' } = {}) {
+    return {
+      event_type: 'flood', country,
+      latitude: lat, longitude: lon,
+      occurred_at: new Date(Date.UTC(year, month, day)).toISOString(),
+    }
+  }
+
+  it('builds month samples: same-month labels, radius matches, first months dropped', async () => {
+    const fp = await fpImport()
+    const daily = deterministicDaily(1)
+    const events = [
+      floodEvent(2005, 6, 10),            // July 2005, at the district point
+      floodEvent(2005, 1, 5, { lat: 60, lon: 60 }), // far away: not in radius
+      floodEvent(2005, 11, 5),            // December 2005: labelled there
+    ]
+    const { samples, events_matched, months_kept } = fp.buildDistrictSamples(
+      daily, events, { latitude: 0, longitude: 0, country: 'TL' },
+    )
+    assert.equal(events_matched, 2)
+    // 12-month series: Jan..Mar cannot have a 90-day trailing window.
+    assert.ok(months_kept >= 9 && months_kept < 12, `months_kept=${months_kept}`)
+    const wetAugust = samples.find((s) => s.month === '2005-08')
+    assert.ok(samples.find((s) => s.month === '2005-07').label, 'July with a flood in radius must carry the label')
+    const labelledMonths = samples.filter((s) => s.label).map((s) => s.month)
+    assert.deepEqual(labelledMonths, ['2005-07', '2005-12'])
+    for (const s of samples) {
+      assert.ok(Number.isFinite(s.max_7_day) && Number.isFinite(s.sum_30_day) && Number.isFinite(s.sum_90_day))
+    }
+    // The August deluge is a 60 mm/day week block: max_7_day must be ~420 mm.
+    assert.ok(wetAugust.max_7_day > 400, `max_7_day=${wetAugust.max_7_day}`)
+  })
+
+  it('skips months whose trailing coverage falls below 90 percent', async () => {
+    const fp = await fpImport()
+    const daily = deterministicDaily(1).map((d) =>
+      (d.date.startsWith('2005-06') || d.date.startsWith('2005-07'))
+        ? { ...d, precipitation_mm: null } : d)
+    const { samples } = fp.buildDistrictSamples(
+      daily, [floodEvent(2005, 6, 10)], { latitude: 0, longitude: 0, country: 'TL' },
+    )
+    // June/July have under-90% trailing coverage: skipped, not zero-filled.
+    assert.ok(!samples.some((s) => s.month === '2005-06' || s.month === '2005-07'),
+      `kept: ${samples.map((s) => s.month).join(',')}`)
+  })
+
+  it('country fallback matches events without coordinates', async () => {
+    const fp = await fpImport()
+    const daily = deterministicDaily(1)
+    const { events_matched } = fp.buildDistrictSamples(
+      daily, [{ event_type: 'flood', country: 'TL', latitude: null, longitude: null, occurred_at: '2005-08-10T00:00:00.000Z' }],
+      { latitude: 0, longitude: 0, country: 'TL' },
+    )
+    assert.equal(events_matched, 1)
+  })
+
+  it('counts contingencies with a Wilson interval and a lift, and refuses under 10 months', async () => {
+    const fp = await fpImport()
+    const samples = []
+    for (let i = 0; i < 20; i += 1) {
+      samples.push({ month: `2005-${String((i % 12) + 1).padStart(2, '0')}`, max_7_day: i * 10, sum_30_day: i, sum_90_day: i, label: i > 14 })
+    }
+    const { counts } = fp.contingencyCount(
+      samples.sort((a, b) => a.month.localeCompare(b.month) || a.max_7_day - b.max_7_day),
+      'max_7_day', 0.85,
+    )
+    assert.equal(counts.feature, 'max_7_day')
+    // 20 samples, 90th-of-85th quantile: values 180 and 190 land above it, both
+    // labelled. One labelled month below threshold keeps the honest floor visible.
+    assert.equal(counts.months_above_threshold, 2)
+    assert.equal(counts.flood_months_above_threshold, 2)
+    assert.ok(counts.flood_months_below_threshold >= 1)
+    assert.ok(counts.conditional_probability_wilson.low < counts.conditional_probability_wilson.high)
+    assert.ok(counts.lift_over_base_rate > 1)
+    const refused = fp.contingencyCount(samples.slice(0, 5), 'max_7_day', 0.9)
+    assert.ok(!refused.counts && /fewer than 10 months/.test(refused.reason))
+  })
+
+  // Controlled recovery: generated data whose true generative coefficients are
+  // known collinearly (90-day antecedent wetness correlates with 7-day
+  // intensity, exactly as real rainfall statistics do), fit must land close,
+  // and leave-one-year-out must beat always predicting the base rate.
+  function mulberry32(seed) {
+    let a = seed >>> 0
+    return () => {
+      a |= 0; a = (a + 0x6D2B79F5) | 0
+      let t = Math.imul(a ^ (a >>> 15), 1 | a)
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+  }
+
+  function recoverySamples(n = 480, seed = 11) {
+    const rand = mulberry32(seed)
+    const gauss = () => {
+      const u = Math.max(rand(), 1e-9); const v = rand()
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)
+    }
+    const sigmoid = (z) => 1 / (1 + Math.exp(-z))
+    const samples = []
+    for (let i = 0; i < n; i += 1) {
+      const z1 = gauss() * 2            // max_7_day
+      const z2 = gauss() * 1.5          // sum_30_day
+      const z3 = 0.8 * z1 + 0.6 * gauss() // sum_90_day, collinear on purpose
+      const p = sigmoid(0.9 * z1 + 0.6 * z2 - 0.3 * z3 - 0.2)
+      const year = 2000 + Math.floor(i / 12)
+      const month = (i % 12) + 1
+      samples.push({
+        month: `${year}-${String(month).padStart(2, '0')}`,
+        max_7_day: z1, sum_30_day: z2, sum_90_day: z3,
+        label: rand() < p,
+      })
+    }
+    return samples
+  }
+
+  it('recovers known coefficients under collinearity and validates out-of-year', async () => {
+    const fp = await fpImport()
+    const samples = recoverySamples()
+    const { model, refusal } = fp.fitLogisticRegression(samples)
+    assert.ok(model && !refusal, refusal)
+    assert.equal(model.type, 'logistic_l2_empirical')
+    // The 90-day statistic is built collinear with the 7-day one on purpose:
+    // real rainfall statistics are collinear, and an ill-conditioned Hessian is
+    // where naive fitters explode. With collinearity the *individual* betas are
+    // not identifiable — only the penalised reconstruction is — so this asserts
+    // signs and predictive separation, not exact recovered values.
+    const byFeature = Object.fromEntries(model.coefficients.map((c) => [c.feature, c.value]))
+    assert.ok(byFeature.max_7_day > 0, `max_7_day=${byFeature.max_7_day}`)
+    assert.ok(byFeature.sum_30_day > 0, `sum_30_day=${byFeature.sum_30_day}`)
+    assert.equal(model.standardization.length, 3)
+    assert.equal(model.training.months, samples.length)
+    assert.ok(fp.predict(model, { max_7_day: 2, sum_30_day: 1.5, sum_90_day: 1.6 }) > 0.5,
+      'a wet month end must score above the base rate')
+    assert.ok(fp.predict(model, { max_7_day: -2, sum_30_day: -1.5, sum_90_day: -1.6 }) < 0.3,
+      'a dry month end must score low')
+
+    const { folds, refusal: foldRefusal } = fp.leaveOneYearOut(samples)
+    assert.ok(folds && !foldRefusal, foldRefusal)
+    assert.ok(folds.skill_over_base_rate > 0.1, `skill=${folds.skill_over_base_rate}`)
+    assert.ok(folds.brier_score < folds.brier_of_base_rate)
+    assert.equal(folds.n_folds, 40, 'one held-out fold per calendar year')
+  })
+
+  it('refuses the fit on thin months, thin floods, or one class', async () => {
+    const fp = await fpImport()
+    const thin = fp.fitLogisticRegression(recoverySamples(59))
+    assert.ok(thin.model === null && /of the required 60 months/.test(thin.refusal))
+
+    const oneFlood = recoverySamples(120).slice(0, 100).map((s) => ({ ...s, label: false })).concat([{ month: '2009-08', max_7_day: 1, sum_30_day: 1, sum_90_day: 1, label: true }])
+    const few = fp.fitLogisticRegression(oneFlood)
+    assert.ok(few.model === null && /flood-label months/.test(few.refusal))
+
+    const allFlood = recoverySamples(120).map((s) => ({ ...s, label: true }))
+    const noContrast = fp.fitLogisticRegression(allFlood)
+    assert.ok(noContrast.model === null && /no contrast/.test(noContrast.refusal))
+
+    const leave3years = fp.leaveOneYearOut(recoverySamples(30))
+    // Thirty months span three years: each fold holds out ten months, every
+    // training fit is under the 60-month floor, so nothing validates.
+    assert.ok(leave3years.folds === null && /validated months/.test(leave3years.refusal),
+      JSON.stringify(leave3years.refusal))
+
+    // Two calendar years cannot fold: leave-one-year-out needs a held-out
+    // year whose complement is still a sample.
+    const twoYears = recoverySamples(24).map((s, i) => ({ ...s, month: `200${i < 12 ? 0 : 1}-${s.month.slice(5)}` }))
+    assert.ok(twoYears.every((s) => s.month.startsWith('2000') || s.month.startsWith('2001')))
+    const leave2years = fp.leaveOneYearOut(twoYears)
+    assert.ok(leave2years.folds === null && /at least 3 calendar years/.test(leave2years.refusal),
+      JSON.stringify(leave2years.refusal))
+  })
+
+  it('trains per district from the store and refuses without an archive series', async () => {
+    const fp = await fpImport()
+    const daily = deterministicDaily(8)
+    const events = []
+    for (let y = 2005; y <= 2012; y += 1) events.push(floodEvent(y, 7, 20))
+    const storeData = {
+      climate_observations: [{
+        id: 'series1', source: 'open_meteo_archive', region_name: 'Testland', country: 'TL',
+        latitude: 0, longitude: 0, observed_at: '2012-12-31T00:00:00.000Z',
+        series_start: daily[0].date, series_end: daily[daily.length - 1].date,
+        series_days: daily.length, days_missing_precipitation: 0, daily,
+        metadata: { provider: 'test' },
+      }],
+      hazard_events: events,
+    }
+    const { trained, refusals } = fp.trainDistrictModels(storeData, { regions: [{ name: 'Testland', country: 'TL', lat: 0, lon: 0 }] })
+    assert.equal(trained.length, 1)
+    const model = trained[0]
+    assert.ok(model.model && model.model.coefficients.length === 3)
+    assert.ok(model.folds.folds.skill_over_base_rate > 0)
+    assert.ok(model.contingency.length === 3)
+    assert.equal(model.basis === fp.MODEL_BASIS, true)
+    assert.ok(model.rainfall.record_id === 'series1')
+    // August labels with the same rains each year: base rate must be > 5%.
+    assert.ok(model.model.training.base_rate > 0.05)
+
+    const empty = fp.trainDistrictModels({ climate_observations: [], hazard_events: [] },
+      { regions: [{ name: 'Nowhere', country: 'NW', lat: 0, lon: 0 }] })
+    assert.equal(empty.trained.length, 0)
+    assert.match(empty.refusals[0].refusal, /open_meteo_archive/)
+  })
+})
+
+describe('Lindela Lite flood archive backfill connectors', () => {
+  it('gdacs_archive keeps floods, filters other events, and nulls fill-in severity', async () => {
+    const { spec } = await import('../src/connectors/gdacs-archive.js')
+    const archiveFeature = (eventtype, iso, eventid) => ({
+      geometry: { coordinates: [35.0, 3.5] },
+      properties: {
+        eventtype, iso3: iso, eventid,
+        eventname: `Flood ${eventid}`, alertlevel: 'Green',
+        fromdate: '2026-01-02T00:00:00Z', todate: '2026-01-09T00:00:00Z',
+        severitydata: { severity: 0.0, severitytext: 'Magnitude 0.00' },
+      },
+    })
+    const originalFetch = global.fetch
+    global.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ features: [archiveFeature('FL', 'KEN', 1), archiveFeature('FL', 'ESP', 2), archiveFeature('TC', 'KEN', 3)] }) })
+    try {
+      const { hazard_events, errors } = await spec.ingest({ archive_start_year: new Date().getUTCFullYear() })
+      assert.ok(errors.length === 0, errors.join('; '))
+      // The stub returns the same quarter's payload for every requested
+      // window of the current year: one flood must stay one flood, whichever
+      // overlapping window it falls in. Stable ids collapse the walk.
+      assert.ok(hazard_events.length >= 1, 'non-FL and non-SSA events must be filtered to floods in SSA')
+      assert.equal(new Set(hazard_events.map((r) => r.id)).size, 1,
+        `one event across ${hazard_events.length} windows must collapse to one id`)
+      const record = hazard_events[0]
+      assert.equal(record.source, 'gdacs_archive')
+      assert.equal(record.event_type, 'flood')
+      assert.equal(record.severity, null, 'a fill-in zero severity is not a measurement')
+      assert.equal(record.latitude, 3.5)
+      assert.match(record.metadata.geolocation_note, /representative/)
+      assert.equal(record.metadata.alert_level, 'Green')
+      assert.match(record.metadata.attribution, /Joint Research Centre/)
+    } finally {
+      global.fetch = originalFetch
+    }
+  })
+
+  it('validates the gdacs_archive and open_meteo_archive specs and their registration', async () => {
+    const { validateConnector } = await import('../src/connectors/spec.js')
+    const gdacsSpec = (await import('../src/connectors/gdacs-archive.js')).spec
+    const archiveSpec = (await import('../src/connectors/open-meteo-archive.js')).spec
+    assert.deepEqual(validateConnector(gdacsSpec), [])
+    assert.deepEqual(validateConnector(archiveSpec), [])
+    assert.equal(gdacsSpec.id, 'gdacs_archive')
+    assert.equal(archiveSpec.id, 'open_meteo_archive')
+
+    const schema = await import('../src/schema.js')
+    assert.ok(schema.SOURCE_IDS.includes('gdacs_archive'))
+    assert.ok(schema.SOURCE_IDS.includes('open_meteo_archive'))
+    const catalog = schema.publicSourceCatalog()
+    assert.ok(catalog.find((s) => s.id === 'gdacs_archive').outputs.includes('hazard_events'))
+    assert.ok(catalog.find((s) => s.id === 'open_meteo_archive').outputs.includes('climate_observations'))
+    assert.ok(schema.emptyStore().flood_probability_models, 'emptyStore must declare flood_probability_models')
+
+    const ingestion = await import('../src/ingestion.js')
+    const connector = ingestion.getConnector('gdacs_archive')
+    assert.equal(typeof connector.ingest, 'function')
+    assert.equal(typeof ingestion.getConnector('open_meteo_archive').ingest, 'function')
+    assert.ok(ingestion.SOURCE_POLICIES.gdacs_archive.regular === false)
+    assert.ok(ingestion.SOURCE_POLICIES.open_meteo_archive.regular === false)
+    // The crawls must never ride a default ingestion run: a default run that
+    // re-walks 40 years of a free archive is the exact abuse the policy exists
+    // to prevent.
+    assert.ok(!ingestion.PUBLIC_INGESTION_SOURCES.includes('gdacs_archive'))
+    assert.ok(!ingestion.PUBLIC_INGESTION_SOURCES.includes('open_meteo_archive'))
+  })
+
+  it('open_meteo_archive preserves null days and states the reanalysis limit', async () => {
+    const { spec } = await import('../src/connectors/open-meteo-archive.js')
+    const originalFetch = global.fetch
+    global.fetch = async () => ({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ daily: { time: ['2026-01-01', '2026-01-02', '2026-01-03'], precipitation_sum: [1.4, null, 0] } }),
+    })
+    try {
+      const { climate_observations, errors } = await spec.ingest({ archive_start_date: '2026-01-01', archive_end_date: '2026-01-03' })
+      assert.ok(errors.length === 0, errors.join('; '))
+      const record = climate_observations[0]
+      assert.equal(record.source, 'open_meteo_archive')
+      assert.equal(record.series_days, 3)
+      assert.deepEqual(record.daily, [
+        { date: '2026-01-01', precipitation_mm: 1.4 },
+        { date: '2026-01-02', precipitation_mm: null },
+        { date: '2026-01-03', precipitation_mm: 0 },
+      ])
+      assert.equal(record.days_missing_precipitation, 1)
+      assert.match(record.metadata.model_limit, /not gauge observations/)
+      assert.match(record.metadata.provider, /ERA5/)
+      assert.match(record.series_end, /2026-01-03/)
+    } finally {
+      global.fetch = originalFetch
+    }
+  })
+})
+
+describe('Lindela Lite flood probability API', () => {
+  it('trains from the store, scores with the model card, and refuses cleanly', async () => {
+    const fp = await import('../src/flood-probability.js')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-floodprob-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const daily = []
+    const events = []
+    const start = Date.UTC(2005, 0, 1)
+    for (let t = start; t <= Date.UTC(2013, 11, 31); t += 86400000) {
+      const date = new Date(t).toISOString().slice(0, 10)
+      const month = new Date(t).getUTCMonth()
+      const day = new Date(t).getUTCDate()
+      let mm = 2
+      if (month >= 5 && month <= 8) mm = 12
+      if (month === 7) mm = 25
+      if (month === 7 && day >= 14 && day <= 20) mm = 60
+      daily.push({ date, precipitation_mm: mm })
+      if (month === 7 && day === 20) {
+        events.push({ id: `ev${date}`, event_type: 'flood', country: 'TL', latitude: 0.3, longitude: 0.3, occurred_at: date })
+      }
+    }
+    await store.merge({
+      climate_observations: [{
+        id: 'series1', source: 'open_meteo_archive', region_name: 'Testland', country: 'TL',
+        latitude: 0, longitude: 0, observed_at: '2013-12-31T00:00:00.000Z',
+        series_start: daily[0].date, series_end: daily[daily.length - 1].date,
+        series_days: daily.length, days_missing_precipitation: 0, daily,
+        metadata: { provider: 'test' },
+      }],
+      hazard_events: events,
+    })
+
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://localhost:${listener.address().port}`
+    try {
+      const trainRes = await fetch(`${baseUrl}/api/v1/flood-probability/train`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ regions: [{ name: 'Testland', country: 'TL', lat: 0, lon: 0 }] }),
+      })
+      const trained = await trainRes.json()
+      assert.equal(trainRes.status, 200)
+      assert.ok(trained.success)
+      assert.equal(trained.data.length, 1)
+      assert.deepEqual(trained.refusals, [])
+      // The trained card lands in the store with its basis and provenance.
+      assert.match(trained.data[0].basis.basis, /empirical/)
+      assert.equal(trained.data[0].rainfall.record_id, 'series1')
+
+      const listed = await (await fetch(`${baseUrl}/api/v1/flood-probability/models`)).json()
+      assert.equal(listed.data.length, 1)
+
+      // A wet-season month end: features at or above every training band.
+      const scored = await (await fetch(`${baseUrl}/api/v1/flood-probability/score?max_7_day=420&sum_30_day=300&sum_90_day=700&region=Testland`)).json()
+      assert.equal(scored.success, true)
+      assert.equal(scored.scored, true)
+      assert.ok(scored.data.probability > 0.5, `wet month scores ${scored.data.probability}`)
+      assert.match(scored.data.basis.basis, /empirical/)
+      assert.ok(scored.data.model.training.months >= 60)
+      assert.ok(scored.data.folds.folds.skill_over_base_rate !== null)
+
+      // A dry-season month end stays low but is still a number on the sample.
+      const dry = await (await fetch(`${baseUrl}/api/v1/flood-probability/score?max_7_day=14&sum_30_day=60&sum_90_day=180`)).json()
+      assert.ok(dry.scored && dry.data.probability < scored.data.probability)
+
+      // No model for another district: refusal, not an error.
+      const none = await (await fetch(`${baseUrl}/api/v1/flood-probability/score?max_7_day=1&sum_30_day=1&sum_90_day=1&region=Nowhere`)).json()
+      assert.equal(none.scored, false)
+      assert.match(none.refusal, /no trained flood-probability model for Nowhere/)
+
+      // Missing features are a bad request, not a silent default.
+      const bad = await fetch(`${baseUrl}/api/v1/flood-probability/score?max_7_day=1`)
+      assert.equal(bad.status, 400)
+      // MODEL_BASIS must travel with a scored response, and predict must
+      // refuse non-finite features inside the model module as well.
+      const { predict } = fp
+      assert.equal(predict(trained.data[0].model, { max_7_day: NaN, sum_30_day: 1, sum_90_day: 1 }), null)
     } finally {
       listener.close()
     }

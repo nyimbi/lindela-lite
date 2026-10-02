@@ -8,6 +8,8 @@ export const SOURCE_IDS = Object.freeze([
   'noaa_enso',
   'ipc_hdx',
   'who_gho',
+  'gdacs_archive',
+  'open_meteo_archive',
   'service_assets',
   'acled_csv',
   'conflict_csv',
@@ -247,6 +249,7 @@ export function emptyStore() {
     road_access: [],
     food_security_records: [],
     disease_observations: [],
+    flood_probability_models: [],
   }
 }
 
@@ -346,6 +349,26 @@ export function publicSourceCatalog() {
         requires_credentials: false,
         status_note: 'National-annual aggregates only: context with attribution, not district surveillance',
         outputs: ['disease_observations'],
+      }
+    }
+    if (id === 'gdacs_archive') {
+      return {
+        ...common,
+        name: 'GDACS historical flood archive (1985 onward)',
+        type: 'json_api',
+        requires_credentials: false,
+        status_note: 'Backfill source for flood-probability training; walk is paginated quarter-by-quarter and slow by design',
+        outputs: ['hazard_events'],
+      }
+    }
+    if (id === 'open_meteo_archive') {
+      return {
+        ...common,
+        name: 'Open-Meteo ERA5 historical daily precipitation (1981 onward)',
+        type: 'dataset_api',
+        requires_credentials: false,
+        status_note: 'Reanalysis, not gauge observations — stated on every record; backfill for flood-probability training',
+        outputs: ['climate_observations'],
       }
     }
     if (id === 'service_assets') {

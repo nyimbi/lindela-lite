@@ -534,6 +534,34 @@ granularity note (context, not district evidence), the policy note
 (attribution required; not an alert trigger), and the reporting note
 (silence may mean absence of reporting, not absence of disease).
 
+### `flood_probability_models`
+
+Trained flood-probability models written by `POST /api/v1/flood-probability/train`
+from `src/flood-probability.js` (basis in `docs/flood-probability-model-basis.md`).
+
+One record per district per training input: fields include `region_name`,
+`country`, point coordinates, `trained_at`, and —
+
+- `model` — the fitted card: `type: logistic_l2_empirical`, the three
+  features, per-standardised-unit `coefficients`, `intercept`,
+  `standardization` (mean/sd per feature), `lambda`, and `training`
+  (`months`, `flood_months`, `base_rate`). `null` when the district refused;
+  then `refusal` is absent here and lives on the training response only —
+  districts that could not support a fit do not reach the collection.
+- `folds` — leave-one-year-out `brier_score`, `brier_of_base_rate`,
+  `skill_over_base_rate`, `validated_months`, `n_folds`.
+- `contingency` — per-feature percentile thresholds, months above threshold,
+  flood months among them, a Wilson 95 % interval, and lift over base rate.
+- `basis` — the frozen `MODEL_BASIS` object: sources, label definition,
+  features, rejection reasons, and the reporting condition
+  (`reporting-conditioned: P(flood enters the GDACS archive)`).
+- `rainfall` — provenance of the series trained on (`record_id`,
+  `series_start`, `series_end`, `series_days`, `days_missing_precipitation`,
+  provider), so a model can be traced to the actual data that fitted it.
+
+IDs are stable over region + rainfall series, so retraining the same inputs
+upserts rather than stacks duplicate cards.
+
 ## Relationships
 
 Core relationships:

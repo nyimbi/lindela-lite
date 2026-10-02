@@ -6,10 +6,10 @@ import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage, surveyedAreaKm2 } 
 import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets } from '/shared/map-frame.js'
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState } from '/shared/seasonal.js'
 import { fillAppVersion } from '/shared/app-version.js'
+import { apiFetch, apiSettled, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
+import { esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncateId } from '/shared/fmt.js'
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {})
-}
+initServiceWorker()
 
 // =============================================================
 // State
@@ -87,20 +87,12 @@ function authHeaders(headers = {}) {
 // =============================================================
 // Utilities
 // =============================================================
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  })[char])
-}
-
-function safeClass(value) {
-  return String(value || 'unknown').toLowerCase().replace(/[^a-z0-9_-]/g, '-') || 'unknown'
-}
+// escapeHtml, safeClass and the date formatters now live in /shared/fmt.js.
+// They were duplicated here, and in six other surfaces, with enough drift that
+// the same value rendered three ways.
 
 function displayDate(value) {
-  if (!value) return ''
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? '' : escapeHtml(d.toLocaleString())
+  return escapeHtml(formatTimestamp(value))
 }
 
 function debounce(fn, ms) {
@@ -759,21 +751,64 @@ async function loadDiseaseSummary() {
   }
 }
 
+/**
+ * Flood-probability strip. Shows the trained models the store holds, one per
+ * district — including districts that returned a refusal, because "this
+ * district has 40 months, not the 60 required" is a fact a reader can act on,
+ * while a blank strip would read as a missing widget.
+ */
+async function loadFloodProbabilityModels() {
+  try {
+    const body = await fetchJson('/api/v1/flood-probability/models')
+    if (!body?.success) return
+    const models = body.data || []
+    if (!models.length) {
+      if (floodProbStripEl) floodProbStripEl.hidden = true
+      return
+    }
+    floodProbStripEl.hidden = false
+    const okModels = models.filter((m) => m.model)
+    floodProbRegionsEl.textContent = `${okModels.length} district${okModels.length === 1 ? '' : 's'} trained · ${models.length - okModels.length} refused`
+    floodProbRegionsEl.className = `seasonal-phase ${okModels.length ? '' : 'seasonal-phase-unknown'}`
+    // Highest validated skill among refits wins the headline; a model without
+    // LOYO scores leads with its sample size instead.
+    const best = okModels
+      .filter((m) => Number.isFinite(m.folds?.folds?.skill_over_base_rate))
+      .sort((a, b) => b.folds.folds.skill_over_base_rate - a.folds.folds.skill_over_base_rate)[0]
+    const bestAny = best || okModels[0]
+    if (bestAny) {
+      const t = bestAny.model.training
+      const skill = bestAny.folds?.folds?.skill_over_base_rate
+      floodProbBestEl.textContent = `${bestAny.region_name}: ${Math.round((t.base_rate || 0) * 100)}% flood-month base rate`
+        + (Number.isFinite(skill) ? `, skill +${Math.round(skill * 100)}% over base rate` : '')
+      floodProbBestMetaEl.textContent = `${t.months} months · ${t.flood_months} flood months · trained ${String(bestAny.trained_at).slice(0, 10)}`
+    }
+    const refused = models.filter((m) => !m.model)
+    const notes = []
+    for (const r of refused) {
+      notes.push(`${r.region_name}: ${r.refusal || r.model || 'no model'}`)
+    }
+    floodProbNoteEl.textContent = 'Empirical rainfall–flood co-occurrence trained on ERA5 daily precipitation and '
+      + 'reported GDACS floods. Reporting-conditioned: the probability is a flood entering the archive, '
+      + 'not water at a given elevation.'
+      + (notes.length ? ` Not trained: ${notes.join('; ')}.` : '')
+  } catch {
+    if (floodProbStripEl) floodProbStripEl.hidden = true
+  }
+}
+
 // =============================================================
 // Fetch helpers
 // =============================================================
+// Both of these used to check only that the response parsed, never that it
+// succeeded. A 503 from the service worker's offline fallback arrived as
+// {error:'Offline'}, which every caller then read as data.
 async function fetchJson(path) {
-  const response = await fetch(path)
-  return response.json()
+  return apiFetch(path, { headers: authHeaders() })
 }
 
 async function postJson(path, body) {
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: authHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify(body),
-  })
-  return response.json()
+  return apiFetch(path, { method: 'POST', body, headers: authHeaders() })
 }
 
 // =============================================================
@@ -795,25 +830,41 @@ function updateConnectionStatus() {
 
 window.addEventListener('online', () => {
   updateConnectionStatus()
-  navigator.serviceWorker?.controller?.postMessage({ type: 'sync' })
+  window.lindelaQueue?.flush()
 })
 window.addEventListener('offline', updateConnectionStatus)
 updateConnectionStatus()
 
-window.lindelaQueue = {
-  _pending: 0,
-  async queueRequest(url, method, body) {
-    if (navigator.onLine) return postJson(url, body)
-    navigator.serviceWorker?.controller?.postMessage({
-      type: 'queueRequest',
-      request: { url, method, headers: authHeaders(), body: JSON.stringify(body) },
+/**
+ * The offline queue.
+ *
+ * This posted `{type:'queueRequest'}` to the service worker, which only ever
+ * handled `{type:'flushQueue'}`, and wrote nothing to IndexedDB itself — so the
+ * message was discarded, the counter incremented forever, and the status bar
+ * promised "N queued" for records that existed nowhere. A correct implementation
+ * already existed in shared/runtime.js and was not imported.
+ *
+ * Now it is that implementation, with the console's own pending-count readout
+ * driven by the store rather than by a counter.
+ */
+initOfflineQueue().then(() => {
+  const paint = () => {
+    window.lindelaQueue?.pendingCount().then((count) => {
+      const label = `${count} queued`
+      if (queuedCount) { queuedCount.textContent = label; queuedCount.hidden = count === 0 }
+      if (queuedBadge) { queuedBadge.textContent = label; queuedBadge.hidden = count === 0 }
     })
-    this._pending++
-    const label = `${this._pending} queued`
-    if (queuedCount) { queuedCount.textContent = label; queuedCount.hidden = false }
-    if (queuedBadge) { queuedBadge.textContent = label; queuedBadge.hidden = false }
-    return { success: true, queued: true }
-  },
+  }
+  paint()
+  window.addEventListener('lindela-queue-changed', paint)
+  window.addEventListener('lindela-queue-flushed', paint)
+})
+
+/** Submit now, or persist for replay when there is no connection. */
+async function queueRequest(url, body) {
+  if (navigator.onLine) return postJson(url, body)
+  await window.lindelaQueue?.enqueue(url, { method: 'POST', body, headers: authHeaders() })
+  return { success: true, queued: true }
 }
 
 // =============================================================
@@ -870,6 +921,11 @@ const diseaseSeriesStateEl = $('diseaseSeriesState')
 const diseaseLatestEl    = $('diseaseLatest')
 const diseaseLatestMetaEl = $('diseaseLatestMeta')
 const diseaseNoteEl      = $('diseaseNote')
+const floodProbStripEl   = $('floodProbStrip')
+const floodProbRegionsEl = $('floodProbRegions')
+const floodProbBestEl    = $('floodProbBest')
+const floodProbBestMetaEl = $('floodProbBestMeta')
+const floodProbNoteEl    = $('floodProbNote')
 
 function svgEl(tag, attrs = {}) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', tag)
@@ -1267,62 +1323,149 @@ function reRenderMapFromState() {
 // =============================================================
 // Data refresh
 // =============================================================
+let _refreshInFlight = false
+let _refreshFailures = 0
+
+/**
+ * Load every panel the console shows.
+ *
+ * This ran on a bare 30-second interval with no in-flight guard, no visibility
+ * check and no try/catch around a twelve-way `Promise.all`. One failing endpoint
+ * rejected the whole set, so `setStatus` at the bottom never ran and the status
+ * bar froze on the last successful "Updated ..." — an operator could not tell a
+ * live console from one that had been silently dead for an hour.
+ *
+ * Each panel now settles independently, so a dead endpoint blanks its own panel
+ * and is named in the status bar rather than taking the other eleven with it.
+ */
 async function refresh() {
-  const [health, sources, ingestionHealth, flood, conflict, events, assets, alerts, reports, reportTemplates, climate, dispatches] =
-    await Promise.all([
-      fetchJson('/api/v1/health'),
-      fetchJson('/api/v1/sources'),
-      fetchJson('/api/v1/ingest/status'),
-      fetchJson('/api/v1/flood-risk'),
-      fetchJson('/api/v1/conflict-risk'),
+  if (_refreshInFlight) return
+  if (document.hidden) return
+  _refreshInFlight = true
+
+  const load = async (name, path) => {
+    try {
+      return { [name]: await fetchJson(path), failed: null }
+    } catch (err) {
+      return { [name]: null, failed: name }
+    }
+  }
+
+  try {
+    const results = await Promise.all([
+      load('health', '/api/v1/health'),
+      load('sources', '/api/v1/sources'),
+      load('ingestionHealth', '/api/v1/ingest/status'),
+      load('flood', '/api/v1/flood-risk'),
+      load('conflict', '/api/v1/conflict-risk'),
       // Two requests, deliberately. The region the map is about, plus recent
       // global events for context. Asking only for the most recent global events
       // let a busy feed page out the local flood and landslide entirely.
-      fetchJson(localEventQuery()).then(async (local) => {
-        const global_ = await fetchJson(globalEventQuery())
-        return { data: mergeEventSets(local.data || [], global_.data || []) }
-      }),
-      fetchJson('/api/v1/service-assets?limit=100'),
-      fetchJson('/api/v1/alert-events?limit=30'),
-      fetchJson('/api/v1/reports?limit=20'),
-      fetchJson('/api/v1/report-templates?limit=20'),
-      fetchJson('/api/v1/climate?limit=200'),
-      fetchJson('/api/v1/rapidpro/dispatches?limit=200'),
+      (async () => {
+        try {
+          const local = await fetchJson(localEventQuery())
+          const global_ = await fetchJson(globalEventQuery())
+          return { events: { data: mergeEventSets(local.data || [], global_.data || []) }, failed: null }
+        } catch {
+          return { events: null, failed: 'events' }
+        }
+      })(),
+      load('assets', '/api/v1/service-assets?limit=100'),
+      load('alerts', '/api/v1/alert-events?limit=30'),
+      load('reports', '/api/v1/reports?limit=20'),
+      load('reportTemplates', '/api/v1/report-templates?limit=20'),
+      load('climate', '/api/v1/climate?limit=200'),
+      load('dispatches', '/api/v1/rapidpro/dispatches?limit=200'),
     ])
 
-  state.data = { health, sources, ingestionHealth, flood, conflict, events, assets, alerts, reports, reportTemplates, climate, dispatches }
-  state.climate = climate.data || []
-  state.reports   = reports.data || []
-  state.templates = reportTemplates.data || []
+    const failed = results.filter((r) => r.failed).map((r) => r.failed)
+    const merged = Object.assign({}, ...results)
 
-  if (storageMode) storageMode.textContent = health.storage?.mode || 'json'
-  renderAlertsBadge(alerts.data || [])
-  renderSourceDots(ingestionHealth.data || [])
+    const health = merged.health
+    if (health) {
+      state.data.health = health
+      if (storageMode) storageMode.textContent = health.storage?.mode || 'json'
+    }
 
-  // Populate map source filter
-  populateMapSourceFilter(sources.data || [])
-  populateRouteEndpoints(assets.data || [])
-  renderSeasonalStrip(state.climate)
-  // Strips load once per refresh for every viewer; the IPC overlay still only
-  // fetches its records when the operator ticks it on.
-  loadFoodSecuritySummary().catch(() => {})
-  loadDiseaseSummary().catch(() => {})
+    const sources = merged.sources
+    if (sources) {
+      state.data.sources = sources
+      populateMapSourceFilter(sources.data || [])
+    }
 
-  renderMap([
-    ...(flood.data || []),
-    ...(conflict.data || []),
-    ...(events.data || []),
-    ...(assets.data || []),
-  ])
+    if (merged.ingestionHealth) {
+      state.data.ingestionHealth = merged.ingestionHealth
+      renderSourceDots(merged.ingestionHealth.data || [])
+    }
 
-  loadWorkflowMetrics()
-  if (state.activeTab === 'alerts')    renderAlertsPanel()
-  else if (state.activeTab === 'reports')   renderReportsPanel()
-  else if (state.activeTab === 'equity')    renderEquityTab()
-  else if (state.activeTab === 'ingestion') renderIngestionPanel()
+    const alerts = merged.alerts
+    if (alerts) {
+      state.data.alerts = alerts
+      renderAlertsBadge(alerts.data || [])
+    }
 
-  loadSignalToAction()
-  setStatus(`Updated ${new Date().toLocaleString()}. GDELT excluded.`)
+    if (merged.events) state.data.events = merged.events
+    if (merged.assets) {
+      state.data.assets = merged.assets
+      populateRouteEndpoints(merged.assets.data || [])
+    }
+    if (merged.flood) state.data.flood = merged.flood
+    if (merged.conflict) state.data.conflict = merged.conflict
+    if (merged.reports) {
+      state.data.reports = merged.reports
+      state.reports = merged.reports.data || []
+    }
+    if (merged.reportTemplates) {
+      state.data.reportTemplates = merged.reportTemplates
+      state.templates = merged.reportTemplates.data || []
+    }
+    if (merged.dispatches) state.data.dispatches = merged.dispatches
+
+    if (merged.climate) {
+      state.data.climate = merged.climate
+      state.climate = merged.climate.data || []
+      renderSeasonalStrip(state.climate)
+    }
+
+    // Strips load once per refresh for every viewer; the IPC overlay still only
+    // fetches its records when the operator ticks it on.
+    loadFoodSecuritySummary().catch(() => {})
+    loadDiseaseSummary().catch(() => {})
+    loadFloodProbabilityModels().catch(() => {})
+
+    renderMap([
+      ...(merged.flood?.data || []),
+      ...(merged.conflict?.data || []),
+      ...(merged.events?.data || []),
+      ...(merged.assets?.data || []),
+    ])
+
+    loadWorkflowMetrics().catch(() => {})
+
+    if (state.activeTab === 'alerts')         renderAlertsPanel()
+    else if (state.activeTab === 'reports')   renderReportsPanel()
+    else if (state.activeTab === 'equity')    renderEquityTab()
+    else if (state.activeTab === 'ingestion') renderIngestionPanel()
+
+    loadSignalToAction().catch(() => {})
+
+    if (failed.length) {
+      _refreshFailures += 1
+      setStatus(
+        `Updated ${formatTimestamp(new Date())} — ` +
+        `${failed.length} source${failed.length === 1 ? '' : 's'} unavailable (${failed.join(', ')}). GDELT excluded.`
+      )
+      // A single missed poll is a blip; a persistent one is an outage, and the
+      // operator should be told rather than left reading a stale timestamp.
+      if (_refreshFailures >= 3) connectionStatus?.classList.add('degraded')
+    } else {
+      _refreshFailures = 0
+      connectionStatus?.classList.remove('degraded')
+      setStatus(`Updated ${formatTimestamp(new Date())}. GDELT excluded.`)
+    }
+  } finally {
+    _refreshInFlight = false
+  }
 }
 
 function populateMapSourceFilter(sources) {
@@ -1962,8 +2105,14 @@ async function createIncident() {
     latitude:      Number($('latInput')?.value),
     longitude:     Number($('lonInput')?.value),
   }
-  const payload = await postJson('/api/v1/incidents', body)
-  if (!payload.success) { setStatus(payload.error || 'Incident creation failed'); return }
+  // A field report raised without connectivity is the ordinary case this app is
+  // meant to survive, so the write is queued rather than rejected.
+  const payload = await queueRequest('/api/v1/incidents', body)
+  if (payload?.queued) {
+    setStatus('Incident queued — it will be sent when the connection returns.')
+    return
+  }
+  if (!payload?.success) { setStatus(payload?.error || 'Incident creation failed'); return }
   const intInput = $('interventionIncidentInput')
   if (intInput) intInput.value = payload.data.id
   setStatus(`Created incident ${payload.data.id}.`)

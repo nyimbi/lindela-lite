@@ -204,9 +204,13 @@ if (!/Status: scoping only/i.test(outbreakScoping)) {
   throw new Error('outbreak-and-food-security-scoping.md must state that it is scoping only; a scoping doc that reads as an implementation record is worse than none')
 }
 
+// The model-basis document keeps its status line honest: it now records the
+// implemented empirical basis (an agreed decision, 2026-10-02), not a
+// proposal. If the basis ever changes, rewrite the document rather than
+// deleting it — the coefficients alone do not carry the model's meaning.
 const modelBasis = fs.readFileSync('docs/flood-probability-model-basis.md', 'utf8')
-if (!/Status: proposal for review/i.test(modelBasis)) {
-  throw new Error('flood-probability-model-basis.md must state its status; a proposal that reads as settled is worse than none')
+if (!/Status: agreed and implemented/i.test(modelBasis)) {
+  throw new Error('flood-probability-model-basis.md must state its status; a model doc that hides its basis is worse than none')
 }
 
 // The demo guide's counts are claims a panel will check against the screen.
