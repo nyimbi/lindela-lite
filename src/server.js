@@ -1997,11 +1997,28 @@ async function handleParametricRoute(store, data, req, res, url, route) {
             screened: true,
             matches: screened.matches,
             blocked: screened.matches.length > 0,
+            reason: `screened "${recipientName}" against the OFAC SDN list`,
           }
         } catch (screenError) {
           // Screening is advisory: surface the failure but do not silently
           // treat an unreachable list as a clean result.
-          sanctions = { screened: false, matches: [], blocked: false, error: screenError.message }
+          sanctions = {
+            screened: false,
+            matches: [],
+            blocked: false,
+            error: screenError.message,
+            reason: `screening "${recipientName}" failed: ${screenError.message}`,
+          }
+        }
+      } else {
+        // No recipient was supplied, so nothing was screened. Recorded rather
+        // than left as a bare false, because a compliance reader must be able to
+        // see that this disbursement never went near the SDN list.
+        sanctions = {
+          screened: false,
+          matches: [],
+          blocked: false,
+          reason: 'no recipient name supplied, so no name was screened against the OFAC SDN list',
         }
       }
 
@@ -2265,9 +2282,21 @@ async function handleWorkflowRoute(store, data, req, res, url, route) {
     }
     const body = await readRequestJson(req)
     try {
+      // Attribution follows the convention used by actionLog: the authenticated
+      // subject is authoritative when there is one, and the caller's own stated
+      // actor is kept separately rather than discarded. This previously read
+      // `req.__auth?.subject || 'anonymous'`, so on an unauthenticated
+      // deployment every transition — including who approved an anticipatory
+      // alert — was recorded as "anonymous", and an actor the caller did supply
+      // was thrown away. Preferring the verified subject is still correct: a
+      // caller must not be able to claim an identity. The claim is recorded as a
+      // claim, not promoted to authenticated.
+      const claimedActor = typeof body.actor === 'string' && body.actor.trim() ? body.actor.trim() : null
       const updated = transitionWorkflow(existing, {
         to: body.to,
-        actor: req.__auth?.subject || 'anonymous',
+        actor: req.__auth?.subject || claimedActor || 'anonymous',
+        actor_source: req.__auth?.subject ? 'authenticated' : (claimedActor ? 'claimed' : 'unattributed'),
+        claimed_actor: claimedActor,
         reason: body.reason || '',
         evidence: body.evidence || '',
       })

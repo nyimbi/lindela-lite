@@ -82,8 +82,18 @@ export function simulateDisbursement(rule, { actor, focal_point_approved, sancti
     rule_id: rule.id,
     actor: actor || null,
     status: 'simulated',
+    // Three states, not two. `sanctions_screened: false` was true both when
+    // nothing was screened because no recipient was supplied and when the SDN
+    // list could not be reached; only the first is a deliberate choice by the
+    // caller and the second is an outage. A compliance reader must be able to
+    // tell those apart, so the state is a word rather than a boolean.
+    // 'blocked' is not reachable here: a blocked disbursement throws above and
+    // produces no record at all, which is the correct outcome.
+    sanctions_status: sanctions?.screened ? 'clear' : 'not_screened',
     sanctions_screened: Boolean(sanctions?.screened),
     sanctions_matches: sanctions?.matches?.length || 0,
+    sanctions_error: sanctions?.error || null,
+    sanctions_reason: sanctions?.reason || null,
     simulated_at: nowIso(),
   }
 }

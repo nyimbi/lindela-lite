@@ -455,6 +455,43 @@ async function main() {
       pageErrors.length === before, (pageErrors[pageErrors.length - 1] || '').slice(0, 60))
   }
 
+  // Sanctions screening must be visible where a disbursement is simulated.
+  //
+  // The screening capability existed and the parametric form never sent the field
+  // that reaches it, while the result panel reported a green "Simulation
+  // complete" for a 5,000 USD disbursement with no mention of screening at all. A
+  // reader could reasonably conclude the OFAC check described in the README had
+  // run. It had not, and nothing on screen said so.
+  await send('Page.navigate', { url: `${BASE}/parametric?cb=${Date.now()}` })
+  await new Promise((r) => setTimeout(r, 3200))
+  const simInputs = await evaluate(`(() => ({
+    hasRecipient: !!document.getElementById('simRecipientName'),
+    rules: document.getElementById('simRulePicker') ? document.getElementById('simRulePicker').options.length : 0,
+    errorVisible: (() => { const e = document.getElementById('simError'); return Boolean(e) && e.style.display !== 'none' })(),
+  }))()`)
+  check('the parametric form collects a recipient name to screen',
+    simInputs.hasRecipient && simInputs.rules > 0,
+    simInputs.hasRecipient ? `${simInputs.rules} rules available` : 'no recipient field')
+
+  if (simInputs.hasRecipient && simInputs.rules > 0) {
+    await evaluate(`(() => {
+      const p = document.getElementById('simRulePicker');
+      p.value = p.options[0].value;
+      document.getElementById('simFocalApproved').checked = true;
+      document.getElementById('simRecipientName').value = '';
+      document.getElementById('simForm').requestSubmit();
+      return true;
+    })()`)
+    await new Promise((r) => setTimeout(r, 4000))
+    const unscreened = await evaluate(`(document.getElementById('simResult').innerText || '').replace(/\\s+/g, ' ')`)
+    check('an unscreened simulation says so on screen',
+      /not screened/i.test(unscreened) && /sanctions screening/i.test(unscreened),
+      unscreened.slice(0, 110) || '(result panel empty)')
+    check('an unscreened simulation does not read as a clean success',
+      !/no match|cleared|screened against the ofac sdn list — no match\.?$/i.test(unscreened),
+      unscreened.includes('Not screened') ? 'labelled not screened' : unscreened.slice(0, 80))
+  }
+
   // No locale may render an i18n key as user-visible text. The catalogue was
   // replaced outright at boot, so a partially translated locale printed
   // `equity.acknowledged` as a column header. English is now the base layer, so

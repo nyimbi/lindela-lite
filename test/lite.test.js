@@ -4598,3 +4598,111 @@ describe('Lindela Lite locale fallback', () => {
     }
   })
 })
+
+describe('Lindela Lite sanctions screening state', () => {
+  const rule = {
+    id: 'pr-1', chain: 'celo-alfajores', contract_address: '0xSIM',
+    disbursement_amount_local_currency: 5000, currency: 'USD',
+    recipient_group_id: 'group-aweil-farmers',
+    requires_focal_point_approval: true,
+  }
+
+  it('distinguishes blocked, clear and not-screened', async () => {
+    // sanctions_screened was a boolean, so "nothing was screened because no
+    // recipient was supplied" and "the SDN list was unreachable" looked
+    // identical to a reader deciding whether a disbursement had been checked.
+    const { simulateDisbursement } = await import('../src/parametric.js')
+
+    const clear = simulateDisbursement(rule, {
+      focal_point_approved: true,
+      sanctions: { screened: true, matches: [], blocked: false },
+    })
+    assert.equal(clear.sanctions_status, 'clear')
+
+    const unscreened = simulateDisbursement(rule, {
+      focal_point_approved: true,
+      sanctions: { screened: false, matches: [], blocked: false, reason: 'no recipient name supplied' },
+    })
+    assert.equal(unscreened.sanctions_status, 'not_screened')
+    assert.equal(unscreened.sanctions_reason, 'no recipient name supplied',
+      'an unscreened disbursement must say why, so it cannot read as a clean result')
+  })
+
+  it('refuses to simulate a blocked disbursement', async () => {
+    const { simulateDisbursement } = await import('../src/parametric.js')
+    assert.throws(
+      () => simulateDisbursement(rule, { focal_point_approved: true, sanctions: { screened: true, matches: [{}], blocked: true } }),
+      /Sanctions screening match blocks/,
+    )
+  })
+
+  it('still requires focal point approval regardless of screening', async () => {
+    const { simulateDisbursement } = await import('../src/parametric.js')
+    assert.throws(() => simulateDisbursement(rule, { sanctions: { screened: true, matches: [], blocked: false } }),
+      /Focal point approval required/)
+  })
+
+  it('records an unscreened simulation as unscreened through the API', async () => {
+    const { createServer } = await import('../src/server.js')
+    const { JsonStore } = await import('../src/store.js')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-sanctions-'))
+    const server = createServer({ store: new JsonStore(path.join(dir, 'store.json')) })
+    const listener = server.listen(0)
+    const base = `http://localhost:${listener.address().port}`
+    try {
+      // No auth needed to reach this: the point is that omitting the recipient
+      // yields a self-describing unscreened record, not a silent clean one.
+      const res = await fetch(`${base}/api/v1/parametric-rules`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'probe', chain: 'celo-alfajores', trigger_metric: 'precipitation_mm',
+          trigger_threshold: 8, disbursement_amount_local_currency: 100,
+          currency: 'USD', recipient_group_id: 'g',
+        }),
+      })
+      const ruleId = (await res.json()).data.id
+      const sim = await (await fetch(`${base}/api/v1/parametric-rules/${ruleId}/simulate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ focal_point_approved: true }),
+      })).json()
+      assert.equal(sim.data.sanctions_status, 'not_screened')
+      assert.equal(sim.data.sanctions_screened, false)
+      assert.match(sim.data.sanctions_reason, /no recipient name supplied/i)
+    } finally {
+      await new Promise((r) => listener.close(r))
+    }
+  })
+})
+
+describe('Lindela Lite workflow attribution', () => {
+  it('distinguishes an authenticated actor from a claimed one', async () => {
+    // The transition handler read `req.__auth?.subject || 'anonymous'`, so on an
+    // unauthenticated deployment every approval was recorded as "anonymous" and
+    // an actor the caller did supply was discarded. Preferring the verified
+    // subject is right; throwing away the claim loses audit information.
+    const { transitionWorkflow } = await import('../src/workflows.js')
+    const instance = { id: 'wf-1', type: 'anticipatory_alert', state: 'focal_point_review', transitions: [] }
+
+    const claimed = transitionWorkflow(instance, {
+      to: 'approved', actor: 'Dr Amara Okoth', actor_source: 'claimed', claimed_actor: 'Dr Amara Okoth',
+    })
+    const t = claimed.transitions[0]
+    assert.equal(t.actor, 'Dr Amara Okoth')
+    assert.equal(t.actor_source, 'claimed', 'a self-declared actor must never read as verified')
+
+    const authed = transitionWorkflow(instance, {
+      to: 'approved', actor: 'verified-user', actor_source: 'authenticated', claimed_actor: 'someone else',
+    })
+    assert.equal(authed.transitions[0].actor, 'verified-user')
+    assert.equal(authed.transitions[0].actor_source, 'authenticated')
+  })
+
+  it('records an unattributed transition as unattributed', async () => {
+    const { transitionWorkflow } = await import('../src/workflows.js')
+    const instance = { id: 'wf-2', type: 'anticipatory_alert', state: 'focal_point_review', transitions: [] }
+    const out = transitionWorkflow(instance, { to: 'approved', actor: 'anonymous' })
+    assert.equal(out.transitions[0].actor_source, 'unattributed')
+  })
+})

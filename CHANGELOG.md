@@ -56,6 +56,26 @@ no existing endpoint changed shape.
 
 ### Fixed
 
+- **Sanctions screening was invisible in the parametric UI.** The screening
+  capability worked — a match blocks the disbursement — but the simulate form
+  never sent the field that reaches it, so every simulation started from the
+  dashboard was unscreened while the result panel showed a green "Simulation
+  complete" for a 5,000 USD disbursement and mentioned screening nowhere. A
+  reader could reasonably conclude the OFAC check had run. The form now collects a
+  recipient name, the result panel states the screening outcome whatever it is,
+  and the disbursements table has a screening column.
+- `sanctions_screened` was a boolean, which made "nothing was screened because no
+  recipient was supplied" and "the SDN list was unreachable" look identical to
+  someone deciding whether a disbursement had been checked. It is now
+  `sanctions_status`: `clear` or `not_screened`, with a reason on the unscreened
+  case so it cannot read as a clean result.
+- **Workflow transitions recorded every actor as "anonymous".** The handler read
+  `req.__auth?.subject || 'anonymous'` and discarded the actor the caller supplied,
+  so on an unauthenticated deployment nobody could tell who approved an
+  anticipatory alert. Preferring the verified subject is still correct — a caller
+  must not be able to claim an identity — but the claim is now kept and labelled:
+  each transition records `actor_source` of `authenticated`, `claimed` or
+  `unattributed`, matching the `actor`/`subject` split `actionLog` already used.
 - **A CHW field report with no GPS fix was stored at (0, 0) — Null Island.** The
   CHW client used `{latitude: 0, longitude: 0}` as its "no location" sentinel in
   six places, including for the "here" button, so auto-detect and manual were

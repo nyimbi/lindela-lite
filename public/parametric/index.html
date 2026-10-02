@@ -149,6 +149,23 @@
           <label for="simRulePicker">Select rule</label>
           <select id="simRulePicker"></select>
         </div>
+        <div>
+          <label for="simRecipientName">Recipient name to screen</label>
+          <!--
+            The screening capability existed and this form never sent the field
+            that reaches it, so every simulation started from the dashboard was
+            unscreened while the result panel reported success. The recipient is
+            now collected here and screened against the OFAC SDN list. Leaving
+            it blank is allowed and is reported as such — an unscreened
+            simulation is a legitimate thing to want, it just has to be visible.
+          -->
+          <input id="simRecipientName" type="text" placeholder="e.g. Turkana County Water Authority">
+          <p style="font-size:0.75rem;color:var(--ink-muted);margin-top:0.25rem">
+            Screened against the OFAC Specially Designated Nationals list by name.
+            A match blocks the disbursement and needs compliance review; it is not
+            a finding of wrongdoing.
+          </p>
+        </div>
         <div style="display:flex;align-items:center;gap:0.5rem;margin-top:1.25rem">
           <input id="simFocalApproved" type="checkbox" style="width:auto">
           <label for="simFocalApproved" style="margin:0">Focal point approved</label>
@@ -171,6 +188,7 @@
             <th>Tx hash</th>
             <th>Amount</th>
             <th>Status</th>
+            <th>Sanctions screening</th>
             <th>Simulated at</th>
           </tr>
         </thead>

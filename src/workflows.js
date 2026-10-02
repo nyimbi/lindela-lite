@@ -110,7 +110,7 @@ export function normalizeWorkflowInstance(input, existing = null) {
   }
 }
 
-export function transitionWorkflow(instance, { to, actor, reason, evidence }) {
+export function transitionWorkflow(instance, { to, actor, actor_source, claimed_actor, reason, evidence }) {
   if (!instance) throw Object.assign(new Error('Workflow not found'), { statusCode: 404 })
 
   const type = instance.type
@@ -141,6 +141,16 @@ export function transitionWorkflow(instance, { to, actor, reason, evidence }) {
         from: fromState,
         to,
         actor: actor || '',
+        // How `actor` was established. 'authenticated' means it came from a
+        // verified session; 'claimed' means the caller stated it and nothing
+        // verified it; 'unattributed' means nobody said. Without this an audit
+        // reader cannot tell a verified identity from a self-declared one, which
+        // is the difference between evidence and an assertion.
+        // 'anonymous' is the absence of an actor, not a claim by one, so it must
+        // not be recorded as though somebody asserted that name.
+        actor_source: actor_source
+          || (!actor || actor === 'anonymous' ? 'unattributed' : 'claimed'),
+        claimed_actor: claimed_actor || null,
         reason: reason || '',
         evidence: evidence || '',
         timestamp: now,

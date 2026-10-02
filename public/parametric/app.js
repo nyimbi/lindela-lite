@@ -88,9 +88,37 @@ function renderHistory() {
       <td>${txLink}</td>
       <td>${d.amount ?? '—'} ${esc(d.currency || '')}</td>
       <td>${esc(d.status)}</td>
+      <td style="font-size:0.75rem">${esc(screeningLabel(d))}</td>
       <td style="font-size:0.75rem">${d.simulated_at ? new Date(d.simulated_at).toLocaleString() : '—'}</td>
     </tr>`
   }).join('')
+}
+
+/**
+ * Render a simulation result, including what the sanctions screening did.
+ *
+ * The screening state used to be absent from this panel entirely: a green
+ * "Simulation complete" for a 5,000 USD disbursement, with no indication that
+ * no name had been screened. A reader could reasonably conclude the OFAC check
+ * described in the README had run. A compliance-relevant fact must never be
+ * invisible, so it is stated here whatever the outcome — screened and clear,
+ * or not screened at all.
+ */
+function sanctionsBanner(result) {
+  const status = result.sanctions_status
+  const styles = {
+    clear: { bg: '#f0fdf4', border: '#86efac', text: 'Screened against the OFAC SDN list — no match.' },
+    not_screened: { bg: '#fffbeb', border: '#fcd34d', text: 'Not screened: no recipient name was supplied, so nothing was checked against the OFAC SDN list.' },
+    blocked: { bg: '#fef2f2', border: '#fca5a5', text: 'Blocked: a sanctions match requires compliance review.' },
+  }
+  const s = styles[status] || {
+    bg: '#fffbeb', border: '#fcd34d',
+    text: 'Screening state not reported by the server.',
+  }
+  const detail = result.sanctions_reason ? ` ${esc(result.sanctions_reason)}.` : ''
+  return `<div style="background:${s.bg};border:1px solid ${s.border};border-radius:0.375rem;padding:0.6rem 0.75rem;margin-top:0.6rem;font-size:0.8rem">
+    <strong>Sanctions screening:</strong> ${esc(s.text)}${detail}
+  </div>`
 }
 
 function renderSimResult(result) {
@@ -99,6 +127,7 @@ function renderSimResult(result) {
   box.innerHTML = `
     <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:0.5rem;padding:1rem">
       <strong>Simulation complete</strong>
+      ${sanctionsBanner(result)}
       <div style="margin-top:0.5rem;font-size:0.875rem">
         Tx hash: <span class="sim-tx">${esc(result.tx_hash)}</span>
         <a href="#" onclick="return false" style="font-size:0.75rem;color:#6b7280;margin-left:0.5rem">(testnet explorer — no live link)</a>
@@ -111,6 +140,12 @@ function renderSimResult(result) {
       </div>
     </div>
   `
+}
+
+/** Short screening state for the disbursements table. Never blank. */
+function screeningLabel(d) {
+  if (d.sanctions_status) return d.sanctions_status.replace(/_/g, ' ')
+  return d.sanctions_screened ? 'screened clear' : 'not screened'
 }
 
 function esc(str) {
@@ -157,11 +192,12 @@ document.getElementById('simForm').addEventListener('submit', async (e) => {
   errEl.style.display = 'none'
   const ruleId = document.getElementById('simRulePicker').value
   const focal_point_approved = document.getElementById('simFocalApproved').checked
+  const recipient_name = document.getElementById('simRecipientName').value.trim() || null
   try {
     const json = await apiFetch(`/parametric-rules/${encodeURIComponent(ruleId)}/simulate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ focal_point_approved, actor: 'ui_operator' }),
+      body: JSON.stringify({ focal_point_approved, recipient_name, actor: 'ui_operator' }),
     })
     renderSimResult(json.data)
     await loadDisbursements()
