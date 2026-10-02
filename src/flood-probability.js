@@ -51,6 +51,13 @@ export const MIN_EVENTS = 5
 export const MATCH_RADIUS_KM = 150
 export const MIN_COVERAGE = 0.9
 
+// Label definition for the discharge variant: a month is a flood month when
+// its maximum daily GloFAS discharge sits above this percentile of monthly
+// maxima across the training record. A fixed definition, deliberately not a
+// fitted parameter — the fit then measures whether rainfall statistics
+// anticipate it, not whether the model can reproduce its own definition.
+export const DISCHARGE_LABEL_PERCENTILE = 0.95
+
 export const MODEL_BASIS = Object.freeze({
   basis: 'empirical rainfall-flood co-occurrence (contingency counts + regularised logistic fit)',
   rainfall_source: 'ERA5 reanalysis daily precipitation via Open-Meteo archive (1981 onwards), keyless',
@@ -63,6 +70,18 @@ export const MODEL_BASIS = Object.freeze({
   },
   rejection_reasons: 'MERIT Hydro (unreachable, EULA-gated) and gauge-based GEV annual maxima (no validated 36-year discharge record for the pilot basins) — see docs/flood-probability-model-basis.md',
   what_a_probability_is_not: 'reporting-conditioned: P(flood enters the GDACS archive), not P(water reaches a given ground elevation)',
+})
+
+export const MODEL_BASIS_DISCHARGE = Object.freeze({
+  basis: 'empirical rainfall-discharge co-occurrence (contingency counts + regularised logistic fit)',
+  rainfall_source: MODEL_BASIS.rainfall_source,
+  flood_source: "GloFAS v4 modelled river discharge via the Open-Meteo flood API (1984 onward where a river reach exists; consolidated reanalysis to July 2022, seamlessly continued by the operational run), keyless",
+  label_definition: `a calendar month whose maximum daily GloFAS discharge at the district's river cell is above that cell's 95th-percentile of monthly maxima (DISCHARGE_LABEL_PERCENTILE — a fixed definition, not a fitted parameter)`,
+  label_caveat: 'The discharge label comes from a hydrological model forced by reanalysis rainfall over the whole upstream basin, while the features are point rainfall statistics. The fit therefore measures how far point-rain statistics anticipate basin-scale river response — an anticipation-skill question, not a hydrological identity. And the label remains modelled: no gauge validation exists at these cells.',
+  features: MODEL_BASIS.features,
+  months_keep_rule: 'a month is kept only when its trailing 90-day rainfall window is >= 90% populated AND the month has >= 90% discharge coverage at the reach cell',
+  rejection_reasons: MODEL_BASIS.rejection_reasons,
+  what_a_probability_is_not: 'model-conditioned: P(the GloFAS reanalysis shows a flood-level discharge month at the reach), not P(water reaches a given ground elevation), and not gauge-conditioned — no gauge record exists at these cells',
 })
 
 /**
@@ -173,6 +192,95 @@ function monthHasFlood(month, events) {
     const t = Date.parse(event.occurred_at)
     return t >= monthStart && t <= last
   })
+}
+
+/**
+ * Monthly maxima of the GloFAS discharge series, with per-month valid-day
+ * counts so downstream can gate months on discharge coverage the same way
+ * the rainfall features gate on precipitation coverage.
+ */
+function monthlyMaxDischarge(dischargeDaily) {
+  const byMonth = new Map()
+  for (const d of dischargeDaily || []) {
+    const date = String(d.date).slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue
+    const v = d.river_discharge_m3s === null || d.river_discharge_m3s === undefined ? null : Number(d.river_discharge_m3s)
+    if (v === null || !Number.isFinite(v)) continue
+    const key = date.slice(0, 7)
+    if (!byMonth.has(key)) byMonth.set(key, { max: v, days: 0 })
+    const m = byMonth.get(key)
+    m.days += 1
+    if (v > m.max) m.max = v
+  }
+  const maxima = [...byMonth.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, m]) => ({ key, ...m }))
+  return { byMonth, maxima, count: maxima.length }
+}
+
+function daysInMonth(monthKey) {
+  const [y, m] = monthKey.split('-').map(Number)
+  return new Date(Date.UTC(y, m, 0)).getUTCDate()
+}
+
+/**
+ * The discharge-label variant of the sampling step: the rainfall features are
+ * the very same monthStats machinery with the very same coverage gates, but
+ * the label is hydrological — the month's maximum daily GloFAS discharge
+ * above a fixed percentile of the record's monthly maxima. Where
+ * monthHasFlood answers "did a flood get reported here", this answers "did
+ * the reach at the district point carry flood-level water" — denser, but
+ * model-conditioned (see MODEL_BASIS_DISCHARGE.label_caveat).
+ *
+ * A month joins the sample only when BOTH gates pass: the trailing-rainfall
+ * coverage gate inside monthStats, and >= minCoverage of the month's days
+ * present at the reach. A month whose discharge is missing is skipped, never
+ * labelled false — absence is not a dry month.
+ *
+ * The threshold is a fixed definition computed from the discharge record
+ * alone (independent of the rainfall features), so it cannot leak into the
+ * fit: it defines what "flood month" means, then the model is measured on
+ * how well rainfall statistics anticipate that.
+ */
+export function buildDistrictSamplesFromDischarge(rainDaily, dischargeDaily, options = {}) {
+  const minCoverage = options.minCoverage || MIN_COVERAGE
+  const percentile = options.floodPercentile || DISCHARGE_LABEL_PERCENTILE
+  const series = normalizeDaily(rainDaily)
+  if (series.length < 120) {
+    return { samples: [], months_kept: 0, skipped_reason: 'rainfall series shorter than ~4 months of daily data' }
+  }
+  const monthlyDischarge = monthlyMaxDischarge(dischargeDaily)
+  if (monthlyDischarge.count < MIN_MONTHS) {
+    return {
+      samples: [],
+      months_kept: 0,
+      skipped_reason: `only ${monthlyDischarge.count} months of discharge coverage; the discharge label needs ${MIN_MONTHS}`,
+    }
+  }
+  const thresholdCms = quantile(monthlyDischarge.maxima.map((m) => m.max).sort((a, b) => a - b), percentile)
+
+  const byMonth = groupByMonth(series)
+  const indexByDate = new Map(series.map((d, i) => [d.date, i]))
+  const samples = []
+  let months_missing_discharge = 0
+  for (const month of byMonth) {
+    const stats = monthStats(month, series, minCoverage, indexByDate)
+    if (!stats) continue
+    const monthly = monthlyDischarge.byMonth.get(month.key)
+    if (!monthly || monthly.days < daysInMonth(month.key) * minCoverage) {
+      months_missing_discharge += 1
+      continue
+    }
+    samples.push({ ...stats, label: monthly.max > thresholdCms })
+  }
+  return {
+    samples,
+    label_source: 'glofas_discharge',
+    discharge_threshold_mCms: Math.round(thresholdCms * 10) / 10,
+    discharge_percentile: percentile,
+    discharge_months_used: monthlyDischarge.count,
+    flood_months: samples.filter((s) => s.label).length,
+    months_kept: samples.length,
+    months_missing_discharge,
+  }
 }
 
 /**

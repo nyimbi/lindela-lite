@@ -1,6 +1,8 @@
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authenticate, requireScope, scopeForRoute } from './auth.js'
@@ -85,6 +87,11 @@ export function createServer(options = {}) {
     const route = normalizeRoute(url.pathname)
 
     try {
+      // Set on every response, API and static alike. The pages build markup
+      // with innerHTML, so this is the backstop that keeps a missed escape from
+      // being a full script injection.
+      securityHeaders(res)
+
       if (hasTraversalSegment(req.url || '')) {
         jsonResponse(res, 404, { success: false, error: 'Not found' })
         return
@@ -104,7 +111,7 @@ export function createServer(options = {}) {
         await handleApi(await storeProvider, req, res, url)
         return
       }
-      await handleStatic(res, url.pathname)
+      await handleStatic(req, res, url.pathname)
     } catch (error) {
       jsonResponse(res, error.statusCode || 500, {
         success: false,
@@ -2440,196 +2447,41 @@ async function handleWorkflowRoute(store, data, req, res, url, route) {
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleStatic(res, pathname) {
+async function handleStatic(req, res, pathname) {
   if (pathname === '/docs' || pathname.startsWith('/docs/')) {
-    await handleDocs(res, pathname)
+    await handleDocs(req, res, pathname)
     return
   }
 
-  // Handle service worker
-  if (pathname === '/sw.js') {
-    try {
-      const content = await fs.readFile(path.join(publicDir, 'sw.js'))
-      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
-      res.end(content)
-      return
-    } catch {
-      jsonResponse(res, 404, { success: false, error: 'Not found' })
-      return
-    }
+  // The service worker is served no-cache so a fix reaches a device that
+  // already has the app open; see sendFile's cache-control rules.
+  const surfaces = ['', '/portal', '/chw', '/co', '/districts', '/focal-point', '/parametric', '/scenarios']
+  const surface = surfaces.find((s) => pathname === s || pathname === `${s}/`)
+
+  if (surface !== undefined) {
+    const indexFile = path.join(publicDir, surface ? `${surface.replace(/^\//, '')}/index.html` : 'index.html')
+    if (await sendFile(req, res, indexFile)) return
   }
 
-  // Handle manifest
-  if (pathname === '/manifest.webmanifest') {
-    try {
-      const content = await fs.readFile(path.join(publicDir, 'manifest.webmanifest'))
-      res.writeHead(200, { 'content-type': 'application/manifest+json; charset=utf-8' })
-      res.end(content)
-      return
-    } catch {
-      jsonResponse(res, 404, { success: false, error: 'Not found' })
-      return
-    }
-  }
-
-  // Handle icon
-  if (pathname === '/icon.svg') {
-    try {
-      const content = await fs.readFile(path.join(publicDir, 'icon.svg'))
-      res.writeHead(200, { 'content-type': 'image/svg+xml' })
-      res.end(content)
-      return
-    } catch {
-      jsonResponse(res, 404, { success: false, error: 'Not found' })
-      return
-    }
-  }
-
-  // Handle i18n catalogs
-  if (pathname.startsWith('/i18n/') && pathname.endsWith('.json')) {
-    try {
-      const content = await fs.readFile(path.join(publicDir, pathname.slice(1)))
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(content)
-      return
-    } catch {
-      jsonResponse(res, 404, { success: false, error: 'Not found' })
-      return
-    }
-  }
-
-  // Handle CO/Donor surface routing
-  if (pathname === '/co' || pathname === '/co/' || pathname.startsWith('/co/')) {
-    const target = pathname === '/co' || pathname === '/co/' ? 'co/index.html' : pathname.replace(/^\/+/, '')
-    const filePath = safeJoin(publicDir, target)
-    try {
-      const content = await fs.readFile(filePath)
-      res.writeHead(200, { 'content-type': contentType(filePath) })
-      res.end(content)
-      return
-    } catch {
-      const index = await fs.readFile(path.join(publicDir, 'co/index.html'))
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(index)
-      return
-    }
-  }
-
-  // Handle focal-point surface routing
-  if (pathname === '/focal-point' || pathname === '/focal-point/' || pathname.startsWith('/focal-point/')) {
-    const target = pathname === '/focal-point' || pathname === '/focal-point/' ? 'focal-point/index.html' : pathname.replace(/^\/+/, '')
-    const filePath = safeJoin(publicDir, target)
-    try {
-      const content = await fs.readFile(filePath)
-      res.writeHead(200, { 'content-type': contentType(filePath) })
-      res.end(content)
-      return
-    } catch {
-      const index = await fs.readFile(path.join(publicDir, 'focal-point/index.html'))
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(index)
-      return
-    }
-  }
-
-  // Handle CHW surface routing
-  if (pathname === '/chw' || pathname === '/chw/' || pathname.startsWith('/chw/')) {
-    const target = pathname === '/chw' || pathname === '/chw/' ? 'chw/index.html' : pathname.replace(/^\/+/, '')
-    const filePath = safeJoin(publicDir, target)
-    try {
-      const content = await fs.readFile(filePath)
-      res.writeHead(200, { 'content-type': contentType(filePath) })
-      res.end(content)
-      return
-    } catch {
-      const index = await fs.readFile(path.join(publicDir, 'chw/index.html'))
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(index)
-      return
-    }
-  }
-
-  // Handle Parametric surface routing
-  if (pathname === '/parametric' || pathname === '/parametric/' || pathname.startsWith('/parametric/')) {
-    const target = pathname === '/parametric' || pathname === '/parametric/' ? 'parametric/index.html' : pathname.replace(/^\/+/, '')
-    const filePath = safeJoin(publicDir, target)
-    try {
-      const content = await fs.readFile(filePath)
-      res.writeHead(200, { 'content-type': contentType(filePath) })
-      res.end(content)
-      return
-    } catch {
-      const index = await fs.readFile(path.join(publicDir, 'parametric/index.html'))
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(index)
-      return
-    }
-  }
-
-  // Handle Scenario Workbench routing
-  if (pathname === '/scenarios' || pathname === '/scenarios/' || pathname.startsWith('/scenarios/')) {
-    const target = pathname === '/scenarios' || pathname === '/scenarios/' ? 'scenarios/index.html' : pathname.replace(/^\/+/, '')
-    const filePath = safeJoin(publicDir, target)
-    try {
-      const content = await fs.readFile(filePath)
-      res.writeHead(200, { 'content-type': contentType(filePath) })
-      res.end(content)
-      return
-    } catch {
-      const index = await fs.readFile(path.join(publicDir, 'scenarios/index.html'))
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(index)
-      return
-    }
-  }
-
-  // Handle Portal surface routing
-  if (pathname === '/portal' || pathname === '/portal/' || pathname.startsWith('/portal/')) {
-    const target = pathname === '/portal' || pathname === '/portal/' ? 'portal/index.html' : pathname.replace(/^\/+/, '')
-    const filePath = safeJoin(publicDir, target)
-    try {
-      const content = await fs.readFile(filePath)
-      res.writeHead(200, { 'content-type': contentType(filePath) })
-      res.end(content)
-      return
-    } catch {
-      const index = await fs.readFile(path.join(publicDir, 'portal/index.html'))
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(index)
-      return
-    }
-  }
-
-  if (pathname === '/districts' || pathname === '/districts/' || pathname.startsWith('/districts/')) {
-    const target = pathname === '/districts' || pathname === '/districts/' ? 'districts/index.html' : pathname.replace(/^\/+/, '')
-    const filePath = safeJoin(publicDir, target)
-    try {
-      const content = await fs.readFile(filePath)
-      res.writeHead(200, { 'content-type': contentType(filePath) })
-      res.end(content)
-      return
-    } catch {
-      const index = await fs.readFile(path.join(publicDir, 'districts/index.html'))
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(index)
-      return
-    }
-  }
-
-  const target = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '')
-  const filePath = safeJoin(publicDir, target)
+  let filePath
   try {
-    const content = await fs.readFile(filePath)
-    res.writeHead(200, { 'content-type': contentType(filePath) })
-    res.end(content)
+    filePath = safeJoin(publicDir, pathname.replace(/^\/+/, '') || 'index.html')
   } catch {
-    const index = await fs.readFile(path.join(publicDir, 'index.html'))
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    res.end(index)
+    jsonResponse(res, 404, { success: false, error: 'Not found' })
+    return
   }
+
+  if (await sendFile(req, res, filePath)) return
+
+  // A bare directory request that is not one of the known surfaces falls back
+  // to the console rather than 404ing.
+  const index = path.join(publicDir, 'index.html')
+  if (await sendFile(req, res, index)) return
+
+  jsonResponse(res, 404, { success: false, error: 'Not found' })
 }
 
-async function handleDocs(res, pathname) {
+async function handleDocs(req, res, pathname) {
   const target = pathname === '/docs' ? 'README.md' : pathname.replace(/^\/docs\/?/, '')
   let filePath
   try {
@@ -2638,13 +2490,8 @@ async function handleDocs(res, pathname) {
     jsonResponse(res, 404, { success: false, error: 'Document not found' })
     return
   }
-  try {
-    const content = await fs.readFile(filePath)
-    res.writeHead(200, { 'content-type': contentType(filePath) })
-    res.end(content)
-  } catch {
-    jsonResponse(res, 404, { success: false, error: 'Document not found' })
-  }
+  if (await sendFile(req, res, filePath)) return
+  jsonResponse(res, 404, { success: false, error: 'Document not found' })
 }
 
 function safeJoin(rootDir, target) {
@@ -2654,6 +2501,116 @@ function safeJoin(rootDir, target) {
     throw Object.assign(new Error('Path is outside document root'), { statusCode: 404 })
   }
   return filePath
+}
+
+// =============================================================
+// Static file serving
+// =============================================================
+
+/**
+ * The dashboard ships ~64 KB gzipped across 17 files and was being served as
+ * 232 KB of raw bytes, because nothing in this file compressed anything. The
+ * binding constraint for this product is a field connection, not a data centre,
+ * so that 3.6x was paid by exactly the users who can least afford it.
+ */
+const COMPRESSIBLE = /^(text\/|application\/(json|javascript|manifest\+json)|image\/svg)/
+
+function acceptsGzip(req) {
+  const header = req?.headers?.['accept-encoding'] || ''
+  // "gzip;q=0" is an explicit refusal; a bare substring test would ignore it.
+  return /(^|,)\s*gzip\s*(;|,|$)/i.test(header) && !/gzip\s*;\s*q=0(\.0+)?\s*(;|,|$)/i.test(header)
+}
+
+function etagFor(buffer) {
+  // Content hash, so the validator changes exactly when the bytes change.
+  return `W/"${createHash('sha1').update(buffer).digest('base64url')}"`
+}
+
+/**
+ * Send a file, compressed and cached.
+ *
+ * One implementation, replacing fifteen near-identical readFile/writeHead/end
+ * blocks that each decided caching independently — and none of which sent a
+ * Cache-Control, so a deploy was not cacheable at all and every asset was
+ * refetched on every load.
+ */
+async function sendFile(req, res, filePath, { immutable = false } = {}) {
+  let content
+  try {
+    content = await fs.readFile(filePath)
+  } catch {
+    return false
+  }
+
+  const type = contentType(filePath)
+  const etag = etagFor(content)
+  const headers = {
+    'content-type': type,
+    etag,
+    'last-modified': new Date().toUTCString(),
+  }
+
+  if (immutable) {
+    // Asset filenames are not content-hashed, so a long max-age would pin an
+    // operator to a stale build after a fix ships. Revalidate instead: cheap
+    // with an ETag, and correct.
+    headers['cache-control'] = 'public, max-age=0, must-revalidate'
+  } else if (/\.(html|webmanifest)$/.test(filePath) || filePath.endsWith('sw.js')) {
+    // The service worker must never be served stale, or a fix cannot reach a
+    // device that already has the app open.
+    headers['cache-control'] = 'no-cache'
+  } else {
+    headers['cache-control'] = 'public, max-age=3600, must-revalidate'
+  }
+
+  if (req?.headers?.['if-none-match'] === etag) {
+    res.writeHead(304, headers)
+    res.end()
+    return true
+  }
+
+  if (COMPRESSIBLE.test(type) && acceptsGzip(req) && content.length > 512) {
+    const gzipped = gzipSync(content)
+    headers['content-encoding'] = 'gzip'
+    headers['vary'] = 'accept-encoding'
+    res.writeHead(200, headers)
+    res.end(req.method === 'HEAD' ? undefined : gzipped)
+    return true
+  }
+
+  headers['content-length'] = content.length
+  res.writeHead(200, headers)
+  res.end(req.method === 'HEAD' ? undefined : content)
+  return true
+}
+
+/**
+ * Security headers for every response.
+ *
+ * There were none. The pages build markup with innerHTML, so a CSP is the
+ * backstop that turns a missed escape from a full injection into a visible
+ * failure. `unsafe-inline` is still needed for the per-page <style> blocks that
+ * remain, and drops out as those are consolidated.
+ */
+function securityHeaders(res) {
+  res.setHeader('x-content-type-options', 'nosniff')
+  res.setHeader('x-frame-options', 'DENY')
+  res.setHeader('referrer-policy', 'no-referrer')
+  res.setHeader('permissions-policy', 'geolocation=(), camera=(self), microphone=()')
+  res.setHeader(
+    'content-security-policy',
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "font-src 'self'",
+      "base-uri 'none'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join('; ')
+  )
 }
 
 function hasTraversalSegment(rawUrl) {
@@ -2739,7 +2696,8 @@ function contentType(filePath) {
   if (filePath.endsWith('.svg')) return 'image/svg+xml'
   if (filePath.endsWith('.md')) return 'text/markdown; charset=utf-8'
   if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) return 'text/yaml; charset=utf-8'
-  if (filePath.endsWith('.json') || filePath.endsWith('.webmanifest')) return 'application/json; charset=utf-8'
+  if (filePath.endsWith('.webmanifest')) return 'application/manifest+json; charset=utf-8'
+  if (filePath.endsWith('.json')) return 'application/json; charset=utf-8'
   return 'text/html; charset=utf-8'
 }
 
