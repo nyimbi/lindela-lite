@@ -56,6 +56,38 @@ no existing endpoint changed shape.
 
 ### Fixed
 
+- **A CHW field report with no GPS fix was stored at (0, 0) — Null Island.** The
+  CHW client used `{latitude: 0, longitude: 0}` as its "no location" sentinel in
+  six places, including for the "here" button, so auto-detect and manual were
+  indistinguishable whenever the fix failed. The server then wrote
+  `body.location?.latitude || 0`, which turned a missing fix, an explicit null and
+  a real zero alike into latitude 0, longitude 0. A disease signal that looks
+  located while pointing at open water is worse than one with no coordinate:
+  cluster detection and any "facilities near this report" join both treat it as
+  real. Location is now nullable and self-describing: `location_source` says
+  whether a fix was obtained, refused, timed out, or self-reported, and
+  `location_accuracy_m` survives when there is one.
+
+- **`toNumber(null)` returned 0.** `Number(null)`, `Number('')` and `Number([])`
+  are all 0, so absence coerced to a real zero. Harmless for a threshold;
+  not harmless for a coordinate — it meant the CHW fix above reappeared the moment
+  anything updated or soft-deleted the report through the operational API, since
+  the normaliser read those nulls and wrote 0. Null is now an absence and 0 is a
+  value, with numeric strings still coercing.
+
+- **A field report raised through `/api/v1/chw/report` could be listed but never
+  updated or withdrawn.** It has no incident linkage by design — a health worker
+  reporting a symptom does not know which incident it belongs to — and the
+  normaliser re-checked that linkage on every mutation, so DELETE returned 400.
+  A duplicate or mistaken disease signal could not be taken back. Linkage is now
+  required at creation and not re-required afterwards. `normalizeFieldReport` also
+  carries `category`, `status`, `source` and the location fields explicitly rather
+  than relying on the store's shallow merge to preserve them.
+
+- The browser check now walks the CHW symptom wizard end to end (82 checks, from
+  78) and asserts the created report carries no fabricated coordinate and says how
+  its location was determined. It cleans up after itself.
+
 - **Payload hashing ignored record metadata, so connector corrections could never
   reach stored data.** `canonicalHash` passed `Object.keys(record)` as
   `JSON.stringify`'s second argument, which is a property *allowlist applied at

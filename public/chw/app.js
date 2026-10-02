@@ -18,7 +18,13 @@ const offlineBanner = $('offlineBanner')
 const statusDot = $('statusDot')
 const toast = $('toast')
 
-let userLocation = { latitude: 0, longitude: 0 }
+/**
+ * Null means "no location known". It is never (0, 0): that is a real coordinate
+ * in the Gulf of Guinea, and a field report carrying it looks located to every
+ * downstream join while pointing at open water.
+ */
+let userLocation = null
+let userLocationError = null
 
 async function init() {
   await initI18n(state.locale)
@@ -65,17 +71,27 @@ function updateStatus() {
 }
 
 async function requestUserLocation() {
-  if (!navigator.geolocation) return
+  if (!navigator.geolocation) {
+    // Absence of the API is a different fact from a refused permission, and a
+    // caller may want to tell them apart.
+    userLocationError = 'geolocation_not_supported'
+    return
+  }
   navigator.geolocation.getCurrentPosition(
     (position) => {
       userLocation = {
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
+        source: 'gps',
+        accuracy_m: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
       }
+      userLocationError = null
     },
-    () => {
-      userLocation = { latitude: 0, longitude: 0 }
-    }
+    (error) => {
+      userLocation = null
+      userLocationError = error?.code === 1 ? 'permission_denied' : (error?.code === 3 ? 'timeout' : 'unavailable')
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
   )
 }
 
@@ -151,13 +167,23 @@ function setupSymptomDurationScreen() {
 
 function setupSymptomLocationScreen() {
   $('autoLocationBtn').addEventListener('click', () => {
+    // A refused or timed-out fix must not be reported as a fix. The report goes
+    // out with no coordinates and a stated reason, which is recoverable; a
+    // report at (0, 0) is not.
     state.symptom.location = userLocation
+      ? { ...userLocation }
+      : { latitude: null, longitude: null, source: 'auto_failed', auto_error: userLocationError || 'unavailable' }
   })
   $('hereLocationBtn').addEventListener('click', () => {
-    state.symptom.location = { latitude: 0, longitude: 0 }
+    // "Here" is the CHW telling us where the problem is. It carries no
+    // coordinates — a phone with no fix cannot supply one — so it is recorded as
+    // a self-reported location rather than given a made-up point.
+    state.symptom.location = { latitude: null, longitude: null, source: 'reported_here' }
   })
   $('symptomLocationNextBtn').addEventListener('click', () => {
-    if (!state.symptom.location) state.symptom.location = { latitude: 0, longitude: 0 }
+    if (!state.symptom.location) {
+      state.symptom.location = { latitude: null, longitude: null, source: 'not_answered' }
+    }
     showScreen('symptomAboutWho')
   })
   $('symptomLocationBackBtn').addEventListener('click', () => showScreen('symptomDuration'))
@@ -207,7 +233,11 @@ function setupIncidentScreen() {
 
   locationBtns.forEach((btn) => {
     btn.addEventListener('click', (e) => {
-      state.incident.location = e.target.dataset.incidentLocation === 'auto' ? userLocation : { latitude: 0, longitude: 0 }
+      state.incident.location = e.target.dataset.incidentLocation === 'auto'
+        ? (userLocation
+            ? { ...userLocation }
+            : { latitude: null, longitude: null, source: 'auto_failed', auto_error: userLocationError || 'unavailable' })
+        : { latitude: null, longitude: null, source: 'reported_here' }
     })
   })
 

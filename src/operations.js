@@ -219,7 +219,16 @@ function normalizeDemographics(input) {
 }
 
 function normalizeFieldReport(input, data, existing = null) {
-  if (!input.incident_id && !input.intervention_id) {
+  // A field report must be attributable to an incident or intervention *when it
+  // is created*. It must not be re-required on every later mutation: a report
+  // raised through POST /api/v1/chw/report has no incident linkage by design —
+  // a health worker reporting a symptom does not know which incident it belongs
+  // to — and it was consequently impossible to update or soft-delete such a
+  // record through this endpoint, because every call re-checked a link the
+  // record never had. A disease signal that cannot be withdrawn is a problem
+  // when the report turns out to be a duplicate or a mistake.
+  const linkage = input.incident_id || input.intervention_id || existing?.incident_id || existing?.intervention_id
+  if (!linkage && !existing) {
     throw Object.assign(new Error('incident_id or intervention_id is required'), { statusCode: 400 })
   }
   const intervention = findById(data.interventions, input.intervention_id)
@@ -241,6 +250,18 @@ function normalizeFieldReport(input, data, existing = null) {
     impact: objectValue(input.impact || existing?.impact),
     latitude: toNumber(input.latitude ?? input.lat ?? existing?.latitude),
     longitude: toNumber(input.longitude ?? input.lon ?? input.lng ?? existing?.longitude),
+    // How the location was determined, and how accurate it was. A report with no
+    // coordinates has to say why, or "no location" is indistinguishable from
+    // "we did not look". Carried explicitly rather than left to the store's
+    // shallow merge to preserve, so a record is self-describing on its own.
+    location_source: input.location_source ?? existing?.location_source ?? null,
+    location_accuracy_m: toNumber(input.location_accuracy_m ?? existing?.location_accuracy_m),
+    // Also carried explicitly: these are set on reports raised through
+    // POST /api/v1/chw/report and were surviving only because the store merges
+    // rather than replaces.
+    category: input.category ?? existing?.category ?? null,
+    status: input.status ?? existing?.status ?? 'new',
+    source: input.source ?? existing?.source ?? null,
     demographics,
     created_at: existing?.created_at || input.created_at || now,
     updated_at: now,

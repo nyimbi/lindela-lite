@@ -455,6 +455,62 @@ async function main() {
       pageErrors.length === before, (pageErrors[pageErrors.length - 1] || '').slice(0, 60))
   }
 
+  // The CHW reporting flow, walked the way a health worker walks it. Loading
+  // /chw and finding no console errors is not the same as the flow working: the
+  // wizard is five screens with a submit at the end, and nothing else in the
+  // suite touched it.
+  //
+  // This is where a fabricated coordinate was found. The client used (0, 0) as
+  // its "no location" sentinel and the server wrote `latitude || 0`, so a phone
+  // with no GPS fix produced a field report at Null Island — a disease signal
+  // that looks located while pointing at open water.
+  await send('Page.navigate', { url: `${BASE}/chw?cb=${Date.now()}` })
+  await new Promise((r) => setTimeout(r, 3000))
+  const beforeReports = await (await fetch(`${BASE}/api/v1/field-reports?limit=5000`)).json().then((b) => b.data.length)
+  await evaluate(`document.getElementById('reportSymptomBtn').click(); true`)
+  await new Promise((r) => setTimeout(r, 600))
+
+  const WIZARD = [
+    { pick: '[data-symptom-who]', next: 'symptomNextBtn' },
+    { pick: '[data-symptom-type]', next: 'symptomTypeNextBtn' },
+    { pick: '[data-symptom-duration]', next: 'symptomDurationNextBtn' },
+    { pick: '[data-symptom-location]', next: 'symptomLocationNextBtn' },
+  ]
+  let wizardStuck = null
+  for (const step of WIZARD) {
+    const picked = await evaluate(`(() => { const b = document.querySelector('${step.pick}');
+      if (!b) return false; b.click(); return true; })()`)
+    const hasNext = await evaluate(`!!document.getElementById('${step.next}')`)
+    if (!picked || !hasNext) { wizardStuck = `${step.pick} -> ${step.next}`; break }
+    await evaluate(`document.getElementById('${step.next}').click(); true`)
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  check('the CHW symptom wizard advances through every screen',
+    wizardStuck === null, wizardStuck || 'all steps advanced')
+
+  await evaluate(`document.getElementById('symptomSubmitBtn').click(); true`)
+  await new Promise((r) => setTimeout(r, 2000))
+  const reports = await (await fetch(`${BASE}/api/v1/field-reports?limit=5000`)).json().then((b) => b.data)
+  const created = reports.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0]
+  check('a CHW report is actually created',
+    reports.length === beforeReports + 1 && created?.source === 'chw_web',
+    `${beforeReports} -> ${reports.length}, source ${created?.source}`)
+  check('a CHW report with no GPS fix carries no coordinate',
+    !(created?.latitude === 0 && created?.longitude === 0),
+    `lat ${created?.latitude}, lon ${created?.longitude}`)
+  check('a CHW report states how its location was determined',
+    typeof created?.location_source === 'string' && created.location_source.length > 0,
+    `location_source ${created?.location_source}`)
+
+  // Remove it, so the check leaves the store as it found it.
+  if (created?.id) {
+    await fetch(`${BASE}/api/v1/field-reports/${created.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ actor: 'browser-check' }),
+    }).catch(() => {})
+  }
+
   // District drill-down, reached the way a panel would.
   await send('Page.navigate', { url: `${BASE}/districts?cb=${Date.now()}` })
   await new Promise((r) => setTimeout(r, 3000))

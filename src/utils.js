@@ -46,7 +46,21 @@ export function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
 
+/**
+ * Coerce to a finite number, or the fallback.
+ *
+ * Null, undefined and the empty string must fall back rather than coerce to 0.
+ * `Number(null)`, `Number('')` and `Number([])` are all 0, so the previous
+ * implementation turned "no value" into a real zero. That is harmless for a
+ * threshold and not harmless for a coordinate: a field report whose location was
+ * unknown was stored with null latitude and longitude, and the moment anything
+ * updated or soft-deleted it through the operational API, the normaliser read
+ * those nulls and wrote 0 — putting the report back at Null Island in the Gulf
+ * of Guinea. A null is an absence; a zero is a location.
+ */
 export function toNumber(value, fallback = null) {
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return fallback
+  if (Array.isArray(value)) return fallback
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
 }

@@ -2048,14 +2048,33 @@ async function handleChwRoute(store, data, req, res, url, route) {
   if (req.method === 'POST' && route.kind === 'report') {
     const body = await readRequestJson(req)
     const now = new Date().toISOString()
+    // Location is nullable on purpose. It used to be `|| 0`, which turned a
+    // missing fix, an explicit null and a real zero alike into latitude 0,
+    // longitude 0 — Null Island, in the ocean off West Africa. A field report
+    // is a disease signal, and a signal placed at a fixed ocean coordinate is
+    // worse than one with no coordinate at all: it looks located, so cluster
+    // detection and any "facilities near this report" join treat it as real.
+    //
+    // When there is no fix, the record says so via location_source, so a caller
+    // can tell "the CHW is standing in it" from "we do not know where".
+    const reportedLat = Number(body.location?.latitude)
+    const reportedLon = Number(body.location?.longitude)
+    const hasFix = Number.isFinite(reportedLat) && Number.isFinite(reportedLon)
+      && !(reportedLat === 0 && reportedLon === 0)
     const record = {
       id: stableId('report', [body.description, body.location?.latitude, body.location?.longitude, now]),
       summary: body.description,
       category: body.category || body.kind,
       status: 'new',
       source: 'chw_web',
-      latitude: body.location?.latitude || 0,
-      longitude: body.location?.longitude || 0,
+      latitude: hasFix ? reportedLat : null,
+      longitude: hasFix ? reportedLon : null,
+      location_source: hasFix
+        ? (body.location?.source === 'gps' ? 'gps' : 'reported')
+        : (body.location?.source || 'unknown'),
+      location_accuracy_m: hasFix && Number.isFinite(Number(body.location?.accuracy_m))
+        ? Number(body.location.accuracy_m)
+        : null,
       reported_by: req.__auth?.subject,
       created_at: now,
       updated_at: now,

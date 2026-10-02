@@ -4396,3 +4396,171 @@ describe('Lindela Lite ENSO index labelling', () => {
     assert.equal(classified.episode_declared, false)
   })
 })
+
+describe('Lindela Lite CHW field-report location', () => {
+  async function postReport(body) {
+    const { createServer } = await import('../src/server.js')
+    const { JsonStore } = await import('../src/store.js')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-chw-geo-'))
+    const server = createServer({ store: new JsonStore(path.join(dir, 'store.json')) })
+    const listener = server.listen(0)
+    const base = `http://localhost:${listener.address().port}`
+    try {
+      const res = await fetch(`${base}/api/v1/chw/report`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const payload = await res.json()
+      return { status: res.status, body: payload, report: payload.report || payload.data }
+    } finally {
+      await new Promise((r) => listener.close(r))
+    }
+  }
+
+  it('never stores a fabricated coordinate when the location is unknown', async () => {
+    // The client used (0, 0) as its "no location" sentinel and the server wrote
+    // `body.location?.latitude || 0`, so a missing fix, an explicit null and a
+    // real zero all became latitude 0, longitude 0 — Null Island, open water off
+    // West Africa. A field report is a disease signal, and one that looks located
+    // while pointing at the ocean is worse than one with no coordinate.
+    const { report } = await postReport({
+      kind: 'symptom',
+      category: 'fever',
+      description: 'child with fever for days',
+      location: { latitude: null, longitude: null, source: 'reported_here' },
+    })
+    assert.equal(report.latitude, null)
+    assert.equal(report.longitude, null)
+    assert.equal(report.location_source, 'reported_here',
+      'the record must say how the location was determined, or a caller cannot judge it')
+  })
+
+  it('treats a legacy zero coordinate as no location rather than as a fix', async () => {
+    const { report } = await postReport({
+      kind: 'symptom',
+      category: 'fever',
+      description: 'legacy client payload',
+      location: { latitude: 0, longitude: 0 },
+    })
+    assert.equal(report.latitude, null)
+    assert.equal(report.longitude, null)
+    assert.equal(report.location_source, 'unknown')
+  })
+
+  it('keeps a real fix, and records that it was a GPS fix and how accurate', async () => {
+    const { report } = await postReport({
+      kind: 'symptom',
+      category: 'diarrhoea',
+      description: 'self with diarrhoea for hours',
+      location: { latitude: 3.2, longitude: 35.7, source: 'gps', accuracy_m: 12 },
+    })
+    assert.notEqual(report.latitude, null)
+    assert.notEqual(report.longitude, null)
+    assert.equal(report.location_source, 'gps')
+    assert.equal(report.location_accuracy_m, 12,
+      'accuracy is the difference between a usable and an unusable field fix, so it must survive')
+  })
+
+  it('keeps no (0, 0) sentinel in the CHW client', async () => {
+    // The client is where the fabrication started. It used {latitude: 0,
+    // longitude: 0} in six places, including for the "here" button — so auto and
+    // manual were indistinguishable whenever the fix failed.
+    const src = await fs.readFile('public/chw/app.js', 'utf8')
+    assert.ok(!/latitude:\s*0,\s*longitude:\s*0/.test(src),
+      'the CHW client must not use (0, 0) as a location sentinel')
+    assert.ok(/userLocation = null/.test(src),
+      'unknown location must be null, not a coordinate')
+  })
+})
+
+describe('Lindela Lite field-report attribution', () => {
+  it('still requires incident or intervention linkage when a report is created', async () => {
+    const { buildCreate } = await import('../src/operations.js')
+    assert.throws(
+      () => buildCreate('field_reports', { summary: 'orphaned report' }, { incidents: [], interventions: [] }),
+      /incident_id or intervention_id is required/,
+      'an unattributable report must not be creatable through the operational API',
+    )
+  })
+
+  it('lets a report without linkage be updated and withdrawn', async () => {
+    // A report raised through POST /api/v1/chw/report has no incident linkage by
+    // design: a health worker reporting a symptom does not know which incident it
+    // belongs to. Because the normaliser re-checked linkage on every mutation,
+    // such a record could be listed but never updated or soft-deleted — a disease
+    // signal that cannot be withdrawn when it turns out to be a duplicate.
+    const { buildUpdate, buildSoftDelete, isDeleted } = await import('../src/operations.js')
+    const chwReport = {
+      id: 'report_chw_1',
+      incident_id: null,
+      intervention_id: null,
+      summary: 'child with fever for days',
+      category: 'fever',
+      source: 'chw_web',
+      location_source: 'reported_here',
+    }
+    const data = { incidents: [], interventions: [] }
+
+    const updated = buildUpdate('field_reports', chwReport, { status: 'acknowledged' }, data)
+    assert.equal(updated.status, 'acknowledged')
+
+    const deleted = buildSoftDelete('field_reports', chwReport, 'operator', data)
+    assert.ok(isDeleted(deleted), 'a CHW report must be withdrawable')
+    assert.equal(deleted.deleted_by, 'operator')
+  })
+
+  it('refuses to delete a record twice', async () => {
+    const { buildSoftDelete } = await import('../src/operations.js')
+    const rec = { id: 'r', incident_id: null, intervention_id: null, summary: 's', deleted_at: '2026-01-01T00:00:00.000Z' }
+    assert.throws(() => buildSoftDelete('field_reports', rec, 'operator', { incidents: [], interventions: [] }),
+      /already deleted/)
+  })
+})
+
+describe('Lindela Lite absence is not zero', () => {
+  it('toNumber falls back for absence and keeps a real zero', async () => {
+    // Number(null), Number('') and Number([]) are all 0, so the previous
+    // implementation turned "no value" into a real zero. For a threshold that
+    // is harmless. For a coordinate it put unknown locations in the Gulf of
+    // Guinea.
+    const { toNumber } = await import('../src/utils.js')
+    for (const absent of [null, undefined, '', [], false, Number.NaN]) {
+      assert.equal(toNumber(absent), null, `${JSON.stringify(absent)} must not coerce to a number`)
+    }
+    assert.equal(toNumber(0), 0, 'a real zero is a value and must survive')
+    assert.equal(toNumber('0'), 0, 'a numeric string zero is a value')
+    assert.equal(toNumber('3.5'), 3.5, 'numeric strings still coerce')
+    assert.equal(toNumber(3.5), 3.5)
+    assert.equal(toNumber('abc'), null)
+  })
+
+  it('keeps an unknown location unknown through update and delete', async () => {
+    // The regression, end to end. A CHW report with null coordinates was stored
+    // correctly, then toNumber(null) returned 0 the moment anything updated or
+    // soft-deleted it through the operational API — putting the report back at
+    // Null Island, which is the defect this all started from.
+    const { buildCreate, buildUpdate, buildSoftDelete } = await import('../src/operations.js')
+    const data = { incidents: [{ id: 'inc-1' }], interventions: [] }
+
+    const created = buildCreate('field_reports', {
+      incident_id: 'inc-1',
+      summary: 'child with fever for days',
+      latitude: null,
+      longitude: null,
+      location_source: 'auto_failed',
+    }, data)
+    assert.equal(created.latitude, null)
+    assert.equal(created.longitude, null)
+
+    const updated = buildUpdate('field_reports', created, { summary: 'child with fever for days (edited)' }, data)
+    assert.equal(updated.latitude, null, 'an update must not resurrect a coordinate')
+    assert.equal(updated.longitude, null)
+    assert.equal(updated.location_source, 'auto_failed', 'the reason for having no location must survive')
+
+    const deleted = buildSoftDelete('field_reports', updated, 'operator', data)
+    assert.equal(deleted.latitude, null, 'a soft delete must not resurrect a coordinate either')
+    assert.equal(deleted.longitude, null)
+    assert.ok(deleted.deleted_at)
+  })
+})
