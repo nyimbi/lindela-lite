@@ -63,6 +63,15 @@ no existing endpoint changed shape.
   with GDACS and USGS both live is always the same Pacific and Caribbean
   earthquakes: the seeded flood and landslide that the road-access and routing
   walkthrough depends on were paginated out and never drawn.
+- The **OpenAPI contract now covers 93 paths / 118 operations**, up from 63. It
+  was missing 26 documented endpoints: equity by district and breaches, the
+  equity scan, parametric rules and disbursements, webhooks, community feedback
+  and its summary, quarterly KPIs, data lineage, the connector catalog,
+  scenarios, trigger-protocol backtest and shadow-run, outbox dispatch,
+  retention, bias correction, and the CHW report and reply routes. All 26 were
+  real and reachable; they simply were not in the contract, so a technical reader
+  could not discover them or generate a client. `info.version` also said 0.1.0
+  while the package was at 0.2.0.
 - The flood-probability build guard now scans **documentation, the OpenAPI
   contract and the dashboard markup**, not just `.js` files, and matches prose
   phrasings as well as identifiers. A flood probability asserted in the contract

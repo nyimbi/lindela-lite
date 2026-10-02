@@ -1,11 +1,361 @@
 openapi: 3.1.0
 info:
   title: Lindela Lite API
-  version: 0.1.0
+  version: 0.2.0
   description: Public API for climate-conflict, flood-risk, service-impact, and source-ingestion data.
 servers:
   - url: http://127.0.0.1:4177
 paths:
+  /api/v1/analytics/bias-correct:
+    post:
+      summary: Re-run the bias correction over stored climate observations
+      operationId: postanalytics_bias-correct
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/chw/reply:
+    post:
+      summary: Record a community health worker reply to an alert
+      operationId: postchw_reply
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/chw/report:
+    post:
+      summary: Create a field report from a community health worker
+      operationId: postchw_report
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/community-feedback:
+    get:
+      summary: List or create community feedback
+      operationId: getcommunity-feedback
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+    post:
+      summary: List or create community feedback
+      operationId: postcommunity-feedback
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/community-feedback/summary:
+    get:
+      summary: Community feedback summary by sentiment and district
+      operationId: getcommunity-feedback_summary
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/connectors:
+    get:
+      summary: Connector catalog, including each connector validation spec
+      operationId: getconnectors
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/data-lineage:
+    get:
+      summary: Record and read source lineage for ingested data
+      operationId: getdata-lineage
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/equity/breaches:
+    get:
+      summary: Detected equity breaches
+      operationId: getequity_breaches
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/equity/by-district:
+    get:
+      summary: Dispatch acknowledgement by district
+      operationId: getequity_by-district
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/equity/scan:
+    post:
+      summary: Scan for equity breaches and raise audit workflows
+      operationId: postequity_scan
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/impact/population-at-risk:
+    get:
+      summary: Population at risk from current hazards
+      operationId: getimpact_population-at-risk
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/kpi/quarterly:
+    get:
+      summary: Quarterly KPI snapshot (JSON, or .pdf for a rendered report)
+      operationId: getkpi_quarterly
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/maintenance/apply-retention:
+    post:
+      summary: Apply the configured retention policy
+      operationId: postmaintenance_apply-retention
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/outbox:
+    get:
+      summary: Pending outbox events
+      operationId: getoutbox
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/outbox/dispatch:
+    post:
+      summary: Dispatch pending outbox events
+      operationId: postoutbox_dispatch
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/parametric-disbursements:
+    get:
+      summary: List parametric disbursements
+      operationId: getparametric-disbursements
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/parametric-rules:
+    get:
+      summary: List or create parametric disbursement rules
+      operationId: getparametric-rules
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+    post:
+      summary: List or create parametric disbursement rules
+      operationId: postparametric-rules
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/parametric-rules/{id}:
+    patch:
+      summary: Update a parametric disbursement rule
+      operationId: patchparametric-rules_id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: >-
+              Identifier of the parametric-rules record.
+  /api/v1/parametric-rules/{id}/simulate:
+    post:
+      summary: Simulate a parametric rule without disbursing
+      operationId: postparametric-rules_id_simulate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: >-
+              Identifier of the parametric-rules record.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/scenarios:
+    post:
+      summary: Create a shareable scenario
+      operationId: postscenarios
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/scenarios/{id}:
+    get:
+      summary: Resolve a scenario by its share token
+      operationId: getscenarios_id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: >-
+              Identifier of the scenarios record.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/trigger-protocols:
+    get:
+      summary: List pre-authorised trigger protocols
+      operationId: gettrigger-protocols
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/trigger-protocols/{id}/backtest:
+    post:
+      summary: Backtest a trigger protocol
+      operationId: posttrigger-protocols_id_backtest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: >-
+              Identifier of the trigger-protocols record.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/trigger-protocols/{id}/shadow-run:
+    post:
+      summary: Shadow-run a trigger protocol
+      operationId: posttrigger-protocols_id_shadow-run
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: >-
+              Identifier of the trigger-protocols record.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/webhooks:
+    get:
+      summary: List or create webhook subscriptions
+      operationId: getwebhooks
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+    post:
+      summary: List or create webhook subscriptions
+      operationId: postwebhooks
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/webhooks/{id}:
+    patch:
+      summary: Update a webhook subscription
+      operationId: patchwebhooks_id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: >-
+              Identifier of the webhooks record.
   /api/v1/health:
     get:
       summary: Service health and storage mode

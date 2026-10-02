@@ -4254,3 +4254,44 @@ describe('Lindela Lite OpenAPI contract', () => {
       `health returns these fields the OpenAPI contract does not document: ${undocumented.join(', ')}`)
   })
 })
+
+describe('Lindela Lite OpenAPI coverage', () => {
+  it('documents every endpoint the API reference lists', async () => {
+    // The contract carried 63 of 89 endpoints. Equity, parametric rules,
+    // webhooks, community feedback, KPI snapshots, lineage, connectors and
+    // scenarios were all documented in docs/api.md and absent from the
+    // contract, so a technical reader could not discover them or generate a
+    // client for them. validate.mjs only substring-matches the contract, so it
+    // could not notice either way.
+    const spec = await fs.readFile('docs/openapi.yaml', 'utf8')
+    const api = await fs.readFile('docs/api.md', 'utf8')
+
+    const documented = new Set([...spec.matchAll(/^  (\/api\/v1\/[^:]*):/gm)].map((m) => m[1]))
+    const normalise = (p) => p
+      .replace(/[.,;:)']+$/, '')
+      .replace(/:[A-Za-z_]+/g, '{id}')
+      .replace(/\.cap$/, '')
+      .replace(/\.pdf$/, '')
+      .replace(/\.(md|json|csv|geojson)$/, '')
+      .replace(/\/$/, '')
+
+    const missing = []
+    for (const m of api.matchAll(/^### `(GET|POST|PATCH|PUT|DELETE) (\/api\/v1\/[^`]+)`/gm)) {
+      const p = normalise(m[2])
+      if (p && !documented.has(p)) missing.push(`${m[1]} ${m[2]}`)
+    }
+    assert.deepEqual(missing, [],
+      `docs/api.md documents these but the OpenAPI contract does not: ${[...new Set(missing)].join(', ')}`)
+  })
+
+  it('declares the released version, not an older one', async () => {
+    // info.version was 0.1.0 while the package was at 0.2.0 — the same drift as
+    // the footers, in the API contract.
+    const pkg = JSON.parse(await fs.readFile('package.json', 'utf8'))
+    const spec = await fs.readFile('docs/openapi.yaml', 'utf8')
+    const declared = spec.match(/^  version:\s*(\S+)$/m)
+    assert.ok(declared, 'the contract must declare a version')
+    assert.equal(declared[1], pkg.version,
+      `contract says ${declared[1]} but package.json says ${pkg.version}`)
+  })
+})
