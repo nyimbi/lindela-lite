@@ -1,7 +1,18 @@
+let _swRegistration = null
+
+/**
+ * Register the service worker once.
+ *
+ * Exported but previously imported by nobody: the console and focal-point both
+ * hand-rolled `navigator.serviceWorker.register('/sw.js')`, and focal-point then
+ * called this as well — two registrations for one worker, which the second
+ * silently deduplicated, so the bug hid behind working code.
+ */
 export function initServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {})
-  }
+  if (!('serviceWorker' in navigator)) return
+  if (_swRegistration) return _swRegistration
+  _swRegistration = navigator.serviceWorker.register('/sw.js').catch(() => null)
+  return _swRegistration
 }
 
 export function initOfflineBanner() {
@@ -124,18 +135,48 @@ export async function initOfflineQueue() {
   queue.flush()
 }
 
-export async function apiFetch(path, { method = 'GET', body, headers = {}, token } = {}) {
-  const opts = { method, headers }
-  if (body) {
+/** Default request timeout. Long enough for a satellite hop, short enough
+ *  that a dead link surfaces as an error rather than a spinner that never ends. */
+export const REQUEST_TIMEOUT_MS = 20_000
+
+/**
+ * The one HTTP call in the codebase.
+ *
+ * Every surface had its own copy of this, and `parametric/app.js:5-10` was a
+ * verbatim clone under the same name. The copies that skipped `res.ok` — the
+ * console's own `fetchJson`, and every call in `co` and `districts` — treated a
+ * 503 from the service worker's offline fallback as a valid body, so a
+ * disconnected console rendered silently stale data with no error shown.
+ *
+ * `signal` combines a caller-supplied signal with the timeout, so a caller can
+ * still cancel a refresh that is no longer wanted.
+ */
+export async function apiFetch(path, { method = 'GET', body, headers = {}, token, timeout = REQUEST_TIMEOUT_MS, signal } = {}) {
+  const opts = { method, headers: { ...headers } }
+  if (body !== undefined && body !== null) {
     opts.body = typeof body === 'string' ? body : JSON.stringify(body)
     opts.headers['content-type'] = 'application/json'
   }
   if (token) {
     opts.headers['authorization'] = `Bearer ${token}`
   }
+  if (timeout > 0 || signal) {
+    // AbortSignal.any rejects a non-signal member, and `signal` is undefined on
+    // every ordinary call — so the caller's signal is filtered, not passed bare.
+    const signals = []
+    if (signal) signals.push(signal)
+    if (timeout > 0) signals.push(AbortSignal.timeout(timeout))
+    opts.signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals)
+  }
+
   const res = await fetch(path, opts)
   if (!res.ok) {
     const err = new Error(`HTTP ${res.status}`)
+    err.status = res.status
+    // The service worker marks a response it served from its offline cache.
+    // Callers need to say "this is the last known state" rather than "this is
+    // current", so the flag is carried through rather than discarded.
+    err.offline = res.headers.get('x-lindela-offline') === '1'
     try {
       err.json = await res.json()
     } catch {
@@ -144,6 +185,37 @@ export async function apiFetch(path, { method = 'GET', body, headers = {}, token
     throw err
   }
   return res.json()
+}
+
+/**
+ * apiFetch that reports failure as null instead of throwing.
+ *
+ * For the console and CO dashboard, where twelve independent panels render and
+ * one dead endpoint must not blank the other eleven.
+ */
+export async function apiSettled(path, options) {
+  try {
+    return await apiFetch(path, options)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Submit now, or queue for replay when there is no connection.
+ *
+ * Online writes go straight through. Offline writes go to IndexedDB, where the
+ * service worker's `replayQueue` picks them up — either on Background Sync or on
+ * the page's own flush. Returns `{queued: true}` rather than throwing, because a
+ * queued write is a success the user should be told about plainly.
+ */
+export async function submitOrQueue(path, body, { headers } = {}) {
+  if (navigator.onLine) return apiFetch(path, { method: 'POST', body, headers })
+  if (window.lindelaQueue) {
+    await window.lindelaQueue.enqueue(path, { method: 'POST', body, headers })
+    return { queued: true }
+  }
+  throw new Error('Offline and no queue is available')
 }
 
 export async function initI18n(defaultLocale = 'en') {

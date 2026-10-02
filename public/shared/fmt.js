@@ -1,0 +1,231 @@
+// =============================================================
+// Lindela Lite — shared formatting
+// =============================================================
+// Eight surfaces, four different date idioms, five escape helpers, three
+// severity-to-class mappings with different defaults, and nine inline number
+// formatters. Every copy was a chance for two surfaces to disagree about how
+// the same value reads, and they did: `203.0 people`, `9/28/2026, 6:55:29 AM`,
+// `2026-10-02`, and a status bar whose "Updated" stamp meant nothing without
+// its timezone.
+//
+// This is the single source for anything a user reads off a screen.
+
+/**
+ * Escape text for interpolation into innerHTML.
+ *
+ * Uses `??` rather than `||` on purpose: `escapeHtml(v || '')` renders a
+ * legitimate 0 or false as an empty string, which silently blanks a real value.
+ * Two surfaces had that bug.
+ */
+export function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[char])
+}
+
+/** Reduce a value to a safe CSS class token. */
+export function safeClass(value, fallback = 'unknown') {
+  return String(value || fallback).toLowerCase().replace(/[^a-z0-9_-]/g, '-') || fallback
+}
+
+// =============================================================
+// Numbers
+// =============================================================
+
+/**
+ * A number, or an em dash when there is nothing to show.
+ *
+ * `int: true` for counts. `203.0 people` was on screen: a count carrying a
+ * decimal place it cannot have.
+ */
+export function num(value, { dp = 1, int = false, dash = '—' } = {}) {
+  if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value))) return dash
+  return int
+    ? Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 })
+    : Number(value).toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp })
+}
+
+/** A percentage. Takes the fraction (0.42) or the already-scaled value (42). */
+export function pct(value, { dp = 1, dash = '—' } = {}) {
+  if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value))) return dash
+  const n = Number(value)
+  return `${(Math.abs(n) <= 1 ? n * 100 : n).toFixed(dp)}%`
+}
+
+/** A signed number, for anomalies and deltas: +2.17, -0.4. */
+export function signed(value, { dp = 2, unit = '', dash = '—' } = {}) {
+  if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value))) return dash
+  const n = Number(value)
+  const sign = n > 0 ? '+' : n < 0 ? '−' : ''
+  return `${sign}${Math.abs(n).toFixed(dp)}${unit}`
+}
+
+/** Yes/no, for booleans that arrive as either. */
+export function yesNo(value, yes = 'Yes', no = 'No') {
+  if (value === null || value === undefined || value === '') return '—'
+  return value === true || value === 'true' || value === 1 ? yes : no
+}
+
+// =============================================================
+// Severity and status
+// =============================================================
+
+/** The four levels every surface agrees on. Anything else is unknown. */
+const SEVERITIES = new Set(['critical', 'high', 'medium', 'low'])
+
+/**
+ * Severity to CSS class.
+ *
+ * One default ('medium'), one allowlist. A severity string used to be
+ * interpolated straight into a class attribute on one surface, so a value
+ * containing a quote injected markup.
+ */
+export function sevClass(severity) {
+  const s = String(severity || '').toLowerCase()
+  return SEVERITIES.has(s) ? s : 'medium'
+}
+
+/** Severity to an allowlisted class token, safe for any attribute position. */
+export function sevChip(severity) {
+  return `chip chip-${sevClass(severity)}`
+}
+
+// =============================================================
+// Time
+// =============================================================
+
+const TIME_ZONE = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
+})()
+
+/** Short zone label: EAT, UTC+3, GMT. */
+function zoneLabel(date) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(date)
+    return parts.find((p) => p.type === 'timeZoneName')?.value || TIME_ZONE
+  } catch {
+    return TIME_ZONE
+  }
+}
+
+const RELATIVE_UNITS = [
+  ['year', 365 * 24 * 3600],
+  ['month', 30 * 24 * 3600],
+  ['week', 7 * 24 * 3600],
+  ['day', 24 * 3600],
+  ['hour', 3600],
+  ['minute', 60],
+]
+
+const relativeFormatter = (() => {
+  try {
+    return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+  } catch {
+    return null
+  }
+})()
+
+/**
+ * How long ago, in words: "12 minutes ago", "3 days ago".
+ *
+ * Seconds are dropped. Every timestamp on the product carried them and no user
+ * ever needed them; on an approval screen they cost the reader a moment of
+ * parsing for nothing.
+ */
+export function formatRelative(value, { dash = '—' } = {}) {
+  if (!value) return dash
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return dash
+  const seconds = (Date.now() - date.getTime()) / 1000
+  if (Math.abs(seconds) < 45) return 'just now'
+  for (const [unit, size] of RELATIVE_UNITS) {
+    if (Math.abs(seconds) >= size) {
+      const amount = Math.round(seconds / size)
+      if (relativeFormatter) return relativeFormatter.format(-amount, unit)
+      return `${amount} ${unit}${amount === 1 ? '' : 's'} ago`
+    }
+  }
+  return 'just now'
+}
+
+/**
+ * An absolute timestamp with its zone: "2 Oct 2026, 14:18 EAT".
+ *
+ * Day-month-year, not the browser's locale-dependent m/d/y, because the readers
+ * are spread across Kenya, Uganda, Sudan and Chad and an ambiguous 9/28 is a
+ * worse answer than an unambiguous 28 Sep.
+ */
+export function formatTimestamp(value, { style = 'datetime', dash = '—' } = {}) {
+  if (!value) return dash
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return dash
+
+  const dayMonth = new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric', month: 'short', timeZone: TIME_ZONE,
+  }).format(date)
+  const time = new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TIME_ZONE,
+  }).format(date)
+  const year = new Intl.DateTimeFormat('en-GB', { year: 'numeric', timeZone: TIME_ZONE }).format(date)
+
+  if (style === 'date') return `${dayMonth} ${year}`
+  if (style === 'iso-day') return `${year}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  return `${dayMonth} ${year}, ${time} ${zoneLabel(date)}`
+}
+
+// =============================================================
+// Truncation
+// =============================================================
+
+/**
+ * Shorten an identifier in the middle, keeping both ends recognisable.
+ *
+ * The parametric console showed `disbursement_7e5b8a4ca0e91ee` and
+ * `0x53961be91373ac7` as primary column content, where `…ca0e91ee` and
+ * `0x5396…3ac7` carry the same information and do not push the useful columns
+ * off the screen.
+ */
+export function truncateId(value, { head = 8, tail = 6, dash = '—' } = {}) {
+  if (value === null || value === undefined || value === '') return dash
+  const s = String(value)
+  if (s.length <= head + tail + 1) return s
+  return `${s.slice(0, head)}…${s.slice(-tail)}`
+}
+
+/** Truncate prose at a word boundary, for one-line summaries. */
+export function truncate(value, { max = 140, dash = '' } = {}) {
+  if (value === null || value === undefined || value === '') return dash
+  const s = String(value)
+  if (s.length <= max) return s
+  const cut = s.slice(0, max)
+  const lastSpace = cut.lastIndexOf(' ')
+  return `${(lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`
+}
+
+// =============================================================
+// Common units
+// =============================================================
+
+/** A count of things, pluralised: "1 alert", "0 alerts". */
+export function plural(count, singular, pluralForm = `${singular}s`, { dash = '—' } = {}) {
+  if (count === null || count === undefined || !Number.isFinite(Number(count))) return dash
+  const n = Number(count)
+  return `${n.toLocaleString()} ${n === 1 ? singular : pluralForm}`
+}
+
+/** Metres, with a sensible number of decimals for the magnitude. */
+export function metres(value, { dash = '—' } = {}) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return dash
+  const n = Number(value)
+  return n >= 100 ? `${Math.round(n).toLocaleString()} m` : n >= 1 ? `${n.toFixed(1)} m` : `${n.toFixed(2)} m`
+}
+
+/** Square kilometres, rounded to something an operator can hold in mind. */
+export function sqKm(value, { dash = '—' } = {}) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return dash
+  return `${num(value, { dp: 0 })} km²`
+}

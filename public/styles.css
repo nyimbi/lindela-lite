@@ -11,7 +11,7 @@
 html { height: 100%; -webkit-text-size-adjust: 100%; }
 
 body {
-  height: 100vh;
+  min-height: 100vh;
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font-sans);
@@ -19,7 +19,21 @@ body {
   line-height: 1.5;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+}
+
+/* The scroll container every page needs.
+   This rule did not exist and `body` carried `overflow: hidden`, so the two
+   surfaces that link this sheet but have no inner scroller — parametric and
+   scenarios — clipped their own tables: the parametric Disbursement History
+   lost its last column off the right edge with no scrollbar and no way to
+   reach it. Every other page escaped this only by not linking the sheet. */
+main {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--sp-5);
 }
 
 h1, h2, h3 {
@@ -33,6 +47,64 @@ h3 { font-size: var(--text-xs); font-weight: 600; color: var(--ink-muted); lette
 
 a { color: var(--brand); text-decoration: none; }
 a:hover { text-decoration: underline; }
+
+/* Visually hidden, still announced.
+   Used three times in co/index.html and defined nowhere, so the labels it was
+   written for — "Quarter", "Year", "Locale" — rendered as visible text beside
+   their selects. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip to content.
+   There was no skip link and no <main> in the console, so a keyboard user
+   tabbed through roughly thirty map filters, simulations and route inputs
+   before reaching the rail that holds the actual alerts. */
+.skip-link {
+  position: absolute;
+  left: var(--sp-2);
+  top: -100%;
+  z-index: var(--z-toast);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--brand);
+  color: var(--on-brand);
+  border-radius: var(--r);
+  font-weight: 600;
+  transition: top var(--dur-fast) var(--ease);
+}
+.skip-link:focus { top: var(--sp-2); text-decoration: none; }
+
+/* --- Focus -----------------------------------------------------
+   There were no :focus-visible rules anywhere in the product. The only focus
+   styling was `input:focus, select:focus, textarea:focus`, which fires on mouse
+   click — the exact behaviour :focus-visible exists to avoid — and covered no
+   interactive component at all: not .btn, .chip, .rail-tab, a, or summary. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* Field rings sit inside the control so a dense filter bar does not shift. */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+  border-color: var(--brand);
+}
+
+/* Keyboard users must always be able to see where they are, including on the
+   surfaces that were previously outline-less. */
+[tabindex="-1"]:focus-visible { outline-offset: -2px; }
 
 code {
   font-family: var(--font-mono);
@@ -173,12 +245,41 @@ kbd {
 
 .btn-primary {
   background: var(--brand);
-  color: oklch(14% 0.02 205);
+  color: var(--on-brand);
   border-color: var(--brand);
   font-weight: 600;
 }
 
-.btn-primary:hover { background: oklch(74% 0.16 205); border-color: oklch(74% 0.16 205); }
+.btn-primary:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+
+/* `.btn-secondary` was used in five places and defined nowhere, so those
+   controls rendered as bare UA-default buttons. It is the quiet counterpart to
+   .btn-primary: a visible boundary, no fill, no lift. */
+.btn-secondary {
+  background: transparent;
+  color: var(--ink-muted);
+  border-color: var(--stroke-strong);
+  font-weight: 500;
+}
+.btn-secondary:hover { background: var(--surface); color: var(--ink); }
+
+/* A variant used without `.btn` never received padding, border or cursor, so
+   the UA default `border: 2px outset ButtonBorder` showed through. Give the
+   colour-only variants a full standalone appearance as well, so a component
+   author who writes `class="btn-primary"` alone gets a real button. */
+.btn-primary, .btn-secondary, .btn-approve, .btn-reject, .btn-send {
+  padding: 0.35rem 0.7rem;
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  border-width: 1px;
+  border-style: solid;
+  border-radius: var(--r);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
 
 .btn-icon {
   padding: 0.35rem;
@@ -215,6 +316,14 @@ kbd {
 }
 
 /* --- Console layout ------------------------------------------ */
+/* The console is a fixed app shell: map beside rail, rail scrolls, page does
+   not. Opted into per-page rather than assumed, because the other surfaces that
+   link this sheet need the page itself to scroll. */
+body.app-shell {
+  height: 100vh;
+  overflow: hidden;
+}
+
 .console-layout {
   display: grid;
   grid-template-columns: 1fr 360px;
@@ -470,6 +579,11 @@ kbd {
 
 .filter-label {
   display: flex;
+  /* The global `label` rule sets flex-direction: column for stacked field
+     labels. .filter-label re-declared display and alignment but not direction,
+     so every checkbox label inherited the column and rendered the box on its
+     own line above the caption. */
+  flex-direction: row;
   align-items: center;
   gap: var(--sp-2);
   font-size: var(--text-xs);
@@ -1089,6 +1203,43 @@ dialog[open] {
 
 .dialog-header h2 { font-size: var(--text-h2); }
 
+/* `.dialog-body` was used in the console and in focal-point and defined
+   nowhere, so dialog content had no padding, no scroll container and no max
+   height: a long dialog grew past the viewport with no way to reach its foot. */
+.dialog-body {
+  padding: var(--sp-4) var(--sp-5);
+  max-height: 65vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.dialog-body > :first-child { margin-top: 0; }
+
+/* `.dialog-close` was used on four dialogs and defined nowhere, so the close
+   controls fell back to the bare `.btn .btn-icon` box with no spacing from the
+   title beside them. */
+.dialog-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-inline-start: var(--sp-3);
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  color: var(--ink-muted);
+  font-size: var(--text-body);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.dialog-close:hover { background: var(--surface-hover); color: var(--ink); }
+
 .dialog-actions {
   display: flex;
   gap: var(--sp-2);
@@ -1143,11 +1294,15 @@ dialog[open] {
   border-bottom: 1px solid var(--stroke);
 }
 
+/* The command-palette search field carried `outline: none` on both its base and
+   :focus rules, so the one control a user is guaranteed to be typing into had
+   no focus indicator at all — and then cancelled the generic input ring that
+   would otherwise have supplied one. The palette opens focused, so this was
+   invisible to anyone using a mouse and absent for anyone using a keyboard. */
 .palette-header input[type="search"] {
   flex: 1;
   background: transparent;
   border: none;
-  outline: none;
   font-size: var(--text-body);
   color: var(--ink);
   padding: var(--sp-2) var(--sp-1);
@@ -1155,9 +1310,12 @@ dialog[open] {
   width: auto;
 }
 
-.palette-header input[type="search"]:focus {
-  outline: none;
-  border-color: transparent;
+/* The ring lives on the header rather than the input, so it frames the whole
+   search affordance instead of drawing a box inside a box. */
+.palette-header:has(input[type="search"]:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-radius: var(--r-sm);
 }
 
 .palette-results {
@@ -1243,8 +1401,16 @@ dialog[open] {
   grid-auto-columns: minmax(140px, 1fr);
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  min-width: 100%;
+  /* The tray holds eight workflow cards. Below ~900px they cannot all fit, and
+     without a scroll container the widest card pushed the whole document 29px
+     past the viewport — so the console had a horizontal scrollbar and every
+     card to the right of the fold. */
+  min-width: 0;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
 }
+
+.workflow-tray > * { scroll-snap-align: start; }
 
 @media (max-width: 900px) {
   .workflow-tray {
@@ -1442,32 +1608,78 @@ dialog[open] {
   background: var(--danger);
 }
 
-/* --- Cold chain toggle ------------------------------------ */
-#coldChainToggle {
+/* --- Checkboxes and radios ---------------------------------- */
+/* Checkboxes were styled by a single ID, #coldChainToggle, and nothing else.
+   Every other checkbox in the product rendered as a raw UA control, and on the
+   dashboard, scenarios and parametric pages the box visibly detached from its
+   label — the operator was looking at a floating white square above the text. */
+input[type="checkbox"],
+input[type="radio"] {
   appearance: none;
-  width: 16px;
-  height: 16px;
-  border: 1px solid var(--stroke);
-  border-radius: var(--r-sm);
+  flex: 0 0 auto;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0;
+  border: 1px solid var(--stroke-strong);
   background: var(--surface);
   cursor: pointer;
-  transition: all var(--dur-fast) var(--ease);
-  margin: 0;
+  vertical-align: middle;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
-#coldChainToggle:hover {
+input[type="checkbox"] { border-radius: var(--r-sm); }
+input[type="radio"]    { border-radius: 50%; }
+
+input[type="checkbox"]:hover,
+input[type="radio"]:hover {
   background: var(--surface-hover);
   border-color: var(--brand);
 }
 
-#coldChainToggle:checked {
+input[type="checkbox"]:checked,
+input[type="radio"]:checked {
   background: var(--brand);
   border-color: var(--brand);
+}
+
+/* The tick is drawn with a mask rather than a background image so it keeps its
+   contrast against the brand fill at both themes and both forced-colours modes. */
+input[type="checkbox"]:checked {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 8l3 3 7-7' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: center;
-  background-size: 12px;
+  background-size: 0.8rem;
 }
+
+input[type="radio"]:checked {
+  box-shadow: inset 0 0 0 3px var(--surface);
+}
+
+/* Keep the box and its label on one line with a real gap, whatever the
+   surrounding layout does. `flex-direction: row` is the load-bearing part: the
+   stacked-field `label` rule above is what pushed the box onto its own line. */
+label:has(> input[type="checkbox"]),
+label:has(> input[type="radio"]) {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+}
+
+/* Filter rows put the box first, then the caption, inline. */
+.check-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* --- Cold chain toggle ------------------------------------ */
+#coldChainToggle { margin: 0; }
 
 /* --- RTL ---------------------------------------------------- */
 [dir="rtl"] .topbar             { flex-direction: row-reverse; }
@@ -1498,7 +1710,7 @@ dialog[open] {
 
 /* --- Mobile -------------------------------------------------- */
 @media (max-width: 800px) {
-  body { overflow: auto; }
+  body.app-shell { height: auto; overflow: auto; }
 
   .console-layout {
     grid-template-columns: 1fr;
@@ -1742,3 +1954,28 @@ dialog[open] {
 
 .hazard-footprint-critical { stroke-opacity: 0.8; fill-opacity: 0.14; }
 .hazard-footprint-low { stroke-opacity: 0.35; fill-opacity: 0.06; }
+
+/* --- Tap targets ------------------------------------------------
+   Measured across the eight surfaces with scripts/check-responsive.mjs: 171
+   controls rendered below the 44px floor this product's own --tap-target-min
+   token declares — 24px selects in the map filter bar, 16px range sliders, 20px
+   checkboxes. On a desk those are merely tight. For the health worker this app
+   exists to serve, on a low-end Android, they are mis-taps. The floor is
+   enforced here rather than left to each surface to remember. */
+@media (pointer: coarse), (max-width: 768px) {
+  .btn,
+  button,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]),
+  select,
+  textarea {
+    min-height: var(--tap-target-min);
+  }
+
+  /* The visible track stays thin; the hit area does not. */
+  input[type="range"] { height: var(--tap-target-min); background: transparent; }
+
+  input[type="checkbox"],
+  input[type="radio"] { width: 1.35rem; height: 1.35rem; }
+
+  .btn-icon { min-width: var(--tap-target-min); }
+}

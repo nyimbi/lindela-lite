@@ -11,7 +11,22 @@
   --ink-faint:       oklch(55% 0.02 260);
 
   --brand:           oklch(70% 0.16 205);
+  --brand-hover:     oklch(74% 0.16 205);
   --accent:          oklch(78% 0.15 90);
+
+  /* Ink that sits ON a coloured fill. These were hardcoded oklch() literals in
+     eight places, which meant the palette could be retuned without the text
+     that sits on it following. */
+  --on-brand:        oklch(14% 0.02 205);
+  --on-accent:       oklch(14% 0.02 90);
+  --on-warn:         oklch(14% 0.02 90);
+  --on-danger:       oklch(96% 0.005 260);
+  --on-sev-medium:   oklch(14% 0.02 90);
+
+  /* Focus ring. Separate from --brand because a focus indicator needs to hold
+     3:1 against both the surface and the control it is drawn on, and --brand
+     does not clear 3:1 against --surface at this lightness. */
+  --focus-ring:      oklch(85% 0.14 205);
 
   --sev-critical:    oklch(65% 0.22 25);
   --sev-high:        oklch(72% 0.18 45);
@@ -40,11 +55,30 @@
   --sp-4: 1rem;
   --sp-5: 1.25rem;
   --sp-6: 1.5rem;
+  --sp-7: 1.75rem;
   --sp-8: 2rem;
+  --sp-10: 2.5rem;
 
   --r-sm: 3px;
   --r:    6px;
   --r-lg: 10px;
+
+  /* Dimensions. Every one of these was a raw literal somewhere: the topbar, the
+     statusbar, the rail width, the map's minimum height, control heights. */
+  --size-topbar:    48px;
+  --size-statusbar: 30px;
+  --size-rail:      360px;
+  --size-map-min:   480px;
+  --size-control:   28px;
+  --size-control-lg:36px;
+  --size-icon-sm:   12px;
+  --size-icon:      14px;
+  --size-icon-lg:   18px;
+
+  /* One shadow scale. styles.css had exactly one box-shadow in 1,700 lines. */
+  --shadow-sm: 0 1px 2px oklch(5% 0.02 260 / 0.35);
+  --shadow-md: 0 4px 8px oklch(5% 0.02 260 / 0.4);
+  --shadow-lg: 0 16px 48px oklch(5% 0.02 260 / 0.6);
 
   --z-map:             1;
   --z-controls:       10;
