@@ -1,153 +1,274 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" dir="ltr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lindela Scenario Workbench</title>
   <link rel="manifest" href="/scenarios/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/components.css">
   <style>
+    /* Page-specific only. The panel, form and table chrome moved to
+       components.css, along with eight `style="margin-top:0"` label overrides
+       that existed solely to undo a global label rule. */
+
     .workbench-layout {
       display: grid;
-      grid-template-columns: 340px 1fr;
-      gap: 1.5rem;
+      grid-template-columns: 22rem 1fr;
+      gap: var(--sp-5);
       align-items: start;
     }
-    @media (max-width: 700px) { .workbench-layout { grid-template-columns: 1fr; } }
-    .panel {
-      border: 1px solid var(--stroke);
-      border-radius: 0.5rem;
-      padding: 1rem;
+
+    /* --- Presets ------------------------------------------------
+       A planner opens this screen with a question ("what if the rains fail?"),
+       not with eight empty text boxes. These are the questions. */
+    .preset-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--sp-1);
+      margin-bottom: var(--sp-4);
     }
-    .panel-title {
-      font-weight: 700;
-      font-size: 0.95rem;
-      margin-bottom: 1rem;
-      color: var(--brand);
-    }
-    label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.2rem; margin-top: 0.75rem; }
-    input[type=range] { width: 100%; }
-    input[type=text], input[type=number], input[type=datetime-local] {
+
+    .preset {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.1rem;
       width: 100%;
-      padding: 0.35rem 0.5rem;
+      padding: var(--sp-2) var(--sp-3);
+      background: var(--bg-elevated);
       border: 1px solid var(--stroke);
-      border-radius: 0.25rem;
+      border-radius: var(--r);
+      color: var(--ink);
+      font-family: var(--font-sans);
+      font-size: var(--text-sm);
+      text-align: start;
+      cursor: pointer;
+      transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
     }
-    .range-value { font-size: 0.8rem; color: var(--ink-muted); }
-    .asset-list { max-height: 120px; overflow-y: auto; border: 1px solid var(--stroke); border-radius: 0.25rem; padding: 0.25rem; }
-    .delta-card { background: var(--surface); border-radius: 0.5rem; padding: 1rem; margin-bottom: 0.75rem; }
-    .delta-value { font-size: 1.4rem; font-weight: 700; }
-    .delta-label { font-size: 0.8rem; color: var(--ink-muted); margin-top: 0.2rem; }
-    .bar-wrap { display: flex; gap: 0.5rem; align-items: flex-end; margin-top: 0.5rem; }
-    .bar { width: 28px; border-radius: 3px 3px 0 0; }
-    .bar-label { font-size: 0.7rem; text-align: center; }
-    .share-box { background: var(--surface); border-radius: 0.5rem; padding: 0.75rem; font-family: monospace; font-size: 0.8rem; word-break: break-all; margin-top: 1rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-    th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--stroke); }
-    th { background: var(--surface); font-weight: 600; }
-    .event-add-form { background: var(--surface); border-radius: 0.375rem; padding: 0.75rem; margin-top: 0.5rem; }
-    .mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .preset:hover { border-color: var(--brand); background: var(--surface); }
+    .preset[aria-pressed="true"] { border-color: var(--brand); background: color-mix(in oklch, var(--brand) 12%, transparent); }
+    .preset-name { font-weight: 600; }
+    .preset-desc { color: var(--ink-muted); font-size: var(--text-xs); }
+
+    /* --- Results ------------------------------------------------ */
+    .results-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--sp-4);
+      margin-bottom: var(--sp-3);
+    }
+
+    .empty-state-large {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--sp-3);
+      padding: var(--sp-10) var(--sp-5);
+      border: 1px dashed var(--stroke-strong);
+      border-radius: var(--r);
+      text-align: center;
+      color: var(--ink-muted);
+    }
+    .empty-state-large h2 { color: var(--ink); }
+    .empty-state-large p { max-width: 42ch; line-height: 1.6; }
+
+    .delta-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--sp-3);
+      margin-bottom: var(--sp-5);
+    }
+
+    .delta-card {
+      padding: var(--sp-4);
+      background: var(--surface);
+      border: 1px solid var(--stroke);
+      border-radius: var(--r);
+    }
+    .delta-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.2;
+    }
+    .delta-label { margin-top: var(--sp-1); color: var(--ink-muted); font-size: var(--text-sm); }
+
+    .bar-wrap { display: flex; gap: var(--sp-2); align-items: flex-end; margin-top: var(--sp-3); height: 3rem; }
+    .bar { width: 1.5rem; border-radius: 2px 2px 0 0; background: var(--stroke-strong); }
+    .bar-label { font-size: var(--text-xs); color: var(--ink-muted); text-align: center; }
+
+    .share-box {
+      padding: var(--sp-3);
+      background: var(--bg);
+      border: 1px solid var(--stroke);
+      border-radius: var(--r-sm);
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      word-break: break-all;
+      color: var(--ink-muted);
+    }
+
+    @media (max-width: 900px) {
+      .workbench-layout { grid-template-columns: 1fr; }
+      /* The delta grid was 3-across with no breakpoint, so below the collapse it
+         stayed three columns in a one-column layout. */
+      .delta-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <header class="site-header" style="display:flex;align-items:center;gap:1rem;padding:0.75rem 1rem;background:var(--surface);border-bottom:1px solid var(--stroke)">
-    <img src="/icon.svg" alt="Lindela" width="32" height="32">
-    <h1 style="font-size:1.1rem;font-weight:700;margin:0">Lindela Scenario Workbench</h1>
-    <nav style="margin-left:auto;display:flex;align-items:center;gap:0.75rem">
-      <select id="locale-select" aria-label="Language" style="font-size:0.8rem;padding:0.2rem 0.4rem;border:1px solid var(--stroke);border-radius:0.25rem">
-        <option value="en">English</option>
-        <option value="sw">Swahili</option>
-        <option value="ar">العربية</option>
-        <option value="so">Somali</option>
-        <option value="din">Dinka</option>
-        <option value="km">Karimojong</option>
-        <option value="nk">Ngakarimojong</option>
-        <option value="fr">Français</option>
-        <option value="pt">Português</option>
-        <option value="am">አማርኛ</option>
-      </select>
-      <a href="/" style="font-size:0.85rem;color:var(--brand)">Operator Console</a>
-    </nav>
-  </header>
+  <!-- The page header was hand-rolled here and shared/navbar.js injected a
+       second one, leaving two #locale-select elements in one document. The
+       navbar owns the chrome. -->
 
-  <main style="max-width:1100px;margin:0 auto;padding:1rem">
+  <main class="page-main">
+    <h1 class="page-title">Scenario Workbench</h1>
+    <p class="page-lede">
+      Ask what would change if the forecast did. Pick a starting point, adjust it,
+      and run the model against the current record.
+    </p>
+
     <div class="workbench-layout">
-      <!-- Builder panel -->
-      <div class="panel" id="builderPanel">
-        <div class="panel-title">Perturbation Controls</div>
+      <section class="panel" id="builderPanel" aria-labelledby="builderTitle">
+        <h2 class="section-title" id="builderTitle">Start from a scenario</h2>
 
-        <label>Precipitation multiplier: <span class="range-value" id="precipValue">1.0x</span></label>
-        <input type="range" id="precipMultiplier" min="0.5" max="3.0" step="0.05" value="1.0">
-
-        <label>Offline asset IDs <span class="range-value">(max 20)</span></label>
-        <div class="asset-list" id="assetList">
-          <p style="color: var(--ink-muted);font-size:0.75rem;padding:0.25rem">Loading assets…</p>
+        <div class="preset-list" role="group" aria-label="Scenario presets">
+          <button type="button" class="preset" data-preset="drought" aria-pressed="false">
+            <span class="preset-name">Drought — rains fail</span>
+            <span class="preset-desc">Rainfall down 40% for the season</span>
+          </button>
+          <button type="button" class="preset" data-preset="flood" aria-pressed="false">
+            <span class="preset-name">Flood — rains double</span>
+            <span class="preset-desc">Rainfall up 100% for the season</span>
+          </button>
+          <button type="button" class="preset" data-preset="asset_outage" aria-pressed="false">
+            <span class="preset-name">Access lost — asset offline</span>
+            <span class="preset-desc">Every selected asset cut off</span>
+          </button>
+          <button type="button" class="preset" data-preset="conflict" aria-pressed="false">
+            <span class="preset-name">Conflict — displacement events</span>
+            <span class="preset-desc">Three medium-severity events</span>
+          </button>
+          <button type="button" class="preset" data-preset="baseline" aria-pressed="false">
+            <span class="preset-name">Baseline</span>
+            <span class="preset-desc">No perturbation, for comparison</span>
+          </button>
         </div>
 
-        <label>Add hazard event</label>
-        <div class="event-add-form">
-          <div class="mini-grid">
-            <div>
-              <label style="margin-top:0">Type</label>
-              <input type="text" id="hazardType" placeholder="flood">
+        <h2 class="section-title">Adjust</h2>
+
+        <div class="field">
+          <label for="precipMultiplier">Rainfall multiplier</label>
+          <input type="range" id="precipMultiplier" min="0.5" max="3.0" step="0.05" value="1.0"
+                 aria-describedby="precipValue">
+          <p class="field-note"><output id="precipValue" for="precipMultiplier">1.0×</output> — current season is 1.0×</p>
+        </div>
+
+        <div class="field">
+          <span class="field-label" id="assetListLabel">Take these assets offline</span>
+          <div class="asset-list" id="assetList" role="group" aria-labelledby="assetListLabel"></div>
+        </div>
+
+        <details class="disclosure">
+          <summary>Add an event</summary>
+
+          <fieldset class="fieldset">
+            <legend>Hazard event</legend>
+            <div class="form-grid">
+              <div>
+                <label for="hazardType">Type</label>
+                <input type="text" id="hazardType" placeholder="flood" list="hazard-types">
+                <datalist id="hazard-types">
+                  <option value="flood"><option value="landslide"><option value="storm"><option value="drought">
+                </datalist>
+              </div>
+              <div>
+                <label for="hazardSeverity">Severity</label>
+                <select id="hazardSeverity">
+                  <option value="low">Low</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+              <div>
+                <label for="hazardLat">Latitude</label>
+                <input type="number" id="hazardLat" step="0.0001" placeholder="3.12">
+                <p class="field-note">Decimal degrees, WGS84</p>
+              </div>
+              <div>
+                <label for="hazardLon">Longitude</label>
+                <input type="number" id="hazardLon" step="0.0001" placeholder="35.6">
+              </div>
+              <div>
+                <label for="hazardAt">Occurred at</label>
+                <input type="datetime-local" id="hazardAt">
+              </div>
             </div>
-            <div>
-              <label style="margin-top:0">Severity</label>
-              <input type="text" id="hazardSeverity" placeholder="high">
+            <button type="button" class="btn btn-secondary form-submit" id="addHazardBtn">Add hazard event</button>
+          </fieldset>
+
+          <fieldset class="fieldset">
+            <legend>Conflict event</legend>
+            <div class="form-grid">
+              <div>
+                <label for="conflictType">Type</label>
+                <input type="text" id="conflictType" placeholder="intercommunal">
+              </div>
+              <div>
+                <label for="conflictSeverity">Severity</label>
+                <select id="conflictSeverity">
+                  <option value="low">Low</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+              <div>
+                <label for="conflictLat">Latitude</label>
+                <input type="number" id="conflictLat" step="0.0001" placeholder="3.12">
+              </div>
+              <div>
+                <label for="conflictLon">Longitude</label>
+                <input type="number" id="conflictLon" step="0.0001" placeholder="35.6">
+              </div>
+              <div>
+                <label for="conflictAt">Occurred at</label>
+                <input type="datetime-local" id="conflictAt">
+              </div>
             </div>
-            <div>
-              <label style="margin-top:0">Lat</label>
-              <input type="number" id="hazardLat" step="0.0001" placeholder="3.12">
-            </div>
-            <div>
-              <label style="margin-top:0">Lon</label>
-              <input type="number" id="hazardLon" step="0.0001" placeholder="35.6">
-            </div>
+            <button type="button" class="btn btn-secondary form-submit" id="addConflictBtn">Add conflict event</button>
+          </fieldset>
+        </details>
+
+        <p class="field-note" id="perturbationSummary"></p>
+        <button type="button" class="btn btn-primary builder-run" data-run>Run scenario</button>
+        <p class="form-error" id="scenarioError" role="alert" hidden></p>
+      </section>
+
+      <section id="resultsPanel" aria-labelledby="resultsTitle">
+        <div id="noResults" class="empty-state-large">
+          <h2 id="resultsTitle">No scenario run yet</h2>
+          <p>
+            Choose a scenario on the left, adjust it if you like, then run it.
+            The results show how the model responds — not a forecast.
+          </p>
+          <p class="field-note">
+            The right-hand numbers come back as soon as you run one.
+          </p>
+        </div>
+
+        <div id="results" hidden>
+          <div class="results-head">
+            <h2 class="section-title" id="resultsTitleUsed">Results</h2>
+            <!-- The primary action moved here from the foot of an 850px form:
+                 it belongs with the thing it produces. -->
+            <button type="button" class="btn btn-primary" data-run>Run again</button>
           </div>
-          <label>Occurred at</label>
-          <input type="datetime-local" id="hazardAt">
-          <button class="btn-secondary" id="addHazardBtn" style="margin-top:0.5rem;width:100%">Add hazard event</button>
-        </div>
 
-        <label>Add conflict event</label>
-        <div class="event-add-form">
-          <div class="mini-grid">
-            <div>
-              <label style="margin-top:0">Type</label>
-              <input type="text" id="conflictType" placeholder="intercommunal">
-            </div>
-            <div>
-              <label style="margin-top:0">Severity</label>
-              <input type="text" id="conflictSeverity" placeholder="medium">
-            </div>
-            <div>
-              <label style="margin-top:0">Lat</label>
-              <input type="number" id="conflictLat" step="0.0001" placeholder="3.12">
-            </div>
-            <div>
-              <label style="margin-top:0">Lon</label>
-              <input type="number" id="conflictLon" step="0.0001" placeholder="35.6">
-            </div>
-          </div>
-          <label>Occurred at</label>
-          <input type="datetime-local" id="conflictAt">
-          <button class="btn-secondary" id="addConflictBtn" style="margin-top:0.5rem;width:100%">Add conflict event</button>
-        </div>
-
-        <div id="perturbationSummary" style="font-size:0.75rem;color: var(--ink-muted);margin-top:0.5rem"></div>
-
-        <button class="btn-primary" id="runScenarioBtn" style="margin-top:1rem;width:100%">Run scenario</button>
-        <p id="scenarioError" style="color:#dc2626;font-size:0.85rem;display:none;margin-top:0.5rem"></p>
-      </div>
-
-      <!-- Results panel -->
-      <div id="resultsPanel">
-        <div id="noResults" style="color: var(--ink-muted);padding:2rem;text-align:center">
-          Configure perturbations on the left and click <strong>Run scenario</strong> to see results.
-        </div>
-        <div id="results" style="display:none">
           <!--
             The limitation travels with the numbers. These deltas are changes in
             an uncalibrated sensitivity score, and presented as percentages in
@@ -155,8 +276,9 @@
             flood risk 19%" — which is exactly the claim this product must not
             make.
           -->
-          <div id="scenarioLimit" style="font-size:0.8rem;color:var(--ink-muted);border:1px solid var(--stroke);border-radius:0.375rem;padding:0.5rem 0.7rem;margin-bottom:0.9rem"></div>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.75rem;margin-bottom:1.5rem">
+          <div class="notice notice-warn" id="scenarioLimit" role="note"></div>
+
+          <div class="delta-grid">
             <div class="delta-card">
               <div class="delta-value" id="floodDelta">—</div>
               <div class="delta-label">Flood risk score change (mean points)</div>
@@ -174,23 +296,32 @@
             </div>
           </div>
 
-          <div style="font-weight:600;font-size:0.9rem;margin-bottom:0.5rem">Top affected service assets</div>
-          <div style="overflow-x:auto">
+          <h3 class="section-title">Most affected service assets</h3>
+          <div class="table-wrap">
             <table id="affectedTable">
+              <caption class="visually-hidden">Service assets ranked by modelled impact under this scenario</caption>
               <thead>
-                <tr><th>Asset</th><th>Type</th><th>Region</th><th>Baseline impact</th><th>Scenario impact</th><th>Delta</th></tr>
+                <tr>
+                  <th scope="col">Asset</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">Region</th>
+                  <th scope="col">Baseline impact</th>
+                  <th scope="col">Scenario impact</th>
+                  <th scope="col">Change</th>
+                </tr>
               </thead>
               <tbody id="affectedBody"></tbody>
             </table>
           </div>
 
-          <div id="shareSection" style="margin-top:1rem">
-            <div style="font-weight:600;font-size:0.9rem">Share this scenario</div>
+          <div id="shareSection" class="share-section">
+            <h3 class="section-title">Share this scenario</h3>
             <div class="share-box" id="shareUrl"></div>
-            <button class="btn-secondary" id="copyShareBtn" style="margin-top:0.5rem">Copy link</button>
+            <button type="button" class="btn btn-secondary" id="copyShareBtn">Copy link</button>
+            <p class="field-note" id="copyStatus" role="status"></p>
           </div>
         </div>
-      </div>
+      </section>
     </div>
   </main>
 
