@@ -110,7 +110,14 @@ document.getElementById('runScenarioBtn').addEventListener('click', async () => 
     })
     const json = await res.json()
     if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
-    showResults(json.data, perturbation)
+    // The endpoint returns the scenario at the top level, not under `data`. This
+    // read `json.data`, so "Run scenario" threw on every run, rendered nothing,
+    // and left the three delta cards showing em dashes. Nothing caught it: the
+    // error was caught and shown as text, so the page reported no console error
+    // and every check passed.
+    const payload = json.data || json
+    if (!payload.diff) throw new Error('Scenario response contained no diff')
+    showResults(payload, perturbation)
   } catch (err) {
     errEl.textContent = err.message
     errEl.style.display = ''
@@ -123,25 +130,41 @@ function showResults(data, perturbation) {
 
   const diff = data.diff || {}
 
+  const limit = document.getElementById('scenarioLimit')
+  if (limit) {
+    const parts = []
+    if (data.model_limit) parts.push(data.model_limit)
+    if (diff.regions_compared != null) parts.push(`Averaged over ${diff.regions_compared} region scores.`)
+    limit.textContent = parts.join(' ')
+  }
+
   // Delta cards
   setDeltaCard('flood', diff.flood_risk_delta_mean)
   setDeltaCard('conflict', diff.conflict_risk_delta_mean)
   setDeltaCard('impacts', diff.impacts_delta_mean)
 
-  // Top affected assets
+  // Top affected assets, ranked by how much the scenario moved them.
+  //
+  // It sorted by scenario impact alone, which with every asset scoring the same
+  // produced an arbitrary "top 10". It also read `asset_type`, a field that does
+  // not exist on an impact assessment, and `baseline_impact_score`, which the API
+  // did not return — so Type and Region showed em dashes and Delta showed a
+  // fabricated +75 on every row, computed as `scenario - (missing ?? 0)`.
   const impacts = data.impact_assessments || []
-  const sorted = [...impacts].sort((a, b) => (b.impact_score || 0) - (a.impact_score || 0)).slice(0, 10)
+  const sorted = [...impacts]
+    .sort((a, b) => Math.abs(b.impact_delta ?? 0) - Math.abs(a.impact_delta ?? 0))
+    .slice(0, 10)
   const tbody = document.getElementById('affectedBody')
   if (!sorted.length) {
     tbody.innerHTML = '<tr><td colspan="6" style="color:#6b7280;text-align:center">No assets in dataset.</td></tr>'
   } else {
     tbody.innerHTML = sorted.map((a) => `<tr>
       <td>${esc(a.asset_name || a.asset_id || '—')}</td>
-      <td>${esc(a.asset_type || '—')}</td>
+      <td>${esc(a.service_type || '—')}</td>
       <td>${esc(a.region_name || '—')}</td>
       <td>${(a.baseline_impact_score ?? '—')}</td>
       <td>${(a.impact_score ?? '—')}</td>
-      <td>${((a.impact_score ?? 0) - (a.baseline_impact_score ?? 0)).toFixed(2)}</td>
+      <td>${a.impact_delta == null ? '—' : (a.impact_delta > 0 ? '+' : '') + a.impact_delta}</td>
     </tr>`).join('')
   }
 
@@ -167,9 +190,14 @@ function setDeltaCard(prefix, value) {
     barsEl.innerHTML = ''
     return
   }
+  // Score points, not a percentage. The value used to be rendered with a "%"
+  // suffix and coloured red or green, which read as a modelled physical outcome
+  // — "doubling rainfall raises flood risk 19%" — rather than the change in an
+  // uncalibrated sensitivity score. The colour is dropped for the same reason: a
+  // higher sensitivity score is not by itself a worse outcome.
   const sign = value > 0 ? '+' : ''
-  el.textContent = `${sign}${value.toFixed(2)}%`
-  el.style.color = value > 0 ? '#dc2626' : value < 0 ? '#16a34a' : '#374151'
+  el.textContent = `${sign}${value.toFixed(1)}`
+  el.style.color = '#374151'
 
   // Simple SVG bars: baseline (left) vs scenario (right)
   const baseH = 40

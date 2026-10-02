@@ -148,21 +148,29 @@
           Configure perturbations on the left and click <strong>Run scenario</strong> to see results.
         </div>
         <div id="results" style="display:none">
+          <!--
+            The limitation travels with the numbers. These deltas are changes in
+            an uncalibrated sensitivity score, and presented as percentages in
+            red they read as a modelled prediction — "doubling rainfall raises
+            flood risk 19%" — which is exactly the claim this product must not
+            make.
+          -->
+          <div id="scenarioLimit" style="font-size:0.8rem;color:var(--ink-muted);border:1px solid var(--stroke);border-radius:0.375rem;padding:0.5rem 0.7rem;margin-bottom:0.9rem"></div>
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.75rem;margin-bottom:1.5rem">
             <div class="delta-card">
               <div class="delta-value" id="floodDelta">—</div>
-              <div class="delta-label">Flood risk delta (mean %)</div>
+              <div class="delta-label">Flood risk score change (mean points)</div>
               <div class="bar-wrap" id="floodBars"></div>
             </div>
             <div class="delta-card">
               <div class="delta-value" id="conflictDelta">—</div>
-              <div class="delta-label">Conflict risk delta (mean %)</div>
+              <div class="delta-label">Conflict risk score change (mean points)</div>
               <div class="bar-wrap" id="conflictBars"></div>
             </div>
             <div class="delta-card">
               <div class="delta-value" id="impactsDelta">—</div>
-              <div class="delta-label">Impacts delta (mean)</div>
-              <div class="bar-wrap" id="impactBars"></div>
+              <div class="delta-label">Service impact score change (mean points)</div>
+              <div class="bar-wrap" id="impactsBars"></div>
             </div>
           </div>
 

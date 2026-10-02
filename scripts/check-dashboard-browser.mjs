@@ -492,6 +492,57 @@ async function main() {
       unscreened.includes('Not screened') ? 'labelled not screened' : unscreened.slice(0, 80))
   }
 
+  // The scenario workbench must actually run.
+  //
+  // "Run scenario" read `json.data` from a response that carries the scenario at
+  // the top level, so it threw on every run, rendered nothing and left the delta
+  // cards on em dashes. The error was caught and shown as text, so the page
+  // reported no console error and every check passed — the surface looked loaded
+  // and was entirely dead. A later null-id mismatch in the third card's bars
+  // aborted the render again, taking the affected-assets table with it.
+  await send('Page.navigate', { url: `${BASE}/scenarios?cb=${Date.now()}` })
+  await new Promise((r) => setTimeout(r, 3200))
+  await evaluate(`(() => {
+    const r = document.getElementById('precipMultiplier');
+    r.value = '2';
+    r.dispatchEvent(new Event('input', { bubbles: true }));
+    document.getElementById('runScenarioBtn').click();
+    return true;
+  })()`)
+  await new Promise((r) => setTimeout(r, 4000))
+  const scenario = await evaluate(`(() => {
+    const err = document.getElementById('scenarioError');
+    const cards = [...document.querySelectorAll('.delta-card')].map((c) => (c.textContent || '').trim());
+    // Double-escaped on purpose: this expression lives inside a template literal,
+    // where a lone \d is an unknown escape and collapses to the letter d, so the
+    // match found nothing and the check passed without ever reading a number.
+    const value = (c) => (c.match(/-?[0-9]+(?:\.[0-9]+)?/) || [])[0] || '';
+    return {
+      error: err && err.style.display !== 'none' ? (err.textContent || '').trim() : '',
+      values: cards.map(value),
+      emDashes: cards.filter((c) => c.startsWith('—')).length,
+      limit: (document.getElementById('scenarioLimit') || {}).textContent || '',
+      rows: document.querySelectorAll('#affectedBody tr').length,
+      // A baseline that is missing everywhere means the delta is being computed
+      // from an assumed zero.
+      baselineCells: [...document.querySelectorAll('#affectedBody tr')]
+        .map((tr) => tr.children[3] && tr.children[3].textContent.trim()).filter((t) => t !== '—').length,
+      percentLabels: (document.body.innerText.match(/mean %/g) || []).length,
+    };
+  })()`)
+
+  check('running a scenario produces deltas rather than an error',
+    scenario.error === '' && scenario.emDashes === 0 && scenario.values.every((v) => v !== ''),
+    scenario.error || scenario.values.join(' / '))
+  check('scenario results state what the delta measures',
+    /score points/i.test(scenario.limit) && /not a (percentage|forecast)/i.test(scenario.limit),
+    scenario.limit.slice(0, 100) || '(no limitation shown)')
+  check('scenario deltas are not labelled as percentages',
+    scenario.percentLabels === 0, `${scenario.percentLabels} "mean %" labels found`)
+  check('the affected-assets table is populated with real baselines',
+    scenario.rows > 0 && scenario.baselineCells > 0,
+    `${scenario.rows} rows, ${scenario.baselineCells} with a baseline`)
+
   // The false-alert rate must not present an absence as a zero. It was a keyword
   // scan of free-text resolution notes, which reported 0% — read as "no false
   // alerts occurred" when it means "nobody wrote the word false". The tile shows

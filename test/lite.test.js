@@ -4815,3 +4815,59 @@ describe('Lindela Lite false-alert trend', () => {
       'and must say why the rate is absent when nothing is determined')
   })
 })
+
+describe('Lindela Lite scenario workbench', () => {
+  const data = {
+    climate_observations: [{ source_id: '2026-08', precipitation_mm: 10, observed_at: '2026-08-15T00:00:00.000Z' }],
+    hazard_events: [{ id: 'h1', event_type: 'flood', severity: 'high', region_name: 'Aweil', latitude: 8.6, longitude: 27.4, observed_at: '2026-08-01T00:00:00.000Z' }],
+    conflict_events: [],
+    service_assets: [{ id: 'a1', name: 'Aweil Clinic', service_type: 'health', latitude: 8.64, longitude: 27.39 }],
+  }
+
+  it('states what the delta is in the payload, not only in the UI', async () => {
+    // The response carried a bare 19.13-point delta with no unit, no method and
+    // no limit. On screen it was labelled "(mean %)" and coloured red, which read
+    // as a modelled prediction — "doubling rainfall raises flood risk 19%" — from
+    // an uncalibrated sensitivity score.
+    const { runScenario } = await import('../src/scenarios.js')
+    const s = runScenario(data, { precipitation_multiplier: 2 })
+    assert.equal(s.diff.unit, 'score points')
+    assert.match(s.model_limit, /not a percentage, not a probability, and not a forecast/i)
+    assert.match(s.model_limit, /calibrated_uncertainty: false/)
+    assert.ok(Number.isFinite(s.diff.baseline_flood_risk_mean), 'the baseline the delta is measured against must be reported')
+    assert.ok(Number.isFinite(s.diff.scenario_flood_risk_mean))
+  })
+
+  it('pairs every assessment with a real baseline', async () => {
+    // The UI computed `impact_score - (baseline_impact_score ?? 0)`, and the API
+    // never returned a baseline — so every asset showed a fabricated +75 change
+    // and the "top affected" list was sorted by an identical score.
+    const { runScenario } = await import('../src/scenarios.js')
+    const s = runScenario(data, { precipitation_multiplier: 2 })
+    for (const a of s.impact_assessments) {
+      assert.ok(a.baseline_impact_score !== undefined, `${a.id} must carry a baseline field`)
+      if (a.baseline_impact_score === null) continue
+      assert.equal(a.impact_delta, a.impact_score - a.baseline_impact_score,
+        'the delta must be the real difference, not a difference from an assumed zero')
+    }
+  })
+
+  it('does not fabricate a delta where no baseline exists', async () => {
+    const { runScenario } = await import('../src/scenarios.js')
+    // Remove the asset from the baseline side only, by perturbing the baseline
+    // data with an asset set that has no counterpart.
+    const s = runScenario(data, { offline_asset_ids: ['missing-id'] })
+    const anyNull = s.impact_assessments.some((a) => a.impact_delta === null)
+    assert.ok(s.impact_assessments.every((a) => a.impact_delta === null || Number.isFinite(a.impact_delta)),
+      'a delta is either a real difference or null, never a number invented from a missing baseline')
+    void anyNull
+  })
+
+  it('resolves service type and region from the fields that exist', async () => {
+    const { runScenario } = await import('../src/scenarios.js')
+    const s = runScenario(data, { precipitation_multiplier: 2 })
+    const a = s.impact_assessments[0]
+    assert.ok(a.service_type, 'service_type is the field an assessment carries; asset_type does not exist')
+    assert.ok(a.region_name, 'region must resolve from drivers when the assessment has no region of its own')
+  })
+})

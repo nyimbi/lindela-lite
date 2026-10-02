@@ -20,6 +20,11 @@ Three methods, in increasing order of yield:
 3. **Comparing a computed value against its own output.** Found the payload-hash
    bug, which is the most consequential of the lot and was invisible to every
    check in the suite.
+4. **Using the feature.** Walking a surface end to end found the scenario
+   workbench was entirely dead and the offline queue never replayed. Neither
+   produced a console error, because both caught their own failures and printed
+   them as text — the one class of breakage that is invisible to every assertion
+   that checks for errors.
 
 Method 3 was only reached because a visible number disagreed with the code that
 produced it. Two green suites had been passing for the wrong reason.
@@ -48,6 +53,8 @@ produced it. Two green suites had been passing for the wrong reason.
 | 18 | The offline queue never replayed — `flush()` was called from nowhere, so a report queued without signal was lost while the UI promised it would send. | walking the CHW flow offline | see changelog |
 | 19 | OFAC sanctions screening worked but the UI never sent the field that reaches it, and never mentioned screening. A green "Simulation complete" for 5,000 USD implied a check that had not run. | walking the parametric surface | see changelog |
 | 20 | The CO dashboard's "false alert rate" was a regex over free-text notes divided by all alerts: 0%, meaning nothing. | asking what the headline KPI measured | see changelog |
+| 21 | The scenario workbench did not run at all: `json.data` on a top-level response, then a `null` element id. Errors were caught and shown as text, so every check passed. | exercising the last unexamined surface | `see changelog` |
+| 22 | Scenario deltas labelled "(mean %)" and coloured red, from an uncalibrated score. Every asset showed a fabricated +75 change because no baseline was ever attached. | reading the rendered result | see changelog |
 
 ## Two green suites passing for the wrong reason
 

@@ -56,6 +56,31 @@ no existing endpoint changed shape.
 
 ### Fixed
 
+- **The scenario workbench did not work at all.** "Run scenario" read `json.data`
+  from a response that carries the scenario at the top level, so it threw on every
+  run, rendered nothing and left all three delta cards on em dashes. A second
+  mismatch — the markup had `impactBars` where the script looked for `impactsBars`
+  — threw again partway through rendering and took the affected-assets table with
+  it. Nothing caught either: the errors were caught and shown as text, so the page
+  reported no console error and every check passed. The surface looked loaded and
+  was entirely dead.
+
+- **Scenario deltas were labelled "(mean %)" and coloured red.** They are score
+  points, not percentages, and not modelled outcomes: the response carried no unit,
+  no method and no limitation, so "+19.13%" read as a prediction that doubling
+  rainfall raises flood risk by nineteen percent. The payload now carries `unit`,
+  both means, the number of regions compared and a `model_limit`; the cards say
+  "score change (mean points)" and the colour is dropped, because a higher
+  sensitivity score is not by itself a worse outcome.
+
+- **Every asset in the scenario table showed a fabricated +75 impact change.** The
+  API never returned `baseline_impact_score`, and the UI computed
+  `scenario - (baseline ?? 0)`. Assessments are now paired with their real baseline
+  by asset, so the table reads e.g. "Aweil East Primary, school, Aweil, 48 → 75,
+  +27", and rows are ranked by how far the scenario moved them rather than by an
+  identical score. Type and Region were reading `asset_type` and `region_name`,
+  which impact assessments do not carry, so both columns showed em dashes.
+
 - **The CO dashboard reported a 0% false alert rate that meant nothing.** It was a
   keyword scan of free-text resolution notes (`/false|invalid|noop/i`) divided by
   the alert count. On the demo data that returned 0%, which reads as "no false
