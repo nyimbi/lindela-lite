@@ -1,6 +1,12 @@
 // CO/Donor read-only dashboard
 // Fetches: /api/v1/kpi/quarterly, /api/v1/equity/by-district,
 //          /api/v1/rapidpro/dispatches, /api/v1/community-feedback/summary
+//
+// This file had no escape function of any kind, unlike the console's 55 uses of
+// one. District names, alert event ids and quarter labels were interpolated
+// into innerHTML raw. The helpers now come from the shared module.
+
+import { esc, formatTimestamp, num, pct } from '/shared/fmt.js'
 
 let currentLocale = 'en'
 let i18n = {}
@@ -57,14 +63,14 @@ function fmtVal(v, unit = '') {
 }
 
 function kpiTileHtml(label, value, unit, annotation, isDataGap) {
-  const displayVal = value !== null ? value : '—'
-  const gapChip = isDataGap ? `<span class="chip-data-gap" data-i18n="co.data_gap">${t('co.data_gap', 'data gap')}</span>` : ''
-  const ann = annotation ? `<span class="kpi-tile-annotation">${annotation}</span>` : ''
+  const displayVal = value !== null && value !== undefined ? value : '—'
+  const gapChip = isDataGap ? `<span class="chip-data-gap" data-i18n="co.data_gap">${esc(t('co.data_gap', 'data gap'))}</span>` : ''
+  const ann = annotation ? `<span class="kpi-tile-annotation">${esc(annotation)}</span>` : ''
   return `
     <div class="kpi-tile">
-      <span class="kpi-tile-label">${label}</span>
-      <span class="kpi-tile-value">${displayVal}</span>
-      <span class="kpi-tile-unit">${unit} ${gapChip}</span>
+      <span class="kpi-tile-label">${esc(label)}</span>
+      <span class="kpi-tile-value">${esc(displayVal)}</span>
+      <span class="kpi-tile-unit">${esc(unit)} ${gapChip}</span>
       ${ann}
     </div>
   `
@@ -108,11 +114,11 @@ function renderCohort(cohort) {
   if (!body) return
   const dash = (v) => (v !== null && v !== undefined ? v : '—')
   body.innerHTML = `<tr>
-    <td>${dash(cohort.total)}</td>
-    <td>${dash(cohort.u18)}</td>
-    <td>${dash(cohort.women_and_girls)}</td>
-    <td>${dash(cohort.pwd)}</td>
-    <td>${dash(cohort.refugees_idps)}</td>
+    <td class="num-cell">${dash(cohort.total)}</td>
+    <td class="num-cell">${dash(cohort.u18)}</td>
+    <td class="num-cell">${dash(cohort.women_and_girls)}</td>
+    <td class="num-cell">${dash(cohort.pwd)}</td>
+    <td class="num-cell">${dash(cohort.refugees_idps)}</td>
   </tr>`
   document.getElementById('cohort-section').hidden = false
 }
@@ -121,19 +127,19 @@ function renderEquity(rows) {
   const body = document.getElementById('equity-body')
   if (!body) return
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="5" style="color:var(--ink-muted)">No equity data yet.</td></tr>'
+    body.innerHTML = '<tr><td colspan="5" class="empty-cell">No equity data yet.</td></tr>'
   } else {
     body.innerHTML = rows.map((r) => {
-      const acc = r.accuracy_pct !== null ? `${r.accuracy_pct.toFixed(1)}%` : '—'
+      const acc = pct(r.accuracy_pct)
       const isBreach = r.accuracy_pct !== null && r.dispatched >= 5 && r.accuracy_pct < 80
       const breachChip = isBreach ? `<span class="chip-breach" data-i18n="co.equity_breach">${t('co.equity_breach', 'breach')}</span>` : ''
       const rowClass = isBreach ? 'breach-row' : ''
       const slug = (r.district || '').toLowerCase().replace(/\s+/g, '-')
       return `<tr class="${rowClass}">
-        <td><a href="/districts#/${slug}" style="color:inherit">${r.district}</a></td>
-        <td>${r.dispatched}</td>
-        <td>${r.acknowledged}</td>
-        <td>${acc}</td>
+        <td><a class="district-link" href="/districts#/${encodeURIComponent(slug)}">${esc(r.district)}</a></td>
+        <td class="num-cell">${num(r.dispatched, { int: true })}</td>
+        <td class="num-cell">${num(r.acknowledged, { int: true })}</td>
+        <td class="num-cell">${acc}</td>
         <td>${breachChip}</td>
       </tr>`
     }).join('')
@@ -182,15 +188,15 @@ function renderFeedback(summary) {
   const body = document.getElementById('feedback-body')
   if (!body) return
   if (!summary.length) {
-    body.innerHTML = '<tr><td colspan="6" style="color:var(--ink-muted)">No feedback yet.</td></tr>'
+    body.innerHTML = '<tr><td colspan="6" class="empty-cell">No feedback yet.</td></tr>'
   } else {
     body.innerHTML = summary.map((row) => `<tr>
-      <td>${row.alert_event_id || '—'}</td>
-      <td>${row.count}</td>
-      <td>${row.sentiment.positive || 0}</td>
-      <td>${row.sentiment.negative || 0}</td>
-      <td>${row.sentiment.unclear || 0}</td>
-      <td>${row.action_taken_count || 0}</td>
+      <td>${esc(row.alert_event_id || '—')}</td>
+      <td class="num-cell">${num(row.count, { int: true })}</td>
+      <td class="num-cell">${num(row.sentiment?.positive, { int: true })}</td>
+      <td class="num-cell">${num(row.sentiment?.negative, { int: true })}</td>
+      <td class="num-cell">${num(row.sentiment?.unclear, { int: true })}</td>
+      <td class="num-cell">${num(row.action_taken_count, { int: true })}</td>
     </tr>`).join('')
   }
   document.getElementById('feedback-section').hidden = false
@@ -298,12 +304,12 @@ function renderQoQ(series) {
     return months.reduce((s, m) => s + (m[field] ?? 0), 0)
   }
   function fmtCell(v) {
-    if (v === null || v === undefined) return '<td>—</td>'
-    return `<td>${typeof v === 'number' ? v.toFixed(v % 1 === 0 ? 0 : 1) : v}</td>`
+    if (v === null || v === undefined) return '<td class="num-cell">—</td>'
+    return `<td class="num-cell">${esc(num(v))}</td>`
   }
 
   body.innerHTML = quarters.map(q => `<tr>
-    <td><strong>${q.label}</strong></td>
+    <td><strong>${esc(q.label)}</strong></td>
     ${fmtCell(sum(q.months, 'people_reached'))}
     ${fmtCell(avg(q.months, 'warning_to_action_median_hours'))}
     ${fmtCell(avg(q.months, 'false_alert_rate'))}
@@ -343,7 +349,7 @@ async function load() {
       renderKpi(kpi)
       renderCohort(kpi.cohort || {})
       const sigEl = document.getElementById('sig-hash')
-      if (sigEl) sigEl.textContent = `sig: ${kpi.generated_at?.slice(0, 16) || ''}`
+      if (sigEl) sigEl.textContent = `signed ${formatTimestamp(kpi.generated_at)}`
       const genEl = document.getElementById('gen-time')
       if (genEl) genEl.textContent = kpi.generated_at || ''
     }

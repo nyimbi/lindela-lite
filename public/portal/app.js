@@ -191,7 +191,9 @@ function formatDate(iso) {
 }
 
 function escapeHtml(str) {
-  return String(str || '').replace(/[&<>"']/g, (c) => ({
+  // `||` here dropped a legitimate 0 or false and rendered it as blank;
+  // `??` only replaces null and undefined.
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;',
     '<': '&lt;',
     '>': '&gt;',

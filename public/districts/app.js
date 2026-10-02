@@ -1,51 +1,59 @@
 // Districts surface — hash-based router
 // #         -> list of districts
 // #/<slug>  -> district overview
+//
+// This file had no escaping function at all. Every render path was innerHTML
+// with interpolated data: district names from the API, hazard types, incident
+// titles, reporter names, community feedback messages. `sevChip` went further
+// and interpolated the severity straight into a class attribute, unquoted, so a
+// severity containing a quote injected markup. The not-found branch interpolated
+// the URL hash. The console, by contrast, had 55 uses of one escapeHtml — the
+// discipline existed, in one file.
+
+import { apiFetch } from '/shared/runtime.js'
+import { esc, formatTimestamp, num, pct, sevClass } from '/shared/fmt.js'
 
 function sevChip(sev) {
-  const s = (sev || 'unknown').toLowerCase()
-  return `<span class="chip chip-${s}">${s}</span>`
+  const s = sevClass(sev)
+  return `<span class="chip chip-${s}">${esc(s)}</span>`
 }
 
 function stateChip(state) {
-  return `<span class="chip chip-neutral">${state || '—'}</span>`
+  return `<span class="chip chip-neutral">${esc(state || '—')}</span>`
 }
 
-function sentimentChip(s) {
+function sentimentChip(sentiment) {
   const map = { positive: 'ok', negative: 'critical', unclear: 'neutral' }
-  const cls = map[s] || 'neutral'
-  return `<span class="chip chip-${cls}">${s || '—'}</span>`
-}
-
-function fmt(v) {
-  if (v === null || v === undefined) return '—'
-  if (typeof v === 'number') return v % 1 === 0 ? String(v) : v.toFixed(1)
-  return String(v)
+  const cls = map[sentiment] || 'neutral'
+  return `<span class="chip chip-${cls}">${esc(sentiment || '—')}</span>`
 }
 
 function recordDetails(r) {
   const skip = new Set(['id'])
   return Object.entries(r)
     .filter(([k]) => !skip.has(k))
-    .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+    .map(([k, v]) => `${esc(k)}: ${esc(typeof v === 'object' ? JSON.stringify(v) : v)}`)
     .join('\n')
 }
 
 function recordItem(title, chipHtml, r) {
   return `<details class="record-item">
     <summary>
-      <span class="record-item-title">${title}</span>
+      <span class="record-item-title">${esc(title)}</span>
       ${chipHtml}
     </summary>
     <pre class="record-full">${recordDetails(r)}</pre>
   </details>`
 }
 
-function kpiTile(label, value, unit) {
+const emptyNote = (what) => `<p class="empty-note">${esc(what)}</p>`
+
+function kpiTile(label, value, unit, gap) {
   return `<div class="kpi-tile">
-    <span class="kpi-label">${label}</span>
-    <span class="kpi-value">${fmt(value)}</span>
-    <span class="kpi-unit">${unit}</span>
+    <span class="kpi-label">${esc(label)}</span>
+    <span class="kpi-value">${esc(value)}</span>
+    <span class="kpi-unit">${esc(unit)}</span>
+    ${gap ? '<span class="data-gap">data gap</span>' : ''}
   </div>`
 }
 
@@ -75,16 +83,18 @@ function buildSvgMap(district, records) {
     const lon = r.longitude ?? r.lon
     if (!lat || !lon) continue
     const p = project(lat, lon)
-    const col = r.severity ? `var(--sev-${r.severity}, var(--brand))` : 'var(--brand)'
+    // Allowlisted, so a severity from the API cannot reach the style attribute.
+    const col = r.severity ? `var(--sev-${sevClass(r.severity)})` : 'var(--brand)'
     dots += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4" fill="${col}" opacity="0.75"/>`
   }
 
-  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  const label = esc(district.name)
+  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Recorded locations in ${label}">
     <rect width="${W}" height="${H}" fill="var(--bg)"/>
     <circle cx="${cx.x.toFixed(1)}" cy="${cx.y.toFixed(1)}" r="8" fill="var(--brand)" opacity="0.25"/>
     <circle cx="${cx.x.toFixed(1)}" cy="${cx.y.toFixed(1)}" r="4" fill="var(--brand)"/>
     ${dots}
-    <text x="${PAD}" y="${H - 6}" font-size="10" fill="var(--ink-muted)">${district.name}</text>
+    <text x="${PAD}" y="${H - 6}" font-size="10" fill="var(--ink-muted)">${label}</text>
   </svg>`
 }
 
@@ -94,7 +104,7 @@ function renderList(districts) {
   if (loading) loading.remove()
 
   const h = document.createElement('h1')
-  h.style.cssText = 'font-size:1.3rem;font-weight:700;margin-bottom:0.5rem'
+  h.className = 'page-title'
   h.textContent = 'Districts'
   app.appendChild(h)
 
@@ -104,27 +114,34 @@ function renderList(districts) {
   for (const d of districts) {
     const card = document.createElement('a')
     card.className = 'district-card'
-    card.href = `/districts#/${d.slug}`
+    // A real href, so middle-click, "open in new tab" and "copy link address"
+    // work. The click handler used to preventDefault unconditionally, which
+    // defeated all three on a page whose entire purpose is linking onward.
+    card.href = `/districts#/${encodeURIComponent(d.slug)}`
     card.innerHTML = `
-      <span class="district-card-name">${d.name}</span>
-      <span class="district-card-meta">${d.country} &middot; ${d.radius_km} km radius</span>
-      <span class="district-card-counts" id="counts-${d.slug}">Loading counts...</span>
+      <span class="district-card-name">${esc(d.name)}</span>
+      <span class="district-card-meta">${esc(d.country)} &middot; ${esc(num(d.radius_km, { int: true }))} km radius</span>
+      <span class="district-card-counts" id="counts-${esc(d.slug)}" aria-live="polite">Loading counts&hellip;</span>
     `
-    card.addEventListener('click', (e) => {
-      e.preventDefault()
-      location.hash = `/${d.slug}`
-    })
     grid.appendChild(card)
 
-    fetch(`/api/v1/districts/${d.slug}`)
-      .then(r => r.json())
+    apiFetch(`/api/v1/districts/${encodeURIComponent(d.slug)}`)
       .then(({ data }) => {
         const el = document.getElementById(`counts-${d.slug}`)
         if (!el || !data) return
         const c = data.counts
-        el.textContent = `Assets ${c.service_assets} · Incidents ${c.incidents} · Alerts ${c.alert_events}`
+        el.textContent = `Assets ${num(c.service_assets, { int: true })} · Incidents ${num(c.incidents, { int: true })} · Alerts ${num(c.alert_events, { int: true })}`
       })
-      .catch(() => {})
+      .catch(() => {
+        // This used to be `.catch(() => {})`, which left the literal text
+        // "Loading counts..." on screen forever after any failure — a spinner
+        // that stops spinning and never resolves into either state.
+        const el = document.getElementById(`counts-${d.slug}`)
+        if (el) {
+          el.textContent = 'Counts unavailable'
+          el.classList.add('data-gap')
+        }
+      })
   }
 
   app.appendChild(grid)
@@ -137,51 +154,46 @@ function renderOverview(overview) {
   const d = overview.district
   const c = overview.counts
 
-  // Back link
   const back = document.createElement('a')
   back.className = 'back-link'
   back.href = '/districts'
-  back.innerHTML = '&#8592; All districts'
-  back.addEventListener('click', (e) => { e.preventDefault(); location.hash = '' })
+  back.textContent = '← All districts'
   app.appendChild(back)
 
-  // Header ribbon
   const ribbon = document.createElement('div')
   ribbon.className = 'ribbon'
   ribbon.innerHTML = `
     <div class="ribbon-title">
-      ${d.name}
-      <span style="font-size:0.85rem;font-weight:400;color:var(--ink-muted)">${d.country}</span>
+      ${esc(d.name)}
+      <span class="ribbon-sub-name">${esc(d.country)}</span>
     </div>
-    <div class="ribbon-subtitle">${d.radius_km} km radius &middot; ${d.center.lat.toFixed(4)}, ${d.center.lon.toFixed(4)}</div>
+    <div class="ribbon-subtitle">${esc(num(d.radius_km, { int: true }))} km radius &middot; ${esc(Number(d.center.lat).toFixed(4))}, ${esc(Number(d.center.lon).toFixed(4))}</div>
     <div class="counts-strip">
-      <span>Assets <strong>${c.service_assets}</strong></span>
-      <span>Incidents <strong>${c.incidents}</strong></span>
-      <span>Interventions <strong>${c.interventions}</strong></span>
-      <span>Tasks <strong>${c.tasks}</strong></span>
-      <span>Field reports <strong>${c.field_reports}</strong></span>
-      <span>Alerts <strong>${c.alert_events}</strong></span>
-      <span>Workflows <strong>${c.workflow_instances}</strong></span>
+      <span>Assets <strong>${num(c.service_assets, { int: true })}</strong></span>
+      <span>Incidents <strong>${num(c.incidents, { int: true })}</strong></span>
+      <span>Interventions <strong>${num(c.interventions, { int: true })}</strong></span>
+      <span>Tasks <strong>${num(c.tasks, { int: true })}</strong></span>
+      <span>Field reports <strong>${num(c.field_reports, { int: true })}</strong></span>
+      <span>Alerts <strong>${num(c.alert_events, { int: true })}</strong></span>
+      <span>Workflows <strong>${num(c.workflow_instances, { int: true })}</strong></span>
     </div>
   `
   app.appendChild(ribbon)
 
-  // Situation
-  const sitSection = document.createElement('div')
+  // --- Situation ------------------------------------------------
+  const sitSection = document.createElement('section')
   sitSection.className = 'section'
-  sitSection.innerHTML = '<div class="section-title">Situation</div>'
+  sitSection.innerHTML = '<h2 class="section-title">Situation</h2>'
 
   const sitRow = document.createElement('div')
   sitRow.className = 'situation-row'
 
-  // SVG map
   const mapRecords = [...overview.active_hazards, ...overview.risk_scores, ...overview.service_assets]
   const mapWrap = document.createElement('div')
   mapWrap.className = 'map-inset'
   mapWrap.innerHTML = buildSvgMap(d, mapRecords)
   sitRow.appendChild(mapWrap)
 
-  // Hazard table
   const hazardWrap = document.createElement('div')
   hazardWrap.className = 'situation-table'
   const top10 = overview.active_hazards.slice(0, 10)
@@ -189,159 +201,134 @@ function renderOverview(overview) {
     hazardWrap.innerHTML = `
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Hazard</th><th>Severity</th><th>Date</th></tr></thead>
+          <caption class="visually-hidden">Most recent active hazards in ${esc(d.name)}</caption>
+          <thead><tr>
+            <th scope="col">Hazard</th>
+            <th scope="col">Severity</th>
+            <th scope="col">Date</th>
+          </tr></thead>
           <tbody>${top10.map(h => `<tr>
-            <td>${h.event_type || h.type || '—'}</td>
+            <td>${esc(h.event_type || h.type || '—')}</td>
             <td>${sevChip(h.severity)}</td>
-            <td style="font-size:0.75rem;color:var(--ink-muted)">${(h.occurred_at || h.observed_at || h.created_at || '').slice(0, 10) || '—'}</td>
+            <td class="muted-sm nowrap">${esc(formatTimestamp(h.occurred_at || h.observed_at || h.created_at, { style: 'date' }))}</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>`
   } else {
-    hazardWrap.innerHTML = '<p style="color:var(--ink-muted);font-size:0.83rem">No active hazards.</p>'
+    hazardWrap.innerHTML = emptyNote('No active hazards.')
   }
   sitRow.appendChild(hazardWrap)
   sitSection.appendChild(sitRow)
   app.appendChild(sitSection)
 
-  // Operations
-  const opsSection = document.createElement('div')
+  // --- Operations ----------------------------------------------
+  const opsSection = document.createElement('section')
   opsSection.className = 'section'
-  opsSection.innerHTML = '<div class="section-title">Operations</div>'
+  opsSection.innerHTML = '<h2 class="section-title">Operations</h2>'
 
-  // Incidents
-  const incDet = document.createElement('details')
-  incDet.className = 'collapsible'
-  incDet.innerHTML = `<summary>Incidents (${overview.incidents.length})</summary>
-    <div class="collapsible-body">${overview.incidents.length
-      ? overview.incidents.map(r => recordItem(r.title || r.id, sevChip(r.severity), r)).join('')
-      : '<p style="color:var(--ink-muted);font-size:0.83rem">None.</p>'
-    }</div>`
-  opsSection.appendChild(incDet)
-
-  // Interventions
-  const intDet = document.createElement('details')
-  intDet.className = 'collapsible'
-  intDet.innerHTML = `<summary>Interventions (${overview.interventions.length})</summary>
-    <div class="collapsible-body">${overview.interventions.length
-      ? overview.interventions.map(r => recordItem(r.title || r.id, stateChip(r.status), r)).join('')
-      : '<p style="color:var(--ink-muted);font-size:0.83rem">None.</p>'
-    }</div>`
-  opsSection.appendChild(intDet)
-
-  // Tasks
-  const taskGroups = {}
-  for (const t of overview.intervention_tasks) {
-    const key = t.intervention_id || 'unlinked'
-    if (!taskGroups[key]) taskGroups[key] = []
-    taskGroups[key].push(t)
+  const collapsible = (label, items, render) => {
+    const det = document.createElement('details')
+    det.className = 'collapsible'
+    det.innerHTML = `<summary>${esc(label)} (${items.length})</summary>
+      <div class="collapsible-body">${items.length ? items.map(render).join('') : emptyNote('None.')}</div>`
+    opsSection.appendChild(det)
+    return det
   }
-  const taskDet = document.createElement('details')
-  taskDet.className = 'collapsible'
-  taskDet.innerHTML = `<summary>Tasks (${overview.intervention_tasks.length})</summary>
-    <div class="collapsible-body">${overview.intervention_tasks.length
-      ? overview.intervention_tasks.map(t => recordItem(t.title || t.id, stateChip(t.status), t)).join('')
-      : '<p style="color:var(--ink-muted);font-size:0.83rem">None.</p>'
-    }</div>`
-  opsSection.appendChild(taskDet)
+
+  collapsible('Incidents', overview.incidents, (r) => recordItem(r.title || r.id, sevChip(r.severity), r))
+  collapsible('Interventions', overview.interventions, (r) => recordItem(r.title || r.id, stateChip(r.status), r))
+  collapsible('Tasks', overview.intervention_tasks, (t) => recordItem(t.title || t.id, stateChip(t.status), t))
 
   // Field reports (last 10)
+  const recentFr = overview.field_reports.slice(0, 10)
   const frDet = document.createElement('details')
   frDet.className = 'collapsible'
-  const recentFr = overview.field_reports.slice(0, 10)
   frDet.innerHTML = `<summary>Field Reports (last 10 of ${overview.field_reports.length})</summary>
     <div class="collapsible-body">${recentFr.length
       ? recentFr.map(r => {
           const demo = r.demographics
           const demoStr = demo ? ` · ${demo.gender || ''} ${demo.age_band || ''}` : ''
-          const reporter = r.reported_by ? `<span class="chip chip-neutral">${r.reported_by}</span>` : ''
-          return recordItem((r.summary || r.id).slice(0, 80) + demoStr, reporter, r)
+          const reporter = r.reported_by ? `<span class="chip chip-neutral">${esc(r.reported_by)}</span>` : ''
+          return recordItem(String(r.summary || r.id).slice(0, 80) + demoStr, reporter, r)
         }).join('')
-      : '<p style="color:var(--ink-muted);font-size:0.83rem">None.</p>'
+      : emptyNote('None.')
     }</div>`
   opsSection.appendChild(frDet)
   app.appendChild(opsSection)
 
-  // Signal and response
-  const sigSection = document.createElement('div')
+  // --- Signal and response --------------------------------------
+  const sigSection = document.createElement('section')
   sigSection.className = 'section'
-  sigSection.innerHTML = '<div class="section-title">Signal and Response</div>'
+  sigSection.innerHTML = '<h2 class="section-title">Signal and Response</h2>'
 
-  // Alert events
-  const alertDet = document.createElement('details')
-  alertDet.className = 'collapsible'
-  alertDet.innerHTML = `<summary>Alert Events (${overview.alert_events.length})</summary>
-    <div class="collapsible-body">${overview.alert_events.length
-      ? overview.alert_events.map(a => {
-          const wfBadge = a.workflow_id ? `<span class="chip chip-neutral">wf</span>` : ''
-          return recordItem(a.message || a.rule_name || a.id, `${sevChip(a.severity)} ${stateChip(a.status)} ${wfBadge}`, a)
-        }).join('')
-      : '<p style="color:var(--ink-muted);font-size:0.83rem">None.</p>'
-    }</div>`
-  sigSection.appendChild(alertDet)
+  const sigCollapsible = (label, items, render) => {
+    const det = document.createElement('details')
+    det.className = 'collapsible'
+    det.innerHTML = `<summary>${esc(label)} (${items.length})</summary>
+      <div class="collapsible-body">${items.length ? items.map(render).join('') : emptyNote('None.')}</div>`
+    sigSection.appendChild(det)
+  }
 
-  // Workflow instances
-  const wfDet = document.createElement('details')
-  wfDet.className = 'collapsible'
-  wfDet.innerHTML = `<summary>Workflows (${overview.workflow_instances.length})</summary>
-    <div class="collapsible-body">${overview.workflow_instances.length
-      ? overview.workflow_instances.map(w => recordItem(w.type || w.id, stateChip(w.state), w)).join('')
-      : '<p style="color:var(--ink-muted);font-size:0.83rem">None.</p>'
-    }</div>`
-  sigSection.appendChild(wfDet)
+  sigCollapsible('Alert Events', overview.alert_events, (a) => {
+    const wfBadge = a.workflow_id ? '<span class="chip chip-neutral">wf</span>' : ''
+    return recordItem(a.message || a.rule_name || a.id, `${sevChip(a.severity)} ${stateChip(a.status)} ${wfBadge}`, a)
+  })
+  sigCollapsible('Workflows', overview.workflow_instances, (w) => recordItem(w.type || w.id, stateChip(w.state), w))
+  sigCollapsible('Community Feedback', overview.community_feedback, (f) =>
+    recordItem(String(f.message || f.id).slice(0, 70), sentimentChip(f.sentiment), f))
 
-  // Community feedback
-  const fbDet = document.createElement('details')
-  fbDet.className = 'collapsible'
-  fbDet.innerHTML = `<summary>Community Feedback (${overview.community_feedback.length})</summary>
-    <div class="collapsible-body">${overview.community_feedback.length
-      ? overview.community_feedback.map(f => recordItem((f.message || f.id).slice(0, 70), sentimentChip(f.sentiment), f)).join('')
-      : '<p style="color:var(--ink-muted);font-size:0.83rem">None.</p>'
-    }</div>`
-  sigSection.appendChild(fbDet)
-
-  // KPI snapshot tiles
+  // --- KPI snapshot ---------------------------------------------
   const kpi = overview.kpi_snapshot
   const kpiRow = document.createElement('div')
   kpiRow.className = 'kpi-row'
+  // A KPI with no data shows its reason rather than a bare em dash, so a reader
+  // can tell "nothing happened" from "we did not measure it".
   kpiRow.innerHTML = [
-    kpiTile('People reached', kpi.people_reached, 'people'),
-    kpiTile('Warning-to-action', kpi.warning_to_action_median_hours, 'hours median'),
-    kpiTile('False alert rate', kpi.false_alert_rate !== null ? kpi.false_alert_rate?.toFixed(1) : null, '%'),
-    kpiTile('Cold-chain rate', kpi.cold_chain_protection_rate !== null ? kpi.cold_chain_protection_rate?.toFixed(1) : null, '%'),
+    kpiTile('People reached', num(kpi.people_reached, { int: true }), 'people'),
+    kpiTile('Warning to action', num(kpi.warning_to_action_median_hours, { dp: 2 }), 'hours median'),
+    kpiTile('False alert rate', pct(kpi.false_alert_rate), '', kpi.false_alert_rate === null || kpi.false_alert_rate === undefined),
+    kpiTile('Cold-chain rate', pct(kpi.cold_chain_protection_rate), '', kpi.cold_chain_protection_rate === null || kpi.cold_chain_protection_rate === undefined),
   ].join('')
   sigSection.appendChild(kpiRow)
   app.appendChild(sigSection)
 }
 
+function showError(app, message) {
+  app.innerHTML = `<div class="error-panel" role="alert">
+    <strong>${esc(message)}</strong>
+    <p>The district data could not be loaded. Check the connection and try again.</p>
+  </div>`
+}
+
 async function route() {
-  const hash = location.hash.replace(/^#\/?/, '')
+  const hash = decodeURIComponent(location.hash.replace(/^#\/?/, ''))
   const app = document.getElementById('app')
+  if (!app) return
 
   if (!hash) {
-    const loading = document.getElementById('loading-msg')
-    if (loading) loading.textContent = 'Loading districts...'
+    app.innerHTML = '<div id="loading-msg" class="loading-note">Loading districts…</div>'
     try {
-      const res = await fetch('/api/v1/districts')
-      const { data } = await res.json()
+      const { data } = await apiFetch('/api/v1/districts')
       renderList(data || [])
-    } catch (e) {
-      if (app) app.innerHTML = '<p style="color:var(--ink-muted);padding:2rem">Failed to load districts.</p>'
+    } catch {
+      showError(app, 'Could not load districts.')
     }
     return
   }
 
-  if (app) app.innerHTML = '<div id="loading-msg" style="padding:2rem;color:var(--ink-muted)">Loading...</div>'
+  app.innerHTML = '<div class="loading-note">Loading…</div>'
   try {
-    const res = await fetch(`/api/v1/districts/${hash}`)
-    if (!res.ok) {
-      app.innerHTML = `<p style="padding:2rem;color:var(--ink-muted)">District not found: ${hash}</p>`
+    const { data } = await apiFetch(`/api/v1/districts/${encodeURIComponent(hash)}`)
+    if (!data) {
+      showError(app, 'District not found.')
       return
     }
-    const { data } = await res.json()
     renderOverview(data)
-  } catch (e) {
-    if (app) app.innerHTML = '<p style="color:var(--ink-muted);padding:2rem">Failed to load district.</p>'
+  } catch (err) {
+    // `hash` came from the URL and used to be interpolated into innerHTML
+    // unescaped, so the not-found branch reflected whatever the address bar
+    // held. It is escaped now, and the detail is not echoed back at all.
+    showError(app, err.status === 404 ? 'District not found.' : 'Could not load this district.')
   }
 }
 
