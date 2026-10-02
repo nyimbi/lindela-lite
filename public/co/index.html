@@ -278,12 +278,13 @@
     </style>
   </head>
   <body>
+    <a class="skip-link" href="#main">Skip to dashboard content</a>
     <header>
       <div class="header-brand">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
         </svg>
-        <span data-i18n="co.title">Lindela CO Dashboard</span>
+        <h1 data-i18n="co.title">Lindela CO Dashboard</h1>
       </div>
       <div class="header-controls">
         <label for="quarter-select" class="visually-hidden" data-i18n="co.select_quarter">Quarter</label>
@@ -311,7 +312,7 @@
       </div>
     </header>
 
-    <main>
+    <main id="main" tabindex="-1">
       <div id="loading-banner">Loading...</div>
 
       <section id="trend-section" hidden>
@@ -320,7 +321,7 @@
       </section>
 
       <section id="kpi-section" hidden>
-        <h2 data-i18n="co.title">KPI Summary</h2>
+        <h2 data-i18n="co.kpi_title">KPI Summary</h2>
         <div class="kpi-grid" id="kpi-grid"></div>
       </section>
 
@@ -330,11 +331,11 @@
           <table class="cohort-table" id="cohort-table">
             <thead>
               <tr>
-                <th data-i18n="co.cohort_total">Total</th>
-                <th data-i18n="co.cohort_u18">Under 18</th>
-                <th data-i18n="co.cohort_women">Women and Girls</th>
-                <th data-i18n="co.cohort_pwd">PwD</th>
-                <th data-i18n="co.cohort_refugees">Refugees/IDPs</th>
+                <th scope="col" data-i18n="co.cohort_total">Total</th>
+                <th scope="col" data-i18n="co.cohort_u18">Under 18</th>
+                <th scope="col" data-i18n="co.cohort_women">Women and Girls</th>
+                <th scope="col" data-i18n="co.cohort_pwd">PwD</th>
+                <th scope="col" data-i18n="co.cohort_refugees">Refugees/IDPs</th>
               </tr>
             </thead>
             <tbody id="cohort-body"></tbody>
@@ -348,11 +349,11 @@
           <table id="equity-table">
             <thead>
               <tr>
-                <th data-i18n="equity.district_column">District</th>
-                <th data-i18n="equity.dispatched">Dispatched</th>
-                <th data-i18n="equity.acknowledged">Acknowledged</th>
-                <th>Accuracy %</th>
-                <th></th>
+                <th scope="col" data-i18n="equity.district_column">District</th>
+                <th scope="col" data-i18n="equity.dispatched">Dispatched</th>
+                <th scope="col" data-i18n="equity.acknowledged">Acknowledged</th>
+                <th scope="col">Accuracy %</th>
+                <th scope="col"></th>
               </tr>
             </thead>
             <tbody id="equity-body" class="equity-row"></tbody>
@@ -366,11 +367,11 @@
           <table id="qoq-table">
             <thead>
               <tr>
-                <th data-i18n="co.qoq_quarter">Quarter</th>
-                <th data-i18n="co.trend_people_reached">People reached</th>
-                <th data-i18n="co.trend_warning_to_action">Warning-to-action (h)</th>
-                <th data-i18n="co.trend_false_alert">False alert %</th>
-                <th data-i18n="co.trend_cold_chain">Cold-chain %</th>
+                <th scope="col" data-i18n="co.qoq_quarter">Quarter</th>
+                <th scope="col" data-i18n="co.trend_people_reached">People reached</th>
+                <th scope="col" data-i18n="co.trend_warning_to_action">Warning-to-action (h)</th>
+                <th scope="col" data-i18n="co.trend_false_alert">False alert %</th>
+                <th scope="col" data-i18n="co.trend_cold_chain">Cold-chain %</th>
               </tr>
             </thead>
             <tbody id="qoq-body"></tbody>
@@ -389,12 +390,12 @@
           <table id="feedback-table">
             <thead>
               <tr>
-                <th>Alert</th>
-                <th>Count</th>
-                <th data-i18n="feedback.positive">Positive</th>
-                <th data-i18n="feedback.negative">Negative</th>
-                <th data-i18n="feedback.unclear">Unclear</th>
-                <th data-i18n="feedback.was_action_taken">Action taken</th>
+                <th scope="col">Alert</th>
+                <th scope="col">Count</th>
+                <th scope="col" data-i18n="feedback.positive">Positive</th>
+                <th scope="col" data-i18n="feedback.negative">Negative</th>
+                <th scope="col" data-i18n="feedback.unclear">Unclear</th>
+                <th scope="col" data-i18n="feedback.was_action_taken">Action taken</th>
               </tr>
             </thead>
             <tbody id="feedback-body" class="feedback-summary"></tbody>

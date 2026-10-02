@@ -393,22 +393,34 @@
       .btn-approve:hover { background: color-mix(in oklch, var(--ok) 85%, white); }
       .btn-reject { background: transparent; color: var(--danger); border-color: color-mix(in oklch, var(--danger) 45%, transparent); font-weight: 600; }
       .btn-reject:hover { background: color-mix(in oklch, var(--danger) 12%, transparent); }
+      .header-role {
+        padding-inline-start: var(--sp-2);
+        margin-inline-start: var(--sp-2);
+        border-inline-start: 1px solid var(--stroke-strong);
+        color: var(--ink-muted);
+        font-size: 0.875rem;
+        font-weight: 400;
+      }
     </style>
   </head>
   <body>
+    <a class="skip-link" href="#main">Skip to pending review</a>
     <div id="offlineBanner" class="offline-banner" hidden>
       <span data-i18n="banner.offline">Offline. Changes will sync when you reconnect.</span>
     </div>
 
     <header>
-      <div class="header-brand">
+      <!-- The page title was a <span>, so the document had no <h1> at all and
+           ran h2 -> h3 -> h3 with the brand doing the heading's job. -->
+      <h1 class="header-brand">
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="12" cy="12" r="3" fill="currentColor"/>
           <circle cx="12" cy="12" r="7" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.5"/>
           <circle cx="12" cy="12" r="11" stroke="currentColor" stroke-width="1" fill="none" opacity="0.25"/>
         </svg>
         <span data-i18n="app.title">Lindela Lite</span>
-      </div>
+        <span class="header-role">Focal Point</span>
+      </h1>
       <div class="header-controls">
         <select id="locale-select" aria-label="Language">
           <option value="en">English</option>
@@ -426,7 +438,7 @@
       </div>
     </header>
 
-    <main>
+    <main id="main" tabindex="-1">
       <div class="pending-queue">
         <h2 data-i18n="focal-point.pending">Pending review</h2>
         <div id="pendingList"></div>

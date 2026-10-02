@@ -27,7 +27,7 @@
           <line x1="1" y1="12" x2="4" y2="12" stroke="currentColor" stroke-width="1.5"/>
           <line x1="20" y1="12" x2="23" y2="12" stroke="currentColor" stroke-width="1.5"/>
         </svg>
-        <span class="brand-name" data-i18n="app.title">Lindela Lite</span>
+        <h1 class="brand-name" data-i18n="app.title">Lindela Lite</h1>
       </div>
       <div class="topbar-controls">
         <select id="locale-select" aria-label="Language">
@@ -62,7 +62,7 @@
       <div id="workflowMetricsGrid" class="workflow-tray" role="list"></div>
     </section>
 
-    <div class="console-layout">
+    <main class="console-layout" id="main" tabindex="-1">
 
       <section class="map-section" aria-label="Situational map">
         <div class="map-container">
@@ -301,9 +301,9 @@
             <table id="equityTable" class="equity-table" role="table">
               <thead>
                 <tr>
-                  <th data-i18n="equity.district_column">District</th>
-                  <th data-i18n="equity.dispatched">Dispatched</th>
-                  <th data-i18n="equity.acknowledged">Acknowledged</th>
+                  <th scope="col" data-i18n="equity.district_column">District</th>
+                  <th scope="col" data-i18n="equity.dispatched">Dispatched</th>
+                  <th scope="col" data-i18n="equity.acknowledged">Acknowledged</th>
                   <!--
                     Deliberately not labelled "false positive rate". The
                     underlying figure is dispatched alerts that were never
@@ -311,7 +311,7 @@
                     dispatch may be a bad alert or a missed human response,
                     and this data cannot tell those apart.
                   -->
-                  <th data-i18n="equity.unacknowledged_rate" title="Dispatched alerts that were never acknowledged. Not a false-positive measure: an unactioned dispatch may be a poor alert or a missed response.">Not acknowledged</th>
+                  <th scope="col" data-i18n="equity.unacknowledged_rate" title="Dispatched alerts that were never acknowledged. Not a false-positive measure: an unactioned dispatch may be a poor alert or a missed response.">Not acknowledged</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -518,9 +518,12 @@
 
         </div>
       </aside>
-    </div>
+    </main>
 
-    <footer class="statusbar" role="status" aria-live="polite" aria-atomic="false">
+    <!-- role="status" on the <footer> suppressed the implicit contentinfo
+         landmark. The live region moves onto an inner element instead. -->
+    <footer class="statusbar">
+      <div class="statusbar-live" role="status" aria-live="polite" aria-atomic="false">
       <div id="sourceDots" class="source-dots" aria-hidden="true"></div>
       <span id="status" class="status-text"></span>
       <span id="queuedCount" class="queued-count" hidden></span>
@@ -535,6 +538,7 @@
           <span data-i18n="statusbar.median_lag">Median lag</span>: <span id="medianLag">—</span>
           <span id="lagDot" class="dot dot-ok"></span>
         </span>
+      </div>
       </div>
     </footer>
 

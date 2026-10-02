@@ -133,13 +133,33 @@
         text-transform: uppercase;
         letter-spacing: 0.02em;
       }
-      .chip-critical { background: var(--sev-critical, #c0392b); color: #fff; }
-      .chip-high { background: var(--sev-high, #e67e22); color: #fff; }
-      .chip-medium { background: var(--sev-medium, #f1c40f); color: #000; }
-      .chip-low { background: var(--sev-low, #27ae60); color: #fff; }
-      .chip-unknown { background: var(--stroke); color: var(--ink-muted); }
-      .chip-ok { background: var(--ok, #27ae60); color: #fff; }
-      .chip-neutral { background: var(--stroke); color: var(--ink); }
+      /* These put white text on the raw severity hue at 0.68rem: measured at
+         ~3.2:1 for critical, ~2.5:1 for high and ~2.2:1 for low — three of four
+         below the 4.5:1 WCAG AA floor, on the single most operationally urgent
+         attribute in the product. The #c0392b-style fallbacks in the old rule
+         were accessible, but tokens.css shadows every one of them with a light
+         OKLCH value, so the fallbacks could never fire and the accessible
+         colours were dead code.
+
+         Severity is now a tint of the hue with the body ink on top: the hue
+         still reads at a glance, the text clears the floor, and every surface
+         resolves severity the same way. The text label is always present, so
+         meaning never depends on colour alone. */
+      .chip-critical,
+      .chip-high,
+      .chip-medium,
+      .chip-low,
+      .chip-ok {
+        color: var(--ink);
+        font-size: var(--text-xs);
+      }
+      .chip-critical { background: color-mix(in oklch, var(--sev-critical) 20%, transparent); box-shadow: inset 0 0 0 1px var(--sev-critical); }
+      .chip-high     { background: color-mix(in oklch, var(--sev-high) 20%, transparent);     box-shadow: inset 0 0 0 1px var(--sev-high); }
+      .chip-medium   { background: color-mix(in oklch, var(--sev-medium) 20%, transparent);   box-shadow: inset 0 0 0 1px var(--sev-medium); }
+      .chip-low      { background: color-mix(in oklch, var(--sev-low) 20%, transparent);      box-shadow: inset 0 0 0 1px var(--sev-low); }
+      .chip-ok       { background: color-mix(in oklch, var(--ok) 20%, transparent);          box-shadow: inset 0 0 0 1px var(--ok); }
+      .chip-unknown,
+      .chip-neutral { background: var(--surface); color: var(--ink-muted); }
 
       /* Collapsibles */
       .collapsible {
@@ -246,7 +266,8 @@
     </style>
   </head>
   <body>
-    <main id="app">
+    <a class="skip-link" href="#app">Skip to district content</a>
+    <main id="app" tabindex="-1">
       <div id="loading-msg">Loading...</div>
     </main>
 

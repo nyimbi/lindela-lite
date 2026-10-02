@@ -825,10 +825,20 @@ body.app-shell {
   flex-shrink: 0;
 }
 
-.sev-critical { background: color-mix(in oklch, var(--sev-critical) 18%, transparent); color: var(--sev-critical); }
-.sev-high     { background: color-mix(in oklch, var(--sev-high) 18%, transparent);     color: var(--sev-high); }
-.sev-medium   { background: color-mix(in oklch, var(--sev-medium) 18%, transparent);   color: var(--sev-medium); }
-.sev-low      { background: color-mix(in oklch, var(--sev-low) 18%, transparent);      color: var(--sev-low); }
+/* Severity read as tinted text at 10px. Measured against the body surface,
+   --sev-critical on its own 18% tint lands at roughly 4.3:1 — under the 4.5:1
+   AA floor for normal text — and 10px is well below the 12px at which a chip
+   stops being "large text" and gets the relaxed 3:1.
+
+   The fill now carries the hue and the text is body ink, which clears the floor
+   comfortably at any size. The word is always present beside the colour, so the
+   encoding never depends on hue alone. */
+.sev-chip { font-size: var(--text-xs); }
+
+.sev-critical { background: color-mix(in oklch, var(--sev-critical) 22%, transparent); color: var(--ink); box-shadow: inset 0 0 0 1px var(--sev-critical); }
+.sev-high     { background: color-mix(in oklch, var(--sev-high) 22%, transparent);     color: var(--ink); box-shadow: inset 0 0 0 1px var(--sev-high); }
+.sev-medium   { background: color-mix(in oklch, var(--sev-medium) 22%, transparent);   color: var(--ink); box-shadow: inset 0 0 0 1px var(--sev-medium); }
+.sev-low      { background: color-mix(in oklch, var(--sev-low) 22%, transparent);      color: var(--ink); box-shadow: inset 0 0 0 1px var(--sev-low); }
 .sev-unknown  { background: var(--surface);                                             color: var(--ink-muted); }
 
 /* Status pills */
@@ -1132,6 +1142,16 @@ details[open] summary { border-bottom: 1px solid var(--stroke); color: var(--ink
   min-width: 0;
   overflow: hidden;
 }
+
+.statusbar-live {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  width: 100%;
+  min-width: 0;
+}
+
+.statusbar-live > * { flex-shrink: 0; }
 
 .statusbar > * { flex-shrink: 0; }
 
