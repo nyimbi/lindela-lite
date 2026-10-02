@@ -51,6 +51,26 @@ no existing endpoint changed shape.
   travels further than standing water, not a slope-stability or volume estimate.
   Treat it as "this road needs checking", not "this road is safe".
 
+### Fixed
+
+- **Payload hashing ignored record metadata, so connector corrections could never
+  reach stored data.** `canonicalHash` passed `Object.keys(record)` as
+  `JSON.stringify`'s second argument, which is a property *allowlist applied at
+  every nesting level*: `metadata` survived as a key with every key inside it
+  stripped, so a record's hash was identical no matter what its metadata said.
+  `mergeById` skips an incoming record whose hash already exists, so any change
+  confined to metadata was silently discarded on re-ingest. Connector metadata is
+  where the qualifications live — `model_limit`, `episode_declared`,
+  `geolocation_note`, `index_note` — so the one thing that must be able to change
+  was the one thing that could not.
+
+  Found because the seasonal strip reported "0 of 5 overlapping seasons" while
+  `classifyNino34` computed 3 on the live feed and the connector emitted it: the
+  field had never reached the stored record. Now canonical JSON with keys sorted
+  at every depth, stable under reordering at any depth. The strip reads
+  "3 of 5 seasons" with three pips filled, matching the computation, and
+  `episode_declared` stays false because three is not five.
+
 ### Changed
 
 - `?bbox=` now returns events the source reported as an **area** overlapping the

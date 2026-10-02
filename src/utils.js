@@ -5,12 +5,37 @@ export function stableId(prefix, value) {
   return `${prefix}_${hash}`
 }
 
+/**
+ * Deterministic JSON with object keys sorted at every depth.
+ *
+ * The previous implementation used `JSON.stringify(filtered, Object.keys(filtered))`.
+ * The second argument to JSON.stringify is a property *allowlist* which applies at
+ * every level of nesting, so only the top-level keys survived — `metadata` was
+ * kept as a key but every key inside it was dropped, and the hash of a record was
+ * identical no matter what its metadata said.
+ *
+ * That is not cosmetic. mergeById skips an incoming record whose payload_hash
+ * already exists, so a connector whose metadata changed — a corrected model
+ * limit, a flipped episode_declared, a new geolocation note — produced the same
+ * hash and the update was silently discarded. Since connector metadata is where
+ * the qualifications and provenance live, the one thing that must be able to
+ * change is exactly what could not.
+ */
+function canonicalise(value) {
+  if (Array.isArray(value)) return value.map(canonicalise)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonicalise(value[key])]),
+    )
+  }
+  return value
+}
+
 export function canonicalHash(record, ignoreKeys = ['id', 'payload_hash', 'ingested_at', 'generated_at', 'updated_at', 'created_at', 'first_seen_at']) {
   const filtered = Object.fromEntries(
     Object.entries(record).filter(([key]) => !ignoreKeys.includes(key))
   )
-  const canonical = JSON.stringify(filtered, Object.keys(filtered).sort())
-  return crypto.createHash('sha256').update(canonical).digest('hex')
+  return crypto.createHash('sha256').update(JSON.stringify(canonicalise(filtered))).digest('hex')
 }
 
 export function nowIso() {

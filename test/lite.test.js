@@ -4295,3 +4295,73 @@ describe('Lindela Lite OpenAPI coverage', () => {
       `contract says ${declared[1]} but package.json says ${pkg.version}`)
   })
 })
+
+describe('Lindela Lite payload hashing', () => {
+  it('changes when only metadata changes', async () => {
+    // The hash used JSON.stringify's second argument as a property allowlist,
+    // which applies at every nesting level, so `metadata` was kept as a key and
+    // every key inside it was dropped. A record's hash was therefore identical
+    // no matter what its metadata said.
+    const { canonicalHash } = await import('../src/utils.js')
+    const base = { source: 'noaa_enso', source_id: '2026-08', value: 2.17, metadata: { phase: 'el_nino_advisory', overlapping_seasons: 0 } }
+    const amended = { ...base, metadata: { ...base.metadata, overlapping_seasons: 3 } }
+
+    assert.notEqual(canonicalHash(base), canonicalHash(amended),
+      'a metadata change must change the hash, or a corrected disclaimer can never reach stored data')
+
+    const relabelled = { ...base, metadata: { ...base.metadata, phase: 'neutral' } }
+    assert.notEqual(canonicalHash(base), canonicalHash(relabelled))
+  })
+
+  it('ignores key order at every depth', async () => {
+    const { canonicalHash } = await import('../src/utils.js')
+    const one = { source: 'x', value: 1, metadata: { a: 2, b: { d: 4, c: 3 } } }
+    const two = { metadata: { b: { c: 3, d: 4 }, a: 2 }, value: 1, source: 'x' }
+    assert.equal(canonicalHash(one), canonicalHash(two),
+      'the hash must be stable under reordering, or every ingest looks like a change')
+
+    const arrOne = { source: 'x', metadata: { list: [{ b: 2, a: 1 }] } }
+    const arrTwo = { source: 'x', metadata: { list: [{ a: 1, b: 2 }] } }
+    assert.equal(canonicalHash(arrOne), canonicalHash(arrTwo))
+  })
+
+  it('propagates a metadata-only change through the store merge', async () => {
+    // mergeById skips an incoming record whose payload_hash already exists. With
+    // metadata invisible to the hash, re-ingesting a connector could never update
+    // a record whose corrections lived in metadata — which is where model limits,
+    // episode declarations and geolocation notes are kept.
+    const { mergeById } = await import('../src/store.js')
+    const { canonicalHash } = await import('../src/utils.js')
+
+    const stored = {
+      id: 'obs-1', source: 'noaa_enso', source_id: '2026-08', value: 2.17,
+      metadata: { phase: 'el_nino_advisory', advisory_run_months: 4, episode_declared: false },
+    }
+    stored.payload_hash = canonicalHash(stored)
+    stored.first_seen_at = '2026-09-01T00:00:00.000Z'
+
+    const incoming = {
+      ...stored,
+      metadata: { ...stored.metadata, overlapping_seasons: 3, advisory_run_months: 4 },
+    }
+    delete incoming.payload_hash
+    delete incoming.first_seen_at
+    incoming.payload_hash = canonicalHash(incoming)
+
+    const merged = mergeById([stored], [incoming])
+    assert.equal(merged.length, 1)
+    assert.equal(merged[0].metadata.overlapping_seasons, 3,
+      'the corrected metadata must reach the stored record')
+  })
+
+  it('still treats a byte-identical re-ingest as a no-op', async () => {
+    const { mergeById } = await import('../src/store.js')
+    const { canonicalHash } = await import('../src/utils.js')
+    const rec = { id: 'obs-1', source: 'x', value: 1, metadata: { note: 'same' } }
+    rec.payload_hash = canonicalHash(rec)
+    const again = { ...rec }
+    again.payload_hash = canonicalHash(again)
+    const merged = mergeById([rec], [again])
+    assert.equal(merged.length, 1, 'an unchanged record must not be duplicated')
+  })
+})
