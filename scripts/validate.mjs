@@ -248,5 +248,7 @@ for (const { phrase, claimed } of GUIDE_CLAIMS) {
 // effect: this throws if a flood-probability or return-period field appears
 // anywhere in the shipped surface while no model basis has been agreed.
 await import('./check-no-flood-probability.mjs')
+// i18n completeness: a surface must not offer a language it cannot render.
+await import('./check-i18n.mjs')
 
 console.log('validation ok')

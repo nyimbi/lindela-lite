@@ -45,31 +45,83 @@ export async function initOfflineQueue() {
       const tx = this.db.transaction(['requests'], 'readwrite')
       const store = tx.objectStore('requests')
       store.add({ path, options, timestamp: Date.now() })
+      window.dispatchEvent(new CustomEvent('lindela-queue-changed'))
+      // Ask the service worker to register a Background Sync. The page flushes
+      // on `online`, on an interval and on load, but none of those fire if the
+      // tab is closed before connectivity returns — and a health worker closing
+      // the app is normal, not an edge case. Best effort: unsupported in some
+      // browsers and non-secure contexts, where the in-page flush still applies.
+      try {
+        const reg = await navigator.serviceWorker?.ready
+        if (reg?.sync) await reg.sync.register('lindela-queue')
+      } catch {
+        // No Background Sync here; the periodic in-page flush covers it.
+      }
     },
+    /** How many reports are waiting to send. Surfaced so the promise is visible. */
+    async pendingCount() {
+      if (!this.db) return 0
+      try {
+        const tx = this.db.transaction(['requests'], 'readonly')
+        return await new Promise((resolve) => {
+          const req = tx.objectStore('requests').count()
+          req.onsuccess = () => resolve(req.result || 0)
+          req.onerror = () => resolve(0)
+        })
+      } catch {
+        return 0
+      }
+    },
+
+    /**
+     * Replay queued requests.
+     *
+     * This existed but was never called from anywhere, so a report queued while
+     * offline sat in IndexedDB forever. The CHW app told the health worker
+     * "Queued (will send when connected)" and the report was silently lost —
+     * the UI made a promise the code never kept.
+     *
+     * Returns the number of records attempted, and never throws: a failing
+     * request must stay queued for the next cycle rather than break the cycle.
+     */
     async flush() {
-      if (!this.db || !navigator.onLine) return
-      const tx = this.db.transaction(['requests'], 'readonly')
-      const store = tx.objectStore('requests')
-      const req = store.getAll()
-      return new Promise((resolve) => {
-        req.onsuccess = async () => {
-          const records = req.result
-          for (const record of records) {
-            try {
-              await apiFetch(record.path, record.options)
-              const delTx = this.db.transaction(['requests'], 'readwrite')
-              delTx.objectStore('requests').delete(record.id)
-            } catch {
-              // Retry in next cycle
-            }
-          }
-          resolve(records.length)
+      if (!this.db || !navigator.onLine) return 0
+      let records
+      try {
+        const tx = this.db.transaction(['requests'], 'readonly')
+        records = await new Promise((resolve) => {
+          const req = tx.objectStore('requests').getAll()
+          req.onsuccess = () => resolve(req.result || [])
+          req.onerror = () => resolve([])
+        })
+      } catch {
+        return 0
+      }
+      let sent = 0
+      for (const record of records) {
+        try {
+          await apiFetch(record.path, record.options)
+          const delTx = this.db.transaction(['requests'], 'readwrite')
+          delTx.objectStore('requests').delete(record.id)
+          sent += 1
+        } catch {
+          // Still failing: keep it queued and try again next cycle.
         }
-        req.onerror = () => resolve(0)
-      })
+      }
+      this.lastFlush = { at: new Date().toISOString(), attempted: records.length, sent }
+      window.dispatchEvent(new CustomEvent('lindela-queue-flushed', { detail: this.lastFlush }))
+      return records.length
     },
   }
   await window.lindelaQueue.init()
+
+  // Replay on reconnect, and periodically while connected, because a link can
+  // come back without the browser firing `online` — and because a request queued
+  // while the tab was closed has no event to wait for at all.
+  const queue = window.lindelaQueue
+  window.addEventListener('online', () => { queue.flush() })
+  setInterval(() => { queue.flush() }, 30_000)
+  queue.flush()
 }
 
 export async function apiFetch(path, { method = 'GET', body, headers = {}, token } = {}) {
@@ -115,18 +167,35 @@ export async function initI18n(defaultLocale = 'en') {
       }
       return text
     },
+    /**
+     * Switch locale, layering it over English.
+     *
+     * This used to merge the new locale into whatever was already in the shared
+     * catalogue, so switching en -> so -> fr left Somali strings behind for every
+     * key French did not define: switching was neither idempotent nor reversible.
+     * English is now re-read as the base each time, so the result depends only on
+     * which locale is selected and not on the path taken to get there.
+     */
     async set(locale) {
+      const base = {}
       try {
-        const res = await fetch(`/i18n/${locale}.json`)
-        if (res.ok) {
-          const newCatalog = await res.json()
-          Object.assign(catalog, newCatalog)
-          this.current = locale
-          applyI18n()
-        }
+        const res = await fetch('/i18n/en.json')
+        if (res.ok) Object.assign(base, await res.json())
       } catch {
-        // Stay on current locale
+        // Keep whatever we have.
       }
+      for (const key of Object.keys(catalog)) delete catalog[key]
+      Object.assign(catalog, base)
+      if (locale !== 'en') {
+        try {
+          const res = await fetch(`/i18n/${locale}.json`)
+          if (res.ok) Object.assign(catalog, await res.json())
+        } catch {
+          // Keep the English layer.
+        }
+      }
+      this.current = locale
+      applyI18n()
     },
   }
 

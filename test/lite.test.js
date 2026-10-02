@@ -4564,3 +4564,37 @@ describe('Lindela Lite absence is not zero', () => {
     assert.ok(deleted.deleted_at)
   })
 })
+
+describe('Lindela Lite locale fallback', () => {
+  it('layers a locale over English rather than replacing it', async () => {
+    // loadLocale replaced the catalogue outright, so any key the active locale
+    // lacked rendered as the raw key name. The dashboard offered nine languages
+    // and was complete in two, so a Somali operator saw `equity.acknowledged`
+    // as a column header, and the equity table overflowed its 360px rail
+    // because a key name is longer than a word.
+    const app = await fs.readFile('public/app.js', 'utf8')
+    assert.ok(!/state\.catalog = await res\.json\(\)/.test(app),
+      'loadLocale must not replace the catalogue with only the active locale')
+
+    const runtime = await fs.readFile('public/shared/runtime.js', 'utf8')
+    const setBody = runtime.slice(runtime.indexOf('async set(locale)'))
+    assert.ok(!/Object\.assign\(catalog, newCatalog\)/.test(setBody),
+      'switching locale must re-read English as the base, not merge into whatever was last loaded')
+  })
+
+  it('keeps no raw key names in any offered locale for the CHW flow', async () => {
+    const html = await fs.readFile('public/chw/index.html', 'utf8')
+    const keys = [...new Set([...html.matchAll(/data-i18n(?:-title)?="(chw\.[a-z_]+)"/g)].map((m) => m[1]))]
+    const select = html.match(/<select[^>]*id="locale-select"[^>]*>([\s\S]*?)<\/select>/)
+    assert.ok(select, 'the CHW app must have a language selector')
+    const offered = [...select[1].matchAll(/<option\s+value="([a-z]{2,3})"/g)].map((m) => m[1])
+    assert.ok(offered.length >= 2, 'the CHW app must offer more than one language')
+
+    for (const code of offered) {
+      const locale = JSON.parse(await fs.readFile(`public/i18n/${code}.json`, 'utf8'))
+      const missing = keys.filter((k) => !(k in locale))
+      assert.deepEqual(missing, [],
+        `the CHW app offers "${code}" but these strings are missing, so they render as raw keys: ${missing.join(', ')}`)
+    }
+  })
+})

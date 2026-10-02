@@ -455,6 +455,70 @@ async function main() {
       pageErrors.length === before, (pageErrors[pageErrors.length - 1] || '').slice(0, 60))
   }
 
+  // No locale may render an i18n key as user-visible text. The catalogue was
+  // replaced outright at boot, so a partially translated locale printed
+  // `equity.acknowledged` as a column header. English is now the base layer, so
+  // a gap degrades to English — which is a translation gap, reported by
+  // scripts/check-i18n.mjs, rather than a broken screen.
+  await send('Page.navigate', { url: `${BASE}/?cb=${Date.now()}` })
+  await new Promise((r) => setTimeout(r, 2800))
+  const offeredUi = await evaluate(`(() => {
+    // The dashboard's own control lives in the topbar as #locale-select; the
+    // navbar renders a separate switcher only when a surface asks for one.
+    const s = document.getElementById('locale-select');
+    return s ? [...s.options].map((o) => o.value) : [];
+  })()`)
+  check('the dashboard offers more than one language', offeredUi.length >= 2, offeredUi.join(', '))
+
+  for (const locale of offeredUi) {
+    await evaluate(`localStorage.setItem('lindela_lite_locale', '${locale}')`)
+    await send('Page.navigate', { url: `${BASE}/?cb=${Date.now()}` })
+    await new Promise((r) => setTimeout(r, 2600))
+    await evaluate(`(() => { const s = document.getElementById('locale-select');
+      if (s) { s.value = '${locale}'; s.dispatchEvent(new Event('change', { bubbles: true })); } return true })()`)
+    await new Promise((r) => setTimeout(r, 1200))
+    const shown = await evaluate(`(() => {
+      const text = document.body.innerText;
+      // Keys look like namespace.token; exclude real filenames and URLs.
+      const keys = (text.match(/\\b[a-z]{2,6}\\.[a-z_]{3,}\\b/g) || [])
+        .filter((k) => !/\\.(md|css|js|json|com|org|html|svg|png)\\b/.test(k));
+      return { lang: document.documentElement.lang, keys: [...new Set(keys)].slice(0, 5), chars: text.trim().length };
+    })()`)
+    check(`dashboard renders no raw i18n keys in "${locale}"`,
+      shown.keys.length === 0 && shown.chars > 100,
+      shown.keys.length ? `raw: ${shown.keys.join(', ')}` : `lang=${shown.lang}, ${shown.chars} chars`)
+  }
+  await evaluate(`localStorage.removeItem('lindela_lite_locale'); true`)
+
+  // Every language the CHW app offers must actually render. It previously
+  // offered nine and had CHW strings for three, so a health worker selecting
+  // Karimojong or Français read `chw.symptom_fever` as a button label. The
+  // element existed, the text was non-empty and there were no console errors —
+  // only reading the screen showed the app was unreadable in the field.
+  await send('Page.navigate', { url: `${BASE}/chw?cb=${Date.now()}` })
+  await new Promise((r) => setTimeout(r, 2800))
+  const offeredLocales = await evaluate(`[...document.getElementById('locale-select').options].map(o => o.value)`)
+  check('the CHW app offers at least one language', offeredLocales.length >= 1, offeredLocales.join(', '))
+
+  for (const locale of offeredLocales) {
+    await evaluate(`(async () => {
+      const s = document.getElementById('locale-select');
+      s.value = '${locale}';
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`)
+    await new Promise((r) => setTimeout(r, 1000))
+    const rendered = await evaluate(`(() => {
+      const text = document.body.innerText;
+      const rawKeys = (text.match(/\\b[a-z]+\\.[a-z_]+\\b/g) || []).filter((k) => k.startsWith('chw.'));
+      const buttons = [...document.querySelectorAll('#homeScreen button')].map((b) => b.textContent.trim());
+      return { rawKeys: [...new Set(rawKeys)].slice(0, 5), buttons, emptyButtons: buttons.filter((b) => !b).length };
+    })()`)
+    check(`CHW renders fully in "${locale}" with no raw keys`,
+      rendered.rawKeys.length === 0 && rendered.emptyButtons === 0 && rendered.buttons.length === 3,
+      rendered.rawKeys.length ? `raw keys: ${rendered.rawKeys.join(', ')}` : rendered.buttons.join(' / '))
+  }
+
   // The CHW reporting flow, walked the way a health worker walks it. Loading
   // /chw and finding no console errors is not the same as the flow working: the
   // wizard is five screens with a submit at the end, and nothing else in the

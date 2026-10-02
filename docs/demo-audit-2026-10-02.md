@@ -41,6 +41,10 @@ produced it. Two green suites had been passing for the wrong reason.
 | 11 | README listed 8 of 11 sources and claimed report distribution was absent — a capability the app has. | doc read | `53a7ce7` |
 | 12 | OpenAPI contract covered 63 of 89 endpoints; equity, parametric rules, webhooks, KPI, lineage, scenarios and CHW routes were missing. 26 real, reachable endpoints. | doc read | `493a743` |
 | 13 | `canonicalHash` was blind to metadata, so no connector metadata correction could ever reach stored data. | a UI number disagreeing with its own computation | `393ec55` |
+| 14 | A CHW field report with no GPS fix was stored at (0, 0) — Null Island. The client used (0, 0) as its "no location" sentinel and the server wrote `latitude || 0`. | walking the CHW wizard on a phone | `cf0dfeb` |
+| 15 | The offline queue never replayed. `lindelaQueue.flush()` was called from nowhere, so a report queued without signal sat in IndexedDB while the UI promised it would send. | the same walk, offline | see changelog |
+| 16 | The CHW app offered nine languages and had CHW strings for three, so a health worker read `chw.symptom_fever` as a button label. | reading the rendered text | see changelog |
+| 17 | `loadLocale` replaced the catalogue, so a partially translated locale printed raw keys — and the equity table overflowed its rail again, because a key name is longer than a word. | checking a fix that appeared to regress | see changelog |
 
 ## Two green suites passing for the wrong reason
 

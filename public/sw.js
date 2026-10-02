@@ -80,72 +80,63 @@ self.addEventListener('sync', (event) => {
 })
 
 self.addEventListener('message', (event) => {
-	if (event.data.type === 'queueRequest') {
-		enqueueRequest(event.data.request)
+	if (event.data.type === 'flushQueue') {
+		event.waitUntil(replayQueue())
 	}
 })
 
+/**
+ * Replay the offline queue.
+ *
+ * There was a second queue here under a different database name
+ * (`lindela-queue`) that nothing ever wrote to and nothing ever registered a
+ * sync tag for, alongside the page's own queue (`lindela_queue`). Two
+ * implementations, one of them dead, and neither replaying anything: a report
+ * queued offline sat in IndexedDB until the tab was closed.
+ *
+ * This now reads the page's queue, so there is exactly one set of pending
+ * requests and the service worker and the page cannot disagree about what is
+ * outstanding. The page also flushes on `online`, on an interval and on load;
+ * this path covers the case the tab was closed, which no in-page event can.
+ */
 async function replayQueue() {
 	const db = await openQueueDb()
-	const tx = db.transaction('lindela-queue', 'readonly')
-	const store = tx.objectStore('lindela-queue')
-	const requests = await new Promise((resolve, reject) => {
-		const req = store.getAll()
-		req.onsuccess = () => resolve(req.result)
+	const tx = db.transaction('requests', 'readonly')
+	const records = await new Promise((resolve, reject) => {
+		const req = tx.objectStore('requests').getAll()
+		req.onsuccess = () => resolve(req.result || [])
 		req.onerror = () => reject(req.error)
 	})
 
 	const succeeded = []
-	for (const item of requests) {
+	for (const item of records) {
 		try {
-			const response = await fetch(item.url, {
-				method: item.method,
-				headers: item.headers,
-				body: item.body,
-			})
+			const response = await fetch(item.path, item.options)
 			if (response.ok) succeeded.push(item.id)
 		} catch {
-			// Skip failures; retry next sync
+			// Still failing: keep it queued and try again on the next sync.
 		}
 	}
 
 	if (succeeded.length) {
-		const deleteTx = db.transaction('lindela-queue', 'readwrite')
-		const deleteStore = deleteTx.objectStore('lindela-queue')
-		for (const id of succeeded) {
-			deleteStore.delete(id)
-		}
+		const deleteTx = db.transaction('requests', 'readwrite')
+		const deleteStore = deleteTx.objectStore('requests')
+		for (const id of succeeded) deleteStore.delete(id)
 		await new Promise((resolve, reject) => {
 			deleteTx.oncomplete = () => resolve()
 			deleteTx.onerror = () => reject(deleteTx.error)
 		})
 	}
-}
-
-async function enqueueRequest(request) {
-	const db = await openQueueDb()
-	const tx = db.transaction('lindela-queue', 'readwrite')
-	const store = tx.objectStore('lindela-queue')
-	store.add({
-		id: `${Date.now()}-${Math.random()}`,
-		url: request.url,
-		method: request.method,
-		headers: request.headers || {},
-		body: request.body,
-	})
-	await new Promise((resolve, reject) => {
-		tx.oncomplete = () => resolve()
-		tx.onerror = () => reject(tx.error)
-	})
+	return succeeded.length
 }
 
 function openQueueDb() {
 	return new Promise((resolve, reject) => {
-		const req = indexedDB.open('lindela-queue', 1)
+		const req = indexedDB.open('lindela_queue', 1)
 		req.onupgradeneeded = (event) => {
 			const db = event.target.result
-			if (!db.objectStoreNames.contains('lindela-queue')) {
-				db.createObjectStore('lindela-queue', { keyPath: 'id' })
+			if (!db.objectStoreNames.contains('requests')) {
+				db.createObjectStore('requests', { keyPath: 'id', autoIncrement: true })
 			}
 		}
 		req.onsuccess = () => resolve(req.result)

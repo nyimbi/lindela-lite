@@ -105,17 +105,37 @@ function debounce(fn, ms) {
 // =============================================================
 // i18n
 // =============================================================
+/**
+ * Load a locale with English as the base layer.
+ *
+ * This used to replace the catalogue outright, so any key the active locale did
+ * not have rendered as the raw key name. The dashboard offered nine languages
+ * and was complete in two, so a Somali or French operator saw
+ * `equity.acknowledged` as a column header. A missing translation should degrade
+ * to English, not to a key.
+ *
+ * English is loaded first and the active locale layered over it, so a partially
+ * translated locale shows English where it has no translation and its own text
+ * where it does. Coverage is reported by scripts/check-i18n.mjs, so a gap is
+ * visible rather than silently masked.
+ */
 async function loadLocale(locale) {
+  const catalog = {}
   try {
-    const res = await fetch(`/i18n/${locale}.json`)
-    if (!res.ok) throw new Error('locale missing')
-    state.catalog = await res.json()
+    const base = await fetch('/i18n/en.json')
+    if (base.ok) Object.assign(catalog, await base.json())
   } catch {
-    if (locale !== 'en') {
-      const fallback = await fetch('/i18n/en.json')
-      state.catalog = fallback.ok ? await fallback.json() : {}
+    // No English either: the key itself is all we have.
+  }
+  if (locale !== 'en') {
+    try {
+      const res = await fetch(`/i18n/${locale}.json`)
+      if (res.ok) Object.assign(catalog, await res.json())
+    } catch {
+      // Keep the English layer.
     }
   }
+  state.catalog = catalog
   applyI18n()
 }
 

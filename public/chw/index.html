@@ -324,16 +324,24 @@
       <div class="header-brand" data-i18n="chw.title">Lindela CHW</div>
       <div class="header-controls">
         <div class="status-dot" id="statusDot"></div>
+        <!--
+          Only languages whose CHW strings are actually complete. This selector
+          previously offered nine and had CHW translations for three: selecting
+          Karimojong or Français put a health worker through the whole reporting
+          flow reading `chw.symptom_fever` and `chw.submit` as literal button
+          labels. A missing translation is honest; an offered one that renders
+          raw keys is worse than absent.
+
+          Dinka is deliberately absent too. It has three strings, all of them
+          correct, which is not a translation. Adding Karimojong, Ngakarimojong,
+          Amharic, Arabic, French and Portuguese properly means working with
+          speakers of those languages, not inventing strings. scripts/check-i18n
+          fails if this list and the locale files disagree.
+        -->
         <select id="locale-select" aria-label="Language">
           <option value="en">English</option>
           <option value="sw">Swahili</option>
           <option value="so">Somali</option>
-          <option value="din">Dinka</option>
-          <option value="km">Karimojong</option>
-          <option value="nk">Ngakarimojong</option>
-          <option value="fr">Français</option>
-          <option value="pt">Português</option>
-          <option value="am">አማርኛ</option>
         </select>
       </div>
     </header>
