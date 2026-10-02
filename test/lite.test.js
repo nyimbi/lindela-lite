@@ -463,6 +463,56 @@ describe('Lindela Lite report content and scope', () => {
   })
 })
 
+describe('Lindela Lite invented-uncertainty guard', () => {
+  it('does not synthesize ensemble percentiles from a point value', async () => {
+    // open-meteo read a deterministic forecast and manufactured p10/p50/p90 with
+    // a spread of `0.25 + (1 - probability/100) * 0.75`, publishing them under the
+    // field names a real probabilistic forecast uses. At a reported probability of
+    // 10% that made p90 about 1.9x the observed precipitation, and the risk scorer
+    // preferred p90 over the point value.
+    const { ENSEMBLE_MODEL_LIMIT } = await import('../src/connectors/open-meteo.js')
+    assert.match(ENSEMBLE_MODEL_LIMIT, /Deterministic point forecast only/)
+    const source = await fs.readFile(new URL('../src/connectors/open-meteo.js', import.meta.url), 'utf8')
+    assert.ok(!/function synthesizeEnsemble/.test(source), 'the synthesizer must be gone, not just unused')
+    assert.ok(!/ensemble_p90:\s*Number\(p90/.test(source), 'no percentile may be computed from a spread')
+  })
+
+  it('does not publish zero percentiles for a source that has none', async () => {
+    // glofas emitted ensemble_p10/p50/p90 of 0, which reads as a certain
+    // forecast of zero rather than the absence of one.
+    const source = await fs.readFile(new URL('../src/connectors/glofas.js', import.meta.url), 'utf8')
+    assert.ok(!/ensemble_p90:\s*0\b/.test(source), 'a missing ensemble must be null, not zero')
+    assert.match(source, /ensemble_p10:\s*null/)
+  })
+
+  it('only prefers a percentile that came from a real ensemble', () => {
+    // A synthesized percentile must not raise the score or claim ensemble
+    // coverage, or the absence of a probabilistic forecast presents as
+    // quantified uncertainty.
+    const base = {
+      regions: [{ name: 'Turkana', lat: 3.1167, lon: 35.6 }],
+      climate_observations: [{
+        id: 'obs-1', region_name: 'Turkana', latitude: 3.12, longitude: 35.6,
+        precipitation_mm: 10, precipitation_probability_pct: 10,
+        ensemble_p90: 19.25, ensemble_p10: 0, ensemble_p50: 10,
+      }],
+      hazard_events: [], conflict_events: [], service_assets: [], impact_assessments: [],
+      incidents: [], interventions: [], intervention_tasks: [], field_reports: [],
+      response_resources: [], data_quality: [],
+    }
+    const withFake = computeFloodRisk(base)[0]
+    assert.ok(!withFake.drivers.ensemble_used, 'a synthesized percentile is not ensemble coverage')
+    assert.equal(withFake.drivers.precipitation_mm, 10, 'the real point value is scored, not the inflated p90')
+
+    const withReal = computeFloodRisk({
+      ...base,
+      climate_observations: [{ ...base.climate_observations[0], ensemble_source: 'open_meteo_ensemble' }],
+    })[0]
+    assert.equal(withReal.drivers.ensemble_used, true, 'a genuine ensemble is still used')
+    assert.ok(Math.abs(withReal.drivers.precipitation_mm - 19.25) < 0.1, `expected ~19.25, got ${withReal.drivers.precipitation_mm}`)
+  })
+})
+
 describe('Lindela Lite scenario workbench', () => {
   const testData = {
     climate_observations: [

@@ -40,14 +40,26 @@ export function computeFloodRisk(data, options = {}) {
     const climate = nearby(data.climate_observations, region, 125)
     const hazards = nearby(data.hazard_events.filter((event) => /flood|storm|disaster/i.test(event.event_type)), region, 250)
 
-    // Prefer bias-corrected values, else ensemble p90, else raw precipitation
+    // Bias-corrected value, else the deterministic point value.
+    //
+    // This used to prefer ensemble p90 over the point value. Those percentiles
+    // were synthesized from the same point value by an invented spread, so
+    // preferring them meant scoring against an inflated number — at a reported
+    // probability of 10%, p90 was about 1.9x the observed precipitation. A
+    // percentile is only preferred when a real probabilistic forecast supplied
+    // it, which is now identified by `ensemble_source`.
     const precipValues = climate.map((item) => {
       if (Number.isFinite(item.bias_corrected_precipitation_mm)) return Number(item.bias_corrected_precipitation_mm)
-      if (Number.isFinite(item.ensemble_p90)) return Number(item.ensemble_p90)
+      if (item.ensemble_source === 'open_meteo_ensemble' && Number.isFinite(item.ensemble_p90)) {
+        return Number(item.ensemble_p90)
+      }
       return Number(item.precipitation_mm || 0)
     })
     const precipitation = precipValues.reduce((sum, v) => sum + v, 0)
-    const hasEnsemble = climate.some((c) => Number.isFinite(c.ensemble_p90))
+    // Only a percentile from a genuine probabilistic forecast counts as ensemble
+    // coverage. Percentiles previously synthesized from a point value would
+    // otherwise always satisfy this and report uncertainty the data does not have.
+    const hasEnsemble = climate.some((c) => c.ensemble_source === 'open_meteo_ensemble' && Number.isFinite(c.ensemble_p90))
     const hasBiasCorrection = climate.some((c) => Number.isFinite(c.bias_corrected_precipitation_mm))
 
     const maxProbability = Math.max(0, ...climate.map((item) => Number(item.precipitation_probability_pct || 0)))

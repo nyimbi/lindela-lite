@@ -43,10 +43,14 @@ async function glofasIngest(options = {}) {
             country: null,
             latitude: null,
             longitude: null,
+            // No flood extent and no ensemble: this feed carries neither, and
+            // publishing zeros in the percentile fields made an absent
+            // probabilistic forecast look like a certain one.
             ensemble_members: [],
-            ensemble_p10: 0,
-            ensemble_p50: 0,
-            ensemble_p90: 0,
+            ensemble_p10: null,
+            ensemble_p50: null,
+            ensemble_p90: null,
+            model_limit: 'GloFAS feed carries no extent and no ensemble members; no flood probability is derived from it.',
             metadata: { provider: 'Copernicus GloFAS', feed },
           })
         }

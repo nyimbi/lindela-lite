@@ -3,22 +3,35 @@ import { DEFAULT_REGIONS } from '../schema.js'
 import { stableId } from '../utils.js'
 import { defineConnector } from './spec.js'
 
-function synthesizeEnsemble(pointValue, probabilityPct = 0) {
-  const value = Number(pointValue) || 0
-  const uncertainty = 0.25 + (1 - Math.min(100, Math.max(0, probabilityPct)) / 100) * 0.75
-  const spread = value * uncertainty
-  const p10 = Math.max(0, value - spread)
-  const p50 = value
-  const p90 = value + spread
+/**
+ * This connector reads a deterministic forecast, so it has no ensemble members to
+ * report and must not imply that it has.
+ *
+ * It used to invent them. A spread of `0.25 + (1 - probability/100) * 0.75` was
+ * applied to the single point value to manufacture p10/p50/p90, which were
+ * published under exactly the field names a probabilistic forecast uses. At a
+ * reported probability of 10% that made p90 roughly 1.9x the observed
+ * precipitation, and the risk scorer preferred p90 over the point value — so the
+ * flood risk score was inflated by an invented coefficient before it was even
+ * scaled by precipitation * 1.5.
+ *
+ * Invented uncertainty is worse than none: it looks calibrated, it is
+ * indistinguishable from a real ensemble downstream, and it moves a number
+ * someone dispatches resources on. Probabilistic members require Open-Meteo's
+ * ensemble endpoint and its real member set. Until that is wired up, the
+ * observation states the limit and carries no percentiles.
+ */
+export const ENSEMBLE_MODEL_LIMIT =
+  'Deterministic point forecast only; no ensemble members are produced. ' +
+  'Percentile fields are absent because this connector does not fetch a probabilistic forecast.'
+
+function withoutEnsemble() {
   return {
-    ensemble_members: [
-      { member_id: 'p10', value: Number(p10.toFixed(3)) },
-      { member_id: 'p50', value: Number(p50.toFixed(3)) },
-      { member_id: 'p90', value: Number(p90.toFixed(3)) },
-    ],
-    ensemble_p10: Number(p10.toFixed(3)),
-    ensemble_p50: Number(p50.toFixed(3)),
-    ensemble_p90: Number(p90.toFixed(3)),
+    ensemble_members: [],
+    ensemble_p10: null,
+    ensemble_p50: null,
+    ensemble_p90: null,
+    model_limit: ENSEMBLE_MODEL_LIMIT,
   }
 }
 
@@ -54,7 +67,7 @@ async function openMeteoIngest(options = {}) {
             precipitation_mm: Number(data.current.precipitation || 0),
             temperature_c: Number(data.current.temperature_2m || 0),
             humidity_pct: Number(data.current.relative_humidity_2m || 0),
-            ...synthesizeEnsemble(Number(data.current.precipitation || 0), 100),
+            ...withoutEnsemble(),
             metadata: { provider: 'Open-Meteo' },
           })
         }
@@ -75,7 +88,7 @@ async function openMeteoIngest(options = {}) {
             precipitation_probability_pct: Number(daily.precipitation_probability_max?.[i] || 0),
             temperature_max_c: Number(daily.temperature_2m_max?.[i] || 0),
             temperature_min_c: Number(daily.temperature_2m_min?.[i] || 0),
-            ...synthesizeEnsemble(precip, Number(daily.precipitation_probability_max?.[i] || 0)),
+            ...withoutEnsemble(),
             metadata: { provider: 'Open-Meteo', horizon: 'forecast' },
           })
         }

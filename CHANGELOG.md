@@ -56,6 +56,30 @@ no existing endpoint changed shape.
 
 ### Fixed
 
+- **The flood risk model was scoring against an invented uncertainty band.**
+  The Open-Meteo connector reads a *deterministic* forecast and has no ensemble
+  members to report. It used to manufacture them: a spread of
+  `0.25 + (1 - probability/100) * 0.75` was applied to the single point value to
+  produce `p10`/`p50`/`p90`, published under exactly the field names a real
+  probabilistic forecast uses. At a reported probability of 10% that made `p90`
+  about **1.9x the observed precipitation**.
+
+  The risk scorer preferred `ensemble_p90` over the point value, so every flood
+  score was computed against an inflated number before being multiplied by
+  `precipitation * 1.5`. 82 of 130 climate observations carried a synthesized
+  band and 8 of 16 risk scores reported `ensemble_used`. Invented uncertainty is
+  worse than none: it is indistinguishable from a calibrated ensemble downstream
+  and it moves a number someone dispatches resources on.
+
+  The connector no longer produces percentiles. Each observation states
+  `model_limit: "Deterministic point forecast only; no ensemble members are
+  produced."` and carries null percentiles. The scorer only prefers a percentile
+  when `ensemble_source` identifies a genuine probabilistic forecast, and
+  `drivers.ensemble_used` can no longer be raised by a synthesized value.
+  GloFAS, which carries neither an extent nor an ensemble, published
+  `ensemble_p10/p50/p90` of `0` — a certain forecast of zero rather than the
+  absence of one; those are now null with their own stated limit.
+
 - **233 of 280 hazard events were published to STAC at Null Island.** The STAC and
   OGC Features catalogues are what GIS tooling loads — QGIS, Earth Engine,
   planetary-computing clients — and `stacItem` guarded its coordinates with

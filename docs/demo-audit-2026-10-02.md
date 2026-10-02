@@ -77,6 +77,7 @@ produced it. Two green suites had been passing for the wrong reason.
 | 27 | The same ignored-parameter behaviour on the API: `?district=Bor` returned every incident in the collection, identical to sending no filter at all. | querying the list endpoints directly | `see changelog` |
 | 28 | District filtering matched nothing for interventions, tasks and dispatches, so `?district=Bor` reported 0 interventions while `/districts/Bor` reported 3 — one district, two answers. | comparing every endpoint against the district overview | `see changelog` |
 | 29 | `Number(null)` is `0`, so the STAC coordinate guard passed for location-less records: 233 of 280 hazard events published as `Point [0,0]`, bbox `[0,0,0,0]`. A collection bbox of `[0,0,1,1]` was fabricated for empty collections. | loading the OGC/STAC catalogue the way a GIS client would | `see changelog` |
+| 30 | The Open-Meteo connector invented `p10/p50/p90` from a single deterministic value with a made-up spread; the risk scorer preferred `p90`, so flood risk was scored against ~1.9x observed precipitation at 10% probability. 82 of 130 observations affected. | reading what the connector publishes versus what it fetched | `see changelog` |
 
 ## Two green suites passing for the wrong reason
 
