@@ -320,7 +320,10 @@ describe('NOAA CPC Nino 3.4 index', () => {
     assert.equal(latest.value, 2.17)
     assert.equal(latest.unit, 'degC')
     assert.equal(latest.metadata.phase, 'el_nino_advisory')
-    assert.equal(latest.metadata.index_used, 'ONI')
+    // Not 'ONI': the feed is the monthly anomaly, and the ONI is the three-month
+    // running mean of it. Naming the series accurately is the point.
+    assert.equal(latest.metadata.index_used, 'monthly nino34 sst anomaly')
+    assert.match(latest.metadata.index_note, /not an ONI/i)
   })
 
   it('leaves coordinates null so the index is not attributed to a district', async () => {

@@ -28,8 +28,18 @@ import { defineConnector } from './spec.js'
  * 2. Per NWS Public Information Statement 26-05, CPC now uses the Relative
  *    Oceanic Niño Index (RONI) for official ENSO monitoring. RONI is not
  *    published as a machine-readable monthly file at a stable keyless URL, so
- *    this connector reads ONI and says so in `index_used`. Reading ONI and
- *    labelling it RONI would be a fabricated capability.
+ *    this connector reads the CPC Niño 3.4 series and says exactly which series
+ *    in `index_used`. Reporting one index while labelling it as another would be
+ *    a fabricated capability.
+ *
+ * 3. What `value` is, stated precisely. The feed is the CPC *monthly* detrended
+ *    Niño 3.4 SST anomaly — one number per month. The ONI is by definition the
+ *    three-month running mean of exactly these numbers, so `value` is not an
+ *    ONI and must not be labelled as one. The connector derives the overlapping
+ *    three-month means separately, applies the episode rule to those, and reports
+ *    the count as `overlapping_seasons`. Labelling the monthly anomaly "ONI" was
+ *    a mislabel of about 0.3 °C in the current data, which is small enough to look
+ *    like noise and large enough to be wrong.
  */
 
 const DEFAULT_FEED = 'https://www.cpc.ncep.noaa.gov/data/indices/detrend.nino34.ascii.txt'
@@ -216,8 +226,8 @@ async function noaaNinoConnectorIngest(options = {}) {
         unit: 'degC',
         metadata: {
           provider: 'NOAA CPC',
-          index_used: 'ONI',
-          index_note: 'Oceanic Niño Index. Per NWS Public Information Statement 26-05, CPC now uses RONI for official ENSO monitoring; RONI is not published as a stable keyless monthly feed, so this is ONI.',
+          index_used: 'monthly nino34 sst anomaly',
+          index_note: 'Value is the CPC monthly detrended Nino 3.4 SST anomaly, one number per month. It is not an ONI: the ONI is the three-month running mean of these numbers. The overlapping three-month means this record was used to derive are what the CPC episode rule is applied to, and their count is reported as overlapping_seasons. Per NWS Public Information Statement 26-05 CPC now uses RONI for official ENSO monitoring; RONI is not published as a stable keyless monthly file, so no RONI figure is reported.',
           phase: above ? 'el_nino_advisory' : below ? 'la_nina_advisory' : 'neutral',
           threshold_c: threshold,
           threshold_source: 'NOAA CPC: +/-0.5 °C on the three-month running mean',
@@ -240,7 +250,7 @@ async function noaaNinoConnectorIngest(options = {}) {
 
 export const spec = defineConnector({
   id: 'noaa_enso',
-  description: 'NOAA CPC Niño 3.4 SST anomaly index (ONI), fixed-width ASCII',
+  description: 'NOAA CPC monthly Nino 3.4 SST anomaly, fixed-width ASCII; overlapping three-month means derived for the CPC episode rule',
   schema: {
     requestSchema: {
       enso_window_months: 'how many recent months to store (default 18)',

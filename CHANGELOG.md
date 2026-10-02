@@ -22,8 +22,11 @@ no existing endpoint changed shape.
 - Flood-depth and road-status overlays on the operations map, with depth-banded
   shading and a legend. The water level is an operator input, not a forecast; the
   UI labels it a simulation.
-- `noaa_enso` connector. NOAA CPC Niño 3.4 SST anomaly index from a keyless
-  fixed-width ASCII feed, verified live on 2026-10-01. Emits
+- `noaa_enso` connector. NOAA CPC **monthly** Niño 3.4 SST anomaly from a keyless
+  fixed-width ASCII feed, verified live on 2026-10-01. The overlapping three-month
+  means are derived from it and are what the CPC episode rule is applied to. The
+  monthly value is reported as a monthly anomaly and is **not** labelled the ONI,
+  which is by definition the three-month running mean of those numbers. Emits
   `climate_observations` with coordinates deliberately null, because a
   basin-wide Pacific index must not be attributed to a district by proximity.
 

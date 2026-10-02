@@ -4365,3 +4365,34 @@ describe('Lindela Lite payload hashing', () => {
     assert.equal(merged.length, 1, 'an unchanged record must not be duplicated')
   })
 })
+
+describe('Lindela Lite ENSO index labelling', () => {
+  it('names the monthly anomaly rather than claiming it is the ONI', async () => {
+    // The feed is the CPC *monthly* detrended Niño 3.4 anomaly. The ONI is by
+    // definition the three-month running mean of those numbers, so reporting the
+    // monthly value under the label "ONI" is a mislabel — currently about 0.3 °C,
+    // small enough to look like noise and large enough to be wrong. The ONI is
+    // still what the episode rule is applied to, via the derived three-month
+    // means, and the distinction is what the payload now states.
+    const { parseNino34, classifyNino34 } = await import('../src/connectors/noaa-enso.js')
+    const source = await fs.readFile('src/connectors/noaa-enso.js', 'utf8')
+
+    assert.ok(/index_used:\s*'monthly nino34 sst anomaly'/.test(source),
+      'index_used must name the series that was actually read')
+    assert.ok(!/index_used:\s*'ONI'/.test(source),
+      "index_used must not claim the monthly anomaly is the ONI")
+
+    // The derived three-month means are what the episode rule runs on, so the
+    // count is a real ONI-based qualification rather than a month count.
+    const rows = parseNino34([
+      ' YR   MON  TOTAL ClimAdjust ANOM',
+      '2026  6   29.18   27.71   1.47',
+      '2026  7   29.07   27.29   1.78',
+      '2026  8   29.04   26.87   2.17',
+    ].join('\n'))
+    const classified = classifyNino34(rows)
+    assert.equal(classified.overlapping_seasons, 1,
+      'one complete three-month window qualifies, which is a season and not a month')
+    assert.equal(classified.episode_declared, false)
+  })
+})

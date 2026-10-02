@@ -432,7 +432,7 @@ async function main() {
   check('the note says what the index is not',
     /not a rainfall forecast/i.test(seasonal.note))
   check('the index identity is preserved rather than relabelled',
-    /\(ONI\)/.test(seasonal.index), seasonal.index)
+    /monthly nino34 sst anomaly/i.test(seasonal.index), seasonal.index)
 
   // Every top-level surface must render. The navbar exposes eight pages and only
   // Ops had ever been opened in a browser; the district drill-down was found
