@@ -56,6 +56,31 @@ no existing endpoint changed shape.
 
 ### Fixed
 
+- **The CO dashboard reported a 0% false alert rate that meant nothing.** It was a
+  keyword scan of free-text resolution notes (`/false|invalid|noop/i`) divided by
+  the alert count. On the demo data that returned 0%, which reads as "no false
+  alerts occurred" when it means "nobody wrote the word false" — none of the
+  seeded resolutions ("situation stabilised", "temperature normalised") says
+  whether the alert was warranted at all. A note reading "not a false alarm: wind
+  damage" would have been counted as one.
+
+  Alert events now carry an explicit `false_alert` determination (`true` / `false`
+  / `null` for not determined, refusing anything else rather than coercing it to
+  `false`). The rate is measured only over determined alerts, is `null` rather than
+  `0` when none are, reports the reason as a data gap, and states its denominator
+  and method. The seed records one genuine false alarm — an auto-approved heat
+  alert that turned out to be a faulty sensor — and leaves one resolution
+  deliberately undetermined.
+
+- **The same metric contradicted itself on one screen.** The monthly series kept
+  its own copy of the old scan, so the trend card showed a flat 0% while the KPI
+  tile above it correctly showed a gap. Both paths now agree.
+
+- **Sparklines filled gaps with zero**, so a month with no recorded outcome drew
+  as a flat line sitting on the axis — visually identical to a month in which
+  nothing happened. Months without a value are no longer plotted, and a lone
+  value is a dot rather than a trend line.
+
 - **Sanctions screening was invisible in the parametric UI.** The screening
   capability worked — a match blocks the disbursement — but the simulate form
   never sent the field that reaches it, so every simulation started from the

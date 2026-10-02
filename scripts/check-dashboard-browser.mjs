@@ -492,6 +492,60 @@ async function main() {
       unscreened.includes('Not screened') ? 'labelled not screened' : unscreened.slice(0, 80))
   }
 
+  // The false-alert rate must not present an absence as a zero. It was a keyword
+  // scan of free-text resolution notes, which reported 0% — read as "no false
+  // alerts occurred" when it means "nobody wrote the word false". The tile shows
+  // a data gap and the trend does not draw a flat line along the axis.
+  await send('Page.navigate', { url: `${BASE}/co?cb=${Date.now()}` })
+  await new Promise((r) => setTimeout(r, 4000))
+  const coKpi = await evaluate(`(() => {
+    const tiles = [...document.querySelectorAll('#kpi-grid *')]
+      .map((n) => (n.textContent || '').trim()).filter(Boolean);
+    const i = tiles.findIndex((t) => /false alert/i.test(t));
+    const tile = i < 0 ? '' : tiles.slice(i, i + 5).join(' | ');
+    const trend = (() => {
+      const card = [...document.querySelectorAll('.spark-tile')]
+        .find((n) => /false alert/i.test(n.textContent || ''));
+      return card ? {
+        text: (card.textContent || '').replace(/\\s+/g, ' ').trim(),
+        // A polyline implies a trend; a single plotted month must be a dot only.
+        polylines: card.querySelectorAll('polyline').length,
+        dots: card.querySelectorAll('circle').length,
+        points: (card.querySelector('polyline')?.getAttribute('points') || '').trim()
+          // Double-escaped: this whole expression is a template literal, where a
+          // lone \s is an unknown escape and collapses to the letter s, so the
+          // split silently matched nothing and every count came back as 1.
+          ? card.querySelector('polyline').getAttribute('points').trim().split(/\\s+/).length
+          : card.querySelectorAll('circle').length,
+      } : null;
+    })();
+    return { tile, trend };
+  })()`)
+
+  check('the false-alert KPI states its denominator or says why it is absent',
+    /reviewed for outcome|outcomes recorded yet/.test(coKpi.tile),
+    coKpi.tile.slice(0, 110) || '(tile not found)')
+  check('the false-alert KPI does not show a bare zero',
+    !/^false alert rate\s*0\b/i.test(coKpi.tile.replace(/\s+/g, ' ').trim()),
+    coKpi.tile.slice(0, 80))
+  if (coKpi.trend) {
+    // The number of plotted points must equal the number of months that actually
+    // have a value. Filling gaps with zero produced a flat line along the axis
+    // across all twelve months, which is what a real 0% trend looks like.
+    const months = await evaluate(`(async () => {
+      const res = await fetch('/api/v1/kpi/monthly-series');
+      const { data } = await res.json();
+      return (data || []).filter((m) => m.false_alert_rate !== null && m.false_alert_rate !== undefined).length;
+    })()`)
+    const plotted = coKpi.trend.points
+    check('the false-alert trend plots only months that have a value',
+      plotted === months && months <= 12,
+      `${plotted} plotted of ${months} months with a value`)
+    check('a single plotted month is a dot, not a trend line',
+      months !== 1 || coKpi.trend.polylines === 0,
+      `${months} month(s) with a value, ${coKpi.trend.polylines} line(s)`)
+  }
+
   // No locale may render an i18n key as user-visible text. The catalogue was
   // replaced outright at boot, so a partially translated locale printed
   // `equity.acknowledged` as a column header. English is now the base layer, so

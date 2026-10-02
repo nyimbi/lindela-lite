@@ -300,14 +300,26 @@ function buildAlertEvents(rules) {
   const events = [
     { ruleId: 'rule-flood-precip', status: 'open', severity: 'high', district: 'Turkana', value: 52, daysAgoN: 1, approval: { state: 'proposed' } },
     { ruleId: 'rule-flood-precip', status: 'acknowledged', severity: 'high', district: 'Bor', value: 48, daysAgoN: 4, approval: { state: 'approved', reviewer: 'Peter Deng', reviewed_at: daysAgo(3) } },
-    { ruleId: 'rule-flood-precip', status: 'resolved', severity: 'high', district: 'Aweil', value: 61, daysAgoN: 12, approval: { state: 'approved', reviewer: 'Nyabuot Chan', reviewed_at: daysAgo(11) }, resolution_note: 'Flood subsided; road access restored.' },
+    // false_alert is recorded as a determination, not inferred from the note.
+    // One of the three is a genuine false alarm: the threshold tripped on a gauge
+    // fault, so the alert asked people to act on a number that was wrong. That
+    // is the case a false-alert rate exists to surface, and a demo in which every
+    // alert was right would misrepresent what early warning looks like.
+    { ruleId: 'rule-flood-precip', status: 'resolved', severity: 'high', district: 'Aweil', value: 61, daysAgoN: 12, approval: { state: 'approved', reviewer: 'Nyabuot Chan', reviewed_at: daysAgo(11) }, resolution_note: 'Flood subsided; road access restored.', false_alert: false },
     { ruleId: 'rule-drought-precip', status: 'open', severity: 'high', district: 'Mandera', value: 2.1, daysAgoN: 2, approval: { state: 'proposed' } },
     { ruleId: 'rule-drought-precip', status: 'acknowledged', severity: 'high', district: 'Moroto', value: 3.4, daysAgoN: 7, approval: { state: 'approved', reviewer: 'Emmanuel Okello', reviewed_at: daysAgo(6) } },
-    { ruleId: 'rule-heat-temp', status: 'resolved', severity: 'medium', district: 'Mandera', value: 39.2, daysAgoN: 18, approval: { state: 'auto_approved' }, resolution_note: 'Temperature normalised after three days.' },
+    // A false alarm: the automatic approval is the point. Auto-approved alerts are
+    // never reviewed by a human before they fire, so a gauge or sensor fault goes
+    // straight to a community warning. Recording that this one was wrong is what
+    // makes the rate meaningful.
+    { ruleId: 'rule-heat-temp', status: 'resolved', severity: 'medium', district: 'Mandera', value: 39.2, daysAgoN: 18, approval: { state: 'auto_approved' }, resolution_note: 'Temperature normalised after three days. Reading traced to a faulty sensor; the heat did not occur.', false_alert: true },
     { ruleId: 'rule-disease-fever', status: 'open', severity: 'critical', district: 'Bor', value: 27, daysAgoN: 3, approval: { state: 'proposed' } },
     { ruleId: 'rule-disease-fever', status: 'acknowledged', severity: 'critical', district: 'Aweil', value: 23, daysAgoN: 9, approval: { state: 'approved', reviewer: 'Nyabuot Chan', reviewed_at: daysAgo(8) } },
     { ruleId: 'rule-conflict-proximity', status: 'open', severity: 'high', district: 'Mandera', value: 5, daysAgoN: 2, approval: { state: 'proposed' } },
-    { ruleId: 'rule-conflict-proximity', status: 'resolved', severity: 'high', district: 'Bor', value: 4, daysAgoN: 25, approval: { state: 'approved', reviewer: 'Peter Deng', reviewed_at: daysAgo(24) }, resolution_note: 'Situation stabilised; UNMISS engaged.' },
+    // Left undetermined on purpose. The false-alert rate is measured over
+    // determined alerts only, so this one keeps the denominator honest rather than
+    // defaulting into a confident verdict it never received.
+    { ruleId: 'rule-conflict-proximity', status: 'resolved', severity: 'high', district: 'Bor', value: 4, daysAgoN: 25, approval: { state: 'approved', reviewer: 'Peter Deng', reviewed_at: daysAgo(24) }, resolution_note: 'Situation stabilised; UNMISS engaged.', false_alert: null },
   ]
 
   return events.map((e, i) => {
@@ -328,6 +340,7 @@ function buildAlertEvents(rules) {
       scope: { district: e.district, regions: [e.district] },
       approval: e.approval,
       resolution_note: e.resolution_note || null,
+      false_alert: e.false_alert ?? null,
       created_at: createdAt,
       updated_at: createdAt,
       suppression_bucket: Math.floor(Date.parse(createdAt) / (120 * 60000)),

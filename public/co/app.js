@@ -35,6 +35,21 @@ function currentQuarter() {
   return 'Q4'
 }
 
+/**
+ * How many alerts the false-alert rate rests on, and why it may be absent.
+ *
+ * The metric used to be a keyword scan of free-text resolution notes divided by
+ * the alert count, which reported 0% on the demo data — read as "no false alerts"
+ * when it meant "nobody wrote the word false". It is now measured only over alerts
+ * with a recorded determination, so the denominator is small and must be visible.
+ */
+function falseAlertAnnotation(kpi) {
+  const n = kpi.false_alert_determined
+  if (!n) return 'no alert outcomes recorded yet'
+  const of = kpi.false_alert_of_total ?? '?'
+  return `${n} of ${of} alerts reviewed for outcome`
+}
+
 function fmtVal(v, unit = '') {
   if (v === null || v === undefined) return null
   if (typeof v === 'number') return `${v.toFixed(1)}${unit}`
@@ -70,7 +85,10 @@ function renderKpi(kpi) {
     { key: 'co.kpi_warning_to_action', label: t('co.kpi_warning_to_action', 'Warning-to-action median'), value: fmtVal(kpi.warning_to_action_median_hours, ''), unit: 'hours', annotation: t('co.kpi_warning_to_action_target', 'target: <24h'), gap: kpi.warning_to_action_median_hours === null },
     { key: 'co.kpi_feeding_repositioning', label: t('co.kpi_feeding_repositioning', 'Feeding repositioning rate'), value: fmtVal(kpi.feeding_supply_repositioning_rate, ''), unit: '%', annotation: '', gap: kpi.feeding_supply_repositioning_rate === null },
     { key: 'co.kpi_cold_chain', label: t('co.kpi_cold_chain', 'Cold-chain protection rate'), value: fmtVal(kpi.cold_chain_protection_rate, ''), unit: '%', annotation: '', gap: kpi.cold_chain_protection_rate === null },
-    { key: 'co.kpi_false_alerts', label: t('co.kpi_false_alerts', 'False alert rate'), value: fmtVal(kpi.false_alert_rate, ''), unit: '%', annotation: '', gap: kpi.false_alert_rate === null },
+    // The denominator travels with the number. A proportion computed from one
+    // determined alert swings between 0% and 100% on a single record, so the
+    // sample size is shown rather than a threshold being invented to suppress it.
+    { key: 'co.kpi_false_alerts', label: t('co.kpi_false_alerts', 'False alert rate'), value: fmtVal(kpi.false_alert_rate, ''), unit: '%', annotation: falseAlertAnnotation(kpi), gap: kpi.false_alert_rate === null },
     { key: 'co.kpi_api_uptime', label: t('co.kpi_api_uptime', 'API uptime'), value: fmtVal(kpi.api_uptime_pct, ''), unit: '%', annotation: '', gap: false },
   ]
 
@@ -171,26 +189,44 @@ function renderFeedback(summary) {
   document.getElementById('feedback-section').hidden = false
 }
 
+/**
+ * A sparkline that distinguishes "no value" from "zero".
+ *
+ * Gaps used to be filled with 0 before plotting, so a month with no recorded
+ * outcome drew as a flat line sitting on the axis — visually identical to a
+ * month in which nothing happened. That is the same absence-as-zero mistake the
+ * KPI itself was making, one layer down: the tile correctly showed a gap while
+ * the chart under it drew a confident flat zero.
+ *
+ * Months with a value are connected in their own right, so a single determined
+ * month shows as a single dot rather than being stretched into a trend line it
+ * does not support.
+ */
 function buildSparkline(values, w = 200, h = 40, pad = 4) {
   if (!values || values.length < 2) return ''
-  const nonNull = values.filter(v => v !== null && v !== undefined)
-  if (!nonNull.length) return ''
-  const filled = values.map(v => v ?? 0)
-  const min = Math.min(...filled)
-  const max = Math.max(...filled)
+  const indexed = values
+    .map((v, i) => ({ v, i }))
+    .filter((p) => p.v !== null && p.v !== undefined)
+  if (!indexed.length) return ''
+  const xs = values.length - 1
+  const min = Math.min(...indexed.map((p) => p.v))
+  const max = Math.max(...indexed.map((p) => p.v))
   const range = max - min || 1
-  const xStep = (w - pad * 2) / (filled.length - 1)
-  const pts = filled.map((v, i) => {
-    const x = pad + i * xStep
-    const y = h - pad - ((v - min) / range) * (h - pad * 2)
-    return `${x.toFixed(1)},${y.toFixed(1)}`
-  }).join(' ')
-  const last = filled[filled.length - 1]
-  const lx = (pad + (filled.length - 1) * xStep).toFixed(1)
-  const ly = (h - pad - ((last - min) / range) * (h - pad * 2)).toFixed(1)
+  const xStep = xs > 0 ? (w - pad * 2) / xs : 0
+  const at = (p) => [
+    pad + p.i * xStep,
+    h - pad - ((p.v - min) / range) * (h - pad * 2),
+  ]
+  const pts = indexed.map((p) => at(p).map((n) => n.toFixed(1)).join(',')).join(' ')
+  const last = at(indexed[indexed.length - 1])
+  // Only draw a connecting line when there is more than one plotted point;
+  // a lone value is a dot, not a trend.
+  const line = indexed.length > 1
+    ? `<polyline points="${pts}" fill="none" stroke="var(--brand)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>`
+    : ''
   return `<svg class="spark-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
-    `<polyline points="${pts}" fill="none" stroke="var(--brand)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>` +
-    `<circle cx="${lx}" cy="${ly}" r="3" fill="var(--accent,#4a9eff)"/>` +
+    line +
+    `<circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3" fill="var(--accent,#4a9eff)"/>` +
     `</svg>`
 }
 

@@ -4706,3 +4706,112 @@ describe('Lindela Lite workflow attribution', () => {
     assert.equal(out.transitions[0].actor_source, 'unattributed')
   })
 })
+
+describe('Lindela Lite false-alert rate', () => {
+  const alert = (over) => ({
+    id: 'a', status: 'resolved', created_at: '2026-08-01T00:00:00.000Z', ...over,
+  })
+
+  it('is null, not zero, when no alert outcome has been determined', async () => {
+    // It used to scan resolution_note for /false|invalid|noop/i and divide by the
+    // alert count. On the demo data that gave 0%, which reads as "no false alerts
+    // occurred" when it means "nobody wrote the word false". None of the seeded
+    // notes — "situation stabilised", "temperature normalised" — says whether the
+    // alert was warranted at all.
+    const { computeQuarterlyKpi } = await import('../src/kpi.js')
+    const data = {
+      alert_events: [
+        alert({ id: 'a1', resolution_note: 'Situation stabilised; UNMISS engaged.' }),
+        alert({ id: 'a2', resolution_note: 'Temperature normalised after three days.' }),
+      ],
+    }
+    const kpi = computeQuarterlyKpi(data, { quarter: 'Q3', year: 2026 })
+    assert.equal(kpi.false_alert_rate, null,
+      'a zero here would assert no false alerts occurred, which the data does not support')
+    assert.equal(kpi.false_alert_determined, 0)
+    assert.ok(kpi.data_gaps.some((g) => g.field === 'false_alert_rate'),
+      'an unmeasurable KPI must be reported as a data gap, not silently blank')
+  })
+
+  it('ignores a note that merely mentions the word false', async () => {
+    const { computeQuarterlyKpi } = await import('../src/kpi.js')
+    const data = {
+      alert_events: [
+        alert({ id: 'a1', resolution_note: 'Not a false alarm: wind damage to the roof.' }),
+      ],
+    }
+    const kpi = computeQuarterlyKpi(data, { quarter: 'Q3', year: 2026 })
+    assert.equal(kpi.false_alert_rate, null,
+      'prose must not be parsed for a verdict the operator never recorded')
+  })
+
+  it('measures the rate over determined alerts only and states the denominator', async () => {
+    const { computeQuarterlyKpi } = await import('../src/kpi.js')
+    const data = {
+      alert_events: [
+        alert({ id: 'a1', false_alert: true, resolution_note: 'Sensor fault.' }),
+        alert({ id: 'a2', false_alert: false, resolution_note: 'Flood subsided.' }),
+        alert({ id: 'a3', false_alert: false, resolution_note: 'Heat event confirmed.' }),
+        alert({ id: 'a4', false_alert: null, resolution_note: 'Situation stabilised.' }),
+      ],
+    }
+    const kpi = computeQuarterlyKpi(data, { quarter: 'Q3', year: 2026 })
+    assert.equal(kpi.false_alert_determined, 3, 'the undetermined alert must stay out of the denominator')
+    assert.equal(kpi.false_alert_of_total, 4)
+    assert.equal(kpi.false_alert_rate, 100 / 3)
+    assert.match(kpi.false_alert_method, /determination/i)
+  })
+
+  it('records a determination only as true, false, or explicitly undetermined', async () => {
+    const { updateAlertEvent } = await import('../src/alerts.js')
+    const base = { id: 'a', status: 'resolved' }
+    assert.equal(updateAlertEvent(base, { false_alert: true }).false_alert, true)
+    assert.equal(updateAlertEvent(base, { false_alert: false }).false_alert, false)
+    assert.equal(updateAlertEvent(base, { false_alert: null }).false_alert, null,
+      'an absent determination must stay absent, not become a verdict')
+    assert.throws(() => updateAlertEvent(base, { false_alert: 'maybe' }), /false_alert must be/,
+      'an unrecognised value must be refused rather than coerced to false')
+  })
+})
+
+describe('Lindela Lite false-alert trend', () => {
+  it('reports null, not zero, in the monthly series too', async () => {
+    // The monthly series kept its own copy of the old keyword scan, so the trend
+    // card showed a flat 0% while the KPI tile above it correctly showed a gap —
+    // the same metric contradicting itself on one screen.
+    const { computeMonthlyKpiSeries } = await import('../src/kpi.js')
+    const now = new Date()
+    const series = computeMonthlyKpiSeries({
+      alert_events: [{
+        id: 'a1',
+        status: 'resolved',
+        created_at: now.toISOString(),
+        resolution_note: 'Situation stabilised; UNMISS engaged.',
+      }],
+      dispatches: [],
+    })
+    assert.ok(Array.isArray(series) && series.length, 'the monthly series must produce months')
+    assert.ok(series.every((m) => m.false_alert_rate === null),
+      'no month may report a false-alert rate when no outcome was determined')
+  })
+
+  it('does not plot a missing month as a zero', async () => {
+    // Gaps used to be filled with 0 before plotting, so a month with no recorded
+    // outcome drew as a flat line sitting on the axis — indistinguishable from a
+    // month in which nothing happened.
+    const app = await fs.readFile('public/co/app.js', 'utf8')
+    const spark = app.slice(app.indexOf('function buildSparkline'), app.indexOf('function sparkCard'))
+    assert.ok(!/values\.map\(v => v \?\? 0\)/.test(spark),
+      'a sparkline must not fill missing values with zero')
+    assert.ok(/indexed\.length > 1/.test(spark),
+      'a single plotted value is a dot, not a trend line')
+  })
+
+  it('states the denominator beside the rate on the KPI tile', async () => {
+    const app = await fs.readFile('public/co/app.js', 'utf8')
+    assert.ok(/false_alert_determined/.test(app),
+      'the CO tile must disclose how many alerts the rate rests on')
+    assert.ok(/no alert outcomes recorded yet/.test(app),
+      'and must say why the rate is absent when nothing is determined')
+  })
+})

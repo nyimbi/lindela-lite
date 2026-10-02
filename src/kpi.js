@@ -156,13 +156,23 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
     : null
 
   // False alert rate
-  const resolved = alertEvents.filter((a) => a.status === 'resolved')
-  const falseAlerts = resolved.filter((a) =>
-    a.resolution_note && /false|invalid|noop/i.test(a.resolution_note)
-  )
-  const false_alert_rate = alertEvents.length
-    ? (100 * falseAlerts.length) / alertEvents.length
+  //
+  // Measured only over alerts whose outcome was actually determined. It used to
+  // scan resolution_note for /false|invalid|noop/i and divide by the alert count,
+  // which on the demo data reported 0% — read as "no false alerts occurred" when
+  // it means "nobody wrote the word false". A resolution note like "situation
+  // stabilised" says nothing about whether the alert was warranted.
+  //
+  // With no determinations recorded the rate is null, not zero, and the reason is
+  // reported as a data gap. A number that looks authoritative without being sound
+  // is worse than no number.
+  const determinedAlerts = alertEvents.filter((a) => a.false_alert !== null && a.false_alert !== undefined)
+  const falseAlerts = determinedAlerts.filter((a) => a.false_alert === true)
+  const false_alert_rate = determinedAlerts.length
+    ? (100 * falseAlerts.length) / determinedAlerts.length
     : null
+  const false_alert_determined = determinedAlerts.length
+  const false_alert_sample = determinedAlerts.length
 
   // Demographic KPIs from field_reports.demographics
   const reportsWithDemo = fieldReports.filter((r) => r.demographics != null)
@@ -203,6 +213,7 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   if (cohort_refugees_idps === null) data_gaps.push({ field: 'cohort.refugees_idps', reason: 'no demographics recorded yet' })
   if (!youth_mappers_count) data_gaps.push({ field: 'youth_mappers_count', reason: 'role=mapper flag rarely set on field_reports' })
   if (warning_to_action_median_hours === null) data_gaps.push({ field: 'warning_to_action_median_hours', reason: 'dispatches rarely linked to matched_signal_at; returns null when no matches' })
+  if (false_alert_rate === null) data_gaps.push({ field: 'false_alert_rate', reason: 'no alert event carries a false_alert determination; the rate is measured over determined alerts only and is null rather than 0 until an outcome is recorded' })
 
   const result = {
     people_reached,
@@ -216,6 +227,12 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
     feeding_supply_repositioning_rate,
     cold_chain_protection_rate,
     false_alert_rate,
+    // The denominator and the method travel with the number. A rate with an
+    // unstated denominator cannot be judged, and a rate whose denominator is
+    // "every alert ever raised" is not a false-alert rate at all.
+    false_alert_determined,
+    false_alert_of_total: alertEvents.length,
+    false_alert_method: 'share of alert events with a recorded false_alert determination (true) among alert events with any determination; null when none are determined',
     api_uptime_pct: computeApiUptime(),
     cohort: {
       total: demoTotal,
@@ -295,13 +312,19 @@ export function computeMonthlyKpiSeries(data, { monthsBack = 12 } = {}) {
     const cold_chain_protection_rate = coldChainWorkflows.length
       ? (100 * coldChainTerminal.length) / coldChainWorkflows.length : null
 
-    const resolved = alertEvents.filter(a => a.status === 'resolved')
-    const falseAlerts = resolved.filter(a => a.resolution_note && /false|invalid|noop/i.test(a.resolution_note))
-    const false_alert_rate = alertEvents.length
-      ? (100 * falseAlerts.length) / alertEvents.length : null
+    // Same rule as the quarterly figure: measured only over alerts whose outcome
+    // was determined, and null rather than 0 when none were. This path had kept
+    // the old keyword scan, so the trend card showed a flat 0% while the KPI tile
+    // correctly showed a gap — the same metric contradicting itself on one screen.
+    const determined = alertEvents.filter(a => a.false_alert !== null && a.false_alert !== undefined)
+    const false_alert_rate = determined.length
+      ? (100 * determined.filter(a => a.false_alert === true).length) / determined.length : null
+    const false_alert_determined = determined.length
 
     series.push({
       month: monthStr,
+      false_alert_determined,
+
       from,
       to,
       people_reached,
@@ -333,6 +356,8 @@ export async function refreshKpiSnapshots(store) {
       people_reached: s.people_reached,
       warning_to_action_median_hours: s.warning_to_action_median_hours,
       false_alert_rate: s.false_alert_rate,
+      false_alert_determined: s.false_alert_determined,
+      false_alert_of_total: s.false_alert_of_total,
       feeding_repositioning_rate: s.feeding_repositioning_rate,
       cold_chain_protection_rate: s.cold_chain_protection_rate,
       community_reporters_count: s.community_reporters_count,

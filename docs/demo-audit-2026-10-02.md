@@ -45,6 +45,9 @@ produced it. Two green suites had been passing for the wrong reason.
 | 15 | The offline queue never replayed. `lindelaQueue.flush()` was called from nowhere, so a report queued without signal sat in IndexedDB while the UI promised it would send. | the same walk, offline | see changelog |
 | 16 | The CHW app offered nine languages and had CHW strings for three, so a health worker read `chw.symptom_fever` as a button label. | reading the rendered text | see changelog |
 | 17 | `loadLocale` replaced the catalogue, so a partially translated locale printed raw keys — and the equity table overflowed its rail again, because a key name is longer than a word. | checking a fix that appeared to regress | see changelog |
+| 18 | The offline queue never replayed — `flush()` was called from nowhere, so a report queued without signal was lost while the UI promised it would send. | walking the CHW flow offline | see changelog |
+| 19 | OFAC sanctions screening worked but the UI never sent the field that reaches it, and never mentioned screening. A green "Simulation complete" for 5,000 USD implied a check that had not run. | walking the parametric surface | see changelog |
+| 20 | The CO dashboard's "false alert rate" was a regex over free-text notes divided by all alerts: 0%, meaning nothing. | asking what the headline KPI measured | see changelog |
 
 ## Two green suites passing for the wrong reason
 

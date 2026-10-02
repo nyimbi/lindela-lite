@@ -38,8 +38,39 @@ export function updateAlertEvent(existing, patch) {
     status: enumValue(patch.status || existing.status, ALERT_EVENT_STATUSES, 'status'),
     owner: patch.owner || existing.owner || null,
     resolution_note: patch.resolution_note || existing.resolution_note || null,
+    // Whether this alert was a false alarm, recorded as data rather than
+    // inferred from prose.
+    //
+    // The false-alert KPI used to scan resolution_note for /false|invalid|noop/i
+    // and divide by the number of alerts. On the demo data that returned 0%,
+    // which reads as "no false alerts occurred" when it means "nobody happened to
+    // write the word false". None of the seeded resolutions — "situation
+    // stabilised", "temperature normalised" — says whether the alert was
+    // warranted at all.
+    //
+    // Null means not determined, which is the honest default and is what lets the
+    // KPI report "not yet measurable" instead of a confident zero.
+    false_alert: determination(patch.false_alert ?? existing.false_alert),
     updated_at: new Date().toISOString(),
   }
+}
+
+/**
+ * Normalise a false-alert determination to true / false / null.
+ *
+ * Rejects anything else rather than coercing: a value like the string "maybe"
+ * must not silently become `false`, which would understate the false-alert rate
+ * and flatter the system.
+ */
+function determination(value) {
+  if (value === null || value === undefined || value === '') return null
+  if (value === true || value === false) return value
+  if (value === 'true') return true
+  if (value === 'false') return false
+  throw Object.assign(
+    new Error('false_alert must be true, false, or null for "not determined"'),
+    { statusCode: 400 },
+  )
 }
 
 export function approveAlertEvent(existing, actor, decision, note = '') {
