@@ -6,6 +6,8 @@
     <title>Lindela CHW</title>
     <link rel="manifest" href="/chw/manifest.webmanifest">
     <meta name="theme-color" content="#0e1520">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/components.css">
     <style>
       @import '/tokens.css';
 
@@ -63,29 +65,47 @@
 
       main {
         flex: 1;
-        padding: 1.5rem;
+        padding: 1.5rem 1rem;
         display: flex;
         flex-direction: column;
         align-items: center;
-        justify-content: center;
+        /* Centred, not stretched. `justify-content: center` put a three-button
+           home screen in the middle of a 844px viewport and left the health
+           worker looking at roughly 600px of nothing before and after it.
+           Top-aligned, the primary action is where the thumb and the eye both
+           start. */
+        justify-content: flex-start;
+        width: 100%;
+        max-width: 32rem;
+        margin-inline: auto;
       }
 
       .privacy-toggle {
         width: 100%;
         max-width: 420px;
-        margin-bottom: 2rem;
+        margin-bottom: 1.5rem;
         padding: 1rem;
         background: var(--surface);
         border: 1px solid var(--stroke);
-        border-radius: 8px;
+        border-radius: var(--r);
         display: flex;
         align-items: center;
         gap: 0.75rem;
       }
 
+      /* Row direction, so the box sits beside its sentence rather than above
+         the em dash. The shared `label` rule stacks wrapped content, which is
+         right for a field caption and wrong for a sentence. */
+      .privacy-toggle label {
+        display: block;
+        margin: 0;
+        font-size: 0.875rem;
+        line-height: 1.4;
+      }
+
+      /* Size comes from the shared stylesheet, which enforces the 24px WCAG 2.2
+         AA target floor. This 20px override put the privacy toggle below it. */
       .privacy-toggle input[type=checkbox] {
-        width: 20px;
-        height: 20px;
         cursor: pointer;
       }
 
@@ -323,7 +343,10 @@
     <header>
       <div class="header-brand" data-i18n="chw.title">Lindela CHW</div>
       <div class="header-controls">
-        <div class="status-dot" id="statusDot"></div>
+        <!-- The connection dot used to live here as well as in the injected
+             navbar, so the field app showed connection state twice in two
+             stacked bars. The navbar's dot is the one that stays. -->
+        <div class="status-dot" id="statusDot" hidden></div>
         <!--
           Only languages whose CHW strings are actually complete. This selector
           previously offered nine and had CHW translations for three: selecting
@@ -552,10 +575,11 @@
       <span data-app-version>v0.1.0</span> — <span data-i18n="footer.powered">Powered by Lindela Lite</span>
     </footer>
 
+    <!-- mountNavbar is called once, from /chw/app.js. It used to be called
+         here as well; mountNavbar is idempotent, so nothing broke, but the
+         second call hid which module owned the chrome. -->
     <script type="module">
-      import { mountNavbar } from '/shared/navbar.js'
       import { fillAppVersion } from '/shared/app-version.js'
-      mountNavbar({ activePath: '/chw' })
       fillAppVersion()
     </script>
     <script type="module" src="/chw/app.js"></script>

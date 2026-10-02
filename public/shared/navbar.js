@@ -16,7 +16,14 @@ const NAVBAR_CSS = `
   position: fixed;
   top: 0;
   inset-inline: 0;
-  height: 44px;
+  /* inset-inline: 0 alone does not bound a fixed flex container: its items
+     default to min-width:auto, so at 360px the bar sized itself to 389px of
+     brand + locale + hamburger and pushed a horizontal scrollbar onto the
+     whole document. */
+  min-width: 0;
+  max-width: 100vw;
+  overflow: hidden;
+  height: var(--size-topbar);
   z-index: 999;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--stroke);
@@ -34,6 +41,7 @@ const NAVBAR_CSS = `
   text-decoration: none;
   font-weight: 600;
   flex-shrink: 0;
+  min-width: 0;
   margin-inline-end: var(--sp-3);
 }
 .l-navbar-links {
@@ -72,6 +80,7 @@ const NAVBAR_CSS = `
   align-items: center;
   gap: var(--sp-3);
   flex-shrink: 0;
+  min-width: 0;
   margin-inline-start: auto;
 }
 .l-navbar-locale {
@@ -81,6 +90,8 @@ const NAVBAR_CSS = `
   border: 1px solid var(--stroke);
   border-radius: var(--r-sm);
   padding: 2px var(--sp-2);
+  min-width: 0;
+  max-width: 8rem;
   cursor: pointer;
 }
 .l-navbar-locale:hover { color: var(--ink); }
@@ -96,8 +107,8 @@ const NAVBAR_CSS = `
   display: none;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: var(--tap-target-min);
+  height: var(--tap-target-min);
   background: none;
   border: none;
   color: var(--ink-muted);
@@ -134,8 +145,8 @@ const NAVBAR_CSS = `
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: var(--tap-target-min);
+  height: var(--tap-target-min);
   background: none;
   border: none;
   color: var(--ink-muted);

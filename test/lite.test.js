@@ -4083,9 +4083,15 @@ describe('Lindela Lite Phase 2 — Parametric, DHIS2, Demographics, Observabilit
         const res = await fetch(`${baseUrl}${surface}`)
         assert.equal(res.status, 200, `${surface} should return 200`)
         const html = await res.text()
+        // The requirement is that the surface mounts the shared navbar. Where
+        // that happens is an implementation detail: /chw mounts it from its
+        // app.js while the rest mount it inline, and asserting the HTML alone
+        // made the test fail a correct surface over a choice with no user
+        // consequence. Either source satisfies it; neither does not.
+        const script = await (await fetch(`${baseUrl}${surface.replace(/\/$/, '')}/app.js`)).text()
         assert.ok(
-          html.includes("from '/shared/navbar.js'"),
-          `${surface} HTML must import from /shared/navbar.js`
+          html.includes("from '/shared/navbar.js'") || script.includes("from '/shared/navbar.js'"),
+          `${surface} must mount /shared/navbar.js from its HTML or its script`
         )
       }
     } finally {

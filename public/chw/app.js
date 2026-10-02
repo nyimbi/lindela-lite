@@ -62,10 +62,10 @@ async function init() {
 
 function updateStatus() {
   if (navigator.onLine) {
-    statusDot.classList.remove('offline')
+    statusDot?.classList.remove('offline')
     offlineBanner.classList.remove('show')
   } else {
-    statusDot.classList.add('offline')
+    statusDot?.classList.add('offline')
     offlineBanner.classList.add('show')
   }
 }

@@ -312,7 +312,9 @@ kbd {
   font-size: var(--text-xs);
   font-family: var(--font-sans);
   cursor: pointer;
-  min-height: 28px;
+  /* No fixed min-height here: an ID-scoped one silently outranked the shared
+     tap-target floor and pinned the language picker to 28px on every surface. */
+  min-height: var(--size-control);
 }
 
 /* --- Console layout ------------------------------------------ */
@@ -599,7 +601,8 @@ body.app-shell {
   border-radius: var(--r-sm);
   padding: 2px 6px;
   font-size: var(--text-xs);
-  min-height: 24px;
+  /* Same reason as #locale-select: a hard px floor here outranked the shared
+     tap-target rule and left the map filters at 24px on a phone. */
 }
 
 .map-record-count {
@@ -1115,7 +1118,7 @@ details[open] summary { border-bottom: 1px solid var(--stroke); color: var(--ink
   position: sticky;
   bottom: 0;
   z-index: var(--z-statusbar);
-  height: 30px;
+  height: var(--size-statusbar);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -1123,6 +1126,28 @@ details[open] summary { border-bottom: 1px solid var(--stroke); color: var(--ink
   padding: 0 var(--sp-5);
   background: var(--bg-elevated);
   border-top: 1px solid var(--stroke);
+  /* The status line packs source dots, an update stamp and three metrics into
+     one row. At 360px that was 389px of content on a 360px bar, overflowing the
+     document. The status text scrolls rather than widening the page. */
+  min-width: 0;
+  overflow: hidden;
+}
+
+.statusbar > * { flex-shrink: 0; }
+
+#status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .statusbar { gap: var(--sp-2); padding: 0 var(--sp-3); }
+  /* Secondary telemetry is the first thing to go: "Last signal" and
+     "Median lag" were routinely just an em dash. */
+  .statusbar-metric { display: none; }
 }
 
 .source-dots {
@@ -1393,6 +1418,12 @@ dialog[open] {
   border-bottom: 1px solid var(--stroke);
   overflow-x: auto;
   overflow-y: hidden;
+  /* A flex child defaults to min-width:auto, so the ribbon sized itself to the
+     widest of eight cards and pushed the whole document 29px past a 360px
+     viewport. The scroll container below could not help, because its parent
+     was already too wide. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 .workflow-tray {
@@ -1974,8 +2005,9 @@ label:has(> input[type="radio"]) {
   /* The visible track stays thin; the hit area does not. */
   input[type="range"] { height: var(--tap-target-min); background: transparent; }
 
+  /* 24px is WCAG 2.2 SC 2.5.8 (AA). The label carries the full tap area. */
   input[type="checkbox"],
-  input[type="radio"] { width: 1.35rem; height: 1.35rem; }
+  input[type="radio"] { width: 1.5rem; height: 1.5rem; }
 
   .btn-icon { min-width: var(--tap-target-min); }
 }

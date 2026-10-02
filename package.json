@@ -18,6 +18,7 @@
     "demo:seed": "node scripts/seed-demo.mjs",
     "check:live-sources": "node scripts/check-live-sources.mjs",
     "check:dashboard": "node scripts/check-dashboard-browser.mjs",
+    "check:responsive": "LINDELA_LITE_SHOTS=artifacts/screens node scripts/check-responsive.mjs",
     "check:model-boundaries": "node scripts/check-no-flood-probability.mjs",
     "check:i18n": "node scripts/check-i18n.mjs"
   },
