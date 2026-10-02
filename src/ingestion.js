@@ -9,6 +9,8 @@ import { chirpsConnector } from './connectors/chirps.js'
 import { nasaFirmsConnector } from './connectors/nasa-firms.js'
 import { usgsEarthquakeConnector } from './connectors/usgs-earthquake.js'
 import { noaaNinoConnector } from './connectors/noaa-enso.js'
+import { ipcHdxConnector } from './connectors/ipc-hdx.js'
+import { whoGhoConnector } from './connectors/who-gho.js'
 import { acledCsvConnector, conflictCsvConnector, serviceAssetsConnector } from './connectors/uploads.js'
 import { dhis2Connector } from './connectors/dhis2.js'
 
@@ -20,6 +22,8 @@ const CONNECTORS = Object.freeze({
   nasa_firms: nasaFirmsConnector,
   usgs_earthquake: usgsEarthquakeConnector,
   noaa_enso: noaaNinoConnector,
+  ipc_hdx: ipcHdxConnector,
+  who_gho: whoGhoConnector,
   service_assets: serviceAssetsConnector,
   acled_csv: acledCsvConnector,
   conflict_csv: conflictCsvConnector,
@@ -34,6 +38,8 @@ export const PUBLIC_INGESTION_SOURCES = Object.freeze([
   'nasa_firms',
   'usgs_earthquake',
   'noaa_enso',
+  'ipc_hdx',
+  'who_gho',
 ])
 
 export const SOURCE_POLICIES = Object.freeze({
@@ -49,6 +55,12 @@ export const SOURCE_POLICIES = Object.freeze({
   nasa_firms: { interval_minutes: 360, timeout_ms: 30000, retries: 2, stale_after_minutes: 720, minimum_records: 1, regular: true },
   usgs_earthquake: { interval_minutes: 60, timeout_ms: 20000, retries: 2, stale_after_minutes: 180, minimum_records: 1, regular: true },
   noaa_enso: { interval_minutes: 720, timeout_ms: 20000, retries: 2, stale_after_minutes: 1440, minimum_records: 1, regular: true },
+  // IPC classifications come out per analysis month and HDX scrapes them
+  // promptly, so 24 h beats the feed without hammering a 3.6 MB CSV. WHO GHO
+  // publishes yearly, so its staleness window is long: a national-annual
+  // figure is "stale" here only when something breaks, not week to week.
+  ipc_hdx: { interval_minutes: 1440, timeout_ms: 30000, retries: 2, stale_after_minutes: 2880, minimum_records: 1, regular: true },
+  who_gho: { interval_minutes: 1440, timeout_ms: 20000, retries: 2, stale_after_minutes: 20160, minimum_records: 1, regular: true },
   service_assets: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   acled_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   conflict_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
@@ -79,6 +91,8 @@ export async function runIngestion(store, request = {}) {
     hazard_events: [],
     conflict_events: [],
     service_assets: [],
+    food_security_records: [],
+    disease_observations: [],
   }
 
   for (const source of requestedSources) {

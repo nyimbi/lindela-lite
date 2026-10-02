@@ -95,6 +95,8 @@ Built-in source ids:
 | `nasa_firms` | NASA FIRMS active fire detections | **no** — needs `NASA_FIRMS_MAP_KEY` |
 | `usgs_earthquake` | USGS earthquake catalogue | yes |
 | `noaa_enso` | NOAA CPC Niño 3.4 SST anomaly (ONI) | yes |
+| `ipc_hdx` | IPC acute food insecurity phases (national + subnational, via HDX) | yes — CC0 |
+| `who_gho` | WHO GHO outbreak indicators (cholera, meningitis, measles, yellow fever, plague; national-annual) | yes — attribution required |
 | `dhis2` | DHIS2 data-quality aggregate | user-supplied instance |
 | `service_assets` | imported roads, clinics, boreholes | — |
 | `acled_csv` | ACLED-compatible conflict CSV, user-supplied | user licence |

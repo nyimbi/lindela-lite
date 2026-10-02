@@ -490,6 +490,50 @@ Important fields:
 
 Failed schedule runs are retained and can be retried.
 
+### `food_security_records`
+
+IPC Acute Food Insecurity classifications from `ipc_hdx`, one record per
+country (scope `national`) or admin area (scope `area`) per validity window.
+
+Important fields:
+
+- `country` — ISO3 code as IPC publishes it; `country_name` is deliberately
+  absent rather than guessed.
+- `scope` — `national` or `area`.
+- `area`, `level1` — area name and first-level region for area-scope records.
+- `analysis_date`, `validity_period` — `current`, `first_projection`, or
+  `second_projection`.
+- `valid_from`, `valid_to` — validity window; ordering and roll-ups use these
+  ISO dates, not the analysis-month string.
+- `phase3plus_number`, `phase3plus_fraction` — the Phase 3+ aggregate, lifted
+  for direct use.
+- `phases` — keyed by phase label (`all`, `1`-`5`, `3+`), each
+  `{ number, fraction }`. `fraction` is a fraction of the analysed population
+  (`0.2` = 20%), verbatim from the source.
+- `bbox` — bounding box of the mapped area polygon where the dataset GeoJSON
+  matched the area name; `null` otherwise. `latitude`/`longitude` are always
+  `null`: an area name is not a point.
+
+Metadata carries the classification note (relayed verbatim, never re-derived),
+the fraction note, the validity note, the CC0 licence, and attribution.
+
+### `disease_observations`
+
+WHO Global Health Observatory outbreak-relevant counts from `who_gho`.
+
+Important fields:
+
+- `indicator_code`, `indicator_name`, `unit` — `cases`, `deaths`, `ratio`, or
+  `districts`; the unit belongs to the row so deaths cannot be misread as cases.
+- `country`, `region`, `year` — national-annual grain, which is the source's
+  own. `latitude`/`longitude` are always `null`.
+- `value` — the published count, verbatim. No rates or trends are derived.
+
+Metadata carries `first_seen_source_type: national_annual_aggregate`, the
+granularity note (context, not district evidence), the policy note
+(attribution required; not an alert trigger), and the reporting note
+(silence may mean absence of reporting, not absence of disease).
+
 ## Relationships
 
 Core relationships:

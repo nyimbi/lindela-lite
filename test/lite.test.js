@@ -5338,3 +5338,227 @@ describe('Lindela Lite signal-to-dispatch latency', () => {
       'the PDF must say this figure is not comparable to the bid target')
   })
 })
+
+describe('Lindela Lite IPC food security ingestion', () => {
+  async function loadFixtureRecords() {
+    const { parseCsv } = await import('../src/utils.js')
+    const { groupIpcRows } = await import('../src/connectors/ipc-hdx.js')
+    const text = await fs.readFile('test/fixtures/ipc-area-kenya-sample.csv', 'utf8')
+    return { parseCsv, text, groupIpcRows, records: groupIpcRows(parseCsv(text), 'area', { datasetUrl: 'https://x' }) }
+  }
+
+  it('groups long rows into one record per area and validity window', async () => {
+    // The live area CSV is ~42,000 rows (one per phase); the store shape is one
+    // record per (area, window). If the grouping key is wrong the count moves
+    // silently either way, so it is compared against an independently counted
+    // distinct set of the key fields rather than a hand-written number.
+    const { parseCsv, text, records } = await loadFixtureRecords()
+    const rows = parseCsv(text)
+    const expected = new Set(rows.map((r) => [r.Country, r.Area, r['Date of analysis'], r['Validity period'], r.From, r.To].join('|'))).size
+    assert.equal(records.length, expected, 'one record per (country, area, analysis, window, From, To)')
+
+    const baringo = records.find((r) => r.area === 'Baringo' && r.validity_period === 'current')
+    assert.ok(baringo, 'fixture must contain a Baringo current-window record')
+    assert.equal(baringo.country, 'KEN')
+    assert.equal(baringo.phase3plus_number, 152800)
+    // The source Percentage column is a fraction of the analysed population:
+    // 0.2 means 20%. A reader of 0.2 as "0.2%" would misreport by 100x.
+    assert.equal(baringo.phase3plus_fraction, 0.2)
+    assert.match(String(baringo.metadata.percentage_note), /0\.2 means 20%/, 'the fraction semantics must be stated on the record')
+    assert.ok(baringo.phases['3+'], 'the 3+ figure stays in the phases map too')
+    assert.ok(baringo.phases.all, 'the analysed-population row is grouped in, not dropped')
+    assert.equal(baringo.latitude, null, 'an area name is not a point: coordinates must stay null')
+  })
+
+  it('keeps the phases map complete without double-counting the lifted 3+', async () => {
+    const { records } = await loadFixtureRecords()
+    const baringo = records.find((r) => r.area === 'Baringo' && r.validity_period === 'current')
+    const lifted = baringo.phases['3+']
+    assert.equal(lifted.number, baringo.phase3plus_number)
+    assert.equal(lifted.fraction, baringo.phase3plus_fraction)
+  })
+
+  it('joins a bbox where the GeoJSON matched and leaves null where it did not', async () => {
+    const { parseCsv } = await import('../src/utils.js')
+    const { groupIpcRows } = await import('../src/connectors/ipc-hdx.js')
+    const text = await fs.readFile('test/fixtures/ipc-area-kenya-sample.csv', 'utf8')
+    const bboxes = new Map([['Baringo', { south: 0.5, west: 35.9, north: 1.3, east: 36.3 }]])
+    const records = groupIpcRows(parseCsv(text), 'area', { bboxes })
+    const baringo = records.find((r) => r.area === 'Baringo')
+    assert.deepEqual(baringo.bbox, { south: 0.5, west: 35.9, north: 1.3, east: 36.3 })
+    const other = records.find((r) => r.area !== 'Baringo')
+    assert.equal(other.bbox, null, 'an unmatched area name must give null geometry, not a guessed one')
+  })
+
+  it('accepts country filters against ISO3 feed codes', async () => {
+    // The feed publishes "KEN"; regions use "KE". An exact-match filter on the
+    // wrong spelling returned zero records silently — found live on the first
+    // ingest — so the connector normalises both spellings before matching.
+    // groupIpcRows takes the already-normalised set; the ISO2 mapping is
+    // asserted on the source so its removal is caught.
+    const { parseCsv } = await import('../src/utils.js')
+    const { groupIpcRows } = await import('../src/connectors/ipc-hdx.js')
+    const text = await fs.readFile('test/fixtures/ipc-area-kenya-sample.csv', 'utf8')
+    const nothing = groupIpcRows(parseCsv(text), 'area', { countryFilter: new Set(['SOM']) })
+    assert.equal(nothing.length, 0, 'this fixture is all Kenya; a non-Kenya filter keeps nothing')
+    const records = groupIpcRows(parseCsv(text), 'area', { countryFilter: new Set(['KEN']) })
+    assert.ok(records.length > 0)
+    const source = await fs.readFile('src/connectors/ipc-hdx.js', 'utf8')
+    assert.ok(/ISO2_TO_ISO3/.test(source) && /KE: 'KEN'/.test(source),
+      'the ISO2 spelling must be mapped onto the ISO3 feed codes')
+  })
+
+  it('rolls up the latest current window and excludes projections from it', async () => {
+    const { summarizeFoodSecurity } = await import('../src/connectors/ipc-hdx.js')
+    const earlier = { source: 'ipc_hdx', scope: 'national', country: 'KEN', area: null,
+      analysis_date: 'Jun 2026', validity_period: 'current', valid_from: '2026-06-01', valid_to: '2026-08-31',
+      phase3plus_number: 100, phase3plus_fraction: 0.1 }
+    const later = { ...earlier, valid_from: '2026-07-01', valid_to: '2026-10-31',
+      phase3plus_number: 900, phase3plus_fraction: 0.9 }
+    const projection = { ...later, validity_period: 'first_projection', phase3plus_number: 9999, phase3plus_fraction: 0.99 }
+    // A record with no 3+ figure (phase row missing) must not crash the roll-up.
+    const bare = { ...later, country: 'UGA', phase3plus_number: null, phase3plus_fraction: null }
+
+    const summary = summarizeFoodSecurity([earlier, projection, later, bare])
+    const kenya = summary.countries.find((c) => c.country === 'KEN')
+    assert.equal(kenya.phase3plus_number, 900, 'latest window by valid_from wins over earlier current windows')
+    assert.equal(kenya.phase3plus_fraction, 0.9)
+    assert.equal(summary.countries.find((c) => c.country === 'UGA').phase3plus_number, null)
+    // All synthetic records are national scope, so the areas roll-up is empty;
+    // and the null-3+ UGA record must not crash the finite-fraction filter.
+    assert.deepEqual(summary.worst_areas, [])
+  })
+
+  it('registers the source end to end', async () => {
+    const { publicSourceCatalog, emptyStore } = await import('../src/schema.js')
+    const { SOURCE_POLICIES, PUBLIC_INGESTION_SOURCES } = await import('../src/ingestion.js')
+    const catalog = publicSourceCatalog().map((s) => s.id)
+    assert.ok(catalog.includes('ipc_hdx'), 'ipc_hdx must be advertised to the API')
+    assert.ok(emptyStore().food_security_records, 'store must have the collection or runIngestion drops its output')
+    assert.ok(getConnector('ipc_hdx'), 'connector must be registered for ingestion')
+    assert.ok(PUBLIC_INGESTION_SOURCES.includes('ipc_hdx'), 'the source must be selectable in public ingestion')
+    assert.equal(SOURCE_POLICIES.ipc_hdx.regular, true)
+    assert.ok(SOURCE_POLICIES.ipc_hdx.minimum_records >= 1, 'an empty IPC ingest is a degraded run, not success')
+    // The merged-collections map inside runIngestion routes connector output
+    // into the store; a key absent there is silently dropped (every collection
+    // was when this class of bug was found). Asserted on the source text
+    // because the map is not exported.
+    const ingestionSource = await fs.readFile('src/ingestion.js', 'utf8')
+    assert.ok(ingestionSource.includes('food_security_records: []'),
+      'runIngestion drops collections missing from its merged map')
+  })
+})
+
+describe('Lindela Lite WHO GHO outbreak context', () => {
+  it('builds indicator URLs without the query params this endpoint silently mis-handles', async () => {
+    // Probed live 2026-10-02: $filter answers 200 with zero rows, $orderby is
+    // silently ignored, $top>1000 is HTTP 400. Any of these in the URL would
+    // trim records invisibly, so the URL must not contain them.
+    const { buildIndicatorUrl } = await import('../src/connectors/who-gho.js')
+    const url = buildIndicatorUrl('CHOLERA_0000000001')
+    assert.ok(url.startsWith('https://ghoapi.azureedge.net/api/CHOLERA_0000000001'))
+    assert.ok(url.includes('$format=json'))
+    assert.ok(!/\$orderby=/i.test(url))
+    assert.ok(!/\$filter=/i.test(url))
+    assert.ok(!/\$top=/i.test(url))
+  })
+
+  it('verdicts indicator staleness rather than letting old counts look current', async () => {
+    const { summarizeDiseaseObservations } = await import('../src/connectors/who-gho.js')
+    const currentYear = new Date().getUTCFullYear()
+    const record = (code, country, year, value, unit) => ({
+      indicator_code: code, indicator_name: code, country, year, value, unit,
+    })
+    // Cholera's published series genuinely ends 2016 (verified); it must read
+    // stale against the calendar, not "current" by virtue of being in the store.
+    const summary = summarizeDiseaseObservations([
+      record('CHOLERA_0000000001', 'KEN', 2016, 3120, 'cases'),
+      record('WHS3_62', 'KEN', currentYear - 1, 840, 'cases'),
+      record('WHS3_62', 'KEN', currentYear, 991, 'cases'),
+      record('WHS3_62', 'SOM', currentYear, 2100, 'cases'),
+    ])
+    const cholera = summary.series_state.find((s) => s.indicator_code === 'CHOLERA_0000000001')
+    assert.equal(cholera.state, 'stale')
+    assert.equal(cholera.latest_year, 2016)
+    assert.ok(cholera.note, 'a stale series must say why recent silence is a data fact, not a disease fact')
+    const measles = summary.series_state.find((s) => s.indicator_code === 'WHS3_62')
+    assert.equal(measles.state, 'current')
+    const kenya = summary.latest_by_indicator_country.find((r) => r.country === 'KEN' && r.indicator_code === 'WHS3_62')
+    assert.equal(kenya.value, 991, 'latest year wins, not last row ingested')
+    assert.equal(summary.latest_by_indicator_country.filter((r) => r.country === 'SOM').length, 1)
+  })
+
+  it('registers the source end to end', async () => {
+    const { publicSourceCatalog, emptyStore } = await import('../src/schema.js')
+    const { SOURCE_POLICIES, PUBLIC_INGESTION_SOURCES } = await import('../src/ingestion.js')
+    const catalog = publicSourceCatalog().map((s) => s.id)
+    assert.ok(catalog.includes('who_gho'))
+    assert.ok(PUBLIC_INGESTION_SOURCES.includes('who_gho'), 'the source must be selectable in public ingestion')
+    assert.ok(emptyStore().disease_observations)
+    assert.ok(getConnector('who_gho'))
+    assert.equal(SOURCE_POLICIES.who_gho.regular, true)
+    // WHO series are annual; staleness lives in the summary (20160 minutes),
+    // but the source must not read fresh forever without a window at all.
+    assert.ok(SOURCE_POLICIES.who_gho.stale_after_minutes > 0)
+    const ingestionSource = await fs.readFile('src/ingestion.js', 'utf8')
+    assert.ok(ingestionSource.includes('disease_observations: []'),
+      'runIngestion drops collections missing from its merged map')
+  })
+})
+
+describe('Lindela Lite food security and disease API', () => {
+  it('serves IPC records and the WHO context with their honesty metadata', async () => {
+    // The dashboard renders these fields directly; metadata notes ride along on
+    // every record, so the API must not strip them into bare numbers.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-food-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await store.merge({
+      food_security_records: [{
+        id: 'fs1', source: 'ipc_hdx', source_id: 'KEN:Turkana:current:2026-07-01',
+        latitude: null, longitude: null, bbox: { south: 3.0, west: 34.4, north: 4.6, east: 36.0 },
+        country: 'KEN', scope: 'area', area: 'Turkana', analysis_date: 'Jul 2026',
+        validity_period: 'current', valid_from: '2026-07-01', valid_to: '2026-10-31',
+        phase3plus_number: 375900, phase3plus_fraction: 0.35,
+        phases: { all: { number: 1074000, fraction: 1 }, '3+': { number: 375900, fraction: 0.35 } },
+        observed_at: '2026-07-01T00:00:00.000Z',
+        metadata: { percentage_note: '0.2 means 20%, not 0.2%', dataset_license: 'CC0 / Public Domain' },
+      }],
+      disease_observations: [{
+        id: 'dob1', source: 'who_gho', indicator_code: 'CHOLERA_0000000001',
+        indicator_name: 'Number of reported cases of cholera', unit: 'cases',
+        country: 'KEN', region: 'Eastern Mediterranean', year: 2016, value: 3120,
+        latitude: null, longitude: null, first_seen_source_type: 'national_annual_aggregate',
+        observed_at: '2016-01-01T00:00:00.000Z',
+        metadata: { granularity_note: 'National annual aggregate', policy_note: 'context, not an alert trigger' },
+      }],
+    })
+
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://localhost:${listener.address().port}`
+    try {
+      const food = await fetchJson(`${baseUrl}/api/v1/food-security`)
+      assert.equal(food.success, true)
+      assert.equal(food.data.length, 1)
+      assert.equal(food.data[0].phase3plus_fraction, 0.35)
+      assert.equal(food.data[0].metadata.percentage_note, '0.2 means 20%, not 0.2%')
+      // The record is area scope, so it lands in the areas roll-up, not countries.
+      assert.equal(food.summary.countries.length, 0)
+      assert.equal(food.summary.worst_areas.length, 1)
+      assert.equal(food.summary.worst_areas[0].area, 'Turkana')
+
+      const summary = await fetchJson(`${baseUrl}/api/v1/food-security/summary`)
+      // Area-scope records surface in the worst-areas roll-up, not countries.
+      assert.equal(summary.data.worst_areas[0].phase3plus_number, 375900)
+
+      const disease = await fetchJson(`${baseUrl}/api/v1/disease-observations`)
+      assert.equal(disease.success, true)
+      assert.equal(disease.data.length, 1)
+      assert.equal(disease.data[0].unit, 'cases')
+      assert.equal(disease.data[0].latitude, null)
+      assert.equal(disease.summary.series_state[0].state, 'stale')
+    } finally {
+      listener.close()
+    }
+  })
+})

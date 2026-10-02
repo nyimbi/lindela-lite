@@ -279,6 +279,8 @@ export function computeDataQuality(data) {
     hazard_events: data.hazard_events,
     conflict_events: data.conflict_events,
     service_assets: data.service_assets,
+    food_security_records: data.food_security_records,
+    disease_observations: data.disease_observations,
   }
   const bySource = new Map()
   for (const [collection, records] of Object.entries(collections)) {

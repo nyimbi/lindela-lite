@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-Flood, access-risk, and seasonal-signal capability. All additions are additive;
-no existing endpoint changed shape.
+Flood, access-risk, seasonal-signal, food-security, and outbreak-context capability.
+All additions are additive; no existing endpoint changed shape.
 
 ### Added
 
@@ -29,6 +29,37 @@ no existing endpoint changed shape.
   which is by definition the three-month running mean of those numbers. Emits
   `climate_observations` with coordinates deliberately null, because a
   basin-wide Pacific index must not be attributed to a district by proximity.
+- `ipc_hdx` connector → `food_security_records`, plus `GET /api/v1/food-security`
+  and `/api/v1/food-security/summary`. IPC Acute Food Insecurity classifications
+  (phases 1-5 and the Phase 3+ aggregate, national and subnational) via the
+  Humanitarian Data Exchange — keyless, CC0 / public domain, verified live
+  2026-10-02. This supersedes the scoping conclusion that IPC needed a FAO/WFP
+  licence: the HDX channel carries the same classifications, subnational, with
+  no licence needed. Records are grouped one per area and validity window with
+  every phase's published figure, relayed verbatim and never re-derived. The
+  source `Percentage` column is a fraction of the analysed population (0.2 means
+  20%), stated on every record. Geometry is bounding boxes only, joined from
+  per-country GeoJSON where the area name matched; coordinates stay null. The
+  summary rolls up the latest `current` window per country and the ten worst
+  areas by Phase 3+ fraction. Default ingestion scope: all Sub-Saharan Africa.
+- `who_gho` connector → `disease_observations`, plus
+  `GET /api/v1/disease-observations`. WHO Global Health Observatory
+  outbreak-relevant indicators (cholera cases/deaths/CFR, meningitis cases and
+  epidemic districts, measles, yellow fever, plague) from keyless OData,
+  verified live 2026-10-02. URL construction omits `$filter`, `$orderby`, and
+  `$top` deliberately, after probing that the endpoint silently empties or
+  ignores each of them — the full series is fetched and windowed in-process,
+  where the failure mode is visible. National-annual aggregates only, with
+  `coordinates: null` and a policy note per record (decision-support context
+  with attribution; not district evidence; not an alert trigger), because
+  outbreak figures can move funding flows and stigmatise areas. The summary
+  marks each indicator series `current`/`aging`/`stale` against the calendar:
+  a series that stopped publishing (cholera ends 2016, verified) is labelled,
+  not hidden.
+- IPC area bbox overlay and food-security/outbreak surfaces on the dashboard.
+- `docs/outbreak-and-food-security-scoping.md` amended 2026-10-02: its "no
+  keyless IPC feed" conclusion never checked HDX; the original verification
+  record is kept, with the supersession stated.
 
 ### Known limitations
 

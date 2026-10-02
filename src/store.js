@@ -40,6 +40,12 @@ export const COLLECTIONS = [
   'parametric_disbursements',
   'kpi_snapshots',
   'road_access',
+  // Every collection JsonStore.merge writes must be listed here: the loop
+  // below keys strictly off COLLECTIONS, and an unlisted collection's records
+  // are dropped silently — the same class of bug the runIngestion merged map
+  // had, caught first by the food-security API test.
+  'food_security_records',
+  'disease_observations',
 ]
 
 export class JsonStore {

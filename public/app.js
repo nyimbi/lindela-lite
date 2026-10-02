@@ -41,6 +41,12 @@ const state = {
   routeFocus: null,
   roadAccess: [],
   showRoads: false,
+  // IPC area overlay + food-security/outbreak strips. ipcRecords holds only
+  // the current-window area records the overlay draws; the strip reads the
+  // server-side summary so 4,500 records never cross the wire twice.
+  foodSecurity: [],
+  diseaseSummary: null,
+  showIpcAreas: false,
   climate: [],
   routePlan: null,
   roadsById: new Map(),
@@ -218,6 +224,69 @@ function renderRoadLayer(roads, bbox) {
     title.textContent = `${r.road_name || 'Road'} — ${status}${r.access_reason ? `: ${r.access_reason}` : ''}`
     dot.append(title)
     mapRoadsEl.append(dot)
+  }
+}
+
+/**
+ * IPC area overlay: one shaded bounding box per current-window area record.
+ *
+ * Two honesty rules are enforced here. First, the shading bands are bands of
+ * the *published* Phase 3+ fraction — thresholds chosen for legibility, not a
+ * re-classification of IPC's work; IPC's own phase for the area is not
+ * recomputed. Second, a bbox is drawn with a dashed edge and a title that says
+ * what it is, because a rectangle includes neighbouring ground the
+ * classification does not cover and a solid fill would read as a footprint.
+ */
+const IPC_FRACTION_BANDS = [
+  { key: 'low', max: 0.15, note: 'Phase 3+ below 15% of analysed population' },
+  { key: 'medium', max: 0.3, note: 'Phase 3+ 15-30% of analysed population' },
+  { key: 'high', max: 0.4, note: 'Phase 3+ 30-40% of analysed population' },
+  { key: 'severe', max: Infinity, note: 'Phase 3+ above 40% of analysed population' },
+]
+
+function renderFoodSecurityLayer(records, bbox) {
+  if (!mapFoodSecurityEl) return
+  mapFoodSecurityEl.innerHTML = ''
+  for (const r of records) {
+    const box = r.bbox
+    if (!box || ![box.west, box.south, box.east, box.north].every(Number.isFinite)) continue
+    const fraction = r.phase3plus_fraction
+    // No published Phase 3+ figure: coverage is still drawn, as a neutral
+    // outline with the fact in the title — shading it green would invent a value.
+    if (!Number.isFinite(fraction)) {
+      const nw0 = project(Math.min(box.north, 90), box.west, bbox)
+      const se0 = project(Math.max(box.south, -90), box.east, bbox)
+      const outline = svgEl('rect', {
+        x: Math.min(nw0.x, se0.x), y: Math.min(nw0.y, se0.y),
+        width: Math.abs(se0.x - nw0.x), height: Math.abs(se0.y - nw0.y),
+        class: 'food-cell food-unclassified',
+      })
+      const title0 = svgEl('title')
+      title0.textContent = `${r.area || 'National'} (${r.country}) — IPC classification present; no Phase 3+ figure published for this window.`
+      outline.append(title0)
+      mapFoodSecurityEl.append(outline)
+      continue
+    }
+    const band = IPC_FRACTION_BANDS.find((b) => fraction < b.max) || IPC_FRACTION_BANDS[IPC_FRACTION_BANDS.length - 1]
+    const nw = project(Math.min(box.north, 90), box.west, bbox)
+    const se = project(Math.max(box.south, -90), box.east, bbox)
+    const rect = svgEl('rect', {
+      x: Math.min(nw.x, se.x),
+      y: Math.min(nw.y, se.y),
+      width: Math.abs(se.x - nw.x),
+      height: Math.abs(se.y - nw.y),
+      class: `food-cell food-${band.key}`,
+    })
+    const people = Number.isFinite(r.phase3plus_number)
+      ? ` — ${r.phase3plus_number.toLocaleString()} people`
+      : ''
+    const title = svgEl('title')
+    title.textContent = `${r.area || 'National'} (${r.country}) — IPC Phase 3+ ${Number.isFinite(fraction)
+      ? `${Math.round(fraction * 100)}% of analysed population` : 'not published'}${people}, ` +
+      `${r.valid_from} to ${r.valid_to}. Bounding box, not the mapped polygon.`
+    rect.append(title)
+    rect.addEventListener('click', () => openDetailDialog(r))
+    mapFoodSecurityEl.append(rect)
   }
 }
 
@@ -606,6 +675,90 @@ async function loadRoadStatus() {
   }
 }
 
+/**
+ * IPC area overlay loader. Records are the current-window area rows only —
+ * projections and national records are classification, not something to shade
+ * a map with — and the summary strip reads the server's roll-up so the light
+ * payload is loaded even when the overlay is off.
+ */
+async function loadIpcOverlay() {
+  try {
+    const list = await fetchJson('/api/v1/food-security?limit=5000')
+    if (list?.success) {
+      state.foodSecurity = (list.data || []).filter(
+        (r) => r.scope === 'area' && r.validity_period === 'current')
+      const withBox = state.foodSecurity.filter((r) => r.bbox).length
+      if (ipcStatusEl && ipcOverlayToggle?.checked) {
+        ipcStatusEl.textContent = withBox
+          ? `${withBox} IPC areas shaded by published Phase 3+ share; boxes include neighbouring ground`
+          : 'No IPC area geometry matched — see food-security records for the classifications'
+      }
+      if (ipcOverlayToggle?.checked) reRenderMapFromState()
+    }
+  } catch {
+    if (ipcStatusEl) ipcStatusEl.textContent = 'IPC food-security data unavailable'
+  }
+}
+
+async function loadFoodSecuritySummary() {
+  try {
+    const body = await fetchJson('/api/v1/food-security/summary')
+    if (body?.success) renderFoodSecurityStrip(body.data)
+  } catch {
+    if (ipcStripEl) ipcStripEl.hidden = true
+  }
+}
+
+function renderFoodSecurityStrip(summary) {
+  if (!ipcStripEl) return
+  const worst = summary?.worst_areas?.[0]
+  const countryCount = summary?.countries?.length || 0
+  const areaCount = (summary?.worst_areas || []).length
+  ipcStripEl.hidden = !worst && !countryCount
+  if (!worst && !countryCount) return
+  if (worst) {
+    const pct = Number.isFinite(worst.phase3plus_fraction)
+      ? `${Math.round(worst.phase3plus_fraction * 100)}%`
+      : '—'
+    ipcWorstValueEl.textContent = `Worst area: ${worst.area || 'unknown'} (${worst.country}) — Phase 3+ ${pct}${
+      Number.isFinite(worst.phase3plus_number) ? `, ${worst.phase3plus_number.toLocaleString()} people` : ''}`
+    ipcWorstPeriodEl.textContent = `${worst.valid_from} → ${worst.valid_to}`
+  }
+  ipcAreasEl.textContent = `${countryCount} countries · ${areaCount} worst areas`
+  ipcAreasEl.className = `seasonal-phase ${worst ? '' : 'seasonal-phase-unknown'}`
+}
+
+/**
+ * Outbreak strip. State wording mirrors who-gho's verdicts: a stale series is
+ * a data fact (publication stopped), not a disease fact.
+ */
+async function loadDiseaseSummary() {
+  try {
+    const body = await fetchJson('/api/v1/disease-observations/summary')
+    if (!body?.success) return
+    state.diseaseSummary = body.data
+    const states = body.data?.series_state || []
+    if (!states.length) {
+      diseaseStripEl.hidden = true
+      return
+    }
+    diseaseStripEl.hidden = false
+    const stale = states.filter((s) => s.state === 'stale').length
+    const current = states.filter((s) => s.state === 'current').length
+    diseaseSeriesStateEl.textContent = `${states.length} indicator series · ${current} current · ${stale} stale`
+    diseaseSeriesStateEl.className = `seasonal-phase ${stale === states.length ? 'seasonal-phase-unknown' : ''}`
+    const latest = states.reduce((a, b) => (b.latest_year > (a?.latest_year || 0) ? b : a), null)
+    if (latest) {
+      diseaseLatestEl.textContent = `${latest.indicator_name}: latest data ${latest.latest_year}`
+      diseaseLatestMetaEl.textContent = latest.state !== 'current' ? `${latest.years_behind_calendar}y behind calendar` : ''
+    }
+    diseaseNoteEl.textContent = `National annual aggregates. Context, not district evidence; not an alert trigger.` +
+      (stale ? ` Series marked stale have stopped publishing; silence is absence of published data, not absence of disease.` : '')
+  } catch {
+    if (diseaseStripEl) diseaseStripEl.hidden = true
+  }
+}
+
 // =============================================================
 // Fetch helpers
 // =============================================================
@@ -682,6 +835,7 @@ const mapRiskEl       = $('mapRisk')
 const mapFloodEl      = $('mapFlood')
 const mapRoadsEl      = $('mapRoads')
 const mapRouteEl      = $('mapRoute')
+const mapFoodSecurityEl = $('mapFoodSecurity')
 const seasonalIndexEl    = $('seasonalIndex')
 const seasonalPhaseEl    = $('seasonalPhase')
 const seasonalAnomalyEl  = $('seasonalAnomaly')
@@ -705,6 +859,17 @@ const floodSimulateBtn = $('floodSimulate')
 const floodClearBtn   = $('floodClear')
 const roadOverlayToggle = $('roadOverlayToggle')
 const roadStatusEl       = $('roadStatus')
+const ipcOverlayToggle   = $('ipcOverlayToggle')
+const ipcStatusEl        = $('ipcStatus')
+const ipcStripEl         = $('ipcStrip')
+const ipcAreasEl         = $('ipcAreas')
+const ipcWorstValueEl    = $('ipcWorstValue')
+const ipcWorstPeriodEl   = $('ipcWorstPeriod')
+const diseaseStripEl     = $('diseaseStrip')
+const diseaseSeriesStateEl = $('diseaseSeriesState')
+const diseaseLatestEl    = $('diseaseLatest')
+const diseaseLatestMetaEl = $('diseaseLatestMeta')
+const diseaseNoteEl      = $('diseaseNote')
 
 function svgEl(tag, attrs = {}) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', tag)
@@ -863,6 +1028,7 @@ function renderMap(records) {
   if (mapFloodEl) mapFloodEl.innerHTML = ''
   if (mapRoadsEl) mapRoadsEl.innerHTML = ''
   if (mapRouteEl) mapRouteEl.innerHTML = ''
+  if (mapFoodSecurityEl) mapFoodSecurityEl.innerHTML = ''
   if (mapDefsEl) mapDefsEl.innerHTML = ''
 
   // The simulation overlay and road status persist across filter changes, so
@@ -871,6 +1037,7 @@ function renderMap(records) {
   if (state.floodGrid) renderFloodLayer(state.floodGrid, bbox)
   if (state.roadAccess?.length) renderRoadLayer(state.roadAccess, bbox)
   if (state.routePlan) renderRouteLayer(state.routePlan, bbox)
+  if (state.showIpcAreas && state.foodSecurity?.length) renderFoodSecurityLayer(state.foodSecurity, bbox)
 
   const hazards = visible.filter((r) => r.event_type || r.source === 'gdacs' || r.source === 'glofas' || r.source === 'nasa_firms')
   const assets  = visible.filter((r) => r.service_type)
@@ -964,12 +1131,13 @@ function renderMap(records) {
 
 function renderMapLegend() {
   mapLegendEl.innerHTML = ''
-  const items = [
+    const items = [
     { cls: 'hazard-flood',     label: 'Flood',     shape: 'circle' },
     { cls: 'hazard-landslide', label: 'Landslide', shape: 'circle' },
     { cls: 'hazard-fire',      label: 'Fire',      shape: 'circle' },
     { cls: 'hazard-conflict',  label: 'Conflict',  shape: 'circle' },
     { cls: 'hazard-footprint', label: 'Area (box)',shape: 'footprint' },
+    { cls: 'food-medium',      label: 'IPC Phase 3+ area', shape: 'footprint' },
     { cls: 'asset-health',     label: 'Health',    shape: 'rect' },
     { cls: 'asset-water',      label: 'Water',     shape: 'rect' },
   ]
@@ -1075,6 +1243,16 @@ roadOverlayToggle?.addEventListener('change', async () => {
     reRenderMapFromState()
   }
 })
+ipcOverlayToggle?.addEventListener('change', async () => {
+  state.showIpcAreas = ipcOverlayToggle.checked
+  if (state.showIpcAreas) {
+    await loadIpcOverlay()
+  } else {
+    state.foodSecurity = []
+    if (ipcStatusEl) ipcStatusEl.textContent = ''
+    reRenderMapFromState()
+  }
+})
 
 function reRenderMapFromState() {
   const d = state.data
@@ -1125,6 +1303,10 @@ async function refresh() {
   populateMapSourceFilter(sources.data || [])
   populateRouteEndpoints(assets.data || [])
   renderSeasonalStrip(state.climate)
+  // Strips load once per refresh for every viewer; the IPC overlay still only
+  // fetches its records when the operator ticks it on.
+  loadFoodSecuritySummary().catch(() => {})
+  loadDiseaseSummary().catch(() => {})
 
   renderMap([
     ...(flood.data || []),

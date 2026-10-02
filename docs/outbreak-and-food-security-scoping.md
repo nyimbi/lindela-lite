@@ -150,8 +150,30 @@ operator controls, not surveillance instrumentation we introduced.
 
 ## 5. What is shipped today
 
-- No outbreak surveillance connector, collection, or UI.
-- No IPC integration.
+Amended 2026-10-02. The conclusions above were checked against ipcinfo.org,
+FENIX, and WHO — but not HDX. On 2026-10-02 the IPC organisation's datasets on
+the Humanitarian Data Exchange were verified live
+(`data.humdata.org/api/3/action/package_show?id=global-acute-food-insecurity-country-data`):
+keyless, CC0 / public domain (license_id `other-pd-nr`), current within days,
+and **subnational** — which removes the licensing blocker and the
+country-granularity limitation this document was written around. With the
+operator's decision to proceed, both capabilities below are now implemented:
+
+- `ipc_hdx` connector → `food_security_records` (national and area scope,
+  phases 1-5 plus the Phase 3+ aggregate, validity windows, bbox-only
+  geometry), food-security API endpoints and dashboard surface.
+- `who_gho` connector → `disease_observations` (national-annual aggregates,
+  staleness verdicts per indicator series), disease-observations API and
+  dashboard surface, under the policy constraints in section 3.
+
+What remains per this document's own policy constraints: no outbreak
+surveillance product, no alert triggers on outbreak or classification data,
+attribution kept on every record. See `docs/ingestion.md` for the sources'
+deliberate limits. The original verification record below is kept unedited
+because it is the reasoning chain that found the gap.
+
+- No outbreak surveillance connector, collection, or UI. *(superseded 2026-10-02: `who_gho`)*
+- No IPC integration. *(superseded 2026-10-02: `ipc_hdx` via HDX, CC0)*
 - No food-security phase modelling.
 - The DHIS2 scaffold is operator-configured and inactive by default; it is not
   outbreak instrumentation.
@@ -160,6 +182,8 @@ operator controls, not surveillance instrumentation we introduced.
 
 - IPC official site (access restricted to registered users):
   https://www.ipcinfo.org/
+- IPC via HDX (keyless, CC0, subnational — channel used now):
+  https://data.humdata.org/dataset/global-acute-food-insecurity-country-data
 - FAO IPC programme: https://www.fao.org/ipc/en/
 - WHO Global Health Observatory OData API (keyless):
   https://ghoapi.azureedge.net/api/Indicator?$format=json

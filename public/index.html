@@ -72,9 +72,10 @@
               Paint order is z-order. The flood depth layer sits above the risk
               blobs, not below: an operator who asked for an inundation
               simulation is looking for water, and the red risk gradients are
-              opaque enough to bury it entirely. Road markers stay on top of
-              both so a cut-off segment is never hidden by the shading it
-              caused.
+              opaque enough to bury it entirely. IPC area boxes shade below the
+              flood layer so a flood simulation stays legible inside them; road
+              markers stay on top of all so a cut-off segment is never hidden by
+              the shading it caused.
             -->
             <g id="mapTransform">
               <g id="mapOcean" class="ocean-layer"></g>
@@ -82,6 +83,7 @@
               <g id="mapDistricts" class="districts-layer"></g>
               <g id="mapGraticule" class="graticule"></g>
               <g id="mapRisk" class="risk-layer"></g>
+              <g id="mapFoodSecurity" class="food-layer"></g>
               <g id="mapFlood" class="flood-layer"></g>
               <g id="mapHazards" class="hazard-layer"></g>
               <g id="mapRoute" class="route-layer"></g>
@@ -112,6 +114,33 @@
             <p id="seasonalNote" class="seasonal-note">
               Monthly SST anomaly index. Not a rainfall forecast and not a flood probability.
             </p>
+          </div>
+
+          <div class="seasonal-strip" id="ipcStrip" role="group" aria-label="Food security context" hidden>
+            <div class="seasonal-head">
+              <span class="seasonal-label">Food security (IPC)</span>
+              <span id="ipcAreas" class="seasonal-phase seasonal-phase-unknown">not ingested</span>
+            </div>
+            <div class="seasonal-value">
+              <span id="ipcWorstValue" class="seasonal-anomaly">—</span>
+              <span id="ipcWorstPeriod" class="seasonal-period"></span>
+            </div>
+            <p class="seasonal-note">Phase 3+ figures as published, latest validity window.
+              Analytical classification by IPC — relayed verbatim, never re-derived. Fractions
+              of the analysed population: 0.35 means 35%.</p>
+          </div>
+
+          <div class="seasonal-strip" id="diseaseStrip" role="group" aria-label="Outbreak context" hidden>
+            <div class="seasonal-head">
+              <span class="seasonal-label">Outbreak context (WHO GHO)</span>
+              <span id="diseaseSeriesState" class="seasonal-phase seasonal-phase-unknown">not ingested</span>
+            </div>
+            <div class="seasonal-value">
+              <span id="diseaseLatest" class="seasonal-anomaly">—</span>
+              <span id="diseaseLatestMeta" class="seasonal-period"></span>
+            </div>
+            <p id="diseaseNote" class="seasonal-note">
+              National annual aggregates. Context, not district evidence; not an alert trigger.</p>
           </div>
 
           <div class="map-filters">
@@ -170,11 +199,16 @@
                 <input type="checkbox" id="roadOverlayToggle">
                 <span>Road status</span>
               </label>
+              <label class="filter-label">
+                <input type="checkbox" id="ipcOverlayToggle">
+                <span>IPC areas</span>
+              </label>
             </div>
             <p id="floodStatus" class="map-sim-status" role="status" aria-live="polite">
               Choose an area and a water surface elevation to shade the ground beneath it.
             </p>
             <p id="roadStatus" class="map-sim-status" role="status" aria-live="polite"></p>
+            <p id="ipcStatus" class="map-sim-status" role="status" aria-live="polite"></p>
             <div id="floodLegend" class="flood-legend" hidden></div>
           </div>
 

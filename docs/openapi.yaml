@@ -633,6 +633,69 @@ paths:
                   success: { type: boolean }
                   summary:
                     $ref: '#/components/schemas/RoadAccessSummary'
+  /api/v1/food-security:
+    get:
+      summary: IPC acute food insecurity classifications
+      description: |
+        IPC phase classifications (national and subnational) relayed verbatim
+        from the HDX dataset. IPC is an analytical classification by National
+        IPC Technical Working Groups: not an observation, not an estimate by
+        this platform, and Phase thresholds carry triggering consequences under
+        famine and anticipatory-action policy.
+
+        The phase `Percentage` column is a fraction of the analysed population:
+        `0.2` means 20%. Coordinates are null; geometry is a bounding box where
+        the dataset GeoJSON matched the area name — a bbox includes
+        neighbouring ground the classification does not cover.
+      responses:
+        '200':
+          description: Food security records and a summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FoodSecurityRecord'
+                  summary:
+                    $ref: '#/components/schemas/FoodSecuritySummary'
+  /api/v1/food-security/summary:
+    get:
+      summary: Phase 3+ roll-up, latest published window per country/area
+      responses:
+        '200':
+          description: Countries, and the worst ten areas by current-window Phase 3+ fraction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FoodSecuritySummary'
+  /api/v1/disease-observations:
+    get:
+      summary: WHO GHO outbreak indicators, national-annual aggregates
+      description: |
+        Decision-support context with attribution; not district evidence and
+        not an alert trigger. The source reports COUNTRY/YEAR, so coordinates
+        are null and nothing here is evidence about a district. Series that
+        stopped publishing are marked stale in the summary — silence may mean
+        absence of published data, not absence of disease.
+      responses:
+        '200':
+          description: Disease observation records and a summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DiseaseObservation'
+                  summary:
+                    $ref: '#/components/schemas/DiseaseObservationsSummary'
   /api/v1/routing/plan:
     post:
       summary: Plan delivery routes over current road access
@@ -1638,6 +1701,122 @@ components:
               road_class: { type: string }
               reason: { type: string }
               primary_hazard_type: { type: string, nullable: true }
+    FoodSecurityRecord:
+      type: object
+      required: [country, scope, analysis_date, validity_period, phases]
+      properties:
+        id: { type: string }
+        source: { type: string, enum: [ipc_hdx] }
+        country: { type: string, description: ISO3 code as IPC publishes it }
+        scope: { type: string, enum: [national, area] }
+        area: { type: string, nullable: true }
+        level1: { type: string, nullable: true }
+        analysis_date: { type: string }
+        validity_period: { type: string, enum: [current, first_projection, second_projection] }
+        valid_from: { type: string, format: date }
+        valid_to: { type: string, format: date }
+        total_country_population: { type: integer, nullable: true }
+        phase3plus_number: { type: integer, nullable: true }
+        phase3plus_fraction:
+          type: number
+          description: Fraction of the analysed population, e.g. 0.35 for 35% — not 0.35%.
+        phases:
+          type: object
+          description: Published figure per phase label (1-5, 3+, all).
+          additionalProperties:
+            type: object
+            properties:
+              number: { type: integer, nullable: true }
+              fraction: { type: number, nullable: true }
+        bbox:
+          type: object
+          nullable: true
+          description: Bounding box of the mapped area polygon; null where GeoJSON did not match.
+          properties:
+            south: { type: number }
+            west: { type: number }
+            north: { type: number }
+            east: { type: number }
+        latitude: { type: null, nullable: true }
+        longitude: { type: null, nullable: true }
+        metadata:
+          type: object
+          description: Classification note, fraction note, validity note, CC0 licence, attribution.
+    FoodSecuritySummary:
+      type: object
+      required: [countries]
+      properties:
+        generated_at: { type: string }
+        methodology: { type: string }
+        countries:
+          type: array
+          items:
+            $ref: '#/components/schemas/FoodSecurityRollup'
+        worst_areas:
+          type: array
+          description: Up to ten areas with the highest current-window Phase 3+ fraction.
+          items:
+            $ref: '#/components/schemas/FoodSecurityRollup'
+    FoodSecurityRollup:
+      type: object
+      required: [country]
+      properties:
+        country: { type: string }
+        area: { type: string, nullable: true }
+        analysis_date: { type: string }
+        valid_from: { type: string, format: date }
+        valid_to: { type: string, format: date }
+        phase3plus_number: { type: integer, nullable: true }
+        phase3plus_fraction: { type: number, nullable: true }
+    DiseaseObservation:
+      type: object
+      required: [indicator_code, country, year, value, unit]
+      properties:
+        id: { type: string }
+        source: { type: string, enum: [who_gho] }
+        indicator_code: { type: string, example: CHOLERA_0000000001 }
+        indicator_name: { type: string }
+        unit: { type: string, enum: [cases, deaths, ratio, districts] }
+        country: { type: string }
+        region: { type: string, nullable: true }
+        year: { type: integer }
+        value: { type: number }
+        first_seen_source_type: { type: string, enum: [national_annual_aggregate] }
+        latitude: { type: null, nullable: true }
+        longitude: { type: null, nullable: true }
+        metadata:
+          type: object
+          description: Granularity and policy notes; attribution required per WHO data terms.
+    DiseaseObservationsSummary:
+      type: object
+      required: [series_state]
+      properties:
+        generated_at: { type: string }
+        granularity: { type: string }
+        attribution: { type: string }
+        series_state:
+          type: array
+          description: Staleness verdict per indicator series — a data fact, not a disease fact.
+          items:
+            type: object
+            properties:
+              indicator_code: { type: string }
+              indicator_name: { type: string }
+              latest_year: { type: integer }
+              years_behind_calendar: { type: integer }
+              state: { type: string, enum: [current, aging, stale] }
+              note: { type: string, nullable: true }
+        latest_by_indicator_country:
+          type: array
+          items:
+            type: object
+            properties:
+              country: { type: string }
+              indicator_code: { type: string }
+              indicator_name: { type: string }
+              year: { type: integer }
+              value: { type: number }
+              unit: { type: string }
     RoutingPlanInput:
       type: object
       required: [from, to]

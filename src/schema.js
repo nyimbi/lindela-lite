@@ -6,6 +6,8 @@ export const SOURCE_IDS = Object.freeze([
   'nasa_firms',
   'usgs_earthquake',
   'noaa_enso',
+  'ipc_hdx',
+  'who_gho',
   'service_assets',
   'acled_csv',
   'conflict_csv',
@@ -243,6 +245,8 @@ export function emptyStore() {
     parametric_disbursements: [],
     kpi_snapshots: [],
     road_access: [],
+    food_security_records: [],
+    disease_observations: [],
   }
 }
 
@@ -318,6 +322,30 @@ export function publicSourceCatalog() {
         type: 'geojson_api',
         requires_credentials: false,
         outputs: ['hazard_events'],
+      }
+    }
+    if (id === 'ipc_hdx') {
+      return {
+        ...common,
+        name: 'IPC acute food insecurity classifications (via HDX)',
+        type: 'dataset_api',
+        requires_credentials: false,
+        // ipcinfo.org 403s automated access, but the IPC organisation
+        // publishes the same classifications on HDX, keyless and CC0. The
+        // scoping document that concluded otherwise predates this check
+        // (2026-10-01 vs 2026-10-02) and has been updated.
+        status_note: 'IPC classifications relayed as published, subnational where available; not re-classified, not scored',
+        outputs: ['food_security_records'],
+      }
+    }
+    if (id === 'who_gho') {
+      return {
+        ...common,
+        name: 'WHO Global Health Observatory outbreak indicators',
+        type: 'odata_api',
+        requires_credentials: false,
+        status_note: 'National-annual aggregates only: context with attribution, not district surveillance',
+        outputs: ['disease_observations'],
       }
     }
     if (id === 'service_assets') {

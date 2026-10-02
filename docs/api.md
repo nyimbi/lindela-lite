@@ -19,6 +19,9 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 - `GET /api/v1/flood-depth` returns static flood depth for a water surface elevation, with per-level coverage, extent polygons, and model limits stated in the payload.
 - `GET /api/v1/road-access` returns passage status for every road asset, plus a summary.
 - `GET /api/v1/road-access/summary` returns road access counts and cut-off rate.
+- `GET /api/v1/food-security` returns IPC acute food insecurity classifications, plus a Phase 3+ summary.
+- `GET /api/v1/food-security/summary` returns the IPC Phase 3+ roll-up alone.
+- `GET /api/v1/disease-observations` returns WHO GHO outbreak indicators with staleness verdicts.
 - `POST /api/v1/routing/plan` plans delivery routes over current road access, returning per-leg routes and severed-segment diagnostics.
 - `GET /api/v1/conflict-risk` returns climate-conflict risk scores.
 - `GET /api/v1/service-assets` returns imported service assets.
@@ -282,6 +285,58 @@ distant roads.
 
 Auth: none required. Returns `{ success, summary: RoadAccessSummary }` with
 `total_roads`, `cut_off_rate_pct`, and `blocked_by_hazard_type`.
+
+### `GET /api/v1/food-security`
+
+Auth: none required. Keyless; IPC classifications via HDX (CC0 / public
+domain). Default ingestion scope is all Sub-Saharan Africa.
+
+Response: `{ success, data: FoodSecurityRecord[], summary: FoodSecuritySummary }`
+
+One grouped record per area and validity window, phases 1–5 plus the Phase 3+
+aggregate. Three honesty constraints ride in the record metadata itself:
+
+- Every classification is **relayed verbatim** from National IPC Technical
+  Working Groups. The platform does not re-derive a phase: published thresholds
+  carry triggering consequences under famine and anticipatory-action policy.
+- The `Percentage` column is a **fraction of the analysed population** —
+  `0.2` means 20%, not 0.2% — stated on every record.
+- Coordinates are `null`. Geometry is a **bounding box** where the dataset
+  GeoJSON matched the area name; a bbox includes neighbouring ground the
+  classification does not cover.
+
+Projections carry `validity_period: first_projection` / `second_projection`
+and are IPC's projections, not forecasts by this platform. The summary's
+`countries` and `worst_areas` roll-ups read only the `current` window, ordered
+by window start date.
+
+### `GET /api/v1/food-security/summary`
+
+Auth: none required. Returns `{ success, summary }` with `countries` (latest
+current window per country) and `worst_areas` (ten highest Phase 3+ fraction
+areas).
+
+### `GET /api/v1/disease-observations`
+
+Auth: none required. Keyless; WHO Global Health Observatory OData.
+
+Response: `{ success, data: DiseaseObservation[], summary }`
+
+National-annual aggregates for cholera (cases, deaths, case fatality rate),
+meningitis (cases, epidemic districts), measles, yellow fever, and plague.
+Deliberate constraints:
+
+- The source reports COUNTRY/YEAR, so `coordinates` are `null` and the record
+  is context for what national surveillance says — **not evidence about any
+  district**.
+- No trend, incidence rate, or risk score is derived: no denominators or
+  reporting-quality metadata are available in the source.
+- Every record carries a policy note: outbreak figures can move funding flows
+  and stigmatise areas; decision-support context with attribution, not an
+  alert trigger.
+- The summary marks each indicator series `current` / `aging` / `stale`
+  against the calendar. Cholera's published series ends 2016 (verified); a
+  stale series is a data fact, not a disease fact.
 
 ### `POST /api/v1/routing/plan`
 

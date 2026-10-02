@@ -90,7 +90,7 @@ export async function ingestPublicSources(store, options = {}) {
   // surface a degraded source. The exclusions only apply to the default set.
   const sources = options.sources?.length
     ? options.sources
-    : ['open_meteo', 'gdacs', 'glofas', 'chirps', 'nasa_firms', 'usgs_earthquake', 'noaa_enso']
+    : ['open_meteo', 'gdacs', 'glofas', 'chirps', 'nasa_firms', 'usgs_earthquake', 'noaa_enso', 'ipc_hdx', 'who_gho']
       .filter((source) => !DEMO_SOURCE_EXCLUSIONS.has(source))
   const regions = REGIONS.map(r => ({ name: r.name, country: r.country, lat: r.lat, lon: r.lon }))
 

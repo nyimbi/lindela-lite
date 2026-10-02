@@ -41,6 +41,8 @@ import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './s
 import { renderCapXml } from './cap.js'
 import { emit, dispatchPending } from './outbox.js'
 import { summarizeRoadAccess } from './road-access.js'
+import { summarizeFoodSecurity } from './connectors/ipc-hdx.js'
+import { summarizeDiseaseObservations } from './connectors/who-gho.js'
 import { planDelivery } from './routing.js'
 import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
@@ -471,6 +473,33 @@ async function handleApi(store, req, res, url) {
 
   if (url.pathname === '/api/v1/road-access/summary') {
     jsonResponse(res, 200, { success: true, data: summarizeRoadAccess(data.road_access || []) })
+    return
+  }
+
+  if (url.pathname === '/api/v1/food-security') {
+    // Summary rides along with the list, like road-access: a caller paging the
+    // records gets the roll-up for nothing instead of a second request.
+    const records = filterRecords(data.food_security_records || [], url.searchParams, { data, collection: 'food_security_records' })
+    jsonResponse(res, 200, { success: true, data: records, summary: summarizeFoodSecurity(records) })
+    return
+  }
+
+  if (url.pathname === '/api/v1/food-security/summary') {
+    jsonResponse(res, 200, { success: true, data: summarizeFoodSecurity(data.food_security_records || []) })
+    return
+  }
+
+  if (url.pathname === '/api/v1/disease-observations') {
+    const records = filterRecords(data.disease_observations || [], url.searchParams, { data, collection: 'disease_observations' })
+    jsonResponse(res, 200, { success: true, data: records, summary: summarizeDiseaseObservations(records) })
+    return
+  }
+
+  if (url.pathname === '/api/v1/disease-observations/summary') {
+    // The list endpoint caps at filterRecords' page limit, and the series
+    // states must not be computed over an arbitrary page of the collection —
+    // the dashboard strip therefore reads the whole store here.
+    jsonResponse(res, 200, { success: true, data: summarizeDiseaseObservations(data.disease_observations || []) })
     return
   }
 

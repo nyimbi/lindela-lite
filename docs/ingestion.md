@@ -15,6 +15,8 @@ Regular public/open-source sources:
 - `nasa_firms`
 - `usgs_earthquake`
 - `noaa_enso`
+- `ipc_hdx`
+- `who_gho`
 
 User-supplied sources:
 
@@ -87,6 +89,48 @@ deliberate and worth knowing before using the output:
 
 This is a monthly SST anomaly index. It is not a rainfall forecast and not a
 flood probability, and nothing downstream treats it as one.
+
+### Food Security: `ipc_hdx`
+
+IPC Acute Food Insecurity classifications, published through the Humanitarian
+Data Exchange (keyless, CC0 / public domain, verified live 2026-10-02). This
+supersedes the earlier scoping that concluded IPC needed a FAO/WFP licence:
+HDX carries the same classifications, including the subnational area CSV the
+licence-gated channels were wanted for.
+
+Emits `food_security_records`, one record per area and validity window, with
+every phase's published population in a `phases` map and the Phase 3+ figure
+lifted to `phase3plus_number` / `phase3plus_fraction`. Default scope is all
+Sub-Saharan Africa (`countries: 'all'` widens further).
+
+- **Relayed, not re-derived.** IPC is an analytical classification by National
+  IPC Technical Working Groups. A home-grown phase number would carry
+  triggering consequences under famine and anticipatory-action policy that no
+  protocol of this platform stands behind.
+- **Fractions, not percent.** The source `Percentage` column is a fraction of
+  the analysed population: `0.2` means 20%. Every record says so.
+- **Bbox-only geometry.** Area polygons come from per-country GeoJSON
+  resources; only the bounding box is stored, and it includes neighbouring
+  ground the classification does not cover. Coordinates stay `null`.
+- **Validation windows are labelled** (`current`, `first_projection`,
+  `second_projection`); projections are IPC's, not forecasts by this platform.
+
+### Outbreak Context: `who_gho`
+
+WHO Global Health Observatory outbreak-relevant indicators (cholera, meningitis,
+measles, yellow fever, plague), keyless OData, verified live 2026-10-02.
+
+Emits `disease_observations` as national-annual aggregates. Deliberate limits:
+
+- **Not district evidence.** The source reports COUNTRY/YEAR; the platform
+  works at district level. Records carry `coordinates: null` and say so.
+- **Staleness is labelled, not hidden.** Series stop publishing (cholera ends
+  2016, verified). The API summary marks each indicator `current` / `aging` /
+  `stale` against the calendar; a stale series is a data fact, not a disease fact.
+- **No derived rates.** No denominators or reporting-quality metadata are
+  available, so no trends or incidence rates are computed.
+- **Policy note on every record:** outbreak figures can move funding and
+  stigmatise areas; decision-support context with attribution, not an alert trigger.
 
 ## Connector Responsibilities
 
@@ -169,6 +213,8 @@ Regular sources have default policies in `src/ingestion.js`:
 | `nasa_firms` | 360 min | 30 sec | 2 | 720 min |
 | `usgs_earthquake` | 60 min | 20 sec | 2 | 180 min |
 | `noaa_enso` | 720 min | 20 sec | 2 | 1440 min |
+| `ipc_hdx` | 1440 min | 30 sec | 2 | 2880 min |
+| `who_gho` | 1440 min | 20 sec | 2 | 20160 min |
 
 User-supplied sources do not have regular schedules by default. `dhis2` has a
 policy but `regular: false`, because activation depends on an operator

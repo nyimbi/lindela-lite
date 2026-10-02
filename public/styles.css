@@ -332,6 +332,26 @@ kbd {
 .flood-d3 { fill: oklch(46% 0.20 242); fill-opacity: 0.80; }
 .flood-d4 { fill: oklch(34% 0.22 250); fill-opacity: 0.90; }
 
+/*
+ * IPC area boxes. Bands of the *published* Phase 3+ fraction — presentation
+ * thresholds, not a re-classification of IPC's phases. Dashed edges and flat
+ * fills because a rectangle includes neighbouring ground the classification
+ * does not cover; solid footprints are reserved for geometry the source drew.
+ */
+.food-cell {
+  fill-opacity: 0.22;
+  stroke-opacity: 0.55;
+  stroke-width: 1.2;
+  stroke-dasharray: 5 3;
+}
+.food-layer { pointer-events: auto; }
+
+.food-low     { fill: oklch(80% 0.11 145); stroke: oklch(58% 0.14 145); }
+.food-medium  { fill: oklch(82% 0.13 85);  stroke: oklch(60% 0.14 85); }
+.food-high    { fill: oklch(75% 0.15 55);  stroke: oklch(56% 0.16 55); }
+.food-severe  { fill: oklch(58% 0.20 25);  stroke: oklch(45% 0.20 25); }
+.food-unclassified { fill: none; stroke: oklch(55% 0.02 250); stroke-opacity: 0.35; }
+
 /* Road status: impassable must read instantly at map scale. */
 .roads-layer { pointer-events: none; }
 
