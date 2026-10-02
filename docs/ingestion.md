@@ -182,6 +182,35 @@ curl -X POST http://127.0.0.1:4177/api/v1/ingest/run \
   -d '{"sources": ["gdacs_archive", "open_meteo_archive"]}'
 ```
 
+### River Discharge Backfill: `open_meteo_flood`
+
+GloFAS v4 modelled daily river discharge via the Open-Meteo flood API
+(`flood-api.open-meteo.com/v1/flood`), keyless, verified live 2026-10-02.
+Backfill source for the discharge-labelled flood-probability variant
+(`label_source: 'glofas_discharge'`), which exists because the GDACS
+reported-flood label is too sparse to train on at the pilot districts.
+
+Emits `climate_observations` — one record per region **that has a GloFAS
+river reach at or under its reference point**, carrying the whole daily
+array (`daily: [{date, river_discharge_m3s}]`). Regions without a reach
+return null discharge every day and are refused as explicit ingestion
+errors, never stored as records of zeros. Limits stated on every record:
+
+- **Modelled hydrology, not gauge measurements** — GloFAS v4, consolidated
+  reanalysis to July 2022, seamlessly continued by the operational run.
+- **A cell without a reach is a refusal** — the Mogadishu pilot point has
+  no GloFAS reach at all (verified 2026-10-02: 15 616 days of null), while
+  the Turkana point (non-null daily discharge from 1997-01-01) and the Juba
+  point (4.8594, 31.5713, White Nile) do.
+- Values before the first valid day are absent reach coverage, not zero flow.
+
+Same backfill policy — `regular: false`, on demand, never on a default run;
+
+```bash
+curl -X POST http://127.0.0.1:4177/api/v1/ingest/run \
+  -d '{"sources": ["open_meteo_flood"]}'
+```
+
 ## Connector Responsibilities
 
 Each connector returns normalized records grouped by collection:
@@ -267,10 +296,11 @@ Regular sources have default policies in `src/ingestion.js`:
 | `who_gho` | 1440 min | 20 sec | 2 | 20160 min |
 | `gdacs_archive` | 0 min | 30 sec | 2 | 43200 min |
 | `open_meteo_archive` | 0 min | 60 sec | 2 | 43200 min |
+| `open_meteo_flood` | 0 min | 60 sec | 2 | 43200 min |
 
 User-supplied sources do not have regular schedules by default. `dhis2` has a
 policy but `regular: false`, because activation depends on an operator
-uploading entitlement they hold. `gdacs_archive` and `open_meteo_archive`
+uploading entitlement they hold. `gdacs_archive`, `open_meteo_archive`, and `open_meteo_flood`
 are also `regular: false` and carry a `0 min` interval on purpose: they are
 historical backfills for flood-probability training, run on demand, and an
 interval of 0 means no `next_run_at` is ever computed for them; DHIS2 needs

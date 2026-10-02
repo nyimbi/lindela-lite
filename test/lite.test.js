@@ -5853,6 +5853,67 @@ describe('Lindela Lite flood archive backfill connectors', () => {
     }
   })
 
+  it('open_meteo_flood stores a reach series and refuses a no-reach cell as an error', async () => {
+    const { spec } = await import('../src/connectors/open-meteo-flood.js')
+    const originalFetch = global.fetch
+    global.fetch = async (url) => {
+      const u = new URL(url)
+      const dry = Number(u.searchParams.get('latitude')) > 4
+      return {
+        ok: true, status: 200,
+        text: async () => JSON.stringify({
+          daily: {
+            time: ['2026-01-01', '2026-01-02', '2026-01-03'],
+            river_discharge: dry ? [null, null, null] : [10.5, null, 22.3],
+          },
+        }),
+      }
+    }
+    try {
+      const { climate_observations, errors } = await spec.ingest({
+        regions: [
+          { name: 'Riverland', country: 'TL', lat: 1, lon: 2 },
+          { name: 'Dryland', country: 'DL', lat: 5, lon: 6 },
+        ],
+        flood_start_date: '2026-01-01',
+        flood_end_date: '2026-01-03',
+      })
+      assert.equal(climate_observations.length, 1, 'a cell without a river reach must not become a record')
+      const record = climate_observations[0]
+      assert.equal(record.source, 'open_meteo_flood')
+      assert.deepEqual(record.daily, [
+        { date: '2026-01-01', river_discharge_m3s: 10.5 },
+        { date: '2026-01-02', river_discharge_m3s: null },
+        { date: '2026-01-03', river_discharge_m3s: 22.3 },
+      ])
+      assert.equal(record.discharge_days, 2)
+      assert.equal(record.days_missing_discharge, 1)
+      assert.equal(record.discharge_first_valid, '2026-01-01')
+      assert.match(record.metadata.model_limit, /modelled/i)
+      assert.ok(errors.some((e) => /Dryland/.test(e) && /river reach/.test(e)),
+        `the no-reach cell must be refused as an explicit error, got: ${errors.join('; ')}`)
+    } finally {
+      global.fetch = originalFetch
+    }
+  })
+
+  it('validates the open_meteo_flood spec and its registration', async () => {
+    const { validateConnector } = await import('../src/connectors/spec.js')
+    const floodSpec = (await import('../src/connectors/open-meteo-flood.js')).spec
+    assert.deepEqual(validateConnector(floodSpec), [])
+    assert.equal(floodSpec.id, 'open_meteo_flood')
+
+    const schema = await import('../src/schema.js')
+    assert.ok(schema.SOURCE_IDS.includes('open_meteo_flood'))
+    assert.ok(schema.publicSourceCatalog().find((s) => s.id === 'open_meteo_flood').outputs.includes('climate_observations'))
+
+    const ingestion = await import('../src/ingestion.js')
+    assert.equal(typeof ingestion.getConnector('open_meteo_flood').ingest, 'function')
+    assert.ok(ingestion.SOURCE_POLICIES.open_meteo_flood.regular === false)
+    assert.ok(!ingestion.PUBLIC_INGESTION_SOURCES.includes('open_meteo_flood'),
+      'a default ingestion run must not re-fetch the full GloFAS history for every region')
+  })
+
   it('validates the gdacs_archive and open_meteo_archive specs and their registration', async () => {
     const { validateConnector } = await import('../src/connectors/spec.js')
     const gdacsSpec = (await import('../src/connectors/gdacs-archive.js')).spec
@@ -5991,5 +6052,128 @@ describe('Lindela Lite flood probability API', () => {
     } finally {
       listener.close()
     }
+  })
+})
+
+describe('Lindela Lite flood probability discharge label (glofas_discharge)', () => {
+  // Deterministic synthetic catchment: the same wet-July rainfall series the
+  // GDACS-label tests use, plus a discharge series that responds to it. The
+  // discharge label then flags the wettest months — the assertion set checks
+  // the plumbing, the coverage gates, and the refusals, not hydrology.
+  const fpImport = () => import('../src/flood-probability.js')
+
+  function rainSeries() {
+    const daily = []
+    const start = Date.UTC(2005, 0, 1)
+    for (let t = start; t <= Date.UTC(2013, 11, 31); t += 86400000) {
+      const month = new Date(t).getUTCMonth()
+      let mm = 2
+      if (month >= 5 && month <= 8) mm = 12
+      if (month === 7) mm = 25
+      if (month === 7 && new Date(t).getUTCDate() >= 14 && new Date(t).getUTCDate() <= 20) mm = 60
+      daily.push({ date: new Date(t).toISOString().slice(0, 10), precipitation_mm: mm })
+    }
+    return daily
+  }
+
+  function dischargeSeries(rainDaily, { dropMonth = null } = {}) {
+    // Monthly maxima track monthly rainfall maxima with exact ties everywhere
+    // except the deluge weeks: August (month index 7) base 25 -> 100, deluge
+    // 60 -> 240+noise, wet season 12 -> 48 (tied), dry 2 -> 8 (tied). Exact
+    // ties keep the percentile threshold off the wet-season band; only the
+    // deluge-day noise breaks ties. The labelled months are the Augusts.
+    const seq = []
+    let seed = 7
+    const rng = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed / 2147483648
+    }
+    for (const day of rainDaily) {
+      if (dropMonth && day.date.startsWith(dropMonth)) continue
+      const deluge = day.precipitation_mm >= 60
+      seq.push({ date: day.date, river_discharge_m3s: day.precipitation_mm * 4 + (deluge ? rng() : 0) })
+    }
+    return seq
+  }
+
+  it('labels the wettest months against a fixed discharge percentile and gates discharge coverage', async () => {
+    const fp = await fpImport()
+    const rain = rainSeries()
+    // The sampling step takes the label percentile as a fixed definition; 0.9
+    // here labels all nine Augusts (108 months x ~10% labelled), exercising
+    // the full label path and leaving every fold enough positives.
+    const built = fp.buildDistrictSamplesFromDischarge(rain, dischargeSeries(rain), { floodPercentile: 0.9 })
+    assert.ok(built.samples.length >= 90, `expected ~105 months kept, got ${built.samples.length}`)
+    assert.equal(built.discharge_percentile, 0.9)
+    assert.equal(built.label_source, 'glofas_discharge')
+    assert.ok(built.flood_months >= 5, `flood months must clear MIN_EVENTS, got ${built.flood_months}`)
+    for (const s of built.samples.filter((x) => x.label)) {
+      assert.match(s.month, /-08$/, `only August months may be labelled, got ${s.month}`)
+    }
+    assert.ok(built.samples.filter((x) => x.month.endsWith('-08')).every((x) => x.label),
+      'every August month must be labelled by the discharge threshold')
+    assert.ok(built.discharge_threshold_mCms >= 48 && built.discharge_threshold_mCms < 260,
+      `threshold should fall in the August band, got ${built.discharge_threshold_mCms}`)
+
+    // The default percentile is 0.95 and is recorded on the build; the label
+    // count shrinks but must still clear MIN_EVENTS.
+    const builtDefault = fp.buildDistrictSamplesFromDischarge(rain, dischargeSeries(rain))
+    assert.equal(builtDefault.discharge_percentile, 0.95)
+    assert.ok(builtDefault.flood_months >= 5,
+      `default-percentile labels must clear MIN_EVENTS, got ${builtDefault.flood_months}`)
+
+    // A month with discharge knocked out is skipped, never labelled false.
+    const builtHole = fp.buildDistrictSamplesFromDischarge(rain, dischargeSeries(rain, { dropMonth: '2010-08' }))
+    assert.ok(builtHole.months_missing_discharge >= 1)
+    assert.ok(!builtHole.samples.some((s) => s.month === '2010-08'),
+      'a month without discharge coverage must be absent from the sample')
+
+    // A discharge record shorter than the 60-month floor is a refusal.
+    const short = fp.buildDistrictSamplesFromDischarge(rain, rain.slice(0, 300).map((d) => ({ date: d.date, river_discharge_m3s: d.precipitation_mm })))
+    assert.equal(short.samples.length, 0)
+    assert.match(short.skipped_reason, /months of discharge coverage/)
+  })
+
+  it('trains and validates a discharge-labelled model from the store, and refuses without one', async () => {
+    const fp = await fpImport()
+    const rain = rainSeries()
+    const discharge = dischargeSeries(rain)
+    // Fit and validate on the 0.9-percentile samples: nine labels spread over
+    // nine years is what a LOYO fold needs — at the default 0.95 only five
+    // Augusts stay labelled and a held-out year's training set can drop below
+    // MIN_EVENTS, which is the documented refusal, not a bug.
+    const built = fp.buildDistrictSamplesFromDischarge(rain, discharge, { floodPercentile: 0.9 })
+    const fit = fp.fitLogisticRegression(built.samples)
+    assert.ok(fit.model, `expected a fit, got: ${fit.refusal}`)
+    const folds = fp.leaveOneYearOut(built.samples)
+    assert.ok(folds.folds, `expected LOYO folds, got: ${folds.refusal}`)
+    assert.ok(folds.folds.skill_over_base_rate > 0.3,
+      `rainfall statistics must anticipate the synthetic discharge label, skill ${folds.folds.skill_over_base_rate}`)
+
+    // From the store: needs the rainfall series AND the discharge series.
+    const { trainDistrictModels, MODEL_BASIS_DISCHARGE } = fp
+    const data = {
+      climate_observations: [
+        { id: 'rain1', source: 'open_meteo_archive', region_name: 'Testland', country: 'TL', latitude: 0, longitude: 0, observed_at: rain[rain.length - 1].date + 'T00:00:00.000Z', series_start: rain[0].date, series_end: rain[rain.length - 1].date, series_days: rain.length, days_missing_precipitation: 0, daily: rain },
+        { id: 'dis1', source: 'open_meteo_flood', region_name: 'Testland', country: 'TL', latitude: 0, longitude: 0, observed_at: discharge[discharge.length - 1].date + 'T00:00:00.000Z', series_start: discharge[0].date, series_end: discharge[discharge.length - 1].date, series_days: discharge.length, discharge_days: discharge.length, discharge_first_valid: discharge[0].date, discharge_last_valid: discharge[discharge.length - 1].date, days_missing_discharge: 0, daily: discharge },
+      ],
+      hazard_events: [],
+    }
+    const { trained, refusals } = trainDistrictModels(data, { regions: [{ name: 'Testland', country: 'TL', lat: 0, lon: 0 }], label_source: 'glofas_discharge' })
+    assert.deepEqual(refusals, [])
+    assert.equal(trained.length, 1)
+    assert.equal(trained[0].label_source, 'glofas_discharge')
+    assert.equal(trained[0].basis, MODEL_BASIS_DISCHARGE)
+    assert.ok(trained[0].discharge.threshold_mCms > 0)
+    assert.ok(trained[0].flood_months >= 5)
+    assert.match(trained[0].basis.label_definition, /95th-percentile/)
+    assert.match(trained[0].metadata.model_limit, /model-conditioned/)
+
+    // Without a discharge series: refusal naming the missing backfill.
+    const { trained: none, refusals: refused } = trainDistrictModels(
+      { climate_observations: data.climate_observations.filter((r) => r.source !== 'open_meteo_flood'), hazard_events: [] },
+      { regions: [{ name: 'Testland', country: 'TL', lat: 0, lon: 0 }], labelSource: 'glofas_discharge' })
+    assert.equal(none.length, 0)
+    assert.match(refused[0].refusal, /open_meteo_flood/)
   })
 })

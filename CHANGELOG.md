@@ -72,6 +72,17 @@ implement the most functional defensible option, never invented coefficients):
   filtered in-process; flood `severitydata` is a fill-in zero upstream and is
   stored as null. Both connectors run on demand (`regular: false`) so a
   default ingestion run never issues a 40-year crawl.
+- `open_meteo_flood` connector → `climate_observations`: GloFAS v4 modelled
+  daily river discharge per pilot district with a river reach, verified live
+  2026-10-02 (Turkana non-null from 1997; Mogadishu/Juba have no reach and
+  are refused as errors). `regular: false` backfill like the others.
+- Discharge label variant for training: `POST
+  /api/v1/flood-probability/train` accepts `label_source: 'glofas_discharge'`,
+  labelling months where GloFAS discharge at the district's river cell is
+  above its 95th-percentile of monthly maxima. The label percentile is a
+  fixed definition, not a fitted parameter; the model card carries a
+  `label_caveat` stating that the label is model-conditioned hydrology and
+  the fit measures anticipation skill.
 - `src/flood-probability.js` + `POST /api/v1/flood-probability/train` and
   `GET /api/v1/flood-probability/score`. Empirical rainfall–flood
   co-occurrence: month-grain contingency counts (Wilson intervals, lift over

@@ -13,6 +13,7 @@ import { ipcHdxConnector } from './connectors/ipc-hdx.js'
 import { whoGhoConnector } from './connectors/who-gho.js'
 import { gdacsArchiveConnector } from './connectors/gdacs-archive.js'
 import { openMeteoArchiveConnector } from './connectors/open-meteo-archive.js'
+import { openMeteoFloodConnector } from './connectors/open-meteo-flood.js'
 import { acledCsvConnector, conflictCsvConnector, serviceAssetsConnector } from './connectors/uploads.js'
 import { dhis2Connector } from './connectors/dhis2.js'
 
@@ -28,6 +29,7 @@ const CONNECTORS = Object.freeze({
   who_gho: whoGhoConnector,
   gdacs_archive: gdacsArchiveConnector,
   open_meteo_archive: openMeteoArchiveConnector,
+  open_meteo_flood: openMeteoFloodConnector,
   service_assets: serviceAssetsConnector,
   acled_csv: acledCsvConnector,
   conflict_csv: conflictCsvConnector,
@@ -44,7 +46,7 @@ export const PUBLIC_INGESTION_SOURCES = Object.freeze([
   'noaa_enso',
   'ipc_hdx',
   'who_gho',
-  // The two historical backfills are deliberately NOT here: PUBLIC sources
+  // The historical backfills are deliberately NOT here: PUBLIC sources
   // are the default run set, and a default run must not re-walk 40 years of a
   // free archive. They run on explicit request — see docs/ingestion.md.
 ])
@@ -74,6 +76,7 @@ export const SOURCE_POLICIES = Object.freeze({
   // ingestion or the ingestion run API) to stock training data.
   gdacs_archive: { interval_minutes: 0, timeout_ms: 30000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
   open_meteo_archive: { interval_minutes: 0, timeout_ms: 60000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
+  open_meteo_flood: { interval_minutes: 0, timeout_ms: 60000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
   service_assets: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   acled_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   conflict_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },

@@ -19,9 +19,11 @@ import { readMeasurement } from './open-meteo.js'
  * reanalysis to July 2022, seamlessly continued by the operational run). That
  * matters in two ways, both stated on every record:
  * - discharge is modelled, not gauged;
- * - a grid cell without a river reach returns null throughout — the API has
- *   no river at the Mogadishu and Juba pilot points, verified live, and those
- *   regions come back as explicit errors, not null-wearing records.
+ * - a grid cell without a river reach returns null throughout — verified live
+ *   2026-10-02: the Turkana point (reach non-null from 1997-01-01, max
+ *   1431.2 m3/s) and the Juba point (4.8594, 31.5713, White Nile) have
+ *   reaches; the Mogadishu point has none. A no-reach region comes back as
+ *   an explicit error, not a null-wearing record.
  *
  * One record per region with the whole daily array mirrors the
  * open_meteo_archive connector, for the same reason: the discharge label is

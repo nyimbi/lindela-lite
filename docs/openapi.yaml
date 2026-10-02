@@ -699,17 +699,47 @@ paths:
   /api/v1/flood-probability/train:
     post:
       summary: Train the empirical rainfall-flood model per pilot district
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                regions:
+                  type: array
+                  description: Districts to train; defaults to the pilot regions.
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      country: { type: string }
+                      lat: { type: number }
+                      lon: { type: number }
+                label_source:
+                  type: string
+                  enum: [gdacs_archive, glofas_discharge]
+                  default: gdacs_archive
+                  description: |
+                    Label basis. gdacs_archive labels months where a reported
+                    flood fell within 150 km in the same calendar month;
+                    glofas_discharge labels months where GloFAS v4 river
+                    discharge at the district's river cell (open_meteo_flood
+                    series) is above that cell's 95th-percentile of monthly
+                    maxima. Both carry their condition in the model card.
       description: |
         Fits the empirical co-occurrence model (contingency counts plus an
         L2-regularised logistic fit, leave-one-year-out validated) from
-        open_meteo_archive rainfall series and GDACS flood events already in
-        the store. No network calls.
+        open_meteo_archive rainfall series and the selected label source
+        (GDACS flood events by default, or an open_meteo_flood discharge
+        series) already in the store. No network calls.
 
         Refusals are per district with a reason — fewer than 60 months of
         valid features, fewer than 5 flood months, all-one-class samples, or
-        no archive series. A trained model always carries its basis and the
-        reporting condition: P(flood enters the GDACS archive), not the
-        physical flood rate.
+        no archive/discharge series. A trained model always carries its basis
+        and its reporting condition: P(flood enters the GDACS archive) or,
+        for the discharge label, P(the GloFAS reanalysis shows a flood-level
+        discharge month), not the physical flood rate at a given elevation.
       responses:
         '200':
           description: Trained models and refusals

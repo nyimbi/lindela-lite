@@ -537,8 +537,10 @@ function quantile(sorted, p) {
 /**
  * Train one model per pilot district from whatever the store currently holds.
  * The store is the evidence: climate_observations carrying an
- * open_meteo_archive daily series (the rainfall record) and hazard_events
- * from gdacs / gdacs_archive (the labels). Nothing here reaches the network.
+ * open_meteo_archive daily series (the rainfall record) and either hazard_events
+ * from gdacs / gdacs_archive (the reported-flood labels, default) or an
+ * open_meteo_flood daily discharge series (the modelled hydrological labels,
+ * `labelSource: 'glofas_discharge'`). Nothing here reaches the network.
  *
  * A district with no archive series is a refusal, not a model from the live
  * forecast — a 7-day forecast series cannot produce 60 months of statistics,
@@ -546,6 +548,10 @@ function quantile(sorted, p) {
  * module refuses.
  */
 export function trainDistrictModels(data, options = {}) {
+  // Accept both spellings; the API body speaks snake_case, the module camelCase.
+  const rawLabel = options.labelSource ?? options.label_source
+  const labelSource = rawLabel === 'glofas_discharge' ? 'glofas_discharge' : 'gdacs_archive'
+  const basis = labelSource === 'glofas_discharge' ? MODEL_BASIS_DISCHARGE : MODEL_BASIS
   const regions = options.regions?.length ? options.regions : DEFAULT_REGIONS
   const trained = []
   const refusals = []
@@ -566,31 +572,72 @@ export function trainDistrictModels(data, options = {}) {
     }
 
     const district = { latitude: seriesRecord.latitude ?? region.lat, longitude: seriesRecord.longitude ?? region.lon, country: countryFor(seriesRecord, region) }
-    const { samples, events_matched, months_kept } = buildDistrictSamples(seriesRecord.daily, floodEvents, district)
+
+    let samples
+    let sampleFacts = {}
+    if (labelSource === 'glofas_discharge') {
+      const dischargeRecord = (data.climate_observations || [])
+        .filter((r) => r.source === 'open_meteo_flood' && String(r.region_name).toUpperCase() === wanted &&
+          Array.isArray(r.daily) && (r.daily || []).some((d) => d.river_discharge_m3s !== null && d.river_discharge_m3s !== undefined))
+        .sort((a, b) => Date.parse(b.observed_at) - Date.parse(a.observed_at))[0]
+      if (!dischargeRecord) {
+        refusals.push({
+          region: region.name,
+          refusal: 'no open_meteo_flood discharge series in the store; run the open_meteo_flood backfill ingestion first (regions without a GloFAS river reach come back as ingestion errors, not records)',
+        })
+        continue
+      }
+      const build = buildDistrictSamplesFromDischarge(seriesRecord.daily, dischargeRecord.daily)
+      if (!build.samples.length) {
+        refusals.push({ region: region.name, refusal: build.skipped_reason, months_kept: 0 })
+        continue
+      }
+      samples = build.samples
+      sampleFacts = {
+        flood_months: build.flood_months,
+        discharge: {
+          record_id: dischargeRecord.id,
+          reach_first_valid: dischargeRecord.discharge_first_valid,
+          reach_last_valid: dischargeRecord.discharge_last_valid,
+          reach_days_valid: dischargeRecord.discharge_days,
+          reach_days_missing: dischargeRecord.days_missing_discharge,
+          threshold_mCms: build.discharge_threshold_mCms,
+          threshold_percentile: build.discharge_percentile,
+          months_used: build.discharge_months_used,
+          provider: dischargeRecord.metadata?.provider || 'Open-Meteo flood API (GloFAS v4)',
+        },
+      }
+    } else {
+      const { samples: built, events_matched, months_kept } = buildDistrictSamples(seriesRecord.daily, floodEvents, district)
+      samples = built
+      sampleFacts = { flood_months: samples.filter((s) => s.label).length, events_matched, months_kept }
+    }
 
     const fit = fitLogisticRegression(samples)
     const folds = leaveOneYearOut(samples)
     const counts = contingency(samples)
 
     if (!fit.model) {
-      refusals.push({ region: region.name, refusal: fit.refusal, months_kept, events_matched })
+      refusals.push({ region: region.name, refusal: fit.refusal, months_kept: sampleFacts.months_kept ?? samples.length, ...sampleFacts })
       continue
     }
 
     trained.push({
-      id: stableId('floodmodel', [region.name, seriesRecord.id]),
+      id: stableId('floodmodel', [region.name, seriesRecord.id, labelSource]),
       region_name: region.name,
       country: district.country,
       latitude: district.latitude,
       longitude: district.longitude,
       source: 'flood_probability_train',
+      label_source: labelSource,
       trained_at: new Date().toISOString(),
       model: fit.model,
       folds,
       contingency: counts,
-      basis: MODEL_BASIS,
-      months_kept,
-      events_matched,
+      basis,
+      months_kept: sampleFacts.months_kept ?? samples.length,
+      flood_months: sampleFacts.flood_months,
+      ...sampleFacts,
       rainfall: {
         record_id: seriesRecord.id,
         series_start: seriesRecord.series_start,
@@ -600,8 +647,8 @@ export function trainDistrictModels(data, options = {}) {
         provider: seriesRecord.metadata?.provider || 'Open-Meteo archive (ERA5 reanalysis)',
       },
       metadata: {
-        model_limit: MODEL_BASIS.what_a_probability_is_not,
-        attribution: `${MODEL_BASIS.rainfall_source}; ${MODEL_BASIS.flood_source}`,
+        model_limit: basis.what_a_probability_is_not,
+        attribution: `${basis.rainfall_source}; ${basis.flood_source}`,
       },
     })
   }

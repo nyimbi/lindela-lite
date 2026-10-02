@@ -10,6 +10,7 @@ export const SOURCE_IDS = Object.freeze([
   'who_gho',
   'gdacs_archive',
   'open_meteo_archive',
+  'open_meteo_flood',
   'service_assets',
   'acled_csv',
   'conflict_csv',
@@ -368,6 +369,16 @@ export function publicSourceCatalog() {
         type: 'dataset_api',
         requires_credentials: false,
         status_note: 'Reanalysis, not gauge observations — stated on every record; backfill for flood-probability training',
+        outputs: ['climate_observations'],
+      }
+    }
+    if (id === 'open_meteo_flood') {
+      return {
+        ...common,
+        name: 'Open-Meteo flood API — GloFAS v4 daily river discharge',
+        type: 'dataset_api',
+        requires_credentials: false,
+        status_note: 'Modelled hydrology, not gauges; regions without a GloFAS river reach are refused as errors; backfill for discharge-labelled flood-probability training',
         outputs: ['climate_observations'],
       }
     }

@@ -110,9 +110,90 @@ events; matched at 150 km against the three pilot districts, that is exactly
 Every pilot district therefore refuses at the MIN_EVENTS floor, and the
 refusal is not a temporary data gap — with this archive and this radius it is
 the ceiling. The model surfaces exist and are correct; a trained number for
-these districts needs a denser reported-flood record (a wider radius, a
-national flood registry, or another district chosen for its reporting density)
-and is an operator decision, not a code default.
+these districts needs a denser flood signal and is an operator decision, not
+a code default. That decision is taken below.
+
+---
+
+## 2a. Amendment (2026-10-02): the discharge label, `glofas_discharge`
+
+The measured ceiling above led to one more live survey of keyless flood
+signals (record: `docs/research/flood-label-sources/README.md`). ReliefWeb's
+API requires an approved appname and Copernicus EMS rejects automated
+requests; the Open-Meteo **flood API**
+(`flood-api.open-meteo.com/v1/flood`) works and is keyless — GloFAS v4
+modelled daily river discharge, consolidated reanalysis to July 2022,
+seamlessly continued by the operational run. Live coverage checks at the
+region points in `src/schema.js`: the Turkana point (3.1167, 35.6) sits on
+a real reach — non-null daily discharge from 1997-01-01, max 1 431.2 m³/s;
+the Juba point (4.8594, 31.5713) is on the White Nile with a dense record;
+the Mogadishu point (2.0469, 45.3182) has **no reach** — every daily value
+null across 15 616 days. (A first probe of "Juba" was later found to have
+used a wrong coordinate 1°+ off the region point and read a near-dry cell;
+the region point itself is dense.)
+
+So the implemented basis gains a second, documented label. The features, the
+month grain, the coverage gates, the contingency layer, the logistic fit,
+and the LOYO validation are all unchanged. What changes is the label:
+
+> **`glofas_discharge` label** — a calendar month is a flood month when the
+> maximum daily GloFAS discharge at the district's river cell is above that
+> cell's **95th percentile of monthly maxima**. The percentile is a fixed
+> definition, deliberately not a fitted parameter, and is computed from the
+> discharge record alone so it cannot leak into the fit.
+
+and therefore the probability's meaning:
+
+> P(the GloFAS reanalysis shows a flood-level discharge month at the reach |
+> that month's rainfall statistics)
+
+**`MODEL_BASIS_DISCHARGE.label_caveat`** (on every discharge model card):
+the label is modelled hydrology forced by reanalysis rainfall over the whole
+upstream basin, while the features are point rainfall statistics. The fit
+measures how far point-rain statistics *anticipate* basin-scale river
+response — an anticipation-skill question, not a hydrological identity — and
+no gauge record exists at these cells to validate the label itself.
+
+A month joins the sample only when both gates pass: the trailing 90-day
+rainfall coverage gate **and** ≥ 90 % discharge coverage in the month at the
+reach. A month with absent discharge is skipped, never labelled dry —
+absence is not zero flow.
+
+Code: `buildDistrictSamplesFromDischarge` in `src/flood-probability.js`;
+connector `open_meteo_flood` (same backfill policy — `regular: false`, on
+demand). Trained via
+`POST /api/v1/flood-probability/train` with body `{ "label_source":
+"glofas_discharge" }`. Model records carry `label_source` (`gdacs_archive`
+or `glofas_discharge`) and, for the discharge variant, a `discharge` block
+with the threshold (m³/s), its percentile, and the reach's coverage facts.
+
+### Measured outcome of the amendment (2026-10-02, live run)
+
+- **Turkana** (Turkwell/Kerio reach, daily discharge non-null from
+  1997-01-01): trains. 357 months kept, 17 flood-months (threshold 994.4
+  m³/s at p95 over 358 months), base rate 0.0476. **Leave-one-year-out
+  skill over base rate: −0.038** (Brier 0.0471 vs 0.0454 for the base
+  rate) — the fitted layer does not beat always predicting the base rate.
+  Contingency counts, the primary layer: `sum_90_day` above-threshold lift
+  **1.8** (p 0.086, Wilson [0.030, 0.224]), while `max_7_day` and
+  `sum_30_day` lift **0.6** — *below* 1: locally intense point rain is,
+  if anything, rarer in flood-level months at this reach.
+- **Juba** (White Nile reach at 4.8594, 31.5713): trains. 357 months, 17
+  flood-months (threshold 6 728.8 m³/s at p95), base 0.0476, **skill
+  −0.036**; per-feature lifts 0.6–1.2.
+- **Mogadishu** (2.0469, 45.3182): no GloFAS river reach in 15 616 days →
+  the connector refuses the region as an ingestion error and training
+  refuses it as "no open_meteo_flood discharge series in the store".
+
+The honest reading, which every trained card carries by its numbers: at
+these districts, month-grain point-rainfall statistics **do not anticipate**
+GloFAS flood-level discharge months better than the base rate. That is a
+measured property of the point-to-reach relationship (flashy upland systems
+and a basin-scale label), not a defect in the machinery — the contingency
+counts are the empirical statement of what the pairing supports, and the
+same machinery will score any district where that relationship is stronger.
+No number is hidden and no number is inflated: the negative skill ships on
+the card where the operator can see it.
 
 ## 3. Endpoints
 

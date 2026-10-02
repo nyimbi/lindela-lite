@@ -483,5 +483,43 @@
     "source": "Open-Meteo (ERA5 reanalysis archive)",
     "license": "CC BY 4.0, per open-meteo.com terms",
     "since": "0.2.0"
+  },
+  {
+    "id": "open_meteo_flood",
+    "module": "src/connectors/open-meteo-flood.js",
+    "description": "GloFAS v4 modelled daily river discharge per pilot district via the keyless Open-Meteo flood API (1984 onward where a reach exists; consolidated reanalysis to July 2022, continued by the operational run). One record per region with a river reach; a cell without a reach is refused as an explicit error, never stored as zeros. Backfill for the discharge-labelled flood-probability variant.",
+    "schemas": {
+      "input": {
+        "regions": "array of {name, country, lat, lon} (default the pilot regions)",
+        "flood_start_date": "date (default '1984-01-01')",
+        "flood_end_date": "date (default today)",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": [
+        "climate_observations"
+      ]
+    },
+    "defaults": {
+      "rateLimit": {
+        "perMinute": 60
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
+      "timeout_ms": 60000
+    },
+    "tags": [
+      "river-discharge",
+      "glofas",
+      "hydrology",
+      "archive",
+      "training-data"
+    ],
+    "contributor": "core",
+    "source": "Open-Meteo (GloFAS v4 river discharge)",
+    "license": "CC BY 4.0, per open-meteo.com terms",
+    "since": "0.2.0"
   }
 ]

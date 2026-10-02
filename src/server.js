@@ -524,8 +524,10 @@ async function handleApi(store, req, res, url) {
   // here in the GET-only section.
   if (req.method === 'POST' && url.pathname === '/api/v1/flood-probability/train') {
     // Training is pure compute over the store: open_meteo_archive rainfall
-    // series plus GDACS flood events already held. It writes trained models
-    // into flood_probability_models and never reaches the network. A district
+    // series, plus either GDACS flood events (default label) or an
+    // open_meteo_flood discharge series (body label_source:
+    // 'glofas_discharge') already held. It writes trained models into
+    // flood_probability_models and never reaches the network. A district
     // that cannot support a fit lands in refusals with the reason, not as a
     // model with no sample.
     const body = await readRequestJson(req)
@@ -589,6 +591,7 @@ async function handleApi(store, req, res, url) {
         model: latest.model,
         folds: latest.folds,
         basis: latest.basis,
+        label_source: latest.label_source,
         months_kept: latest.months_kept,
         events_matched: latest.events_matched,
         metadata: latest.metadata,

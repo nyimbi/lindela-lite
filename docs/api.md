@@ -346,13 +346,18 @@ Deliberate constraints:
 Auth: API key. Trains the empirical rainfall–flood model per pilot district
 (`src/flood-probability.js`, basis documented in
 `docs/flood-probability-model-basis.md`). Pure compute over the store — the
-rainfall series from `open_meteo_archive` climate observations and flood
-labels from `gdacs`/`gdacs_archive` hazard events; no network calls.
+rainfall series from `open_meteo_archive` climate observations and, by
+default, flood labels from `gdacs`/`gdacs_archive` hazard events; no network
+calls.
 
-Optional body `{ regions: [{name, country, lat, lon}] }` (default the pilot
-regions).
+Optional body `{ regions: [{name, country, lat, lon}], label_source }`.
+`label_source` selects the label: `'gdacs_archive'` (default, reported floods
+within 150 km) or `'glofas_discharge'`, which labels months from
+`open_meteo_flood` GloFAS river-discharge series instead — usable where
+reported-flood records are too sparse, but model-conditioned (see the basis
+document).
 
-Response: `{ success, data: FloodProbabilityModel[], refusals: [{region, refusal, months_kept?, events_matched?}] }`
+Response: `{ success, data: FloodProbabilityModel[], refusals: [{region, refusal, months_kept?, events_matched?, flood_months?}] }`
 
 Hard refusals (60-month / 5-flood-month floors, all-one-class samples, missing
 archive series) come back per district with the reason — no number without a
