@@ -932,3 +932,37 @@ current test suite.** Follow `docs/demo-audit-2026-10-02.md`'s own rule: screens
 **~28 days.** Phases 0 and 9 are non-negotiable and have the highest ratio of defects fixed to effort in
 the whole plan. Phase 2 is the enabling investment: it is what makes Phases 3–8 cheap rather than eight
 separate renegotiations with the same cascade.
+---
+
+## Implementation progress
+
+Tracked against the phases above. Each line was verified by a real render or a
+failing check, not by reading the diff.
+
+| Phase | State | Evidence |
+|---|---|---|
+| 0 — correctness | done | offline boot fixed (full module graph precached, `skipWaiting`/`claim`); offline queue routed through `shared/runtime.js`; `refresh()` settles per-panel and names failures; `res.ok` checked via shared `apiFetch`; XSS closed in `co` and `districts`; `escapeHtml` preserves `0`/`false`; four undefined classes defined; checkbox class; `:focus-visible` replaces two `outline: none` |
+| 1 — serving | done | 238 KB → 65 KB over the wire (3.7×); ETag revalidation, per-type `cache-control`, `sw.js` `no-cache`; fifteen static branches collapsed into one `sendFile`; CSP + `nosniff` + `frame-ancestors` + `referrer-policy` + `permissions-policy`; SW API cache bounded and TTL-pruned |
+| 2 — one design system | done | all 8 surfaces link `tokens.css` + `styles.css` + `components.css`; `shared/fmt.js`, `shared/labels.js` created; `apiFetch`/`apiSettled`/`submitOrQueue` adopted by every surface; duplicated `escapeHtml`, date, number and severity helpers removed (178 LOC); responsive gate enforces the 24px AA target floor |
+| 3 — content design | in progress | `labels.js` names every metric; focal-point card states the comparison and the consequence; scenario workbench opens on five named presets; workflow ribbon leads with a total; CO counts are integers; blockchain IDs truncated; `shared/fmt.js` gives one time format with a zone and one duration format |
+| 4 — accessibility | in progress | one `<h1>`, `<main>` and skip link on all 8; 38 `<th>` scoped; 0 unlabelled inputs; 0 missing `alt`; severity contrast fixed on two surfaces (was 2.2–4.3:1); `--ink-faint` raised above AA; CHW live regions and focus management; map focusable with keyboard pan/zoom and a textual record list; print stylesheet; focal-point dialog focus + stale-state fix |
+| 5 — i18n and RTL | done | per-surface locale reconciliation enforced by `scripts/check-i18n-offers.mjs`; three surfaces were offering languages at 0% coverage; `lang`/`dir` now driven from one locale table |
+| 6 — JTBD contract | not started | — |
+| 7 — performance | not started | — |
+| 8 — component library | not started | — |
+| 9 — automated gate | in progress | `scripts/check-responsive.mjs` (layout, overflow, clipping, target size, screenshots through CDP); `scripts/check-i18n-offers.mjs` |
+| 10 — copy pass | not started | — |
+| 11 — requirements track reality | not started | — |
+
+### Gates added
+
+| Script | Fails on |
+|---|---|
+| `npm run check:responsive` | horizontal overflow, clipped text, or a control below the WCAG 2.2 SC 2.5.8 24px floor, across 8 surfaces × 3 viewports. Set `LINDELA_LITE_SHOTS=<dir>` to capture screenshots through CDP |
+| `npm run check:i18n-offers` | a surface offering a locale it cannot render, or omitting one it can; a picker option labelled with an abbreviation |
+
+Both clear the service worker and the browser cache before measuring. That is
+not incidental: several hours of this work went into debugging assertions that
+were passing or failing against a cached build rather than the source, and
+`chrome --headless --screenshot` sizes the window rather than the layout
+viewport, which renders a correct page as one with content running off the edge.
