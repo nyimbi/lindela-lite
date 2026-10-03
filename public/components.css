@@ -427,6 +427,10 @@ input[type="range"]:focus-visible::-moz-range-thumb     { box-shadow: 0 0 0 3px 
   vertical-align: -0.25em;
 }
 
+@keyframes spinner-turn {
+  to { transform: rotate(1turn); }
+}
+
 .spinner-lg { inline-size: 2rem; block-size: 2rem; }
 
 .spinner-label {
@@ -437,12 +441,14 @@ input[type="range"]:focus-visible::-moz-range-thumb     { box-shadow: 0 0 0 3px 
   font-size: var(--text-sm);
 }
 
-/* A spinner with the rotation removed would read as a solid blob, so the
-   reduced-motion treatment changes what the thing *is* rather than deleting
-   it: a dimmer static ring still says "in progress", a removed one says
-   nothing at all. */
+/* styles.css already has a global reduced-motion kill-switch that clamps every
+   animation to 0.01ms and one iteration. It stops the rotation, but it leaves
+   the ring painted — and at 0.01ms the conic gradient stops at whatever angle
+   the first frame lands on, so the loader reads as a static disc, which is the
+   one thing a loader must never look like. Dimming it keeps the meaning without
+   asking the compositor for a frame. */
 @media (prefers-reduced-motion: reduce) {
-  .l-navbar-brand, .btn { animation: skeleton-sweep 1.4s ease-in-out infinite; }
+  .spinner { animation: none; opacity: 0.55; }
   .skeleton { animation: none; background: var(--surface); }
 }
 
