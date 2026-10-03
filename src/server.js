@@ -39,6 +39,7 @@ import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
 import { collectionPage, createIdempotencyStore, filterRecords, jsonResponse, readRawBody, readRequestJson, toCsv, toGeoJson, stableId } from './utils.js'
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays } from './pii.js'
+import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
 import { emit, dispatchPending } from './outbox.js'
@@ -565,6 +566,132 @@ async function handleApiRequest(store, req, res, url) {
     const webhooks = data.webhook_subscriptions || []
     const result = await dispatchPending(store, { webhooks, maxBatch: 50, timeoutMs: 5000 })
     jsonResponse(res, 201, { success: true, ...result })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/upload') {
+    // The upload contract, served. A client that has to guess which columns a
+    // collection wants will guess wrong, and a wrong guess is a validation
+    // report the operator has to read instead of a column list they could have
+    // had up front.
+    jsonResponse(res, 200, {
+      success: true,
+      collections: UPLOAD_COLLECTIONS.map(({ id, label, required, optional }) => ({
+        id, label, required_columns: required, optional_columns: optional,
+      })),
+      accepts: ['multipart/form-data (part named "file")', 'text/csv?collection=…', 'application/json { csv, collection }'],
+      dry_run: 'Send dry_run=true to validate and write nothing.',
+    })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/v1/upload') {
+    // Three content types, because three clients are real: a browser form posts
+    // multipart, `curl --data-binary @file.csv` sends text/csv, and an
+    // integrator who already has the rows in memory has them as JSON. All three
+    // end up in the same validator, so the report is identical whichever door
+    // the data came through.
+    const contentType = String(req.headers['content-type'] || '')
+    let csvText = ''
+    let filename = null
+    let body = {}
+
+    if (contentType.startsWith('multipart/form-data')) {
+      const raw = await readRawBody(req)
+      let parsed
+      try {
+        parsed = parseMultipart(Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw)), contentType)
+      } catch (error) {
+        jsonResponse(res, error.statusCode || 400, { success: false, error: error.message })
+        return
+      }
+      const file = parsed.files.find((f) => f.field === 'file') || parsed.files[0]
+      if (!file) {
+        jsonResponse(res, 400, { success: false, error: 'No file part found. Send the CSV as a part named "file".' })
+        return
+      }
+      csvText = file.content.toString('utf8')
+      filename = file.filename
+      body = { collection: parsed.fields.collection, dry_run: parsed.fields.dry_run }
+    } else if (contentType.startsWith('text/csv')) {
+      const raw = await readRawBody(req)
+      csvText = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw)
+      body = { collection: url.searchParams.get('collection'), dry_run: url.searchParams.get('dry_run') }
+    } else {
+      body = await readRequestJson(req)
+      csvText = body.csv ?? ''
+      filename = body.filename ?? null
+    }
+
+    const dryRun = body.dry_run === true || body.dry_run === 'true' || body.dry_run === '1'
+    const collection = body.collection || url.searchParams.get('collection') || 'service_assets'
+    const existingIds = new Set((data[collection] || []).map((record) => record.id).filter(Boolean))
+    const report = validateUpload(csvText, { collection, existingIds })
+
+    // A batch is one thing that happened, so it gets one id — a fingerprint of
+    // the bytes. Two posts of the same file produce the same id, which makes the
+    // log readable and gives an operator something to quote when asking why
+    // their import ran twice.
+    const batchId = `upload_${createHash('sha256').update(csvText).digest('hex').slice(0, 12)}`
+
+    await store.merge({
+      action_logs: [actionLog(collection, dryRun ? 'upload_validated' : 'uploaded',
+        { id: batchId }, body.actor || req.__auth?.subject, req.__auth?.subject, {
+          batch_id: batchId,
+          collection,
+          filename,
+          dry_run: dryRun,
+          ...report.summary,
+          errors: report.errors.slice(0, 25),
+          error_count_total: report.errors.length,
+        })],
+    })
+
+    if (dryRun) {
+      // A dry run that writes nothing but still says what would happen. The first
+      // twenty errors are enough to recognise a systematic problem — a wrong
+      // date format, a transposed latitude column — and a four-thousand-error
+      // body would be a denial of service against the reader.
+      jsonResponse(res, 200, {
+        success: true,
+        dry_run: true,
+        collection: report.collection,
+        filename,
+        ...report.summary,
+        headers: report.headers,
+        errors: report.errors.slice(0, 20),
+        errors_truncated: report.errors.length > 20,
+      })
+      return
+    }
+
+    if (!report.ok) {
+      // Nothing is written. A partial import is the outcome nobody wants: the
+      // caller has to work out which half landed, and the half that landed is
+      // the half they did not look at.
+      jsonResponse(res, 422, {
+        success: false,
+        error: report.summary.valid_rows === 0
+          ? 'No rows could be imported. Nothing was written; the errors below say why.'
+          : `Nothing was written. ${report.summary.invalid_rows} of ${report.summary.total_rows} rows failed validation, and a partial import is refused.`,
+        collection: report.collection,
+        filename,
+        ...report.summary,
+        headers: report.headers,
+        errors: report.errors.slice(0, 20),
+        errors_truncated: report.errors.length > 20,
+      })
+      return
+    }
+
+    await store.merge({ [collection]: report.rows })
+    jsonResponse(res, 201, {
+      success: true,
+      collection: report.collection,
+      filename,
+      imported: report.rows.length,
+      ...report.summary,
+    })
     return
   }
 

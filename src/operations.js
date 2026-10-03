@@ -98,7 +98,7 @@ export function isDeleted(record) {
   return Boolean(record?.deleted_at)
 }
 
-export function actionLog(collection, action, record, actor = 'operator', subject = null) {
+export function actionLog(collection, action, record, actor = 'operator', subject = null, metadata = {}) {
   const now = new Date().toISOString()
   return {
     id: stableId('log', [collection, action, record.id, now]),
@@ -109,9 +109,16 @@ export function actionLog(collection, action, record, actor = 'operator', subjec
     subject,
     created_at: now,
     summary: `${action} ${OPERATIONAL_COLLECTIONS[collection] || 'record'} ${record.id}`,
+    // `metadata` carries whatever the caller can say about the action beyond
+    // status and priority. It used to be a fixed two-key literal, so any caller
+    // with more to say passed it in and the whole object was silently dropped —
+    // an upload that merged `valid_rows: 2, invalid_rows: 1` into the store read
+    // back as a log entry with neither. Callers win on a collision: a fact the
+    // caller stated deliberately outranks the default `null`.
     metadata: {
-      status: record.status || null,
-      priority: record.priority || null,
+      status: record.status ?? null,
+      priority: record.priority ?? null,
+      ...metadata,
     },
   }
 }

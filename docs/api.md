@@ -16,6 +16,13 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 - `POST /api/v1/ingest/schedules/defaults` creates default schedules for regular public/open-source connectors.
 - `POST /api/v1/ingest/schedules/:id/run` runs one ingestion schedule immediately.
 - `POST /api/v1/ingest/run-due` runs every active ingestion schedule whose `next_run_at` is due.
+- `GET /api/v1/upload` publishes the bulk-upload contract: every collection that can be uploaded into, the
+  columns it requires and the columns it accepts. Fetch it rather than guessing — a guessed column is a
+  validation report instead of a column list.
+- `POST /api/v1/upload` bulk-imports CSV with a row-level validation report. Accepts `multipart/form-data`
+  (part named `file`), raw `text/csv`, or `{csv, collection}` as JSON; all three reach one validator and
+  produce one report. `dry_run=true` validates and writes nothing. Any rejected row means 422 and nothing
+  is written. See [Bulk Upload](#bulk-upload).
 - `GET /api/v1/events` returns hazard and conflict events.
 - `GET /api/v1/climate` returns climate observations.
 - `GET /api/v1/flood-risk` returns flood risk scores.
@@ -484,6 +491,71 @@ the response does not quietly return a straight line.
 Not modelled: bridges, culverts, ferry crossings, seasonal causeways, load
 limits. If the operator has not imported them as assets, the router cannot
 reason about them. Each leg reports the `road_classes` it relied on.
+
+## Bulk Upload
+
+`POST /api/v1/upload` is the door for a user's own data. Three content types reach the same validator, because
+three clients are real: a browser form posts multipart, `curl --data-binary @file.csv` sends `text/csv`, and an
+integrator who already has the rows in memory sends JSON.
+
+```bash
+# What columns does this collection want?
+curl -s localhost:4177/api/v1/upload | jq '.collections[] | {id, required_columns}'
+
+# Check the file before writing anything.
+curl -s -X POST 'localhost:4177/api/v1/upload?collection=service_assets&dry_run=true' \
+  -H 'content-type: text/csv' --data-binary @assets.csv | jq '.summary, .errors'
+
+# Import it.
+curl -s -X POST 'localhost:4177/api/v1/upload?collection=service_assets' \
+  -H 'content-type: text/csv' --data-binary @assets.csv | jq
+```
+
+A rejected row is reported as `{row, column, value, message}`, where `row` is a **line number in the file,
+counting the header as line 1**, and `value` is what was found, verbatim. Errors are capped at 20 in the body;
+`error_count` is the true total and `errors_truncated` says whether the list was cut.
+
+Four things it will not do, each because the alternative is a silent wrong answer:
+
+- **It will not guess a column name.** `lat`, `latitude` and `Latitude` all appear in real exports. An explicit
+  alias table handles the ones it knows; an unknown header is carried into the record under its own name rather
+  than dropped.
+- **It will not clamp an out-of-range coordinate.** A latitude of 91 is not a latitude at ±90. Clamping would put
+  the record in the store claiming to be somewhere it is not. A coordinate of exactly `0` *is* accepted — the
+  equator and the prime meridian are ordinary places.
+- **It will not read a date it does not recognise.** `Date.parse` would take `04/03/2026` and quietly mean
+  3 April or 4 March depending on the reader. Only ISO-8601 is accepted; anything else is reported as
+  unparseable.
+- **It will not import half a file.** See below.
+
+### Why a batch lands whole or not at all
+
+If any row is rejected the response is `422` and **nothing is written**. A partial import is the outcome nobody
+wants: the caller has to work out which half landed, and the half that landed is the half they did not look at.
+`dry_run` exists so that can be discovered before it matters, and so an import into a system other people depend
+on can be rehearsed.
+
+### Duplicates are two different problems
+
+An id appearing twice in the file is a mistake in the file. An id already in the store is an overwrite of a
+record somebody else relies on. Both are reported, with different messages — calling them both "duplicate"
+would hide the second. This covers *generated* ids too: a file with no `id` column still has its deterministic
+id checked against the store, so re-importing the same file is refused rather than merged over the top.
+
+Every attempt writes an `action_logs` entry, including failed and dry-run ones, with the batch fingerprint, the
+row counts and the first 25 errors. The log action is `uploaded` or `upload_validated`.
+
+### Collections
+
+| Collection | Required | Optional |
+|---|---|---|
+| `service_assets` | `name`, `latitude`, `longitude` | `id`, `service_type`, `road_class`, `country`, `admin1`, `capacity`, `population_served` |
+| `conflict_events` | `event_date` | `id`, `title`, `event_type`, `latitude`, `longitude`, `fatalities`, `actor1`, `admin1`, `country`, `description` |
+| `hazard_events` | `event_type`, `occurred_at` | `id`, `title`, `severity`, `latitude`, `longitude`, `admin1`, `country`, `source` |
+| `climate_observations` | `observed_at`, `metric`, `value` | `id`, `latitude`, `longitude`, `station_id`, `unit` |
+
+`id` is optional in every collection — it is generated when absent — but a supplied one is checked, because a
+duplicate silently overwrites.
 
 ## Trigger Protocols
 

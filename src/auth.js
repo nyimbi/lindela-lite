@@ -60,6 +60,11 @@ const WRITE_SCOPES = [
   ['/api/v1/chw', 'write:incidents'],
   ['/api/v1/community-feedback', 'write:incidents'],
   ['/api/v1/service-assets', 'write:incidents'],
+  // Bulk import. It writes to whichever collection the caller names, so it is
+  // gated at the level of the collections it can touch rather than given a scope
+  // of its own — an import is not a lesser `write:incidents`, it is a
+  // `write:incidents` with four thousand rows of it.
+  ['/api/v1/upload', 'write:incidents'],
   ['/api/v1/reports', 'write:reports'],
   ['/api/v1/report-templates', 'write:reports'],
   ['/api/v1/report-schedules', 'write:reports'],

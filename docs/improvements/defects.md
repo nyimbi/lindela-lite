@@ -773,6 +773,15 @@ handler in `src/`. Unlisted collections are dropped silently by both adapters
 comment, not code. `min(…spread)` (`Math.min(...array)`) can OOM on large
 collections.
 
+**Audit trail** — `actionLog` built `metadata` as a fixed two-key literal from
+`record.status` and `record.priority`, with no way for a caller to say anything
+else. Every call site that had more to say passed it as the third argument and
+had it dropped: the store held an audit entry saying an import happened, with
+none of the row counts, the errors, or the file it came from. An audit trail
+that records *that* without recording *what* is a worse artefact than none —
+it certifies something happened and cannot be used to reconstruct it. Fixed by
+an optional metadata parameter, with caller-wins precedence over the defaults.
+
 **Outbound HTTP** — `distributeReport` fetches with no timeout, unlike every
 connector. HTTP error bodies are discarded at `src/connectors/http.js:6`, so
 `Retry-After` is never seen. RapidPro outbound is likewise unbounded.

@@ -73,6 +73,7 @@ it reaches the caller. Half of them historically did not.
 | `src/schema.js` | Normalized record shapes and `emptyStore()`. |
 | `src/ingestion.js` | `runIngestion`, `OUTPUT_COLLECTIONS`, source policies. |
 | `src/connectors/` | 17 connectors; `spec.js` is the SDK (`defineConnector`). |
+| `src/upload.js` | `POST /api/v1/upload`. Bulk CSV import: per-collection column contract, row-level validation report, `dry_run`. A batch with any rejected row writes nothing — see `docs/api.md` § Bulk Upload. |
 | `src/analytics/` | Flood probability, impact, downscaling, ensemble. |
 | `public/` | Eight PWA surfaces. No framework, no build step, no bundler. |
 | `test/` | `node:test`. `store-conformance.test.js` runs one contract against every backend. |

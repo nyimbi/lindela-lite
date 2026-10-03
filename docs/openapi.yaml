@@ -492,6 +492,116 @@ paths:
           description: Import accepted
         '400':
           description: Validation error
+  /api/v1/upload:
+    get:
+      summary: The bulk upload contract
+      description: >
+        Every collection that can be uploaded into, with the columns it requires
+        and the columns it accepts. A client that has to guess will guess wrong,
+        and a wrong guess is a validation report to read instead of a column list
+        that could have been fetched.
+      responses:
+        '200':
+          description: Upload contract
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  collections:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          enum: [service_assets, conflict_events, hazard_events, climate_observations]
+                        label:
+                          type: string
+                        required_columns:
+                          type: array
+                          items:
+                            type: string
+                        optional_columns:
+                          type: array
+                          items:
+                            type: string
+                  accepts:
+                    type: array
+                    items:
+                      type: string
+    post:
+      summary: Bulk CSV upload with a row-level validation report
+      description: >
+        Accepts multipart/form-data with a part named `file`, a raw text/csv
+        body, or `{csv, collection}` as JSON; all three reach the same validator
+        and produce the same report. Set `dry_run=true` to validate and write
+        nothing. If any row is rejected the response is 422 and nothing is
+        written at all — a partial import is refused, because the caller cannot
+        tell which half landed and the half that landed is the half they did not
+        look at. Errors are capped at 20 in the body; `error_count` is the true
+        total.
+      parameters:
+        - name: collection
+          in: query
+          schema:
+            type: string
+            enum: [service_assets, conflict_events, hazard_events, climate_observations]
+            default: service_assets
+        - name: dry_run
+          in: query
+          schema:
+            type: boolean
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                collection:
+                  type: string
+                dry_run:
+                  type: boolean
+          text/csv:
+            schema:
+              type: string
+          application/json:
+            schema:
+              type: object
+              properties:
+                collection:
+                  type: string
+                csv:
+                  type: string
+                dry_run:
+                  type: boolean
+      responses:
+        '201':
+          description: Imported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadReport'
+        '200':
+          description: Dry run — validated, nothing written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadReport'
+        '400':
+          description: Unreadable multipart body or no file part
+        '422':
+          description: One or more rows failed validation; nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadReport'
   /api/v1/events:
     get:
       summary: Hazard and conflict events
@@ -1863,6 +1973,52 @@ components:
           type: string
         default_options:
           type: object
+    UploadReport:
+      type: object
+      properties:
+        success:
+          type: boolean
+        dry_run:
+          type: boolean
+        collection:
+          type: string
+        filename:
+          type: string
+          nullable: true
+        imported:
+          type: integer
+        total_rows:
+          type: integer
+          description: Data rows read, excluding the header and wholly blank lines
+        valid_rows:
+          type: integer
+        invalid_rows:
+          type: integer
+        error_count:
+          type: integer
+          description: Total errors. `errors` below is capped at 20.
+        errors_truncated:
+          type: boolean
+        headers:
+          type: array
+          items:
+            type: string
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              row:
+                type: integer
+                description: Line number in the file, counting the header as line 1
+              column:
+                type: string
+                nullable: true
+              value:
+                description: The value that was found, verbatim
+                nullable: true
+              message:
+                type: string
     ServiceAssetInput:
       type: object
       required: [name, service_type, country, latitude, longitude]

@@ -542,7 +542,28 @@ and scenarios surfaces.
 exact JSON shape" to "bring your data". Everything else in this document assumes
 users can get their own data in.
 
-**Effort:** M.
+**Effort:** M. — **SHIPPED** (2026-10-03).
+
+**What actually shipped, against the proposal above.** `src/upload.js`,
+`GET /api/v1/upload` (the contract) and `POST /api/v1/upload` (the import),
+`test/upload.test.js` (52 tests). Three deviations from the proposal, each with a
+reason:
+
+- **It buffers rather than streaming to disk.** `readRawBody` already caps the
+  body (`DEFAULT_MAX_BODY_BYTES`) and the parse is pure, so streaming would add a
+  temp-file lifecycle and a second failure mode — a half-written upload left on
+  disk — to solve a problem the size cap already answers.
+- **No client-side CSV picker.** The proposal put a file input on the districts and
+  scenarios surfaces. Both are gated behind the i18n work (WEB-11) and doing it
+  first would mean shipping a picker with an untranslated label on surfaces whose
+  strings are not yet keyed.
+- **A client-side picker would have needed the browser's own preview.** The
+  server-side report is strictly better evidence than a JS re-implementation of it:
+  one validator, one answer, and the same report for a browser and a `curl`.
+
+The proposal's own four refusals all survived into the implementation and are
+tested: no column guessing, no coordinate clamping, no date format guessing, no
+partial import.
 
 ### ENH-26 — Two-way SMS acknowledgement, escalation, and delivery tracking
 

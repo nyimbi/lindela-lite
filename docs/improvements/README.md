@@ -177,7 +177,7 @@ credited, not claimed as new findings.
    suite so they stay fixed.
 3. **ENH-02 and ENH-04** — make the honesty travel in the payload. Everything in
    Group C draws on these.
-4. **ENH-25** — bulk upload, so users can get their own data in.
+4. **ENH-25** — bulk upload, so users can get their own data in. **SHIPPED** 2026-10-03: `src/upload.js`, `GET`+`POST /api/v1/upload`, 52 tests. Deviations from the proposal (buffered not streamed, no client-side picker) are recorded in `enhancements.md`.
 5. **ENH-06 and ENH-07** — freshness verdicts and assertions. Unglamorous, and the
    difference between an operator trusting source health and ignoring it.
 6. **ENH-16 first**, because the chart library makes the other seven visualization

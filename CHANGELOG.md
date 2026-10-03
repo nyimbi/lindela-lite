@@ -5,7 +5,65 @@
 Flood, access-risk, seasonal-signal, food-security, and outbreak-context capability.
 All additions are additive; no existing endpoint changed shape.
 
+### Added
+
+**Bulk upload with a validation report.** There was no way to get your own data
+in. `POST /api/v1/ingest/run` takes CSV as a *string inside a JSON body* — a
+district officer with a 4 MB ACLED export had to paste it into a field on a
+surface that has no such field, and the API was the only door. It is also a
+door with no curtain: the connector returns `errors`, the caller decides what to
+do with them, and nothing anywhere enumerates what was wrong with which row. A
+paste-and-pray import that reports "imported 400, 12 errors" is worse than one
+that refuses, because the twelve are invisible.
+
+`GET /api/v1/upload` publishes the contract — every collection, the columns it
+requires, the columns it accepts — so a client never has to guess. `POST
+/api/v1/upload` accepts `multipart/form-data`, raw `text/csv`, or `{csv,
+collection}` as JSON; all three reach one validator and produce one report.
+Every rejected row carries a line number, a column, the value found and what was
+expected. `dry_run=true` returns that report and writes nothing.
+
+A batch lands whole or not at all: if any row is rejected the response is 422
+and nothing is written. A partial import is the outcome nobody wants — the caller
+has to work out which half landed, and the half that landed is the half they did
+not look at.
+
+Four judgement calls, each stated because the alternative was tempting. It does
+not guess at a column name: `lat`, `latitude` and `Latitude` all appear in real
+exports, and guessing which is meant turns a typo into a silently dropped
+column. It does not clamp an out-of-range coordinate, because a latitude of 91 is
+not a latitude at ±90 and the record would then be in the store claiming to be
+somewhere it is not. It does not accept a date it cannot read — `Date.parse`
+would have taken `04/03/2026` and quietly meant 3 April, which is a different
+answer depending on who is asking. And it treats a coordinate of exactly 0 as a
+coordinate, because the equator and the prime meridian are ordinary places; that
+is the falsy-zero conflation this codebase has been bitten by repeatedly, and
+`latitude && longitude` is not used here.
+
 ### Fixed
+
+**A bulk upload reported success on a file that contained a bad row.** The
+`ok` verdict was `rows.length + invalidRows === parsed.length` — arithmetic that
+is satisfied by three rows with one rejected just as happily as by three good
+ones. It was an accounting coincidence dressed up as a statement of intent. It
+is now `errors.length === 0`, which says what it means.
+
+**Re-importing the same file silently overwrote its own records.** The duplicate
+check read the id off the row and only generated one if it was absent — so a file
+with no `id` column, the common case, never had its generated id compared with
+the store. The generated id is deterministic, so a second import produced the
+same ids, merged over the existing rows, and answered `imported: 3`. That is the
+overwrite the check exists to prevent, reached by the one route that always
+generates the id. The id is resolved before the check now.
+
+**`actionLog` silently discarded everything a caller had to say.** Its
+`metadata` was a fixed two-key literal built from `record.status` and
+`record.priority`, so a caller with more to say passed it in and the whole
+object was dropped. The upload route merged `{valid_rows, invalid_rows,
+error_count, errors}` into the store and read back a log entry with none of it —
+an audit trail that recorded that an import happened and nothing about what it
+contained. `actionLog` takes an optional metadata object now, and callers win on
+a collision: a fact the caller stated deliberately outranks the default `null`.
 
 **A health worker told their report was filed when it was discarded.** The CHW
 offline queue opened `if (!this.db) return` and then fired an IndexedDB write
