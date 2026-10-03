@@ -966,12 +966,12 @@ and the corrections are recorded here rather than quietly edited away
 | 1 — serving | done | 238 KB → 65 KB over the wire (3.7×); ETag revalidation, per-type `cache-control`, `sw.js` `no-cache`; fifteen static branches collapsed into one `sendFile`; CSP + `nosniff` + `frame-ancestors` + `referrer-policy` + `permissions-policy`; SW API cache bounded and TTL-pruned |
 | 2 — one design system | in progress | 7 of 8 surfaces link `tokens.css` + `styles.css` + `components.css`; the console links `styles.css` only (`public/index.html:8`); `shared/fmt.js`, `shared/labels.js` created; `apiFetch`/`apiSettled`/`submitOrQueue` adopted by every surface; duplicated `escapeHtml`, date, number and severity helpers removed (178 LOC); responsive gate enforces the 24px AA target floor |
 | 3 — content design | in progress | `labels.js` names every metric; focal-point card states the comparison and the consequence; scenario workbench opens on five named presets; workflow ribbon leads with a total; CO counts are integers; blockchain IDs truncated; `shared/fmt.js` gives one time format with a zone and one duration format |
-| 4 — accessibility | in progress | one `<h1>`, `<main>` and skip link on all 8; 38 `<th>` scoped; 0 unlabelled inputs; 0 missing `alt`; severity contrast fixed on two surfaces (was 2.2–4.3:1); `--ink-faint` raised above AA; CHW live regions and focus management; map focusable with keyboard pan/zoom and a textual record list; print stylesheet; focal-point dialog focus + stale-state fix |
+| 4 — accessibility | done | one `<h1>`, `<main>` and skip link on all 8; 38 `<th>` scoped; 0 unlabelled inputs; 0 missing `alt`; severity contrast fixed on two surfaces (was 2.2–4.3:1); `--ink-faint` raised above AA; CHW live regions and focus management; map focusable with keyboard pan/zoom and a textual record list; print stylesheet; focal-point dialog focus + stale-state fix |
 | 5 — i18n and RTL | done | per-surface locale reconciliation enforced by `scripts/check-i18n-offers.mjs`; three surfaces were offering languages at 0% coverage; `lang`/`dir` now driven from one locale table |
 | 6 — JTBD contract | not started | — |
 | 7 — performance | not started | — |
-| 8 — component library | not started | — |
-| 9 — automated gate | in progress | `scripts/check-responsive.mjs` (layout, overflow, clipping, target size, screenshots through CDP); `scripts/check-i18n-offers.mjs` |
+| 8 — component library | done | spinner, toast, tooltip, pagination, shared `.card`/`.data-table` |
+| 9 — automated gate | done | `check-responsive`, `check-a11y`, `check-i18n-offers` |
 | 10 — copy pass | not started | — |
 | 11 — requirements track reality | not started | — |
 
@@ -981,6 +981,19 @@ and the corrections are recorded here rather than quietly edited away
 |---|---|
 | `npm run check:responsive` | horizontal overflow, clipped text, or a control below the WCAG 2.2 SC 2.5.8 24px floor, across 8 surfaces × 3 viewports. Set `LINDELA_LITE_SHOTS=<dir>` to capture screenshots through CDP |
 | `npm run check:i18n-offers` | a surface offering a locale it cannot render, or omitting one it can; a picker option labelled with an abbreviation |
+| `npm run check:a11y` | 12 assertions × 8 surfaces: one `h1`, a `main`, a skip link that is the first tab stop, heading order, form naming, `alt`, header `scope`, measured WCAG contrast, visible focus, reduced motion, reflow at 320px |
+
+All three clear the service worker and the browser cache before measuring. That is
+not incidental: several hours went into debugging assertions that were passing or
+failing against a cached build rather than the source, and `chrome --screenshot`
+sizes the window rather than the layout viewport, which renders a correct page as
+one with content running off the edge.
+
+The accessibility gate was written with a negative control for every assertion —
+each was confirmed to fail against a deliberately broken page and pass on revert.
+Its first motion probe used `document.getAnimations()`, which returned `[]` on a
+page with a running infinite animation; it now also reads computed styles. A gate
+that cannot fail is worse than no gate.
 
 Both clear the service worker and the browser cache before measuring. That is
 not incidental: several hours of this work went into debugging assertions that

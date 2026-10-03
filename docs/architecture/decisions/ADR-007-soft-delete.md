@@ -1,157 +1,209 @@
 # ADR-007: Soft delete rather than hard delete
 
-**Status:** Accepted — the hard-delete defect below is recorded in `src/store.js:114-124`
-**Applies to:** `src/operations.js`, `src/server.js`, `src/store.js`, `src/pii.js`
-**Deciders:** whoever writes a destructive endpoint, or a retention policy
+**Status:** Accepted
+**Applies to:** `src/operations.js` (`buildSoftDelete`, `isDeleted`, `actionLog`), `src/server.js`
+(operational routes, `apply-retention`)
+**Deciders:** whoever adds an operational collection, or describes the platform's retention story
 
 ## Context
 
-Operational records in this product form a graph, not a list. A task points at an intervention, an
-intervention at an incident, a field report at an incident, and every operational mutation writes an
-`action_log` entry naming the record and the actor. Deleting a row from the middle of that graph
-breaks it in a way the schema cannot express — there are no foreign keys to cascade, because
-[ADR-002](ADR-002-single-table-jsonb-store.md) chose one JSONB table over a relational schema, so
-referential integrity is an application problem and a missing row is not an error, it is an empty
-field.
+The product keeps a history of what was done: incidents opened and closed, interventions planned
+and paused, tasks assigned and completed, field reports from the district, resources deployed and
+returned. `action_logs` records every one of those, as a separate collection, keyed by
+`collection` + `record_id`:
 
-That has a second, sharper consequence on the **write** path. `mergeById` keys on `id`
-(`src/store.js:161`) and there was no counterpart operation: until `JsonStore.remove` existed,
-`src/store.js:117-120` records, *"there was no path by which a record could ever leave the store."*
-`apply-retention` computed its survivors and wrote them back over the top of the originals, so a
-correct run returned `{success: true, expired: 1}` **and deleted nothing**. The endpoint reported the
-outcome it intended rather than the one it achieved, which is the failure mode this whole repository
-keeps running into.
+```js
+export function actionLog(collection, action, record, actor = 'operator', subject = null) {
+  ...
+  id: stableId('log', [collection, action, record.id, now]),
+  collection,
+  record_id: record.id,
+  action,
+  summary: `${action} ${OPERATIONAL_COLLECTIONS[collection] || 'record'} ${record.id}`,
+```
 
-The uncomfortable part of the context is that hard delete is what the word "delete" means, and every
-operator who types it expects the record to be gone.
+`OPERATIONAL_COLLECTIONS` is exactly five entries — `incidents`, `interventions`,
+`intervention_tasks`, `field_reports`, `response_resources` — and those are the only collections
+that can be deleted at all. `DELETE` on `action_logs` is refused with 405: *"Action logs are
+read-only."*
+
+Hard delete would break that trail immediately. A log entry pointing at an id with no row behind it
+is a history of actions on records the product can no longer show, which is worse than no history,
+because it looks like history.
 
 ## Decision
 
-**Operational records are soft-deleted. The row stays; it is stamped and filtered.**
+Soft delete, in five collections, with two stamped fields.
 
 ```js
 const merged = { ...existing, deleted_at: new Date().toISOString(), deleted_by: actor || null }
 ```
 
-`buildSoftDelete` (`src/operations.js:76`) stamps two fields and re-runs the collection's normalizer,
-so a soft-deleted record has exactly the shape of a live one. `isDeleted` (`src/operations.js:97`) is
-`Boolean(record?.deleted_at)` — one predicate, used everywhere.
+The reason is written on the function (`src/operations.js:70-75`):
 
-Reads filter unless the caller asks otherwise:
+> *"Soft-deletes an operational record by stamping deleted_at and deleted_by. Records are never
+> removed from the store so action-log history and any downstream references (tasks →
+> interventions, field_reports → incidents) stay resolvable."*
 
-- `src/server.js:2117` — collection reads apply `!isDeleted(item)` unless `includeDeleted`
-- `src/server.js:2124` — a single-record read 404s on a deleted record, again unless `includeDeleted`
-- `src/server.js:2159` — updates are refused on an already-deleted record
-- `src/server.js:736` — `road_access` filters deleted rows out of the derived surface
+`isDeleted` is `Boolean(record?.deleted_at)`. It is applied at read time in six places:
+`operationalSummary`, `counts` (so `/api/v1/health` and `/api/v1/assessments` agree), the
+collection GET, the single-record GET, the PATCH guard and the `road_access` filter. A record with
+`deleted_at` set is invisible to live counts and to every default read, and reachable by
+`?include_deleted=true` and by id.
 
-Every normalizer round-trips both fields rather than stripping them
-(`deleted_at: input.deleted_at || existing?.deleted_at || null`, e.g. `src/operations.js:149`), which
-is what makes a soft delete survive a subsequent update.
+Three properties make it hard to get wrong:
 
-`buildSoftDelete` also refuses a second delete with `409 Record is already deleted`
-(`src/operations.js:78-80`). Un-deleting is not an operation.
-
-**Hard delete exists, and is scoped.** Two places, both deliberate:
-
-- `JsonStore.remove({ collection: [ids] })` (`src/store.js:125`) is the storage capability that
-  retention needs. It throws on an unrecognised collection rather than ignoring it — the same
-  reasoning as `COLLECTIONS` itself.
-- `POST /api/v1/maintenance/apply-retention` (`src/server.js:627-630`) applies
-  `applyRetention` to `field_reports` and `rapidpro_inbound_messages`, splits into
-  `{kept, expired}` (`src/pii.js:67`) and writes back. Those two collections hold personal data —
-  names, phone numbers, locations — and a retention window that leaves the data in place has no
-  meaning.
-
-So the rule is not "never delete". It is: **operational records are stamped, personal data is
-purged.** The comment at `src/operations.js:71-74` states the first half and its reason: *"Records
-are never removed from the store so action-log history and any downstream references (tasks →
-interventions, field_reports → incidents) stay resolvable."*
+- **Deleting twice is a 409, not a second stamp.** `buildSoftDelete` throws *'Record is already
+  deleted'*. The tombstone has one author and one moment.
+- **A client cannot un-delete by PATCHing.** Every operational normalizer carries the fields through
+  `input.deleted_at || existing?.deleted_at || null`, so `deleted_at: null` falls back to the
+  existing value and the 409 holds.
+- **A soft delete re-runs the normaliser.** `buildSoftDelete` takes the store snapshot and re-derives
+  fields, because the normalizers cross-reference a parent to backfill derived values. Deleting a
+  field report can therefore change fields other than the two stamps. That is a real cost, and it is
+  the reason for it — see **Harder**.
 
 ## Options considered
 
-### Hard delete everywhere
+### Hard delete
 
 | Dimension | Assessment |
 |---|---|
-| Matches the operator's expectation | Yes |
-| Graph integrity | Broken — `includeDeleted` cannot exist, and references resolve to empty fields |
-| Audit trail | The `action_logs` entries outlive their subjects and point at nothing |
-| Retention compliance | The only thing that satisfies it |
-| Undo | Impossible. There is no backup path in the one-click deployment |
+| Storage reclaimed | Yes, immediately |
+| Audit trail | Broken. `action_logs` points at nothing; the read-only log becomes a list of ghosts |
+| Downstream references | A deleted intervention leaves its tasks parentless, with no referential integrity to catch it ([ADR-002](ADR-002-single-table-jsonb-store.md)) |
+| `include_deleted` | No meaning |
+| Reversibility | None |
 
-**Rejected** for operational collections. Note that it is the correct choice for personal data, which
-is why it is kept for two collections rather than abandoned.
+**Rejected.** It trades the one thing the product is for — a record of what happened — for disk
+space that is not scarce at this scale.
 
-### Tombstones — a `deleted` boolean
+### A separate audit collection, and delete from the main one
 
 | Dimension | Assessment |
 |---|---|
-| Marginally smaller than a timestamp | Yes |
-| Answers "who, and when" | No — both are required by `src/operations.js:81` |
-| Answers "was this deleted before the audit window started" | No |
+| Storage reclaimed | Yes |
+| Audit trail | Present, if the audit entry embeds the record's fields |
+| Faithfulness | The audit copy is a snapshot taken at delete time, so it diverges from what the record actually was at delete time unless it embeds the pre-delete state |
+| Cost | A second writer per delete, a second normalizer, a second place to get it wrong |
 
-**Rejected.** `deleted_at` and `deleted_by` are one `if (existing.deleted_at)` away from each other,
-and the audit trail is the point of keeping the row.
+**Considered, rejected.** It is the same decision with an extra table. The gain — reclaiming space —
+is real but small, and the divergence problem is real and permanent: with soft delete, the record
+in the store *is* the record as it was when deleted, because deleting it does not modify anything
+else except by re-deriving.
 
-### Soft delete plus an `include_deleted=true` escape hatch everywhere
+### Tombstones with a scheduled purge
 
-**Rejected as a default.** It exists (`src/server.js:2117`) and is opt-in per request, but the
-operational endpoints deliberately do not expose it: a CHW-facing app that could list deleted
-incident records would be listing records a coordinator removed on purpose.
+| Dimension | Assessment |
+|---|---|
+| Eventual storage reclaimed | Yes |
+| Trail resolvable | Only until the purge runs |
+| Needs | A scheduler, an age threshold, and a rule for what age |
+| Fits this product | No — `docs/architecture/decisions/ADR-009-external-scheduler.md` deliberately keeps scheduling out of the process |
 
-### Purge after a grace period
+**Rejected.** This is hard delete with a delay, and the delay is the only thing soft delete does not
+need. It also converts an at-most-once question into an idempotency question: what happens if the
+purge runs twice, or runs against a store that was restored from a backup taken before the purge?
 
-**Considered.** It is the obvious completion of the policy and it is not implemented.
+### Event sourcing
 
-**Rejected for now**, for the same reason `apply-retention` is manual
-([ADR-009](ADR-009-external-scheduler.md)): an unattended purge is irreversible, and nothing in the
-current deployment has a backup to restore from. This is a genuine gap, not a design.
+| Dimension | Assessment |
+|---|---|
+| Audit completeness | Total, by construction |
+| Fit | Wrong shape. The product reads current state constantly and history occasionally |
+| Cost | Every read becomes a fold over an event log; `operationalSummary` currently reads four collections and filters them |
+| Migration | Every one of the 39 collections becomes an event stream |
+
+**Rejected.** The log that already exists is an event log — `action_logs` is append-only and
+read-only. Soft delete is the cheapest way to make the projection consistent with it.
 
 ## Consequences
 
 **Easier**
 
-- **The graph stays resolvable.** A task whose intervention was soft-deleted still resolves to it.
-- **An accidental delete is recoverable.** `deleted_at` is data; clearing two fields restores the
-  record through the normal update path.
-- **The audit trail is not orphaned.** `actionLog` (`src/operations.js:101`) writes
-  `stableId('log', [collection, action, record.id, now])` against a record that will still be there.
-- **Deleted-records questions become answerable.** "Who removed this, and when?" is a query over the
-  collection, not a log reconstruction.
-- Retention compliance is unaffected, because it was never on the same code path.
+- An `action_logs` entry always resolves. There is no state in which the product records an action
+  on a record it cannot display.
+- `tasks → interventions` and `field_reports → incidents` survive their parent being deleted,
+  because the parent is still there. Nothing has to decide what "orphan" means.
+- Undo is a `PATCH` clearing the stamp on a record nobody can find, because the record is still
+  there.
+- Live counts and default reads are computed by one predicate, `isDeleted`, at read time. Nothing
+  has to be migrated when a record is deleted.
 
 **Harder**
 
-- **Every read has to remember.** The filter is applied by hand at each read site. A new endpoint
-  that forgets `!isDeleted` will serve deleted records and no test will catch it — the same silent-
-  omission class that `countRecords` has.
-- **The fields never go away.** `deleted_at` and `deleted_by` ride along on every operational record,
-  including the vast majority that are live, and they are carried into exports and reports.
-- **`deleted_at` is not the same as deleted.** A record soft-deleted at 14:00 can still be updated
-  through any path that does not check `isDeleted`. The server route checks
-  (`src/server.js:2159`); a direct `store.merge` call does not.
-- **Storage grows without bound for the two purged collections too.** `apply-retention` is a manual
-  endpoint ([ADR-009](ADR-009-external-scheduler.md)), so personal data sits in the store until
-  someone POSTs. That is a compliance gap that the decision knowingly leaves open.
-- **There is no un-delete endpoint**, and adding one contradicts `src/operations.js:78-80`. Recovery
-  means a direct store edit.
+- **Storage is never reclaimed by an operator delete.** Soft-deleted rows stay in the JSON file and
+  in `lite_records` forever. On `JsonStore` that matters more than usual, because `merge` rewrites
+  the whole file for a single record — a delete costs a full-file serialisation and a full disk of
+  `deleted_at`-stamped rows.
+- **The soft delete is visible in full to anyone who asks.** `?include_deleted=true` returns the
+  entire record, not a tombstone. A soft-deleted field report still carries its reporter's details.
+  Soft delete is not a privacy control and must not be described as one.
+- **Deletion changes fields other than the two stamps.** Because `buildSoftDelete` re-runs the
+  normaliser against the store snapshot, a delete is a derived-field recomputation. It is
+  deterministic, but it means "what changed" is not "two fields changed".
+- **Every read path must remember to filter.** There is no database constraint doing it. A new
+  endpoint that forgets `isDeleted` publishes deleted records, and the tests that would catch it do
+  not exist until someone writes them.
+- **`road_access` honours `?include_deleted=true` and nothing else does.** `GET /api/v1/road-access`
+  (`src/server.js:733`) reads the flag and filters on `isDeleted`, exactly like the five operational
+  routes. But `road_access` is one of the six derived collections `replaceAnalytics` rewrites
+  wholesale — it is computed, never deleted, and no record in it ever carries `deleted_at`. The flag
+  is inert. It is a second, wrong copy of the operational read pattern in a collection that is not
+  operational. Either the six derived collections should refuse the flag with a 400, or the flag
+  should not be there.
 
-**Revisit when**
+## The wrinkle: `apply-retention` used to delete nothing
 
-- An operator-facing "restore deleted record" need appears. It should be a new endpoint with its own
-  `action_logs` entry, not a relaxation of the 409.
-- Backup and restore exists in the deployment, at which point the grace-period purge becomes
-  implementable and the retention endpoint can move onto the scheduler.
-- A collection holds personal data *and* is referenced by another collection. Today the split is
-  by collection; if that stops being true, retention has to become per-record.
+This has to be recorded, because for most of this product's life the retention endpoint was a lie.
 
-## The general shape
+`POST /api/v1/maintenance/apply-retention` computes an expiry set from `field_reports` and
+`rapidpro_inbound_messages` against `policy.retentionDays` (`src/pii.js:67`), then used to hand the
+**kept** records back to `store.merge()`. Neither store had a delete path — `merge` upserts by id and
+cannot remove — so the expired rows were counted, reported as
+`{success: true, field_reports: {expired: 1}}`, and left exactly where they were.
 
-Soft delete here is not primarily a data-retention choice — retention is handled separately and does
-delete. It is a **reference-integrity** choice, adopted because
-[ADR-002](ADR-002-single-table-jsonb-store.md) moved referential integrity out of the database and
-into application code, where a deleted row has no way to announce itself. The uncomfortable residue
-is that every read site now carries a manual filter, and a manual filter is a promise rather than a
-constraint.
+The defect is recorded as **DAT-07**:
 
-Related: [ADR-002](ADR-002-single-table-jsonb-store.md), [ADR-009](ADR-009-external-scheduler.md)
+> *"This is the worst combination in the codebase: the operator asks for deletion of personal data,
+> receives `{success: true}`, and has a false compliance record."*
+
+It was reproduced, fixed on 2026-10-03, and is now guarded: `JsonStore.remove()` filters the doomed
+ids out of the collection, `PostgresStore.remove()` issues
+`DELETE FROM lite_records WHERE collection = $1 AND id = ANY($2::text[])`, both refuse an unknown
+collection rather than ignoring it, and `store-conformance.test.js` runs the same
+*deletes the records it reports as expired* case against both backends. The endpoint had no test at
+all before that.
+
+**What the ADR requires before this is called retention.** The capability exists now, so the
+remaining requirements are about the description, not the code:
+
+1. **A test that asserts the deletion, not the count.** The original endpoint had a test-shaped
+   surface — it returned `expired: 1` — and no assertion on the store. Any retention claim is
+   backed by a read-back after the call, on both backends.
+2. **Retention is the one hard delete, and it should say so.** `field_reports` is a soft-delete
+   collection, and `apply-retention` removes its rows outright. That is the correct tension to hold
+   open: an operational delete keeps the record, a PII retention purge must not, because the whole
+   purpose is that the personal data stops existing. Anything described as "deletion" in this
+   product should be one or the other, and the docs should never let the word cover both.
+3. **`docs/api.md` currently overstates this route in the other direction.** It documents a
+   `dry_run` body flag, an `{success, affected, dry_run}` response, and *"Writes an action_log entry
+   per affected collection."* None of those exist in the implementation — no `dry_run`, no
+   `affected`, no `action_logs` written. A retention endpoint that claims a dry run it does not have
+   is the same false compliance record DAT-07 was about, in the documentation rather than the code.
+4. **`docs/architecture/data-model.md` is stale on this point.** Its "Nothing hard-deletes a row"
+   note describes the pre-DAT-07 code. It should be corrected, or an operator reading the data model
+   will conclude, correctly for the wrong reason, that no deletion is possible.
+
+## Revisit when
+
+- Storage becomes the binding constraint rather than a rounding error. At that point the answer is a
+  purge with an age threshold and an export-first step, not the removal of soft delete.
+- `road_access` or any other derived collection becomes deletable, in which case the
+  `include_deleted` flag question above has to be answered before it is copied a seventh time.
+- A PII obligation requires that a soft-deleted record's personal fields be unreadable. Soft delete
+  does not provide that, and redaction on write plus hard purge on retention is the only honest
+  answer.
+
+Related: [ADR-002](ADR-002-single-table-jsonb-store.md),
+[ADR-004](ADR-004-sensitivity-is-not-a-probability.md)

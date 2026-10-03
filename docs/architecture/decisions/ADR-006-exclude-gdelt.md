@@ -1,159 +1,154 @@
-# ADR-006: Exclude GDELT from ingestion
+# ADR-006: GDELT is excluded from ingestion
 
-**Status:** Accepted — inherited from the Lite boundary at the first release (`CHANGELOG.md:1118`),
-not forced by an incident
-**Applies to:** `src/schema.js`, `src/ingestion.js`, `src/server.js`, `connectors.registry.json`
-**Deciders:** anyone who thinks GDELT belongs in the open-source edition
+**Status:** Accepted — enforced in the first published commit (`fe5a9e3`, 2026-05-17), never enabled
+**Applies to:** `src/schema.js:20`, `src/ingestion.js`, `src/server.js:522`, `public/app.js:2106`
+**Deciders:** whoever adds a source id to `SOURCE_IDS`
 
 ## Context
 
-GDELT is the largest free global event database, it is keyless, and it reports conflict events — the
-exact gap the product's `conflict_events` collection is thin in. Sixteen connectors ship in Lite
-(`src/connectors/`) and none of them is GDELT. Fourteen of them poll upstream automatically.
+`gdelt` is the only name in the ingestion vocabulary that cannot be ingested. It is not in
+`SOURCE_IDS` — the sixteen ids the registry, `/api/v1/sources` and the schedule endpoints all draw
+from — and it is named explicitly in a list of its own:
 
-That looks like an omission, and it is easy to read `POST /api/v1/ingest/run -d '{"sources":
-["gdelt"]}'`, get an error, and conclude the feature was forgotten. It was not forgotten. It is
-listed in the release notes under a heading of its own:
+```js
+export const BLOCKED_SOURCE_IDS = Object.freeze(['gdelt'])
+```
 
-> ### Excluded
-> - GDELT ingestion.
+Enforcement is in two places, both in `src/ingestion.js`, and both throw before anything is
+fetched:
 
-`docs/open-source-boundary.md` draws the line the exclusion serves: Lite is *"the public-good
-climate-conflict edition"*, and what is closed in the commercial product includes *"production
-ingestion orchestration, source lifecycle governance, enrichment, deduplication, proprietary source
-reputation, and enterprise data-quality systems."*
+> `getConnector` — ``throw new Error(`${sourceId} ingestion is intentionally excluded from Lindela Lite`)``
+>
+> `runIngestion` / `validateSources` — the same string, checked per requested source before the
+> loop that would call a connector.
 
-The uncomfortable part is that the technical argument and the commercial argument are the same
-argument here. GDELT's raw feed is free and redistributable. What is not free is the *pipeline*: the
-event coding, the deduplication across the 65 language editions, and the reputation weighting that
-turn a fire in a favela into a conflict event and a riot in a stadium into a football match. Lite
-has none of that and would be presenting an unweighted code list next to the same field in the
-commercial product. A user who cannot tell the two apart has been given a reason to.
+`/api/v1/health` reports `exclusions: ['gdelt']`, `ingestionStatus` filters the blocked ids out of
+the status list, and `publicSourceCatalog` never produces the entry.
+
+**The reason is editorial, not legal.** Nothing in the codebase claims GDELT is unlicensed,
+rate-limited or unusable. `docs/open-source-boundary.md` states the actual rule:
+
+> *"Lindela Lite is the public-good climate-conflict edition. It is useful on its own, but it
+> preserves the commercial value of full Lindela by limiting the release to public ingestion,
+> neutral schemas, baseline heuristics, a small API, and a lightweight UI."*
+
+GDELT sits in the same exclusion family as WorldMonitor code. `CONTRIBUTING.md` lists them together
+— *"No GDELT ingestion"* and *"No WorldMonitor code or derivative implementation"* — and asks every
+pull request to *"state that no client data, secrets, WorldMonitor code, GDELT ingestion, or full
+Lindela internals were added."* `docs/improvements/_research/ingestion.md` calls it what it is:
+*"`BLOCKED_SOURCE_IDS` (`schema.js:20`) is a deliberate editorial decision."*
+
+Conflict events are not absent from the product. `acled_csv` and `conflict_csv` are first-class
+sources writing to `conflict_events`; the block is on one provider, not on the signal.
+
+### History
+
+`git log -S"gdelt"` shows six commits, all of which carry the constant forward. `git show
+fe5a9e3:src/schema.js` already contains `BLOCKED_SOURCE_IDS`, `git log --all --diff-filter=A
+--name-only` has never seen a GDELT connector file, and `src/connectors/` has sixteen modules,
+none of them GDELT. **It was never enabled.** The temptation to describe it as a reverted
+experiment is wrong, and the block is cheaper partly because nothing had to be undone.
 
 ## Decision
 
-**GDELT is hard-blocked, and the block is a named constant rather than an absence.**
+Keep the hard block. Not a flag, not a default-off flag, not a config key. An attempt to ingest
+`gdelt` throws, by name, in every path — `getConnector`, `runIngestion` and `validateSources` — and
+the console says so on every refresh:
 
-```js
-export const BLOCKED_SOURCE_IDS = Object.freeze(['gdelt'])   // src/schema.js:20
-```
-
-There is no connector file. The block exists in five places, each doing something the mere absence
-of a connector could not:
-
-| Site | What it does |
-|---|---|
-| `src/schema.js:20` | The constant. `gdelt` is deliberately **not** in `SOURCE_IDS` (`src/schema.js:1-19`) |
-| `src/ingestion.js:87-89` | `getConnector` throws `` `${sourceId} ingestion is intentionally excluded from Lindela Lite` `` |
-| `src/ingestion.js:104` | `runIngestion` rejects the request before any connector is resolved |
-| `src/ingestion.js:280`, `:302` | `ingestionStatus` filters it out; `validateSources` throws with the same message |
-| `src/server.js:522` | `GET /api/v1/health` returns `exclusions: ['gdelt']` |
-
-The error text matters as much as the throw. An unknown source returns `Unknown source: gdelt`,
-which reads as a typo. The blocked source returns *"intentionally excluded"*, which is the truth and
-is the difference between a support ticket and a one-line answer.
-
-`GET /api/v1/health` advertising the exclusion is the part that is easy to leave out and the part
-that makes the decision real: a boundary the system refuses quietly is indistinguishable from a
-feature that was never announced. `test/lite.test.js:1025-1028` asserts both halves — that health
-lists it and that `/api/v1/sources` does not.
-
-The same boundary is stated where a reader will meet it: `README.md:23` (*"It does not ingest
-GDELT"*), `docs/ingestion.md:28`, `docs/developer-guide.md:49` (*"Do not add GDELT ingestion"*), and
-`connectors.registry.json`, which has no `gdelt` entry among its sixteen.
+> `setStatus(\`Updated ${formatTimestamp(new Date())}. GDELT excluded.\`)`
 
 ## Options considered
 
-### Include GDELT, treat it as a public source like any other
+### Keep it behind a flag
 
 | Dimension | Assessment |
 |---|---|
-| Fills a real gap | Yes — `conflict_events` is the product's thinnest collection |
-| Keyless and redistributable | Yes |
-| Licence | Permissive; not the blocker |
-| Classification quality | Raw automated coding, no confidence weighting, multi-edition duplicates |
-| Relationship to the commercial product | Presents the same field as Lite without the pipeline that makes it mean anything |
+| Restores the signal | Only for whoever finds and sets the flag |
+| Keeps the boundary | Only while the flag is off, and only by default |
+| Failure mode when on | Silent. The console constant says excluded; the metric says otherwise |
+| Test surface | A branch that CI never runs, on a path the boundary forbids |
 
-**Rejected.** The licence is not what stops this. A reader comparing the two editions cannot tell
-which events are weighted, and would reasonably assume they are.
+**Rejected.** A flag converts a boundary into a preference, and the boundary is the entire point of
+the Lite edition. It would also make the console's status line a lie the moment someone flipped it,
+which is a worse outcome than the missing data.
 
-### Include it behind an off-by-default config flag
+### Sample it — a daily digest instead of a full feed
 
-**Rejected.** A flag is a promise someone will set. The state this prevents is a deployment with
-GDELT on and no note explaining why its conflict numbers differ from the commercial edition's.
+| Dimension | Assessment |
+|---|---|
+| Cost | Small: one fetch per day, records trimmed to the region |
+| Signal quality | Unchanged in kind, and much worse in coverage — GDELT's local event density is what makes it useful |
+| Boundary | Unchanged: it is still GDELT ingestion, just less of it |
+| Complexity | A second code path, a second store, a second thing to exclude later |
 
-### Support ACLED instead
+**Rejected** on the boundary alone. Sampling is not a smaller version of a permitted thing; it is
+the same thing with the volume turned down.
 
-**What was actually done**, and the contrast is the whole point. `acled_csv` *is* in `SOURCE_IDS`
-(`src/schema.js:15`), it produces the same `conflict_events` collection, and it is gated at
-`src/connectors/uploads.js:35-38`:
+### Use it for a count only — "N media-reported events in the region"
 
-```js
-if (!options.acled_license_accepted) {
-  return { conflict_events: [], errors: ['ACLED imports require acled_license_accepted=true and user-supplied licensed data.'] }
-}
-```
+| Dimension | Assessment |
+|---|---|
+| Appears cheap | Yes |
+| Is it honest | Only if the count is labelled with its provenance, and the console already refuses exactly that kind of unlabelled aggregate |
+| Interaction with the scoring | None — `computeClimateConflictRisk` reads `conflict_events`, so a count would not reach the score anyway |
 
-The difference is who holds the entitlement. ACLED data reaches Lite because an operator who has the
-licence uploaded it themselves; the connector records
-`license: 'user_supplied_acled_license'` so the provenance travels with the record. GDELT would
-reach Lite because *we* chose to fetch it, which is the case the boundary is about.
-
-### Block it by not writing the connector, and document the omission in prose
-
-**Rejected**, and this is the option the code actually moved away from. An absent connector produces
-`Unknown source: gdelt` and nothing else. The `/health` exclusion, the distinct message and the tests
-at `test/lite.test.js:756-763` were added to make the exclusion *stated* rather than inferred —
-because a boundary that has to be inferred from a missing file will be filled in by the next
-contributor who finds the gap interesting.
+**Rejected.** A count of events that are not in the store invites the reader to infer a density the
+store cannot support, and it is the same move ADR-004 rejects: a number that is correct as computed
+and misleading as read.
 
 ## Consequences
 
 **Easier**
 
-- The open-source boundary is legible from the running system, not only from a document.
-- A contributor who asks is answered by a named constant and a test, in under a minute.
-- `/health` can be polled by a deployment to assert that the Lite build it received is the Lite
-  build it expected.
-- ACLED users still get conflict data, with provenance, without the platform taking the licence
-  decision on their behalf.
+- The exclusion is one constant, one string, and three call sites. It cannot drift out of the
+  vocabulary because it was never in it.
+- Nothing has to be un-shipped if the boundary is later withdrawn — no connector, no stored records,
+  no migration of already-ingested data.
+- A contributor who reaches for GDELT hits `getConnector`'s throw immediately, and
+  `CONTRIBUTING.md` explains why before they file the issue.
 
 **Harder**
 
-- **The exclusion is a `const`, not a type.** Nothing stops a connector file named
-  `src/connectors/gdelt.js` from being added — it would simply never be reachable through
-  `getConnector`, because `CONNECTORS` is keyed by `SOURCE_IDS`. A contributor could write the
-  connector, wire it into the map, and see tests pass while the block still holds. The failure mode
-  is confusing rather than dangerous, and it is not covered by any test.
-- **`SOURCE_IDS` and `BLOCKED_SOURCE_IDS` are two lists where one would do.** Every source appears in
-  exactly one, and the code checks the blocked list first everywhere, which means the ordering is
-  load-bearing at four sites and stated nowhere. Adding an id to `SOURCE_IDS` that is also in
-  `BLOCKED_SOURCE_IDS` produces an unreachable source that still appears in `SOURCE_POLICIES`.
-- The block stops the *platform* ingestion path only. Nothing prevents an operator POSTing GDELT
-  data as `conflict_csv`, and nothing can — the CSV connector accepts any rows. The boundary is a
-  statement about what Lite fetches, not about what a user may load.
-- The GitHub issue that eventually arrives is *"why no GDELT?"*, and the answer is a link to this
-  file.
+- **The product loses a broad conflict-event signal.** GDACS and USGS give hazards; `acled_csv` and
+  `conflict_csv` give conflict, and only if an operator supplies the file. Out of the box the map's
+  conflict layer is empty and the operator has to know that.
+- **`computeClimateConflictRisk` is weaker for it.** `conflictPressure` is
+  `Math.min(30, conflicts.reduce((sum, event) => sum + 4 + Number(event.fatalities || 0) * 0.8, 0))`
+  over `conflict_events` within 125 km. With no source writing that collection, the term is 0 for a
+  fresh deployment, and the component carries 30 of the score's 100 points. The remaining terms —
+  climate 35, hazards 25, services 10 — can still reach 70. The score is not wrong; it is computed
+  over a thinner input set than its own name implies, which is what the `confidence` term and the
+  sensitivity band are for ([ADR-004](ADR-004-sensitivity-is-not-a-probability.md)).
+- The block costs a constant on screen. Every refresh writes "GDELT excluded." into the status line,
+  which some operator will eventually ask to have removed.
 
-**Revisit when**
+### Why the constant on screen is worth it
 
-- The commercial boundary changes, which is a product decision with an owner outside this codebase.
-- An openly-licensed, redistribution-friendly conflict feed with documented coding confidence appears
-  and can be ingested *with* that confidence attached to each record. That is the condition — the
-  confidence field, not the licence — and it is the same condition ACLED satisfies by shifting the
-  entitlement to the operator.
-- Someone wants a build-time guard on `BLOCKED_SOURCE_IDS` the way
-  [ADR-010](ADR-010-build-time-claim-guard.md) guards the model boundary. Unlike the model boundary
-  there is no regex that distinguishes "documenting the exclusion" from "adding the connector", and
-  the existing `test/lite.test.js` assertions are the current enforcement.
+The alternative to a labelled exclusion is not a map with a conflict layer that quietly has no data
+in it. It is a map that looks complete. `computeDataQuality` will report a coverage percentage, and
+that percentage will be computed over the sources that remain — so an empty conflict layer reads as
+"no conflict recorded", which is the single most dangerous thing a humanitarian situational map can
+say about a region where people are armed.
 
-## What could not be verified
+A named, unchanging exclusion is a *statement about the product*. A silently degraded metric is a
+statement about the world. The console says the first; the map would say the second.
 
-Whether GDELT was ever implemented in this repository and later removed. `CHANGELOG.md:1118-1122`
-lists it under **Excluded** in what is otherwise the added-and-excluded ledger of the first public
-release, which reads as *never included*. Nothing in the code, the tests or the CHANGELOG records a
-removal. This ADR therefore records an inherited boundary rather than a reversal — the distinction
-matters, because a boundary that was tried and undone carries an incident that would justify it and
-this one does not.
+## Revisit when
 
-Related: [ADR-002](ADR-002-single-table-jsonb-store.md), [ADR-003](ADR-003-content-hash-idempotency.md)
+- The open-source boundary itself changes — a decision to publish the connector, at which point this
+  ADR is superseded rather than amended.
+- Conflict events come from a permitted source that covers the pilot districts without an
+  operator-supplied file, in which case the cost above is paid down by other means and this becomes a
+  restatement rather than a decision.
+
+## One loose end
+
+`exclusions: ['gdelt']` in `/api/v1/health` (`src/server.js:522`) is a **literal**, not
+`[...BLOCKED_SOURCE_IDS]`. The health endpoint, the ingestion guards and the vocabulary are three
+lists, and the first is maintained by hand. A second blocked source would be enforced in three of
+four places and reported in none. That is the same failure mode ADR-002 names for `COLLECTIONS`
+— *an unlisted key is dropped silently* — in a different list, and it deserves the same treatment:
+derive it, and assert on it.
+
+Related: [ADR-002](ADR-002-single-table-jsonb-store.md),
+[ADR-004](ADR-004-sensitivity-is-not-a-probability.md)
