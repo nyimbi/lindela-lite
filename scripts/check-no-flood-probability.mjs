@@ -44,6 +44,15 @@ const SURFACE_EXTS = /\.(js|mjs|ts|md|yaml|yml|html|json)$/
 const MAY_NAME_TERMS = new Set([
   'docs/flood-probability-model-basis.md',
   'docs/developer-guide.md',
+  // The ADRs whose subject *is* the prohibition. ADR-004 records the rename
+  // away from return-period language, ADR-005 records the agreed basis and the
+  // methods it rejected, and ADR-010 records the guard itself. Each can only
+  // explain the ban by naming what it bans — that is the same exemption the
+  // basis document holds, and it is granted per file rather than per directory
+  // so that the next ADR written does not inherit it.
+  'docs/architecture/decisions/ADR-004-sensitivity-is-not-a-probability.md',
+  'docs/architecture/decisions/ADR-005-flood-probability-basis.md',
+  'docs/architecture/decisions/ADR-010-build-time-claim-guard.md',
 ])
 
 // Terms that assert a probability or a return level. Deliberately specific:

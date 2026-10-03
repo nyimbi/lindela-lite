@@ -116,4 +116,4 @@ health, which is why it belongs in this ADR rather than only in the runbook.
 The other half is `GET /api/v1/health`, which is the compose healthcheck target and reports the store
 mode. It does not report ingestion recency, and it should.
 
-Related: [deployment.md](../deployment.md)
+Related: [deployment.md](../../deployment.md)

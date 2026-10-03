@@ -318,6 +318,6 @@ kind: arithmetic that looks finished and is not.
 - [data-model.md](data-model.md) — what is stored and what idempotency rests on
 - [ingestion.md](ingestion.md) — how external data becomes records
 - [analytics-and-alerts.md](analytics-and-alerts.md) — how records become a decision
-- [frontend.md](frontend.md) — the surfaces and the offline model
-- [deployment.md](deployment.md) — topology, configuration, failure
+- [dashboard.md](../dashboard.md) — the surfaces and the offline model
+- [deployment.md](../deployment.md) — topology, configuration, failure
 - [decisions/](decisions/) — the choices that shaped all of the above

@@ -8,7 +8,7 @@ per-route module. Understanding a request means understanding the order of the
 
 Related: [system-overview.md](system-overview.md) for the process and its
 boundaries, [data-model.md](data-model.md) for what `store.read()` returns,
-[deployment.md](deployment.md) for the reverse proxy in front of this.
+[deployment.md](../deployment.md) for the reverse proxy in front of this.
 
 ## The one callback
 
@@ -155,7 +155,7 @@ What this means in practice:
 - **The comparison is `===`, not constant-time** (`src/auth.js:31`). Token
   strings are compared in full. This is a timing side-channel in principle; the
   practical exposure depends on whether the deployment is internet-facing with
-  untrusted callers, which [deployment.md](deployment.md) addresses.
+  untrusted callers, which [deployment.md](../deployment.md) addresses.
 - **`parseTokens()` re-reads `process.env` and re-`JSON.parse`s on every
   request.** Token rotation takes effect without a restart, at the cost of a
   parse per request.
