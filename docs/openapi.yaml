@@ -1588,14 +1588,30 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Id'
     get:
-      summary: GeoJSON alert cap for an alert event
+      # Documented as `application/json` / FeatureCollection until 2026-10-03.
+      # `src/server.js:1960` serves `application/xml` — CAP 1.2 — and a client
+      # generated from the old description parses it as a broken payload.
+      # `check-openapi.mjs` compares paths, not media types, so it passed: a
+      # wrong path is a client that cannot call the endpoint, a wrong content
+      # type is a client that calls it and then fails to read the answer.
+      summary: CAP 1.2 alert message for an alert event
       responses:
         '200':
-          description: FeatureCollection
+          description: A CAP 1.2 `alert` message
           content:
-            application/json:
+            application/xml:
               schema:
-                $ref: '#/components/schemas/GeoJsonFeatureCollection'
+                type: string
+                description: |
+                  An OASIS Common Alerting Protocol 1.2 document. The message
+                  type follows the alert's lifecycle: `Alert` while open,
+                  `Update` once acknowledged, `Cancel` once resolved. A resolved
+                  alert still emits a Cancel rather than nothing — CAP retires
+                  a prior Alert by identifier, so suppressing the message would
+                  leave every downstream subscriber holding the live alert.
+                  `scope` defaults to `Public` for every alert; a
+                  `<restriction>` element states the dissemination basis of this
+                  particular message.
   /api/v1/disease-observations/summary:
     get:
       summary: Outbreak context roll-up
