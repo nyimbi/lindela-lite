@@ -1263,6 +1263,12 @@ dialog[open] {
   to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
+/* The universal `* { margin: 0 }` reset beat the user agent's
+   `dialog { margin: auto }`, so every dialog in the console opened pinned to
+   the top-left corner instead of centred. A dialog in the corner reads as a
+   panel that failed to open. */
+dialog { margin: auto; }
+
 .dialog-header {
   display: flex;
   align-items: center;

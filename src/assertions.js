@@ -878,7 +878,7 @@ function checkRequiredFields(assertion, { batch, fieldStats, unmeasured }) {
   return [{
     assertion: assertion.name,
     kind: assertion.kind,
-    message: `${missingTotal} record${missingTotal === 1 ? '' : 's'} missing a required field across ${assertion.fields.length} required field(s) out of ${batch.length} record(s).`,
+    message: `Assertion failed: ${missingTotal} record${missingTotal === 1 ? '' : 's'} missing a required field across ${assertion.fields.length} required field(s) out of ${batch.length} record(s).`,
     detail: {
       records_with_failures: offenders.length,
       offenders,

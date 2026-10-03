@@ -179,10 +179,20 @@ function normalizeConflictEvent(row, source) {
   const longitude = toNumber(row.longitude ?? row.lon ?? row.lng)
   const eventDate = row.event_date || row.date || row.occurred_at
   if (!eventDate) return null
+  const id = row.id || stableId('conflict', [source, row.event_id_cnty, row.source_id, row.title, eventDate, latitude, longitude])
+  // ACLED exports always carry event_id_cnty, but the documented lite format
+  // (event_date, event_type, latitude, longitude, country, fatalities, title)
+  // has no identifier column at all. Leaving source_id null there meant every
+  // lite upload quarantined on `required_fields` — a guard that condemns the
+  // one format we document. Minting it from the same fields the id is minted
+  // from costs nothing and keeps the row citable; the flag says it came from us
+  // rather than the operator, so nobody reads it as an upstream key.
+  const upstreamId = row.event_id_cnty || row.source_id || row.id || null
   return {
-    id: row.id || stableId('conflict', [source, row.event_id_cnty, row.source_id, row.title, eventDate, latitude, longitude]),
+    id,
     source,
-    source_id: row.event_id_cnty || row.source_id || row.id || null,
+    source_id: upstreamId || id,
+    source_id_minted: !upstreamId,
     event_type: row.event_type || row.type || 'conflict_event',
     sub_event_type: row.sub_event_type || null,
     severity: normalizeSeverity(toNumber(row.fatalities, 0) > 10 ? 'high' : toNumber(row.fatalities, 0) > 0 ? 'medium' : row.severity),

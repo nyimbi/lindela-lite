@@ -226,9 +226,15 @@ describe('store conformance — both backends, one contract', () => {
         ipc_hdx: {
           id: 'ipc_hdx',
           ingest: async () => ({
+            // Descriptor-shaped, per src/assertions.js:343 and the connector's
+            // own output at src/connectors/ipc-hdx.js:195,:217. The first draft
+            // of this fixture omitted `source_id` and `observed_at`, and the
+            // quarantine gate correctly condemned it — so the run reported
+            // "degraded" for reasons that had nothing to do with what this
+            // suite measures.
             food_security_records: [
-              { id: 'fs-1', country: 'KEN', area: 'Turkana', phase3plus_number: 375900 },
-              { id: 'fs-2', country: 'KEN', area: 'Marsabit', phase3plus_number: 210000 },
+              { id: 'fs-1', source_id: 'KEN:Turkana:2026-01:2025-10', country: 'KEN', area: 'Turkana', observed_at: '2026-01-01T00:00:00.000Z', phase3plus_number: 375900, phase3plus_fraction: 0.42 },
+              { id: 'fs-2', source_id: 'KEN:Marsabit:2026-01:2025-10', country: 'KEN', area: 'Marsabit', observed_at: '2026-01-01T00:00:00.000Z', phase3plus_number: 210000, phase3plus_fraction: 0.31 },
             ],
           }),
         },
@@ -247,8 +253,10 @@ describe('store conformance — both backends, one contract', () => {
         who_gho: {
           id: 'who_gho',
           ingest: async () => ({
+            // Likewise src/assertions.js:377 — `source_id` and `observed_at`
+            // are required, and who-gho.js:121,:134 mints both.
             disease_observations: [
-              { id: 'dob-1', indicator_code: 'CHOLERA_0000000001', country: 'KEN', year: 2016, value: 3120 },
+              { id: 'dob-1', source_id: 'CHOLERA_0000000001:KEN:2016', indicator_code: 'CHOLERA_0000000001', country: 'KEN', year: 2016, observed_at: '2016-01-01T00:00:00.000Z', value: 3120 },
             ],
           }),
         },

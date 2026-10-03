@@ -1,7 +1,6 @@
 import { BLOCKED_SOURCE_IDS, INGESTION_SCHEDULE_STATUSES, SOURCE_IDS } from './schema.js'
 import { nowIso, stableId, toNumber, canonicalHash } from './utils.js'
 import { metrics } from './observability.js'
-import { recordLineage } from './lineage.js'
 import { openMeteoConnector } from './connectors/open-meteo.js'
 import { gdacsConnector } from './connectors/gdacs.js'
 import { glofasConnector } from './connectors/glofas.js'
@@ -16,6 +15,11 @@ import { openMeteoArchiveConnector } from './connectors/open-meteo-archive.js'
 import { openMeteoFloodConnector } from './connectors/open-meteo-flood.js'
 import { acledCsvConnector, conflictCsvConnector, serviceAssetsConnector } from './connectors/uploads.js'
 import { dhis2Connector } from './connectors/dhis2.js'
+import { allowRequest, createCircuitState, recordOutcome } from './circuit.js'
+import { runAssertions, quarantineRecords, quarantineCollectionName } from './assertions.js'
+import { buildProvenance, recordLineageRow } from './provenance.js'
+import { explainVerdict } from './freshness.js'
+import { beginFetchRecording, endFetchRecording } from './connectors/http.js'
 
 const CONNECTORS = Object.freeze({
   open_meteo: openMeteoConnector,
@@ -109,6 +113,13 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
 
   const source_runs = []
   const merged = Object.fromEntries(OUTPUT_COLLECTIONS.map((key) => [key, []]))
+  const quarantined = Object.fromEntries(OUTPUT_COLLECTIONS.map((key) => [quarantineCollectionName(key), []]))
+  const provenance_by_run = new Map()
+  // ENH-10. Per-run, not per-process: the breaker exists to stop one dead
+  // source being retried inside one run and eating the wall-clock budget the
+  // healthy ones need. Carrying it across runs would mean persisting circuit
+  // state, which is a bigger claim than this item makes.
+  let circuitState = createCircuitState()
 
   for (const source of requestedSources) {
     const startedAt = nowIso()
@@ -124,7 +135,49 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     let errors = []
     let output = {}
     let attempts = 0
+    let verdict = 'ok'
+    let assertionReport = null
+    let provenance = []
+
+    // ENH-10. `failure_streak` was computed by this file and acted on by
+    // nothing: a dead source was retried in full on every run-due tick,
+    // consuming the wall-clock budget the healthy sources need. The gate goes
+    // before the fetch, and its skip is recorded as a distinct verdict — three
+    // different situations that all render as "the source didn't update" are how
+    // a working pipeline and a dead one come to report the same thing.
+    const gate = allowRequest(circuitState, source)
+    if (!gate.allowed) {
+      source_runs.push({
+        id: stableId('run', [source, startedAt, verdict, [gate.reason]]),
+        source,
+        status: 'skipped',
+        verdict: gate.reason,
+        run_type: request.run_type || (request.schedule_id ? 'scheduled' : 'manual'),
+        schedule_id: request.schedule_id || null,
+        started_at: startedAt,
+        completed_at: nowIso(),
+        records_processed: 0,
+        records_by_collection: emptyCounts(),
+        errors: [],
+        diagnostics: {
+          degraded: false,
+          error_count: 0,
+          records_by_collection: emptyCounts(),
+          attempts: 0,
+          skipped_reason: gate.reason,
+          circuit_state: gate.state,
+        },
+      })
+      metrics.counter('ingestion_runs_total', { source, status: gate.reason })
+      continue
+    }
+
     try {
+      // ENH-15. Name the run before fetching, so every URL the connector
+      // pulls through http.js is attributable to it. Without this the lineage
+      // row cannot say where the data came from, because no connector exposes
+      // the URLs it builds internally.
+      beginFetchRecording(`${source}:${startedAt}`)
       output = await runConnectorWithRetries(connector, sourceRequest)
       attempts = output.__attempts || 1
       errors = output.errors || []
@@ -139,6 +192,52 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
       attempts = error.attempts || 1
     }
 
+    // ENH-10. The outcome feeds the breaker whether the fetch succeeded or not,
+    // and `recordOutcome` releases the half-open probe. Recorded after the
+    // attempt rather than inside the try so a thrown connector still counts —
+    // a failure that does not reach the breaker is precisely the one that keeps
+    // a dead source being retried in full.
+    circuitState = recordOutcome(circuitState, source, {
+      ok: status !== 'failed',
+      latencyMs: Date.now() - Date.parse(startedAt),
+      recordCount: countRecords(output),
+    })
+
+    // The run id is computed before the records are stamped, because the
+    // stamp is what lets the lineage loop below attribute records to the run
+    // that produced them. It used to be computed afterwards, from a status and
+    // an error list that the stamping could not influence.
+    const runId = stableId('run', [source, startedAt, status, errors])
+
+    // ENH-15. Provenance per record, built before the batch is merged so the
+    // `_provenance` envelope travels with the row rather than being inferred
+    // afterwards from whatever survived. `transform_version` comes from the
+    // hashing of the code that did the transforming, so editing a connector's
+    // mapping changes the version it stamps.
+    const runRecords = OUTPUT_COLLECTIONS.flatMap((key) => output[key] || [])
+    const retrievalUrl = endFetchRecording(`${source}:${startedAt}`)[0]?.url || null
+    provenance = buildProvenance({
+      sourceRun: { id: runId, source },
+      connector: { id: source },
+      records: runRecords,
+      retrieval: { url: retrievalUrl, retrieved_at: startedAt },
+      transform: connector.transform || connector.ingest || null,
+    })
+
+    // ENH-07. Assertions run before anything is published. A batch that fails
+    // them is quarantined rather than merged, and rather than reported as zero:
+    // the GDACS archive silently caps at ~100 results per query, so a run
+    // returning 4,000 of 40,000 parses cleanly and reports success. Nothing in
+    // the codebase noticed for the life of the product.
+    if (status !== 'failed') {
+      assertionReport = runSourceAssertions({ source, output })
+      if (assertionReport && !assertionReport.ok) {
+        status = 'degraded'
+        errors = [...errors, ...assertionReport.failures.map((f) => f.message)]
+        output = assertionReport.published
+      }
+    }
+
     for (const key of Object.keys(merged)) {
       const records = output[key] || []
       for (const record of records) {
@@ -148,16 +247,30 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
         if (!record.first_seen_at) {
           record.first_seen_at = nowIso()
         }
+        // ENH-15. The attribution the lineage loop needs to write one row per
+        // source run rather than nine rows describing all of them.
+        record._source_run_id = runId
+        record._source = source
       }
       merged[key].push(...records)
     }
+
+    // Quarantined batches are stored apart from published ones, with the
+    // assertion that condemned them attached. A condemned batch is a finding
+    // to be read, not a zero to be averaged.
+    if (assertionReport && !assertionReport.ok) {
+      for (const [collection, rows] of Object.entries(assertionReport.quarantined)) {
+        quarantined[collection]?.push(...rows)
+      }
+    }
+    provenance_by_run.set(runId, provenance)
 
     const completedAt = nowIso()
     const durationMs = Date.now() - Date.parse(startedAt)
     const recordsProcessed = countRecords(output)
 
     source_runs.push({
-      id: stableId('run', [source, startedAt, status, errors]),
+      id: runId,
       source,
       status,
       run_type: request.run_type || (request.schedule_id ? 'scheduled' : 'manual'),
@@ -182,19 +295,45 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
   }
 
   const data_lineage = []
-  for (let i = 0; i < source_runs.length; i++) {
-    const run = source_runs[i]
-    const allRecords = OUTPUT_COLLECTIONS.flatMap((key) => merged[key])
-    const lineageRecord = recordLineage(store, run, allRecords)
-    data_lineage.push(lineageRecord)
+  // ENH-15. This loop rebuilt a *run-wide* union of every record inside the
+  // per-source iteration, so a nine-source run wrote nine lineage rows that
+  // each described all nine sources — the audit trail was nine copies of one
+  // statement about the whole run, and no row could say which source it was
+  // about. `upstream_url_or_endpoint` was hardcoded null and
+  // `transform_version` was the constant '0.1.0', so even the one row had
+  // nothing to say about provenance.
+  //
+  // One row per source run now, over that run's own records, with a transform
+  // version derived from the code that transformed them.
+  for (const run of source_runs) {
+    if (run.status === 'skipped') continue
+    const provenance = provenance_by_run.get(run.id) || []
+    // Every published record is stamped with its run at line 252, so a record
+    // with no stamp belongs to no run. The `|| !record._source_run_id` clause
+    // that used to here matched those records for *every* run, which rebuilt
+    // the union the previous fix removed — nine rows, each describing all nine
+    // sources, which is the defect in the first place.
+    const records = OUTPUT_COLLECTIONS.flatMap((key) => merged[key])
+      .filter((record) => record._source_run_id === run.id)
+    data_lineage.push(recordLineageRow({ sourceRun: run, records, provenance }))
   }
 
-  const data = await store.merge({ ...merged, source_runs, data_lineage })
+  const quarantine_counts = Object.fromEntries(
+    Object.entries(quarantined).map(([key, rows]) => [key, rows.length]),
+  )
+
+  const data = await store.merge({
+    ...merged,
+    ...quarantined,
+    source_runs,
+    data_lineage,
+  })
   return {
     source_runs,
     counts: Object.fromEntries(
       OUTPUT_COLLECTIONS.map((key) => [key, merged[key].length]),
     ),
+    quarantined: quarantine_counts,
     data,
   }
 }
@@ -288,6 +427,21 @@ export function ingestionStatus(data) {
       source,
       regular: Boolean(policy.regular),
       status: sourceHealth(lastRun, staleAfter),
+      // ENH-06. The old `status` above is one clock judging every source: a
+      // two-week staleness window applied to a daily rainfall product and to an
+      // annual WHO national statistic alike, so a quiet GDACS week and a dead
+      // one could both report `degraded`. The verdict is cadence-aware and
+      // separates them.
+      //
+      // Both fields are kept. `status` is what existing consumers read and the
+      // openapi schema names; replacing it outright would break every caller to
+      // fix a problem a second field solves. New code should read `verdict`.
+      verdict: explainVerdict({
+        source,
+        policy,
+        lastRun,
+        lastSuccessRun: lastSuccess,
+      }),
       last_run: lastRun,
       last_success: lastSuccess,
       failure_streak: failureStreak(sourceRuns),
@@ -295,6 +449,54 @@ export function ingestionStatus(data) {
       policy,
     }
   })
+}
+
+/**
+ * Runs a source's declarative assertions over everything it just returned.
+ *
+ * Returns `published` (what is safe to merge) and `quarantined` (keyed by
+ * quarantine collection) rather than a bare verdict, because the caller has to
+ * do two different things with the answer: merge one and store the other. A
+ * boolean would force the caller to re-derive the split and get it subtly
+ * different per source.
+ *
+ * `trailingRecords` is deliberately not passed. A count assertion needs the
+ * source's own trailing window, which lives in the store and is read by the
+ * caller that has it; wiring a plausible-looking default here would make every
+ * count assertion pass vacuously, which is the failure mode ENH-07 exists to
+ * catch.
+ */
+function runSourceAssertions({ source, output, trailingRecords = [] }) {
+  const records = OUTPUT_COLLECTIONS.flatMap((key) => output?.[key] || [])
+  const report = runAssertions({ source, records, trailingRecords })
+  if (report.ok) {
+    return { ...report, published: output, quarantined: {} }
+  }
+  const published = Object.fromEntries(OUTPUT_COLLECTIONS.map((key) => [key, []]))
+  const quarantined = {}
+  for (const key of OUTPUT_COLLECTIONS) {
+    const batch = output?.[key] || []
+    if (!batch.length) continue
+    // Quarantine by collection so the store can hold them apart, and carry the
+    // failed assertions with each row so the finding is readable without
+    // cross-referencing the run.
+    quarantined[quarantineCollectionName(key)] = quarantineRecords({
+      source,
+      records: batch,
+      failures: report.failures,
+      sourceRunId: null,
+      collection: key,
+    })
+  }
+  // Nothing is published from a batch that failed. Merging the survivors would
+  // be worse than quarantining the whole thing: a partial GDACS page that
+  // passed its count assertion by accident is indistinguishable, downstream,
+  // from a complete one.
+  return { ...report, published, quarantined }
+}
+
+function emptyCounts() {
+  return Object.fromEntries(OUTPUT_COLLECTIONS.map((key) => [key, 0]))
 }
 
 function validateSources(sources) {

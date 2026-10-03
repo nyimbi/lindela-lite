@@ -53,6 +53,23 @@ export const COLLECTIONS = [
   // leaving it off this list would drop every history row silently — the exact
   // silent-key-list bug the comment above warns about, one level down.
   'record_versions',
+  // ENH-07. One quarantine collection per ingestable collection, holding the
+  // batches that failed their assertions together with the failures that
+  // condemned them. They need their own collections rather than a flag on the
+  // good records because the point is that a condemned batch is never merged:
+  // quarantining in place would mean the store holds records nothing published
+  // and nothing downstream can tell apart from real ones.
+  //
+  // Six hand-written names, and the same silent-drop failure if one is missing.
+  // `test/ingestion-wiring.test.js` asserts this list covers every key
+  // OUTPUT_COLLECTIONS produces, so a new collection cannot be added without
+  // either its quarantine home or that failure.
+  'quarantine_climate_observations',
+  'quarantine_hazard_events',
+  'quarantine_conflict_events',
+  'quarantine_service_assets',
+  'quarantine_food_security_records',
+  'quarantine_disease_observations',
 ]
 
 export class JsonStore {

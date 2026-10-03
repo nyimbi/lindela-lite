@@ -256,6 +256,17 @@ export function emptyStore() {
     // no emptyStore key means read() spreads a missing key over the default
     // and the first `store.record_versions` access throws on a fresh file.
     record_versions: [],
+    // ENH-07. Quarantine homes. These keys must match the store.js COLLECTIONS
+    // entries of the same names: JsonStore.merge keys strictly off COLLECTIONS
+    // and drops an unlisted collection silently, while read() spreads this
+    // default under a parsed file — so a name in one list and not the other is
+    // a defect in whichever direction it appears.
+    quarantine_climate_observations: [],
+    quarantine_hazard_events: [],
+    quarantine_conflict_events: [],
+    quarantine_service_assets: [],
+    quarantine_food_security_records: [],
+    quarantine_disease_observations: [],
   }
 }
 

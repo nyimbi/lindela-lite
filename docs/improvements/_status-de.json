@@ -1,12 +1,25 @@
 {
-  "groups": ["D", "E"],
+  "groups": [
+    "D",
+    "E"
+  ],
   "items": [
     {
       "id": "ENH-25",
       "title": "Bulk upload with a validation report",
       "status": "shipped",
       "detail": "src/upload.js holds the validator, the multipart parser and the collection contracts; GET /api/v1/upload (src/server.js:572) serves the contract and POST /api/v1/upload (src/server.js:588) accepts multipart, text/csv and JSON through one validator with dry_run, a 20-error-capped row-level report and a refusal of partial import (src/server.js:672). Two spec items were deliberately not built and are documented as deviations in the ENH entry: it buffers under DEFAULT_MAX_BODY_BYTES instead of streaming to disk, and there is no client-side CSV picker (the only file input in public/ is a camera capture on the CHW surface, public/chw/index.html:545).",
-      "evidence": ["src/upload.js:104", "src/upload.js:74", "src/server.js:572", "src/server.js:588", "src/server.js:609", "src/server.js:672", "test/upload.test.js:64", "test/upload.test.js:337", "test/upload.test.js:485"],
+      "evidence": [
+        "src/upload.js:104",
+        "src/upload.js:74",
+        "src/server.js:572",
+        "src/server.js:588",
+        "src/server.js:609",
+        "src/server.js:672",
+        "test/upload.test.js:64",
+        "test/upload.test.js:337",
+        "test/upload.test.js:485"
+      ],
       "guarded_by": "test/upload.test.js"
     },
     {
@@ -14,7 +27,12 @@
       "title": "Two-way SMS acknowledgement, escalation, and delivery tracking",
       "status": "not started",
       "detail": "No structured reply verbs anywhere: src/rapidpro.js parses inbound field reports and free text only, and no ACK/ESCALATE/RESOLVED verb or reason code exists in src/ or public/. There is no per-recipient delivery state, no delivery-report endpoint (the four rapidpro routes are status, response-metrics, dispatches, inbound, field-report — src/server.js:2841-2845), and no escalation tree or acknowledgement SLA. The response_rate_pct rework at src/rapidpro.js:255 is the ALERT-05 fix, not this enhancement, and inbound webhooks are still written unconditionally with no idempotency guard (src/server.js:2036-2050).",
-      "evidence": ["src/rapidpro.js:185", "src/rapidpro.js:255", "src/server.js:2841", "src/server.js:2036"],
+      "evidence": [
+        "src/rapidpro.js:185",
+        "src/rapidpro.js:255",
+        "src/server.js:2841",
+        "src/server.js:2036"
+      ],
       "guarded_by": null
     },
     {
@@ -22,7 +40,12 @@
       "title": "Export that carries the narrative",
       "status": "not started",
       "detail": "GET /api/v1/export.csv and /api/v1/export.geojson (src/server.js:1284, 1300) still return only the flattened source-record appendix — toCsv writes record keys and nothing else (src/utils.js:335) — with no warnings, no caveats and no pointer to export.md. No XLSX, no KMZ and no signed PDF exists in src/ or scripts/. markdown_download still records a byte count rather than the artefact (src/server.js:1806), and no per-row provenance stamp (source_id, observed_at, payload_hash) is added at export time.",
-      "evidence": ["src/server.js:1284", "src/server.js:1300", "src/utils.js:335", "src/server.js:1806"],
+      "evidence": [
+        "src/server.js:1284",
+        "src/server.js:1300",
+        "src/utils.js:335",
+        "src/server.js:1806"
+      ],
       "guarded_by": null
     },
     {
@@ -30,23 +53,51 @@
       "title": "A donor-inspectable, hash-chained audit trail",
       "status": "partial",
       "detail": "Two of the four parts shipped. The money path is now audited: the three parametric writes write action logs with the token subject as actor (src/server.js:2521, 2553, 2633), asserted by test/parametric-trigger.test.js:300. action_logs is read-only by route guard — POST, PATCH and DELETE all answer 405 (src/server.js:2275, 2295, 2313) — and a read-only audit view renders it in the workflow panel (public/workflow/panel.js:135, 168). Missing: there is no hash chain — prev_hash/row_hash appear nowhere in the tree, so tampering is undetectable — and there is no audit export a donor can inspect independently of the operator running the server.",
-      "evidence": ["src/server.js:2521", "src/server.js:2553", "src/server.js:2633", "src/server.js:2275", "src/server.js:2295", "src/server.js:2313", "public/workflow/panel.js:135", "public/workflow/panel.js:168", "test/parametric-trigger.test.js:300"],
+      "evidence": [
+        "src/server.js:2521",
+        "src/server.js:2553",
+        "src/server.js:2633",
+        "src/server.js:2275",
+        "src/server.js:2295",
+        "src/server.js:2313",
+        "public/workflow/panel.js:135",
+        "public/workflow/panel.js:168",
+        "test/parametric-trigger.test.js:300"
+      ],
       "guarded_by": "test/parametric-trigger.test.js"
     },
     {
       "id": "ENH-29",
       "title": "A store conformance suite, a real schema, and migrations",
       "status": "partial",
-      "detail": "Part 1 shipped: test/store-conformance.test.js runs one behavioural contract against JsonStore and PostgresStore and is in both the npm test glob and the coverage set (package.json:9, package.json:13). It is also unguarded in practice for the backend that matters — the Postgres half only runs when LINDELA_LITE_TEST_DATABASE_URL is set (test/store-conformance.test.js:24) and no CI job sets it, so CI exercises the conformance suite against one adapter. Parts 2 and 3 are untouched: there is no migration runner and no schema_version column — src/schema.js:213 still hardcodes version: 1 and ensureSchema still issues hand-written ALTER TABLE statements (src/postgres-store.js:22-53) — and the single lite_records JSONB table remains, with no per-collection columns or indexes.",
-      "evidence": ["test/store-conformance.test.js:57", "test/store-conformance.test.js:24", "package.json:9", "package.json:13", ".github/workflows/ci.yml:33", "src/schema.js:213", "src/postgres-store.js:22"],
-      "guarded_by": "test/store-conformance.test.js"
+      "detail": "Part 1 shipped and parts 2 and 3 now have: `src/migrations.js` is an ordered, idempotent migration runner with a frozen three-migration list, `SCHEMA_VERSION = 3`, and a `__schema` ledger. Each migration runs in its own transaction *and* records its own ledger row, so a batch that fails halfway leaves the completed migrations applied and recorded rather than half-applied and unrecorded — the usual alternative leaves the runner unable to tell which half it reached. `PostgresStore.ensureSchema` reads `schema_version` and applies `pendingMigrations(from)` instead of issuing hand-written `ALTER TABLE`s on every boot. Migration 3 adds the two generated columns the JSONB table was missing — `region` as `body->>'district'` and `observed_at` as a real `timestamptz` rather than a string inside JSON — with indexes on each, so the queries that were doing `body->>'…'` per row now use one. Still partial: the Postgres half of the conformance suite still only runs when `LINDELA_LITE_TEST_DATABASE_URL` is set and no CI job sets it, so CI measures one adapter against a contract written for two; the single `lite_records` JSONB table remains, with per-collection columns added only as generated expressions over the body rather than as typed columns; and the two stores can still diverge, since `JsonStore.remove()` and the Postgres equivalents are asserted separately rather than by one shared driver.",
+      "evidence": [
+        "test/store-conformance.test.js:24",
+        "src/migrations.js",
+        "src/postgres-store.js:22",
+        "src/schema.js:211"
+      ],
+      "guarded_by": "test/store-conformance.test.js, test/migrations.test.js"
     },
     {
       "id": "ENH-30",
       "title": "API substrate: pagination, conditional requests, idempotency, readiness",
       "status": "shipped",
       "detail": "All five parts are in place and exercised by 31 passing tests. Cursor pagination with a total-count envelope is collectionPage (src/utils.js:210) at 27 call sites in src/server.js; ETag and 304 handling is in jsonResponse (src/utils.js:452-466); the Idempotency-Key wrapper is handleApi (src/server.js:340-418), scoped by subject+method+path and replaying only sub-400 responses; GET /api/v1/ready probes the store with a timeout and reports mode, reachability and latency (src/server.js:454-479); and the OpenAPI document is diffed against the route table parsed out of src/server.js by scripts/check-openapi.mjs, run inside npm run validate (scripts/validate.mjs:264), which CI executes. One endpoint opts out of the envelope — GET /api/v1/kpi/snapshots returns a raw unpaginated list (src/server.js:1165).",
-      "evidence": ["src/utils.js:210", "src/utils.js:452", "src/server.js:340", "src/server.js:454", "src/server.js:471", "scripts/check-openapi.mjs:33", "scripts/validate.mjs:264", ".github/workflows/ci.yml:18", "test/api-substrate.test.js:62", "test/api-substrate.test.js:152", "test/api-substrate.test.js:209", "test/api-substrate.test.js:337"],
+      "evidence": [
+        "src/utils.js:210",
+        "src/utils.js:452",
+        "src/server.js:340",
+        "src/server.js:454",
+        "src/server.js:471",
+        "scripts/check-openapi.mjs:33",
+        "scripts/validate.mjs:264",
+        ".github/workflows/ci.yml:18",
+        "test/api-substrate.test.js:62",
+        "test/api-substrate.test.js:152",
+        "test/api-substrate.test.js:209",
+        "test/api-substrate.test.js:337"
+      ],
       "guarded_by": "test/api-substrate.test.js"
     }
   ]

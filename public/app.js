@@ -257,6 +257,11 @@ function renderPager(host, key, total, onGo) {
     + link(page + 1, 'Next ›', false, page === pages)
     + `</ul><span class="pagination-status">Showing ${start + 1}–${end} of ${total}</span>`
 
+  // The out-of-range guard below is also what makes `aria-disabled` honest: the
+  // boundary link carries a page number of 0 or pages+1 and is dropped here, so
+  // it stays in the tab order and stays announced without being operable. Per
+  // components.css that beats `disabled`, which removes the control from the tab
+  // order entirely and leaves a keyboard user never learning it exists.
   host.querySelectorAll('[data-page]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const n = Number(btn.dataset.page)
@@ -265,9 +270,6 @@ function renderPager(host, key, total, onGo) {
       onGo()
     })
   })
-  // aria-disabled rather than `disabled`, per components.css: a removed
-  // control is a control a keyboard user tabs past and never learns about.
-  host.querySelector('[aria-disabled="true"]')?.addEventListener('click', (e) => e.preventDefault())
 }
 
 /** Jump back to page 1 when the filter that produced the list changes. */
@@ -898,7 +900,6 @@ async function loadDiseaseSummary() {
     const body = await fetchJson('/api/v1/disease-observations/summary')
     if (!body?.success) {
       contextPresence.disease = 'unavailable'
-      diseaseStripEl && (diseaseStripEl.hidden = false)
     } else {
       state.diseaseSummary = body.data
       const states = body.data?.series_state || []
@@ -1195,7 +1196,6 @@ const ipcStripEl         = $('ipcStrip')
 const ipcAreasEl         = $('ipcAreas')
 const ipcWorstValueEl    = $('ipcWorstValue')
 const ipcWorstPeriodEl   = $('ipcWorstPeriod')
-const diseaseStripEl     = $('diseaseStrip')
 const diseaseSeriesStateEl = $('diseaseSeriesState')
 const diseaseLatestEl    = $('diseaseLatest')
 const diseaseLatestMetaEl = $('diseaseLatestMeta')
