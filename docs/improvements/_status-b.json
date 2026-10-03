@@ -1,0 +1,129 @@
+{
+  "group": "B",
+  "items": [
+    {
+      "id": "ENH-06",
+      "title": "Freshness SLAs by cadence, with an `ok | quiet | stale | broken` verdict",
+      "status": "not started",
+      "detail": "SOURCE_POLICIES still carries only stale_after_minutes and a flat minimum_records; there is no cadence_days or min_expected_delta anywhere in src/. The health route (src/server.js:1339) returns sourceHealth(), which emits never_run|failed|stale|degraded|fresh — never `quiet` or `broken` — and the global 2/14/45-day clock at src/analytics.js:470-489 is untouched. minimum_records is still 1 for every regular source (src/ingestion.js:55-72).",
+      "evidence": [
+        "src/ingestion.js:54-84",
+        "src/ingestion.js:368-378",
+        "src/server.js:1339",
+        "src/analytics.js:470-489"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-07",
+      "title": "Per-source data assertions with quarantine-on-fail",
+      "status": "not started",
+      "detail": "No declarative assertion map and no quarantine collection exist; the four hand-written guards are all that is there (chirps.js:97, glofas.js:24, nasa-firms.js and who-gho.js equivalents). counts_found is recorded nowhere — src/connectors/chirps.js:105-106 slices to a 30-record limit and returns silently. Failed batches are published as usual via store.merge at src/ingestion.js:192.",
+      "evidence": [
+        "src/connectors/chirps.js:97-106",
+        "src/connectors/glofas.js:24",
+        "src/ingestion.js:192"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-08",
+      "title": "Watermarks, incremental fetch, resumable backfill",
+      "status": "not started",
+      "detail": "No watermark or cursor state is persisted (no watermark/last_cursor/last_success_at identifiers in src/); open-meteo-archive.js:47-48 and open-meteo-flood.js:48 still default endDate to today and re-walk from 1981 every run, and both mint their record id from endDate (open-meteo-archive.js:73), so a fresh id is minted daily. Backfills remain synchronous loops with no progress or resume (gdacs-archive.js:45-74).",
+      "evidence": [
+        "src/connectors/open-meteo-archive.js:35-48",
+        "src/connectors/open-meteo-archive.js:73",
+        "src/connectors/open-meteo-flood.js:48",
+        "src/connectors/gdacs-archive.js:45-74"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-09",
+      "title": "Source-agreement cross-validation",
+      "status": "not started",
+      "detail": "There is no GeoTIFF reader and no agreement check: src/analytics/downscaling.js is 60 lines and contains no correlation, Pearson, disagreement or `disputed` logic, and no such identifiers exist in src/. CHIRPS still explicitly declines to decode pixels (chirps.js:23, chirps.js:91), so the two products cannot be compared. The volume-based confidence term in computeDataQuality (src/analytics.js:355) is unchanged.",
+      "evidence": [
+        "src/analytics/downscaling.js:1-60",
+        "src/connectors/chirps.js:23",
+        "src/analytics.js:355"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-10",
+      "title": "Connector health scoring and circuit breaking",
+      "status": "not started",
+      "detail": "failure_streak is still computed at src/ingestion.js:293 and read nowhere else — no circuit, no half-open probe, no skipped_circuit_open status. runDueIngestionSchedules (src/ingestion.js:236-264) retries every due schedule regardless of prior failures, and there is no connector success-rate/latency/payload-drift score.",
+      "evidence": [
+        "src/ingestion.js:293",
+        "src/ingestion.js:236-264",
+        "src/ingestion.js:309-323"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-11",
+      "title": "Enforce the rate limits that are already declared",
+      "status": "partial",
+      "detail": "Only the RapidPro client timeout shipped: src/rapidpro.js:370-379 aborts via RAPIDPRO_REQUEST_TIMEOUT_MS and is guarded by test/rapidpro-webhook-auth.test.js:214-224. The token bucket, concurrency cap, jitter and Retry-After handling in src/connectors/http.js do not exist — that file is 25 lines of plain exponential backoff — and the declared rateLimit fields (e.g. src/connectors/ipc-hdx.js:417 perMinute 20 against the unbounded Promise.all at ipc-hdx.js:265) remain documentation. The webhook branch of distributeReport still fetches with no timeout or AbortSignal (src/server.js:1814-1819), and there is no API rate limiter.",
+      "evidence": [
+        "src/rapidpro.js:370-379",
+        "test/rapidpro-webhook-auth.test.js:214-224",
+        "src/connectors/http.js:1-25",
+        "src/connectors/ipc-hdx.js:265",
+        "src/connectors/ipc-hdx.js:417",
+        "src/server.js:1814-1819"
+      ],
+      "guarded_by": "test/rapidpro-webhook-auth.test.js"
+    },
+    {
+      "id": "ENH-12",
+      "title": "Raw payload retention, replay, and fixture seeding",
+      "status": "not started",
+      "detail": "No connector captures a response body: there is no raw_payload/capture/retrieval_url machinery in src/ — fetchWithRetry returns the parsed body and discards it (src/connectors/http.js:1-25). No replay mode exists for connectors, and no script seeds test/fixtures from captures; the 10 hand-assembled fixtures are consumed only by test/fixtures.test.js, which mocks globalThis.fetch per file.",
+      "evidence": [
+        "src/connectors/http.js:1-25",
+        "test/fixtures.test.js:1-26",
+        "test/fixtures/"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-13",
+      "title": "Bitemporal records",
+      "status": "not started",
+      "detail": "Store semantics are unchanged: mergeById overwrites by id (src/store.js:161-173) and no collection in src/schema.js carries valid_from/valid_to. The only valid_from/valid_to in the codebase are the upstream IPC analysis-window columns copied at src/connectors/ipc-hdx.js:211-212, not record versioning — the prior value of a revised record remains unrecoverable.",
+      "evidence": [
+        "src/store.js:161-173",
+        "src/schema.js:242",
+        "src/connectors/ipc-hdx.js:211-212"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-14",
+      "title": "Completeness tripwires for capped pagination",
+      "status": "not started",
+      "detail": "No pagination bookkeeping exists. gdacs-archive walks quarter windows and discards everything about each page except feature count (src/connectors/gdacs-archive.js:51-68) — no pages fetched, records seen, provider total, or full-last-page flag — and chirps.js:105-106 applies its 30-record cap without recording what it dropped. The possibly_incomplete flag appears nowhere in src/.",
+      "evidence": [
+        "src/connectors/gdacs-archive.js:51-68",
+        "src/connectors/chirps.js:105-106"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-15",
+      "title": "Record-level provenance with real transform versions",
+      "status": "not started",
+      "detail": "src/lineage.js is unchanged: upstream_url_or_endpoint is still hardcoded null and transform_version the constant '0.1.0' (lines 13-14), and no _provenance envelope exists on any record. The run-wide union bug the item describes is still present at src/ingestion.js:185-189, where allRecords is rebuilt from the full merged set inside the per-run loop, so a nine-source run still writes nine identical lineage rows. No test asserts on lineage content — data_lineage appears in tests only as an empty input collection (test/remaining-defects.test.js:295).",
+      "evidence": [
+        "src/lineage.js:13-14",
+        "src/ingestion.js:184-190",
+        "test/remaining-defects.test.js:295"
+      ],
+      "guarded_by": null
+    }
+  ]
+}

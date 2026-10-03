@@ -1,0 +1,90 @@
+{
+  "group": "A",
+  "items": [
+    {
+      "id": "ENH-01",
+      "title": "Deny-by-default authorization from an explicit route→scope table",
+      "status": "partial",
+      "detail": "The security behaviour shipped and is tested: unmapped mutations map to DENIED_SCOPE 'admin:*' and are refused (src/auth.js:19, src/auth.js:255-259, src/server.js:445-450), malformed or empty token config throws rather than returning [] (src/auth.js:126-167, src/server.js:423-452), GETs now sit behind the gate with an explicit public-path list (src/auth.js:99-112, src/server.js:434-444). What is missing is the checkability the entry asks for: there is no single exported ROUTE_SCOPES table — the two tables at src/auth.js:22 and src/auth.js:52 are module-private, so nothing external can iterate them — two mutating routes (POST /api/v1/routing/plan at src/server.js:1025 and POST /api/v1/equity/scan at src/server.js:1221, both named in the entry's reproduced list) are absent from WRITE_SCOPES and therefore closed to every scoped token, no test asserts that every route in server.js appears in the table, and /api/v1/health (src/server.js:503-519) reports no auth posture — only the token-bearing /api/v1/auth-info does (src/server.js:486-501).",
+      "evidence": [
+        "src/auth.js:19",
+        "src/auth.js:22",
+        "src/auth.js:52",
+        "src/auth.js:99",
+        "src/auth.js:126",
+        "src/auth.js:255",
+        "src/server.js:423",
+        "src/server.js:434",
+        "src/server.js:446",
+        "src/server.js:486",
+        "src/server.js:503",
+        "src/server.js:1025",
+        "src/server.js:1221",
+        "test/auth-deny-by-default.test.js:128",
+        "test/auth-deny-by-default.test.js:181"
+      ],
+      "guarded_by": "test/auth-deny-by-default.test.js"
+    },
+    {
+      "id": "ENH-02",
+      "title": "Honesty envelopes on every numeric response, policed in CI",
+      "status": "partial",
+      "detail": "The caveat travels with the number on exactly one route: GET /api/v1/flood-probability/score returns uncertainty.by_feature with the contingency counts and their Wilson intervals plus an explicit note that it is not a confidence interval (src/server.js:1001-1011, keyed per feature at src/server.js:317-330). The standard envelope is not there: no response anywhere carries value/limits/evidence/not_included — the closest is a prose string named `limits` on risk scores (src/analytics.js:139, src/analytics.js:205), and evidence{source_ids,basis_doc,retrieved_at} and not_included[] appear nowhere in src/. The CI rule is also absent: scripts/check-no-flood-probability.mjs is 221 lines of blocked-vocabulary scanning (scripts/check-no-flood-probability.mjs:61, :142) and contains no assertion that a route returning a probability returns a limits object.",
+      "evidence": [
+        "src/server.js:317",
+        "src/server.js:1001",
+        "src/server.js:1008",
+        "src/analytics.js:139",
+        "src/analytics.js:205",
+        "scripts/check-no-flood-probability.mjs:61",
+        "scripts/check-no-flood-probability.mjs:142",
+        "scripts/check-no-flood-probability.mjs:221",
+        "test/flood-score-honesty.test.js:134"
+      ],
+      "guarded_by": "test/flood-score-honesty.test.js"
+    },
+    {
+      "id": "ENH-03",
+      "title": "Per-region calibration and a trust score",
+      "status": "not started",
+      "detail": "No alert_outcomes collection exists, nothing joins an alert to its outcome, and there is no trust score on any surface. What is present is the pre-existing tri-state honesty the entry cites as evidence, not the change: false_alert_rate is computed over determined or resolved alerts only and stays null otherwise (src/kpi.js:182-186, src/districts.js:166-168, src/equity.js:105-119), with the reason reported as a data gap (src/kpi.js:229). No Wilson interval is applied to the false-alert rate anywhere.",
+      "evidence": [
+        "src/kpi.js:182",
+        "src/kpi.js:229",
+        "src/districts.js:166",
+        "src/equity.js:105",
+        "src/equity.js:117"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-04",
+      "title": "Three tiers of uncertainty on every number",
+      "status": "partial",
+      "detail": "One of the three tiers exists, on one route. Sampling is carried per feature as a Wilson interval with months_above_threshold beside it (src/flood-probability.js:298, src/flood-probability.js:332-340, surfaced at src/server.js:1008-1011) and is tested against the payload at test/flood-score-honesty.test.js:146-188. The model tier is absent — the Hessian is used only as a Newton step (src/flood-probability.js:400-412) and the fit returns coefficients with no standard errors or covariance (src/flood-probability.js:434-443), so nothing measures parameter uncertainty. The coverage tier is absent as a named list, and the effective-n correction for the serial correlation of overlapping windows is not implemented: wilsonInterval is called with the raw above.length (src/flood-probability.js:296-298).",
+      "evidence": [
+        "src/flood-probability.js:296",
+        "src/flood-probability.js:298",
+        "src/flood-probability.js:332",
+        "src/flood-probability.js:400",
+        "src/flood-probability.js:434",
+        "src/server.js:1008",
+        "test/flood-score-honesty.test.js:146",
+        "test/flood-score-honesty.test.js:160"
+      ],
+      "guarded_by": "test/flood-score-honesty.test.js"
+    },
+    {
+      "id": "ENH-05",
+      "title": "Model-drift monitoring",
+      "status": "not started",
+      "detail": "No evidence outside the spec itself. There is no drift flag on any score, no model_drift_events collection, and no /api/v1/model-drift route; a repo-wide search for model.drift, drift_flag and drift_events matches only docs/improvements/enhancements.md:134-135 and the research note. The cited data-age concept does exist and is untouched by any model monitoring — freshnessPenaltyFor (src/analytics.js:470) is called once, for source staleness in a confidence score (src/analytics.js:354), and nothing compares a stored coefficient vector against a training run.",
+      "evidence": [
+        "src/analytics.js:354",
+        "src/analytics.js:470",
+        "docs/improvements/enhancements.md:134"
+      ],
+      "guarded_by": null
+    }
+  ]
+}

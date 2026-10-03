@@ -1,0 +1,152 @@
+{
+  "group": "C",
+  "items": [
+    {
+      "id": "ENH-16",
+      "title": "A chart component library, shared by all eight surfaces",
+      "status": "partial",
+      "detail": "`public/shared/charts.js` (640 lines) exists with all five named primitives plus `sparkline` and the scale helpers, and is exercised by `test/charts.test.js` (50 tests). It is imported by 2 of 8 surfaces — `public/co/app.js:11` (static) and `public/app.js:1010` (lazy) — and only `barChart`, `sparkline` and `smallMultiples` have call sites anywhere outside the library; `lineChart`, `stackedBar` and `heatmap` have none.",
+      "evidence": [
+        "public/shared/charts.js:204",
+        "public/shared/charts.js:341",
+        "public/shared/charts.js:407",
+        "public/shared/charts.js:477",
+        "public/shared/charts.js:563",
+        "public/shared/charts.js:599",
+        "public/co/app.js:11",
+        "public/co/app.js:354",
+        "public/co/app.js:417",
+        "public/app.js:1010",
+        "public/app.js:1050",
+        "public/app.js:1071",
+        "public/index.html:302",
+        "public/components.css:760"
+      ],
+      "guarded_by": "test/charts.test.js"
+    },
+    {
+      "id": "ENH-17",
+      "title": "Render uncertainty as geometry, not as a footnote",
+      "status": "partial",
+      "detail": "`lineChart` can draw an uncertainty band (`public/shared/charts.js:232-256`) and two tests guard it, but `lineChart` has zero call sites outside its own test file — no chart in the product passes `low`/`high`. There is no `not_included` caption anywhere in `public/` or `src/`, and no map uncertainty mode: no confidence-driven opacity or hatch exists in `public/app.js`.",
+      "evidence": [
+        "public/shared/charts.js:192",
+        "public/shared/charts.js:232",
+        "public/shared/charts.js:253",
+        "test/charts.test.js:145",
+        "test/charts.test.js:157"
+      ],
+      "guarded_by": "test/charts.test.js"
+    },
+    {
+      "id": "ENH-18",
+      "title": "Time-slider playback of hazard history",
+      "status": "not started",
+      "detail": "No scrubber, play/pause or speed control in any surface. A search for `input type=\"range\"`, `scrub` and `playback` across `public/` returns nothing; the only `setInterval` uses are the 30s queue flush (`public/shared/runtime.js:172`) and the console's self-rescheduling poll (`public/app.js:4176`), neither of which replays hazard frames.",
+      "evidence": [
+        "public/shared/runtime.js:172",
+        "public/app.js:4176"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-19",
+      "title": "Map → chart → record drill-down, with a `/explain` endpoint",
+      "status": "not started",
+      "detail": "No `/api/v1/explain/:kind/:id` route exists — the route table in `src/server.js` has no matching path. A map click opens `openDetailDialog` (`public/app.js:3781`), which renders the record's own fields as a flat `<dl>` — no time series, no underlying records, no per-term coefficient breakdown. The adjacent evidence defect did get fixed: `calibrationReport` is now routed from `/api/v1/assessments` (`src/server.js:1276`), but that is the calibration metadata, not the equation endpoint.",
+      "evidence": [
+        "public/app.js:3781",
+        "public/app.js:3786",
+        "src/server.js:1276",
+        "src/analytics.js:258"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-20",
+      "title": "Month × year seasonal calendar heatmap",
+      "status": "not started",
+      "detail": "The `heatmap` primitive exists and is tested (`test/charts.test.js:264-319`) but has no call site outside the library. No surface builds a month×year matrix, nothing computes departure from a climatological median, and there is no flood/alert overlay on a grid. `public/shared/seasonal.js` still has exactly one consumer, `public/app.js:7`, which renders the single-summary strip.",
+      "evidence": [
+        "public/shared/charts.js:477",
+        "public/shared/seasonal.js",
+        "public/app.js:7",
+        "public/app.js:615",
+        "public/app.js:2321",
+        "test/charts.test.js:264"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-21",
+      "title": "Forecast-versus-observed verification charts",
+      "status": "not started",
+      "detail": "No reliability diagram, no forecast-probability binning, no lead-time axis anywhere in `src/` or `public/`; `lead_time_days` appears only as a fixture field (`test/lite.test.js:127`) and a display string in `public/workflow/ops.js:43`. `src/analytics/ensemble.js` remains dead: `computeEnsembleStats` is called only from itself and from tests, and both connectors still write `ensemble_p10/p50/p90: null`.",
+      "evidence": [
+        "src/analytics/ensemble.js:1",
+        "src/analytics/ensemble.js:49",
+        "src/connectors/open-meteo.js:49",
+        "src/connectors/glofas.js:56",
+        "test/lite.test.js:924",
+        "public/workflow/ops.js:43"
+      ],
+      "guarded_by": null
+    },
+    {
+      "id": "ENH-22",
+      "title": "Offline-first drill-down and cached map tiles",
+      "status": "partial",
+      "detail": "Three of the five changes shipped: the precache list is now a computed breadth-first closure of the real import graph (`public/sw.js:111`, guarded by `test/web-chw-offline.test.js:437-513`); the queue throws unless IndexedDB confirms the write (`public/shared/runtime.js:66-95`, `submitOrQueue` at `:251`, guarded by 12 tests); and `/api/v1/*` GETs are network-first with an API cache fallback and an `x-lindela-offline` header (`public/sw.js:210-240`, read at `public/shared/runtime.js:217`) under a tested eviction cap. Missing: there is no tile cache of any kind in `public/sw.js`, and no \"last synced\" indicator — no surface reads the offline header or renders per-panel staleness.",
+      "evidence": [
+        "public/sw.js:111",
+        "public/sw.js:167",
+        "public/sw.js:210",
+        "public/sw.js:227",
+        "public/shared/runtime.js:66",
+        "public/shared/runtime.js:217",
+        "public/shared/runtime.js:251",
+        "test/web-chw-offline.test.js:256",
+        "test/web-chw-offline.test.js:437",
+        "test/sw-cache-eviction.test.js:22"
+      ],
+      "guarded_by": "test/web-chw-offline.test.js, test/sw-cache-eviction.test.js"
+    },
+    {
+      "id": "ENH-23",
+      "title": "Colourblind-safe and high-contrast themes",
+      "status": "partial",
+      "detail": "The secondary-encoding half shipped and is guarded: `hazardShape` (`public/app.js:1356`) and `severityDash` (`public/app.js:1373`) are applied to every map and legend severity class, with six tests in `test/web-console.test.js:214-262` asserting distinct shapes, distinct dash patterns and that an ungraded record is not painted as \"low\". The palette half did not: `public/tokens.css` is a single dark `:root` with no deuteranopia/protanopia/tritanopia check, no high-contrast mode, and no `prefers-contrast`/`forced-colors` theme; `scripts/check-a11y.mjs:24` audits WCAG contrast but only against that one theme.",
+      "evidence": [
+        "public/app.js:1356",
+        "public/app.js:1373",
+        "public/app.js:1770",
+        "public/app.js:1807",
+        "public/app.js:1989",
+        "public/tokens.css:3",
+        "public/tokens.css:35",
+        "test/web-console.test.js:214",
+        "test/web-console.test.js:237",
+        "scripts/check-a11y.mjs:24"
+      ],
+      "guarded_by": "test/web-console.test.js"
+    },
+    {
+      "id": "ENH-24",
+      "title": "Shareable, deep-linked, per-role dashboard state",
+      "status": "partial",
+      "detail": "The console encodes and restores six filter/time-window params — `sev`, `source`, `range`, `cold`, `alerts`, `workflow` — through `syncFiltersToUrl`/`restoreFiltersFromUrl` (`public/app.js:2867-2921`), called from 5 sites including boot at `:4185`; scenarios has a share token in the URL hash plus a copy button. Missing: map extent and selected feature are not in the URL, there is no per-role saved default view anywhere (`public/shared/runtime.js` exports no view-config API), and no test exercises any of it — the only `replaceState` reference in `test/` is a stub. Shipped, unguarded.",
+      "evidence": [
+        "public/app.js:2867",
+        "public/app.js:2878",
+        "public/app.js:2907",
+        "public/app.js:2132",
+        "public/app.js:4185",
+        "public/scenarios/app.js:434",
+        "public/scenarios/index.html:366",
+        "public/shared/runtime.js:12",
+        "test/i18n-scenarios.test.js:146"
+      ],
+      "guarded_by": null
+    }
+  ]
+}
