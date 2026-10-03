@@ -261,37 +261,83 @@ SW?.addEventListener('fetch', (event) => {
 })
 
 /**
- * Drop API cache entries older than the TTL and cap total entries.
+ * Which cache entries to delete, oldest first. Pure, and therefore testable.
  *
- * The console polls twelve endpoints every thirty seconds. Cached into the app
- * shell bucket with no bound, that grows without limit and survives logout,
- * because nothing tied the lifetime of an operational record to the session
- * that read it.
+ * The console polls twelve endpoints every thirty seconds. Cached with no bound,
+ * that grows without limit and survives logout, because nothing tied the
+ * lifetime of an operational record to the session that read it.
+ *
+ * `entries` is `[{ id, storedAtMs }]`; `now` and the limits are parameters
+ * because a cache policy that can only be exercised by filling a browser cache
+ * with two hundred and one entries is a policy nobody has ever run.
+ *
+ * TTL is the *preference*, not the condition. The previous version deleted only
+ * entries older than the TTL and then tried to make up the shortfall with a
+ * second pass whose bound — `remaining - API_MAX_ENTRIES`, where
+ * `remaining = keys.length - excess` and `excess = keys.length - API_MAX_ENTRIES`
+ * — is algebraically zero. So the fallback never ran, and a cache full of fresh
+ * entries was never trimmed at all: the exact unbounded growth the cap exists to
+ * prevent, in a function written to prevent it. Age-based eviction still comes
+ * first, because dropping a day-old response is free while dropping a fresh one
+ * costs the user a round trip.
  */
+export function evictionPlan(entries, { now, ttlMs, maxEntries }) {
+	if (entries.length <= maxEntries) return []
+
+	const stamped = entries.map((entry) => ({
+		...entry,
+		// An unstamped entry is older than every dated one. Comparing `NaN`
+		// sorts nothing in particular — the result depends on the engine's
+		// comparison — so the sort key is made a number explicitly rather than
+		// hoping `NaN` happens to land at the front.
+		expired: !Number.isFinite(entry.storedAtMs) || now - entry.storedAtMs > ttlMs,
+		sortKey: Number.isFinite(entry.storedAtMs) ? entry.storedAtMs : 0,
+	}))
+	// Oldest first, so the survivors are the most recently served.
+	stamped.sort((a, b) => a.sortKey - b.sortKey)
+
+	// A Set, not an array, and the second pass skips what the first already
+	// took. Both are load-bearing. Without the Set the plan names the same
+	// request twice and the caller issues a delete for something it already
+	// deleted. Without the skip the second pass spends its first decrement
+	// re-visiting the oldest entry — which the first pass just doomed, since an
+	// expired entry is by definition old — so the plan comes back one short and
+	// the cache stays one entry over its own limit, silently, on every run.
+	const doomed = new Set()
+	let over = stamped.length - maxEntries
+	for (const entry of stamped) {
+		if (over <= 0) break
+		if (entry.expired) {
+			doomed.add(entry.id)
+			over -= 1
+		}
+	}
+	// Anything still over the cap goes regardless of age: the ceiling is a
+	// ceiling, and a cache that can exceed its own limit is not capped.
+	for (const entry of stamped) {
+		if (over <= 0) break
+		if (doomed.has(entry.id)) continue
+		doomed.add(entry.id)
+		over -= 1
+	}
+	return [...doomed]
+}
+
 async function pruneApiCache() {
 	const cache = await caches.open(API_CACHE_NAME)
 	const keys = await cache.keys()
 	if (keys.length <= API_MAX_ENTRIES) return
 
 	const now = Date.now()
-	const stamped = []
+	const entries = []
 	for (const request of keys) {
 		const response = await cache.match(request)
-		const stored = response ? Date.parse(response.headers.get('date') || '') : NaN
-		stamped.push({ request, stored: Number.isNaN(stored) ? 0 : stored })
+		const parsed = Date.parse(response?.headers.get('date') || '')
+		entries.push({ id: request.url, storedAtMs: Number.isNaN(parsed) ? 0 : parsed })
 	}
 
-	// Oldest first, so the survivors are the most recently served.
-	stamped.sort((a, b) => a.stored - b.stored)
-	const excess = stamped.length - API_MAX_ENTRIES
-	for (const entry of stamped.slice(0, excess)) {
-		if (!entry.stored || now - entry.stored > API_TTL_MS) await cache.delete(entry.request)
-	}
-	// If age alone did not free enough room, evict oldest-first regardless.
-	let remaining = keys.length - excess
-	for (const entry of stamped.slice(0, Math.max(0, remaining - API_MAX_ENTRIES))) {
-		await cache.delete(entry.request)
-		remaining--
+	for (const url of evictionPlan(entries, { now, ttlMs: API_TTL_MS, maxEntries: API_MAX_ENTRIES })) {
+		await cache.delete(url)
 	}
 }
 

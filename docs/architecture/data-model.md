@@ -473,10 +473,11 @@ stateDiagram-v2
   end note
 
   note right of Live
-    There is no hard-delete transition.
-    Nothing in the API omits a row from
-    a store object, and both merge paths
-    only ever upsert.
+    Hard delete exists on exactly one
+    path: apply-retention calls
+    store.remove() for field_reports and
+    rapidpro_inbound_messages. Nothing
+    else omits a row.
   end note
 ```
 
@@ -502,13 +503,20 @@ The cost is that deletion is not reclaimable and not private. A soft-deleted
 record is still in the store, still in the `lite_records` table, and returned in
 full by `GET /api/v1/incidents/<id>?include_deleted=true`.
 
-**Nothing hard-deletes a row.** `POST /api/v1/maintenance/apply-retention` looks
-like the counterexample — it computes `expired` for `field_reports` and
-`rapidpro_inbound_messages` and reports the counts — but it then calls
-`store.merge({ field_reports: kept, rapidpro_inbound_messages: kept })`. `merge`
-only ever upserts the rows it is given; it has no delete path. The expired rows
-are counted, reported, and left exactly where they were. The endpoint reports
-reclamation that does not happen.
+**Hard delete exists on exactly one path, and it is the right one.**
+`POST /api/v1/maintenance/apply-retention` calls `store.remove()` for
+`field_reports` and `rapidpro_inbound_messages` — the two collections that carry
+personal data and a stated retention period.
+
+It used to call `store.merge({ field_reports: kept, ... })`, and `merge` only
+upserts. The expired rows were counted, reported as reclaimed, and left where they
+were: **an operator asking for deletion of personal data received
+`{success: true}` and a false compliance record.** `store.remove()` now exists on
+both adapters and is guarded by `store-conformance.test.js`.
+
+Retention is deliberately not available on the other collections. Soft-deleted
+operational records must keep resolving, because the action log and any
+downstream reference point at them.
 
 `buildSoftDelete` takes the whole store as `data` and re-runs the normaliser
 over the stamped record. The comment explains why: the normalizers cross-reference

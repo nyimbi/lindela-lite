@@ -256,10 +256,10 @@ testability, not reuse, and the directory name overstates the sharing.
 
 | Boundary | Direction | Payload | Failure mode |
 |---|---|---|---|
-| Browser → API | in | JSON, API key via header | Token comparison is `===`, not constant-time. |
+| Browser → API | in | JSON, API key via header | Constant-time comparison. With no key configured the API is fully open, including writes. |
 | API → store | both | Whole-store read per request | `PostgresStore.write` rewrites the table. |
 | Connector → external | out | HTTP to 16 providers | Retry is exponential; **rate limits are declared and never enforced**. |
-| API → RapidPro | out | `flow_start` or `broadcast` | Webhook secret verification **passes when unset**. |
+| API → RapidPro | out | `flow_start` or `broadcast` | Webhook verification fails closed unless a secret is set, or the explicit insecure opt-in is. |
 | RapidPro → API | in | SMS replies, free text | Text is parsed for ids and coordinates. |
 | API → downstream | out | STAC, OGC Features, CAP XML | Standards-conformant, so a consumer trusts it. |
 | Browser → external | out | AWS Terrarium tiles, keyed | Deliberately unauthenticated so a key cannot expire mid-crisis. |
@@ -285,8 +285,13 @@ kind: arithmetic that looks finished and is not.
   `who_gho`, and `records_processed` under-reports.
 - Lineage records in one ingestion batch all receive the same concatenated
   cross-source array, so `record_count` and `upstream_checksum` are identical.
-- `/metrics` is served before the auth gate, so it is unauthenticated regardless
-  of whether an API key is configured.
+- **With no auth configured, everything is open.** The gate is
+  `isAuthConfigured() && …`, so a deployment that sets neither
+  `LINDELA_LITE_TOKENS` nor `LINDELA_LITE_API_KEY` serves `/metrics`, every
+  write endpoint and every record. That is a reasonable default for a laptop
+  and an unreasonable one for a shared server. `/metrics` used to be served in
+  front of the gate, so `/api/v1/metrics` was reachable without a token despite
+  sitting in the authenticated namespace; it is now behind the gate.
 - GloFAS's feed URL serves a single-page app. The connector detects and rejects
   it, so the source reports an error and zero records rather than silently
   emptying.
@@ -307,7 +312,9 @@ kind: arithmetic that looks finished and is not.
 **Scaffolded**
 
 - DHIS2 bidirectional sync is a scaffold and returns a message saying so.
-- `redactPii` is implemented and tested but never called from a request path.
+- `redactPii` now runs on both field-report write paths — the CHW endpoint and
+  the RapidPro webhook — under the configured policy. It was previously
+  implemented, tested and unreachable from any request.
 - `scopeToPartnerOrg` keys on a field `authenticate()` never sets.
 - Outbox dispatch, retention, KPI snapshot refresh and bias correction all
   require an explicit POST; nothing schedules them.

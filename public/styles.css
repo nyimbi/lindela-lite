@@ -570,14 +570,22 @@ body.app-shell {
 .map-filters {
   display: flex;
   align-items: center;
-  gap: var(--sp-4);
+  /* Wrap rather than scroll. Three selects with labels do not fit a 414px
+     viewport, and `nowrap` plus a shrinking flex row squeezed each select to
+     14px — the width of its own dropdown arrow. The controls were present,
+     focusable and inert. */
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-3);
   padding: var(--sp-2) var(--sp-4);
   background: var(--bg-elevated);
   border-top: 1px solid var(--stroke);
   flex-shrink: 0;
   z-index: var(--z-controls);
-  overflow-x: auto;
 }
+
+/* A select that cannot show its current value is worse than a wide one. */
+.map-filters select { min-width: 7rem; }
+.map-filters .filter-label { flex: 0 1 auto; }
 
 .filter-label {
   display: flex;
