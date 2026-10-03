@@ -138,17 +138,26 @@ function collect(minTap) {
   }
 
   // Interactive controls below the tap-target floor.
+  //
+  // The selector originally listed only HTML form controls, which is why every
+  // map marker on the situation map could be five CSS pixels across and CI
+  // stayed green: SVG shapes were never queried at all. `[data-tap-target]` is
+  // the console's own opt-in for "this SVG element is a control", so adding it
+  // measures the map without guessing at SVG semantics.
   const smallTargets = []
-  for (const el of doc.querySelectorAll('button, input:not([type=hidden]), select, textarea')) {
+  for (const el of doc.querySelectorAll(
+    'button, input:not([type=hidden]), select, textarea, [data-tap-target]',
+  )) {
     if (!shown(el)) continue
     const rect = el.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) continue
-    if (rect.height < minTap - 1) {
+    if (rect.height < minTap - 1 || rect.width < minTap - 1) {
       smallTargets.push({
         tag: el.tagName.toLowerCase(),
         id: el.id || '',
         cls: clsOf(el),
         height: Math.round(rect.height),
+        width: Math.round(rect.width),
       })
     }
   }
@@ -254,7 +263,7 @@ async function main() {
       if (r.smallTargetCount > 0) {
         failures.push(
           `${label}: ${r.smallTargetCount} control(s) below ${MIN_TAP}px — ` +
-          r.smallTargets.map((t) => `${t.tag}#${t.id}.${t.cls} ${t.height}px`).join(', ')
+          r.smallTargets.map((t) => `${t.tag}#${t.id}.${t.cls} ${t.width}x${t.height}px`).join(', ')
         )
       }
 
