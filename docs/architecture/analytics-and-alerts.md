@@ -247,9 +247,25 @@ Two properties worth stating plainly. **A source with zero records scores higher
 one with ten**, because `geocodeCoverage` of an empty set is defined as `0`, but
 `min(0, 25) × 1.8 = 0` and `freshnessPenalty` for no date is only 30 — so an unknown
 source lands around 0 after the penalty, but one whose last run succeeded and which has
-some records is compared against a source that failed. And `mean_confidence` is
-computed from `quality.confidence_sum`, which **is never incremented** anywhere in the
-function (`src/analytics.js:296`) — it is always `0`.
+some records is compared against a source that failed.
+
+**Fixed 2026-10-03.** `mean_confidence` was computed from `quality.confidence_sum`,
+which was initialised and read but **never incremented** anywhere in the function —
+so it divided zero by the record count and reported `0` for every source in the
+platform, including sources whose model produced perfectly good confidences. A
+data-quality panel showed "mean confidence 0" beside a source with thousands of
+records and a healthy run. It now sums only the records that carry a confidence,
+divides by `confidence_count` rather than by the record total, and returns `null`
+when nothing carried one: raw source rows have no model confidence, and averaging
+their absence in would understate the sources that do. `confidence_sum` and
+`confidence_count` are both in the payload, so a reader can check the mean.
+A companion `mean_confidence_pct` is emitted alongside, because the 0-1 fraction
+sits confusingly next to `confidence` and `geocode_coverage_pct`, which are 0-100.
+
+Note the rounding that hid this: `Math.round(0.82)` is `1`. A 0-1 mean rounded to
+an integer can only ever be 0 or 1, so even a correctly-summed value would have
+been meaningless. The same defect was in `calibrationReport`'s `mean_confidence`
+and `mean_interval_width`; both are now two-decimal and null-safe too.
 
 ## Calibration report: `brier_score` is always `null`
 
@@ -504,9 +520,11 @@ read by the backtest.
   on optional inputs, where `computeFloodRisk` uses `null` and routes absence to
   confidence. Whether the flood scorer's policy is intended to apply to the other two
   is not stated.
-- `confidence_sum` in `computeDataQuality` is initialised and read but never
+- ~~`confidence_sum` in `computeDataQuality` is initialised and read but never
   incremented, so `mean_confidence` is always `0`. No comment marks this as
-  deliberate.
+  deliberate.~~ **Fixed 2026-10-03** — see above; the accumulator is now
+  incremented, divided by the count of records that carry a confidence, and null
+  when there are none.
 - `evaluateAlertRules` skips a rule whose metric resolves to `undefined` with no
   diagnostic. A typo in a metric path is indistinguishable from a rule that
   correctly did not fire.

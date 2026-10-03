@@ -243,6 +243,20 @@ export function computeServiceImpacts(data, riskScores) {
   return assessments
 }
 
+/**
+ * A mean that survives the units it is given.
+ *
+ * `Math.round(sum / n)` over a 0-1 quantity returns 0 or 1 and nothing else, so
+ * a source whose model reports 0.82 confidence reported a mean of 1, and one
+ * reporting 0.4 reported 0 — the number was not imprecise, it was meaningless.
+ * Rounded to two decimals it is readable; `null` when there was nothing to
+ * average, because no mean is not a mean of zero.
+ */
+const mean2dp = (sum, count) => (count > 0 ? Math.round((sum / count) * 100) / 100 : null)
+
+/** The same mean as a 0-100 percentage, for display beside other percentages. */
+const asPct = (value) => (value === null ? null : Math.round(value * 100))
+
 export function calibrationReport(data) {
   const byType = new Map()
   for (const score of data.risk_scores || []) {
@@ -267,8 +281,11 @@ export function calibrationReport(data) {
     type: item.type,
     count: item.count,
     mean_score: item.count > 0 ? Math.round(item.total_score / item.count) : 0,
-    mean_confidence: item.count > 0 ? Math.round(item.total_confidence / item.count) : 0,
-    mean_interval_width: item.count > 0 ? Math.round(item.total_interval_width / item.count) : 0,
+    // Record confidence and interval width are 0-1 and 0-100 respectively;
+    // rounding a 0-1 mean to an integer left it able to hold only 0 or 1.
+    mean_confidence: mean2dp(item.total_confidence, item.count),
+    mean_confidence_pct: asPct(mean2dp(item.total_confidence, item.count)),
+    mean_interval_width: mean2dp(item.total_interval_width, item.count),
     brier_score: null,
   }))
 }
@@ -295,11 +312,19 @@ export function computeDataQuality(data) {
           geocoded_records: 0,
           latest_record_at: null,
           confidence_sum: 0,
+          confidence_count: 0,
         })
       }
       const quality = bySource.get(source)
       quality.records_by_collection[collection] = (quality.records_by_collection[collection] || 0) + 1
       quality.total_records += 1
+      // Only computed records carry a model confidence. Raw source rows do not,
+      // and counting their absence as zero would drag the mean down for a source
+      // whose model has not run.
+      if (Number.isFinite(record.confidence)) {
+        quality.confidence_sum += record.confidence
+        quality.confidence_count += 1
+      }
       if (Number.isFinite(record.latitude) && Number.isFinite(record.longitude)) quality.geocoded_records += 1
       quality.latest_record_at = latestDate(quality.latest_record_at, record.observed_at || record.occurred_at || record.updated_at || record.generated_at)
     }
@@ -316,6 +341,7 @@ export function computeDataQuality(data) {
         geocoded_records: 0,
         latest_record_at: null,
         confidence_sum: 0,
+        confidence_count: 0,
       })
     }
     const quality = bySource.get(source)
@@ -329,10 +355,18 @@ export function computeDataQuality(data) {
     const runPenalty = quality.last_run_status === 'failed' ? 35 : quality.last_run_status === 'degraded' ? 15 : 0
     const freshnessPenalty = freshnessPenaltyFor(quality.latest_record_at || quality.last_run_at)
     const confidence = clamp(Math.round(geocodeCoverage * 55 + Math.min(quality.total_records, 25) * 1.8 - runPenalty - freshnessPenalty), 0, 100)
-    const mean_confidence = quality.total_records > 0 ? Math.round(quality.confidence_sum / quality.total_records) : 0
+    // Null, not zero, when no record carried a confidence. `confidence_sum` was
+    // initialised and read here but never incremented anywhere, so this divided
+    // zero by the record count and reported 0 for every source — a confident
+    // "we have no confidence in any of this" for sources whose models were
+    // simply not part of this pass.
+    const mean_confidence = mean2dp(quality.confidence_sum, quality.confidence_count)
     return {
       ...quality,
       geocode_coverage_pct: Math.round(geocodeCoverage * 100),
+      // Beside `confidence` and `geocode_coverage_pct`, both 0-100, a bare
+      // 0-1 fraction invites the reader to compare it with the wrong scale.
+      mean_confidence_pct: asPct(mean_confidence),
       freshness: freshnessLabel(quality.latest_record_at || quality.last_run_at),
       confidence,
       mean_confidence,

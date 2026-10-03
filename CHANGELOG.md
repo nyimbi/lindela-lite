@@ -5,6 +5,30 @@
 Flood, access-risk, seasonal-signal, food-security, and outbreak-context capability.
 All additions are additive; no existing endpoint changed shape.
 
+### Fixed
+
+**A data-quality number that was always zero, and would have been meaningless
+if it were not.** `computeDataQuality` initialised `confidence_sum` on each
+source, read it to produce `mean_confidence`, and never incremented it anywhere
+— so it computed `0 / total_records` and reported `0` for every source in the
+platform, including sources whose model produced perfectly good confidences. A
+panel showing "mean confidence 0" beside a source with thousands of records and
+a healthy run is worse than an absent number, because it looks measured.
+
+It now sums only the records that carry a confidence, divides by
+`confidence_count` rather than by the record total, and returns `null` when
+nothing carried one — raw source rows have no model confidence, and averaging
+their absence in understates the sources that do. `confidence_sum` and
+`confidence_count` are both in the payload, so the mean can be checked.
+
+The rounding is what concealed it: `Math.round(0.82)` is `1`. A 0-1 mean rounded
+to an integer can only ever be 0 or 1, so even a correctly-summed value would
+have been meaningless. `mean_confidence` is now two-decimal, with a
+`mean_confidence_pct` companion because the 0-1 fraction sits confusingly beside
+`confidence` and `geocode_coverage_pct`, which are 0-100. The same defect was in
+`calibrationReport`'s `mean_confidence` and `mean_interval_width`; both are now
+two-decimal and null-safe.
+
 ### Added
 
 **The API document is now checked against the code.** `docs/openapi.yaml` was

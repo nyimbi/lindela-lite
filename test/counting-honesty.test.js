@@ -4,6 +4,7 @@ import { computeFacilitiesAtRisk, computePopulationAtRisk } from '../src/analyti
 import { districtOverview } from '../src/districts.js'
 import { detectDispatchPrecisionBreaches, equityByDistrict } from '../src/equity.js'
 import { responseMetrics } from '../src/rapidpro.js'
+import { computeDataQuality } from '../src/analytics.js'
 
 // Turkana centre. 0.1 degrees of latitude is about 11 km, so the offsets below
 // are comfortably inside or outside the 25 km impact radius without depending
@@ -379,5 +380,93 @@ describe('equity precision divides by the population it subtracted from', () => 
     })
     assert.equal(equity[0].dispatch_precision_pct, 100)
     assert.notEqual(metrics.response_rate_pct, equity[0].dispatch_precision_pct)
+  })
+})
+
+/**
+ * A mean over a set nothing was ever added to.
+ *
+ * `computeDataQuality` initialised `confidence_sum: 0` on each source, read it
+ * to produce `mean_confidence`, and never incremented it anywhere. The divisor
+ * was `total_records`, so the result was `0 / n` — a confident 0 for every
+ * source in the platform, including sources whose model produced perfectly good
+ * confidences. It read as a measurement: a data-quality panel showing "mean
+ * confidence 0%" next to a source with 4,000 records and a healthy run.
+ *
+ * The shape of the bug is the one this file collects: a field that looks like an
+ * accumulator, is shaped like one, and is wired at both ends — except the
+ * middle.
+ */
+describe('source data quality reports a confidence it can support', () => {
+  const sourceRun = (source, status = 'success') => ({
+    id: `run-${source}`, source, status, completed_at: new Date().toISOString(), errors: [],
+  })
+
+  const observations = (over = {}) => ([{
+    id: 'obs-1', source: 'open_meteo', latitude: 3.1, longitude: 35.6, country: 'KE',
+    observed_at: new Date().toISOString(), confidence: 0.82, ...over,
+  }])
+
+  it('averages the confidences that exist', () => {
+    const quality = computeDataQuality({
+      climate_observations: [
+        ...observations(),
+        { ...observations()[0], id: 'obs-2', confidence: 0.78 },
+      ],
+      source_runs: [sourceRun('open_meteo')],
+    })
+    const openMeteo = quality.find((item) => item.source === 'open_meteo')
+    assert.equal(openMeteo.mean_confidence, 0.8, '0.82 and 0.78 average to 0.80')
+    assert.equal(openMeteo.mean_confidence_pct, 80, 'and readable on the scale of its siblings')
+  })
+
+  it('reports nothing rather than zero when no record carries a confidence', () => {
+    // Raw source rows have no model confidence. Counting their absence as zero
+    // would drag the mean down for a source whose model simply did not run in
+    // this pass — and 0% confidence reads as "we measured and it was terrible".
+    const quality = computeDataQuality({
+      climate_observations: [{ ...observations()[0], confidence: undefined }],
+      source_runs: [sourceRun('open_meteo')],
+    })
+    const openMeteo = quality.find((item) => item.source === 'open_meteo')
+    assert.equal(openMeteo.mean_confidence, null)
+    assert.equal(openMeteo.mean_confidence_pct, null, 'no mean is not a mean of zero, on either scale')
+    assert.equal(openMeteo.total_records, 1, 'the record still counts toward coverage')
+  })
+
+  it('excludes unconfident rows from the mean without excluding them from the count', () => {
+    // The two populations are different: a source can hold many raw rows and a
+    // few modelled ones. Averaging over all of them would understate the model.
+    const quality = computeDataQuality({
+      climate_observations: [
+        ...observations(),
+        { ...observations()[0], id: 'obs-2', confidence: 0.78 },
+        { ...observations()[0], id: 'obs-3', confidence: undefined },
+        { ...observations()[0], id: 'obs-4', confidence: undefined },
+      ],
+      source_runs: [sourceRun('open_meteo')],
+    })
+    const openMeteo = quality.find((item) => item.source === 'open_meteo')
+    assert.equal(openMeteo.total_records, 4)
+    assert.equal(openMeteo.mean_confidence, 0.8, 'the mean is over the two rows that have one')
+  })
+
+  it('carries a count a reader can check the mean against', () => {
+    // The mean is unreadable without knowing what it was taken over: 0.8 over
+    // four records and 0.8 over one are different statements, and the payload
+    // has to let a reader tell them apart.
+    const quality = computeDataQuality({
+      climate_observations: [
+        ...observations(),
+        { ...observations()[0], id: 'obs-2', confidence: undefined },
+        { ...observations()[0], id: 'obs-3', confidence: undefined },
+      ],
+      source_runs: [sourceRun('open_meteo')],
+    })
+    const openMeteo = quality.find((item) => item.source === 'open_meteo')
+    assert.equal(openMeteo.total_records, 3)
+    assert.equal(openMeteo.confidence_count, 1, 'one modelled row, two raw ones')
+    assert.equal(openMeteo.confidence_sum, 0.82, 'the sum is over that same row')
+    assert.equal(openMeteo.mean_confidence, 0.82)
   })
 })
