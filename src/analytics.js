@@ -156,12 +156,23 @@ export function computeClimateConflictRisk(data, options = {}) {
     const conflicts = nearby(data.conflict_events, region, 125)
     const serviceAssets = nearby(data.service_assets, region, 75)
     const climatePressure = Math.min(35, climate.reduce((sum, item) => sum + Number(item.precipitation_mm || 0), 0))
+    // How many climate observations actually carried a rainfall number. Every
+    // CHIRPS record has `precipitation_mm: null` by construction — the connector
+    // reports which rasters exist, not what fell — and open-meteo-flood does the
+    // same. Counting them in the confidence vector gave a region full climate
+    // coverage credit for observations that contributed nothing to the score
+    // above, and `confidence` is what the p10/p90 band is drawn from. The
+    // pressure sum itself is unaffected: a null adds nothing either way.
+    const climateWithRainfall = climate.filter((item) => item.precipitation_mm !== null
+      && item.precipitation_mm !== undefined
+      && item.precipitation_mm !== ''
+      && Number.isFinite(Number(item.precipitation_mm))).length
     const hazardPressure = Math.min(25, hazards.reduce((sum, event) => sum + severityWeight(event.severity) * 12, 0))
     const conflictPressure = Math.min(30, conflicts.reduce((sum, event) => sum + 4 + Number(event.fatalities || 0) * 0.8, 0))
     const servicePressure = Math.min(10, serviceAssets.length * 1.5)
     const score = clamp(Math.round(climatePressure + hazardPressure + conflictPressure + servicePressure), 0, 100)
     const confidence = confidenceScore([
-      { count: climate.length, weight: 30 },
+      { count: climateWithRainfall, weight: 30 },
       { count: hazards.length, weight: 25 },
       { count: conflicts.length, weight: 30 },
       { count: serviceAssets.length, weight: 15 },
