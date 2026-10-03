@@ -78,6 +78,21 @@ each with its own sample size, refused ones included.
 
 ### Fixed
 
+**The responsive gate measured nothing and passed.** `check-responsive.mjs`
+slept a fixed 2500ms after navigation, then measured. A surface whose content had
+not arrived yet reported *zero* controls — which reads exactly like a surface
+where every control clears the floor. It was timing-dependent in the one
+direction that hides defects: focal-point's rule form (21px inputs, under the
+24px floor) passed on one run and failed on the next with no code change between
+them. It now polls until the control count stops changing before measuring.
+
+The gate also gained a floor on what it looked at. It reports
+`smallTargetCount` with no lower bound, so a dashboard whose map never rendered,
+or whose markers lost `data-tap-target` in a refactor, reports zero undersized
+targets and passes. The dashboard now fails on "no controls were measured"
+outright. Verified sensitive: at a 32px floor the same sweep fails 23 of 24
+combinations.
+
 **The sparkline connected across a missing month.** `public/co/app.js` filtered
 nulls out of the series and drew one polyline through what remained, so
 `[10, null, 30]` rendered as a continuous line through a month nobody measured.

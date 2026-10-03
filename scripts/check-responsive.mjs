@@ -55,6 +55,17 @@ const VIEWPORTS = [
  */
 const MIN_TAP = 24
 
+/**
+ * Surfaces where "measured nothing" is itself the failure.
+ *
+ * Every other surface always renders controls, so a zero here would mean the
+ * probe broke. The dashboard renders its controls into an SVG that the map code
+ * draws — so a data outage, a failed fetch or a refactor that dropped
+ * `data-tap-target` all produce the same zero, and the tap-target result cannot
+ * be read without it.
+ */
+const REQUIRE_MEASURED_TARGETS = new Set(['dashboard'])
+
 class Session {
   #ws
   #id = 0
@@ -145,12 +156,20 @@ function collect(minTap) {
   // the console's own opt-in for "this SVG element is a control", so adding it
   // measures the map without guessing at SVG semantics.
   const smallTargets = []
+  // How many controls the check actually looked at. Without this the gate is
+  // vacuous: a dashboard whose map never rendered, or whose markers lost the
+  // `data-tap-target` attribute in a refactor, reports zero undersized targets
+  // and passes — indistinguishable from a dashboard where every marker clears
+  // the floor. That is the same failure this selector was added to fix, one
+  // level up.
+  let measured = 0
   for (const el of doc.querySelectorAll(
     'button, input:not([type=hidden]), select, textarea, [data-tap-target]',
   )) {
     if (!shown(el)) continue
     const rect = el.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) continue
+    measured += 1
     if (rect.height < minTap - 1 || rect.width < minTap - 1) {
       smallTargets.push({
         tag: el.tagName.toLowerCase(),
@@ -185,9 +204,29 @@ function collect(minTap) {
     overflowing: overflowing.slice(0, 6),
     smallTargets: smallTargets.slice(0, 6),
     smallTargetCount: smallTargets.length,
+    measuredTargetCount: measured,
     clipped: clipped.slice(0, 6),
     clippedCount: clipped.length,
   }
+}
+
+/**
+ * How many controls a surface currently has laid out.
+ *
+ * Deliberately cheap — no geometry, no computed styles — because this runs on
+ * every poll of the settle loop, and all it needs to answer is "has this page
+ * stopped growing?".
+ */
+function countControls() {
+  const visible = (el) => {
+    const r = el.getBoundingClientRect()
+    if (r.width === 0 || r.height === 0) return false
+    const style = getComputedStyle(el)
+    return style.display !== 'none' && style.visibility !== 'hidden'
+  }
+  return [...document.querySelectorAll(
+    'button, input:not([type=hidden]), select, textarea, [data-tap-target]',
+  )].filter(visible).length
 }
 
 async function main() {
@@ -228,9 +267,32 @@ async function main() {
         mobile: vp.width < 700,
       })
       await session.send('Page.navigate', { url: BASE + path })
-      // Long enough for the surfaces that fetch on load, short enough that the
-      // whole sweep stays a CI-length task.
-      await sleep(2500)
+
+      // Wait for the surface to settle rather than sleeping a fixed 2500ms.
+      //
+      // A fixed sleep made the whole gate timing-dependent, and it failed
+      // silently in the direction that hides defects: a surface whose content
+      // had not arrived yet reported *zero* controls, which reads exactly like
+      // a surface where every control clears the floor. focal-point's rule form
+      // (21px inputs, below the 24px floor) passed on one run and failed on the
+      // next with no code change between them.
+      //
+      // Settling is: poll the same probe, and stop when the count of measured
+      // controls has stopped changing. The cap is generous because a surface
+      // that never settles must be reported, not waited on forever.
+      let settled = 0
+      let previous = -1
+      for (let attempt = 0; attempt < 40 && settled < 3; attempt += 1) {
+        await sleep(250)
+        const probe = await session.send('Runtime.evaluate', {
+          expression: `(${countControls.toString()})()`,
+          returnByValue: true,
+          awaitPromise: false,
+        })
+        const count = probe.result?.value ?? 0
+        settled = count === previous && count > 0 ? settled + 1 : 0
+        previous = count
+      }
 
       // MIN_TAP is injected rather than re-declared inside collect(): the first
       // version of this probe hardcoded 44 in the page copy and 24 here, and
@@ -258,6 +320,15 @@ async function main() {
         failures.push(
           `${label}: ${r.clippedCount} element(s) clipped — ` +
           r.clipped.map((c) => `${c.tag}.${c.cls} "${c.text}"`).join('; ')
+        )
+      }
+      if (REQUIRE_MEASURED_TARGETS.has(name) && r.measuredTargetCount === 0) {
+        // The dashboard is the only surface with SVG controls the gate is
+        // asserting on, so it is the only one where "found nothing" is a defect
+        // rather than an honest report.
+        failures.push(
+          `${label}: no controls were measured — the tap-target check passed on nothing. `
+          + 'Either the surface rendered empty or its controls lost data-tap-target.',
         )
       }
       if (r.smallTargetCount > 0) {
