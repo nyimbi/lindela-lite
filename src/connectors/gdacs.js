@@ -12,6 +12,10 @@ const FEEDS = [
   'https://www.gdacs.org/xml/rss.xml',
 ]
 
+// The complete set of alert levels GDACS publishes. Anything else is not a
+// level we recognise, and is stored as ungraded rather than rounded to one.
+const GDACS_ALERT_LEVELS = Object.freeze(['green', 'orange', 'red'])
+
 async function gdacsIngest(options = {}) {
     const hazard_events = []
     const errors = []
@@ -134,16 +138,18 @@ function parseGdacsItem(item) {
     }
   }
 
+  // Severity comes from gdacs:alertlevel, and from nowhere else. The feed
+  // publishes the level; the prose does not. `lower.includes('red')` matched
+  // "predicted", "Red Sea", and "reduced", so a green South Sudan flood was
+  // stored as a critical hazard with metadata.alert_level reading "green"
+  // beside it — and risk scoring reads severity, not the alert level. A
+  // confidently wrong severity is worse than a missing one, because nothing
+  // downstream can tell it apart from a measured one.
+  //
+  // So an absent level, or one outside the vocabulary GDACS publishes, is
+  // null: an unevaluated alert is not a low one.
   const alertLevel = String(item.alertlevel || '').trim().toLowerCase()
-  const severity = normalizeSeverity(
-    alertLevel === 'red' || lower.includes('red')
-      ? 'red'
-      : alertLevel === 'orange' || lower.includes('orange')
-        ? 'orange'
-        : alertLevel === 'green' || lower.includes('green')
-          ? 'green'
-          : 'unknown',
-  )
+  const severity = GDACS_ALERT_LEVELS.includes(alertLevel) ? normalizeSeverity(alertLevel) : null
 
   // gdacs:bbox is "south west north east" in decimal degrees. Prefer it over
   // scraping coordinates out of the description, which the RSS rarely carries.

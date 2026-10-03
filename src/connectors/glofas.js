@@ -35,7 +35,14 @@ async function glofasIngest(options = {}) {
             source: 'glofas',
             source_id: link,
             event_type: 'flood_forecast',
-            severity: /high|severe|red/i.test(`${title} ${description}`) ? 'high' : 'medium',
+            // No severity. The feed publishes none, and inferring one from the
+            // title matched "high" in "high latitude" and "red" in a place
+            // name; everything else fell through to a flat 'medium', which
+            // asserted a moderate forecast the connector had not measured.
+            // analytics.js weights a null severity below any measured level,
+            // so an unmeasured forecast contributes less than a measured one
+            // instead of standing in for it.
+            severity: null,
             title,
             description,
             occurred_at: readTag(match[1], 'pubDate') ? new Date(readTag(match[1], 'pubDate')).toISOString() : new Date().toISOString(),
@@ -50,7 +57,7 @@ async function glofasIngest(options = {}) {
             ensemble_p10: null,
             ensemble_p50: null,
             ensemble_p90: null,
-            model_limit: 'GloFAS feed carries no extent and no ensemble members; no flood probability is derived from it.',
+            model_limit: 'GloFAS feed carries no extent, no ensemble members, and no severity; none of them is derived from it.',
             metadata: { provider: 'Copernicus GloFAS', feed },
           })
         }
