@@ -1,6 +1,12 @@
 export function computeEnsembleStats(values) {
-  if (!values || values.length === 0) {
-    return { p10: 0, p50: 0, p90: 0, mean: 0, stddev: 0, count: 0 }
+  // Percentiles of nothing are not zero. This returned five confident zeros,
+  // which is the same falsy-zero conflation the rest of the codebase exists to
+  // avoid: an ensemble spread of 0 says every member agreed, and a mean of 0
+  // says the members were all zero. Neither is knowable from an empty array.
+  // `null` says the thing that is true — it was not computed — and a caller
+  // that wants a number has to decide what to do about not having one.
+  if (!Array.isArray(values) || values.length === 0) {
+    return { p10: null, p50: null, p90: null, mean: null, stddev: null, count: 0 }
   }
 
   const sorted = [...values].sort((a, b) => a - b)

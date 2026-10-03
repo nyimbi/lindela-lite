@@ -11,6 +11,10 @@
          so every component added to components.css reached seven of eight
          surfaces and not this one. -->
     <link rel="stylesheet" href="/components.css">
+    <!-- Styles for the subject panel, the escalation view and the operations
+         controls. Linked rather than injected by app.js: a dialog that renders
+         before its stylesheet arrives is a dialog an operator reads wrong. -->
+    <link rel="stylesheet" href="/workflow/panel.css">
   </head>
   <body class="app-shell">
     <a class="skip-link" href="#railPanel">Skip to alerts and panels</a>
@@ -81,6 +85,10 @@
         <span class="workflow-summary-breakdown">by type</span>
       </div>
       <div id="workflowMetricsGrid" class="workflow-tray" role="list"></div>
+      <details class="workflow-instances" id="workflowInstances">
+        <summary>Open instances <span class="workflow-summary-breakdown" id="workflowInstanceCount"></span></summary>
+        <div id="workflowInstanceList" class="list-container"></div>
+      </details>
     </section>
 
     <main class="console-layout" id="main" tabindex="-1">
@@ -148,35 +156,53 @@
               <span class="seasonal-pips" id="seasonalPips"></span>
               <span id="seasonalSeasonsText" class="seasonal-seasonstext"></span>
             </div>
-            <p id="seasonalNote" class="seasonal-note">
-              Monthly SST anomaly index. Not a rainfall forecast and not a flood probability.
-            </p>
+            <!-- The advisory prose used to render here at 10px, all of it, every
+                 refresh: five clauses about what CPC's criterion is, none of them
+                 readable at that size. The summary carries the four facts a reader
+                 needs — the value, the threshold, the season count, and the
+                 qualification — and the full text is one click away rather than
+                 forty characters tall. The qualification stays in the summary on
+                 purpose: "this is an advisory, not a declared event" is the clause
+                 that stops the strip being read as a prediction, and burying it is
+                 how it gets misread. -->
+            <p id="seasonalSummary" class="muted-sm"></p>
+            <details>
+              <summary>Show the full advisory</summary>
+              <p id="seasonalNote" class="seasonal-note">
+                Monthly SST anomaly index. Not a rainfall forecast and not a flood probability.
+              </p>
+            </details>
           </div>
 
-          <div class="seasonal-strip" id="ipcStrip" role="group" aria-label="Food security context" hidden>
+          <!-- IPC and WHO GHO share a strip because they are the same kind of
+               claim — national context, not district evidence — and neither was
+               carrying anything. Each was a full panel reserved for an em dash and
+               the words "not ingested". Collapsing them must not cost the empty
+               state: #contextMissing names what is absent and why, and it is a
+               different line from the caveats below, which state what the figures
+               mean when they exist. -->
+          <div class="seasonal-strip" id="contextStrips" role="group" aria-label="Context strips">
             <div class="seasonal-head">
-              <span class="seasonal-label">Food security (IPC)</span>
+              <span class="seasonal-label">Context</span>
+              <span id="contextState" class="seasonal-phase seasonal-phase-unknown">not ingested</span>
+            </div>
+            <div class="seasonal-value" id="ipcStrip">
+              <span class="seasonal-seasonlabel">Food security (IPC)</span>
+              <span id="ipcWorstValue" class="muted-sm">—</span>
+              <span id="ipcWorstPeriod" class="seasonal-period"></span>
               <span id="ipcAreas" class="seasonal-phase seasonal-phase-unknown">not ingested</span>
             </div>
-            <div class="seasonal-value">
-              <span id="ipcWorstValue" class="seasonal-anomaly">—</span>
-              <span id="ipcWorstPeriod" class="seasonal-period"></span>
-            </div>
-            <p class="seasonal-note">Phase 3+ figures as published, latest validity window.
-              Analytical classification by IPC — relayed verbatim, never re-derived. Fractions
-              of the analysed population: 0.35 means 35%.</p>
-          </div>
-
-          <div class="seasonal-strip" id="diseaseStrip" role="group" aria-label="Outbreak context" hidden>
-            <div class="seasonal-head">
-              <span class="seasonal-label">Outbreak context (WHO GHO)</span>
+            <div class="seasonal-value" id="diseaseStrip">
+              <span class="seasonal-seasonlabel">Outbreak (WHO GHO)</span>
+              <span id="diseaseLatest" class="muted-sm">—</span>
+              <span id="diseaseLatestMeta" class="seasonal-period"></span>
               <span id="diseaseSeriesState" class="seasonal-phase seasonal-phase-unknown">not ingested</span>
             </div>
-            <div class="seasonal-value">
-              <span id="diseaseLatest" class="seasonal-anomaly">—</span>
-              <span id="diseaseLatestMeta" class="seasonal-period"></span>
-            </div>
-            <p id="diseaseNote" class="seasonal-note">
+            <p id="contextMissing" class="seasonal-note" hidden></p>
+            <p id="ipcNote" class="seasonal-note" hidden>Phase 3+ figures as published, latest validity
+              window. Analytical classification by IPC — relayed verbatim, never re-derived. Fractions of
+              the analysed population: 0.35 means 35%.</p>
+            <p id="diseaseNote" class="seasonal-note" hidden>
               National annual aggregates. Context, not district evidence; not an alert trigger.</p>
           </div>
 
@@ -350,6 +376,27 @@
               </div>
             </div>
             <div id="alertsList" class="list-container" role="list"></div>
+            <nav id="alertsPager" class="pagination" aria-label="Alert pages" hidden></nav>
+            <section id="escalationView" class="escalation" aria-labelledby="escalationHeading">
+              <div class="panel-header">
+                <h3 id="escalationHeading">Needs escalation <span id="escalationCount" class="tab-badge" hidden>0</span></h3>
+                <div class="escalation-head">
+                  <label class="escalation-threshold" for="escalationDays">
+                    <span>Open longer than (days)</span>
+                    <input id="escalationDays" type="number" min="0" step="1" inputmode="numeric">
+                  </label>
+                  <button id="escalationToggle" class="btn btn-sm" type="button"
+                          aria-expanded="false" aria-controls="escalationBody">Show</button>
+                </div>
+              </div>
+              <p class="ops-control-note">
+                Alert events record no deadline, so there is nothing to be past.
+                This ranks the alerts still marked open, oldest first, against the
+                threshold above. Raise it to widen what counts as overdue; lower
+                it to narrow.
+              </p>
+              <div id="escalationBody" hidden></div>
+            </section>
           </div>
 
           <!-- Equity -->
@@ -376,6 +423,7 @@
               </thead>
               <tbody></tbody>
             </table>
+            <nav id="equityPager" class="pagination" aria-label="Equity rows" hidden></nav>
             <p id="equityMethodNote" class="panel-note">
               Dispatched counts come from RapidPro dispatch records, joined to the
               alert event to recover the district. "Not acknowledged" is the share of
@@ -409,6 +457,7 @@
               </div>
             </form>
             <div id="reportsList" class="list-container" role="list"></div>
+            <nav id="reportsPager" class="pagination" aria-label="Report pages" hidden></nav>
           </div>
 
           <!-- Ingestion -->
@@ -443,6 +492,20 @@
                 <button id="exportCsvButton" type="button" class="btn btn-sm">Export CSV</button>
               </div>
             </div>
+            <div class="service-asset-section" id="acledSection">
+              <h3>ACLED conflict import</h3>
+              <p class="settings-note">
+                Licensed, not open data. The import is refused unless you assert you
+                hold a current ACLED licence for it, and that assertion is recorded
+                against the run.
+              </p>
+              <textarea id="acledCsvInput" rows="4" spellcheck="false"
+                placeholder="event_id,event_date,country,event_type,sub_event_type,fatalities&#10;EVT-1,2026-08-01,KE,Protest,Peaceful protest,0"></textarea>
+              <div class="form-actions">
+                <button id="importAcledButton" type="button" class="btn btn-sm">Import ACLED CSV</button>
+              </div>
+              <p class="ops-result" role="status" aria-live="polite"></p>
+            </div>
           </div>
 
           <!-- Settings -->
@@ -463,6 +526,58 @@
               <section class="settings-section">
                 <h3>Trigger protocols</h3>
                 <div id="triggerProtocolsList" class="list-container"></div>
+              </section>
+
+              <section class="settings-section" id="opsApi">
+                <h3>Platform operations</h3>
+                <p class="settings-note">
+                  Routes with no other dashboard affordance. Each one reports what
+                  happened, including what it could not determine.
+                </p>
+
+                <div id="opsProtocols"></div>
+
+                <div class="ops-control" id="opsBiasCorrectControl">
+                  <h4>Bias-correct observations</h4>
+                  <p class="ops-control-note">
+                    Maps gridded values onto station baselines by quantile matching.
+                    Paste <code>{&quot;observations&quot;:[…],&quot;stations&quot;:[…]}</code>.
+                    Returns the corrected values and stores nothing.
+                  </p>
+                  <label class="visually-hidden" for="biasCorrectInput">Observations and stations payload</label>
+                  <textarea id="biasCorrectInput" rows="4" spellcheck="false"
+                    placeholder='{"observations":[{"country":"KE","precipitation_mm":12.4}],"stations":[{"country":"KE","precipitation_mm":9.1}]}'></textarea>
+                  <button id="opsBiasCorrect" class="btn btn-sm" type="button">Correct</button>
+                  <p class="ops-result" role="status" aria-live="polite"></p>
+                </div>
+
+                <div class="ops-control">
+                  <h4>Dispatch the outbox</h4>
+                  <p class="ops-control-note">
+                    Delivers pending outbox events to every active webhook subscription
+                    that matches them.
+                  </p>
+                  <button id="opsOutboxDispatch" class="btn btn-sm" type="button">Dispatch pending</button>
+                  <p class="ops-result" role="status" aria-live="polite"></p>
+                </div>
+
+                <div class="ops-control" id="opsRetentionControl">
+                  <h4>Apply retention</h4>
+                  <p class="ops-control-note">
+                    Deletes field reports and inbound RapidPro messages past the
+                    configured retention window. Irreversible, and gated hardest of
+                    anything in this console.
+                  </p>
+                  <button id="opsRetention" class="btn btn-sm btn-reject" type="button">Apply retention…</button>
+                  <p class="ops-result" role="status" aria-live="polite"></p>
+                </div>
+
+                <div class="ops-control" id="opsConnectorsControl">
+                  <h4>Connector registry</h4>
+                  <p class="ops-control-note">Every connector the platform can run, with its last run.</p>
+                  <button id="opsConnectors" class="btn btn-sm" type="button">Load registry</button>
+                  <p class="ops-result" role="status" aria-live="polite"></p>
+                </div>
               </section>
 
               <section class="settings-section">
@@ -681,6 +796,39 @@
       </div>
     </dialog>
 
+    <dialog id="subjectPanelDialog" class="detail-dialog subject-panel" aria-labelledby="subjectPanelTitle">
+      <div class="dialog-header">
+        <h2 id="subjectPanelTitle">Subject</h2>
+        <button class="btn btn-icon dialog-close" type="button" aria-label="Close">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div id="subjectPanelBody" class="dialog-body"></div>
+      <div class="dialog-actions">
+        <button class="btn" type="button" data-close>Close</button>
+      </div>
+    </dialog>
+
+    <dialog id="confirmDialog" class="detail-dialog" aria-labelledby="confirmTitle">
+      <div class="dialog-header">
+        <h2 id="confirmTitle">Confirm</h2>
+        <button class="btn btn-icon dialog-close" type="button" aria-label="Close">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="dialog-body"></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-role="cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" data-role="confirm">Confirm</button>
+      </div>
+    </dialog>
+
     <!-- Detail overlay -->
     <dialog id="detailDialog" class="detail-dialog" aria-labelledby="detailTitle">
       <div class="dialog-header">
@@ -701,6 +849,16 @@
       mountNavbar({ activePath: '/' })
     </script>
     <script type="module" src="/app.js"></script>
-    <script type="module" src="/shared/demo.js"></script>
+    <!-- The guided demo director returns immediately unless the URL carries
+         ?demo=1, and it was a static import on every surface: 3.1 KB gzipped
+         downloaded, parsed and discarded by every operator and every community
+         health worker who will never see it. Loaded only when it will do
+         something. The other surfaces still fetch it unconditionally; this is
+         the console's half of the fix. -->
+    <script type="module">
+      if (new URLSearchParams(location.search).get('demo') === '1') {
+        import('/shared/demo.js')
+      }
+    </script>
 </body>
 </html>

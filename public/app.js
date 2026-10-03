@@ -3,14 +3,36 @@
 // =============================================================
 import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS } from '/shared/basemap.js'
 import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage, surveyedAreaKm2 } from '/shared/flood-bands.js'
-import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets } from '/shared/map-frame.js'
+import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets, withinBbox, NEAR_REGION_MARGIN_DEG, REGION_OF_INTEREST } from '/shared/map-frame.js'
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState } from '/shared/seasonal.js'
 import { fillAppVersion } from '/shared/app-version.js'
 import { apiFetch, apiSettled, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
 import { applyLocaleToDocument, esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
-import { barChart, smallMultiples } from '/shared/charts.js'
 import { formatRelative } from '/shared/fmt.js'
+
+/**
+ * Load a console module the first time something needs it.
+ *
+ * The subject panel, the escalation view, the operations controls and the
+ * record search are each reachable from exactly one affordance, and the budget
+ * gate measures what a first paint costs on a field connection. Fetching them
+ * with the console meant every operator downloaded them to look at a map they
+ * may never have queried. The browser caches the module after the first import,
+ * so the second open is as fast as a static one.
+ */
+const _lazyModules = new Map()
+function lazy(path) {
+  if (!_lazyModules.has(path)) {
+    _lazyModules.set(path, import(path).catch((err) => {
+      // A rejected promise cached here would fail every later call identically,
+      // and the console would report a broken feature with no way to retry it.
+      _lazyModules.delete(path)
+      throw err
+    }))
+  }
+  return _lazyModules.get(path)
+}
 
 initServiceWorker()
 
@@ -51,6 +73,7 @@ const state = {
   // the current-window area records the overlay draws; the strip reads the
   // server-side summary so 4,500 records never cross the wire twice.
   foodSecurity: [],
+  foodSecuritySummary: null,
   diseaseSummary: null,
   showIpcAreas: false,
   climate: [],
@@ -168,6 +191,87 @@ function applyI18n() {
     el.placeholder = t(el.dataset.i18nPlaceholder)
   })
 }
+
+// =============================================================
+// Pagination
+// =============================================================
+
+/**
+ * Rows per page for the console's three long lists.
+ *
+ * The alert rail fetched 30 and rendered all 30, which on a 900px-tall laptop
+ * pushed every action button below the fold; the map's own record list is
+ * worse still, since it renders one row per hazard and the hazard count follows
+ * whatever GDACS is doing that week. Twenty-five is the figure the plan set and
+ * is enough to scan a screen without scrolling.
+ */
+export const LIST_PAGE_SIZE = 25
+
+/** Page index per paged surface. Held in state so a re-render does not reset it. */
+const listPages = { alerts: 1, reports: 1, equity: 1 }
+
+/**
+ * Clamp and return the window of `items` for `key`'s current page.
+ *
+ * Clamping rather than trusting the stored page is what keeps a filter change
+ * from stranding an operator on page 4 of a list that now has one page: the
+ * stored index survives, the window never runs off the end.
+ */
+export function pageWindow(key, total, size = LIST_PAGE_SIZE) {
+  const pages = Math.max(1, Math.ceil(total / size))
+  const page = Math.min(Math.max(1, listPages[key] || 1), pages)
+  listPages[key] = page
+  const start = (page - 1) * size
+  return { page, pages, start, end: Math.min(start + size, total) }
+}
+
+/**
+ * Paints a pager and wires its buttons. `components.css` owns the visual; this
+ * only decides what the page numbers are.
+ *
+ * The count is rendered as text rather than left to the operator to infer from
+ * how many rows there are, because "25 rows" and "25 rows because that is all
+ * there are" are different facts and the rail is the only place either appears.
+ */
+function renderPager(host, key, total, onGo) {
+  if (!host) return
+  const { page, pages, start, end } = pageWindow(key, total)
+  host.hidden = pages <= 1
+  if (pages <= 1) { host.innerHTML = ''; return }
+
+  const link = (n, label, current, disabled) => (
+    `<li class="pagination-item"><button type="button" class="pagination-link"
+        ${current ? 'aria-current="page"' : ''} ${disabled ? 'aria-disabled="true"' : ''}
+        data-page-key="${escapeHtml(key)}" data-page="${n}">${escapeHtml(label)}</button></li>`
+  )
+  // Windowed page numbers. A 400-row alert list renders 16 links otherwise, and
+  // the operator has to read past nine of them to reach the one they want.
+  const from = Math.max(1, Math.min(page - 2, pages - 4))
+  const to = Math.min(pages, Math.max(page + 2, 5))
+  const numbers = []
+  for (let n = from; n <= to; n += 1) numbers.push(link(n, String(n), n === page, false))
+
+  host.innerHTML = `<ul class="pagination-list">`
+    + link(page - 1, '‹ Prev', false, page === 1)
+    + numbers.join('')
+    + link(page + 1, 'Next ›', false, page === pages)
+    + `</ul><span class="pagination-status">Showing ${start + 1}–${end} of ${total}</span>`
+
+  host.querySelectorAll('[data-page]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const n = Number(btn.dataset.page)
+      if (n < 1 || n > pages || n === page) return
+      listPages[key] = n
+      onGo()
+    })
+  })
+  // aria-disabled rather than `disabled`, per components.css: a removed
+  // control is a control a keyboard user tabs past and never learns about.
+  host.querySelector('[aria-disabled="true"]')?.addEventListener('click', (e) => e.preventDefault())
+}
+
+/** Jump back to page 1 when the filter that produced the list changes. */
+function resetListPage(key) { listPages[key] = 1 }
 
 // =============================================================
 // Flood depth overlay
@@ -541,10 +645,37 @@ function renderSeasonalStrip(observations) {
       ? `${Math.min(state.overlappingSeasons, state.seasonsRequired)} of ${state.seasonsRequired} seasons`
       : ''
   }
+  if (seasonalSummaryEl) seasonalSummaryEl.textContent = seasonalSummary(state)
   if (seasonalNoteEl) seasonalNoteEl.textContent = seasonalNarrative(state)
   if (seasonalIndexEl && state?.indexUsed) {
     seasonalIndexEl.textContent = `Niño 3.4 SST anomaly (${state.indexUsed})`
   }
+}
+
+/**
+ * The one line the seasonal strip shows without a click.
+ *
+ * Four facts, in the order a reader needs them: what the number is, what it is
+ * measured against, how many of the five seasons qualify, and what that does
+ * not amount to. The last clause is not decoration — an operator who sees
+ * "+2.17 °C, 3 of 5 seasons" and nothing else reasonably reads it as a
+ * developing event, which is the claim CPC has not made and this product will
+ * not make for them.
+ *
+ * `seasonalNarrative` already holds every clause; this is the subset that has
+ * to survive at 13px.
+ */
+function seasonalSummary(state) {
+  if (!state) {
+    return 'Niño 3.4 has not been ingested, so there is no advisory to report. Run the noaa_enso connector to fill it.'
+  }
+  const seasons = Math.min(state.overlappingSeasons, state.seasonsRequired)
+  const sign = state.anomalyC > 0 ? '+' : ''
+  return `${state.period}: ${sign}${state.anomalyC.toFixed(2)} °C against a ±${state.thresholdC} °C `
+    + `advisory threshold · ${seasons} of ${state.seasonsRequired} seasons. `
+    + (state.episodeDeclared
+      ? `CPC's episode criterion is met: ${state.overlappingSeasons} consecutive overlapping seasons.`
+      : 'This is an advisory, not a declared event.')
 }
 
 /** Fills the origin and destination selects from the imported road assets. */
@@ -707,13 +838,33 @@ async function loadIpcOverlay() {
   }
 }
 
+/**
+ * Whether each context source has something to say, and why not if it does not.
+ *
+ * Two panels reserved for an em dash is worse than one line that says so. But
+ * "one line that says so" is only honest if the line is always there: a strip
+ * that hides itself when its data is absent is indistinguishable from a strip
+ * whose data is legitimately empty, and an operator checking whether anyone is
+ * in food crisis cannot tell those apart. So presence is recorded separately
+ * from content and the empty state is rendered from it.
+ */
+const contextPresence = { food: 'loading', disease: 'loading' }
+
 async function loadFoodSecuritySummary() {
   try {
     const body = await fetchJson('/api/v1/food-security/summary')
-    if (body?.success) renderFoodSecurityStrip(body.data)
+    if (!body?.success) {
+      contextPresence.food = 'unavailable'
+    } else {
+      state.foodSecuritySummary = body.data
+      const worst = body.data?.worst_areas?.[0]
+      contextPresence.food = (worst || body.data?.countries?.length) ? 'present' : 'empty'
+    }
   } catch {
-    if (ipcStripEl) ipcStripEl.hidden = true
+    contextPresence.food = 'unavailable'
   }
+  renderFoodSecurityStrip(state.foodSecuritySummary)
+  renderContextStrips()
 }
 
 function renderFoodSecurityStrip(summary) {
@@ -721,13 +872,16 @@ function renderFoodSecurityStrip(summary) {
   const worst = summary?.worst_areas?.[0]
   const countryCount = summary?.countries?.length || 0
   const areaCount = (summary?.worst_areas || []).length
-  ipcStripEl.hidden = !worst && !countryCount
-  if (!worst && !countryCount) return
+  if (!worst && !countryCount) {
+    ipcWorstValueEl.textContent = '—'
+    ipcWorstPeriodEl.textContent = ''
+    return
+  }
   if (worst) {
     const pct = Number.isFinite(worst.phase3plus_fraction)
       ? `${Math.round(worst.phase3plus_fraction * 100)}%`
       : '—'
-    ipcWorstValueEl.textContent = `Worst area: ${worst.area || 'unknown'} (${worst.country}) — Phase 3+ ${pct}${
+    ipcWorstValueEl.textContent = `${worst.area || 'unknown'} (${worst.country}) — Phase 3+ ${pct}${
       Number.isFinite(worst.phase3plus_number) ? `, ${worst.phase3plus_number.toLocaleString()} people` : ''}`
     ipcWorstPeriodEl.textContent = `${worst.valid_from} → ${worst.valid_to}`
   }
@@ -742,28 +896,66 @@ function renderFoodSecurityStrip(summary) {
 async function loadDiseaseSummary() {
   try {
     const body = await fetchJson('/api/v1/disease-observations/summary')
-    if (!body?.success) return
-    state.diseaseSummary = body.data
-    const states = body.data?.series_state || []
-    if (!states.length) {
-      diseaseStripEl.hidden = true
-      return
+    if (!body?.success) {
+      contextPresence.disease = 'unavailable'
+      diseaseStripEl && (diseaseStripEl.hidden = false)
+    } else {
+      state.diseaseSummary = body.data
+      const states = body.data?.series_state || []
+      contextPresence.disease = states.length ? 'present' : 'empty'
+      if (!states.length) {
+        diseaseSeriesStateEl.textContent = 'no series'
+        diseaseLatestEl.textContent = '—'
+        diseaseLatestMetaEl.textContent = ''
+      } else {
+        const stale = states.filter((s) => s.state === 'stale').length
+        const current = states.filter((s) => s.state === 'current').length
+        diseaseSeriesStateEl.textContent = `${states.length} series · ${current} current · ${stale} stale`
+        diseaseSeriesStateEl.className = `seasonal-phase ${stale === states.length ? 'seasonal-phase-unknown' : ''}`
+        const latest = states.reduce((a, b) => (b.latest_year > (a?.latest_year || 0) ? b : a), null)
+        if (latest) {
+          diseaseLatestEl.textContent = `${latest.indicator_name}: ${latest.latest_year}`
+          diseaseLatestMetaEl.textContent = latest.state !== 'current' ? `${latest.years_behind_calendar}y behind calendar` : ''
+        }
+        diseaseNoteEl.textContent = `National annual aggregates. Context, not district evidence; not an alert trigger.` +
+          (stale ? ` Series marked stale have stopped publishing; silence is absence of published data, not absence of disease.` : '')
+        diseaseNoteEl.hidden = false
+      }
     }
-    diseaseStripEl.hidden = false
-    const stale = states.filter((s) => s.state === 'stale').length
-    const current = states.filter((s) => s.state === 'current').length
-    diseaseSeriesStateEl.textContent = `${states.length} indicator series · ${current} current · ${stale} stale`
-    diseaseSeriesStateEl.className = `seasonal-phase ${stale === states.length ? 'seasonal-phase-unknown' : ''}`
-    const latest = states.reduce((a, b) => (b.latest_year > (a?.latest_year || 0) ? b : a), null)
-    if (latest) {
-      diseaseLatestEl.textContent = `${latest.indicator_name}: latest data ${latest.latest_year}`
-      diseaseLatestMetaEl.textContent = latest.state !== 'current' ? `${latest.years_behind_calendar}y behind calendar` : ''
-    }
-    diseaseNoteEl.textContent = `National annual aggregates. Context, not district evidence; not an alert trigger.` +
-      (stale ? ` Series marked stale have stopped publishing; silence is absence of published data, not absence of disease.` : '')
   } catch {
-    if (diseaseStripEl) diseaseStripEl.hidden = true
+    contextPresence.disease = 'unavailable'
   }
+  renderContextStrips()
+}
+
+/** One row, for both sources, from recorded presence rather than from content. */
+function renderContextStrips() {
+  if (!contextStripsEl) return
+  const present = [contextPresence.food, contextPresence.disease].filter((p) => p === 'present').length
+
+  if (contextStateEl) {
+    contextStateEl.textContent = present === 2 ? 'both' : present === 1 ? '1 of 2' : 'not ingested'
+    contextStateEl.className = `seasonal-phase ${present ? '' : 'seasonal-phase-unknown'}`
+  }
+
+  // The caveats travel with their figures. A note explaining what an IPC
+  // fraction means, shown next to an em dash, reads as an apology; shown next
+  // to a figure, it is the definition.
+  if (ipcNoteEl) ipcNoteEl.hidden = contextPresence.food !== 'present'
+  if (diseaseNoteEl) diseaseNoteEl.hidden = contextPresence.disease !== 'present'
+
+  if (!contextMissingEl) return
+  const why = (p) => (p === 'unavailable'
+    ? 'the summary endpoint did not answer'
+    : p === 'loading' ? 'still loading' : 'the connector has written no records')
+  const missing = []
+  if (contextPresence.food !== 'present') missing.push(`food security (IPC) — ${why(contextPresence.food)}`)
+  if (contextPresence.disease !== 'present') missing.push(`outbreak (WHO GHO) — ${why(contextPresence.disease)}`)
+
+  contextMissingEl.hidden = missing.length === 0
+  contextMissingEl.textContent = missing.length
+    ? `Not shown: ${missing.join('; ')}. Absence of published data, not a measurement of zero.`
+    : ''
 }
 
 /**
@@ -815,7 +1007,7 @@ async function loadFloodProbabilityModels() {
       + 'reported GDACS floods. Reporting-conditioned: the probability is a flood entering the archive, '
       + 'not water at a given elevation.'
       + (notes.length ? ` Not trained: ${notes.join('; ')}.` : '')
-    renderFloodProbabilityPanels(models)
+    renderFloodProbabilityPanels(models, await lazy('/shared/charts.js'))
   } catch {
     if (floodProbStripEl) floodProbStripEl.hidden = true
   }
@@ -834,8 +1026,12 @@ async function loadFloodProbabilityModels() {
  * The refused districts stay in the grid too, under their own titles, for the
  * reason this function already kept them in the note: "this district has 40
  * months, not the 60 required" is actionable and a blank strip is not.
+ *
+ * `charts` is passed in rather than imported, because the strip is the only
+ * thing in the console that draws and the charting library is a tenth of the
+ * first load. See `lazy`.
  */
-function renderFloodProbabilityPanels(models) {
+function renderFloodProbabilityPanels(models, { barChart, smallMultiples }) {
   if (!floodProbStripEl) return
   const existing = floodProbStripEl.querySelector('.chart-grid')
   if (existing) existing.remove()
@@ -973,6 +1169,10 @@ const seasonalPeriodEl   = $('seasonalPeriod')
 const seasonalPipsEl     = $('seasonalPips')
 const seasonalSeasonsEl  = $('seasonalSeasonsText')
 const seasonalNoteEl     = $('seasonalNote')
+const seasonalSummaryEl  = $('seasonalSummary')
+const contextStripsEl    = $('contextStrips')
+const contextStateEl     = $('contextState')
+const contextMissingEl   = $('contextMissing')
 const routeFromEl      = $('routeFrom')
 const routeToEl        = $('routeTo')
 const routePlanBtn     = $('routePlan')
@@ -1000,6 +1200,7 @@ const diseaseSeriesStateEl = $('diseaseSeriesState')
 const diseaseLatestEl    = $('diseaseLatest')
 const diseaseLatestMetaEl = $('diseaseLatestMeta')
 const diseaseNoteEl      = $('diseaseNote')
+const ipcNoteEl          = $('ipcNote')
 const floodProbStripEl   = $('floodProbStrip')
 const floodProbRegionsEl = $('floodProbRegions')
 const floodProbBestEl    = $('floodProbBest')
@@ -1387,20 +1588,70 @@ function isColdChainAsset(record) {
   return String(record.service_type || '').toLowerCase() === 'cold_chain'
 }
 
+/**
+ * Below this span in BOTH axes, a fit is a pinprick rather than a frame.
+ *
+ * Two records 200m apart are real data and the operator is entitled to see
+ * them, but framing to their exact extent renders two overlapping markers in a
+ * district-sized window with no basemap between them and nothing to orient by.
+ */
+export const MIN_AUTO_FIT_SPAN_DEG = 1.5
+
+/**
+ * The extent the map should actually show.
+ *
+ * `mapFrame` anchors on the region of interest — 21° of latitude by 25° of
+ * longitude — which answers "where is this product about" and not "what is on
+ * screen". The console drew that box into roughly 890×1290px of map in which
+ * the records that matter, clustered around Turkana, Bor, Aweil and Mandera,
+ * occupied the lower-left quarter; the other three quarters were the Indian
+ * Ocean. So when nobody has asked to look somewhere specific, frame what is
+ * plotted.
+ *
+ * Four guards keep that from becoming a different lie:
+ *
+ *   - a flood simulation or a planned route is an operator saying "look here",
+ *     and still wins outright
+ *   - only points near the region shape the frame, and bbox-only hazards shape
+ *     it not at all. GDACS is a worldwide feed whose alerts carry forty-degree
+ *     boxes, some of them with a south edge below the south pole; fitting on
+ *     them reproduced the ocean at a larger scale. `mapFrame` already refuses
+ *     to frame on a record without a point, for the same reason, and this
+ *     keeps one rule in the codebase rather than two that disagree.
+ *   - nothing near the region falls through to every point, because a
+ *     deployment whose data is elsewhere still has to draw that data somewhere
+ *   - a single record, or a cluster under MIN_AUTO_FIT_SPAN_DEG in both axes,
+ *     falls back to the region rather than zooming a viewport onto one marker
+ */
+export function autoFitBox(records, fallback) {
+  const points = (records || []).filter(isFinitePoint)
+  const near = points.filter((r) => withinBbox(r, REGION_OF_INTEREST, NEAR_REGION_MARGIN_DEG))
+  // Mirrors mapFrame: near-region points shape the extent, and if none are near
+  // then all of them do, rather than collapsing to an empty frame.
+  const drivers = near.length ? near : points
+  if (drivers.length < 2) return fallback
+
+  const lats = drivers.map((r) => r.latitude)
+  const lons = drivers.map((r) => r.longitude)
+
+  const minLat = Math.min(...lats)
+  const maxLat = Math.max(...lats)
+  const minLon = Math.min(...lons)
+  const maxLon = Math.max(...lons)
+  if (maxLat - minLat < MIN_AUTO_FIT_SPAN_DEG && maxLon - minLon < MIN_AUTO_FIT_SPAN_DEG) return fallback
+
+  // An eighth of the longer edge, and never less than half a degree: a tight
+  // cluster still gets ground around it to orient against, and a wide spread
+  // does not get a margin too small to see.
+  const pad = Math.max(0.5, Math.max(maxLat - minLat, maxLon - minLon) / 8)
+  return { minLat: minLat - pad, maxLat: maxLat + pad, minLon: minLon - pad, maxLon: maxLon + pad }
+}
+
 function renderMap(records) {
   // Records count as plottable if they have a point OR a usable bounding box.
   // Filtering on coordinates alone dropped every bbox-only hazard before the
   // hazard loop could draw its footprint.
   const geo = records.filter((r) => isFinitePoint(r) || hasUsableBbox(r))
-
-  // Frame the map around the region of interest rather than around whatever the
-  // global feeds contain. See shared/map-frame.js for the bug this fixes, which
-  // was found by screenshotting the running dashboard.
-  // Frame on the active simulation when there is one, so the shaded extent
-  // fills the viewport instead of sitting as a few pixels in a Horn-wide view.
-  // A route frame is an explicit operator request too: zoom to the planned
-  // corridor rather than letting a region-wide view swallow it.
-  const bbox = mapFrame(geo, undefined, state.floodFocus || state.routeFocus || null).frame
 
   // Apply map filters.
   //
@@ -1429,6 +1680,17 @@ function renderMap(records) {
     if (verdict.undetermined === 'source') undeterminedSource += 1
     return verdict.shown
   })
+
+  // The frame is decided AFTER filtering, not before it. Framing on everything
+  // the feeds delivered and then hiding most of it is how the console ended up
+  // drawing an ocean: the fit has to describe what is on screen, and what is on
+  // screen is `visible`.
+  //
+  // A flood simulation or a planned route overrides the fit outright — those are
+  // an operator saying "look here", and a data-derived frame would swallow them.
+  const focus = state.floodFocus || state.routeFocus || null
+  const regionFrame = mapFrame(geo, undefined, focus).frame
+  const bbox = focus ? regionFrame : autoFitBox(visible, regionFrame)
 
   renderStaticLayers(bbox)
   mapHazardsEl.innerHTML = ''
@@ -2114,6 +2376,7 @@ async function refresh({ first = false, force = false } = {}) {
         ;(index[wf.type] ||= new Set()).add(wf.subject_id)
       }
       state.workflowAlertIds = index
+      renderWorkflowInstanceList()
     }
 
     if (merged.climate) {
@@ -2303,6 +2566,7 @@ function renderWorkflowsTab(byType, totals = {}) {
     // a separate control.
     const same = state.workflowTypeFilter === card.dataset.type
     state.workflowTypeFilter = same ? null : card.dataset.type
+    resetListPage('alerts')
     grid.querySelectorAll('.workflow-metric').forEach((c) => {
       c.classList.toggle('active', !same && c === card)
     })
@@ -2328,6 +2592,58 @@ function renderWorkflowsTab(byType, totals = {}) {
     card.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectType(card) }
     })
+  })
+}
+
+// =============================================================
+// Subject panel
+// =============================================================
+/**
+ * Open the six-attribute panel on a subject.
+ *
+ * The reference is `{ kind, id }` and nothing else: the panel resolves the
+ * record, its workflow and its history itself, so every entry point — the
+ * workflow ribbon, the escalation view, the command palette — opens the same
+ * panel on the same data rather than three partial versions of it.
+ */
+function openSubjectPanel(ref) {
+  return lazy('/workflow/panel.js').then((m) => m.openSubjectPanel(ref)).catch((err) => {
+    console.error('Subject panel failed to load:', err)
+    setStatus('The subject panel could not be loaded.')
+  })
+}
+
+/**
+ * The open workflow instances, reachable.
+ *
+ * The ribbon reported nine open workflows and gave no route to any of them. An
+ * instance here is a button rather than a row because the panel is where the
+ * detail lives, and a second read-only table of the same fields would be a
+ * second place for them to go stale.
+ */
+function renderWorkflowInstanceList() {
+  const list = $('workflowInstanceList')
+  if (!list) return
+  const instances = state.data.workflows?.data || []
+  const open = instances.filter((w) => !['closed', 'rejected'].includes(w.state))
+  const count = $('workflowInstanceCount')
+  if (count) count.textContent = `${open.length} of ${instances.length}`
+
+  if (!open.length) {
+    list.innerHTML = '<p class="workflow-empty">No open workflow instances.</p>'
+    return
+  }
+
+  list.innerHTML = open.map((w) => `<button class="source-card" type="button" data-instance="${escapeHtml(w.id)}">
+      <span class="source-card-header">
+        <span class="source-name">${escapeHtml(String(w.type || '').replace(/_/g, ' '))}</span>
+        <span class="status-pill status-${safeClass(w.state)}">${escapeHtml(String(w.state || '').replace(/_/g, ' '))}</span>
+      </span>
+      <span class="workflow-metric-meta">${w.district ? escapeHtml(w.district) : 'no district'} · opened ${escapeHtml(formatRelative(w.created_at))}</span>
+    </button>`).join('')
+
+  list.querySelectorAll('[data-instance]').forEach((btn) => {
+    btn.addEventListener('click', () => openSubjectPanel({ kind: 'workflow_instance', id: btn.dataset.instance }))
   })
 }
 
@@ -2365,23 +2681,27 @@ function renderEquityTab() {
   if (!districts.length) {
     emptyState.hidden = false
     table.hidden = true
+    renderPager($('equityPager'), 'equity', 0, renderEquityTab)
     return
   }
 
   emptyState.hidden = true
   table.hidden = false
+  const slice = pageWindow('equity', districts.length)
   const tbody = table.querySelector('tbody')
   if (tbody) {
-    tbody.innerHTML = districts.map(([district, data]) => {
+    tbody.innerHTML = districts.slice(slice.start, slice.end).map(([district, data]) => {
       const rate = data.dispatched > 0 ? ((data.dispatched - data.acknowledged) / data.dispatched * 100).toFixed(1) : '—'
       return `<tr>
-        <td>${escapeHtml(district)}</td>
+        <td title="${escapeHtml(district)}">${escapeHtml(truncate(district, { max: 40 }))}</td>
         <td>${escapeHtml(String(data.dispatched))}</td>
         <td>${escapeHtml(String(data.acknowledged))}</td>
         <td>${escapeHtml(String(rate))}%</td>
       </tr>`
     }).join('')
   }
+
+  renderPager($('equityPager'), 'equity', districts.length, renderEquityTab)
 }
 
 // =============================================================
@@ -2745,7 +3065,9 @@ let _alertsRedrawPending = false
  * paint of a list still animates; a repaint of the same 30 records does not.
  */
 function renderAlertsPanel() {
+  ensureEscalation()
   const painted = preserveUiAroundRebuild(() => _renderAlertsPanel())
+  escalation?.render()
   if (!painted) _alertsRedrawPending = true
   return painted
 }
@@ -2761,6 +3083,7 @@ document.addEventListener('focusout', () => {
     if (shouldDeferRedraw(document.activeElement)) return
     _alertsRedrawPending = false
     _renderAlertsPanel()
+    escalation?.render()
     _renderMapRecordList(_lastMapEntries)
   }, 0)
 })
@@ -2796,6 +3119,7 @@ function _renderAlertsPanel() {
 
   if (!filtered.length) {
     container.innerHTML = `<div class="empty-state"><p>${escapeHtml(t('state.empty_alerts'))}</p></div>`
+    renderPager($('alertsPager'), 'alerts', 0, () => _renderAlertsPanel())
     return
   }
 
@@ -2806,7 +3130,10 @@ function _renderAlertsPanel() {
   const animate = signature !== _alertsSignature
   _alertsSignature = signature
 
-  container.innerHTML = filtered.map((alert, i) => {
+  const slice = pageWindow('alerts', filtered.length)
+  const page = filtered.slice(slice.start, slice.end)
+
+  container.innerHTML = page.map((alert, i) => {
     const delay = animate ? Math.min(i * 40, 320) : 0
     const canSend = alert.status === 'approved' || alert.status === 'auto_approved' || alert.status === 'auto-approved'
     // The metric was rendered straight from the API — `precipitation_mm`,
@@ -2817,10 +3144,15 @@ function _renderAlertsPanel() {
       ? metric
       : metricLabel(metric)
     const statusText = String(alert.status || '').replace(/_/g, ' ')
+    // A rule name is free text from the connector and can run to a sentence.
+    // Truncated for the rail, with the full string on the title and reachable in
+    // full through the row's own detail dialog — truncated without a way back to
+    // the rest is a deleted fact, not a shortened one.
+    const ruleName = alert.rule_name || metricLabel(alert.metric) || alert.id || ''
     return `<div class="alert-item" style="animation-delay:${delay}ms" role="listitem">
       <div class="alert-item-row">
         <span class="sev-chip sev-${sevClass(alert.severity)}">${escapeHtml(alert.severity || 'unknown')}</span>
-        <span class="alert-rule-name">${escapeHtml(alert.rule_name || metricLabel(alert.metric) || alert.id || '')}</span>
+        <span class="alert-rule-name" title="${escapeHtml(ruleName)}">${escapeHtml(truncate(ruleName, { max: 64 }))}</span>
         <span class="alert-timestamp">${displayDate(alert.created_at)}</span>
       </div>
       <div class="alert-item-meta">
@@ -2837,15 +3169,53 @@ function _renderAlertsPanel() {
         <button class="btn btn-xs btn-send" data-id="${escapeHtml(alert.id)}" data-action="send"
                 ${canSend ? '' : 'disabled'} ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:send"
                 data-i18n="action.send">Send</button>
+        <button class="btn btn-xs" data-id="${escapeHtml(alert.id)}" data-action="details"
+                ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:details">Details</button>
       </div>
     </div>`
   }).join('')
 
+  renderPager($('alertsPager'), 'alerts', filtered.length, () => _renderAlertsPanel())
+
   container.querySelectorAll('[data-action]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       const { id, action } = e.currentTarget.dataset
+      if (action === 'details') {
+        const alert = (state.data.alerts?.data || []).find((a) => a.id === id)
+        if (alert) openDetailDialog(alert)
+        return
+      }
       handleAlertAction(id, action)
     })
+  })
+}
+
+// =============================================================
+// Needs escalation (JTBD-476)
+// =============================================================
+/**
+ * The escalation view, mounted on the first alert paint and repainted with it.
+ *
+ * Repainted rather than left alone because the alert list above it repaints
+ * every thirty seconds, and two lists on one panel that disagree about which
+ * alerts are open is worse than no second list. `render()` reads through
+ * `state.data.alerts` rather than taking a snapshot, so it cannot drift.
+ */
+let escalation = null
+let escalationWanted = false
+
+function ensureEscalation() {
+  if (escalation || escalationWanted) return
+  escalationWanted = true
+  lazy('/workflow/escalation.js').then((m) => {
+    escalation = m.mountEscalation({
+      getAlerts: () => state.data.alerts?.data || [],
+      openSubject: openSubjectPanel,
+    })
+    escalation?.render()
+  }).catch((err) => {
+    escalationWanted = false
+    console.error('Escalation view failed to load:', err)
   })
 }
 
@@ -2853,6 +3223,9 @@ $('alertFilterChips')?.addEventListener('click', (e) => {
   const chip = e.target.closest('.chip')
   if (!chip) return
   state.alertFilter = chip.dataset.filter
+  // A narrower filter yields a shorter list; leaving the page index where it was
+  // shows page 2 of a list that now ends on page 1.
+  resetListPage('alerts')
   syncAlertFilterChips()
   syncFiltersToUrl()
   renderAlertsPanel()
@@ -2896,11 +3269,16 @@ function renderReportsPanel() {
   if (!reports.length) {
     container.innerHTML = `<div class="empty-state"><p>${escapeHtml(t('state.empty_reports'))}</p></div>`
   } else {
-    container.innerHTML = reports.map((r) => {
+    const slice = pageWindow('reports', reports.length)
+    container.innerHTML = reports.slice(slice.start, slice.end).map((r) => {
       const canApprove = r.status === 'ready' || r.status === 'draft'
       const canDist    = r.status === 'approved' || r.status === 'ready'
+      // A generated report's title is the generator's own prose and can run to
+      // a clause. Shortened for the rail; the full string is on the title, and
+      // the exported document carries all of it.
+      const title = r.title || r.template_name || 'Untitled report'
       return `<div class="report-item" role="listitem">
-        <div class="report-item-title">${escapeHtml(r.title || r.template_name || 'Untitled report')}</div>
+        <div class="report-item-title" title="${escapeHtml(title)}">${escapeHtml(truncate(title, { max: 64 }))}</div>
         <div class="report-item-meta">
           <span class="status-pill status-${safeClass(r.status || 'draft')}">${escapeHtml(r.status || '')}</span>
           <span>${displayDate(r.generated_at)}</span>
@@ -2923,6 +3301,8 @@ function renderReportsPanel() {
       })
     })
   }
+
+  renderPager($('reportsPager'), 'reports', reports.length, renderReportsPanel)
 
   // Populate template select
   const sel = $('reportTemplateIdInput')
@@ -3123,11 +3503,47 @@ async function runIngestion() {
   await refresh({ force: true })
 }
 
+/**
+ * Create the default public ingestion schedules — behind a preview (JTBD-002).
+ *
+ * This wrote one schedule per built-in public source with nothing showing what
+ * would be created, and each schedule then runs on its own interval from an
+ * external scheduler. The preview names every source that has no schedule today
+ * and every schedule that already exists; the route still chooses the subset
+ * it treats as built-in and public, and reports back what it actually created.
+ */
 async function createPublicIngestionSchedules() {
-  setStatus('Creating default public ingestion schedules...')
-  const payload = await postJson('/api/v1/ingest/schedules/defaults', {})
-  setStatus(payload.success ? `Created ${payload.created} ingestion schedules.` : (payload.error || 'Ingestion schedule creation failed'))
-  await refresh({ force: true })
+  setStatus('Reading what the default schedules would change...')
+  try {
+    const { askToConfirm } = await lazy('/workflow/confirm.js')
+    await lazy('/workflow/ingest-gates.js').then((m) => m.confirmDefaultSchedules(askToConfirm, async () => {
+      setStatus('Creating default public ingestion schedules...')
+      await refresh({ force: true })
+    }))
+  } catch (err) {
+    setStatus(`Could not prepare the schedule preview: ${err.message}`)
+  }
+}
+
+/** ACLED conflict import — behind the licence assertion it depends on (JTBD-007). */
+async function importAcledConflictCsv() {
+  const csv = $('acledCsvInput')?.value || ''
+  const section = $('acledSection')
+  if (!csv.trim()) {
+    setStatus('Paste the ACLED CSV before importing.')
+    $('acledCsvInput')?.focus()
+    return
+  }
+  try {
+    const { askToConfirm } = await lazy('/workflow/confirm.js')
+    await lazy('/workflow/ingest-gates.js').then((m) => m.confirmAcledImport(askToConfirm, csv, async () => {
+      setStatus('Importing ACLED conflict data...')
+      await refresh({ force: true })
+    }))
+  } catch (err) {
+    const out = section?.querySelector('.ops-result')
+    if (out) out.textContent = String(err.message || err)
+  }
 }
 
 async function runDueIngestion() {
@@ -3154,6 +3570,13 @@ async function importServiceAssets(kind) {
 // Settings panel
 // =============================================================
 function renderSettingsPanel() {
+  // The six API-only routes. Mounted once, on the first visit to Settings,
+  // because a control for a route nobody has asked for is not a first-paint cost
+  // worth paying for.
+  lazy('/workflow/confirm.js').then(({ askToConfirm }) =>
+    lazy('/workflow/ops.js').then((m) => m.mountOps({ askToConfirm }))
+  ).catch((err) => console.error('Operations controls failed to load:', err))
+
   fetchJson('/api/v1/trigger-protocols').then((payload) => {
     const list = $('triggerProtocolsList')
     if (!list) return
@@ -3388,6 +3811,12 @@ const paletteResults = $('paletteResults')
 
 const PALETTE_BASE = [
   { icon: '1', label: 'Alerts tab',              category: 'Navigation', action: () => switchTab('alerts') },
+  { icon: '!', label: 'Needs escalation',        category: 'Navigation', action: () => {
+    switchTab('alerts')
+    const body = $('escalationBody')
+    const toggle = $('escalationToggle')
+    if (body?.hidden && toggle) toggle.click()
+  } },
   { icon: '2', label: 'Reports tab',             category: 'Navigation', action: () => switchTab('reports') },
   { icon: '3', label: 'Ingestion tab',           category: 'Navigation', action: () => switchTab('ingestion') },
   { icon: '4', label: 'Settings tab',            category: 'Navigation', action: () => switchTab('settings') },
@@ -3412,19 +3841,58 @@ function openPalette() {
   paletteInput?.focus()
 }
 
+/**
+ * Palette results: actions plus, when there is a query, records (JTBD-091).
+ *
+ * The record index is built on the first open of the palette rather than at
+ * boot, and refreshed once a minute thereafter — an operator who searched an
+ * hour ago should not be told a record they just created does not exist.
+ * Building it is five requests; the palette shows the actions immediately and
+ * the records arrive a moment later, re-rendering in place rather than leaving
+ * the operator with an empty list to interpret.
+ */
+let recordSearch = null
+/** The index the palette last drew, so a resolved index repaints exactly once. */
+let paintedRecordIndex = null
+
 function renderPaletteResults(query) {
   const q = query.trim().toLowerCase()
+
+  lazy('/workflow/search.js').then((m) => {
+    if (!recordSearch) {
+      m.bindSubjectOpener(openSubjectPanel)
+      recordSearch = m
+    }
+    return m.recordIndex()
+  }).then((ready) => {
+    // Identity, not a boolean: `recordIndex` hands back the same array while it
+    // is fresh and a new one after a rebuild, so this repaints when the records
+    // changed and not on every keystroke's own repaint.
+    if (!ready || ready === paintedRecordIndex || !cmdPalette.open) return
+    paintedRecordIndex = ready
+    renderPaletteResults(paletteInput?.value || '')
+  }).catch((err) => console.error('Record search failed to load:', err))
+
   const recentAlerts = (state.data.alerts?.data || []).slice(0, 3).map((a) => ({
     icon: '!',
     label: `Alert: ${a.rule_name || a.id || ''}`,
     category: 'Recent alerts',
+    haystack: `${a.rule_name || ''} ${a.id || ''}`.toLowerCase(),
     action: () => { switchTab('alerts'); openDetailDialog(a) },
   }))
 
-  const all = [...recentAlerts, ...PALETTE_BASE]
-  const items = q
-    ? all.filter((c) => c.label.toLowerCase().includes(q) || c.category.toLowerCase().includes(q))
-    : all
+  const records = recordSearch ? recordSearch.searchingFor(q) : []
+  const actions = PALETTE_BASE.map((c) => ({ ...c, haystack: `${c.label} ${c.category}`.toLowerCase() }))
+  const recent = q
+    ? recentAlerts.filter((c) => c.haystack.includes(q))
+    : recentAlerts
+
+  // Records first: a query that matches an incident and the word "Alerts" is
+  // answering a question about the incident.
+  const items = [...records, ...recent, ...actions]
+    .filter((c) => !q || c.haystack.includes(q))
+
+  const caveat = recordSearch?.searchCaveat(q) || ''
 
   state._paletteItems = items
   state._paletteIndex = 0
@@ -3436,7 +3904,11 @@ function renderPaletteResults(query) {
       <span class="palette-result-label">${escapeHtml(item.label)}</span>
       <span class="palette-result-category">${escapeHtml(item.category)}</span>
     </li>
-  `).join('')
+  `).join('') + (q && !items.length
+    ? `<li class="empty-note" role="presentation" style="padding:var(--sp-3) var(--sp-4)">No action or record matches.${caveat ? ` ${escapeHtml(caveat)}` : ''}</li>`
+    : caveat
+      ? `<li class="empty-note" role="presentation" style="padding:var(--sp-3) var(--sp-4)">${escapeHtml(caveat)}</li>`
+      : '')
 
   paletteResults.querySelectorAll('.palette-result').forEach((li, i) => {
     li.addEventListener('click', () => {
@@ -3565,6 +4037,7 @@ $('refreshButton')?.addEventListener('click', refresh)
 $('runButton')?.addEventListener('click', runIngestion)
 $('createIngestionSchedulesButton')?.addEventListener('click', createPublicIngestionSchedules)
 $('runDueIngestionButton')?.addEventListener('click', runDueIngestion)
+$('importAcledButton')?.addEventListener('click', importAcledConflictCsv)
 $('importCsvButton')?.addEventListener('click', () => importServiceAssets('csv'))
 $('importGeoJsonButton')?.addEventListener('click', () => importServiceAssets('geojson'))
 $('exportGeoJsonButton')?.addEventListener('click', () => window.open('/api/v1/export.geojson', '_blank'))
