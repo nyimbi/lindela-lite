@@ -2559,21 +2559,33 @@ async function handleChwRoute(store, data, req, res, url, route) {
       updated_at: now,
     }
 
-    const redacted = redactPii(record, {
+    // One policy for both records written here. `anonymous` is a per-request
+    // opt-in from the reporter; absent, it leaves the name to the loaded
+    // default. The phone is redacted either way — a CHW who does not ask to be
+    // named has not agreed to be called.
+    const policy = {
       redactNames: body.anonymous,
       redactPhone: true,
       coarsenGeoToH3Cell: 3,
-    })
+    }
 
-    const inbound = {
+    const redacted = redactPii(record, policy)
+
+    // The reporter's name and number live on the inbound record, not on the
+    // field report. Redacting `record` and then handing `body` straight to the
+    // inbound built it with — which is what this used to do — means the redactor
+    // saw an object that never had the fields and passed them through untouched,
+    // so both survived into `GET /api/v1/rapidpro/inbound` and export.csv. The
+    // RapidPro path redacts the object it is about to store; this now does too.
+    const inbound = redactPii({
       id: stableId('inbound', [redacted.id, now]),
       text: body.description,
       contact_urn: body.reporter_phone || '',
       contact_name: body.reporter_name || '',
       event_type: 'field_report',
-      field_report_id: redacted.id,
       created_at: now,
-    }
+    }, policy)
+    inbound.field_report_id = redacted.id
 
     const log = actionLog('field_reports', 'created', redacted, 'chw_web', req.__auth?.subject)
     await store.merge({
