@@ -16,3 +16,7 @@ coverage/
 # Internal tender analysis — never publish bid requirements or scoring
 docs/unicef-requirements-traceability.md
 artifacts/screens/
+
+# Agent instructions — local to each contributor's tooling, not product source
+CLAUDE.md
+AGENTS.md
