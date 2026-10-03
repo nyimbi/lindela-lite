@@ -31,11 +31,17 @@ export function redactPii(record, config = {}) {
   }
 
   if (cfg.coarsenGeoToH3Cell !== null && cfg.coarsenGeoToH3Cell !== undefined) {
-    if (record.latitude && record.longitude) {
+    // 0° is a place. `record.latitude && record.longitude` skipped coarsening
+    // for every record on the equator or the prime meridian, so the privacy
+    // control quietly did not apply to exactly the records a map draws most
+    // precisely — and said nothing, because the records were still there.
+    const lat = finiteNumber(record.latitude)
+    const lon = finiteNumber(record.longitude)
+    if (lat !== null && lon !== null) {
       const level = cfg.coarsenGeoToH3Cell
       const precision = 1 / Math.pow(2, level)
-      result.latitude = Math.round(record.latitude / precision) * precision
-      result.longitude = Math.round(record.longitude / precision) * precision
+      result.latitude = Math.round(lat / precision) * precision
+      result.longitude = Math.round(lon / precision) * precision
       result.geo_precision_deg = precision
     }
   }
@@ -85,6 +91,21 @@ export async function loadPolicy() {
   }
 
   return DEFAULT_POLICY
+}
+
+/**
+ * A finite number, or null when the value was never determined.
+ *
+ * The guard has to rule absence out before it asks about the number.
+ * `Number.isFinite(Number(x))` looks like it does both and does neither:
+ * `Number(null)` and `Number('')` are both 0, so a null coordinate and an
+ * empty one both sail through as a point on the equator. A value that is
+ * present and non-finite is also absent in every sense that matters here.
+ */
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
 }
 
 function hashString(value) {
