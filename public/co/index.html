@@ -207,15 +207,6 @@
         color: var(--ink-muted);
         font-size: 0.875rem;
       }
-
-      /* A table inside .visually-hidden is still laid out at its min-content
-         width — the wrapper is 1px, the cells are not — so it registers as
-         horizontal overflow on a 360px screen even though nothing is visible.
-         A fixed layout is the only table algorithm that honours the 1px. */
-      .data-alt {
-        table-layout: fixed;
-        width: 100%;
-      }
     </style>
   </head>
   <body>
