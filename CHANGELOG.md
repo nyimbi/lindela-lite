@@ -216,6 +216,40 @@ timestamp will not parse is treated as no evidence the window elapsed — the
 naive `Math.max` over a `NaN` would have returned `NaN`, `NaN < windowMs` is
 `false`, and the alert would have re-fired on top of itself.
 
+**One open alert per rule.** A persistent condition raised an open,
+dispatchable alert every suppression window — about 84 a week at the default
+120-minute setting — each one sendable to a CHW, each one counted in the equity
+KPIs. `evaluateAlertRules` now keeps one open alert per rule and records a
+repeat as an observation on it (`observations`, `last_observed_at`,
+`peak_value`). A genuinely worse reading escalates instead: the old alert
+becomes `superseded` with a note saying what it was superseded by, and the new
+one carries `supersedes` and `prior_value`.
+
+Escalation is strict. `compare(value, operator, prior)` treats equality as
+satisfying a `>=`, so an unchanged reading would have superseded the alert on
+every evaluation — a supersede that says nothing has changed is a worse
+artefact than the duplicate alert it replaced.
+
+**Hysteresis.** `hysteresis` on a rule (default `0`, so existing rules are
+unaffected) is the margin, in the metric's own units, the value must fall back
+*past* before an open alert is released. An alert whose gauge has visibly
+settled is closed by the evaluation with `resolution: 'cleared'` and a note
+naming the reading — otherwise it stays open until a person triages it, and an
+alert nobody clears because the reading came back down is an alert nobody
+reads. `==` and `!=` have no direction to move away in, so any non-firing
+reading clears them.
+
+**Breaking changes**
+
+- `evaluateAlertRules` returns `{ raised, updated }`, not a flat array of new
+  alerts. `updated` holds existing alerts whose state changed; merging them
+  with the raised ones, as a flat array invites, makes "an alert was raised"
+  and "an alert was closed" indistinguishable — and the webhook fan-out fires
+  on both. `POST /api/v1/alerts/evaluate` reports `created` and `updated`
+  separately and emits only for raised alerts.
+- Alert rules accept `hysteresis`. Absent means `0`, which preserves existing
+  behaviour exactly.
+
 **Tests**
 
 - `test/store-conformance.test.js`, `test/flood-score-honesty.test.js`,
@@ -255,6 +289,9 @@ passes a blank field and plants a dot on Null Island.
 
 ### Breaking changes
 
+- `evaluateAlertRules` returns `{ raised, updated }` rather than a flat array.
+- Repeated alert evaluations no longer create a second open alert for an
+  unchanged condition; the existing alert gains `observations` and `peak_value`.
 - `response_rate_pct` is now `null` rather than `0` when nobody has responded,
   and `null` when dispatches carry no recipient identity. Consumers that
   treated `0` as "no response" should treat `null` as "not yet known".

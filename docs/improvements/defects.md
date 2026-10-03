@@ -47,6 +47,7 @@ under **Unreleased**; this table is the index into them.
 | INT-02 | fixed | backtest evaluates `metric`/`operator`/`threshold`; misses counted separately | `trigger-backtest.test.js` |
 | INT-03 | fixed | trigger evaluated against platform state; unverifiable triggers pay nothing; approval sourced from workflow instances; all three write paths log | `parametric-trigger.test.js` |
 | ALERT-05 | fixed | `response_rate_pct` counts responders, not messages; `null` when unknowable | `rapidpro-response-metrics.test.js` |
+| ALERT-04 | fixed | one open alert per rule; repeats become observations; worsening supersedes; `hysteresis` release margin | `alert-suppression.test.js` |
 | ALERT-03 | fixed | rolling window from the last alert, not a calendar bucket | `alert-suppression.test.js` |
 
 Two findings were found while fixing these and are also fixed, without

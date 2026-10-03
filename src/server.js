@@ -1783,17 +1783,29 @@ async function handleAlertEvaluation(store, data, req, res) {
     operations: operationalSummary(data),
     data_quality: data.data_quality,
   }
-  const events = evaluateAlertRules(data, context)
-  const logs = events.map((event) => actionLog('alert_events', 'created', event, body.actor, req.__auth?.subject))
-  if (events.length) await store.merge({ alert_events: events, action_logs: logs })
-  for (const event of events) {
+  const { raised, updated } = evaluateAlertRules(data, context)
+  const logs = [
+    ...raised.map((event) => actionLog('alert_events', 'created', event, body.actor, req.__auth?.subject)),
+    ...updated.map((event) => actionLog('alert_events', event.status, event, body.actor, req.__auth?.subject)),
+  ]
+  if (raised.length || updated.length) await store.merge({ alert_events: [...raised, ...updated], action_logs: logs })
+  // Only a raised alert is a new fact. An updated one is the same alert with a
+  // newer reading, or one that has just been closed, and neither is something
+  // a subscriber asked to be told about.
+  for (const event of raised) {
     try {
       await emit(store, 'alert_event.created', event)
     } catch (emitError) {
       // Swallow emit errors
     }
   }
-  jsonResponse(res, 201, { success: true, evaluated: data.alert_rules.length, created: events.length, data: events })
+  jsonResponse(res, 201, {
+    success: true,
+    evaluated: data.alert_rules.length,
+    created: raised.length,
+    updated: updated.length,
+    data: raised,
+  })
 }
 
 async function handleAlertRoute(store, data, req, res, url, route) {

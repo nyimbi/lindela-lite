@@ -26,6 +26,10 @@ export function normalizeAlertRule(input, existing = null) {
     scope: objectValue(input.scope || existing?.scope),
     actions: arrayValue(input.actions || existing?.actions),
     suppression_minutes: toNumber(input.suppression_minutes ?? existing?.suppression_minutes, 120),
+    // How far past the threshold the metric must fall back before an open alert
+    // is considered cleared. Zero disables the behaviour entirely, so an
+    // existing rule's behaviour does not change by upgrading.
+    hysteresis: toNumber(input.hysteresis ?? existing?.hysteresis, 0),
     created_at: existing?.created_at || input.created_at || now,
     updated_at: input.updated_at || now,
     metadata: objectValue(input.metadata || existing?.metadata),
@@ -96,37 +100,120 @@ export function approveAlertEvent(existing, actor, decision, note = '') {
   }
 }
 
+/**
+ * Evaluate every active rule against the current context.
+ *
+ * Returns `{ raised, updated }` rather than a flat list, because the two are
+ * not the same kind of record. `raised` are new alerts; `updated` are existing
+ * alerts whose state changed — superseded by a worse reading, or resolved
+ * because the condition cleared. Merging them together, as this function
+ * previously returned a single flat array, makes it impossible for a caller
+ * to tell "an alert was raised" from "an alert was closed", and the webhook
+ * fan-out fires on both.
+ *
+ * The design point is one open alert per rule. A condition that persists
+ * across evaluations used to accumulate an open, dispatchable alert every
+ * suppression window — about 84 a week for a rule with the default 120-minute
+ * suppression — all of them dispatchable, all of them counting toward the
+ * equity KPIs. A repeat is now either an observation on the existing alert or,
+ * if the condition has genuinely worsened, a new alert that supersedes the old
+ * one and says what it superseded.
+ */
 export function evaluateAlertRules(data, context) {
   const now = new Date().toISOString()
   const active = data.alert_rules.filter((rule) => rule.status === 'active')
-  const events = []
+  const raised = []
+  const updated = []
+
   for (const rule of active) {
     const value = resolveMetric(context, rule.metric)
-    if (!Number.isFinite(value) || !compare(value, rule.operator, rule.threshold)) continue
+    if (!Number.isFinite(value)) continue
+    const firing = compare(value, rule.operator, rule.threshold)
+    const open = (data.alert_events || []).filter(
+      (event) => event.rule_id === rule.id && event.status === 'open'
+    )
+
+    if (!firing) {
+      // The condition no longer holds. With hysteresis configured, an alert
+      // that has been open this whole time is closed by the metric rather than
+      // left for someone to triage: the release band is the operator's own
+      // statement of what "cleared" means, and an alert nobody clears because
+      // the gauge came back down is an alert nobody reads.
+      for (const event of open) {
+        if (Number(rule.hysteresis) > 0 && hasCleared(value, rule) && !event.cleared_at) {
+          updated.push({
+            ...event,
+            status: 'resolved',
+            resolution: 'cleared',
+            resolution_note: `condition cleared: ${rule.metric} fell to ${value}, inside the ${rule.hysteresis} release margin below ${rule.operator} ${rule.threshold}`,
+            cleared_at: now,
+            updated_at: now,
+          })
+        }
+      }
+      continue
+    }
+
     const bucket = suppressionBucket(now, rule.suppression_minutes)
+    if (open.length > 0) {
+      const current = open[0]
+      // Escalation is measured against the reading on the open alert, not
+      // against the rule's threshold: the threshold is what the rule asks for,
+      // the recorded value is what last happened.
+      const escalates = isWorseThan(value, current.value, rule)
+      const windowElapsed = !isSuppressed(data, rule, now)
+
+      if (escalates && windowElapsed) {
+        updated.push({
+          ...current,
+          status: 'superseded',
+          resolution: 'superseded',
+          resolution_note: `superseded: ${rule.metric} moved to ${value}, past the ${current.value} recorded when this alert was raised`,
+          superseded_at: now,
+          updated_at: now,
+        })
+        raised.push(buildAlert(rule, value, { bucket, now, supersedes: current.id, prior_value: current.value }))
+      } else {
+        updated.push({
+          ...current,
+          updated_at: now,
+          last_observed_at: now,
+          observations: (current.observations ?? 1) + 1,
+          peak_value: Number.isFinite(current.peak_value) ? Math.max(current.peak_value, value) : value,
+        })
+      }
+      continue
+    }
+
     if (isSuppressed(data, rule, now)) continue
-    const approvalState = rule.severity === 'low' ? 'auto_approved' : 'proposed'
-    events.push({
-      id: stableId('alert', [rule.id, bucket, value]),
-      rule_id: rule.id,
-      rule_name: rule.name,
-      status: 'open',
-      severity: rule.severity,
-      metric: rule.metric,
-      value,
-      threshold: rule.threshold,
-      operator: rule.operator,
-      message: `${rule.name}: ${rule.metric} ${rule.operator} ${rule.threshold} (actual ${value})`,
-      actions: rule.actions,
-      scope: rule.scope,
-      created_at: now,
-      updated_at: now,
-      suppression_bucket: bucket,
-      approval: { state: approvalState },
-      metadata: {},
-    })
+    raised.push(buildAlert(rule, value, { bucket, now }))
   }
-  return events
+
+  return { raised, updated }
+}
+
+function buildAlert(rule, value, { bucket, now, supersedes = null, prior_value = null }) {
+  const approvalState = rule.severity === 'low' ? 'auto_approved' : 'proposed'
+  return {
+    id: stableId('alert', [rule.id, bucket, value]),
+    rule_id: rule.id,
+    rule_name: rule.name,
+    status: 'open',
+    severity: rule.severity,
+    metric: rule.metric,
+    value,
+    threshold: rule.threshold,
+    operator: rule.operator,
+    message: `${rule.name}: ${rule.metric} ${rule.operator} ${rule.threshold} (actual ${value})`,
+    actions: rule.actions,
+    scope: rule.scope,
+    created_at: now,
+    updated_at: now,
+    suppression_bucket: bucket,
+    approval: { state: approvalState },
+    ...(supersedes ? { supersedes, prior_value } : {}),
+    metadata: {},
+  }
 }
 
 export function normalizeTriggerProtocol(input, existing = null) {
@@ -323,6 +410,46 @@ export function compare(value, operator, threshold) {
   if (operator === '==') return value === threshold
   if (operator === '!=') return value !== threshold
   return false
+}
+
+/**
+ * Has the condition moved further past the threshold than it already had?
+ *
+ * Strictly. `compare(value, operator, prior)` treats equality as satisfying a
+ * `>=`, so an unchanged reading of 3 against a recorded 3 would supersede the
+ * alert on every evaluation — a supersede that says nothing has changed is a
+ * worse artefact than the duplicate alert it replaced.
+ */
+function isWorseThan(value, prior, rule) {
+  if (!Number.isFinite(prior)) return false
+  if (rule.operator === '>' || rule.operator === '>=') return value > prior
+  if (rule.operator === '<' || rule.operator === '<=') return value < prior
+  return value !== prior
+}
+
+/**
+ * The value at which a condition is considered to have ended.
+ *
+ * `hysteresis` is the margin, in the metric's own units, that the value must
+ * fall back *past* before an open alert is released. Without it, a metric
+ * oscillating either side of the threshold produces a stream of alerts and
+ * resolutions that describe the gauge rather than the situation.
+ *
+ * Returns null for `==` and `!=`, which have no direction to move away in —
+ * any non-firing reading has cleared those.
+ */
+function releaseValue(rule) {
+  const margin = Number(rule.hysteresis) || 0
+  if (rule.operator === '>' || rule.operator === '>=') return rule.threshold - margin
+  if (rule.operator === '<' || rule.operator === '<=') return rule.threshold + margin
+  return null
+}
+
+function hasCleared(value, rule) {
+  const release = releaseValue(rule)
+  if (release === null) return true
+  if (rule.operator === '>' || rule.operator === '>=') return value <= release
+  return value >= release
 }
 
 function suppressionBucket(now, minutes) {
