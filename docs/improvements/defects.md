@@ -49,6 +49,27 @@ under **Unreleased**; this table is the index into them.
 | ALERT-05 | fixed | `response_rate_pct` counts responders, not messages; `null` when unknowable | `rapidpro-response-metrics.test.js` |
 | ALERT-04 | fixed | one open alert per rule; repeats become observations; worsening supersedes; `hysteresis` release margin | `alert-suppression.test.js` |
 | ALERT-03 | fixed | rolling window from the last alert, not a calendar bucket | `alert-suppression.test.js` |
+| SEC-12 | fixed | `csvEscape` neutralises `= + - @` in header rows as well as values | `csv-injection.test.js` |
+| PRIV-01 | fixed | one shared policy object; redaction applied to the object actually stored | `privacy-chw-report.test.js` |
+| PRIV-02 | fixed | redaction defaults on; HMAC-SHA256 digests with a configured salt; 0° is a coordinate | `pii.test.js` |
+| ING-01 | fixed | severity from the alert level alone; prose never consulted; unknown ⇒ `null` | `connector-severity.test.js` |
+| ING-02 | fixed | severity is `null` by construction, declared in `model_limit` | `connector-severity.test.js` |
+| ALERT-01 | fixed | lifecycle→msgtype table asserted against the alert-status vocabulary; unknown throws | `cap-encoding.test.js` |
+| ALERT-07 | fixed | `scopeOverride` honoured and validated; falsy-but-present values no longer fall back to `Public` | `cap-encoding.test.js` |
+| DATA-03 | fixed | each asset counted once, from the shared collection list | `facilities-at-risk-counting.test.js` |
+| DATA-05 | fixed | full pagination with a real total; the 30-row slice is no longer the total | `district-rates.test.js` |
+| DATA-07 | fixed | one `false_alert_rate` definition, in both places, with the denominator exposed | `district-rates.test.js` |
+| DATA-09 | fixed | foreign vertical datum ⇒ every depth `null` with a reason; void cells serialise as `null` | `flood-depth-datum.test.js` |
+| WEB-05 | fixed | `enqueue` resolves on transaction commit and throws without a database | `web-chw-offline.test.js` |
+| WEB-06 | fixed | precache derived from the import graph instead of a hand-written list | `web-chw-offline.test.js` |
+| WEB-08 | fixed | the CO dashboard requests the window it labels | `web-co-i18n.test.js` |
+| WEB-03 | fixed | delta bars share a zero-anchored extent and carry a reading sentence | `web-districts-scenarios.test.js` |
+| WEB-01, WEB-02 | fixed | coordinate and severity filters test `== null`, not truthiness | `web-console.test.js` |
+| WEB-07 | fixed | the redraw preserves focus and the poll is gone | `web-console.test.js` |
+| WEB-09 | fixed | no `setInterval`; the cadence is owned by visibility and idle | `web-console.test.js` |
+| WEB-10 | not yet measured | fix is in the CSS; the 24px floor needs a real Chrome run on :9222 | — |
+| WEB-11 | partly fixed | three surfaces still have no i18n layer | `check-i18n.mjs` |
+| WEB-12 | partly fixed | the derivation claims were corrected; Phase 2 remains open at 7 of 8 surfaces | — |
 
 Two findings were found while fixing these and are also fixed, without
 original IDs: a dead second authorization path (`isAuthorizedMutation`,

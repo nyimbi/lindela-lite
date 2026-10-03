@@ -94,7 +94,111 @@ have been meaningless. `mean_confidence` is now two-decimal, with a
 `calibrationReport`'s `mean_confidence` and `mean_interval_width`; both are now
 two-decimal and null-safe.
 
+**A CSV export was a spreadsheet macro.** `csvEscape` escaped commas, quotes and
+newlines, and did nothing about the four leading characters a spreadsheet treats
+as a formula. A field report whose submitter is named `=HYPERLINK(...)` — or
+`+`, `-`, `@` — became an executable cell the moment a district officer opened
+the export. Header rows were not escaped at all, so the injection also worked by
+way of a column name. Formula-leading cells are now prefixed with `'` unless the
+cell is a bare numeric literal, in which case the prefix would corrupt a value
+that was already fine. Header rows go through the same neutraliser as values.
+
+**The PII controls were off by default, unsalted, and one value for everyone.**
+Three defects in one module. `redactNames` defaulted to `false`, so a deployment
+that configured nothing stored reporter names and phone numbers in the clear;
+`mergePolicy` then used `||`, which cannot distinguish "the caller said false"
+from "the caller said nothing", so the safe default could not be asserted
+anywhere; and the digest truncated a prefixed string to 32 characters — of a
+`"sha256:"` prefix that is 7 characters, leaving 25 hex digits in which the *name*
+prefix survived, so every redacted reporter came out looking the same and a
+single confirmation named the population. Redaction now defaults on, policy
+merging treats an explicit `undefined` as silence, and names hash through
+`crypto.createHmac('sha256', salt)` to 128 bits. The salt comes from
+`LINDELA_LITE_PII_SALT`; unset, one is generated rather than omitting — an unset
+salt must never mean *no salt* — and the process says so on stderr, because an
+ephemeral salt makes yesterday's pseudonym and today's unrelated people.
+
+**GDACS and GloFAS invented severities.** Both connectors derived severity from
+free text. GloFAS searched a description for the words "flood" and "orange" and
+assigned the levels it found; GDACS matched an alert level against the strings
+`green`/`orange`/`red` with `includes`, so a title containing "no orange alert"
+produced `orange`. Severity now comes from the alert level against a closed
+vocabulary, and anything outside it is `null` with a reason rather than a guess.
+GloFAS emits `null` unconditionally and declares it in `model_limit`: it is a
+modelled discharge series and has no severity to report.
+
+**CAP could not express a cancellation and would not admit a restriction.**
+`msgType` was keyed on the lifecycle string, and `Cancel` was not among the keys
+— a cancelled alert was published as an `Update`, which tells a recipient to
+update their records about an event that was withdrawn. `resolveMsgType` now
+compares exactly and **throws** on an unrecognised status rather than defaulting.
+`scope` was the literal `Public` on every alert; `scopeOverride` was accepted and
+then discarded, and it was discarded *through `||`*, so `''`, `0` and `false`
+all fell through to `Public` — a private alert with an empty scope. The override
+is now honoured, validated against `{Public, Restricted, Private}`, and
+`<restriction>` is emitted after `<scope>`.
+
+**Flood depth ignored the vertical datum.** `depthAtPoint` refused to answer when
+a cell fell below the no-data floor; `depthGrid` did not, so a grid could report
+a confident negative depth where the DEM is simply absent — over the ocean, and
+over any tile whose vertical reference is not the one the flood model assumes. A
+foreign datum with no offset now yields `null` for every depth plus a `reason`,
+and void cells in the `Float64Array` serialise as `null` rather than `0`.
+`-0` is normalised, because a depth of negative zero is a rounding artefact that
+prints as `-0`.
+
+**Road access described the archive.** `computeRoadAccess` matched every hazard
+in the store against every road regardless of age, so a 1985 GDACS archive flood
+closed a road today with the same `access_status`, the same
+`access_reason: "Blocked by flood (red)"` and the same confidence as one from that
+morning — and `summarizeRoadAccess` counted it beside live events. A road-access
+record is a claim about the present; a thirty-year-old entry is not evidence about
+the present. Each obstruction now carries `temporal_status` (`active`,
+`forecast`, `stale`, `undated`), `occurred_at` and `age_days`, with a per-hazard
+active window — seven days for a flood, thirty for a landslide and an eruption,
+because standing water recedes and a deposit does not. Stale evidence is kept in
+the record and marked rather than deleted: deleting it would make "how much of
+this road's status rests on current information" unanswerable. `undated` still
+blocks — an undated hazard is not safe to dismiss — but it caps `confidence`
+below 100, because "passable" beside an unexamined record is not the same claim as
+"observed clear".
+
+**Two surfaces computed `false_alert_rate` differently**, and both reported a
+confident number where the honest answer was `null`: a district with no reviewed
+alerts divided by zero and rendered `0%`, which reads as "no false alerts" rather
+than "nobody has looked". One definition now, in both places, with the numerator
+published beside it as `false_alert_determined` so the denominator is visible.
+
 ### Added
+
+**Documentation links are checked, not assumed.** `validate.mjs` tested a
+hand-written list of required sections in eight documents and never followed a
+link. So `docs/architecture/decisions/README.md` could list twelve decision
+records while six of the files did not exist, and the whole suite exited 0 — which
+it did, on the missing rows being the six decisions a new contributor most wants
+to read. A dangling link is not cosmetic: it asserts that something exists, it is
+the first thing a reader follows, and unlike a broken build it fails *silently* —
+the document still renders, still reads well, still lies.
+
+`scripts/check-doc-links.mjs` resolves every relative markdown link in `README.md`,
+`CHANGELOG.md`, `llms.txt` and `docs/**/*.md`, stripping fenced and inline code so
+a bracket in a CSV example is not read as a link. It found **15** broken links on
+its first run: `frontend.md` (the file is `dashboard.md`), four paths in
+`deployment.md` pointing at a sibling directory as though it were the current one,
+and the six absent ADRs, which have since been written.
+
+**A fourth improvement document.** `docs/improvements/sources-and-decisions-roadmap.md`
+asks the question the first three did not: not *can this platform be trusted* and
+not *does what it claims work*, but **what does it not know yet**. Thirty-one
+items — eleven sources, nine decisions, six operational capabilities, four platform
+capabilities, and cold chain taken end to end as the one vertical that proves the
+shape. It ships with its own dedup ledger: every item is marked `replaces`,
+`extends`, `fixes`, `subsumed` or `new` against ENH-01..30 and items 1–20, and
+three items the request duplicated (calibration surfaces, bias-corrected
+downscaling, and the IBF backtest already covered by extension 6) are listed as
+*considered and rejected* rather than written twice. Two entries are counted twice
+on purpose — `cold_chain` exists today as a workflow type, and the KPI that
+carries it measures ticket closure, not vaccine viability.
 
 **The API document is now checked against the code.** `docs/openapi.yaml` was
 hand-maintained, and the check that existed tested ~30 hand-listed endpoint

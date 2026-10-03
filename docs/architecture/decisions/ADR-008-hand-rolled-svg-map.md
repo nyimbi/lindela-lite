@@ -257,17 +257,19 @@ describes in detail.
   overlaps a busy area, markers overlap — there is no declutter, no spider-fy, no density binning.
   It is legible because the frame is the pilot region; it would not be at continental scale.
 - **No labels or roads basemap.** The only text on the map is the graticule's own degree labels and
-  whatever the layers draw. There are no place names, no rivers, no roads. An operator cannot read
-  "Lodwar" off the map, only recognise the shape.
+  the five pilot district names (`renderBasemap` draws a `<text>` beside each district circle).
+  There are no town names, no rivers, no roads, no coastline features. An operator can find Lodwar
+  because Turkana is labelled and they know where it is, not because the map says so.
 - **`preserveAspectRatio="xMidYMid meet"` letterboxes.** At any container aspect other than 16:10 the
   drawn content does not fill the box — it is centred with bands left and right or top and bottom,
-  and markers in a band are still clickable because the bands are part of the element. This is the
-  right default (nothing is cropped) but it means the *visual* map is smaller than the container at
-  most window sizes.
+  and the bands are dead space inside an element that still receives wheel and pointer events. This
+  is the right default (nothing is cropped) but it means the *visual* map is smaller than the
+  container at most window sizes, and the bands swallow the first drag a user makes towards an edge.
 - **Pan deltas mix coordinate systems.** The pointer handlers read `e.clientX` in CSS pixels and
-  write it into a `transform` whose units are viewBox units, so a drag tracks the cursor exactly at
-  scale 1 and over-pans by the scale factor above it. Zoomed in, the map runs away from the pointer.
-  Nobody has filed this because nobody has noticed, which is not the same as nobody being affected.
+  write the delta into a `transform` measured in viewBox units, so a drag tracks the cursor exactly
+  only when one CSS pixel equals one viewBox unit — an 800 px-wide container at scale 1. At any
+  other width the map moves too little, and at any zoom above 1 it moves too much. Nobody has filed
+  this because nobody has noticed, which is not the same as nobody being affected.
 - **Two projections, not one.** `public/districts/app.js` has its own `project` with its own
   padding and its own 320×200 box, and it returns an SVG *string* while `app.js` returns *elements*.
   The consistency between them is a convention, not a shared module.

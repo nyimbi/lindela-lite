@@ -256,8 +256,9 @@ FROM node:20-bookworm-slim
 
 `npm ci --omit=dev` — so the runtime dependency surface is exactly `pg` and
 whatever its tree. `ca-certificates` and `curl` are installed explicitly; `curl` is
-for the `HEALTHCHECK` and `openssl`/`random_bytes` is not present, which is why
-`deploy/one-click.sh` falls back to `node -e` for secret generation.
+for the `HEALTHCHECK`. Note `openssl` is *not* installed, which is why
+`deploy/one-click.sh` has a `node -e "…randomBytes(24)…"` fallback — the Node
+binary it would otherwise fall back on is the one already in the image.
 
 ```
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
@@ -282,8 +283,9 @@ Three services, all `restart: unless-stopped`.
 
 - **`db`** — `postgres:16-alpine`, volume `lindela_lite_pgdata`. Healthcheck
   `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB`, 10 s interval, 5 s timeout, 10
-  retries. `POSTGRES_PASSWORD` has **no default** — compose substitutes empty and
-  Postgres refuses to initialise, which is the intended outcome.
+  retries. `POSTGRES_PASSWORD` is written into `.env` by `one-click.sh`, never into
+  `docker-compose.yml`; `.env.example` ships the literal `change-me`, so a
+  deployment that copies it by hand runs on a password in a tracked file.
 - **`app`** — `depends_on: db: condition: service_healthy`, so Postgres finishes
   initialising before the first connection attempt. Maps
   `${LINDELA_LITE_PORT:-4177}:4177`. Its own `HEALTHCHECK` curl and one in the

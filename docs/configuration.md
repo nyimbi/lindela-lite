@@ -69,6 +69,34 @@ Most source options are passed in ingestion requests or schedules:
 - `stale_after_minutes`
 - Source-specific feed URLs or CSV/GeoJSON payloads.
 
+## Privacy
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `LINDELA_LITE_PII_SALT` | generated at boot, ephemeral | Salt for pseudonymised names and phone numbers. |
+
+PII redaction is **on by default** (`redactNames: true`) and can only be switched
+off by a deliberate `"redactNames": false` in `data/pii-policy.json` or in
+`LINDELA_LITE_PII_POLICY` — or, for a single submission, by an explicit
+`anonymous: true` on the request. There is no path where an omitted flag means
+"leave the reporter's name in the record".
+
+Set the salt in any deployment that will hold field reports across a restart. The
+same input must produce the same pseudonym on every process — the HTTP path and the
+RapidPro webhook path both hash against it, and if they disagree, linking a field
+report to the dispatch that answered it stops working. A generated salt is still a
+salt: an unset variable never means *no salt*, because unsalted digests are
+trivially reversible by dictionary attack over a population of district health
+workers.
+
+The cost of leaving it unset is not leakage; it is that pseudonyms do not survive a
+restart, so yesterday's redacted reporter and today's are two unrelated people. The
+process warns on stderr when it generates one.
+
+```bash
+openssl rand -hex 32   # → LINDELA_LITE_PII_SALT
+```
+
 ## RapidPro
 
 | Variable | Default | Description |

@@ -3,13 +3,19 @@
 A deep-dive audit of Lindela Lite, commissioned to answer one question: what would
 make this platform dramatically more useful, and what is currently broken.
 
-Three deliverables, plus the evidence they rest on.
+Four deliverables, plus the evidence they rest on.
 
 | Document | What it contains |
 |---|---|
 | [enhancements.md](enhancements.md) | **30 enhancements**, grouped and sequenced, each with evidence, value, and what it does not license |
 | [defects.md](defects.md) | **~55 defects**, security holes and architectural deficiencies, and the five root causes behind them |
 | [roadmap-extension.md](roadmap-extension.md) | **All 20 items** from `docs/plans/world-class-roadmap.md`, with verified status: 5 shipped, 15 partial, 0 rejected |
+| [sources-and-decisions-roadmap.md](sources-and-decisions-roadmap.md) | **31 new capability items** — the sources, decisions and operational states the platform cannot currently express, each deduplicated against the three above |
+
+The three earlier documents ask whether the platform is trustworthy (ENH) and whether
+what it claims to do actually works (items 1–20). The fourth asks a different
+question: **what does it not know yet**. It carries its own dedup ledger, so an item
+already owned elsewhere is listed and rejected rather than written twice.
 
 Supporting material is in [_research/](_research/), one file per audit domain. Each
 is long-form and evidence-dense; the three documents above are the synthesis.

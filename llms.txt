@@ -18,8 +18,8 @@ source file is the authority.
 ```bash
 npm test              # node --test test/*.test.js
 npm run validate      # model-basis status, capability guard, i18n
-                      # completeness, and the OpenAPI document against the
-                      # route table
+                      # completeness, documentation links, and the OpenAPI
+                      # document against the route table
 npm run test:coverage # thresholds: lines 75, branches 60, functions 75
 ```
 
@@ -28,8 +28,15 @@ npm run test:coverage # thresholds: lines 75, branches 60, functions 75
 the server: adding a route and forgetting the list passed, which is how nine live
 routes went undocumented. `scripts/check-openapi.mjs` now reads the routes out of
 `src/server.js` and requires the two to agree in both directions — see *The API
-document is checked, not trusted* below. It still does not check internal doc
-links.
+document is checked, not trusted* below.
+
+It also used not to check documentation links, with the same consequence: the ADR
+table in `docs/architecture/decisions/README.md` listed twelve records while six
+of the files did not exist, and every check passed.
+`scripts/check-doc-links.mjs` resolves every relative markdown link under
+`README.md`, `CHANGELOG.md`, `llms.txt` and `docs/**/*.md`, stripping fenced and
+inline code first so a bracket in a CSV example is not read as a link. A dangling
+link fails *silently* otherwise — the document renders, reads well, and lies.
 
 `npm test` and `npm run validate` must both exit 0. Never gate a check on a
 pipe (`npm test | tail -5`) — `tail` masks the exit code and truncates the
@@ -70,6 +77,7 @@ it reaches the caller. Half of them historically did not.
 | `public/` | Eight PWA surfaces. No framework, no build step, no bundler. |
 | `test/` | `node:test`. `store-conformance.test.js` runs one contract against every backend. |
 | `docs/` | Architecture, OpenAPI, improvements audit, model basis. |
+| `docs/improvements/` | Four documents: `enhancements.md` (ENH-01..30, can it be trusted), `defects.md` (~55 defects + a remediation index), `roadmap-extension.md` (items 1–20, does what shipped actually work), `sources-and-decisions-roadmap.md` (31 items, what does it not know yet). They carry a dedup ledger against each other — do not add an item to one that another already owns. |
 
 ## Three lists that must agree
 
