@@ -1,7 +1,15 @@
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+
+import { logger } from './observability.js'
 import { stableId, toNumber } from './utils.js'
 
 const DEFAULT_BASE_URL = 'https://rapidpro.io/api/v2'
+const DEFAULT_REQUEST_TIMEOUT_MS = 10000
+const HEX_DIGEST = /^[0-9a-f]{64}$/i
 const TEL_PREFIX = 'tel:'
+const UNCONFIGURED_SECRET_MESSAGE = 'RAPIDPRO_WEBHOOK_SECRET is not configured, so the RapidPro field-report webhook cannot authenticate any caller. Set the secret, or set LINDELA_LITE_RAPIDPRO_INSECURE_ALLOW_UNSIGNED=1 to accept unsigned webhooks on a local development machine.'
+
+let warnedUnconfiguredSecret = false
 
 export function rapidProStatus(env = process.env) {
   return {
@@ -14,6 +22,10 @@ export function rapidProStatus(env = process.env) {
     default_contacts: splitList(env.RAPIDPRO_ALERT_CONTACTS).length,
     default_groups: splitList(env.RAPIDPRO_ALERT_GROUPS).length,
     inbound_webhook_protected: Boolean(env.RAPIDPRO_WEBHOOK_SECRET),
+    // An unsigned inbound is a deliberate local-development choice, so it gets
+    // its own flag rather than hiding behind inbound_webhook_protected: false.
+    inbound_webhook_secure: Boolean(env.RAPIDPRO_WEBHOOK_SECRET) || !allowUnsignedInbound(env),
+    inbound_webhook_unsigned_allowed: !env.RAPIDPRO_WEBHOOK_SECRET && allowUnsignedInbound(env),
   }
 }
 
@@ -27,15 +39,7 @@ export async function sendRapidProAlert(alert, options = {}, env = process.env) 
   const startedAt = queuedAt
 
   try {
-    const response = await fetch(request.url, {
-      method: 'POST',
-      headers: {
-        authorization: `Token ${config.token}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(request.body),
-    })
-    const responseBody = await readResponseBody(response)
+    const { response, responseBody } = await dispatchToRapidPro(request.url, config, request.body, env)
     const sentAt = new Date().toISOString()
     const dispatch = rapidProDispatchRecord({
       alert,
@@ -226,14 +230,120 @@ export function responseMetrics(data) {
   return Object.values(result)
 }
 
+/**
+ * Guard for POST /api/v1/rapidpro/field-report, which writes records.
+ *
+ * Two credentials are accepted, in this order:
+ *   - `x-rapidpro-signature`: hex HMAC-SHA256 of the raw request body, keyed
+ *     with RAPIDPRO_WEBHOOK_SECRET. Covers the bytes, so it detects a tampered
+ *     body as well as a wrong caller. Requires the caller to have buffered the
+ *     raw body onto `req.rawBody` first; without it this fails closed.
+ *   - the shared secret in `x-rapidpro-secret`, `x-lindela-rapidpro-secret`, a
+ *     Bearer token, or `?secret=` — what RapidPro itself sends.
+ *
+ * An absent secret is NOT the same as a correct one. It throws a 503 naming the
+ * operator problem rather than returning true, so a deployment that believes it
+ * is protected fails loudly instead of quietly accepting every caller. The only
+ * way to opt out is LINDELA_LITE_RAPIDPRO_INSECURE_ALLOW_UNSIGNED=1, which
+ * someone has to write down on purpose.
+ *
+ * Every rejection returns the same false so the caller cannot leak which of
+ * "no signature", "malformed signature" and "wrong signature" applied.
+ */
 export function verifyRapidProWebhook(req, url, env = process.env) {
   const secret = env.RAPIDPRO_WEBHOOK_SECRET
-  if (!secret) return true
+  if (!secret) {
+    if (allowUnsignedInbound(env)) return true
+    // Say it once. Every rejected caller is an operator symptom, not a new
+    // fact, and an unbounded logger is a log-flood lever pointed at ourselves.
+    if (!warnedUnconfiguredSecret) {
+      warnedUnconfiguredSecret = true
+      logger.error('rapidpro_webhook_secret_unconfigured', {
+        message: UNCONFIGURED_SECRET_MESSAGE,
+      })
+    }
+    throw Object.assign(new Error(UNCONFIGURED_SECRET_MESSAGE), { statusCode: 503 })
+  }
+
+  const signature = signatureHeader(req.headers)
+  if (signature !== null) return verifyBodySignature(signature, req.rawBody, secret)
+
   const provided = req.headers['x-rapidpro-secret']
     || req.headers['x-lindela-rapidpro-secret']
     || bearerToken(req.headers.authorization)
     || url.searchParams.get('secret')
-  return provided === secret
+  return constantTimeEquals(provided, secret)
+}
+
+/** The opt-out is deliberately narrow: exactly `1`, never truthy. */
+function allowUnsignedInbound(env) {
+  return env.LINDELA_LITE_RAPIDPRO_INSECURE_ALLOW_UNSIGNED === '1'
+}
+
+function signatureHeader(headers) {
+  const raw = headers['x-rapidpro-signature'] ?? headers['x-lindela-rapidpro-signature']
+  if (raw === undefined || raw === null || raw === '') return null
+  return String(raw).trim()
+}
+
+function verifyBodySignature(signature, rawBody, secret) {
+  const hex = signature.replace(/^sha256=/i, '')
+  if (!HEX_DIGEST.test(hex)) return false
+  // Fail closed: a signature we cannot recompute over the exact bytes received
+  // is not a signature, and guessing that it was fine is the bug this replaces.
+  if (rawBody === undefined || rawBody === null) return false
+  const body = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody), 'utf8')
+  const expected = createHmac('sha256', secret).update(body).digest()
+  return constantTimeEquals(Buffer.from(hex, 'hex'), expected)
+}
+
+/**
+ * Constant-time equality over equal-length digests. timingSafeEqual throws on a
+ * length mismatch, so both sides are hashed first: the secret's length is not
+ * something a caller gets to probe one byte at a time, and the compare cannot
+ * take the exception path instead of the comparison path.
+ */
+function constantTimeEquals(a, b) {
+  const left = digestOf(a)
+  const right = digestOf(b)
+  if (!left || !right) return false
+  return timingSafeEqual(left, right)
+}
+
+function digestOf(value) {
+  if (value === undefined || value === null || value === '') return null
+  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8')
+  return createHash('sha256').update(bytes).digest()
+}
+
+/**
+ * One deadline across connect, headers and body. RapidPro stalling is an
+ * ordinary outage, and the caller needs a dispatch record either way — an
+ * unbounded fetch would hang the request that triggered the alert instead.
+ */
+async function dispatchToRapidPro(url, config, body, env) {
+  const timeoutMs = Number(env.RAPIDPRO_REQUEST_TIMEOUT_MS) > 0
+    ? Number(env.RAPIDPRO_REQUEST_TIMEOUT_MS)
+    : DEFAULT_REQUEST_TIMEOUT_MS
+  const controller = new AbortController()
+  const timer = setTimeout(() => {
+    controller.abort(Object.assign(new Error(`RapidPro request timed out after ${timeoutMs}ms`), { statusCode: 504 }))
+  }, timeoutMs)
+  timer.unref?.()
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        authorization: `Token ${config.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    return { response, responseBody: await readResponseBody(response) }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function rapidProConfig(env) {

@@ -29,6 +29,8 @@ outside a laptop: **SEC-01** (every GET is unauthenticated), **SEC-04**
 
 ### SEC-01 — Every GET route is unauthenticated, including full-data export
 
+**Fixed 2026-10-03.** Every route requires a token when auth is configured, GET included. The widening is deliberate and opt-in: `LINDELA_LITE_PUBLIC_PATHS` names specific paths, and there is no blanket public-read switch. Guarded by `test/auth-deny-by-default.test.js`.
+
 `src/server.js:237`
 
 ```js
@@ -55,6 +57,8 @@ carve out only `/api/v1/health` and static assets. See ENH-01 for the scope tabl
 
 ### SEC-02 — The RapidPro field-report webhook is open by default
 
+**Fixed 2026-10-03.** An unconfigured secret now returns 503 rather than accepting; the insecure path requires `LINDELA_LITE_RAPIDPRO_INSECURE_ALLOW_UNSIGNED=1`. HMAC-SHA256 body signatures added, constant-time. Guarded by `test/rapidpro-webhook-auth.test.js` and `test/rapidpro-signature-live-route.test.js`.
+
 `src/rapidpro.js:229-231`
 
 ```js
@@ -73,6 +77,8 @@ The tool that field staff rely on to escalate can be written into by a stranger.
 
 ### SEC-03 — A read-only token can perform every unnamed mutation
 
+**Fixed 2026-10-03.** `scopeForRoute` returns `admin:*` for any unmapped mutation — a scope no scoped token holds. Reads fall back to `read:hazards`; only the write path is denied by default, because an unread route leaks data while an unwritten one changes it.
+
 `src/auth.js:66-79`. `scopeForRoute` has five special-cased prefixes; everything
 else falls through to `return 'read:hazards'`.
 
@@ -86,6 +92,8 @@ token issued "just to view the map" can register a webhook pointing anywhere and
 trigger a broadcast to every field team.
 
 ### SEC-04 — Auth fails open on unset *or malformed* configuration
+
+**Fixed 2026-10-03.** `parseTokens` throws on malformed JSON, a non-array, an entry with no token, and an empty array. An operator error is now an outage rather than a silent downgrade to open.
 
 `src/server.js:229` gates the whole auth block on env vars being present:
 
@@ -196,6 +204,8 @@ forever. See [_research/00-audit-baseline.md](_research/00-audit-baseline.md#d2-
 
 ### SEC-05 — The webhook URL is an SSRF primitive
 
+**Fixed 2026-10-03.** `assertSafeWebhookUrl` validates scheme, embedded credentials, and every resolved address against IPv4/IPv6 private ranges. It runs at dispatch as well as registration — DNS rebinding means a hostname that resolved publicly at registration can resolve to 127.0.0.1 minutes later.
+
 `src/webhooks.js:6-9`
 
 ```js
@@ -227,6 +237,8 @@ personal data, receives `{success: true}`, and has a false compliance record.
 does not exist.
 
 ### INT-01 — Signed webhooks never deliver, silently
+
+**Fixed 2026-10-03.** The missing import was added and the empty `catch` now logs. Two follow-on defects surfaced: the signature is verified against a body the route had not yet read (it is now buffered first, cached on the request), and `globMatch` was duplicated in two modules.
 
 `src/outbox.js:54` calls `signPayload`, defined at `src/webhooks.js:44` and
 imported nowhere into `outbox.js`. The resulting `ReferenceError` is swallowed by
@@ -283,19 +295,23 @@ store to every partner.
   concurrent requests against a documented 20/min budget (`src/connectors/ipc-hdx.js:265`).
   Compounds SEC-01: the export endpoint is uncapped and unauthenticated.
 - **SEC-08 — Webhook glob patterns compile to unescaped regex.** `src/webhooks.js:51-59`
+  **Fixed 2026-10-03.** `globMatch` no longer compiles a regex at all — it is a two-pointer scan, so no pattern can be catastrophic. Escaping metacharacters was not enough: translating `*` to `.*` still leaves `*a*a*a…*b` a live combinatorial hang.
   escapes only `.` before mapping `*` to `.*`. A pattern containing `(`/`+` becomes
   a catastrophic-backtracking regex. **Measured 14,168 ms at n=26** on `(a+)+`.
   Duplicated at `src/outbox.js:119`. Patterns are user-supplied via
   `POST /api/v1/webhooks`, so this is an unauthenticated-cost DoS under SEC-03.
 - **SEC-09 — Token comparison is not constant-time**, `src/auth.js:31`
+  **Fixed 2026-10-03.** `crypto.timingSafeEqual` across every candidate token, length-equalised first. The audit subject is now a SHA-256 fingerprint — it previously put the first 8 characters of the secret into every log line that carried it.
   (`t.token === token`), and **the first 8 characters of the bearer token are
   persisted as the actor** at `src/auth.js:37` into every `action_logs` row.
   **Reproduced:** `token_SUPERSEC` in a stored record. Action logs are exported
   and shipped in reports.
 - **SEC-10 — `/metrics` is served before the auth gate.** `src/server.js:105-109`
+  **Fixed 2026-10-03.** Metrics are served behind the auth gate rather than in front of it.
   returns before `handleApi` at `:110`. `/api/v1/metrics` is unauthenticated
   despite its namespace. Leaks route labels, rates and error counts.
 - **SEC-11 — Internal error messages reach the client.** `src/server.js:118-122`
+  **Fixed 2026-10-03.** Errors with an explicit 4xx `statusCode` are written for the caller and keep their message; anything else logs a stack server-side and returns `Internal server error` plus a correlation id.
   returns `error.message`. `pg` errors carry connection strings and statement
   text; `JSON.parse` errors carry payload fragments; filesystem errors carry
   absolute paths.

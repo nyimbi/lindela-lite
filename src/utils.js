@@ -269,10 +269,20 @@ export function jsonResponse(res, status, body, headers = {}) {
 
 const DEFAULT_MAX_BODY_BYTES = Number(process.env.LINDELA_LITE_MAX_BODY_BYTES || 5 * 1024 * 1024)
 
-export async function readRequestJson(req, { maxBytes = DEFAULT_MAX_BODY_BYTES } = {}) {
-  // Check Content-Length first so an oversized upload is rejected before it
-  // is buffered. This is advisory: it can lie, so the streaming check below
-  // is the authoritative one.
+/**
+ * Buffers the request body once and caches it on `req.__rawBody`.
+ *
+ * A webhook signature covers the exact bytes sent, so verification has to
+ * happen after buffering but before anything interprets the body. Draining the
+ * stream twice yields nothing the second time — the chunks are gone — which is
+ * why this caches and why readRequestJson() reuses it.
+ */
+export async function readRawBody(req, { maxBytes = DEFAULT_MAX_BODY_BYTES } = {}) {
+  if (req.__rawBody !== undefined) return req.__rawBody
+
+  // Check Content-Length first so an oversized upload is rejected before it is
+  // buffered. This is advisory: it can lie, so the streaming check below is
+  // the authoritative one.
   const declaredLength = Number(req.headers?.['content-length'])
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     throw Object.assign(
@@ -294,11 +304,16 @@ export async function readRequestJson(req, { maxBytes = DEFAULT_MAX_BODY_BYTES }
     chunks.push(chunk)
   }
 
-  const raw = Buffer.concat(chunks).toString('utf8')
+  req.__rawBody = Buffer.concat(chunks).toString('utf8')
+  return req.__rawBody
+}
+
+export async function readRequestJson(req, options = {}) {
+  const raw = await readRawBody(req, options)
   if (!raw.trim()) return {}
   try {
     return JSON.parse(raw)
-  } catch (error) {
+  } catch {
     throw Object.assign(new Error('Request body must be valid JSON'), { statusCode: 400 })
   }
 }

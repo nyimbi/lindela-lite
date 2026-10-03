@@ -7,54 +7,106 @@ All additions are additive; no existing endpoint changed shape.
 
 ### Fixed
 
-Storage correctness. Six defects, all of which presented as working code.
+**Security. Ten defects.** The headline is that authentication was, in effect,
+optional — and a deployment with it configured looked secured.
 
-- **`replaceAnalytics` dropped two derived collections on Postgres.** The method
-  took four parameters where the caller passes six, so `population_at_risk` and
-  `facilities_at_risk` — people at risk, facilities at risk — were computed,
-  passed in, and never written. Impact-based forecasting worked on the JSON
-  backend and was silently absent on Postgres, which is the default backend
-  whenever `DATABASE_URL` is set. It also delegated to `merge()` where `replace()`
-  was meant, so a region that stopped qualifying kept its last risk score
-  forever, and the two backends disagreed about whether stale analytics survive
-  depending on an environment variable.
-- **`write()` disabled content-addressed dedup permanently.** `payload_hash` is a
-  first-class column that `merge()` reads to skip re-ingested identical upstream
-  data. The full-table rewrite path omitted it, so after a single `write()` call
-  every stored hash read back `null`, no incoming hash could ever match, and
-  dedup was dead for the life of the table — with no error anywhere, because a
-  null hash simply never matches.
-- **`JsonStore` lost writes under concurrency.** Every mutation is a
-  read-modify-write of one file. Twenty concurrent merges left six survivors:
-  each caller read the same snapshot and the last writer won. All mutations are
-  now serialised through an in-process promise chain. Writes also go to a temp
-  file and are `rename()`d into place, so an interrupted write leaves the
-  previous store intact instead of a truncated JSON file.
-- **Retention deleted nothing.** `POST /api/v1/maintenance/apply-retention`
-  merged the surviving records back over the originals, and `merge()` keys on
-  `id` — so the route reported `{success: true, expired: 1}` and every expired
-  record stayed exactly where it was. Both stores gained `remove()`, the
-  counterpart to `merge()`, and the route now calls it.
-- **Ingestion reported failure on success.** `countRecords()` and
-  `countRecordsByCollection()` named four collections while the merge accumulator
-  handled six. `ipc_hdx` returns only `food_security_records` and `who_gho` only
-  `disease_observations`, so both produced
-  `degraded — Expected at least 1 records; received 0` on fully successful runs.
-  An operator watching source health sees a healthy food-security pipeline as
-  broken and learns to ignore the health signal that would have told them data
-  was lost. All three consumers now derive from one exported
-  `OUTPUT_COLLECTIONS` list, as do the run's `counts` and the per-run lineage
-  record, which were separately truncated to the same four collections.
-- **Two regression guards asserted on source text.** They read `src/ingestion.js`
-  and checked that the string `food_security_records: []` was present — which
-  tests the accumulator (correct) while the actual defect sat in `countRecords`
-  fifty lines away, and which fails the moment the accumulator is refactored to
-  derive from the shared list that *fixes* the bug. Replaced with behavioural
-  assertions driven through stub connectors. No test covered retention at all,
-  which is why that no-op survived; it is now covered at the HTTP boundary.
+- **Every GET route was unauthenticated.** The guard read
+  `if (!auth && req.method !== 'GET')`, so GETs were never rejected.
+  `GET /api/v1/export.csv` — which returns field reports and RapidPro message
+  bodies — was served to anyone who could reach the port, even with API keys
+  correctly configured. All routes now require a token. The widening is
+  deliberate and explicit: `LINDELA_LITE_PUBLIC_PATHS` names specific paths and
+  there is no blanket public-read switch, because the previous behaviour was
+  exactly that switch.
+- **A read-only token could perform any mutation.** `scopeForRoute` fell through
+  to `read:hazards` for any route not in its five special cases, so a token
+  issued for reading hazards could write to everything, including routes added
+  after it was issued. Reads and writes now map to explicit scope tables; an
+  unmapped mutation requires `admin:*`, which no scoped token holds. Adding a
+  route without adding it to the table now closes it rather than opening it.
+- **Auth failed open on misconfiguration.** A malformed `LINDELA_LITE_TOKENS`
+  parsed to `[]`, and an empty token list disabled the entire auth block — a
+  stray comma turned authentication off in production and nothing said so.
+  Malformed configuration now throws: an operator error is an outage, not a
+  silent downgrade to open.
+- **`/metrics` was served before the auth gate**, so `/api/v1/metrics` was
+  reachable without a token despite sitting in the authenticated namespace,
+  leaking request rates, error rates, latency percentiles and route labels.
+- **Internal error messages were returned verbatim.** `error.message` reached
+  the client for every failure, including `pg` errors carrying the connection
+  string and failing statement, `JSON.parse` errors carrying a fragment of the
+  payload, and filesystem errors carrying absolute paths. Errors with an
+  explicit 4xx `statusCode` are written for the caller and keep their message;
+  everything else logs server-side and returns a correlation id.
+- **Token comparison was not constant-time**, and the audit subject was
+  `token_${token.slice(0, 8)}` — the first eight characters of the secret in
+  every log line that carried it. Now `crypto.timingSafeEqual` across all
+  candidates, and a SHA-256 fingerprint that is stable for correlation but
+  carries nothing.
+- **The RapidPro field-report webhook was open by default.**
+  `if (!secret) return true` meant an unconfigured secret was indistinguishable
+  from a production deployment where nobody set one. It now returns 503, and
+  accepting unsigned webhooks requires `LINDELA_LITE_RAPIDPRO_INSECURE_ALLOW_UNSIGNED=1`.
+  HMAC-SHA256 body signatures were added alongside the shared secret, compared
+  in constant time; a present-but-invalid signature does not fall back to the
+  secret check. `rapidProStatus` reports which insecure state a deployment is
+  in.
+- **Signed webhooks never delivered.** `outbox.js` called `signPayload` without
+  importing it; the resulting `ReferenceError` was swallowed by an empty
+  `catch`, so every secret-protected webhook failed silently and was marked
+  `failed` after five attempts with no record of why.
+- **Webhook subscriptions were an SSRF primitive.** URL validation was
+  `url.startsWith('http')`, which admitted the cloud metadata endpoint,
+  loopback, RFC1918 and CGNAT ranges, and decimal- or hex-encoded loopback.
+  Now: explicit scheme, no embedded credentials, and every resolved address
+  checked against IPv4 and IPv6 private ranges. The check runs at dispatch as
+  well as registration, because DNS rebinding means a hostname that resolved
+  publicly at registration can resolve to 127.0.0.1 minutes later.
+- **Webhook glob patterns compiled to unescaped regex**, so a subscription
+  created with pattern `(a+)+` hung the event loop — measured 14.2 s on a
+  26-character input. `globMatch` no longer compiles a regex at all; it is a
+  two-pointer scan. Escaping metacharacters would not have been enough,
+  because translating `*` to `.*` still leaves `*a*a*a…*b` a live combinatorial
+  hang. It was also duplicated in two modules; there is now one.
+
+Three further defects surfaced while fixing these and are also fixed:
+
+- **A second mutation auth path** (`isAuthorizedMutation`) authorized by bare
+  API-key comparison with no scope check, and was called from nowhere. Deleted
+  rather than fixed — dead code that duplicates an authorization decision is a
+  bypass waiting to be wired up.
+- **Webhook signature verification ran before the body was read.** A unit test
+  of `verifyRapidProWebhook` passed whether or not the route could supply the
+  bytes it needed, because the body stream is consumed once. The HMAC path was
+  green in tests and dead in production: every signed request failed closed.
+  `readRawBody` now buffers once and caches on the request.
+- **`logger.error({ err })` serialized to `{}`** — an `Error`'s fields are
+  non-enumerable, so the log said nothing at all about the failure it was
+  recording.
+
+### Breaking changes
+
+- GET routes require authentication when `LINDELA_LITE_TOKENS` or
+  `LINDELA_LITE_API_KEY` is set. Set `LINDELA_LITE_PUBLIC_PATHS` to reopen
+  specific paths.
+- Narrow-scoped tokens now get 403 on routes that were never mapped. Grant
+  `*`, `admin:*`, or the specific scope.
+- `RAPIDPRO_WEBHOOK_SECRET` must now be set, or
+  `LINDELA_LITE_RAPIDPRO_INSECURE_ALLOW_UNSIGNED=1` set, for the field-report
+  webhook to accept anything.
 
 ### Added
 
+- `test/auth-deny-by-default.test.js` — 20 tests. Every one of the auth fixes
+  above was verified by reverting it and watching the suite fail.
+- `test/rapidpro-signature-live-route.test.js` — 7 tests against the real HTTP
+  route, because a unit test of the verifier could not see the body-ordering
+  defect.
+- `test/webhook-security.test.js` — 23 tests. The HMAC round-trip needed a
+  seam: `dispatchPending` accepts `options.checkUrl`, defaulting to the SSRF
+  guard. Nothing in the request path passes it; a companion test exercises the
+  default policy against a real loopback listener and asserts no request
+  arrives.
 - `llms.txt` — a map of the repository for agents: how to verify, the model
   contract, the three collection lists that must agree, and the known gaps.
 - `test/store-conformance.test.js` — one behavioural contract run against every
@@ -160,6 +212,54 @@ implement the most functional defensible option, never invented coefficients):
 - `docs/outbreak-and-food-security-scoping.md` amended 2026-10-02: its "no
   keyless IPC feed" conclusion never checked HDX; the original verification
   record is kept, with the supersession stated.
+
+### Fixed (storage)
+
+Storage correctness. Six defects, all of which presented as working code.
+
+- **`replaceAnalytics` dropped two derived collections on Postgres.** The method
+  took four parameters where the caller passes six, so `population_at_risk` and
+  `facilities_at_risk` — people at risk, facilities at risk — were computed,
+  passed in, and never written. Impact-based forecasting worked on the JSON
+  backend and was silently absent on Postgres, which is the default backend
+  whenever `DATABASE_URL` is set. It also delegated to `merge()` where `replace()`
+  was meant, so a region that stopped qualifying kept its last risk score
+  forever, and the two backends disagreed about whether stale analytics survive
+  depending on an environment variable.
+- **`write()` disabled content-addressed dedup permanently.** `payload_hash` is a
+  first-class column that `merge()` reads to skip re-ingested identical upstream
+  data. The full-table rewrite path omitted it, so after a single `write()` call
+  every stored hash read back `null`, no incoming hash could ever match, and
+  dedup was dead for the life of the table — with no error anywhere, because a
+  null hash simply never matches.
+- **`JsonStore` lost writes under concurrency.** Every mutation is a
+  read-modify-write of one file. Twenty concurrent merges left six survivors:
+  each caller read the same snapshot and the last writer won. All mutations are
+  now serialised through an in-process promise chain. Writes also go to a temp
+  file and are `rename()`d into place, so an interrupted write leaves the
+  previous store intact instead of a truncated JSON file.
+- **Retention deleted nothing.** `POST /api/v1/maintenance/apply-retention`
+  merged the surviving records back over the originals, and `merge()` keys on
+  `id` — so the route reported `{success: true, expired: 1}` and every expired
+  record stayed exactly where it was. Both stores gained `remove()`, the
+  counterpart to `merge()`, and the route now calls it.
+- **Ingestion reported failure on success.** `countRecords()` and
+  `countRecordsByCollection()` named four collections while the merge accumulator
+  handled six. `ipc_hdx` returns only `food_security_records` and `who_gho` only
+  `disease_observations`, so both produced
+  `degraded — Expected at least 1 records; received 0` on fully successful runs.
+  An operator watching source health sees a healthy food-security pipeline as
+  broken and learns to ignore the health signal that would have told them data
+  was lost. All three consumers now derive from one exported
+  `OUTPUT_COLLECTIONS` list, as do the run's `counts` and the per-run lineage
+  record, which were separately truncated to the same four collections.
+- **Two regression guards asserted on source text.** They read `src/ingestion.js`
+  and checked that the string `food_security_records: []` was present — which
+  tests the accumulator (correct) while the actual defect sat in `countRecords`
+  fifty lines away, and which fails the moment the accumulator is refactored to
+  derive from the shared list that *fixes* the bug. Replaced with behavioural
+  assertions driven through stub connectors. No test covered retention at all,
+  which is why that no-op survived; it is now covered at the HTTP boundary.
 
 ### Known limitations
 

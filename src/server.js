@@ -1,11 +1,11 @@
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { authenticate, requireScope, scopeForRoute } from './auth.js'
+import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath } from './auth.js'
 import { logger, metrics, timer } from './observability.js'
 import { refreshAnalytics } from './analytics.js'
 import { biasCorrectClimate } from './analytics/downscaling.js'
@@ -37,7 +37,7 @@ import {
 } from './reports.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
-import { filterRecords, jsonResponse, readRequestJson, toCsv, toGeoJson, stableId } from './utils.js'
+import { filterRecords, jsonResponse, readRawBody, readRequestJson, toCsv, toGeoJson, stableId } from './utils.js'
 import { redactPii, applyRetention, loadPolicy } from './pii.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
@@ -103,6 +103,18 @@ export function createServer(options = {}) {
       }
 
       if (url.pathname === '/metrics' || url.pathname === '/api/v1/metrics') {
+        // Served through the auth gate rather than in front of it. It was
+        // returned above handleApi(), so `/api/v1/metrics` was reachable without
+        // a token despite sitting in the authenticated namespace — leaking
+        // request rates, error rates, latency percentiles and route labels,
+        // the last being an enumeration aid.
+        if (isAuthConfigured() && !isPublicPath(url.pathname)) {
+          const metricsAuth = authenticate(req)
+          if (!metricsAuth) {
+            jsonResponse(res, 401, { success: false, error: 'Unauthorized' })
+            return
+          }
+        }
         res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'cache-control': 'no-store' })
         res.end(metrics.render())
         return
@@ -113,10 +125,36 @@ export function createServer(options = {}) {
       }
       await handleStatic(req, res, url.pathname)
     } catch (error) {
-      jsonResponse(res, error.statusCode || 500, {
-        success: false,
-        error: error.message || 'Internal server error',
-      })
+      // A thrown value's message used to reach the client verbatim. In this
+      // codebase that includes failures from `pg` — which carry the connection
+      // string, the failing statement text and constraint names — from
+      // JSON.parse, which carries a fragment of the offending payload, and from
+      // filesystem calls, which carry absolute paths. A 500 became an
+      // information-disclosure primitive.
+      //
+      // Errors that carry an explicit 4xx statusCode are deliberate client
+      // errors (validation, not-found, conflict) and their text is written for
+      // the caller. Anything else is an internal fault and gets a correlation id.
+      const statusCode = error.statusCode || 500
+      const exposeMessage = statusCode < 500
+      if (exposeMessage) {
+        jsonResponse(res, statusCode, { success: false, error: error.message || 'Request failed' })
+      } else {
+        const incidentId = randomUUID()
+        logger.error({
+          incident_id: incidentId,
+          route,
+          method: req.method,
+          // Spreading an Error into a JSON payload yields `{}` — its fields are
+          // non-enumerable. Log the parts, or the log says nothing at all.
+          err: { message: error.message, stack: error.stack },
+        }, 'request_failed')
+        jsonResponse(res, statusCode, {
+          success: false,
+          error: 'Internal server error',
+          incident_id: incidentId,
+        })
+      }
     } finally {
       const elapsed = t.end()
       const statusCode = res.statusCode || 500
@@ -226,25 +264,33 @@ async function handleStacRoute(store, req, res, url) {
 
 async function handleApi(store, req, res, url) {
   let auth = null
-  if (process.env.LINDELA_LITE_TOKENS || process.env.LINDELA_LITE_API_KEY) {
+  if (isAuthConfigured()) {
     if (url.pathname === '/api/v1/rapidpro/field-report' && req.method === 'POST') {
+      // Buffer first. A signature covers the exact bytes sent, and the body
+      // stream cannot be read twice — verifying first meant every HMAC-signed
+      // request failed closed against the real route while passing in tests
+      // that buffered the body themselves.
+      req.rawBody = await readRawBody(req)
       if (!verifyRapidProWebhook(req, url)) {
         jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook' })
         return
       }
-    } else if (url.pathname !== '/api/v1/health') {
+    } else if (!isPublicPath(url.pathname)) {
+      // Every route needs a token, GET included. The old guard rejected only
+      // non-GET methods, so `GET /api/v1/export.csv` — field reports and
+      // RapidPro message bodies — was served to anyone who could reach the
+      // port even with API keys correctly configured. A deployment with auth
+      // enabled looked secured and was not.
       auth = authenticate(req)
-      if (!auth && req.method !== 'GET') {
+      if (!auth) {
         jsonResponse(res, 401, { success: false, error: 'Unauthorized' })
         return
       }
-      if (auth) {
-        try {
-          requireScope(auth, scopeForRoute(req.method, url.pathname))
-        } catch (error) {
-          jsonResponse(res, error.statusCode || 403, { success: false, error: error.message })
-          return
-        }
+      try {
+        requireScope(auth, scopeForRoute(req.method, url.pathname))
+      } catch (error) {
+        jsonResponse(res, error.statusCode || 403, { success: false, error: error.message })
+        return
       }
     }
   }
@@ -898,13 +944,11 @@ async function handleApi(store, req, res, url) {
   jsonResponse(res, 404, { success: false, error: 'Not found' })
 }
 
-function isAuthorizedMutation(req, url) {
-  if (req.headers['x-api-key'] === process.env.LINDELA_LITE_API_KEY) return true
-  if (url.pathname === '/api/v1/rapidpro/field-report' && process.env.RAPIDPRO_WEBHOOK_SECRET) {
-    return verifyRapidProWebhook(req, url)
-  }
-  return false
-}
+// A second mutation auth path used to live here — isAuthorizedMutation() —
+// authorized by bare LINDELA_LITE_API_KEY comparison with no scope check, and
+// was called from nowhere. Every mutation is gated in handleApi() instead. It
+// was deleted rather than fixed: dead code that duplicates an authorization
+// decision is a bypass waiting to be wired up.
 
 async function handleIngestionRoute(store, data, req, res, url, route) {
   if (req.method === 'GET' && route.kind === 'status') {
@@ -1596,6 +1640,7 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'POST' && route.kind === 'field-report') {
+    req.rawBody = await readRawBody(req)
     if (!verifyRapidProWebhook(req, url)) {
       jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook secret' })
       return

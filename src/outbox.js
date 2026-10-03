@@ -1,4 +1,8 @@
+import { logger } from './observability.js'
 import { stableId, nowIso } from './utils.js'
+import { assertSafeWebhookUrl, matchEvent, signPayload } from './webhooks.js'
+
+export { matchEvent } from './webhooks.js'
 
 export async function emit(store, event, payload) {
   const data = await store.read()
@@ -17,7 +21,9 @@ export async function emit(store, event, payload) {
 }
 
 export async function dispatchPending(store, options = {}) {
-  const { webhooks = [], maxBatch = 50, timeoutMs = 5000 } = options
+  // checkUrl defaults to the SSRF guard and exists so tests can deliver to a
+  // loopback listener; nothing in the request path passes it.
+  const { webhooks = [], maxBatch = 50, timeoutMs = 5000, checkUrl = assertSafeWebhookUrl } = options
   const data = await store.read()
   const pending = (data.events_outbox || []).filter((e) => e.status === 'pending').slice(0, maxBatch)
 
@@ -54,6 +60,11 @@ export async function dispatchPending(store, options = {}) {
           headers['x-signature'] = signPayload(webhook.secret, body)
         }
 
+        // Re-check at the point of use. DNS rebinding means a host that resolved
+        // publicly when the subscription was created can point at 127.0.0.1 or
+        // 169.254.169.254 by the time this event is delivered.
+        await checkUrl(webhook.url)
+
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
@@ -71,6 +82,13 @@ export async function dispatchPending(store, options = {}) {
         }
       } catch (error) {
         // Swallow individual webhook errors; retry in next cycle
+        logger.error('webhook_delivery_failed', {
+          webhook_id: webhook.id,
+          url: webhook.url,
+          event: outboxEvent.event,
+          attempt: outboxEvent.attempts + 1,
+          error: error.message,
+        })
       }
     }
 
@@ -102,26 +120,4 @@ export async function dispatchPending(store, options = {}) {
   }
 
   return { dispatched, failed }
-}
-
-export function matchEvent(subscription, eventName) {
-  const patterns = subscription.events || []
-  if (!patterns.length) return false
-
-  for (const pattern of patterns) {
-    if (globMatch(pattern, eventName)) {
-      return true
-    }
-  }
-  return false
-}
-
-function globMatch(pattern, text) {
-  const regex = new RegExp(
-    `^${pattern
-      .replace(/\./g, '\\.')
-      .replace(/\*/g, '.*')
-      .replace(/\?/g, '.')}$`
-  )
-  return regex.test(text)
 }
