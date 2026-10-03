@@ -244,3 +244,53 @@ export function sqKm(value, { dash = '—' } = {}) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return dash
   return `${num(value, { dp: 0 })} km²`
 }
+// =============================================================
+// Locales
+// =============================================================
+
+/**
+ * What the product knows about each locale it ships.
+ *
+ * `rtl` drives `document.documentElement.dir`. Three surfaces set it by
+ * hand and five do not, and the RTL block in styles.css could never be reached
+ * from markup because every page hardcoded `dir="ltr"` on <html>.
+ *
+ * `label` is the language's name in that language, which is what a reader
+ * looking for their own language expects to see in a picker.
+ */
+const LOCALE_INFO = {
+  en: { label: 'English',      rtl: false },
+  sw: { label: 'Kiswahili',    rtl: false },
+  so: { label: 'Soomaali',     rtl: false },
+  am: { label: 'አማርኛ',        rtl: false },
+  fr: { label: 'Français',     rtl: false },
+  pt: { label: 'Português',    rtl: false },
+  din: { label: 'Thuɔŋjäŋ',      rtl: false },
+  km: { label: 'ភាសាខ្មែរ',      rtl: false },
+  nk: { label: 'Nhgakarimojong', rtl: false },
+  ar: { label: 'العربية',      rtl: true },
+}
+
+/** The locales this build ships, in picker order. */
+export const AVAILABLE_LOCALES = Object.keys(LOCALE_INFO)
+
+export function isRtl(locale) {
+  return Boolean(LOCALE_INFO[locale]?.rtl)
+}
+
+export function localeLabel(locale) {
+  return LOCALE_INFO[locale]?.label || locale
+}
+
+/**
+ * Apply a locale to the document.
+ *
+ * Sets `lang` and `dir` together, because setting only one of them is how a
+ * page ends up declaring Arabic content with a left-to-right layout.
+ */
+export function applyLocaleToDocument(locale) {
+  const root = document.documentElement
+  root.lang = locale
+  root.dir = isRtl(locale) ? 'rtl' : 'ltr'
+  return locale
+}

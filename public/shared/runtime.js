@@ -1,3 +1,4 @@
+import { applyLocaleToDocument } from './fmt.js'
 let _swRegistration = null
 
 /**
@@ -248,7 +249,18 @@ export async function initI18n(defaultLocale = 'en') {
      * English is now re-read as the base each time, so the result depends only on
      * which locale is selected and not on the path taken to get there.
      */
+    /**
+     * Apply `lang` and `dir` on every switch, not just at load. A locale change
+     * that left `dir="ltr"` on an Arabic page produced a right-to-left language
+     * laid out left-to-right — which is worse than not offering Arabic at all,
+     * because it looks finished.
+     */
     async set(locale) {
+      // Apply lang and dir on every switch, not just at load. A locale change
+      // that left dir="ltr" on an Arabic page produced a right-to-left
+      // language laid out left-to-right, which is worse than not offering
+      // Arabic at all because it looks finished.
+      applyLocaleToDocument(locale)
       const base = {}
       try {
         const res = await fetch('/i18n/en.json')

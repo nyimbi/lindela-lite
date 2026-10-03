@@ -7,7 +7,7 @@ import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventS
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState } from '/shared/seasonal.js'
 import { fillAppVersion } from '/shared/app-version.js'
 import { apiFetch, apiSettled, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
-import { esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
+import { applyLocaleToDocument, esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { formatRelative } from '/shared/fmt.js'
 
@@ -136,6 +136,9 @@ async function loadLocale(locale) {
     }
   }
   state.catalog = catalog
+  // lang and dir come from the shared locale table rather than an `=== 'ar'`
+  // test here, so adding an RTL locale is a one-line change in one place.
+  applyLocaleToDocument(locale)
   applyI18n()
 }
 
@@ -146,9 +149,7 @@ function t(key, vars = {}) {
 }
 
 function applyI18n() {
-  const isRtl = state.locale === 'ar'
-  document.documentElement.lang = state.locale
-  document.documentElement.dir = isRtl ? 'rtl' : 'ltr'
+  applyLocaleToDocument(state.locale)
   document.querySelectorAll('[data-i18n]').forEach((el) => {
     const key = el.dataset.i18n
     el.textContent = t(key)
