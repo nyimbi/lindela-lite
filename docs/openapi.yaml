@@ -1893,7 +1893,7 @@ components:
                 type: object
     HealthResponse:
       type: object
-      required: [success, status, version, counts, sources, exclusions, storage]
+      required: [success, status, version, counts, sources, exclusions, storage, auth]
       properties:
         success:
           type: boolean
@@ -1925,6 +1925,40 @@ components:
             mode:
               type: string
               enum: [json, pg0, postgres, custom]
+        auth:
+          type: object
+          description: >-
+            The authentication posture of this deployment, on the one route an
+            operator can reach without holding a token. It used to live only on
+            /api/v1/auth-info, which requires a token, so the person asking
+            whether a deployment was secured was the one person who could not
+            find out. A boolean, the public-path list, and nothing about which
+            token holds what.
+          required: [configured, enforced, public_paths]
+          properties:
+            configured:
+              type: boolean
+              description: >-
+                Whether any credential is configured at all. `false` here means
+                the deployment is running unauthenticated, which is a deliberate
+                mode and not a failure - but it is also indistinguishable from a
+                typo in LINDELA_LITE_TOKENS, which is why this field exists.
+            enforced:
+              type: boolean
+              description: >-
+                Whether the request gate is running. It tracks `configured`;
+                false does not mean unsecured, it means there is nothing to
+                enforce.
+            public_paths:
+              type: array
+              description: >-
+                Paths reachable without a token, whatever the token
+                configuration. An operator sets LINDELA_LITE_PUBLIC_PATHS to
+                widen this deliberately; there is no blanket public-reads
+                switch.
+              items:
+                type: string
+              example: ['/api/v1/health', '/api/v1/ready']
     ListResponse:
       type: object
       required: [success, data]
