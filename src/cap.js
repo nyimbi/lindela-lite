@@ -1,4 +1,41 @@
 import { KNOWN_DISTRICTS } from './districts.js'
+import { ALERT_EVENT_STATUSES } from './schema.js'
+
+/**
+ * The CAP msgType for each alert lifecycle status.
+ *
+ * This table was previously the literal `['resolved', 'rejected', 'cancelled']`
+ * inline in the renderer. Two of those three words are not in
+ * `ALERT_EVENT_STATUSES` (`open` / `acknowledged` / `resolved`) and cannot be
+ * stored on an alert event, so the branch that was supposed to retire a
+ * rejected alert was unreachable: a rejected alert rendered `<msgType>Alert</msgType>`
+ * and kept publishing as live to every national system that pulls this feed.
+ *
+ * The vocabulary lives in `schema.js` and is not restated here; the map is
+ * checked against it below, so a status added to the schema without a
+ * classification here fails at import rather than publishing as live by default.
+ *
+ * `acknowledged` stays an `Alert`, not an `Update`. CAP `Update` asserts that an
+ * earlier message with this identifier was superseded by this one; acknowledging
+ * an alert changes nothing about the message, and the alert may never have been
+ * dispatched, so `Update` would assert a publication history that does not exist.
+ */
+const CAP_MSG_TYPES = Object.freeze({
+  open: 'Alert',
+  acknowledged: 'Alert',
+  resolved: 'Cancel',
+})
+
+for (const status of ALERT_EVENT_STATUSES) {
+  if (!Object.hasOwn(CAP_MSG_TYPES, status)) {
+    throw new Error(
+      `cap.js: alert status '${status}' has no CAP msgType; classify it in CAP_MSG_TYPES`
+    )
+  }
+}
+
+/** CAP 1.2 `scope`: what the sender permits the recipient to do with the message. */
+const CAP_SCOPES = Object.freeze(['Public', 'Restricted', 'Private'])
 
 /**
  * Render an alert event as CAP 1.2 XML.
@@ -36,10 +73,9 @@ export function renderCapXml(alertEvent = {}, options = {}) {
   // still `Actual` (the message is true) but is published as a Cancel, so a
   // downstream system retires it rather than leaving it live.
   const status = 'Actual'
-  const msgType = ['resolved', 'rejected', 'cancelled'].includes(String(alertEvent.status || '').toLowerCase())
-    ? 'Cancel'
-    : 'Alert'
-  const scope = scopeOverride || 'Public'
+  const msgType = resolveMsgType(alertEvent)
+  const cancelled = msgType === 'Cancel'
+  const scope = resolveScope(scopeOverride)
 
   const district = resolveDistrict(alertEvent)
   const severity = mapSeverity(alertEvent.severity || 'medium')
@@ -48,8 +84,8 @@ export function renderCapXml(alertEvent = {}, options = {}) {
   const category = categorizeEvent(alertEvent)
   const event = escapeXml(eventName(alertEvent))
 
-  const headline = escapeXml(headlineFor(alertEvent))
-  const description = escapeXml(descriptionFor(alertEvent, district))
+  const headline = escapeXml(headlineFor(alertEvent, cancelled))
+  const description = escapeXml(descriptionFor(alertEvent, district, cancelled))
 
   const areaDesc = escapeXml(
     district ? `${district.name} district extent` : 'Affected area, extent not established'
@@ -66,6 +102,7 @@ export function renderCapXml(alertEvent = {}, options = {}) {
   <status>${status}</status>
   <msgType>${msgType}</msgType>
   <scope>${scope}</scope>
+  <restriction>${escapeXml(restrictionFor(scope))}</restriction>
   <info>
     <category>${category}</category>
     <event>${event}</event>
@@ -80,6 +117,70 @@ ${circle}
     </area>
   </info>
 </alert>`
+}
+
+/**
+ * The CAP msgType for an alert event, from the shared status vocabulary.
+ *
+ * A missing status means the record predates the lifecycle and is still live.
+ * Any other value is compared exactly against `ALERT_EVENT_STATUSES` — not
+ * lower-cased, not truthiness-tested — and an unrecognised one throws rather
+ * than falling through to `Alert`. Falling through is the defect: a status the
+ * renderer does not understand is one it cannot show to be retired, and
+ * publishing it as live is the unsafe direction.
+ */
+function resolveMsgType(alertEvent) {
+  const raw = alertEvent?.status
+  if (raw === undefined || raw === null) return 'Alert'
+  if (!ALERT_EVENT_STATUSES.includes(raw)) {
+    throw new Error(
+      `alert status must be one of ${ALERT_EVENT_STATUSES.join(', ')}; refusing to render '${raw}' as a live alert`
+    )
+  }
+  return CAP_MSG_TYPES[raw]
+}
+
+/**
+ * The CAP dissemination scope.
+ *
+ * `scope` in CAP 1.2 is not a label: it tells the recipient whether the message
+ * is for unrestricted dissemination, controlled dissemination, or a single
+ * recipient. It was a hardcoded `Public` literal, and the `scope` option beside
+ * it was never reachable from any caller — `src/server.js` renders with the
+ * record alone — so the platform asserted unrestricted dissemination for every
+ * alert without ever deciding it.
+ *
+ * Nothing on an alert event carries a classification. `alertEvent.scope` is
+ * `{ district }`, a geographic extent that shares the name and nothing else
+ * with this field. Guessing one — the tempting move being `Security` implies
+ * `Restricted` — would be worse than the literal: a national system that filters
+ * on `Public` would silently drop every conflict alert this platform raises,
+ * which is the same class of harm as a resolved alert that never retires. So the
+ * default is kept, but it is now asserted rather than implied: the document
+ * carries a `<restriction>` saying the message derives from public monitoring
+ * data. An alert that does need controlled dissemination says so through the
+ * option, and anything outside the CAP vocabulary is rejected instead of being
+ * passed to a national system as a misspelt scope.
+ */
+function resolveScope(scopeOverride) {
+  if (scopeOverride === undefined || scopeOverride === null) return 'Public'
+  if (!CAP_SCOPES.includes(scopeOverride)) {
+    throw new Error(
+      `CAP scope must be one of ${CAP_SCOPES.join(', ')}; refusing to render '${scopeOverride}'`
+    )
+  }
+  return scopeOverride
+}
+
+/** How the scope above is worded in the document, so it is stated not implied. */
+function restrictionFor(scope) {
+  if (scope === 'Restricted') {
+    return 'Restricted dissemination: not for unrestricted publication. Confirm the recipient before onward distribution.'
+  }
+  if (scope === 'Private') {
+    return 'Private dissemination: addressed to a single named recipient and not for onward distribution.'
+  }
+  return 'No dissemination restriction. Derived by Lindela Lite from public monitoring data; verify before acting.'
 }
 
 /** The alert's district, if it names one we have a real extent for. */
@@ -108,15 +209,22 @@ function eventName(alertEvent) {
   return 'Hazard alert'
 }
 
-function headlineFor(alertEvent) {
+function headlineFor(alertEvent, cancelled) {
   const message = String(alertEvent.message || '').trim()
-  if (message) return message.length > 200 ? `${message.slice(0, 197)}...` : message
-  if (alertEvent.event_type) return String(alertEvent.event_type)
-  return eventName(alertEvent)
+  const base = message
+    ? (message.length > 200 ? `${message.slice(0, 197)}...` : message)
+    : (alertEvent.event_type ? String(alertEvent.event_type) : eventName(alertEvent))
+  // A Cancel whose headline reads as the original warning is read as a
+  // warning by anything that keys on text, which is most of what receives this
+  // feed. The message is still sent rather than suppressed — CAP Cancel retires
+  // a prior Alert by identifier, and dropping it would leave the downstream
+  // system holding the live alert indefinitely.
+  return cancelled ? `CANCELLED: ${base}` : base
 }
 
-function descriptionFor(alertEvent, district) {
+function descriptionFor(alertEvent, district, cancelled) {
   const parts = []
+  if (cancelled) parts.push('This alert is cancelled and is no longer in effect.')
   const rule = alertEvent.rule_name ? `Rule: ${alertEvent.rule_name}.` : null
   if (rule) parts.push(rule)
   if (alertEvent.metric) {
@@ -129,7 +237,7 @@ function descriptionFor(alertEvent, district) {
   else parts.push('Area: extent not established for this alert; no coordinates are asserted.')
   if (alertEvent.false_alert === true) parts.push('Reviewed outcome: recorded as a false alarm.')
   else if (alertEvent.false_alert === false) parts.push('Reviewed outcome: recorded as a warranted alert.')
-  else if (alertEvent.false_alert === null && ['resolved', 'rejected'].includes(String(alertEvent.status || '').toLowerCase())) {
+  else if (alertEvent.false_alert === null && cancelled) {
     parts.push('Reviewed outcome: not determined.')
   }
   parts.push('Generated by Lindela Lite from public monitoring data; not an official forecast.')
