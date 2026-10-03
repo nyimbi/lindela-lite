@@ -618,6 +618,22 @@ export async function seedFixturesFromCaptures(captures, { targetDir, nameFor = 
   return { fixtures: manifest.fixtures, superseded, manifest_path: manifestPath }
 }
 
+/** One manifest line: what the file is, and which response it was cut from. */
+function manifestRecord(name, capture) {
+  const extension = KIND_EXTENSIONS[capture.kind]
+  return {
+    file: `${name}.${extension ?? 'bin'}`,
+    url: capture.url,
+    source: capture.source,
+    status: capture.status,
+    content_type: capture.content_type,
+    kind: capture.kind,
+    byte_length: capture.byte_length,
+    content_hash: capture.content_hash,
+    retrieved_at: capture.retrieved_at,
+  }
+}
+
 /** Resolve a capture's fixture name: explicit callback, then the source table. */
 function fixtureNameFor(capture, nameFor) {
   const explicit = nameFor ? nameFor(capture) : null
