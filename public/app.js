@@ -2862,10 +2862,12 @@ async function handleAlertAction(id, action) {
   const safeId = encodeURIComponent(id)
   if (action === 'approve') {
     const payload = await postJson(`/api/v1/alert-events/${safeId}/approve`, { actor: 'dashboard' })
-    setStatus(payload.success ? `Alert approved.` : (payload.error || 'Approve failed'))
+    setStatus(payload.success ? `Alert approved. Sending it will now release the trigger.`
+      : `Could not approve: ${payload.error || 'the server gave no reason'}.`)
   } else if (action === 'reject') {
     const payload = await postJson(`/api/v1/alert-events/${safeId}`, { status: 'rejected' })
-    setStatus(payload.success ? `Alert rejected.` : (payload.error || 'Reject failed'))
+    setStatus(payload.success ? 'Alert rejected. No finance is released.'
+      : `Could not reject: ${payload.error || 'the server gave no reason'}.`)
   } else if (action === 'send') {
     const alert = (state.data.alerts?.data || []).find((a) => a.id === id)
     if (alert && (alert.severity === 'high' || alert.severity === 'critical')) {
@@ -2877,7 +2879,8 @@ async function handleAlertAction(id, action) {
     const payload = await postJson(`/api/v1/rapidpro/alert-events/${safeId}/send`, {
       urns: urns.split(',').map((u) => u.trim()).filter(Boolean),
     })
-    setStatus(payload.success ? 'Alert sent via RapidPro.' : (payload.error || 'Send failed'))
+    setStatus(payload.success ? 'Alert sent. It will reach each recipient by SMS.'
+      : `Could not send: ${payload.error || 'the server gave no reason'}.`)
   }
   await refresh({ force: true })
 }
@@ -2936,13 +2939,14 @@ async function handleReportAction(id, action) {
   const safeId = encodeURIComponent(id)
   if (action === 'approve') {
     const payload = await postJson(`/api/v1/reports/${safeId}/approve`, { actor: 'dashboard' })
-    setStatus(payload.success ? `Report approved.` : (payload.error || 'Approve failed'))
+    setStatus(payload.success ? `Report ${report.id} approved. It can now be distributed.`
+      : `Could not approve report ${report.id}: ${payload.error || 'the server gave no reason'}.`)
     await refresh({ force: true })
   } else if (action === 'distribute') {
     const payload = await postJson(`/api/v1/reports/${safeId}/distribute`, { channels: [{ channel: 'markdown_download' }] })
     if (payload.success || payload.report) {
       window.open(`/api/v1/reports/${safeId}/export.md`, '_blank')
-      setStatus('Report distributed.')
+      setStatus(`Report ${report.id} distributed. Check the delivery record for who received it.`)
     } else {
       setStatus(payload.error || 'Distribute failed')
     }
@@ -2992,7 +2996,7 @@ async function createReportTemplate() {
   if (!payload.success) { setStatus(payload.error || 'Template creation failed'); return }
   const sel = $('reportTemplateIdInput')
   if (sel) sel.value = payload.data.id
-  setStatus(`Created template ${payload.data.id}.`)
+  setStatus(`Template created. Reports built on it will use your section list.`)
   await refresh({ force: true })
 }
 
@@ -3005,7 +3009,7 @@ async function generateReport() {
   }
   const payload = await postJson('/api/v1/reports', { template_id: templateId, scope: reportScope(), generate: true })
   if (!payload.success) { setStatus(payload.error || 'Report generation failed'); return }
-  setStatus(`Generated report ${payload.data.id}.`)
+  setStatus(`Report generated. It needs approval before anyone is sent it.`)
   await refresh({ force: true })
 }
 
@@ -3023,7 +3027,7 @@ async function distributeLatestReport() {
   const payload = await postJson(`/api/v1/reports/${report.id}/distribute`, { channels: [{ channel: 'markdown_download' }] })
   if (!payload.success) { setStatus(payload.error || payload.data?.[0]?.error || 'Distribution failed'); return }
   window.open(`/api/v1/reports/${report.id}/export.md`, '_blank')
-  setStatus(`Prepared Markdown export for report ${report.id}.`)
+  setStatus(`Markdown export ready for report ${report.id}. The browser will download it.`)
   await refresh({ force: true })
 }
 
@@ -3095,7 +3099,7 @@ function renderIngestionPanel() {
 }
 
 async function runSingleSource(sourceId) {
-  setStatus(`Running ${sourceId}...`)
+  setStatus(`Running ${sourceId}. This fetches live data from the source; it may take a moment.`)
   const payload = await postJson('/api/v1/ingest/run', { sources: [sourceId] })
   setStatus(payload.success ? `Ran ${sourceId}.` : (payload.error || 'Ingestion failed'))
   await refresh({ force: true })
