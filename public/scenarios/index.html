@@ -20,6 +20,18 @@
       align-items: start;
     }
 
+    /* The language picker sits below the navbar rather than inside it: the
+       shared navbar only renders a switcher when a surface passes it one, and
+       scripts/check-i18n.mjs reads the locales a page offers straight out of
+       its markup. A picker assembled in JavaScript would be invisible to the
+       gate that exists to catch a surface offering a language it cannot
+       render, which is the one thing the picker must never do. */
+    .locale-bar {
+      display: flex;
+      justify-content: flex-end;
+      padding: var(--sp-2) var(--sp-4);
+    }
+
     /* --- Presets ------------------------------------------------
        A planner opens this screen with a question ("what if the rains fail?"),
        not with eight empty text boxes. These are the questions. */
@@ -130,154 +142,177 @@
   </style>
 </head>
 <body>
-    <a class="skip-link" href="#main">Skip to scenario builder</a>
+    <a class="skip-link" href="#main" data-i18n="scenarios.skip_to_builder">Skip to scenario builder</a>
   <!-- The page header was hand-rolled here and shared/navbar.js injected a
        second one, leaving two #locale-select elements in one document. The
        navbar owns the chrome. -->
 
+  <!--
+    One language, and that is the honest count: no catalogue carries a single
+    `scenarios.*` key, so every other locale would render this page as a list of
+    raw key names. Offer it anyway and the check-i18n gate fails this surface —
+    the picker is where a surface states what it can actually render, so a
+    one-option list is the accurate answer until a translator fills these in.
+    app.js keeps the same list in OFFERED_LOCALES and the two are asserted
+    equal, because a picker and the catalogue can otherwise disagree in
+    opposite directions.
+  -->
+  <div class="locale-bar">
+    <label for="locale-select" class="visually-hidden" data-i18n="scenarios.locale_label">Language</label>
+    <select id="locale-select">
+      <option value="en">English</option>
+    </select>
+  </div>
+
   <main id="main" tabindex="-1" class="page-main">
-    <h1 class="page-title">Scenario Workbench</h1>
-    <p class="page-lede">
+    <h1 class="page-title" data-i18n="scenarios.title">Scenario Workbench</h1>
+    <p class="page-lede" data-i18n="scenarios.lede">
       Ask what would change if the forecast did. Pick a starting point, adjust it,
       and run the model against the current record.
     </p>
 
     <div class="workbench-layout">
       <section class="panel" id="builderPanel" aria-labelledby="builderTitle">
-        <h2 class="section-title" id="builderTitle">Start from a scenario</h2>
+        <h2 class="section-title" id="builderTitle" data-i18n="scenarios.start_from">Start from a scenario</h2>
 
         <div class="preset-list" role="group" aria-label="Scenario presets">
           <button type="button" class="preset" data-preset="drought" aria-pressed="false">
-            <span class="preset-name">Drought — rains fail</span>
-            <span class="preset-desc">Rainfall down 40% for the season</span>
+            <span class="preset-name" data-i18n="scenarios.preset_drought">Drought — rains fail</span>
+            <span class="preset-desc" data-i18n="scenarios.preset_drought_desc">Rainfall down 40% for the season</span>
           </button>
           <button type="button" class="preset" data-preset="flood" aria-pressed="false">
-            <span class="preset-name">Flood — rains double</span>
-            <span class="preset-desc">Rainfall up 100% for the season</span>
+            <span class="preset-name" data-i18n="scenarios.preset_flood">Flood — rains double</span>
+            <span class="preset-desc" data-i18n="scenarios.preset_flood_desc">Rainfall up 100% for the season</span>
           </button>
           <button type="button" class="preset" data-preset="asset_outage" aria-pressed="false">
-            <span class="preset-name">Access lost — asset offline</span>
-            <span class="preset-desc">Every selected asset cut off</span>
+            <span class="preset-name" data-i18n="scenarios.preset_asset_outage">Access lost — asset offline</span>
+            <span class="preset-desc" data-i18n="scenarios.preset_asset_outage_desc">Every selected asset cut off</span>
           </button>
           <button type="button" class="preset" data-preset="conflict" aria-pressed="false">
-            <span class="preset-name">Conflict — displacement events</span>
-            <span class="preset-desc">Three medium-severity events</span>
+            <span class="preset-name" data-i18n="scenarios.preset_conflict">Conflict — displacement events</span>
+            <span class="preset-desc" data-i18n="scenarios.preset_conflict_desc">Three medium-severity events</span>
           </button>
           <button type="button" class="preset" data-preset="baseline" aria-pressed="false">
-            <span class="preset-name">Baseline</span>
-            <span class="preset-desc">No perturbation, for comparison</span>
+            <span class="preset-name" data-i18n="scenarios.preset_baseline">Baseline</span>
+            <span class="preset-desc" data-i18n="scenarios.preset_baseline_desc">No perturbation, for comparison</span>
           </button>
         </div>
 
-        <h2 class="section-title">Adjust</h2>
+        <h2 class="section-title" data-i18n="scenarios.adjust">Adjust</h2>
 
         <div class="field">
-          <label for="precipMultiplier">Rainfall multiplier</label>
+          <label for="precipMultiplier" data-i18n="scenarios.rainfall_multiplier">Rainfall multiplier</label>
           <input type="range" id="precipMultiplier" min="0.5" max="3.0" step="0.05" value="1.0"
                  aria-describedby="precipValue">
-          <p class="field-note"><output id="precipValue" for="precipMultiplier">1.0×</output> — current season is 1.0×</p>
+          <!-- The multiplier itself is written by app.js on every input event, so
+               it cannot be the element carrying data-i18n: a locale switch would
+               overwrite the live reading with the static one. -->
+          <p class="field-note"><output id="precipValue" for="precipMultiplier">1.0×</output><span data-i18n="scenarios.current_season"> — current season is 1.0×</span></p>
         </div>
 
         <div class="field">
-          <span class="field-label" id="assetListLabel">Take these assets offline</span>
+          <span class="field-label" id="assetListLabel" data-i18n="scenarios.take_assets_offline">Take these assets offline</span>
           <div class="asset-list" id="assetList" role="group" aria-labelledby="assetListLabel"></div>
         </div>
 
         <details class="disclosure">
-          <summary>Add an event</summary>
+          <summary data-i18n="scenarios.add_event">Add an event</summary>
 
           <fieldset class="fieldset">
-            <legend>Hazard event</legend>
+            <legend data-i18n="scenarios.hazard_event">Hazard event</legend>
             <div class="form-grid">
               <div>
-                <label for="hazardType">Type</label>
+                <label for="hazardType" data-i18n="scenarios.field_type">Type</label>
                 <input type="text" id="hazardType" placeholder="flood" list="hazard-types">
+                <!-- The datalist holds vocabulary the API accepts, not prose: the
+                     value is sent as event_type, so translating it would change
+                     what the model is asked. -->
                 <datalist id="hazard-types">
                   <option value="flood"><option value="landslide"><option value="storm"><option value="drought">
                 </datalist>
               </div>
               <div>
-                <label for="hazardSeverity">Severity</label>
+                <label for="hazardSeverity" data-i18n="scenarios.field_severity">Severity</label>
                 <select id="hazardSeverity">
-                  <option value="low">Low</option>
-                  <option value="medium" selected>Medium</option>
-                  <option value="high">High</option>
-                  <option value="critical">Critical</option>
+                  <option value="low" data-i18n="scenarios.severity_low">Low</option>
+                  <option value="medium" selected data-i18n="scenarios.severity_medium">Medium</option>
+                  <option value="high" data-i18n="scenarios.severity_high">High</option>
+                  <option value="critical" data-i18n="scenarios.severity_critical">Critical</option>
                 </select>
               </div>
               <div>
-                <label for="hazardLat">Latitude</label>
+                <label for="hazardLat" data-i18n="scenarios.latitude">Latitude</label>
                 <input type="number" id="hazardLat" step="0.0001" placeholder="3.12">
-                <p class="field-note">Decimal degrees, WGS84</p>
+                <p class="field-note" data-i18n="scenarios.decimal_degrees">Decimal degrees, WGS84</p>
               </div>
               <div>
-                <label for="hazardLon">Longitude</label>
+                <label for="hazardLon" data-i18n="scenarios.longitude">Longitude</label>
                 <input type="number" id="hazardLon" step="0.0001" placeholder="35.6">
               </div>
               <div>
-                <label for="hazardAt">Occurred at</label>
+                <label for="hazardAt" data-i18n="scenarios.occurred_at">Occurred at</label>
                 <input type="datetime-local" id="hazardAt">
               </div>
             </div>
-            <button type="button" class="btn btn-secondary form-submit" id="addHazardBtn">Add hazard event</button>
+            <button type="button" class="btn btn-secondary form-submit" id="addHazardBtn" data-i18n="scenarios.add_hazard_event">Add hazard event</button>
           </fieldset>
 
           <fieldset class="fieldset">
-            <legend>Conflict event</legend>
+            <legend data-i18n="scenarios.conflict_event">Conflict event</legend>
             <div class="form-grid">
               <div>
-                <label for="conflictType">Type</label>
+                <label for="conflictType" data-i18n="scenarios.field_type">Type</label>
                 <input type="text" id="conflictType" placeholder="intercommunal">
               </div>
               <div>
-                <label for="conflictSeverity">Severity</label>
+                <label for="conflictSeverity" data-i18n="scenarios.field_severity">Severity</label>
                 <select id="conflictSeverity">
-                  <option value="low">Low</option>
-                  <option value="medium" selected>Medium</option>
-                  <option value="high">High</option>
-                  <option value="critical">Critical</option>
+                  <option value="low" data-i18n="scenarios.severity_low">Low</option>
+                  <option value="medium" selected data-i18n="scenarios.severity_medium">Medium</option>
+                  <option value="high" data-i18n="scenarios.severity_high">High</option>
+                  <option value="critical" data-i18n="scenarios.severity_critical">Critical</option>
                 </select>
               </div>
               <div>
-                <label for="conflictLat">Latitude</label>
+                <label for="conflictLat" data-i18n="scenarios.latitude">Latitude</label>
                 <input type="number" id="conflictLat" step="0.0001" placeholder="3.12">
               </div>
               <div>
-                <label for="conflictLon">Longitude</label>
+                <label for="conflictLon" data-i18n="scenarios.longitude">Longitude</label>
                 <input type="number" id="conflictLon" step="0.0001" placeholder="35.6">
               </div>
               <div>
-                <label for="conflictAt">Occurred at</label>
+                <label for="conflictAt" data-i18n="scenarios.occurred_at">Occurred at</label>
                 <input type="datetime-local" id="conflictAt">
               </div>
             </div>
-            <button type="button" class="btn btn-secondary form-submit" id="addConflictBtn">Add conflict event</button>
+            <button type="button" class="btn btn-secondary form-submit" id="addConflictBtn" data-i18n="scenarios.add_conflict_event">Add conflict event</button>
           </fieldset>
         </details>
 
         <p class="field-note" id="perturbationSummary"></p>
-        <button type="button" class="btn btn-primary builder-run" data-run>Run scenario</button>
+        <button type="button" class="btn btn-primary builder-run" data-run data-i18n="scenarios.run_scenario">Run scenario</button>
         <p class="form-error" id="scenarioError" role="alert" hidden></p>
       </section>
 
       <section id="resultsPanel" aria-labelledby="resultsTitle">
         <div id="noResults" class="empty-state-large">
-          <h2 id="resultsTitle">No scenario run yet</h2>
-          <p>
+          <h2 id="resultsTitle" data-i18n="scenarios.no_run_title">No scenario run yet</h2>
+          <p data-i18n="scenarios.no_run_body">
             Choose a scenario on the left, adjust it if you like, then run it.
             The results show how the model responds — not a forecast.
           </p>
-          <p class="field-note">
+          <p class="field-note" data-i18n="scenarios.no_run_note">
             The right-hand numbers come back as soon as you run one.
           </p>
         </div>
 
         <div id="results" hidden>
           <div class="results-head">
-            <h2 class="section-title" id="resultsTitleUsed">Results</h2>
+            <h2 class="section-title" id="resultsTitleUsed" data-i18n="scenarios.results_title">Results</h2>
             <!-- The primary action moved here from the foot of an 850px form:
                  it belongs with the thing it produces. -->
-            <button type="button" class="btn btn-primary" data-run>Run again</button>
+            <button type="button" class="btn btn-primary" data-run data-i18n="scenarios.run_again">Run again</button>
           </div>
 
           <!--
@@ -292,33 +327,33 @@
           <div class="delta-grid">
             <div class="delta-card">
               <div class="delta-value" id="floodDelta">—</div>
-              <div class="delta-label">Flood risk score change (mean points)</div>
+              <div class="delta-label" data-i18n="scenarios.delta_flood">Flood risk score change (points)</div>
               <div class="bar-wrap" id="floodBars"></div>
             </div>
             <div class="delta-card">
               <div class="delta-value" id="conflictDelta">—</div>
-              <div class="delta-label">Conflict risk score change (mean points)</div>
+              <div class="delta-label" data-i18n="scenarios.delta_conflict">Conflict risk score change (points)</div>
               <div class="bar-wrap" id="conflictBars"></div>
             </div>
             <div class="delta-card">
               <div class="delta-value" id="impactsDelta">—</div>
-              <div class="delta-label">Service impact score change (mean points)</div>
+              <div class="delta-label" data-i18n="scenarios.delta_impacts">Service impact score change (points)</div>
               <div class="bar-wrap" id="impactsBars"></div>
             </div>
           </div>
 
-          <h3 class="section-title">Most affected service assets</h3>
+          <h3 class="section-title" data-i18n="scenarios.most_affected">Most affected service assets</h3>
           <div class="table-wrap">
             <table id="affectedTable">
-              <caption class="visually-hidden">Service assets ranked by modelled impact under this scenario</caption>
+              <caption class="visually-hidden" data-i18n="scenarios.affected_caption">Service assets ranked by modelled impact under this scenario</caption>
               <thead>
                 <tr>
-                  <th scope="col">Asset</th>
-                  <th scope="col">Type</th>
-                  <th scope="col">Region</th>
-                  <th scope="col">Baseline impact</th>
-                  <th scope="col">Scenario impact</th>
-                  <th scope="col">Change</th>
+                  <th scope="col" data-i18n="scenarios.th_asset">Asset</th>
+                  <th scope="col" data-i18n="scenarios.th_type">Type</th>
+                  <th scope="col" data-i18n="scenarios.th_region">Region</th>
+                  <th scope="col" data-i18n="scenarios.th_baseline">Baseline impact</th>
+                  <th scope="col" data-i18n="scenarios.th_scenario">Scenario impact</th>
+                  <th scope="col" data-i18n="scenarios.th_change">Change</th>
                 </tr>
               </thead>
               <tbody id="affectedBody"></tbody>
@@ -326,9 +361,9 @@
           </div>
 
           <div id="shareSection" class="share-section">
-            <h3 class="section-title">Share this scenario</h3>
+            <h3 class="section-title" data-i18n="scenarios.share_title">Share this scenario</h3>
             <div class="share-box" id="shareUrl"></div>
-            <button type="button" class="btn btn-secondary" id="copyShareBtn">Copy link</button>
+            <button type="button" class="btn btn-secondary" id="copyShareBtn" data-i18n="scenarios.copy_link">Copy link</button>
             <p class="field-note" id="copyStatus" role="status"></p>
           </div>
         </div>

@@ -7,6 +7,26 @@ All additions are additive; no existing endpoint changed shape.
 
 ### Added
 
+**An i18n layer on the three surfaces that had none.** `districts/`,
+`scenarios/` and `parametric/` shipped no `data-i18n` at all, so
+`scripts/check-i18n.mjs` named them as surfaces with no layer rather than
+counting them as passing. 217 keys across the three, `en.json` 227 → 444.
+
+Every non-English locale got *relatively* worse — `sw` fell from 92% of the
+catalogue to 48%, because the denominator grew by 217 keys and the numerator by
+none. That is the honest consequence and it is left visible: the gate holds an
+absolute floor on each locale's translated count, since a percentage floor would
+force a guess at the new strings rather than a translator's work. Each new
+surface therefore offers `en` only, and each test asserts the picker must widen
+when a catalogue actually reaches that surface's keys.
+
+Three English strings were also wrong, not merely untranslated. The three
+scenario delta cards read "score change (mean points)", which is a mean *number
+of points* rather than the change in the mean — a different quantity from the
+one the card prints, on all three at once. The parametric sanctions banner said a
+match "requires compliance review", which reads as advisory when the rule is
+that the disbursement does not proceed until it is cleared.
+
 **Bulk upload with a validation report.** There was no way to get your own data
 in. `POST /api/v1/ingest/run` takes CSV as a *string inside a JSON body* — a
 district officer with a 4 MB ACLED export had to paste it into a field on a
@@ -39,8 +59,6 @@ answer depending on who is asking. And it treats a coordinate of exactly 0 as a
 coordinate, because the equator and the prime meridian are ordinary places; that
 is the falsy-zero conflation this codebase has been bitten by repeatedly, and
 `latitude && longitude` is not used here.
-
-### Added
 
 **A chart library.** Seven of eight surfaces showed no chart of anything — a
 sentence in a `<span>`. The four charts that did exist were four unrelated
@@ -77,6 +95,38 @@ base rate, the month count and the spread; it now draws all eight side by side,
 each with its own sample size, refused ones included.
 
 ### Fixed
+
+**Calibration was cited as a feature and wired to nothing.** JTBD-018 in
+`docs/platform-jtbd-catalogue.md` offers `calibrationReport` as evidence that
+`GET /api/v1/assessments` "includes calibration metadata". The function was
+exported, documented, and called from nowhere; the route served no calibration
+field. It is served now — over the same scoped score list its six siblings use,
+because a mean confidence and a mean interval width describe data the caller may
+not be permitted to read, and an unscoped aggregate is a quieter leak than the
+record it summarises.
+
+**Ten imports bound names nothing called.** `calibrationReport`,
+`computeEnsembleStats` and `biasCorrectClimate` in `analytics.js`;
+`pendingForFocalPoint`, `WORKFLOW_TYPES`, `WORKFLOW_STATES`,
+`WORKFLOW_TRANSITIONS` and `resolveDistrict` in `server.js`; `stableId` in
+`equity.js`; `toNumber` in `upload.js` and `workflows.js`. Six of the ten were in
+`server.js`, which makes the file whose dependency graph a reader most needs
+correct the one that was most wrong about it. An import is the only place a
+reader learns that a module depends on another.
+
+`test/unused-imports.test.js` now holds the line: every named import in `src/`
+and `scripts/` must be mentioned again in its own file. It asserts it read a
+real tree before it passes, because a scanner matching nothing would report the
+same clean bill of health as the code it exists to catch.
+
+**A test that failed when a defect was fixed.** `test/web-co-i18n.test.js`
+asserted the i18n gate *reports* the surfaces with no layer — so adding a layer to
+a surface failed the test meant to catch a missing one. It also hardcoded the
+catalogue's key count, which went stale the moment three surfaces were layered. It
+now reads the count and asserts the note is absent, with a companion test that
+strips one surface's keys and requires the note back, naming that surface:
+otherwise "the list is empty" and "the gate stopped looking" are the same
+observation.
 
 **The responsive gate measured nothing and passed.** `check-responsive.mjs`
 slept a fixed 2500ms after navigation, then measured. A surface whose content had

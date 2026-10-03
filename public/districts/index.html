@@ -147,6 +147,17 @@
       }
       .list-toolbar-note { margin-inline-start: auto; padding-block-end: 0.3rem; }
 
+      /* The language picker. `end` rather than `right`, so an RTL locale puts
+         it where the reader's hand already is instead of mirroring nothing.
+         Below the shared navbar's 44px, not over it. */
+      .page-locale {
+        position: fixed;
+        inset-block-start: 3.25rem;
+        inset-inline-end: 0.75rem;
+        z-index: 60;
+      }
+      .page-locale select { font-size: var(--text-sm); }
+
       /* Overview page */
       .back-link {
         display: inline-flex;
@@ -377,13 +388,26 @@
     </style>
   </head>
   <body>
-    <a class="skip-link" href="#app">Skip to district content</a>
+    <a class="skip-link" href="#app" data-i18n="districts.skip_link">Skip to district content</a>
+    <!-- Outside #app on purpose. clearApp() empties that element on every
+         route, so a picker placed inside it would survive exactly until the
+         first district rendered and then take itself out of the page. -->
+    <div class="page-locale">
+      <!-- The languages offered here are exactly the ones whose catalogue
+           renders every key this page names, which today is English alone.
+           Widening the picker without the translations behind it is the
+           failure scripts/check-i18n.mjs exists to refuse. -->
+      <label for="locale-select" class="visually-hidden" data-i18n="districts.locale_label">Locale</label>
+      <select id="locale-select">
+        <option value="en">English</option>
+      </select>
+    </div>
     <main id="app" tabindex="-1" aria-busy="true">
       <!-- Declared here and never re-created by app.js. A live region that the
            render wipes is a live region nobody hears: the element a screen
            reader is observing has to still exist when the text changes. -->
       <p id="app-status" class="visually-hidden" role="status" aria-live="polite"></p>
-      <div id="loading-msg" class="loading-note">Loading…</div>
+      <div id="loading-msg" class="loading-note" data-i18n="districts.loading">Loading…</div>
     </main>
 
     <script type="module">

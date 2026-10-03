@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lindela Parametric — Testnet</title>
+  <title data-i18n="parametric.page_title">Lindela Parametric — Testnet</title>
   <link rel="manifest" href="/parametric/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/tokens.css">
@@ -22,10 +22,22 @@
       padding: 0.1rem 0.35rem;
       border-radius: var(--r-sm);
     }
+    /* The locale picker. This page has no header of its own — shared/navbar.js
+       renders the chrome, and it only draws a switcher when a surface hands it
+       a locale list, which this one does not — so the picker lives here. The
+       selector offers English alone until a locale carries the whole
+       parametric namespace; offering one it cannot render puts key names where
+       the button labels are, which is what scripts/check-i18n.mjs exists for. */
+    .page-controls {
+      display: flex;
+      justify-content: flex-end;
+      gap: var(--sp-2);
+      margin-block-end: var(--sp-3);
+    }
   </style>
 </head>
 <body>
-    <a class="skip-link" href="#main">Skip to page content</a>
+    <a class="skip-link" href="#main" data-i18n="parametric.skip_to_content">Skip to page content</a>
   <!-- The page header used to be hand-rolled here *and* injected by
        shared/navbar.js, which meant two #locale-select elements in one
        document. Both demo.js and the page bound whichever appeared first; the
@@ -33,27 +45,35 @@
        no longer duplicates it. -->
 
   <main id="main" tabindex="-1" class="page-main">
-    <h1 class="page-title">Parametric <span class="page-title-muted">— Testnet</span></h1>
-
-    <div class="testnet-banner" id="testnetBanner" role="note">
-      <strong>Testnet only.</strong> No real funds are moved. Figures are illustrative.
+    <div class="page-controls">
+      <label for="locale-select" class="visually-hidden" data-i18n="parametric.locale">Locale</label>
+      <select id="locale-select" aria-label="Language">
+        <option value="en">English</option>
+      </select>
     </div>
 
-    <h2 class="section-title">Parametric Rules</h2>
+    <h1 class="page-title"><span data-i18n="parametric.title">Parametric</span> <span class="page-title-muted" data-i18n="parametric.title_testnet">— Testnet</span></h1>
+
+    <div class="testnet-banner" id="testnetBanner" role="note">
+      <strong data-i18n="parametric.testnet_only">Testnet only.</strong>
+      <span data-i18n="parametric.testnet_disclaimer">No real funds are moved. Figures are illustrative.</span>
+    </div>
+
+    <h2 class="section-title" data-i18n="parametric.rules_heading">Parametric Rules</h2>
     <div id="rulesList">
-      <p class="empty-note">No rules defined yet. Add one below to start simulating.</p>
+      <p class="empty-note" data-i18n="parametric.rules_empty">No rules defined yet. Add one below to start simulating.</p>
     </div>
 
     <details class="disclosure">
-      <summary>Add rule</summary>
+      <summary data-i18n="parametric.add_rule">Add rule</summary>
       <form id="addRuleForm">
         <div class="form-grid">
           <div>
-            <label for="ruleName">Name</label>
+            <label for="ruleName" data-i18n="parametric.field_name">Name</label>
             <input id="ruleName" type="text" placeholder="e.g. Flood trigger — Turkana" required>
           </div>
           <div>
-            <label for="ruleChain">Chain</label>
+            <label for="ruleChain" data-i18n="parametric.field_chain">Chain</label>
             <select id="ruleChain">
               <option value="ethereum-sepolia">ethereum-sepolia</option>
               <option value="polygon-mumbai">polygon-mumbai</option>
@@ -61,48 +81,48 @@
             </select>
           </div>
           <div>
-            <label for="ruleTriggerMetric">Trigger metric</label>
+            <label for="ruleTriggerMetric" data-i18n="parametric.field_trigger_metric">Trigger metric</label>
             <input id="ruleTriggerMetric" type="text" placeholder="e.g. Rainfall (mm)">
           </div>
           <div>
-            <label for="ruleTriggerThreshold">Trigger threshold</label>
+            <label for="ruleTriggerThreshold" data-i18n="parametric.field_trigger_threshold">Trigger threshold</label>
             <input id="ruleTriggerThreshold" type="number" placeholder="e.g. 50">
           </div>
           <div>
-            <label for="ruleAmount">Disbursement amount (local currency)</label>
+            <label for="ruleAmount" data-i18n="parametric.field_amount">Disbursement amount (local currency)</label>
             <input id="ruleAmount" type="number" placeholder="e.g. 10000">
           </div>
           <div>
-            <label for="ruleCurrency">Currency</label>
+            <label for="ruleCurrency" data-i18n="parametric.field_currency">Currency</label>
             <input id="ruleCurrency" type="text" placeholder="USD" value="USD">
           </div>
           <div>
-            <label for="ruleRecipientGroup">Recipient group ID</label>
+            <label for="ruleRecipientGroup" data-i18n="parametric.field_recipient_group">Recipient group ID</label>
             <input id="ruleRecipientGroup" type="text" placeholder="e.g. group_xyz">
           </div>
           <div class="form-check">
             <input id="ruleFocalPoint" type="checkbox">
-            <label for="ruleFocalPoint">Requires focal-point approval</label>
+            <label for="ruleFocalPoint" data-i18n="parametric.field_requires_approval">Requires focal-point approval</label>
           </div>
         </div>
-        <button type="submit" class="btn btn-primary form-submit">Create rule</button>
+        <button type="submit" class="btn btn-primary form-submit" data-i18n="parametric.create_rule">Create rule</button>
         <p id="addRuleError" class="form-error" role="alert" hidden></p>
       </form>
     </details>
 
-    <h2 class="section-title">Simulate a Disbursement</h2>
+    <h2 class="section-title" data-i18n="parametric.simulate_heading">Simulate a Disbursement</h2>
     <div id="simSection">
-      <p class="empty-note">Create a rule first, then simulate here.</p>
+      <p class="empty-note" data-i18n="parametric.simulate_empty">Create a rule first, then simulate here.</p>
     </div>
 
     <form id="simForm" hidden>
       <div class="form-grid">
         <div>
-          <label for="simRulePicker">Select rule</label>
+          <label for="simRulePicker" data-i18n="parametric.field_select_rule">Select rule</label>
           <select id="simRulePicker"></select>
         </div>
         <div>
-          <label for="simRecipientName">Recipient name to screen</label>
+          <label for="simRecipientName" data-i18n="parametric.field_recipient_name">Recipient name to screen</label>
           <!--
             The screening capability existed and this form never sent the field
             that reaches it, so every simulation started from the dashboard was
@@ -112,40 +132,36 @@
             simulation is a legitimate thing to want, it just has to be visible.
           -->
           <input id="simRecipientName" type="text" placeholder="e.g. Turkana County Water Authority">
-          <p class="field-note">
-            Screened against the OFAC Specially Designated Nationals list by name.
-            A match blocks the disbursement and needs compliance review; it is not
-            a finding of wrongdoing.
-          </p>
+          <p class="field-note" data-i18n="parametric.screening_note">Screened against the OFAC Specially Designated Nationals list by name. A match blocks the disbursement and needs compliance review; it is not a finding of wrongdoing.</p>
         </div>
         <div class="form-check">
           <input id="simFocalApproved" type="checkbox">
-          <label for="simFocalApproved">Focal point approved</label>
+          <label for="simFocalApproved" data-i18n="parametric.field_focal_approved">Focal point approved</label>
         </div>
       </div>
-      <button type="submit" class="btn btn-primary form-submit">Simulate disbursement</button>
+      <button type="submit" class="btn btn-primary form-submit" data-i18n="parametric.simulate_button">Simulate disbursement</button>
       <p id="simError" class="form-error" role="alert" hidden></p>
     </form>
     <div id="simResult" hidden></div>
 
-    <h2 class="section-title">Disbursement History</h2>
+    <h2 class="section-title" data-i18n="parametric.history_heading">Disbursement History</h2>
     <div class="table-wrap">
       <table id="historyTable">
-        <caption class="visually-hidden">Simulated disbursements, most recent last. No real funds have been moved.</caption>
+        <caption class="visually-hidden" data-i18n="parametric.history_caption">Simulated disbursements, most recent last. No real funds have been moved.</caption>
         <thead>
           <tr>
-            <th scope="col">Disbursement ID</th>
-            <th scope="col">Rule</th>
-            <th scope="col">Chain</th>
-            <th scope="col">Transaction ref</th>
-            <th scope="col">Amount</th>
-            <th scope="col">Status</th>
-            <th scope="col">Sanctions screening</th>
-            <th scope="col">Simulated at</th>
+            <th scope="col" data-i18n="parametric.col_disbursement_id">Disbursement ID</th>
+            <th scope="col" data-i18n="parametric.col_rule">Rule</th>
+            <th scope="col" data-i18n="parametric.col_chain">Chain</th>
+            <th scope="col" data-i18n="parametric.col_tx_ref">Transaction ref</th>
+            <th scope="col" data-i18n="parametric.col_amount">Amount</th>
+            <th scope="col" data-i18n="parametric.col_status">Status</th>
+            <th scope="col" data-i18n="parametric.col_screening">Sanctions screening</th>
+            <th scope="col" data-i18n="parametric.col_simulated_at">Simulated at</th>
           </tr>
         </thead>
         <tbody id="historyBody">
-          <tr><td colspan="8" class="empty-cell">No simulations yet.</td></tr>
+          <tr><td colspan="8" class="empty-cell" data-i18n="parametric.history_empty">No simulations yet.</td></tr>
         </tbody>
       </table>
     </div>

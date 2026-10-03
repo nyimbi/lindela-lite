@@ -68,7 +68,7 @@ under **Unreleased**; this table is the index into them.
 | WEB-07 | fixed | the redraw preserves focus and the poll is gone | `web-console.test.js` |
 | WEB-09 | fixed | no `setInterval`; the cadence is owned by visibility and idle | `web-console.test.js` |
 | WEB-10 | not yet measured | fix is in the CSS; the 24px floor needs a real Chrome run on :9222 | — |
-| WEB-11 | partly fixed | three surfaces still have no i18n layer | `check-i18n.mjs` |
+| WEB-11 | fixed | every surface has a layer; 217 keys added to `en.json` | `check-i18n.mjs` |
 | WEB-12 | partly fixed | the derivation claims were corrected; Phase 2 remains open at 7 of 8 surfaces | — |
 
 Two findings were found while fixing these and are also fixed, without
@@ -598,7 +598,7 @@ against the working tree; the guard named in each row is what keeps it fixed.
 | WEB-08 | CO charts under the wrong quarter's tiles | **fixed** | the window is anchored to the selected quarter and labelled with the range actually plotted. `test/web-co-i18n.test.js` |
 | WEB-09 | unconditional 12+ endpoint poll | **fixed** | backoff with failure memory, and a hidden document is not polled (`public/app.js:1964,2125,2143`) |
 | WEB-10 | markers below the touch-target floor | **fixed and measured** | `hitRadiusUnits` (`public/app.js:1150`) derives a hit radius from the rendered width; the gate queries `[data-tap-target]` and checks width as well as height (`scripts/check-responsive.mjs`). Measured 2026-10-03 against Chrome 154 on :9222 with a live server on :4177: **8 surfaces x 3 viewports, all clean, 24px floor met.** Getting a truthful number required two fixes to the gate itself — see below |
-| WEB-11 | i18n 17–92%, three surfaces none | **partly fixed** | `scripts/check-i18n.mjs` now gates all eight surfaces and enforces coverage floors that may only rise. Two genuinely broken strings fixed. Coverage itself is unchanged apart from those two: **`districts/`, `scenarios/` and `parametric/` still have no i18n layer at all**, and `chw`+`so` still lack `footer.powered` (named in `KNOWN_UNTRANSLATED`, printed every run, not guessed) |
+| WEB-11 | i18n 17–92%, three surfaces none | **fixed** | `scripts/check-i18n.mjs` gates all eight surfaces and enforces coverage floors that may only rise. `districts/`, `scenarios/` and `parametric/` each gained a full layer — 217 keys, `en.json` 227 → 444. `chw`+`so` still lack `footer.powered`, named in `KNOWN_UNTRANSLATED` and printed every run rather than guessed |
 | WEB-12 | two plan claims are false | **partly fixed** | Phase 0 is now true for a reason that cannot rot; Phase 2 stays open — the console links `styles.css` only (`public/index.html:9`) |
 
 WEB-10 is the one to distrust: the fix is in the code and the gate that would
@@ -703,16 +703,33 @@ frontend and it runs constantly.
 `public/app.js:1032`. Radius 5 on low severity against an 800-unit viewport, with
 no hit padding. `scripts/check-responsive.mjs` cannot see SVG, so CI is blind to it.
 
-### WEB-11 — i18n coverage runs 17% to 92%, and three surfaces have none
+### WEB-11 — i18n coverage ran 17% to 92%, and three surfaces had none
 
-Measured against `en.json` (227 keys): `sw` 209, `so` 101, `din` 58, `km` 55,
-`nk` 55, `ar` 54, `am`/`fr`/`pt` 38. `npm run validate` prints the CHW table
+**Fixed 2026-10-03.** `en.json` went from 227 keys to 444. All three surfaces now
+carry `data-i18n` throughout their markup and ask the catalogue by name from their
+scripts; `check-i18n.mjs` reports no surface with no layer, and the assertion that
+used to guard that list was itself inverted — it required the note to be present,
+so *adding* a layer to a surface failed the test meant to catch a missing one.
+`test/web-co-i18n.test.js` now asserts the note is absent **and** that stripping
+one surface's keys brings it back with that surface named, because "the list is
+empty" and "the gate stopped looking" are otherwise the same observation.
+
+Every non-English locale got *relatively* worse, which is the honest consequence:
+`sw` fell from 92% of the catalogue to 48% because the denominator grew by 217
+keys and the numerator by none. The absolute count is unchanged, and the count is
+the invariant the gate holds a floor on — a percentage floor would have forced a
+guess at the new strings rather than a translator's work. Each new surface
+therefore offers `en` only, and each test asserts that the picker must widen when
+a catalogue actually reaches the surface's keys.
+
+**As measured before the fix**, against `en.json` (227 keys): `sw` 209, `so` 101,
+`din` 58, `km` 55, `nk` 55, `ar` 54, `am`/`fr`/`pt` 38. `npm run validate` prints the CHW table
 separately and shows `am`, `ar`, `fr`, `km`, `nk`, `pt` at **0 of 44** — so the
 locales offered on the console are largely empty on the surface built for the
 person least able to read English.
 
-`districts/`, `scenarios/` and `parametric/` contain zero `data-i18n` attributes
-and have no i18n layer at all. `scripts/check-i18n.mjs` only checks CHW, so CI is
+`districts/`, `scenarios/` and `parametric/` contained zero `data-i18n` attributes
+and had no i18n layer at all. `scripts/check-i18n.mjs` only checked CHW, so CI was
 structurally blind to the other seven surfaces.
 
 ### WEB-12 — Two claims in `docs/plans/ui-ux-world-class.md` are false against the code
@@ -792,14 +809,44 @@ webhooks are unsigned and untimed. `src/pdf.js:11` computes a "signature" that i
 a self-referential 64-bit digest. Export returns only the record appendix;
 the narrative exists solely in `export.md` with nothing saying so.
 
-**Dead code** — `src/analytics/ensemble.js` is entirely dead: no connector sets
-`ensemble_*`, `spreadSkillIndex` has zero callers, `computeEnsembleStats` is
-test-only, and the `ensemble_used` branch is unreachable. `calibrationReport` is
-exported at `src/analytics.js:5`, never routed (`src/server.js:835`), and cited in
-the JTBD catalogue as evidence. `signPayload`, `recentRequestOutcomes`,
-`resetSdnCache` and `pendingForFocalPoint` are all defined and never called.
-`globMatch` is duplicated between `webhooks.js` and `outbox.js`, which is how
-SEC-08 happened twice.
+**Dead code** — corrected against the tree on 2026-10-03; two of the original
+claims were false and one is a third copy of the same shape as the code it
+describes.
+
+`src/analytics/ensemble.js` has no callers. Both functions are unreferenced —
+`computeEnsembleStats` only by `spreadSkillIndex`, which nothing calls. The
+original said "no connector sets `ensemble_*`", which is wrong in a way worth
+stating precisely: `src/connectors/open-meteo.js:49-52` and
+`src/connectors/glofas.js:56-59` both set `ensemble_members: []`,
+`ensemble_p10/p50/p90: null`. They set the *fields* to nothing, which is the same
+outcome through a different door, and no connector ever sets `ensemble_source` —
+the value `src/analytics.js:51,65` gates on. So `drivers.ensemble_used = true`
+at `src/analytics.js:113` is unreachable in practice while being correctly
+guarded for a feed that does not exist. The dead part is the two functions, not
+the read path.
+
+`computeEnsembleStats` also returns `{p10: 0, p50: 0, p90: 0, mean: 0, stddev: 0,
+count: 0}` for an empty input. A percentiles-of-nothing reported as five zeros is
+this repository's own founding defect — an absent value is not a zero — written
+into the function that would compute them.
+
+`calibrationReport` was exported at `src/analytics.js:258`, routed nowhere, and
+cited in the JTBD catalogue as evidence that `GET /api/v1/assessments` "includes
+calibration metadata". It is routed now, scoped like its siblings.
+
+`recentRequestOutcomes` (`src/observability.js`) and `resetSdnCache`
+(`src/sanctions.js`) are defined and never called. `pendingForFocalPoint`
+(`src/workflows.js:162`) was, until this pass, imported into `src/server.js` and
+never called — ten imports across five files bound names nothing used, and
+`test/unused-imports.test.js` now holds that line.
+
+`globMatch` is **not** duplicated. There is one definition, at
+`src/webhooks.js:231`, called once at `:213`; `src/outbox.js` imports
+`matchEvent` and `signPayload` from the same module and has no copy of either.
+The original claim that it lived in both files was how SEC-08 was described, and
+it was never true — a duplicated `globMatch` is a good way to explain how a bug
+happened twice, which is presumably why it was written down without being
+checked.
 
 **Supply chain** — CI fetches unpinned packages at build time:
 `npx --yes trivy` (`.github/workflows/ci.yml:44`, the scanner being the

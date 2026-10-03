@@ -365,7 +365,8 @@ describe('WEB-11 — i18n coverage and the gate over it', () => {
       fs.writeFileSync(p, JSON.stringify(sw))
     })
     assert.equal(result.code, 1, 'the CHW strings this gate exists to protect were deleted and it passed')
-    assert.match(result.stderr, /sw\.json covers \d+ of 227 keys, below the recorded floor/)
+    const total = Object.keys(JSON.parse(fs.readFileSync(path.join(PUBLIC_ROOT, 'i18n', 'en.json'), 'utf8'))).length
+    assert.match(result.stderr, new RegExp(`sw\\.json covers \\d+ of ${total} keys, below the recorded floor`))
   })
 
   it('fails when a surface offers a locale it cannot render', () => {
@@ -395,11 +396,36 @@ describe('WEB-11 — i18n coverage and the gate over it', () => {
 
   it('reports coverage and the surfaces that have none', () => {
     const { stdout } = sandbox(() => {})
-    assert.match(stdout, /Catalogue coverage against en\.json \(227 keys\)/)
+    // The key count is read, not written down. It was hardcoded at 227 and went
+    // stale the moment three surfaces were layered, at which point the assertion
+    // would have failed for the wrong reason — or, had the regex been loose
+    // enough, kept passing while measuring a catalogue nobody had.
+    const total = Object.keys(JSON.parse(fs.readFileSync(path.join(PUBLIC_ROOT, 'i18n', 'en.json'), 'utf8'))).length
+    assert.match(stdout, new RegExp(`Catalogue coverage against en\\.json \\(${total} keys\\)`))
     for (const code of ['am', 'ar', 'din', 'en', 'fr', 'km', 'nk', 'pt', 'so', 'sw']) {
-      assert.match(stdout, new RegExp(`\\n  ${code}\\s+\\d+/227\\s+\\d+\\.\\d%`), `coverage for ${code} is reported`)
+      assert.match(stdout, new RegExp(`\\n  ${code}\\s+\\d+/${total}\\s+\\d+\\.\\d%`), `coverage for ${code} is reported`)
     }
-    assert.match(stdout, /surfaces with no i18n layer at all: districts, parametric, scenarios/)
+    // Every surface has a layer now, so the note is gone — and this used to
+    // assert the opposite, which meant adding an i18n layer to a surface failed
+    // the test that was supposed to be watching for a surface without one. The
+    // next test proves the gate still names one when there is one to name.
+    assert.doesNotMatch(stdout, /surfaces with no i18n layer at all:/,
+      'no surface is left unlayered')
+    assert.doesNotMatch(stdout, /^\s+(districts|co|portal|chw|focal-point|parametric|scenarios)\s+asks for/m,
+      'a surface with an i18n layer still asks for a key no catalogue defines')
+  })
+
+  it('still names a surface that has no layer', () => {
+    // The counterpart to the assertion above, because "the list is empty" and
+    // "the gate stopped looking" look identical from the outside. Stripping the
+    // keys out of one surface must bring the note back with that surface's name
+    // in it — otherwise a future regression in the detector is invisible.
+    const { stdout } = sandbox((dir) => {
+      const p = path.join(dir, 'public', 'districts', 'index.html')
+      fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(/\sdata-i18n(-[a-z]+)?="[^"]*"/g, ''))
+    })
+    const unlayered = stdout.match(/surfaces with no i18n layer at all: (.*)/)?.[1] ?? ''
+    assert.match(unlayered, /districts/, 'and it names the surface by name, not just that one exists')
   })
 
   it('still fails for a locale it has already recorded as short', () => {

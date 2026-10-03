@@ -6,46 +6,101 @@
 // with a question, not a blank form, so the surface now opens on five named
 // scenarios and Run sits with the results it produces.
 
-import { apiFetch } from '/shared/runtime.js'
+import { apiFetch, initI18n } from '/shared/runtime.js'
 import { esc, formatRelative, num, signed } from '/shared/fmt.js'
 
 const BASE = '/api/v1'
 
-// Perturbation state
+/**
+ * `t` with an English fallback, because the shared runtime's returns the key
+ * itself for a key no catalogue carries — and this surface ships keys in a
+ * staged map the catalogues have not absorbed yet. The fallback is what a reader
+ * sees in that window; the key name is what they would see instead, and the
+ * whole reason check-i18n.mjs exists is that a health worker once met
+ * `chw.submit` where a button label should have been.
+ *
+ * The gate scans for a two-argument `t(key, fallback)` call, so the second
+ * argument is load-bearing: dropping it turns a translatable string into a name.
+ */
+export function t(key, fallback = key) {
+  const resolved = window.__i18n?.t(key)
+  return !resolved || resolved === key ? fallback : resolved
+}
+
+/**
+ * `{name}` interpolation for the sentences.
+ *
+ * An unknown placeholder is left as written rather than blanked: a translator
+ * who mistypes a key should meet `{precip}` in the running interface, not a
+ * sentence with a hole in it.
+ */
+function fill(template, vars) {
+  return String(template).replace(/\{(\w+)\}/g, (_, k) => (k in vars ? vars[k] : `{${k}}`))
+}
+
+/**
+ * The languages this surface offers, mirrored in the `<select>` in index.html.
+ *
+ * English alone, because no catalogue carries a `scenarios.*` key yet and a
+ * second option would render the whole workbench as key names. `init()` reads
+ * the picker rather than trusting this list, and the test asserts the two agree
+ * — a picker and a catalogue that disagree in either direction produce exactly
+ * the bug the gate was written to catch.
+ */
+const OFFERED_LOCALES = ['en']
+export { OFFERED_LOCALES }
+
+const storedLocale = localStorage.getItem('lindela_lite_locale')
 const state = {
+  // The stored locale is written by surfaces that do offer more languages, so a
+  // reader who last chose Swahili on the CHW app would arrive here holding `sw`
+  // — with a page that cannot render one string of it, and a picker showing
+  // English. The picker is the authority on what this surface can offer.
+  locale: OFFERED_LOCALES.includes(storedLocale) ? storedLocale : 'en',
   precipitation_multiplier: 1.0,
   offline_asset_ids: new Set(),
   added_hazard_events: [],
   added_conflict_events: [],
 }
 
+/** The last run's payload, so a language switch redraws it instead of blanking it. */
+let lastResult = null
+/** The last error shown, for the same reason. */
+let lastError = ''
+/** The link the Copy button writes, bound once at module scope. */
+let shareUrl = ''
+/** Set when the hash names a scenario this server does not have. */
+let shareUnavailable = false
+
 /**
  * Named starting points.
  *
  * Each one is a complete perturbation a planner can run without touching a
  * form. The free-form controls remain for building something these do not cover.
+ *
+ * There is no `label` here any more. It was never read — the button captions
+ * are markup, carrying `data-i18n` — so it was a second copy of five strings
+ * that had already drifted from the ones on screen ("assets offline" against
+ * "asset offline"), and translating it would have given a translator six strings
+ * to maintain for a page that shows five.
  */
 const PRESETS = {
   drought: {
-    label: 'Drought — rains fail',
     precipitation_multiplier: 0.6,
     offline_asset_ids: [],
     events: { hazards: [], conflicts: [] },
   },
   flood: {
-    label: 'Flood — rains double',
     precipitation_multiplier: 2.0,
     offline_asset_ids: [],
     events: { hazards: [], conflicts: [] },
   },
   asset_outage: {
-    label: 'Access lost — assets offline',
     precipitation_multiplier: 1.0,
     offline_asset_ids: 'all',
     events: { hazards: [], conflicts: [] },
   },
   conflict: {
-    label: 'Conflict — displacement events',
     precipitation_multiplier: 1.0,
     offline_asset_ids: [],
     events: {
@@ -58,7 +113,6 @@ const PRESETS = {
     },
   },
   baseline: {
-    label: 'Baseline',
     precipitation_multiplier: 1.0,
     offline_asset_ids: [],
     events: { hazards: [], conflicts: [] },
@@ -96,12 +150,12 @@ async function loadAssets() {
     const json = await apiFetch(`${BASE}/service-assets`)
     assets = (json.data || []).slice(0, 20)
   } catch {
-    listEl.innerHTML = '<p class="empty-note">Assets could not be loaded. Scenarios that do not reference assets still work.</p>'
+    listEl.innerHTML = `<p class="empty-note">${esc(t('scenarios.assets_error', 'Assets could not be loaded. Scenarios that do not reference assets still work.'))}</p>`
     return
   }
 
   if (!assets.length) {
-    listEl.innerHTML = '<p class="empty-note">No service assets are recorded yet.</p>'
+    listEl.innerHTML = `<p class="empty-note">${esc(t('scenarios.no_assets', 'No service assets are recorded yet.'))}</p>`
     return
   }
 
@@ -167,13 +221,13 @@ function readEvent(typeId, severityId, latId, lonId, atId, fallbackType) {
   const rawLat = $(latId)?.value
   const rawLon = $(lonId)?.value
   if (rawLat === '' || rawLon === '') {
-    setError('Scenario events need both a latitude and a longitude.')
+    setError(t('scenarios.err_coords_required', 'Scenario events need both a latitude and a longitude.'))
     return null
   }
   const lat = Number(rawLat)
   const lon = Number(rawLon)
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-    setError('Latitude must be between −90 and 90, longitude between −180 and 180.')
+    setError(t('scenarios.err_coords_range', 'Latitude must be between −90 and 90, longitude between −180 and 180.'))
     return null
   }
   setError('')
@@ -204,21 +258,50 @@ $('addConflictBtn')?.addEventListener('click', () => {
 })
 
 function setError(message) {
+  lastError = message || ''
   const el = $('scenarioError')
   if (!el) return
-  el.textContent = message || ''
-  el.hidden = !message
+  el.textContent = lastError
+  el.hidden = !lastError
 }
 
+/**
+ * The perturbation, in words, under the controls that set it.
+ *
+ * The counts were interpolated into English prose with a plural decided by a
+ * ternary here — `"1 asset offline"` and `"2 assets offline"` were two
+ * hand-assembled sentences. A translator cannot move a noun across a number,
+ * so the plural now lives in the catalogue: English reads `{n} asset(s)` and a
+ * language that marks plural by suffix or by gender has the string to do it in.
+ */
 function updateSummary() {
   const el = $('perturbationSummary')
   if (!el) return
+  // A shared link this server cannot resolve outranks the run summary: it is
+  // the only thing on the page explaining why the perturbation did not load,
+  // and it used to be written straight to the element, so the next slider move
+  // or language switch replaced it with the run summary and the reader was left
+  // with a scenario that had silently failed to load.
+  if (shareUnavailable) {
+    el.textContent = t('scenarios.share_unavailable', 'This link points at a scenario that is not available on this server.')
+    return
+  }
   const parts = []
-  if (state.precipitation_multiplier !== 1.0) parts.push(`rainfall ×${state.precipitation_multiplier.toFixed(2)}`)
-  if (state.offline_asset_ids.size) parts.push(`${state.offline_asset_ids.size} asset${state.offline_asset_ids.size === 1 ? '' : 's'} offline`)
-  if (state.added_hazard_events.length) parts.push(`${state.added_hazard_events.length} hazard event${state.added_hazard_events.length === 1 ? '' : 's'}`)
-  if (state.added_conflict_events.length) parts.push(`${state.added_conflict_events.length} conflict event${state.added_conflict_events.length === 1 ? '' : 's'}`)
-  el.textContent = parts.length ? `Running: ${parts.join(', ')}` : 'Running: no perturbation (baseline)'
+  if (state.precipitation_multiplier !== 1.0) {
+    parts.push(fill(t('scenarios.part_rainfall', 'rainfall ×{n}'), { n: state.precipitation_multiplier.toFixed(2) }))
+  }
+  if (state.offline_asset_ids.size) {
+    parts.push(fill(t('scenarios.part_assets_offline', '{n} asset(s) offline'), { n: String(state.offline_asset_ids.size) }))
+  }
+  if (state.added_hazard_events.length) {
+    parts.push(fill(t('scenarios.part_hazard_events', '{n} hazard event(s)'), { n: String(state.added_hazard_events.length) }))
+  }
+  if (state.added_conflict_events.length) {
+    parts.push(fill(t('scenarios.part_conflict_events', '{n} conflict event(s)'), { n: String(state.added_conflict_events.length) }))
+  }
+  el.textContent = parts.length
+    ? fill(t('scenarios.running', 'Running: {parts}'), { parts: parts.join(', ') })
+    : t('scenarios.running_baseline', 'Running: no perturbation (baseline)')
 }
 
 // --- Run --------------------------------------------------------------------
@@ -230,7 +313,7 @@ const runButtons = () => Array.from(document.querySelectorAll('[data-run]'))
 async function runScenario() {
   setError('')
   const labels = runButtons().map((b) => b.textContent)
-  runButtons().forEach((b, i) => { b.disabled = true; b.textContent = 'Running…' })
+  runButtons().forEach((b, i) => { b.disabled = true; b.textContent = t('scenarios.running_busy', 'Running…') })
 
   const perturbation = {
     precipitation_multiplier: state.precipitation_multiplier,
@@ -247,7 +330,7 @@ async function runScenario() {
     // error was caught and shown as text, so the page reported no console error
     // and every check passed.
     const payload = json.data || json
-    if (!payload.diff) throw new Error('The server returned no comparison for this scenario.')
+    if (!payload.diff) throw new Error(t('scenarios.err_no_comparison', 'The server returned no comparison for this scenario.'))
     showResults(payload, perturbation)
   } catch (err) {
     setError(err.message)
@@ -258,17 +341,44 @@ async function runScenario() {
 
 runButtons().forEach((b) => b.addEventListener('click', runScenario))
 
-function showResults(data, perturbation) {
-  $('noResults').hidden = true
-  $('results').hidden = false
+// Bound once, here, rather than inside showResults: that bound a fresh listener
+// on every run and every shared link opened from the hash, so the eleventh run
+// copied the same text eleven times. It reads `shareUrl` at click time, so a
+// later run replaces what it writes.
+//
+// The clipboard failure used to be swallowed: on a non-secure origin the user
+// got no link, no confirmation, and no indication anything had happened.
+$('copyShareBtn')?.addEventListener('click', async () => {
+  const status = $('copyStatus')
+  try {
+    await navigator.clipboard.writeText(shareUrl)
+    if (status) status.textContent = t('scenarios.link_copied', 'Link copied.')
+  } catch {
+    if (status) status.textContent = t('scenarios.copy_blocked', 'Copying is blocked here. Select the link above and copy it manually.')
+  }
+})
 
+/**
+ * Everything below `#results` that is written from a payload rather than from
+ * the form.
+ *
+ * Split out of `showResults` so a locale switch can redraw it. Painting it was
+ * fused to the fetch that produced it, which meant the one control that changes
+ * a string on this page left every result on it in the previous language — the
+ * results half translated and the builder half not, which reads as a fault in
+ * the data rather than in the interface.
+ */
+function paintResults(data) {
   const diff = data.diff || {}
 
   const limit = $('scenarioLimit')
   if (limit) {
     const parts = []
     if (data.model_limit) parts.push(esc(data.model_limit))
-    if (diff.regions_compared != null) parts.push(`Averaged over ${esc(String(diff.regions_compared))} region scores.`)
+    if (diff.regions_compared != null) {
+      parts.push(esc(fill(t('scenarios.averaged_over', 'Averaged over {n} region scores.'),
+        { n: String(diff.regions_compared) })))
+    }
     limit.innerHTML = parts.join(' ')
   }
 
@@ -298,7 +408,7 @@ function showResults(data, perturbation) {
     .slice(0, 10)
   const tbody = $('affectedBody')
   if (!sorted.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">No assets in the dataset.</td></tr>'
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-cell">${esc(t('scenarios.no_dataset_assets', 'No assets in the dataset.'))}</td></tr>`
   } else {
     tbody.innerHTML = sorted.map((a) => `<tr>
       <td>${esc(a.asset_name || a.asset_id || '—')}</td>
@@ -309,22 +419,17 @@ function showResults(data, perturbation) {
       <td class="num-cell">${esc(signed(a.impact_delta, { dp: 1 }))}</td>
     </tr>`).join('')
   }
+}
+
+function showResults(data, perturbation) {
+  $('noResults').hidden = true
+  $('results').hidden = false
+  lastResult = data
+  paintResults(data)
 
   const token = data.token || btoa(JSON.stringify(perturbation)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
-  const shareUrl = `${location.origin}/scenarios#${token}`
+  shareUrl = `${location.origin}/scenarios#${token}`
   $('shareUrl').textContent = shareUrl
-
-  // The clipboard failure used to be swallowed: on a non-secure origin the user
-  // got no link, no confirmation, and no indication anything had happened.
-  $('copyShareBtn')?.addEventListener('click', async () => {
-    const status = $('copyStatus')
-    try {
-      await navigator.clipboard.writeText(shareUrl)
-      if (status) status.textContent = 'Link copied.'
-    } catch {
-      if (status) status.textContent = 'Copying is blocked here. Select the link above and copy it manually.'
-    }
-  })
 
   history.replaceState(null, '', `/scenarios#${token}`)
 }
@@ -417,9 +522,17 @@ export function setDeltaCard(prefix, value, extent) {
   // a zero rule, on an extent stated on both ends of the axis.
   const lo = signed(-bar.extent, { dp: 0 })
   const hi = signed(bar.extent, { dp: 0 })
+  // "Up" and "Down" are two whole sentences rather than a word spliced in front
+  // of a shared clause: a language that puts the verb last, or marks the
+  // direction with a prefix, cannot be handed `${dir} 19.4 score points` and
+  // read. The unit stays in the string, because a sentence that names an axis
+  // without naming the unit is the sentence a reader skims past.
+  const vars = { n: Math.abs(bar.value).toFixed(1), lo, hi }
   const reading = bar.value === 0
-    ? `No change in the mean sensitivity score. Axis runs from ${lo} to ${hi} score points.`
-    : `${bar.value > 0 ? 'Up' : 'Down'} ${Math.abs(bar.value).toFixed(1)} score points on an axis running from ${lo} to ${hi} score points.`
+    ? fill(t('scenarios.delta_flat', 'No change in the mean sensitivity score. Axis runs from {lo} to {hi} score points.'), vars)
+    : bar.value > 0
+      ? fill(t('scenarios.delta_up', 'Up {n} score points on an axis running from {lo} to {hi} score points.'), vars)
+      : fill(t('scenarios.delta_down', 'Down {n} score points on an axis running from {lo} to {hi} score points.'), vars)
 
   barsEl.innerHTML = `
     <div class="delta-axis" role="img" aria-label="${esc(reading)}">
@@ -430,12 +543,31 @@ export function setDeltaCard(prefix, value, extent) {
       </div>
       <span class="delta-tick">${esc(hi)}</span>
     </div>
-    <div class="delta-caption">score points</div>
+    <div class="delta-caption">${esc(t('scenarios.score_points', 'score points'))}</div>
   `
 }
 
 // --- Init -------------------------------------------------------------------
 async function init() {
+  await initI18n(state.locale)
+  // The tab title is not a `data-i18n` target — the shared runtime rewrites
+  // attributes and text nodes inside the document, and this is neither — so it
+  // is set from the catalogue like any other string a reader meets.
+  document.title = t('scenarios.doc_title', 'Lindela Scenario Workbench')
+
+  const localeSelect = $('locale-select')
+  localeSelect?.addEventListener('change', async (e) => {
+    state.locale = e.target.value
+    localStorage.setItem('lindela_lite_locale', state.locale)
+    await window.__i18n.set(state.locale)
+    // `set()` repaints the markup; everything below it was painted from a
+    // payload or from form state, so it is repainted here.
+    document.title = t('scenarios.doc_title', 'Lindela Scenario Workbench')
+    updateSummary()
+    if (lastError) setError(lastError)
+    if (lastResult) paintResults(lastResult)
+  })
+
   await loadAssets()
   updateSummary()
 
@@ -460,8 +592,8 @@ async function init() {
   } catch {
     // A shared link may reference a scenario this server does not have. Say so
     // rather than silently showing the empty state.
-    $('perturbationSummary').textContent =
-      'This link points at a scenario that is not available on this server.'
+    shareUnavailable = true
+    updateSummary()
   }
 }
 

@@ -93,6 +93,33 @@ behaviour — assert that a stub connector's records come back out of the store 
 never by grepping source text for a collection name. Two guards that did exactly
 that passed with the bug fully present.
 
+## An import is a claim about a dependency
+
+`test/unused-imports.test.js` fails the build when a named import in `src/` or
+`scripts/` is never mentioned again in its own file. Ten were, at last count,
+six of them in `server.js`.
+
+An import is the only place a reader learns that one module depends on another,
+so a file full of them makes its own dependency graph wrong in the reader's
+head. There is no linter here, so the test is the linter. It also asserts that it
+read a real tree before reporting anything clean — a scanner that matched nothing
+would produce the same result as a scanner that found nothing wrong, and the
+distinction is invisible from the outside.
+
+## Strings live in `en.json`, and the gate measures them
+
+`scripts/check-i18n.mjs`, run by `npm run validate`, enforces two rules over
+every surface: a `data-i18n` key in the DOM must exist in `en.json`, and a
+locale a page offers must be able to render every string that page shows. A
+surface with no keys at all is reported by name rather than counted as passing.
+
+The gate holds an absolute floor on each locale's translated count, never a
+percentage. A percentage floor moves every time a key is added, which would turn
+the check into an argument with the catalogue instead of a measurement of it; and
+it would have to be met by guessing at new strings rather than by translating
+them. Adding 217 keys to `en.json` dropped `sw` from 92% to 48% coverage and
+changed no `sw` string, which is the right shape for that number to move.
+
 ## Storage backends
 
 Four modes via `LINDELA_LITE_DB_MODE`: `auto`, `postgres`, `pg0`, `json`.

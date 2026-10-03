@@ -10,8 +10,33 @@
 // the URL hash. The console, by contrast, had 55 uses of one escapeHtml — the
 // discipline existed, in one file.
 
-import { apiFetch } from '/shared/runtime.js'
+import { apiFetch, initI18n } from '/shared/runtime.js'
 import { esc, formatTimestamp, formatRelative, num, pct, sevClass } from '/shared/fmt.js'
+
+/**
+ * A string in the language the reader selected, or in English.
+ *
+ * The fallback argument is not decoration. A key no catalogue carries resolves,
+ * under the shared runtime, to the key itself — so an untranslated surface shows
+ * `districts.count_assets` where a heading belongs, which is the failure this
+ * layer exists to make impossible. English is a complete rendering of this
+ * surface, so it is always available even when a locale is not.
+ */
+function t(key, fallback = key) {
+  const catalog = window.__i18n?.catalog
+  return (catalog && catalog[key]) || fallback
+}
+
+/**
+ * `{name}` interpolation for the sentences, which cannot be concatenated.
+ *
+ * An unknown placeholder is left as written rather than blanked: a translator
+ * who mistypes a key should see `{perod}` in the running interface, not a
+ * sentence with a hole in it.
+ */
+function fill(template, vars) {
+  return String(template).replace(/\{(\w+)\}/g, (_, k) => (k in vars ? vars[k] : `{${k}}`))
+}
 
 /**
  * Records a <details> body shows before it admits to withholding the rest.
@@ -27,6 +52,19 @@ import { esc, formatTimestamp, formatRelative, num, pct, sevClass } from '/share
  * class of lie before.
  */
 const PAGE = 10
+
+/**
+ * The languages this page offers, and the only ones `currentLocale` will
+ * honour. Kept beside the `<select>` it mirrors rather than read out of the
+ * DOM, so a locale cannot be offered without the code that accepts it.
+ *
+ * English alone, and that is a measurement rather than modesty: `scripts/check-i18n.mjs`
+ * fails any surface whose picker offers a language that cannot render every
+ * string the page names, and no other catalogue carries a `districts.*` key yet.
+ * Adding Swahili here is correct the day sw.json carries this namespace, and
+ * wrong the day before — which is the failure the gate was written after.
+ */
+const OFFERED_LOCALES = ['en']
 
 const appEl = () => document.getElementById('app')
 
@@ -132,7 +170,7 @@ function kpiTile(label, value, unit, gap, valueClass = '') {
     <span class="kpi-label">${esc(label)}</span>
     <span class="kpi-value ${esc(valueClass)}">${esc(value)}</span>
     <span class="kpi-unit">${esc(unit)}</span>
-    ${gap ? '<span class="data-gap">data gap</span>' : ''}
+    ${gap ? `<span class="data-gap">${esc(t('districts.data_gap', 'data gap'))}</span>` : ''}
   </div>`
 }
 
@@ -169,13 +207,15 @@ function pagedList(parent, label, items, render, { page = PAGE } = {}) {
 
   const setShown = (n) => {
     const shown = Math.min(n, items.length)
-    list.innerHTML = shown ? items.slice(0, shown).map(render).join('') : emptyNote('None.')
+    list.innerHTML = shown ? items.slice(0, shown).map(render).join('') : emptyNote(t('districts.none', 'None.'))
     const all = shown === items.length
     note.textContent = items.length
-      ? (all ? `Showing all ${items.length}.` : `Showing ${shown} of ${items.length}.`)
-      : 'No records.'
+      ? (all
+        ? fill(t('districts.showing_all', 'Showing all {n}.'), { n: String(items.length) })
+        : fill(t('districts.showing_some', 'Showing {shown} of {n}.'), { shown: String(shown), n: String(items.length) }))
+      : t('districts.no_records', 'No records.')
     more.hidden = all
-    more.textContent = `Show all ${items.length}`
+    more.textContent = fill(t('districts.show_all', 'Show all {n}'), { n: String(items.length) })
     return shown
   }
 
@@ -189,7 +229,8 @@ function pagedList(parent, label, items, render, { page = PAGE } = {}) {
   })
 
   det.addEventListener('toggle', () => {
-    if (det.open) status.textContent = `${label}: showing ${visible} of ${items.length}.`
+    if (det.open) status.textContent = fill(t('districts.expanded_status', '{label}: showing {shown} of {n}.'),
+      { label, shown: String(visible), n: String(items.length) })
   })
 
   const body = document.createElement('div')
@@ -266,12 +307,19 @@ export function buildSvgMap(district, records) {
   // of small overstatement that makes a reader distrust the counts beside it.
   // The shortfall is named rather than absorbed, so "how many did the map lose"
   // is answerable from the map itself.
-  const noun = plotted === 1 ? 'location' : 'locations'
+  const noun = plotted === 1
+    ? t('districts.location', 'location')
+    : t('districts.locations', 'locations')
   const skipped = records.length - plotted
   const shortfall = skipped > 0
-    ? `; ${skipped} record${skipped === 1 ? '' : 's'} had no usable coordinates and ${skipped === 1 ? 'is' : 'are'} not shown`
+    ? '; ' + (skipped === 1
+      ? fill(t('districts.unplaced_one', '{n} record had no usable coordinates and is not shown'), { n: String(skipped) })
+      : fill(t('districts.unplaced_many', '{n} records had no usable coordinates and are not shown'), { n: String(skipped) }))
     : ''
-  const mapLabel = `Map of ${district.name}: ${plotted} recorded ${noun} plotted${shortfall}, with the district centre marked`
+  const mapLabel = fill(
+    t('districts.map_label', 'Map of {name}: {n} recorded {noun} plotted{shortfall}, with the district centre marked'),
+    { name: district.name, n: String(plotted), noun, shortfall },
+  )
   return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${esc(mapLabel)}">
     <rect width="${W}" height="${H}" fill="var(--bg)"/>
     <circle cx="${cx.x.toFixed(1)}" cy="${cx.y.toFixed(1)}" r="8" fill="var(--brand)" opacity="0.25"/>
@@ -302,10 +350,12 @@ function applyFilters(total) {
     if (visible) shown += 1
   }
   const note = document.getElementById('filter-note')
-  if (note) note.textContent = shown === total ? `${total} districts` : `${shown} of ${total} districts`
+  if (note) note.textContent = shown === total
+    ? fill(t('districts.count_total', '{n} districts'), { n: String(total) })
+    : fill(t('districts.count_shown', '{shown} of {n} districts'), { shown: String(shown), n: String(total) })
   const empty = document.getElementById('grid-empty')
   if (empty) empty.hidden = shown > 0
-  setStatus(`${shown} of ${total} districts listed.`)
+  setStatus(fill(t('districts.status_listed', '{shown} of {n} districts listed.'), { shown: String(shown), n: String(total) }))
 }
 
 /**
@@ -327,14 +377,14 @@ function filterBar(total) {
   bar.className = 'list-toolbar'
   bar.innerHTML = `
     <div class="filter-field">
-      <label for="district-filter">Filter districts</label>
-      <input id="district-filter" type="search" autocomplete="off" placeholder="Name or country code">
+      <label for="district-filter">${esc(t('districts.filter_label', 'Filter districts'))}</label>
+      <input id="district-filter" type="search" autocomplete="off" placeholder="${esc(t('districts.filter_placeholder', 'Name or country code'))}">
     </div>
     <label class="filter-check" for="district-attention">
       <input id="district-attention" type="checkbox">
-      <span>Open alerts or active hazards only</span>
+      <span>${esc(t('districts.filter_attention', 'Open alerts or active hazards only'))}</span>
     </label>
-    <span class="list-toolbar-note muted-sm" id="filter-note">${esc(total)} districts</span>
+    <span class="list-toolbar-note muted-sm" id="filter-note">${esc(fill(t('districts.count_total', '{n} districts'), { n: String(total) }))}</span>
   `
 
   const search = bar.querySelector('#district-filter')
@@ -358,7 +408,7 @@ function renderList(districts) {
 
   const h = document.createElement('h1')
   h.className = 'page-title'
-  h.textContent = 'Districts'
+  h.textContent = t('districts.heading', 'Districts')
   app.appendChild(h)
 
   const lede = document.createElement('p')
@@ -366,7 +416,10 @@ function renderList(districts) {
   // The list endpoint carries identity only, so every card makes its own
   // request. Saying so up front is the difference between a page that looks
   // broken for two seconds and one that looks like it is working.
-  lede.textContent = `${districts.length} districts. Counts, hazards and the most recent event load per card, so one slow district does not hold up the rest of the list.`
+  lede.textContent = fill(
+    t('districts.list_lede', '{n} districts. Counts, hazards and the most recent event load per card, so one slow district does not hold up the rest of the list.'),
+    { n: String(districts.length) },
+  )
   app.appendChild(lede)
 
   app.appendChild(filterBar(districts.length))
@@ -386,8 +439,8 @@ function renderList(districts) {
     card.dataset.attention = 'unknown'
     card.innerHTML = `
       <span class="district-card-name">${esc(d.name)}</span>
-      <span class="district-card-meta">${esc(d.country)} &middot; ${esc(num(d.radius_km, { int: true }))} km radius</span>
-      <span class="district-card-counts" role="status" aria-live="polite" aria-busy="true">Loading counts&hellip;</span>
+      <span class="district-card-meta">${esc(d.country)} &middot; ${esc(fill(t('districts.km_radius', '{km} km radius'), { km: num(d.radius_km, { int: true }) }))}</span>
+      <span class="district-card-counts" role="status" aria-live="polite" aria-busy="true">${esc(t('districts.loading_counts', 'Loading counts…'))}</span>
     `
     grid.appendChild(card)
     filters.cards.push(card)
@@ -409,16 +462,20 @@ function renderList(districts) {
         counts.setAttribute('aria-busy', 'false')
         counts.innerHTML = `
           <span class="district-stat-list">
-            <span class="district-stat"><strong>${esc(num(open, { int: true }))}</strong> open alert${open === 1 ? '' : 's'}</span>
-            <span class="district-stat"><strong>${esc(num(hazards.length, { int: true }))}</strong> active hazard${hazards.length === 1 ? '' : 's'}</span>
-            <span class="district-stat"><strong>${esc(num(c.service_assets, { int: true }))}</strong> assets</span>
-            <span class="district-stat"><strong>${esc(num(c.incidents, { int: true }))}</strong> incidents</span>
+            <span class="district-stat"><strong>${esc(num(open, { int: true }))}</strong> ${esc(open === 1
+              ? t('districts.open_alert_one', 'open alert')
+              : t('districts.open_alerts_many', 'open alerts'))}</span>
+            <span class="district-stat"><strong>${esc(num(hazards.length, { int: true }))}</strong> ${esc(hazards.length === 1
+              ? t('districts.active_hazard_one', 'active hazard')
+              : t('districts.active_hazards_many', 'active hazards'))}</span>
+            <span class="district-stat"><strong>${esc(num(c.service_assets, { int: true }))}</strong> ${esc(t('districts.unit_assets', 'assets'))}</span>
+            <span class="district-stat"><strong>${esc(num(c.incidents, { int: true }))}</strong> ${esc(t('districts.unit_incidents', 'incidents'))}</span>
           </span>
           ${latest
-            ? `<span class="district-card-latest">Most recent hazard ${sevChip(latest.hazard.severity)}${esc(latest.hazard.event_type || latest.hazard.type || 'unlabelled')} &middot; ${esc(formatRelative(latest.at))}</span>`
+            ? `<span class="district-card-latest">${esc(t('districts.most_recent_hazard', 'Most recent hazard'))} ${sevChip(latest.hazard.severity)}${esc(latest.hazard.event_type || latest.hazard.type || t('districts.unlabelled', 'unlabelled'))} &middot; ${esc(formatRelative(latest.at))}</span>`
             : `<span class="district-card-latest muted-sm">${esc(hazards.length
-                ? 'Active hazards carry no timestamp.'
-                : 'No active hazards on record.')}</span>`}
+                ? t('districts.no_hazard_timestamp', 'Active hazards carry no timestamp.')
+                : t('districts.no_hazards_recorded', 'No active hazards on record.'))}</span>`}
         `
         // The filter reads `dataset.attention`, which only exists now.
         applyFilters(districts.length)
@@ -429,7 +486,7 @@ function renderList(districts) {
         // that stops spinning and never resolves into either state.
         if (!card.isConnected) return
         counts.setAttribute('aria-busy', 'false')
-        counts.textContent = 'Counts unavailable'
+        counts.textContent = t('districts.counts_unavailable', 'Counts unavailable')
         counts.classList.add('data-gap')
         // Left unresolved: the filter cannot honestly call this district
         // quiet, and it will keep showing under the attention filter.
@@ -444,7 +501,7 @@ function renderList(districts) {
   empty.className = 'empty-note'
   empty.id = 'grid-empty'
   empty.hidden = true
-  empty.textContent = 'No district matches that filter.'
+  empty.textContent = t('districts.no_match', 'No district matches that filter.')
   app.appendChild(empty)
 
   applyFilters(districts.length)
@@ -464,7 +521,7 @@ function renderOverview(overview) {
   const back = document.createElement('a')
   back.className = 'back-link'
   back.href = '/districts'
-  back.textContent = '← All districts'
+  back.textContent = t('districts.all_districts', '← All districts')
   app.appendChild(back)
 
   const ribbon = document.createElement('div')
@@ -474,15 +531,15 @@ function renderOverview(overview) {
       ${esc(d.name)}
       <span class="ribbon-sub-name">${esc(d.country)}</span>
     </div>
-    <div class="ribbon-subtitle">${esc(num(d.radius_km, { int: true }))} km radius &middot; ${esc(Number(d.center.lat).toFixed(4))}, ${esc(Number(d.center.lon).toFixed(4))}</div>
+    <div class="ribbon-subtitle">${esc(fill(t('districts.km_radius', '{km} km radius'), { km: num(d.radius_km, { int: true }) }))} &middot; ${esc(Number(d.center.lat).toFixed(4))}, ${esc(Number(d.center.lon).toFixed(4))}</div>
     <div class="counts-strip">
-      <span>Assets <strong>${num(c.service_assets, { int: true })}</strong></span>
-      <span>Incidents <strong>${num(c.incidents, { int: true })}</strong></span>
-      <span>Interventions <strong>${num(c.interventions, { int: true })}</strong></span>
-      <span>Tasks <strong>${num(c.tasks, { int: true })}</strong></span>
-      <span>Field reports <strong>${num(c.field_reports, { int: true })}</strong></span>
-      <span>Alerts <strong>${num(c.alert_events, { int: true })}</strong></span>
-      <span>Workflows <strong>${num(c.workflow_instances, { int: true })}</strong></span>
+      <span>${esc(t('districts.count_assets', 'Assets'))} <strong>${num(c.service_assets, { int: true })}</strong></span>
+      <span>${esc(t('districts.count_incidents', 'Incidents'))} <strong>${num(c.incidents, { int: true })}</strong></span>
+      <span>${esc(t('districts.count_interventions', 'Interventions'))} <strong>${num(c.interventions, { int: true })}</strong></span>
+      <span>${esc(t('districts.count_tasks', 'Tasks'))} <strong>${num(c.tasks, { int: true })}</strong></span>
+      <span>${esc(t('districts.count_field_reports', 'Field reports'))} <strong>${num(c.field_reports, { int: true })}</strong></span>
+      <span>${esc(t('districts.count_alerts', 'Alerts'))} <strong>${num(c.alert_events, { int: true })}</strong></span>
+      <span>${esc(t('districts.count_workflows', 'Workflows'))} <strong>${num(c.workflow_instances, { int: true })}</strong></span>
     </div>
   `
   app.appendChild(ribbon)
@@ -493,29 +550,43 @@ function renderOverview(overview) {
   // reuses the KPI tile treatment rather than inventing a sixth set of boxes.
   const glanceSection = document.createElement('section')
   glanceSection.className = 'section'
-  glanceSection.innerHTML = '<h2 class="section-title">At a glance</h2>'
+  glanceSection.innerHTML = `<h2 class="section-title">${esc(t('districts.at_a_glance', 'At a glance'))}</h2>`
 
   const glanceRow = document.createElement('div')
   glanceRow.className = 'kpi-row'
   glanceRow.innerHTML = [
-    kpiTile('Open alerts', num(openCount, { int: true }), `of ${num(alerts.length, { int: true })} alert events`),
-    kpiTile('Active hazards', num(hazards.length, { int: true }), 'hazard events in radius'),
+    kpiTile(
+      t('districts.open_alerts_label', 'Open alerts'),
+      num(openCount, { int: true }),
+      fill(t('districts.of_alert_events', 'of {n} alert events'), { n: num(alerts.length, { int: true }) }),
+    ),
+    kpiTile(
+      t('districts.active_hazards_label', 'Active hazards'),
+      num(hazards.length, { int: true }),
+      t('districts.hazard_events_in_radius', 'hazard events in radius'),
+    ),
     // The age, not the date: "2 days ago" is the answer to "is this still
     // news". The absolute date sits underneath for anyone filing a report.
     latest
       ? kpiTile(
-          'Most recent hazard',
+          t('districts.most_recent_hazard', 'Most recent hazard'),
           formatRelative(latest.at),
-          `${latest.hazard.event_type || latest.hazard.type || 'unlabelled'} · ${sevClass(latest.hazard.severity)} · ${formatTimestamp(latest.at, { style: 'date' })}`,
+          `${latest.hazard.event_type || latest.hazard.type || t('districts.unlabelled', 'unlabelled')} · ${sevClass(latest.hazard.severity)} · ${formatTimestamp(latest.at, { style: 'date' })}`,
           false,
           'kpi-value-text',
         )
       : kpiTile(
-          'Most recent hazard',
+          t('districts.most_recent_hazard', 'Most recent hazard'),
           '—',
-          hazards.length ? 'active hazards carry no timestamp' : 'no active hazards on record',
+          hazards.length
+            ? t('districts.no_hazard_timestamp_unit', 'active hazards carry no timestamp')
+            : t('districts.no_hazards_unit', 'no active hazards on record'),
         ),
-    kpiTile('Incidents', num(c.incidents, { int: true }), 'recorded in radius'),
+    kpiTile(
+      t('districts.incidents_label', 'Incidents'),
+      num(c.incidents, { int: true }),
+      t('districts.recorded_in_radius', 'recorded in radius'),
+    ),
   ].join('')
   glanceSection.appendChild(glanceRow)
   app.appendChild(glanceSection)
@@ -523,7 +594,7 @@ function renderOverview(overview) {
   // --- Situation ------------------------------------------------
   const sitSection = document.createElement('section')
   sitSection.className = 'section'
-  sitSection.innerHTML = '<h2 class="section-title">Situation</h2>'
+  sitSection.innerHTML = `<h2 class="section-title">${esc(t('districts.situation', 'Situation'))}</h2>`
 
   const sitRow = document.createElement('div')
   sitRow.className = 'situation-row'
@@ -541,11 +612,11 @@ function renderOverview(overview) {
     hazardWrap.innerHTML = `
       <div class="table-wrap">
         <table>
-          <caption class="visually-hidden">Most recent active hazards in ${esc(d.name)}</caption>
+          <caption class="visually-hidden">${esc(fill(t('districts.hazards_caption', 'Most recent active hazards in {name}'), { name: d.name }))}</caption>
           <thead><tr>
-            <th scope="col">Hazard</th>
-            <th scope="col">Severity</th>
-            <th scope="col">Date</th>
+            <th scope="col">${esc(t('districts.col_hazard', 'Hazard'))}</th>
+            <th scope="col">${esc(t('districts.col_severity', 'Severity'))}</th>
+            <th scope="col">${esc(t('districts.col_date', 'Date'))}</th>
           </tr></thead>
           <tbody>${top10.map(h => `<tr>
             <td>${esc(h.event_type || h.type || '—')}</td>
@@ -555,7 +626,7 @@ function renderOverview(overview) {
         </table>
       </div>`
   } else {
-    hazardWrap.innerHTML = emptyNote('No active hazards.')
+    hazardWrap.innerHTML = emptyNote(t('districts.no_active_hazards', 'No active hazards.'))
   }
   sitRow.appendChild(hazardWrap)
   sitSection.appendChild(sitRow)
@@ -564,15 +635,15 @@ function renderOverview(overview) {
   // --- Operations ----------------------------------------------
   const opsSection = document.createElement('section')
   opsSection.className = 'section'
-  opsSection.innerHTML = '<h2 class="section-title">Operations</h2>'
+  opsSection.innerHTML = `<h2 class="section-title">${esc(t('districts.operations', 'Operations'))}</h2>`
 
-  pagedList(opsSection, 'Incidents', overview.incidents, (r) => recordItem(r.title || r.id, sevChip(r.severity), r))
-  pagedList(opsSection, 'Interventions', overview.interventions, (r) => recordItem(r.title || r.id, stateChip(r.status), r))
-  pagedList(opsSection, 'Tasks', overview.intervention_tasks, (t) => recordItem(t.title || t.id, stateChip(t.status), t))
+  pagedList(opsSection, t('districts.incidents_label', 'Incidents'), overview.incidents, (r) => recordItem(r.title || r.id, sevChip(r.severity), r))
+  pagedList(opsSection, t('districts.interventions', 'Interventions'), overview.interventions, (r) => recordItem(r.title || r.id, stateChip(r.status), r))
+  pagedList(opsSection, t('districts.tasks', 'Tasks'), overview.intervention_tasks, (task) => recordItem(task.title || task.id, stateChip(task.status), task))
 
   // Field reports kept their 10-record cap; what changed is that the cap now
   // says so and offers the remainder, like every other list on this page.
-  pagedList(opsSection, 'Field Reports', overview.field_reports, (r) => {
+  pagedList(opsSection, t('districts.field_reports', 'Field Reports'), overview.field_reports, (r) => {
     const demo = r.demographics
     const demoStr = demo ? ` · ${demo.gender || ''} ${demo.age_band || ''}` : ''
     const reporter = r.reported_by ? `<span class="chip chip-neutral">${esc(r.reported_by)}</span>` : ''
@@ -583,16 +654,16 @@ function renderOverview(overview) {
   // --- Signal and response --------------------------------------
   const sigSection = document.createElement('section')
   sigSection.className = 'section'
-  sigSection.innerHTML = '<h2 class="section-title">Signal and Response</h2>'
+  sigSection.innerHTML = `<h2 class="section-title">${esc(t('districts.signal_and_response', 'Signal and Response'))}</h2>`
 
-  pagedList(sigSection, 'Alert Events', alerts, (a) => {
+  pagedList(sigSection, t('districts.alert_events', 'Alert Events'), alerts, (a) => {
     const wfBadge = a.workflow_id ? '<span class="chip chip-neutral">wf</span>' : ''
     return recordItem(a.message || a.rule_name || a.id, `${sevChip(a.severity)} ${stateChip(a.status)} ${wfBadge}`, a)
   })
-  pagedList(sigSection, 'Workflows', overview.workflow_instances, (w) => recordItem(w.type || w.id, stateChip(w.state), w))
+  pagedList(sigSection, t('districts.workflows', 'Workflows'), overview.workflow_instances, (w) => recordItem(w.type || w.id, stateChip(w.state), w))
   // 42 feedback notes was the list that started this: it is the longest on a
   // quiet district and pushed every alert above it off the screen.
-  pagedList(sigSection, 'Community Feedback', overview.community_feedback, (f) =>
+  pagedList(sigSection, t('districts.community_feedback', 'Community Feedback'), overview.community_feedback, (f) =>
     recordItem(String(f.message || f.id).slice(0, 70), sentimentChip(f.sentiment), f))
 
   // --- KPI snapshot ---------------------------------------------
@@ -602,10 +673,10 @@ function renderOverview(overview) {
   // A KPI with no data shows its reason rather than a bare em dash, so a reader
   // can tell "nothing happened" from "we did not measure it".
   kpiRow.innerHTML = [
-    kpiTile('People reached', num(kpi.people_reached, { int: true }), 'people'),
-    kpiTile('Warning to action', num(kpi.warning_to_action_median_hours, { dp: 2 }), 'hours median'),
-    kpiTile('False alert rate', pct(kpi.false_alert_rate), '', kpi.false_alert_rate === null || kpi.false_alert_rate === undefined),
-    kpiTile('Cold-chain rate', pct(kpi.cold_chain_protection_rate), '', kpi.cold_chain_protection_rate === null || kpi.cold_chain_protection_rate === undefined),
+    kpiTile(t('districts.people_reached', 'People reached'), num(kpi.people_reached, { int: true }), t('districts.unit_people', 'people')),
+    kpiTile(t('districts.warning_to_action', 'Warning to action'), num(kpi.warning_to_action_median_hours, { dp: 2 }), t('districts.hours_median', 'hours median')),
+    kpiTile(t('districts.false_alert_rate', 'False alert rate'), pct(kpi.false_alert_rate), '', kpi.false_alert_rate === null || kpi.false_alert_rate === undefined),
+    kpiTile(t('districts.cold_chain_rate', 'Cold-chain rate'), pct(kpi.cold_chain_protection_rate), '', kpi.cold_chain_protection_rate === null || kpi.cold_chain_protection_rate === undefined),
   ].join('')
   sigSection.appendChild(kpiRow)
   app.appendChild(sigSection)
@@ -621,7 +692,7 @@ function showError(app, message) {
   // from while it is still talking.
   panel.setAttribute('role', 'alert')
   panel.innerHTML = `<strong>${esc(message)}</strong>
-    <p>The district data could not be loaded. Check the connection and try again.</p>`
+    <p>${esc(t('districts.error_body', 'The district data could not be loaded. Check the connection and try again.'))}</p>`
   app.appendChild(panel)
 }
 
@@ -632,7 +703,7 @@ function loadingNote(app, text) {
   note.className = 'loading-note'
   note.textContent = text
   app.appendChild(note)
-  setStatus('Loading.')
+  setStatus(t('districts.status_loading', 'Loading.'))
 }
 
 async function route() {
@@ -641,42 +712,84 @@ async function route() {
   if (!app) return
 
   if (!hash) {
-    loadingNote(app, 'Loading districts…')
+    loadingNote(app, t('districts.loading_districts', 'Loading districts…'))
     try {
       const { data } = await apiFetch('/api/v1/districts')
       app.setAttribute('aria-busy', 'false')
       renderList(data || [])
-      setStatus(`${(data || []).length} districts loaded.`)
+      setStatus(fill(t('districts.status_districts_loaded', '{n} districts loaded.'), { n: String((data || []).length) }))
     } catch {
-      showError(app, 'Could not load districts.')
+      showError(app, t('districts.error_list', 'Could not load districts.'))
     }
     return
   }
 
-  loadingNote(app, 'Loading…')
+  loadingNote(app, t('districts.loading', 'Loading…'))
   try {
     const { data } = await apiFetch(`/api/v1/districts/${encodeURIComponent(hash)}`)
     app.setAttribute('aria-busy', 'false')
     if (!data) {
-      showError(app, 'District not found.')
+      showError(app, t('districts.error_not_found', 'District not found.'))
       return
     }
     renderOverview(data)
     // The card counts on the list page announce themselves; the overview has
     // no such per-region chatter, so its load is announced once, here.
-    setStatus(`${data.district.name} overview loaded.`)
+    setStatus(fill(t('districts.status_overview_loaded', '{name} overview loaded.'), { name: data.district.name }))
   } catch (err) {
     // `hash` came from the URL and used to be interpolated into innerHTML
     // unescaped, so the not-found branch reflected whatever the address bar
     // held. It is escaped now, and the detail is not echoed back at all.
-    showError(app, err.status === 404 ? 'District not found.' : 'Could not load this district.')
+    showError(app, err.status === 404
+      ? t('districts.error_not_found', 'District not found.')
+      : t('districts.error_district', 'Could not load this district.'))
   }
 }
 
 window.addEventListener('hashchange', route)
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', route)
-} else {
+/**
+ * Boot, and the one control that changes what every string above says.
+ *
+ * `route()` is re-run rather than only re-stamped: almost nothing on this
+ * surface lives in the markup — the headings, the table headers, the list
+ * footers and every sentence are built in JavaScript — so translating the
+ * static strings alone would leave a Swahili page wrapped in English. The
+ * catalogue is awaited before the first route so the first paint is already
+ * in the reader's language.
+ */
+async function init() {
+  await initI18n(currentLocale)
+  document.title = t('districts.title', 'Lindela Districts')
+
+  const localeSel = document.getElementById('locale-select')
+  if (localeSel) {
+  	localeSel.value = currentLocale
+  	localeSel.addEventListener('change', async (e) => {
+  		localStorage.setItem('lindela_lite_locale', e.target.value)
+  		await window.__i18n.set(e.target.value)
+  		document.title = t('districts.title', 'Lindela Districts')
+  		route()
+  	})
+  }
+
   route()
+}
+
+/**
+ * Shared with every other surface, so a reader who chose Kiswahili on the
+ * console is not offered English here.
+ */
+function currentLocale() {
+  const stored = localStorage.getItem('lindela_lite_locale')
+  // A stored preference for a language this surface does not carry would
+  // leave the shared runtime layering a catalogue the reader cannot read,
+  // so only a locale offered on this page is honoured.
+  return OFFERED_LOCALES.includes(stored) ? stored : 'en'
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init)
+} else {
+  init()
 }
