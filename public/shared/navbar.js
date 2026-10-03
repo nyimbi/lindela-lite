@@ -316,6 +316,17 @@ export function mountNavbar(options = {}) {
   }
 
   const navbar = renderNavbar(options)
-  document.body.insertBefore(navbar, document.body.firstChild)
+  // Insert after the skip link rather than as the body's first child.
+  //
+  // The navbar lands above a statically-authored <a class="skip-link">, so the
+  // first Tab press focused the brand link instead. That defeats the skip link
+  // on every surface at once — WCAG 2.4.1 (Bypass Blocks), the requirement the
+  // link exists to satisfy, silently broken by an insertion order.
+  const skipLink = document.querySelector('.skip-link')
+  if (skipLink && skipLink.parentNode === document.body) {
+    document.body.insertBefore(navbar, skipLink.nextSibling)
+  } else {
+    document.body.insertBefore(navbar, document.body.firstChild)
+  }
   document.body.classList.add('has-navbar')
 }

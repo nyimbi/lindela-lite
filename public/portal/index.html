@@ -134,8 +134,11 @@
 
       .auth-panel .btn-primary {
         padding: 0.75rem 1.5rem;
-        background: #3b82f6;
-        color: white;
+        /* White on #3b82f6 measured 3.68:1. The token carries the brand hue
+           with ink chosen to clear AA on it, so both surfaces now share one
+           primary rather than each inventing its own. */
+        background: var(--brand);
+        color: var(--on-brand);
         border: none;
         border-radius: 4px;
         cursor: pointer;

@@ -168,18 +168,23 @@
         min-height: var(--tap-target-min, 44px);
       }
 
+      /* Approve is the control that releases pre-agreed finance, and it was the
+         least legible thing in the product at 2.07:1 — two competing rules
+         declared it, and the later one put body ink on a mid-green fill.
+         One rule, one pairing, chosen to clear AA. */
       .btn-approve {
-        background: var(--focal-point-approve-bg, #10b981);
-        color: white;
+        background: var(--ok);
+        color: var(--on-ok, oklch(14% 0.02 155));
       }
 
       .btn-approve:hover {
-        opacity: 0.9;
+        background: color-mix(in oklch, var(--ok) 85%, black);
       }
 
       .btn-reject {
-        background: var(--focal-point-reject-bg, #ef4444);
-        color: white;
+        background: transparent;
+        color: var(--danger);
+        border-color: color-mix(in oklch, var(--danger) 45%, transparent);
       }
 
       .btn-reject:hover {
@@ -389,7 +394,6 @@
         flex-wrap: wrap;
       }
       .action-buttons .btn { flex: 1 1 10rem; min-height: var(--tap-target-min); }
-      .btn-approve { background: var(--ok); color: var(--ink); border-color: var(--ok); font-weight: 600; }
       .btn-approve:hover { background: color-mix(in oklch, var(--ok) 85%, white); }
       .btn-reject { background: transparent; color: var(--danger); border-color: color-mix(in oklch, var(--danger) 45%, transparent); font-weight: 600; }
       .btn-reject:hover { background: color-mix(in oklch, var(--danger) 12%, transparent); }

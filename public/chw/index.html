@@ -160,14 +160,18 @@
       }
 
       .btn-primary {
-        background: #10b981;
-        color: white;
+        /* White on #10b981 measured 2.54:1 — the primary action on the field
+           app was the least readable control on the screen. */
+        background: var(--ok);
+        color: var(--on-ok, oklch(14% 0.02 155));
         border: none;
       }
 
       .btn-secondary {
-        background: #3b82f6;
-        color: white;
+        /* White on #3b82f6 measured 3.68:1. The brand hue with ink chosen to
+           clear AA on it, matching every other primary in the product. */
+        background: var(--brand);
+        color: var(--on-brand);
         border: none;
       }
 

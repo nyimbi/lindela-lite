@@ -24,6 +24,7 @@
   --on-accent:       oklch(14% 0.02 90);
   --on-warn:         oklch(14% 0.02 90);
   --on-danger:       oklch(96% 0.005 260);
+  --on-ok:           oklch(14% 0.02 155);
   --on-sev-medium:   oklch(14% 0.02 90);
 
   /* Focus ring. Separate from --brand because a focus indicator needs to hold

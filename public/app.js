@@ -55,6 +55,9 @@ const state = {
   climate: [],
   routePlan: null,
   roadsById: new Map(),
+  // workflow type -> Set of alert ids that a workflow of that type governs.
+  // Built once per refresh so the ribbon tiles can filter the alert rail.
+  workflowAlertIds: {},
 }
 
 // =============================================================
@@ -1094,6 +1097,51 @@ function ensureRiskGradient(opacity) {
   return id
 }
 
+/** Start of the window a map time filter selects, or null for "all". */
+function rangeStart(value) {
+  const now = Date.now()
+  switch (value) {
+    case '24h': return new Date(now - 24 * 3600 * 1000)
+    case '7d': return new Date(now - 7 * 24 * 3600 * 1000)
+    case '30d': return new Date(now - 30 * 24 * 3600 * 1000)
+    default: return null
+  }
+}
+
+/** The most recent timestamp on a record, whatever field carries it. */
+function recordTime(record) {
+  const raw = record.occurred_at || record.observed_at || record.first_seen_at ||
+              record.created_at || record.generated_at || record.updated_at
+  if (!raw) return null
+  const t = new Date(raw).getTime()
+  return Number.isNaN(t) ? null : t
+}
+
+/**
+ * Whether a record falls inside the selected window.
+ *
+ * A record with no timestamp at all is kept: "no date" is not "outside the
+ * range", and dropping it would silently empty the map whenever a feed omits
+ * one. The window bounds what it can exclude, and says nothing about the rest.
+ */
+function withinRange(record, since) {
+  const t = recordTime(record)
+  return t === null ? true : t >= since.getTime()
+}
+
+/**
+ * Whether an asset is a cold-chain node.
+ *
+ * The connector seeds `meta.cold_chain` on service assets; the map filter reads
+ * the same field rather than guessing from the asset's type.
+ */
+function isColdChainAsset(record) {
+  if (record.meta?.cold_chain === true) return true
+  if (record.metadata?.cold_chain === true) return true
+  if (typeof record.cold_chain === 'boolean') return record.cold_chain
+  return String(record.service_type || '').toLowerCase() === 'cold_chain'
+}
+
 function renderMap(records) {
   // Records count as plottable if they have a point OR a usable bounding box.
   // Filtering on coordinates alone dropped every bbox-only hazard before the
@@ -1109,13 +1157,24 @@ function renderMap(records) {
   // corridor rather than letting a region-wide view swallow it.
   const bbox = mapFrame(geo, undefined, state.floodFocus || state.routeFocus || null).frame
 
-  // Apply map severity filter
+  // Apply map filters.
+  //
+  // Severity and source were applied; the other three controls on this bar were
+  // inert. "Time" had no listener and filtered nothing, "Cold-chain nodes" wrote
+  // a flag that nothing read, and the workflow tiles set a filter that no panel
+  // consulted. Each looked like a control and did nothing, which is worse than
+  // not offering it: an operator narrows the map, sees no change, and concludes
+  // the data is wrong.
   const sevFilter = $('mapSeverity')?.value || ''
   const srcFilter = $('mapSource')?.value || ''
+  const since = rangeStart($('mapTimeRange')?.value)
+  const coldOnly = $('coldChainToggle')?.checked ? true : state.filters.coldChain
 
   const visible = geo.filter((r) => {
     if (sevFilter && r.severity && r.severity !== sevFilter) return false
     if (srcFilter && r.source && r.source !== srcFilter) return false
+    if (since && !withinRange(r, since)) return false
+    if (coldOnly && !isColdChainAsset(r)) return false
     return true
   })
 
@@ -1567,6 +1626,7 @@ async function refresh() {
       load('reportTemplates', '/api/v1/report-templates?limit=20'),
       load('climate', '/api/v1/climate?limit=200'),
       load('dispatches', '/api/v1/rapidpro/dispatches?limit=200'),
+      load('workflows', '/api/v1/workflows?limit=200'),
     ])
 
     const failed = results.filter((r) => r.failed).map((r) => r.failed)
@@ -1611,6 +1671,18 @@ async function refresh() {
       state.templates = merged.reportTemplates.data || []
     }
     if (merged.dispatches) state.data.dispatches = merged.dispatches
+    if (merged.workflows) {
+      state.data.workflows = merged.workflows
+      // Index the alert each workflow governs, so selecting a ribbon tile can
+      // narrow the rail. A workflow's subject is what it acts on; only alert
+      // subjects are relevant to the alert list.
+      const index = {}
+      for (const wf of merged.workflows.data || []) {
+        if (wf.subject_kind !== 'alert_event' || !wf.subject_id) continue
+        ;(index[wf.type] ||= new Set()).add(wf.subject_id)
+      }
+      state.workflowAlertIds = index
+    }
 
     if (merged.climate) {
       state.data.climate = merged.climate
@@ -1747,10 +1819,19 @@ function renderWorkflowsTab(byType, totals = {}) {
   }).join('') || '<p class="workflow-empty">No workflow instances recorded.</p>'
 
   const selectType = (card) => {
-    state.workflowTypeFilter = card.dataset.type
-    grid.querySelectorAll('.workflow-metric').forEach((c) => c.classList.toggle('active', c === card))
+    // Selecting the same tile again clears it, so there is a way back without
+    // a separate control.
+    const same = state.workflowTypeFilter === card.dataset.type
+    state.workflowTypeFilter = same ? null : card.dataset.type
+    grid.querySelectorAll('.workflow-metric').forEach((c) => {
+      c.classList.toggle('active', !same && c === card)
+    })
     syncFiltersToUrl()
-    setStatus(`Filtering alerts by ${card.dataset.type.replace(/_/g, ' ')}.`)
+    setStatus(state.workflowTypeFilter
+      ? `Showing ${card.dataset.type.replace(/_/g, ' ')} workflows only. Select the tile again to clear.`
+      : 'Showing all workflow types.')
+    renderAlertsPanel()
+    switchTab('alerts')
   }
 
   // A type restored from the URL has to read as selected once the tiles are
@@ -2051,9 +2132,22 @@ function renderAlertsBadge(alerts) {
 function renderAlertsPanel() {
   const alerts = state.data.alerts?.data || []
   const filter = state.alertFilter
-  const filtered = filter === 'all' ? alerts
+  let filtered = filter === 'all' ? alerts
     : filter === 'auto_approved' ? alerts.filter((a) => a.status === 'auto_approved' || a.status === 'auto-approved')
     : alerts.filter((a) => a.status === filter)
+
+  // The workflow tiles set this and nothing read it, so selecting "Anticipatory
+  // Alert" highlighted a tile and changed nothing else.
+  //
+  // The link runs through the workflow, not the alert: a workflow whose
+  // subject_kind is "alert_event" points at the alert by id. Reading
+  // alert.metadata instead — which carries only a district — matched nothing and
+  // emptied the list, which is worse than not filtering at all.
+  const type = state.workflowTypeFilter
+  if (type) {
+    const linked = state.workflowAlertIds?.[type]
+    filtered = linked ? filtered.filter((a) => linked.has(a.id)) : []
+  }
 
   const container = $('alertsList')
   if (!container) return

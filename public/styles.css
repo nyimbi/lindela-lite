@@ -659,9 +659,13 @@ body.app-shell {
 }
 
 .tab-badge {
-  background: var(--danger);
-  color: oklch(96% 0.005 260);
-  font-size: 0.6rem;
+  /* Measured at 3.2:1 with near-white ink at 10px — under the 4.5:1 AA floor.
+     The badge carries an alert COUNT, so the one thing it cannot afford is
+     being the least legible text on the page. Deepened fill with body ink. */
+  background: color-mix(in oklch, var(--danger) 30%, var(--bg));
+  color: var(--ink);
+  border: 1px solid var(--danger);
+  font-size: var(--text-xs);
   font-weight: 700;
   font-family: var(--font-mono);
   min-width: 15px;
