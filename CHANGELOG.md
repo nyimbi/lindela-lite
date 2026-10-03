@@ -7,6 +7,71 @@ All additions are additive; no existing endpoint changed shape.
 
 ### Fixed
 
+**A health worker told their report was filed when it was discarded.** The CHW
+offline queue opened `if (!this.db) return` and then fired an IndexedDB write
+without awaiting it, so an unavailable store — private mode, storage pressure, a
+blocked upgrade — and a write the browser later aborted both resolved
+successfully. The surface showed "Report queued", reset the wizard, and walked
+the worker away from a typed report that existed nowhere. Nothing about a
+discarded report looks like a discarded report.
+
+`enqueue()` now throws unless the record is committed, resolving on
+`tx.oncomplete` rather than on the request's own success: a quota error aborts
+the transaction after the add has already reported success, so a record the
+store then drops must not read as saved. The toast waits for the store's
+acknowledgement. A throw leaves the wizard standing with everything typed still
+in it — the one outcome in which retrying is right.
+
+**The offline precache was a hand-kept list of an import graph, and was wrong.**
+`APP_SHELL` had been repaired twice by hand and still omitted
+`/shared/fmt.js`, `/shared/labels.js` and `/components.css`, all three imported by
+the surfaces it claimed to cover. A missing ES module is a hard module-resolution
+error, not a degraded load, so the console failed to boot offline entirely — the
+one case the work exists for. There is no list now: `shellGraph()` walks a
+breadth-first closure over `<link href>`, `<script src>`, `@import` and
+`from '…'`, and the closure is unit-tested against the real `public/` tree, so
+adding an import and forgetting the worker is a test failure rather than a boot
+failure nobody sees.
+
+**The CO trend chart described a period nobody selected.**
+`computeMonthlyKpiSeries` walks back from `now`; the CO page called it bare
+while its KPI tiles came from `?quarter=Q&year=Y`. Selecting a past quarter
+plotted the last twelve months under a heading that said so, beside tiles for the
+quarter — two different quarters presented as one. The window is now anchored to
+the selected quarter and captioned with the range actually plotted, sections are
+hidden and emptied before each load so a stale chart cannot be counted as
+freshly fetched, and the heading stops claiming a range it no longer implies.
+
+**The scenario delta bars drew score levels under a change.** Each card printed a
+change in the mean sensitivity score and drew two bars below it — "Base" at a
+hardcoded 40px, "Scen" at `max(4, min(80, 40 + delta))`. The bar encoded a level
+while the number was a delta, neither was labelled, and the scale was both fixed
+and truncated: a +2 and a +40 came out at nearly the same width, and everything
+past +40 came out identical. Bars now encode the delta they sit under, anchored
+at a zero rule on a data-derived extent shared by all three cards and printed at
+both ends of the axis. A null delta prints an em dash rather than an empty track
+that reads as "no change".
+
+**Two keys rendered as themselves.** `footer.powered` reached every Soomaali and
+Kiswahili reader on the CHW page as the literal text `footer.powered` — the
+shared runtime resolves a missing key to the key — and `co.kpi_title` left
+English standing under a Kiswahili flag. Both fixed. The Soomaali translation of
+`footer.powered` is not invented; it sits in a named untranslated-key list that
+is printed on every run.
+
+**The i18n gate checked one hand-listed namespace against one locale.**
+`scripts/check-i18n.mjs` now enforces, over all eight surfaces, that every
+`data-i18n` key exists, that every locale a surface offers renders every string
+that surface's markup names, and that every locale file meets a recorded
+coverage floor that may only rise. The three surfaces with no i18n layer are
+named on every run rather than scored as passing.
+
+**The tap-target gate could not see the map.** Its selector listed only HTML form
+controls, so every SVG shape was invisible to it — which is why a hazard marker
+could be five CSS pixels across while the gate stayed green. The console's own
+`data-tap-target` opt-in is now queried, and width is checked alongside height.
+Not run live: the gate needs Chrome on :9222 and a server on :4177.
+
 **A data-quality number that was always zero, and would have been meaningless
 if it were not.** `computeDataQuality` initialised `confidence_sum` on each
 source, read it to produce `mean_confidence`, and never incremented it anywhere

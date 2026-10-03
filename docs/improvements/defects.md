@@ -560,6 +560,30 @@ in `public/`. The complete inventory of graphics primitives in the product is 39
 `public/co/app.js:236`, and CSS-`<div>` bars again at `public/scenarios/app.js:342`.
 Every other "chart" is a text strip: a `<span>` holding one sentence.
 
+### Remediation status, 2026-10-03
+
+Each defect below carries the verdict as of today, not as of the audit. Verified
+against the working tree; the guard named in each row is what keeps it fixed.
+
+| | Defect | State | Held by |
+|---|---|---|---|
+| WEB-01 | falsy coordinates drop records | **fixed** | `coordinatePair` (`public/districts/app.js:217`) refuses null/`''` explicitly rather than through `Number.isFinite`, which both coerce to 0; the shortfall is named in the SVG. `test/web-districts-scenarios.test.js` |
+| WEB-02 | severity filter admits the unseverified | **fixed** | `evaluateMapFilters` (`public/app.js:1236`), a pure function, driven directly by `test/web-console.test.js` |
+| WEB-03 | delta bars truncated and unlabelled | **fixed** | `niceExtent` / `deltaBar` (`public/scenarios/app.js:346`), data-derived shared extent, printed at both ends of the axis. `test/web-districts-scenarios.test.js` |
+| WEB-04 | severity by colour alone | **fixed** | shape and dash per severity plus a text `aria-label` naming it (`public/app.js:1479,1487,1670`) |
+| WEB-05 | offline queue reports a discard as filed | **fixed** | `enqueue()` resolves on `tx.oncomplete` and throws otherwise; the CHW toast waits for the store's acknowledgement. `test/web-chw-offline.test.js` |
+| WEB-06 | precache omits three files | **fixed** | `shellGraph` derives the closure from the import graph instead of holding a list. `test/web-chw-offline.test.js` runs it against the real `public/` tree |
+| WEB-07 | 30s redraw destroys focus | **fixed** | focus and scroll are preserved across a rebuild (`public/app.js:1578,2458`) |
+| WEB-08 | CO charts under the wrong quarter's tiles | **fixed** | the window is anchored to the selected quarter and labelled with the range actually plotted. `test/web-co-i18n.test.js` |
+| WEB-09 | unconditional 12+ endpoint poll | **fixed** | backoff with failure memory, and a hidden document is not polled (`public/app.js:1964,2125,2143`) |
+| WEB-10 | markers below the touch-target floor | **fixed, not yet measured** | `hitRadiusUnits` (`public/app.js:1150`) derives a hit radius from the rendered width. The gate now queries `[data-tap-target]` and checks width as well as height (`scripts/check-responsive.mjs`), but it needs Chrome on :9222 and a server on :4177, so **no live run has confirmed 24px** |
+| WEB-11 | i18n 17–92%, three surfaces none | **partly fixed** | `scripts/check-i18n.mjs` now gates all eight surfaces and enforces coverage floors that may only rise. Two genuinely broken strings fixed. Coverage itself is unchanged apart from those two: **`districts/`, `scenarios/` and `parametric/` still have no i18n layer at all**, and `chw`+`so` still lack `footer.powered` (named in `KNOWN_UNTRANSLATED`, printed every run, not guessed) |
+| WEB-12 | two plan claims are false | **partly fixed** | Phase 0 is now true for a reason that cannot rot; Phase 2 stays open — the console links `styles.css` only (`public/index.html:9`) |
+
+WEB-10 is the one to distrust: the fix is in the code and the gate that would
+confirm it was widened in the same session, but nothing has run the gate. A
+defect marked "fixed, not yet measured" is a claim, not a result.
+
 ### WEB-01 — A district map drops every record on the equator or prime meridian
 
 `public/districts/app.js:208` and `:229`
