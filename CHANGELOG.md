@@ -96,6 +96,37 @@ each with its own sample size, refused ones included.
 
 ### Fixed
 
+**Nine mutating routes 403'd a caller holding the scope the docs named.**
+`READ_SCOPES` and `WRITE_SCOPES` were module-private, so the deny-by-default rule
+was the one rule in the codebase with no way to test it — and an unmapped
+mutation fails *closed*, which is correct and invisible at the same time. Making
+the table exportable found nine routes no prefix covered: `POST/PATCH
+/api/v1/parametric-rules`, `POST /api/v1/trigger-protocols/{id}/backtest` and
+`/shadow-run`, `POST /api/v1/report-distributions/{id}/retry`, `POST
+/api/v1/report-schedule-runs/{id}/retry`, plus `POST /api/v1/routing/plan` and
+`POST /api/v1/equity/scan`.
+
+`scopeForRoute` matches on a `/` boundary, so `/api/v1/parametric` never covered
+`/api/v1/parametric-rules`. That is the safe direction — a prefix cannot leak
+onto a sibling — and it is exactly why a prefix fails silently and nobody finds
+out until somebody reports a 403.
+
+`test/route-scope-coverage.test.js` now enumerates every `(method, path)` in
+`docs/openapi.yaml` and requires each mutating one to map to a scope. It reads
+the document rather than `src/server.js` because `(method, path)` pairs cannot be
+reconstructed from the server's text: only 11 of 64 mutating routes write the
+method and path in one `if`, the rest delegate to eleven `match*Route` helpers
+that check the method elsewhere. A scan that paired them found 11 routes,
+reported every one mapped, and was right about nothing. The document declares all
+122, and `check-openapi.mjs` already fails the build when it and the served
+routes disagree.
+
+**The operator can now see whether a deployment is secured.** The auth posture
+lived only on `/api/v1/auth-info`, which requires a token — so the person asking
+"is this secured?" was the one person who could not find out. `GET
+/api/v1/health` reports `configured`, `enforced` and the public-path list: a
+boolean, a list, and nothing about who holds what.
+
 **Calibration was cited as a feature and wired to nothing.** JTBD-018 in
 `docs/platform-jtbd-catalogue.md` offers `calibrationReport` as evidence that
 `GET /api/v1/assessments` "includes calibration metadata". The function was

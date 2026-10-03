@@ -4,26 +4,15 @@
     {
       "id": "ENH-01",
       "title": "Deny-by-default authorization from an explicit route→scope table",
-      "status": "partial",
-      "detail": "The security behaviour shipped and is tested: unmapped mutations map to DENIED_SCOPE 'admin:*' and are refused (src/auth.js:19, src/auth.js:255-259, src/server.js:445-450), malformed or empty token config throws rather than returning [] (src/auth.js:126-167, src/server.js:423-452), GETs now sit behind the gate with an explicit public-path list (src/auth.js:99-112, src/server.js:434-444). What is missing is the checkability the entry asks for: there is no single exported ROUTE_SCOPES table — the two tables at src/auth.js:22 and src/auth.js:52 are module-private, so nothing external can iterate them — two mutating routes (POST /api/v1/routing/plan at src/server.js:1025 and POST /api/v1/equity/scan at src/server.js:1221, both named in the entry's reproduced list) are absent from WRITE_SCOPES and therefore closed to every scoped token, no test asserts that every route in server.js appears in the table, and /api/v1/health (src/server.js:503-519) reports no auth posture — only the token-bearing /api/v1/auth-info does (src/server.js:486-501).",
+      "status": "shipped",
+      "detail": "Deny-by-default shipped as behaviour, and now as a table a test can iterate. `READ_SCOPES` and `WRITE_SCOPES` are exported and frozen, with `ROUTE_SCOPES` as their union. Making the check possible found seven mutating routes no prefix covered - `parametric-rules`, `trigger-protocols`, `report-distributions` and `report-schedule-runs` - each of which had been failing closed to `admin:*` and 403ing a caller holding the scope the documentation named. `scopeForRoute` matches on a `/` boundary, so `/api/v1/parametric` never covered `/api/v1/parametric-rules`: the safe direction, and the reason a prefix fails silently. `GET /api/v1/health` reports `configured`, `enforced` and the public-path list, which is the one route an operator can reach without a token to begin with.",
       "evidence": [
-        "src/auth.js:19",
         "src/auth.js:22",
-        "src/auth.js:52",
-        "src/auth.js:99",
-        "src/auth.js:126",
-        "src/auth.js:255",
-        "src/server.js:423",
-        "src/server.js:434",
-        "src/server.js:446",
-        "src/server.js:486",
-        "src/server.js:503",
-        "src/server.js:1025",
-        "src/server.js:1221",
-        "test/auth-deny-by-default.test.js:128",
-        "test/auth-deny-by-default.test.js:181"
+        "src/auth.js:60",
+        "src/server.js:514",
+        "test/route-scope-coverage.test.js:1"
       ],
-      "guarded_by": "test/auth-deny-by-default.test.js"
+      "guarded_by": "test/route-scope-coverage.test.js, test/auth-deny-by-default.test.js"
     },
     {
       "id": "ENH-02",

@@ -18,8 +18,16 @@ import crypto from 'node:crypto'
 
 export const DENIED_SCOPE = 'admin:*'
 
-/** Read scopes, checked in order; first prefix match wins. */
-const READ_SCOPES = [
+/**
+ * Read scopes, checked in order; first prefix match wins.
+ *
+ * Exported so a test can iterate it. It was module-private, which made the
+ * deny-by-default rule uncheckable: a route added to `server.js` with no entry
+ * here fails closed to `admin:*` and looks like correct behaviour from the
+ * outside, so nothing but reading this file would ever notice. A table nobody
+ * can iterate is a table nobody maintains.
+ */
+export const READ_SCOPES = Object.freeze([
   // Exports carry field reports and RapidPro message bodies — the most
   // personal data the platform holds. They were readable by any token at all,
   // and by no token when GETs went unauthenticated.
@@ -46,10 +54,18 @@ const READ_SCOPES = [
   ['/api/v1/ingest', 'read:integrations'],
   ['/api/v1/sources', 'read:integrations'],
   ['/api/v1/workflows', 'read:integrations'],
-]
+])
 
-/** Write scopes, checked in order; first prefix match wins. */
-const WRITE_SCOPES = [
+/**
+ * Write scopes, checked in order; first prefix match wins.
+ *
+ * Exported for the same reason as `READ_SCOPES`, and it matters more here: a
+ * mutating route absent from this list is refused rather than served, so the
+ * failure mode is over-restriction rather than a hole — which is exactly why it
+ * can go unnoticed until somebody reports that an endpoint they were told
+ * existed returns 403 for their own token.
+ */
+export const WRITE_SCOPES = Object.freeze([
   ['/api/v1/incidents', 'write:incidents'],
   ['/api/v1/interventions', 'write:incidents'],
   ['/api/v1/tasks', 'write:incidents'],
@@ -85,7 +101,33 @@ const WRITE_SCOPES = [
   ['/api/v1/kpi/refresh-snapshots', 'admin:analytics'],
   ['/api/v1/maintenance', 'admin:maintenance'],
   ['/api/v1/demo', 'admin:maintenance'],
-]
+  // Two mutating routes that were absent and therefore failed closed to
+  // `admin:*`. Not a leak — a `403` to an operator whose token carried every
+  // scope the documentation named.
+  ['/api/v1/routing', 'admin:workflows'],
+  ['/api/v1/equity', 'admin:analytics'],
+  // Seven more that no prefix covered. Every one of them already failed closed
+  // to `admin:*`, so this is not a hole — it is seven routes that returned 403
+  // to a caller holding the scope the documentation told them to hold. They are
+  // here because `scopeForRoute` matches on a `/` boundary, so `/api/v1/parametric`
+  // does *not* cover `/api/v1/parametric-rules`: that is the safe direction, and
+  // it is also why a prefix silently fails to apply and nobody finds out.
+  ['/api/v1/parametric-rules', 'admin:parametric'],
+  ['/api/v1/trigger-protocols', 'admin:alerts'],
+  ['/api/v1/report-distributions', 'write:reports'],
+  ['/api/v1/report-schedule-runs', 'write:reports'],
+])
+
+/**
+ * Every prefix this module knows about, with the scope it maps to.
+ *
+ * The union of the two tables, for a test that wants to assert something about
+ * route coverage without caring which side a path falls on.
+ */
+export const ROUTE_SCOPES = Object.freeze([
+  ...READ_SCOPES.map(([prefix, scope]) => Object.freeze({ prefix, scope, method: 'READ' })),
+  ...WRITE_SCOPES.map(([prefix, scope]) => Object.freeze({ prefix, scope, method: 'WRITE' })),
+])
 
 /**
  * Routes reachable without a token, whatever the token configuration.

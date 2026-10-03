@@ -4,7 +4,7 @@ What has actually shipped, verified against the tree rather than against the com
 Regenerate with `node docs/improvements/_build-status.mjs` after editing any
 `_status-*.json`.
 
-**2 shipped, 11 partial, 17 not started,** of 30.
+**3 shipped, 10 partial, 17 not started,** of 30.
 The two shipped are the two the project was built to make possible anyway: the API
 substrate a caller can integrate against (`ENH-30`) and a way to get your own data in
 (`ENH-25`).
@@ -19,7 +19,7 @@ nothing in the product.
 
 | | Enhancement | Status | Guarded by |
 |---|---|---|---|
-| ENH-01 | Deny-by-default authorization from an explicit route→scope table | partial | `test/auth-deny-by-default.test.js` |
+| ENH-01 | Deny-by-default authorization from an explicit route→scope table | shipped | `test/route-scope-coverage.test.js`, `test/auth-deny-by-default.test.js` |
 | ENH-02 | Honesty envelopes on every numeric response, policed in CI | partial | `test/flood-score-honesty.test.js` |
 | ENH-03 | Per-region calibration and a trust score | **not started** | — |
 | ENH-04 | Three tiers of uncertainty on every number | partial | `test/flood-score-honesty.test.js` |
@@ -73,28 +73,6 @@ nothing in the product.
 ---
 
 ## What each partial is missing
-
-### ENH-01 — Deny-by-default authorization from an explicit route→scope table
-
-**partial.** The security behaviour shipped and is tested: unmapped mutations map to DENIED_SCOPE 'admin:*' and are refused (src/auth.js:19, src/auth.js:255-259, src/server.js:445-450), malformed or empty token config throws rather than returning [] (src/auth.js:126-167, src/server.js:423-452), GETs now sit behind the gate with an explicit public-path list (src/auth.js:99-112, src/server.js:434-444). What is missing is the checkability the entry asks for: there is no single exported ROUTE_SCOPES table — the two tables at src/auth.js:22 and src/auth.js:52 are module-private, so nothing external can iterate them — two mutating routes (POST /api/v1/routing/plan at src/server.js:1025 and POST /api/v1/equity/scan at src/server.js:1221, both named in the entry's reproduced list) are absent from WRITE_SCOPES and therefore closed to every scoped token, no test asserts that every route in server.js appears in the table, and /api/v1/health (src/server.js:503-519) reports no auth posture — only the token-bearing /api/v1/auth-info does (src/server.js:486-501).
-
-Evidence:
-
-- `src/auth.js:19`
-- `src/auth.js:22`
-- `src/auth.js:52`
-- `src/auth.js:99`
-- `src/auth.js:126`
-- `src/auth.js:255`
-- `src/server.js:423`
-- `src/server.js:434`
-- `src/server.js:446`
-- `src/server.js:486`
-- `src/server.js:503`
-- `src/server.js:1025`
-- `src/server.js:1221`
-- `test/auth-deny-by-default.test.js:128`
-- `test/auth-deny-by-default.test.js:181`
 
 ### ENH-02 — Honesty envelopes on every numeric response, policed in CI
 
@@ -454,11 +432,13 @@ about the same idea. One tier, on one route, in prose in the docs and a Wilson i
 one response field. Every one of them says the same thing: the caveat has to travel with the
 number, and it currently travels with about one number.
 
-**A list written once and checked nowhere.** `ENH-01` ships deny-by-default as *behaviour*
-but keeps its route→scope table module-private, so the test cannot iterate it and a route
-added without a scope fails closed to `admin:*` rather than being caught. `ENH-29` runs a
-conformance suite against Postgres only when a CI job nobody sets provides a database, so CI
-exercises one adapter and reports both. `ENH-24` has no test at all.
+**A list written once and checked nowhere.** `ENH-01` is the shape this class takes, and
+fixing it found the defect: deny-by-default shipped as *behaviour* with its route→scope table
+module-private, so nothing could iterate it. Exporting the table found seven mutating routes no
+prefix covered - each already failing closed, each a 403 to a caller holding the documented
+scope. `ENH-29` still has it: a conformance suite that covers Postgres only when a CI job nobody
+sets provides a database, so CI exercises one adapter and reports both. `ENH-24` has no test at
+all.
 
 Group B is the outlier and the honest answer is that it was not started: nine of ten items
 are untouched, and the one that moved (a request timeout on the RapidPro client) was a

@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath } from './auth.js'
+import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, publicPaths } from './auth.js'
 import { logger, metrics, timer } from './observability.js'
 import { refreshAnalytics, calibrationReport } from './analytics.js'
 import { biasCorrectClimate } from './analytics/downscaling.js'
@@ -515,6 +515,19 @@ async function handleApiRequest(store, req, res, url) {
       sources: publicSourceCatalog().map((source) => source.id),
       exclusions: ['gdelt'],
       storage: { mode: store.mode || 'custom' },
+      // The auth posture, on the one route an operator can reach without a
+      // token. It used to live only on `/api/v1/auth-info`, which needs a token
+      // to read — so the person asking "is this deployment secured?" was the one
+      // person who could not find out. The answer is a boolean, a public-path
+      // list, and nothing about who holds what.
+      auth: {
+        configured: isAuthConfigured(),
+        // `false` here means every route except the public list is closed to
+        // everyone, which is a working deployment. It does *not* mean the
+        // deployment is unsecured — that is `configured: false`.
+        enforced: isAuthConfigured(),
+        public_paths: publicPaths(),
+      },
     })
     return
   }
