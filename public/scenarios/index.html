@@ -96,9 +96,19 @@
     }
     .delta-label { margin-top: var(--sp-1); color: var(--ink-muted); font-size: var(--text-sm); }
 
-    .bar-wrap { display: flex; gap: var(--sp-2); align-items: flex-end; margin-top: var(--sp-3); height: 3rem; }
-    .bar { width: 1.5rem; border-radius: 2px 2px 0 0; background: var(--stroke-strong); }
-    .bar-label { font-size: var(--text-xs); color: var(--ink-muted); text-align: center; }
+    /* The delta bars had a hardcoded 40px "Base" bar and a "Scen" bar clamped
+       into [4, 80]px: a fixed, arbitrary, truncated scale that drew levels
+       under a number which is a delta. These anchor at a zero rule, grow either
+       way to a data-derived extent shared by all three cards, and print that
+       extent at both ends so the length means something on its own. */
+    .delta-axis { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); }
+    .delta-track { position: relative; flex: 1; height: 0.75rem; background: var(--bg); border: 1px solid var(--stroke); border-radius: 2px; }
+    .delta-zero { position: absolute; top: -3px; bottom: -3px; left: 50%; width: 1px; background: var(--stroke-strong); }
+    .delta-fill { position: absolute; top: 0; bottom: 0; min-width: 2px; background: var(--brand); }
+    .delta-fill.positive { left: 50%; }
+    .delta-fill.negative { right: 50%; }
+    .delta-tick { font-size: var(--text-xs); color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+    .delta-caption { margin-top: var(--sp-1); font-size: var(--text-xs); color: var(--ink-muted); }
 
     .share-box {
       padding: var(--sp-3);

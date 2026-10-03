@@ -272,9 +272,18 @@ function showResults(data, perturbation) {
     limit.innerHTML = parts.join(' ')
   }
 
-  setDeltaCard('flood', diff.flood_risk_delta_mean)
-  setDeltaCard('conflict', diff.conflict_risk_delta_mean)
-  setDeltaCard('impacts', diff.impacts_delta_mean)
+  // One axis for all three cards. They carry the same quantity in the same
+  // units — the change in the mean of an uncalibrated 0-100 sensitivity score —
+  // so a shared extent is what lets the three be read against each other. Three
+  // independently-scaled bars side by side are three unrelated pictures.
+  const extent = deltaExtent([
+    diff.flood_risk_delta_mean,
+    diff.conflict_risk_delta_mean,
+    diff.impacts_delta_mean,
+  ])
+  setDeltaCard('flood', diff.flood_risk_delta_mean, extent)
+  setDeltaCard('conflict', diff.conflict_risk_delta_mean, extent)
+  setDeltaCard('impacts', diff.impacts_delta_mean, extent)
 
   // Top affected assets, ranked by how much the scenario moved them.
   //
@@ -320,10 +329,75 @@ function showResults(data, perturbation) {
   history.replaceState(null, '', `/scenarios#${token}`)
 }
 
-function setDeltaCard(prefix, value) {
+/**
+ * Round a magnitude up to a 1/2/5 extent — the smallest "nice" number that
+ * still contains it.
+ *
+ * This is the whole of the fix for the truncated bars. The old scale started
+ * from a hardcoded 40px baseline and clamped the bar into [4, 80]px, so it was
+ * both fixed and clipping: a +2 and a +40 delta came out at nearly the same
+ * width, and everything above +40 came out identical. Deriving the extent from
+ * the data makes length monotonic in magnitude and never clipped, and stating
+ * that extent on the axis is what lets a bar be read without the card text.
+ *
+ * `floor` matters for a zero or near-zero delta: an extent of 0 would divide by
+ * zero and paint every bar full width.
+ */
+export function niceExtent(magnitude, floor = 1) {
+  const m = Math.max(Number.isFinite(Number(magnitude)) ? Math.abs(Number(magnitude)) : 0, floor)
+  const decade = 10 ** Math.floor(Math.log10(m))
+  for (const step of [1, 2, 5, 10]) {
+    if (m <= step * decade) return step * decade
+  }
+  return 10 * decade
+}
+
+/**
+ * One extent covering every delta on the page.
+ *
+ * All three cards carry the same quantity in the same units, so a shared
+ * extent is what makes them comparable. Per-card extents would render three
+ * equal-length bars for three unrelated magnitudes.
+ */
+export function deltaExtent(values) {
+  let peak = 0
+  for (const v of values) {
+    const n = Number(v)
+    if (Number.isFinite(n)) peak = Math.max(peak, Math.abs(n))
+  }
+  return niceExtent(peak, 1)
+}
+
+/**
+ * A delta bar as a pure geometry descriptor: how long, which way, on what axis.
+ *
+ * Null means there is nothing to draw. An absent delta is not a zero delta, and
+ * the card says so with an em dash rather than painting an empty track that
+ * looks like "no change".
+ */
+export function deltaBar(value, extent, { maxPx = 48 } = {}) {
+  if (value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  const span = extent > 0 ? extent : 1
+  // The ratio is what the bar means; the pixels are just its size. `niceExtent`
+  // guarantees extent >= |value|, so the min is a belt-and-braces guard on that
+  // invariant rather than the clamp that used to hide truncation.
+  const ratio = Math.min(1, Math.abs(n) / span)
+  return {
+    value: n,
+    extent: span,
+    ratio,
+    lengthPx: ratio * maxPx,
+    direction: n < 0 ? 'negative' : n > 0 ? 'positive' : 'none',
+  }
+}
+
+export function setDeltaCard(prefix, value, extent) {
   const el = $(`${prefix}Delta`)
   const barsEl = $(`${prefix}Bars`)
-  if (value == null) {
+  const bar = deltaBar(value, extent)
+  if (!bar) {
     el.textContent = '—'
     barsEl.innerHTML = ''
     return
@@ -336,18 +410,27 @@ function setDeltaCard(prefix, value) {
   el.textContent = signed(value, { dp: 1 })
   el.style.color = 'var(--ink)'
 
-  // Simple bars: baseline (left) vs scenario (right)
-  const baseH = 40
-  const scenH = Math.max(4, Math.min(80, baseH + value))
+  // The old chart drew a "Base" bar at an invented 40px and a "Scen" bar at
+  // 40 + delta, so it encoded score *levels* while the number printed above it
+  // was a *delta* — two different quantities in one card, with neither one
+  // labelled or scaled. The bar now encodes the delta it sits under, anchored at
+  // a zero rule, on an extent stated on both ends of the axis.
+  const lo = signed(-bar.extent, { dp: 0 })
+  const hi = signed(bar.extent, { dp: 0 })
+  const reading = bar.value === 0
+    ? `No change in the mean sensitivity score. Axis runs from ${lo} to ${hi} score points.`
+    : `${bar.value > 0 ? 'Up' : 'Down'} ${Math.abs(bar.value).toFixed(1)} score points on an axis running from ${lo} to ${hi} score points.`
+
   barsEl.innerHTML = `
-    <div>
-      <div class="bar" style="height:${baseH}px;background:var(--stroke-strong)"></div>
-      <div class="bar-label">Base</div>
+    <div class="delta-axis" role="img" aria-label="${esc(reading)}">
+      <span class="delta-tick">${esc(lo)}</span>
+      <div class="delta-track">
+        ${bar.direction === 'none' ? '' : `<div class="delta-fill ${bar.direction}" style="width:${bar.lengthPx.toFixed(2)}px"></div>`}
+        <div class="delta-zero"></div>
+      </div>
+      <span class="delta-tick">${esc(hi)}</span>
     </div>
-    <div>
-      <div class="bar" style="height:${scenH}px;background:var(--brand)"></div>
-      <div class="bar-label">Scen</div>
-    </div>
+    <div class="delta-caption">score points</div>
   `
 }
 
