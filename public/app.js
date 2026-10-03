@@ -1046,6 +1046,138 @@ function sevRadius(severity) {
   return { critical: 13, high: 10, medium: 7, low: 5 }[String(severity).toLowerCase()] ?? 5
 }
 
+// =============================================================
+// WEB-04 / WEB-10 — a second channel, and a target you can hit
+// =============================================================
+//
+// The map used to carry hazard type in a CSS class that only ever changed
+// `fill`, and severity in a radius. Type was therefore readable *only* by
+// someone who separates the hues: the three colour-vision deficiencies that
+// affect roughly 8% of men all read a flood as a fire, and severity — the one
+// thing on this screen that must never be misread — was a 5px circle against a
+// 13px one on a busy map.
+//
+// Two redundant channels replace the dependence on hue:
+//
+//   type      → shape. Circle, triangle, hexagon, square, diamond, cross.
+//   severity  → radius *and* stroke dash pattern. Five severities, five
+//               patterns, and an ungraded record gets its own rather than
+//               inheriting "low".
+//
+// Colour is still there, and still useful. It is just no longer load-bearing:
+// deleting the stylesheet loses some polish and keeps every fact on screen.
+//
+// Everything below is pure. The drawing code is a thin shell over it, so the
+// claims above are testable without a browser.
+
+/** Points of a unit shape, as offsets from the centre. Null = drawn as <circle>. */
+const SHAPE_OFFSETS = {
+  // Upward triangle — landslide, the thing that slides downhill.
+  triangle: [[0, -1], [0.866, 0.5], [-0.866, 0.5]],
+  // Hexagon — storm, the widest of the set.
+  hexagon: [[1, 0], [0.5, 0.866], [-0.5, 0.866], [-1, 0], [-0.5, -0.866], [0.5, -0.866]],
+  // Square on axis — disaster, generic and blunt.
+  square: [[-1, -1], [1, -1], [1, 1], [-1, 1]],
+  // Diamond on axis — fire.
+  diamond: [[0, -1], [1, 0], [0, 1], [-1, 0]],
+  // Cross — conflict, and the only shape that is not convex.
+  cross: [
+    [-0.35, -1], [0.35, -1], [0.35, -0.35], [1, -0.35], [1, 0.35], [0.35, 0.35],
+    [0.35, 1], [-0.35, 1], [-0.35, 0.35], [-1, 0.35], [-1, -0.35], [-0.35, -0.35],
+  ],
+}
+
+/**
+ * The shape that stands for a hazard type, independent of its colour.
+ *
+ * Derived from `hazardClass` so there is exactly one classifier: two cascades
+ * would drift, and the day they did the legend would describe a map that no
+ * longer existed. Exported because the legend, the draw loop and the test all
+ * have to agree on it.
+ */
+export function hazardShape(eventType) {
+  const cls = hazardClass(eventType).replace('hazard-', '')
+  return {
+    flood: 'circle', landslide: 'triangle', storm: 'hexagon',
+    fire: 'diamond', disaster: 'square', conflict: 'cross', default: 'circle',
+  }[cls] || 'circle'
+}
+
+/**
+ * Severity as a stroke dash pattern.
+ *
+ * Radius alone was not enough: 7px and 10px are hard to tell apart once the
+ * map is dense, and both are far below the tap-target floor, so the thing the
+ * operator is trying to grade is smaller than their fingertip anyway. Dash
+ * pattern is unambiguous at any size, prints in black and white, and survives
+ * `forced-colors` mode where the fill is overridden wholesale.
+ */
+export function severityDash(severity) {
+  return {
+    critical: 'none',      // solid: the loudest, and the default fill if a CSS drops it
+    high: '7 3',
+    medium: '3 3',
+    low: '1 4',
+    ungraded: '9 2 2 2',   // an ungraded record is not "low"
+  }[String(severity || '').toLowerCase()] || '9 2 2 2'
+}
+
+/**
+ * How wide the map is actually drawn, in viewBox units per CSS pixel.
+ *
+ * The viewBox is a fixed 800 units wide; the element is fluid and `meet`-fit,
+ * so the on-screen scale is the smaller of the two axes and varies by two and a
+ * half times between a 360px phone and a 1400px desktop. A hit target sized in
+ * viewBox units alone is therefore 24px on a desktop and 8px in the field, which
+ * is the defect restated. Returns 1 when there is no layout to measure yet,
+ * which makes the floor the conservative one rather than a division by zero.
+ */
+export function viewBoxUnitsPerPx(viewBoxWidth, cssWidth) {
+  if (!(viewBoxWidth > 0) || !(cssWidth > 0)) return 1
+  return viewBoxWidth / cssWidth
+}
+
+/**
+ * Radius, in viewBox units, of the invisible circle that carries a marker's
+ * clicks.
+ *
+ * WCAG 2.2 SC 2.5.8 sets the floor at 24x24 CSS px, so this is 12px scaled
+ * into whatever the map currently measures. A 5-unit visual radius on an 800px
+ * render is a 5px target; the visual marker is still 5px, because a marker
+ * big enough to hit with a thumb would obscure the district it sits in. The
+ * target is invisible and lives behind the mark.
+ */
+export function hitRadiusUnits(viewBoxWidth, cssWidth, minPx = 24) {
+  return Math.ceil((minPx / 2) * viewBoxUnitsPerPx(viewBoxWidth, cssWidth) * 10) / 10
+}
+
+/** Bounding box of a shape at a given radius. Circle included. */
+export function shapeExtent(shape, r) {
+  const offsets = SHAPE_OFFSETS[shape]
+  if (!offsets) return { w: 2 * r, h: 2 * r }
+  const xs = offsets.map((o) => o[0]); const ys = offsets.map((o) => o[1])
+  return {
+    w: (Math.max(...xs) - Math.min(...xs)) * r,
+    h: (Math.max(...ys) - Math.min(...ys)) * r,
+  }
+}
+
+/** An <svg> element for a marker: <circle>, or a <polygon> for everything else. */
+function markerEl(shape, x, y, r, className, extra = {}) {
+  const offsets = SHAPE_OFFSETS[shape]
+  if (!offsets) return svgEl('circle', { cx: x, cy: y, r, class: className, ...extra })
+  const points = offsets
+    .map(([dx, dy]) => `${(x + dx * r).toFixed(1)},${(y + dy * r).toFixed(1)}`)
+    .join(' ')
+  return svgEl('polygon', { points, class: className, ...extra })
+}
+
+/** The live hit radius, measured rather than assumed. Recomputed per render. */
+function currentHitRadius() {
+  const rect = mapEl?.getBoundingClientRect?.()
+  return hitRadiusUnits(SVG_W, rect?.width || 0)
+}
+
 function hazardClass(eventType) {
   const s = String(eventType || '').toLowerCase()
   // Checked before 'flood' so a debris-flow alert, which is a landslide, is not
@@ -1292,6 +1424,10 @@ function renderMap(records) {
   // carries a box spanning ~40 degrees, so its centre is in Chad. The
   // connector now omits those coordinates, and the map shows the region the
   // source actually claims.
+  //
+  // Measured once per render: the map is fluid, so the viewBox-to-pixel ratio
+  // is a fact about the current viewport and not a constant.
+  const hitR = currentHitRadius()
   hazards.forEach((r) => {
     if (!Number.isFinite(r.latitude) || !Number.isFinite(r.longitude)) {
       const box = r.bbox
@@ -1306,9 +1442,17 @@ function renderMap(records) {
           class: `hazard-footprint ${hazardClass(r.event_type)} hazard-footprint-${safeClass(r.severity)}`,
         })
         const footTitle = svgEl('title')
-        footTitle.textContent = `${r.title || r.event_type || 'Hazard'} — reported area, not a point location`
+        footTitle.textContent = `${r.title || r.event_type || 'Hazard'} — ${r.severity || 'ungraded'}, reported area, not a point location`
         foot.append(footTitle)
+        foot.setAttribute('data-tap-target', '')
+        foot.setAttribute('tabindex', '0')
+        foot.setAttribute('role', 'button')
+        foot.setAttribute('aria-label', footTitle.textContent)
+        foot.setAttribute('stroke-dasharray', severityDash(r.severity))
         foot.addEventListener('click', () => openDetailDialog(r))
+        foot.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetailDialog(r) }
+        })
         mapHazardsEl.append(foot)
       }
       // No point and no usable box: nothing to draw, and the record count in
@@ -1316,31 +1460,81 @@ function renderMap(records) {
       return
     }
     const { x, y } = project(r.latitude, r.longitude, bbox)
-    const circle = svgEl('circle', {
-      cx: x, cy: y,
-      r: sevRadius(r.severity),
-      class: `hazard-marker ${hazardClass(r.event_type)}`,
+    const cls = hazardClass(r.event_type)
+    const shape = hazardShape(r.event_type)
+    const label = r.title || r.event_type || 'Hazard'
+    const sev = r.severity || 'ungraded'
+
+    // The invisible target goes first so the visible mark paints over it. The
+    // mark itself keeps its severity radius: a marker sized to a fingertip
+    // would hide the district it sits in, which is the information the
+    // operator is actually reading the map for.
+    const hit = svgEl('circle', {
+      cx: x, cy: y, r: hitR,
+      class: 'hazard-hit',
+      fill: 'transparent', stroke: 'none', 'pointer-events': 'all',
+      'data-tap-target': '',
+      tabindex: '0',
+      role: 'button',
+      'aria-label': `${label} — ${sev}`,
+    })
+    hit.addEventListener('click', () => openDetailDialog(r))
+    hit.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetailDialog(r) }
+    })
+    mapHazardsEl.append(hit)
+
+    const circle = markerEl(shape, x, y, sevRadius(r.severity), `hazard-marker ${cls}`, {
+      'stroke-dasharray': severityDash(sev),
+      // The oversized target behind this is what receives events.
+      'pointer-events': 'none',
+      'aria-hidden': 'true',
     })
     const titleEl = svgEl('title')
-    titleEl.textContent = r.title || r.event_type || 'Hazard'
+    // Severity goes in the accessible name because it is the one thing on this
+    // screen that must never be misread, and the dash pattern carries it
+    // visually only.
+    titleEl.textContent = `${label} — ${sev}`
     circle.append(titleEl)
-    circle.addEventListener('click', () => openDetailDialog(r))
+    // No click listener: the visible mark is `pointer-events: none` so that the
+    // oversized target behind it is the single thing that receives the event.
+    // Two overlapping listeners meant the topmost shape won, and the topmost
+    // shape was the 5px one — the target would have been dead pixels.
     mapHazardsEl.append(circle)
   })
 
-  // Asset squares
+  // Asset squares. A 9-unit square is 9 CSS px on a wide map and 4 on a phone
+  // — the same floor breach the hazard markers had, on a control that has to be
+  // usable with cold hands on a wet screen.
   assets.forEach((r) => {
     const { x, y } = project(r.latitude, r.longitude, bbox)
     const size = 9
+    const label = r.name || r.service_type || 'Asset'
+    const hit = svgEl('circle', {
+      cx: x, cy: y, r: hitR,
+      class: 'asset-hit',
+      fill: 'transparent', stroke: 'none', 'pointer-events': 'all',
+      'data-tap-target': '',
+      tabindex: '0',
+      role: 'button',
+      'aria-label': label,
+    })
+    hit.addEventListener('click', () => openDetailDialog(r))
+    hit.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetailDialog(r) }
+    })
+    mapAssetsEl.append(hit)
+
     const rect = svgEl('rect', {
       x: x - size / 2, y: y - size / 2,
       width: size, height: size,
       class: `asset-marker ${assetClass(r.service_type)}`,
+      'pointer-events': 'none',
+      'aria-hidden': 'true',
     })
     const titleEl = svgEl('title')
-    titleEl.textContent = r.name || r.service_type || 'Asset'
+    titleEl.textContent = label
     rect.append(titleEl)
-    rect.addEventListener('click', () => openDetailDialog(r))
     mapAssetsEl.append(rect)
   })
 
@@ -1380,8 +1574,18 @@ function renderMap(records) {
  * data the map draws, in a table, with the same detail dialog behind each row.
  */
 function renderMapRecordList(entries) {
+  // Same contract as the alerts list: a 30-second refresh must not move the
+  // operator's focus or their scroll position out from under them.
+  _lastMapEntries = entries
+  preserveUiAroundRebuild(() => _renderMapRecordList(entries))
+}
+
+let _lastMapEntries = []
+
+function _renderMapRecordList(entries) {
   const tbody = $('mapRecordListBody')
   if (!tbody) return
+  tbody.setAttribute('data-live-region', 'map-records')
 
   const empty = $('mapRecordListEmpty')
   if (empty) empty.hidden = entries.length > 0
@@ -1443,7 +1647,8 @@ function renderMapRecordList(entries) {
       ? `<span class="sev-chip sev-${sevClass(row.severity)}">${escapeHtml(row.severity)}</span>`
       : '<span class="muted-sm">—</span>'}</td>
     <td class="muted-sm nowrap">${escapeHtml(formatTimestamp(row.when, { style: 'date', dash: '—' }))}</td>
-    <td><button type="button" class="btn btn-xs" data-map-record="${row.index}">Details</button></td>
+    <td><button type="button" class="btn btn-xs" data-map-record="${row.index}"
+        ${FOCUS_KEY_ATTR}="map-record:${row.index}">Details</button></td>
   </tr>`).join('')
 
   tbody.querySelectorAll('[data-map-record]').forEach((btn) => {
@@ -1462,14 +1667,15 @@ function renderMapLegend() {
   _legendDrawn = true
   mapLegendEl.innerHTML = ''
     const items = [
-    { cls: 'hazard-flood',     label: 'Flood',     shape: 'circle' },
-    { cls: 'hazard-landslide', label: 'Landslide', shape: 'circle' },
-    { cls: 'hazard-fire',      label: 'Fire',      shape: 'circle' },
-    { cls: 'hazard-conflict',  label: 'Conflict',  shape: 'circle' },
+    { cls: 'hazard-flood',     label: 'Flood',     shape: hazardShape('flood'),            dash: severityDash('critical') },
+    { cls: 'hazard-landslide', label: 'Landslide', shape: hazardShape('landslide'),        dash: severityDash('high') },
+    { cls: 'hazard-storm',     label: 'Storm',     shape: hazardShape('tropical storm'),   dash: severityDash('medium') },
+    { cls: 'hazard-fire',      label: 'Fire',      shape: hazardShape('wildfire'),         dash: severityDash('low') },
+    { cls: 'hazard-conflict',  label: 'Conflict',  shape: hazardShape('civil conflict'),   dash: severityDash('ungraded') },
     { cls: 'hazard-footprint', label: 'Area (box)',shape: 'footprint' },
     { cls: 'food-medium',      label: 'IPC Phase 3+ area', shape: 'footprint' },
-    { cls: 'asset-health',     label: 'Health',    shape: 'rect' },
-    { cls: 'asset-water',      label: 'Water',     shape: 'rect' },
+    { cls: 'asset-health',     label: 'Health',    shape: 'asset' },
+    { cls: 'asset-water',     label: 'Water',     shape: 'asset' },
   ]
   const pad = 8
   const rowH = 17
@@ -1484,9 +1690,7 @@ function renderMapLegend() {
 
   items.forEach((item, i) => {
     const y = bY + pad + i * rowH + rowH / 2
-    if (item.shape === 'circle') {
-      mapLegendEl.append(svgEl('circle', { cx: 18, cy: y, r: 5, class: `hazard-marker ${item.cls}` }))
-    } else if (item.shape === 'footprint') {
+    if (item.shape === 'footprint') {
       // Dashed, matching how a regional bbox is drawn on the map, and hollow so
       // it cannot be mistaken for a point event with a location we actually know.
       mapLegendEl.append(svgEl('rect', {
@@ -1494,7 +1698,16 @@ function renderMapLegend() {
         class: 'hazard-footprint', fill: 'oklch(62% 0.12 260)', stroke: 'oklch(72% 0.12 260)',
       }))
     } else {
-      mapLegendEl.append(svgEl('rect', { x: 14, y: y - 4, width: 8, height: 8, class: `asset-marker ${item.cls}` }))
+      // The legend draws the same shape the map draws. A swatch that differs
+      // from the mark it explains is worse than no legend: the operator reads
+      // the shape, does not find it, and concludes the map is wrong.
+      if (item.shape === 'asset') {
+        mapLegendEl.append(svgEl('rect', { x: 14, y: y - 4, width: 8, height: 8, class: `asset-marker ${item.cls}` }))
+      } else {
+        mapLegendEl.append(markerEl(item.shape, 18, y, 6, `hazard-marker ${item.cls}`, {
+          'stroke-dasharray': item.dash,
+        }))
+      }
     }
     const lbl = svgEl('text', { x: 30, y: y, class: 'legend-label' })
     lbl.textContent = item.label
@@ -1517,7 +1730,7 @@ mapEl?.addEventListener('wheel', (e) => {
 }, { passive: false })
 
 mapEl?.addEventListener('pointerdown', (e) => {
-  if (e.target.closest('.hazard-marker, .asset-marker')) return
+  if (e.target.closest('.hazard-marker, .asset-marker, .hazard-hit, .asset-hit')) return
   state.mapDragging = true
   state.mapDragStart = { x: e.clientX - state.mapTransform.x, y: e.clientY - state.mapTransform.y }
   mapEl.setPointerCapture(e.pointerId)
@@ -1598,6 +1811,9 @@ $('mapListToggle')?.addEventListener('click', () => toggleMapRecordList())
 
 // Map filter triggers re-render
 $('mapSeverity')?.addEventListener('change', () => { syncFiltersToUrl(); reRenderMapFromState() })
+// The time range had no listener at all, so selecting it never re-rendered and
+// the control looked inert.
+$('mapTimeRange')?.addEventListener('change', () => { syncFiltersToUrl(); reRenderMapFromState() })
 $('mapSource')?.addEventListener('change', () => { syncFiltersToUrl(); reRenderMapFromState() })
 
 // Flood simulation and road overlay controls
@@ -1656,6 +1872,76 @@ function reRenderMapFromState() {
 // =============================================================
 let _refreshInFlight = false
 let _refreshFailures = 0
+let _pollTimer = null
+
+export const POLL_BASE_MS = 30_000
+export const POLL_MAX_MS = 300_000
+
+/**
+ * Milliseconds until the next poll — or null for "do not poll at all".
+ *
+ * The console used `setInterval(refresh, 30_000)`, which is the worst of the
+ * available timers: it cannot be told to stop, it keeps its cadence when the
+ * tab is in the background where nobody is reading the result, and it keeps its
+ * cadence when the network is down and every request is a guaranteed timeout.
+ * Thirteen endpoints at 30s is ~37,000 requests a day per open tab, on the 2G
+ * link the field surfaces are built for.
+ *
+ * Three rules, each one a case where polling is pure waste:
+ *
+ *   hidden    → null. The browser is already throttling background tabs to
+ *               about once a minute; we spend the operator's battery on a
+ *               screen nobody is looking at.
+ *   in flight → null. On a slow link this is the normal case, not the edge one.
+ *   failures  → exponential, 30s → 60 → 120 → 240 → 300s. Bounded, so a link
+ *               that genuinely recovered is picked up within five minutes
+ *               rather than never. A successful poll resets it to the floor.
+ *
+ * Returning null rather than a large number is the point: "do not poll" and
+ * "poll in ten minutes" are different instructions to a scheduler, and only one
+ * of them is honest about a hidden tab.
+ */
+export function pollDelayMs({ failures = 0, hidden = false, inFlight = false } = {}) {
+  if (hidden) return null
+  if (inFlight) return null
+  const step = Math.min(Math.max(0, Math.floor(failures)), 8)
+  return Math.min(POLL_MAX_MS, POLL_BASE_MS * (2 ** step))
+}
+
+/** Every endpoint the console knows how to fetch. */
+export const ALL_ENDPOINTS = [
+  'health', 'sources', 'ingestionHealth', 'flood', 'conflict', 'events',
+  'assets', 'alerts', 'reports', 'reportTemplates', 'climate', 'dispatches', 'workflows',
+]
+
+/** Fetched on every tick: the map and the status bar are never hidden. */
+export const AMBIENT_ENDPOINTS = [
+  'health', 'sources', 'ingestionHealth', 'flood', 'conflict', 'events',
+  'assets', 'climate',
+]
+
+/** Endpoints owned by one tab. Nothing else is fetched while that tab is open. */
+const TAB_ENDPOINTS = {
+  alerts: ['alerts', 'workflows', 'dispatches'],
+  reports: ['reports', 'reportTemplates'],
+  equity: ['climate', 'reports'],
+  ingestion: ['sources', 'ingestionHealth'],
+}
+
+/**
+ * Which endpoints a tick should ask for.
+ *
+ * Every tick used to ask for all thirteen, including the reports list on a tab
+ * showing alerts and the workflows list on a tab showing reports. The map and
+ * the status bar are always on screen, so their inputs are always fetched; the
+ * rest belongs to one tab. `first` is the boot sequence, which pays for
+ * everything once so no tab is ever opened against an empty store.
+ */
+export function endpointsForTab(tab, { first = false } = {}) {
+  const set = new Set(first ? ALL_ENDPOINTS : AMBIENT_ENDPOINTS)
+  for (const name of TAB_ENDPOINTS[tab] || []) set.add(name)
+  return set
+}
 
 /**
  * Load every panel the console shows.
@@ -1668,13 +1954,20 @@ let _refreshFailures = 0
  *
  * Each panel now settles independently, so a dead endpoint blanks its own panel
  * and is named in the status bar rather than taking the other eleven with it.
+ *
+ * Which panels are fetched at all is `endpointsForTab`; how often is
+ * `pollDelayMs`. `force` covers the user-initiated case — pressing Refresh or
+ * bringing a hidden tab back must fetch even if the tab was hidden a moment ago.
  */
-async function refresh() {
+async function refresh({ first = false, force = false } = {}) {
   if (_refreshInFlight) return
-  if (document.hidden) return
+  if (document.hidden && !force) return
   _refreshInFlight = true
 
+  const want = force ? new Set(ALL_ENDPOINTS) : endpointsForTab(state.activeTab, { first })
+
   const load = async (name, path) => {
+    if (!want.has(name)) return { skipped: true }
     try {
       return { [name]: await fetchJson(path), failed: null }
     } catch (err) {
@@ -1693,6 +1986,7 @@ async function refresh() {
       // global events for context. Asking only for the most recent global events
       // let a busy feed page out the local flood and landslide entirely.
       (async () => {
+        if (!want.has('events')) return { skipped: true }
         try {
           const local = await fetchJson(localEventQuery())
           const global_ = await fetchJson(globalEventQuery())
@@ -1777,11 +2071,15 @@ async function refresh() {
     loadDiseaseSummary().catch(() => {})
     loadFloodProbabilityModels().catch(() => {})
 
+    // Reuse whatever state already holds for the panels this tick skipped.
+    // Without the fallback the map emptied itself every time a tab whose
+    // endpoints were not in `want` became active — the visible symptom of a
+    // correct optimisation.
     renderMap([
-      ...(merged.flood?.data || []),
-      ...(merged.conflict?.data || []),
-      ...(merged.events?.data || []),
-      ...(merged.assets?.data || []),
+      ...(merged.flood?.data ?? state.data.flood?.data ?? []),
+      ...(merged.conflict?.data ?? state.data.conflict?.data ?? []),
+      ...(merged.events?.data ?? state.data.events?.data ?? []),
+      ...(merged.assets?.data ?? state.data.assets?.data ?? []),
     ])
 
     loadWorkflowMetrics().catch(() => {})
@@ -1809,8 +2107,52 @@ async function refresh() {
     }
   } finally {
     _refreshInFlight = false
+    schedulePoll()
   }
 }
+
+/**
+ * Self-rescheduling poll, rather than a fixed interval.
+ *
+ * `setInterval` fires on a wall clock no matter what happened last time, so it
+ * cannot express "wait longer because the last attempt failed" and it cannot be
+ * cancelled without clearing a handle nobody keeps. Rescheduling after each
+ * attempt means the delay is computed from the outcome of the attempt that just
+ * finished, which is the only thing worth basing a delay on.
+ */
+function schedulePoll() {
+  if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null }
+  const delay = pollDelayMs({ failures: _refreshFailures, hidden: document.hidden })
+  if (delay === null) return
+  _pollTimer = setTimeout(() => {
+    _pollTimer = null
+    refresh()
+  }, delay)
+  // In a browser the handle is a number and `.unref` does not exist, so this is
+  // a no-op there. Under Node — where every suite that imports this module for
+  // its pure exports would otherwise be held open by a 30-second timer — it
+  // says what it means: a background refresh must not be a reason to stay
+  // alive.
+  _pollTimer?.unref?.()
+}
+
+// A hidden tab stops polling outright; returning to it refreshes at once rather
+// than waiting out whatever delay the backoff had reached. Browsers already
+// throttle background timers, which means an unthrottled `setInterval` was
+// asking for 30-second guarantees it could not deliver anyway.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null }
+    return
+  }
+  schedulePoll()
+  refresh({ force: true })
+})
+
+// Same on the network. `navigator.onLine` is a hint the browser keeps current
+// and acting on it is free.
+window.addEventListener('online', () => refresh({ force: true }))
+window.addEventListener('offline', () => { _refreshFailures = Math.max(_refreshFailures, 1) })
 
 function populateMapSourceFilter(sources) {
   const sel = $('mapSource')
@@ -2094,6 +2436,10 @@ function switchTab(name) {
   else if (name === 'equity')    renderEquityTab()
   else if (name === 'ingestion') renderIngestionPanel()
   else if (name === 'settings')  renderSettingsPanel()
+  // Opening a tab is a request for its data. The poll only fetches the active
+  // tab's endpoints, so without this a tab left open for an hour would render
+  // from whatever the boot load put in state — hours old, with no indication.
+  refresh({ force: false })
 }
 
 document.querySelectorAll('.rail-tab').forEach((btn) => {
@@ -2202,6 +2548,123 @@ function restoreFiltersFromUrl() {
 // =============================================================
 // Alerts panel
 // =============================================================
+// =============================================================
+// WEB-07 — a redraw that does not take the keyboard with it
+// =============================================================
+//
+// `container.innerHTML = ...` on a 30-second timer threw away the node the
+// operator was standing on. Focus fell to `<body>`, so the next Tab started
+// from the top of the document, and a half-typed query died mid-word. It is
+// the same conflation as the falsy-zero bugs: the code knew which *records*
+// were new and had no idea which *element* the human was using.
+//
+// Three fixes, in order of how much they matter:
+//
+//   1. Don't redraw while a field has focus. The state is already loaded; a
+//      paint 200ms later is indistinguishable and costs the operator nothing.
+//   2. When a redraw does happen, put focus and caret back — by a stable key
+//      carried in the markup, never by node identity, which the rebuild
+//      destroys.
+//   3. Keep scroll offsets. A rebuilt list resets to the top of a list the
+//      operator had scrolled 400px into.
+//
+// All three helpers are pure or take their DOM by argument, so each is
+// testable against plain objects.
+
+export const FOCUS_KEY_ATTR = 'data-focus-key'
+
+/**
+ * A snapshot of "where the caret is", if it is somewhere we can find again.
+ *
+ * Only elements carrying `data-focus-key` are captured. Anything else in a
+ * rebuilt subtree has no stable identity — its position shifts as records
+ * arrive — and restoring focus to the wrong control is worse than dropping it.
+ */
+export function captureFocus(activeEl) {
+  if (!activeEl || typeof activeEl.getAttribute !== 'function') return null
+  const key = activeEl.getAttribute(FOCUS_KEY_ATTR)
+  if (!key) return null
+  const start = typeof activeEl.selectionStart === 'number' ? activeEl.selectionStart : null
+  const end = typeof activeEl.selectionEnd === 'number' ? activeEl.selectionEnd : null
+  return { key, start, end }
+}
+
+/**
+ * Put the caret back where it was, if the element still exists.
+ *
+ * `preventScroll` matters: without it, focusing an element near the bottom of
+ * a long rebuilt list scrolls the page to it, which is the scroll jump we are
+ * here to prevent.
+ */
+export function restoreFocus(root, snapshot) {
+  if (!root || !snapshot || typeof root.querySelectorAll !== 'function') return false
+  const nodes = root.querySelectorAll(`[${FOCUS_KEY_ATTR}]`)
+  let target = null
+  for (const node of nodes) {
+    if (node.getAttribute(FOCUS_KEY_ATTR) === snapshot.key) { target = node; break }
+  }
+  if (!target || typeof target.focus !== 'function') return false
+  target.focus({ preventScroll: true })
+  if (snapshot.start !== null && typeof target.setSelectionRange === 'function') {
+    target.setSelectionRange(snapshot.start, snapshot.end ?? snapshot.start)
+  }
+  return true
+}
+
+/**
+ * Whether an automatic redraw should stand down.
+ *
+ * True while the operator is typing, or has focus inside a region that is
+ * about to be replaced. Deferring is free — the data is already in `state`, and
+ * the next paint or a blur puts it on screen — whereas clobbering the caret
+ * loses a sentence the human wrote.
+ */
+export function shouldDeferRedraw(activeEl) {
+  if (!activeEl || typeof activeEl.getAttribute !== 'function') return false
+  if (activeEl.isContentEditable) return true
+  const tag = String(activeEl.tagName || '').toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+  // Focus inside a region keyed as live: about to be rebuilt under the caret.
+  return Boolean(activeEl.closest?.('[data-live-region]'))
+}
+
+/** Scroll offsets of the given scrollable nodes, as pairs. */
+export function captureScroll(nodes) {
+  const out = []
+  for (const node of nodes || []) {
+    const top = node?.scrollTop
+    if (typeof top === 'number' && top !== 0) out.push([node, top])
+  }
+  return out
+}
+
+/** Re-apply a scroll snapshot. One-way: it never captures. */
+export function restoreScroll(pairs) {
+  for (const [node, top] of pairs || []) {
+    try { node.scrollTop = top } catch { /* a node detached mid-rebuild */ }
+  }
+  return (pairs || []).length
+}
+
+/**
+ * Wrap a destructive rebuild so it cannot take the UI down with it.
+ *
+ * Captures before, restores after, and returns whether the redraw was skipped
+ * because someone was typing — the caller replays the deferred paint on blur.
+ */
+export function preserveUiAroundRebuild(rebuild) {
+  const active = document.activeElement
+  if (shouldDeferRedraw(active)) return false
+  const focus = captureFocus(active)
+  const scroll = captureScroll([
+    document.scrollingElement, document.body, $('alertsList'), $('mapRecordListBody'),
+  ])
+  rebuild()
+  restoreScroll(scroll)
+  if (focus) restoreFocus(document, focus)
+  return true
+}
+
 function renderAlertsBadge(alerts) {
   const badge = $('alertsBadge')
   if (!badge) return
@@ -2210,7 +2673,42 @@ function renderAlertsBadge(alerts) {
   else { badge.hidden = true }
 }
 
+/** Signature of the last painted alert list; see `renderAlertsPanel`. */
+let _alertsSignature = ''
+
+/** True while a deferred alert redraw is still owed. */
+let _alertsRedrawPending = false
+
+/**
+ * Redraw the alerts list without disturbing the operator.
+ *
+ * A periodic redraw that lands mid-sentence used to discard the caret and the
+ * scroll position. Two guards: stand down entirely while a field has focus, and
+ * otherwise snapshot focus, caret and scroll across the rebuild. The first
+ * paint of a list still animates; a repaint of the same 30 records does not.
+ */
 function renderAlertsPanel() {
+  const painted = preserveUiAroundRebuild(() => _renderAlertsPanel())
+  if (!painted) _alertsRedrawPending = true
+  return painted
+}
+
+// The pending paint is replayed when focus leaves the surface. Waiting for the
+// next 30-second tick would leave the list stale for up to half a minute after
+// the operator stopped typing.
+document.addEventListener('focusout', () => {
+  if (!_alertsRedrawPending) return
+  // Focusout fires before focus lands, so a keystroke that moved the caret out
+  // of the field would replay against the wrong element.
+  setTimeout(() => {
+    if (shouldDeferRedraw(document.activeElement)) return
+    _alertsRedrawPending = false
+    _renderAlertsPanel()
+    _renderMapRecordList(_lastMapEntries)
+  }, 0)
+})
+
+function _renderAlertsPanel() {
   const alerts = state.data.alerts?.data || []
   const filter = state.alertFilter
   let filtered = filter === 'all' ? alerts
@@ -2233,13 +2731,26 @@ function renderAlertsPanel() {
   const container = $('alertsList')
   if (!container) return
 
+  // A rebuild that does not know where the caret is will take it. The list is
+  // marked live so `shouldDeferRedraw` stands down while a field is focused,
+  // and every control carries a stable key so focus and caret survive the
+  // rebuilds that do happen.
+  container.setAttribute('data-live-region', 'alerts')
+
   if (!filtered.length) {
     container.innerHTML = `<div class="empty-state"><p>${escapeHtml(t('state.empty_alerts'))}</p></div>`
     return
   }
 
+  // Re-animating 30 cards twice a minute is motion nobody asked for, and for a
+  // screen reader it is the whole list being re-announced. Animate on the
+  // frames where the contents actually changed, and not otherwise.
+  const signature = filtered.map((a) => `${a.id}:${a.status}`).join('|')
+  const animate = signature !== _alertsSignature
+  _alertsSignature = signature
+
   container.innerHTML = filtered.map((alert, i) => {
-    const delay = Math.min(i * 40, 320)
+    const delay = animate ? Math.min(i * 40, 320) : 0
     const canSend = alert.status === 'approved' || alert.status === 'auto_approved' || alert.status === 'auto-approved'
     // The metric was rendered straight from the API — `precipitation_mm`,
     // `conflict_events_count_7d` — as the line that says why this alert fired.
@@ -2261,11 +2772,14 @@ function renderAlertsPanel() {
       </div>
       <div class="item-actions">
         <button class="btn btn-xs btn-approve" data-id="${escapeHtml(alert.id)}" data-action="approve"
+                ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:approve"
                 data-i18n="action.approve">Approve</button>
         <button class="btn btn-xs btn-reject" data-id="${escapeHtml(alert.id)}" data-action="reject"
+                ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:reject"
                 data-i18n="action.reject">Reject</button>
         <button class="btn btn-xs btn-send" data-id="${escapeHtml(alert.id)}" data-action="send"
-                ${canSend ? '' : 'disabled'} data-i18n="action.send">Send</button>
+                ${canSend ? '' : 'disabled'} ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:send"
+                data-i18n="action.send">Send</button>
       </div>
     </div>`
   }).join('')
@@ -2308,7 +2822,7 @@ async function handleAlertAction(id, action) {
     })
     setStatus(payload.success ? 'Alert sent via RapidPro.' : (payload.error || 'Send failed'))
   }
-  await refresh()
+  await refresh({ force: true })
 }
 
 // =============================================================
@@ -2366,7 +2880,7 @@ async function handleReportAction(id, action) {
   if (action === 'approve') {
     const payload = await postJson(`/api/v1/reports/${safeId}/approve`, { actor: 'dashboard' })
     setStatus(payload.success ? `Report approved.` : (payload.error || 'Approve failed'))
-    await refresh()
+    await refresh({ force: true })
   } else if (action === 'distribute') {
     const payload = await postJson(`/api/v1/reports/${safeId}/distribute`, { channels: [{ channel: 'markdown_download' }] })
     if (payload.success || payload.report) {
@@ -2375,7 +2889,7 @@ async function handleReportAction(id, action) {
     } else {
       setStatus(payload.error || 'Distribute failed')
     }
-    await refresh()
+    await refresh({ force: true })
   } else if (action === 'export-md') {
     window.open(`/api/v1/reports/${safeId}/export.md`, '_blank')
   } else if (action === 'export-csv') {
@@ -2422,7 +2936,7 @@ async function createReportTemplate() {
   const sel = $('reportTemplateIdInput')
   if (sel) sel.value = payload.data.id
   setStatus(`Created template ${payload.data.id}.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function generateReport() {
@@ -2435,7 +2949,7 @@ async function generateReport() {
   const payload = await postJson('/api/v1/reports', { template_id: templateId, scope: reportScope(), generate: true })
   if (!payload.success) { setStatus(payload.error || 'Report generation failed'); return }
   setStatus(`Generated report ${payload.data.id}.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function approveLatestReport() {
@@ -2443,7 +2957,7 @@ async function approveLatestReport() {
   if (!report) { setStatus('No report to approve.'); return }
   const payload = await postJson(`/api/v1/reports/${report.id}/approve`, {})
   setStatus(payload.success ? `Approved report ${payload.data.id}.` : (payload.error || 'Approval failed'))
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function distributeLatestReport() {
@@ -2453,7 +2967,7 @@ async function distributeLatestReport() {
   if (!payload.success) { setStatus(payload.error || payload.data?.[0]?.error || 'Distribution failed'); return }
   window.open(`/api/v1/reports/${report.id}/export.md`, '_blank')
   setStatus(`Prepared Markdown export for report ${report.id}.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 // =============================================================
@@ -2527,7 +3041,7 @@ async function runSingleSource(sourceId) {
   setStatus(`Running ${sourceId}...`)
   const payload = await postJson('/api/v1/ingest/run', { sources: [sourceId] })
   setStatus(payload.success ? `Ran ${sourceId}.` : (payload.error || 'Ingestion failed'))
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function runIngestion() {
@@ -2545,21 +3059,21 @@ async function runIngestion() {
   })
   if (!payload.success) { setStatus(payload.error || 'Ingestion failed'); return }
   setStatus(`Ingestion complete. ${payload.source_runs.length} source runs recorded.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function createPublicIngestionSchedules() {
   setStatus('Creating default public ingestion schedules...')
   const payload = await postJson('/api/v1/ingest/schedules/defaults', {})
   setStatus(payload.success ? `Created ${payload.created} ingestion schedules.` : (payload.error || 'Ingestion schedule creation failed'))
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function runDueIngestion() {
   setStatus('Running due public ingestion schedules...')
   const payload = await postJson('/api/v1/ingest/run-due', {})
   setStatus(payload.success ? `Completed ${payload.data.length} due source runs.` : (payload.error || 'Due ingestion failed'))
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function importServiceAssets(kind) {
@@ -2572,7 +3086,7 @@ async function importServiceAssets(kind) {
   })
   const payload = await response.json()
   setStatus(payload.success ? `Imported ${payload.imported} service assets.` : ((payload.errors || [payload.error]).join(' | ')))
-  await refresh()
+  await refresh({ force: true })
 }
 
 // =============================================================
@@ -2647,7 +3161,7 @@ async function createIncident() {
   const intInput = $('interventionIncidentInput')
   if (intInput) intInput.value = payload.data.id
   setStatus(`Created incident ${payload.data.id}.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function createIntervention() {
@@ -2663,7 +3177,7 @@ async function createIntervention() {
   const taskInput = $('taskInterventionInput')
   if (taskInput) taskInput.value = payload.data.id
   setStatus(`Created intervention ${payload.data.id}.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function createTask() {
@@ -2677,7 +3191,7 @@ async function createTask() {
   const payload = await postJson('/api/v1/tasks', body)
   if (!payload.success) { setStatus(payload.error || 'Task creation failed'); return }
   setStatus(`Created task ${payload.data.id}.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function createAlertRule() {
@@ -2692,7 +3206,7 @@ async function createAlertRule() {
   })
   if (!payload.success) { setStatus(payload.error || 'Alert rule creation failed'); return }
   setStatus(`Created alert rule ${payload.data.id}.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function evaluateAlerts() {
@@ -2700,7 +3214,7 @@ async function evaluateAlerts() {
   const payload = await postJson('/api/v1/alerts/evaluate', {})
   if (!payload.success) { setStatus(payload.error || 'Alert evaluation failed'); return }
   setStatus(`Evaluated ${payload.evaluated} rules; created ${payload.created} alert events.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function sendLatestRapidProAlert() {
@@ -2712,7 +3226,7 @@ async function sendLatestRapidProAlert() {
   const payload = await postJson(`/api/v1/rapidpro/alert-events/${alert.id}/send`, { urns })
   if (!payload.success) { setStatus(payload.data?.error || payload.error || 'RapidPro dispatch failed'); return }
   setStatus(`RapidPro dispatch ${payload.data.id} recorded.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function createReportSchedule() {
@@ -2732,7 +3246,7 @@ async function createReportSchedule() {
   })
   if (!payload.success) { setStatus(payload.error || 'Report schedule creation failed'); return }
   setStatus(`Created report schedule ${payload.data.id}.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 async function runDueReports() {
@@ -2740,7 +3254,7 @@ async function runDueReports() {
   const payload = await postJson('/api/v1/report-schedules/run-due', {})
   if (!payload.success) { setStatus(payload.error || 'Due report run failed'); return }
   setStatus(`Completed ${payload.data.length} due report schedule runs.`)
-  await refresh()
+  await refresh({ force: true })
 }
 
 // =============================================================
@@ -3019,7 +3533,7 @@ $('dispatchGateDialog')?.querySelector('[data-action="confirm"]')?.addEventListe
     setStatus('Dispatch failed: ' + err.message)
   }
   closeDispatchGateDialog()
-  await refresh()
+  await refresh({ force: true })
 })
 
 const dialogClose = $('dispatchGateDialog')?.querySelector('.dialog-close')
@@ -3047,7 +3561,7 @@ $('triggerEquityAuditButton')?.addEventListener('click', async () => {
     district: district,
   })
   setStatus(payload.success ? `Equity audit workflow triggered for ${district}.` : (payload.error || 'Workflow trigger failed'))
-  await refresh()
+  await refresh({ force: true })
 })
 
 // =============================================================
@@ -3123,9 +3637,11 @@ $('triggerEquityAuditButton')?.addEventListener('click', async () => {
 })()
 
 // =============================================================
-// Auto-refresh (30s)
+// Auto-refresh
 // =============================================================
-setInterval(refresh, 30_000)
+// There is no `setInterval` here any more. The cadence is owned by
+// `schedulePoll`, which runs after each attempt and bases the next delay on
+// that attempt's outcome; see `pollDelayMs` for the three rules it enforces.
 
 // =============================================================
 // Boot
@@ -3133,7 +3649,7 @@ setInterval(refresh, 30_000)
 await loadLocale(state.locale)
 await loadSources()
 restoreFiltersFromUrl()
-await refresh()
+await refresh({ first: true })
 // The build version shown in the Settings panel comes from the health
 // endpoint, which reads package.json, rather than from a literal in the markup
 // that can drift behind the release.
