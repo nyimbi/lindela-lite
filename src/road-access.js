@@ -27,10 +27,45 @@ import { clamp, haversineKm, stableId } from './utils.js'
  *   makes the segment impassable.
  * - When a road has no road_class it is treated as 'unpaved' rather than
  *   assumed all-weather. Absence of data should not read as good news.
+ * - A hazard blocks only within its active window (`DEFAULT_ACTIVE_WINDOW_DAYS`).
+ *   Past that it is recorded with `temporal_status: 'stale'` and downgraded to
+ *   an advisory, because a road-access record describes the present and a
+ *   thirty-year-old archive entry is not evidence about the present. A hazard
+ *   with no usable `occurred_at` is `'undated'`, which is neither evidence nor
+ *   an excuse to dismiss it: it still blocks, and it lowers the confidence of
+ *   the statement it appears in.
  */
 
 const DEFAULT_FLOOD_BLOCK_RADIUS_KM = 2
 const DEFAULT_LANDSLIDE_BLOCK_RADIUS_KM = 5
+
+/**
+ * How long a hazard of each type is allowed to obstruct a road.
+ *
+ * The question a road-access record answers is "can a vehicle reach this
+ * facility now", and `occurred_at` was carried all the way from the hazard
+ * record to the obstruction descriptor and then never read. A 1985 archive
+ * flood closed roads today, with the same confidence as one from this morning,
+ * and the summary counted it in `blocked_by_hazard_type` beside live events.
+ *
+ * The windows differ because the physical processes differ: standing water
+ * recedes within days, a landslide deposit stays on the carriageway until it is
+ * cleared, and an eruption lasts as long as it is producing. Beyond its window
+ * a hazard stops being an obstruction and becomes history — reported, counted
+ * separately, and explicitly not treated as evidence about the present.
+ */
+const DEFAULT_ACTIVE_WINDOW_DAYS = Object.freeze({ flood: 7, landslide: 30, eruption: 30 })
+
+/**
+ * Confidence in a *present* access statement, given the strongest evidence in
+ * the set that does not speak about the present.
+ *
+ * 100 is reserved for a road with no hazard near it at all. A road whose only
+ * nearby evidence is an undated record is not observed-clear; it is
+ * unexamined-clear, and reporting the two at the same confidence is the same
+ * error as the blocking one, in the opposite direction.
+ */
+const TEMPORAL_CONFIDENCE = Object.freeze({ active: 100, forecast: 85, stale: 80, undated: 65 })
 
 /**
  * Largest bounding box, in degrees of latitude, that may block a road.
@@ -60,6 +95,11 @@ export function computeRoadAccess(data, options = {}) {
   const hazards = blockingHazards(data)
   const floodRadiusKm = options.floodRadiusKm ?? DEFAULT_FLOOD_BLOCK_RADIUS_KM
   const slideRadiusKm = options.landslideRadiusKm ?? DEFAULT_LANDSLIDE_BLOCK_RADIUS_KM
+  // The clock is injected rather than read inside the loop so that a recency
+  // rule can be tested at all: a test that has to wait for real time to pass
+  // does not get written, and a recency rule with no test is a rule nobody has.
+  const now = options.now ?? new Date()
+  const activeWindowDays = { ...DEFAULT_ACTIVE_WINDOW_DAYS, ...(options.activeWindowDays || {}) }
 
   return roads.map((road) => {
     const roadClass = ROAD_CLASSES.includes(road.road_class) ? road.road_class : 'unpaved'
@@ -68,7 +108,7 @@ export function computeRoadAccess(data, options = {}) {
     const obstructions = []
     for (const hazard of hazards) {
       const radiusKm = hazard.event_type === 'landslide' ? slideRadiusKm : floodRadiusKm
-      const hit = obstructionFor(road, hazard, radiusKm)
+      const hit = obstructionFor(road, hazard, radiusKm, now, activeWindowDays)
       if (hit) obstructions.push(hit)
     }
 
@@ -103,11 +143,18 @@ export function computeRoadAccess(data, options = {}) {
         distance_km: Math.round(item.distance_km * 10) / 10,
         matched_by: item.matched_by,
         blocking: item.blocking,
+        occurred_at: item.occurred_at,
+        age_days: item.age_days,
+        temporal_status: item.temporal_status,
       })),
       primary_hazard_id: worst?.hazard_id || null,
       primary_hazard_type: worst?.event_type || null,
       generated_at: new Date().toISOString(),
       confidence: confidenceFor(obstructions, worst),
+      // Whether the status rests on something that happened recently. A record
+      // resting on a historical or undated event says so, so a reader can tell
+      // a road somebody checked from one nobody had reason to check lately.
+      access_basis: worst ? worst.temporal_status : 'current',
     }
   })
 }
@@ -136,7 +183,7 @@ function blockingHazards(data) {
 /**
  * Returns an obstruction descriptor when a hazard affects a road, else null.
  */
-function obstructionFor(road, hazard, radiusKm) {
+function obstructionFor(road, hazard, radiusKm, now, activeWindowDays) {
   const roadPoint = { latitude: road.latitude, longitude: road.longitude }
 
   // A bbox is authoritative: if the road falls inside it, the hazard covers
@@ -148,7 +195,7 @@ function obstructionFor(road, hazard, radiusKm) {
       const distanceKm = Number.isFinite(hazard.latitude) && Number.isFinite(hazard.longitude)
         ? haversineKm(roadPoint, { latitude: hazard.latitude, longitude: hazard.longitude })
         : 0
-      return buildObstruction(hazard, distanceKm, 'bbox', roadPoint)
+      return buildObstruction(hazard, distanceKm, 'bbox', roadPoint, now, activeWindowDays)
     }
     // Inside an oversized box: fall through to the proximity check below, so a
     // road near the reported centre can still be blocked while one 2,000 km
@@ -157,16 +204,43 @@ function obstructionFor(road, hazard, radiusKm) {
 
   if (Number.isFinite(hazard.latitude) && Number.isFinite(hazard.longitude)) {
     const distanceKm = haversineKm(roadPoint, { latitude: hazard.latitude, longitude: hazard.longitude })
-    if (distanceKm <= radiusKm) return buildObstruction(hazard, distanceKm, 'proximity', roadPoint)
+    if (distanceKm <= radiusKm) return buildObstruction(hazard, distanceKm, 'proximity', roadPoint, now, activeWindowDays)
   }
 
   return null
 }
 
-function buildObstruction(hazard, distanceKm, matchedBy, roadPoint) {
+/**
+ * Whether this hazard speaks about the present, and how much of the present.
+ *
+ * `stale` and `undated` are kept distinct because they are different states:
+ * stale is known-old, undated is unknown-age. Collapsing them would either let
+ * an archive entry close a road, or let an undated one look as examined as a
+ * flood from this morning.
+ */
+function temporalStatus(hazard, now, activeWindowDays) {
+  const windowDays = activeWindowDays[hazard.event_type] ?? 7
+  if (!hazard.occurred_at) return { status: 'undated', age_days: null }
+  const occurred = Date.parse(hazard.occurred_at)
+  // An unparseable timestamp is not a timestamp. Treating it as absent leaves
+  // the hazard blocking, which is the safe direction, but calling it 'undated'
+  // is what stops the resulting record claiming to be current.
+  if (!Number.isFinite(occurred)) return { status: 'undated', age_days: null }
+  const ageDays = (now.getTime() - occurred) / 86_400_000
+  // A hazard dated in the future is a forecast, not a memory. Flood forecasts
+  // are a declared event type and blocking on one is defensible; it is called
+  // out so the reader is not told a road is blocked by something that has not
+  // happened.
+  if (ageDays < 0) return { status: 'forecast', age_days: ageDays }
+  if (ageDays <= windowDays) return { status: 'active', age_days: ageDays }
+  return { status: 'stale', age_days: ageDays }
+}
+
+function buildObstruction(hazard, distanceKm, matchedBy, roadPoint, now, activeWindowDays) {
   // Outside the bbox/proximity threshold the hazard may still warrant caution,
   // so a non-blocking advisory is still recorded with the road's distance.
-  const blocking = hazard.severity_weight >= 2 || distanceKm <= 1
+  const temporal = temporalStatus(hazard, now, activeWindowDays)
+  const blocking = temporal.status !== 'stale' && (hazard.severity_weight >= 2 || distanceKm <= 1)
   return {
     hazard_id: hazard.hazard_id,
     event_type: hazard.event_type,
@@ -176,6 +250,9 @@ function buildObstruction(hazard, distanceKm, matchedBy, roadPoint) {
     distance_km: distanceKm,
     matched_by: matchedBy,
     blocking,
+    occurred_at: hazard.occurred_at || null,
+    age_days: temporal.age_days === null ? null : Math.round(temporal.age_days * 10) / 10,
+    temporal_status: temporal.status,
     // Distance inside the threshold counts against the road regardless of
     // alert colour; distance beyond it only matters if the alert is serious.
     impact_rank: (blocking ? 100 : 0) + hazard.severity_weight * 10 - Math.min(distanceKm, 20),
@@ -213,15 +290,27 @@ function deriveAccess(worst, reportedPassability) {
   }
 
   if (!worst.blocking) {
+    if (worst.temporal_status === 'stale') {
+      // The honest sentence. "Nearby but not blocking" would describe a road
+      // nobody looked at recently as one somebody checked and cleared.
+      return {
+        status: reportedPassability === 'impassable' ? 'impassable' : 'restricted',
+        reason: `Last recorded ${worst.event_type} here was ${worst.age_days} days ago `
+          + `(${worst.severity}); too old to describe the present, not counted as an obstruction`,
+      }
+    }
     return {
       status: reportedPassability === 'impassable' ? 'impassable' : 'restricted',
       reason: `${worst.event_type} nearby (${worst.severity}) but not blocking this segment`,
     }
   }
 
+  const prefix = worst.temporal_status === 'forecast'
+    ? `Forecast ${worst.event_type}`
+    : `Blocked by ${worst.event_type} (${worst.severity})`
   return {
     status: 'impassable',
-    reason: `Blocked by ${worst.event_type} (${worst.severity}): ${worst.title}`,
+    reason: `${prefix}: ${worst.title}`,
   }
 }
 
@@ -248,10 +337,19 @@ function accessLevel(score) {
 }
 
 function confidenceFor(obstructions, worst) {
-  if (!worst) return 100
-  // Precise match means high confidence; a broad proximity catch is weaker.
-  if (worst.matched_by === 'bbox') return 90
-  return worst.distance_km <= 1 ? 75 : 55
+  if (worst) {
+    // Precise match means high confidence; a broad proximity catch is weaker.
+    if (worst.matched_by === 'bbox') return 90
+    return worst.distance_km <= 1 ? 75 : 55
+  }
+  // Nothing is blocking. If there is also no nearby hazard of any age, that is
+  // an observation. If there is one whose age does not speak about now, the
+  // road is merely unexamined, and the two are not the same claim.
+  if (!obstructions.length) return 100
+  return obstructions.reduce(
+    (lowest, item) => Math.min(lowest, TEMPORAL_CONFIDENCE[item.temporal_status] ?? 65),
+    100,
+  )
 }
 
 function severityWeight(severity) {
@@ -276,9 +374,11 @@ function severityWeight(severity) {
 export function summarizeRoadAccess(records) {
   const byStatus = { passable: 0, restricted: 0, impassable: 0 }
   const blockedByType = {}
+  const byTemporalStatus = { active: 0, forecast: 0, stale: 0, undated: 0 }
   for (const record of records) {
     byStatus[record.access_status] = (byStatus[record.access_status] || 0) + 1
     for (const item of record.obstructions) {
+      if (item.temporal_status in byTemporalStatus) byTemporalStatus[item.temporal_status] += 1
       if (!item.blocking) continue
       blockedByType[item.event_type] = (blockedByType[item.event_type] || 0) + 1
     }
@@ -292,6 +392,11 @@ export function summarizeRoadAccess(records) {
     impassable: byStatus.impassable || 0,
     cut_off_rate_pct: total ? Math.round(((byStatus.impassable || 0) / total) * 10000) / 100 : 0,
     blocked_by_hazard_type: blockedByType,
+    // How much of the evidence behind these statuses actually speaks about the
+    // present. A dashboard that reports '4 roads cut off' without this invites
+    // the reader to assume all four obstructions are live; with it, `stale` and
+    // `undated` are visible without opening a single road.
+    obstructions_by_temporal_status: byTemporalStatus,
     cut_off_roads: records
       .filter((record) => record.access_status === 'impassable')
       .map((record) => ({
