@@ -2,6 +2,7 @@ import { emptyStore } from './schema.js'
 import { COLLECTIONS, supersededVersions } from './store.js'
 import { BITEMPORAL_COLLECTIONS } from './bitemporal.js'
 import { nowIso } from './utils.js'
+import { pendingMigrations, targetVersion } from './migrations.js'
 
 export class PostgresStore {
   constructor({ databaseUrl, pool } = {}) {
@@ -36,24 +37,92 @@ export class PostgresStore {
         ON lite_records (collection, updated_at DESC);
     `)
 
-    // payload_hash gets its own column so merge() can dedupe upstream
-    // re-ingestion with an indexable lookup instead of loading every body.
-    await pool.query('ALTER TABLE lite_records ADD COLUMN IF NOT EXISTS payload_hash TEXT')
-
-    // Backfill rows written before the column existed. jsonb_exists() is used
-    // rather than the `?` operator, which is ambiguous with parameter
-    // placeholders in the extended query protocol.
-    await pool.query(
-      `UPDATE lite_records
-       SET payload_hash = body->>'payload_hash'
-       WHERE payload_hash IS NULL AND jsonb_exists(body, 'payload_hash')`,
-    )
-    await pool.query(
-      `CREATE INDEX IF NOT EXISTS lite_records_collection_hash_idx
-       ON lite_records (collection, payload_hash)
-       WHERE payload_hash IS NOT NULL`,
-    )
+    // ENH-29. The statements below used to be written out here, inline, on
+    // every connect: an ALTER, a backfill UPDATE and an index, with nothing
+    // recording that any of it had run (DATA-11). They are now ordered
+    // migrations keyed on a real schema_version, so a database at version 1 and
+    // one at version 3 are distinguishable without reading this file, and
+    // adding a column is a numbered entry rather than an edit to a method three
+    // other things depend on.
+    //
+    // The order is enforced by the runner rather than by the reader noticing a
+    // dependency: migration 2 creates the schema_version column, and the ledger
+    // row recording migration 2's completion writes into it.
+    //
+    // One transaction per migration, not one for the batch. A failure halfway
+    // through leaves every completed migration applied *and recorded*, which is
+    // recoverable; a single batch transaction would roll all of it back and
+    // re-run statements that already succeeded.
+    const current = await this.readSchemaVersion(pool)
+    for (const migration of pendingMigrations(current)) {
+      const client = await this.pool.connect()
+      try {
+        await client.query('BEGIN')
+        for (const statement of migration.up) await client.query(statement)
+        await client.query(
+          `INSERT INTO lite_records (collection, id, body, schema_version, updated_at)
+           VALUES ('__schema', $1, $2::jsonb, $3, now())
+           ON CONFLICT (collection, id) DO UPDATE
+             SET body = EXCLUDED.body,
+                 schema_version = EXCLUDED.schema_version,
+                 updated_at = now()`,
+          [
+            `schema-${migration.version}`,
+            JSON.stringify({
+              id: `schema-${migration.version}`,
+              version: migration.version,
+              name: migration.name,
+              schema_version: migration.version,
+              applied_at: new Date().toISOString(),
+            }),
+            migration.version,
+          ],
+        )
+        await client.query('COMMIT')
+      } catch (error) {
+        await client.query('ROLLBACK')
+        throw error
+      } finally {
+        client.release()
+      }
+    }
     this.ready = true
+  }
+
+  /**
+   * The version the database is actually at.
+   *
+   * Zero for a database that predates the ledger. Zero is the right answer
+   * rather than null because every migration is written to be idempotent — the
+   * statements themselves decide whether they have already run, so replaying
+   * them against a partially-migrated database is safe. That is the property
+   * that lets this ship to a district server nobody has ever inspected.
+   */
+  async readSchemaVersion(pool = this.pool) {
+    const { rows } = await pool.query(
+      `SELECT schema_version FROM lite_records
+       WHERE collection = '__schema'
+       ORDER BY schema_version DESC
+       LIMIT 1`,
+    )
+    const version = rows[0]?.schema_version
+    return Number.isInteger(version) ? version : 0
+  }
+
+  /** What the database is at versus what this build expects. */
+  async schemaStatus() {
+    await this.ensureSchema()
+    const current = await this.readSchemaVersion()
+    return {
+      current,
+      expected: targetVersion(),
+      pending: pendingMigrations(current).map((m) => ({ version: m.version, name: m.name })),
+      // A database newer than the code is not an error. Refusing to start
+      // would push an operator into a manual downgrade, and the thing they are
+      // avoiding — reading rows written by a newer schema — is the newer
+      // schema's job to guard, not this build's.
+      current_build_is_ahead: current > targetVersion(),
+    }
   }
 
   async read() {
@@ -75,7 +144,13 @@ export class PostgresStore {
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
-      await client.query('DELETE FROM lite_records')
+      // NOT the whole table. `__schema` holds the migration ledger, and a
+      // blanket DELETE would drop it — which is survivable only because every
+      // migration is idempotent, so the cost of getting it wrong is a full
+      // re-run of statements on the next connect rather than a corruption. That
+      // is a cost worth not paying, and the ledger is the one thing in this
+      // table that write() is not the owner of.
+      await client.query("DELETE FROM lite_records WHERE collection <> '__schema'")
       for (const collection of COLLECTIONS) {
         await this.insertRecords(client, collection, next[collection] || [])
       }
