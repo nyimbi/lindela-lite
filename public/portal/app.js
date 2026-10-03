@@ -1,5 +1,7 @@
 import { initI18n, t, apiFetch, initOfflineBanner } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
+import { esc as escapeHtml, formatTimestamp, num, pct, sevClass, truncate } from '/shared/fmt.js'
+import { metricLabel } from '/shared/labels.js'
 mountNavbar({ activePath: '/portal' })
 
 const state = {
@@ -77,99 +79,143 @@ function setupTabs() {
 }
 
 async function loadData() {
-  try {
-    const [risk, hazards, assets, alerts] = await Promise.all([
-      apiFetch(`/api/v1/flood-risk?partner_org=${state.partnerOrg}`),
-      apiFetch(`/api/v1/events?partner_org=${state.partnerOrg}`),
-      apiFetch(`/api/v1/service-assets?partner_org=${state.partnerOrg}`),
-      apiFetch(`/api/v1/rapidpro/dispatches?partner_org=${state.partnerOrg}`),
-    ])
-
-    state.data.risk = risk.data || []
-    state.data.hazards = hazards.data || []
-    state.data.assets = assets.data || []
-    state.data.alerts = alerts.data || []
-
-    renderRiskTable()
-    renderHazardsTable()
-    renderAssetsTable()
-    renderAlertsTable()
-  } catch (error) {
-    console.error('Failed to load data:', error)
+  const load = async (key, path) => {
+    try {
+      return { [key]: (await apiFetch(path)).data || [], failed: null }
+    } catch (error) {
+      // Settle rather than reject: this is a read-only partner view of four
+      // independent collections, and one dead endpoint should not blank the
+      // other three. Previously the first failure rejected the whole Promise.all
+      // and the portal rendered an empty page with no explanation anywhere on
+      // screen — `console.error` is not something a partner reads.
+      return { [key]: [], failed: key }
+    }
   }
+
+  const results = await Promise.all([
+    load('risk', `/api/v1/flood-risk?partner_org=${state.partnerOrg}`),
+    load('hazards', `/api/v1/events?partner_org=${state.partnerOrg}`),
+    load('assets', `/api/v1/service-assets?partner_org=${state.partnerOrg}`),
+    load('alerts', `/api/v1/rapidpro/dispatches?partner_org=${state.partnerOrg}`),
+  ])
+
+  for (const result of results) {
+    for (const key of ['risk', 'hazards', 'assets', 'alerts']) {
+      if (result[key] !== undefined) state.data[key] = result[key]
+    }
+  }
+
+  const failed = results.filter((r) => r.failed).map((r) => r.failed)
+
+  renderRiskTable()
+  renderHazardsTable()
+  renderAssetsTable()
+  renderAlertsTable()
+
+  if (failed.length) showPortalError(
+    failed.length === results.length
+      ? 'Could not reach the server. Showing nothing rather than stale data.'
+      : `Could not load: ${failed.join(', ')}.`
+  )
 }
 
-function renderRiskTable() {
-  const tbody = $('riskTableBody')
-  if (state.data.risk.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="3" class="empty-state" data-i18n="portal.no_data">No data available</td></tr>'
+function showPortalError(message) {
+  let el = document.getElementById('portalError')
+  if (!el) {
+    el = document.createElement('div')
+    el.id = 'portalError'
+    el.setAttribute('role', 'alert')
+    el.className = 'error-panel'
+    el.style.margin = '1rem'
+    document.getElementById('contentArea')?.prepend(el)
+  }
+  el.innerHTML = `<strong>Some data is unavailable</strong><p>${escapeHtml(message)}</p>`
+}
+
+/**
+ * One table renderer for all four portal tables.
+ *
+ * These were four near-identical 24-line blocks differing only in body id,
+ * columns and button ids. Each applied `toFixed(2)` to a value that could be
+ * absent, so a missing risk score rendered "0.00" — a number where the honest
+ * answer is that nothing was measured. Severity was bare text rather than the
+ * same chip every other surface uses.
+ */
+function renderTable(bodyId, { rows, columns, sortKey, limit = 100 }) {
+  const tbody = $(bodyId)
+  if (!tbody) return
+
+  const body = sortKey
+    ? [...rows].sort((a, b) => new Date(b[sortKey] || 0) - new Date(a[sortKey] || 0)).slice(0, limit)
+    : rows.slice(0, limit)
+
+  if (!body.length) {
+    tbody.innerHTML = `<tr><td colspan="${columns.length}" class="empty-cell" data-i18n="portal.no_data">No data available</td></tr>`
     return
   }
 
-  tbody.innerHTML = state.data.risk.map((r) => `
-    <tr>
-      <td>${escapeHtml(r.district || '')}</td>
-      <td>${(r.risk_score || 0).toFixed(2)}</td>
-      <td>${(r.confidence || 0).toFixed(2)}</td>
-    </tr>
-  `).join('')
+  tbody.innerHTML = body.map((row) => `<tr>${
+    columns.map((col) => `<td${col.numeric ? ' class="num-cell"' : ''}>${col.render(row)}</td>`).join('')
+  }</tr>`).join('')
+
+  if (body.length < rows.length) {
+    // The limit is a deliberate cap on a partner-facing export; say so rather
+    // than letting a reader assume the table is complete.
+    const note = document.createElement('tr')
+    note.innerHTML = `<td colspan="${columns.length}" class="empty-cell">Showing the ${body.length} most recent of ${rows.length}.</td>`
+    tbody.appendChild(note)
+  }
+}
+
+const severityCell = (value) =>
+  `<span class="sev-chip sev-${sevClass(value)}">${escapeHtml(value || 'unknown')}</span>`
+
+function renderRiskTable() {
+  renderTable('riskTableBody', {
+    rows: state.data.risk || [],
+    columns: [
+      { render: (r) => escapeHtml(r.district || '—') },
+      // A score with no value is not zero. `|| 0` then toFixed made it so.
+      { render: (r) => escapeHtml(num(r.risk_score, { dp: 2, dash: '—' })), numeric: true },
+      { render: (r) => escapeHtml(pct(r.confidence, { dp: 0 })), numeric: true },
+    ],
+  })
 }
 
 function renderHazardsTable() {
-  const tbody = $('hazardsTableBody')
-  const events = [...(state.data.hazards || [])].sort((a, b) => {
-    return new Date(b.created_at || 0) - new Date(a.created_at || 0)
-  }).slice(0, 100)
-
-  if (events.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty-state" data-i18n="portal.no_data">No data available</td></tr>'
-    return
-  }
-
-  tbody.innerHTML = events.map((e) => `
-    <tr>
-      <td>${escapeHtml(e.headline || e.event_type || '')}</td>
-      <td>${escapeHtml(e.event_type || '')}</td>
-      <td>${formatDate(e.created_at)}</td>
-      <td>${escapeHtml(e.severity || '')}</td>
-    </tr>
-  `).join('')
+  renderTable('hazardsTableBody', {
+    rows: state.data.hazards || [],
+    sortKey: 'created_at',
+    columns: [
+      { render: (e) => escapeHtml(truncate(e.headline || e.event_type || '—', { max: 80 })) },
+      { render: (e) => escapeHtml(metricLabel(e.event_type)) },
+      { render: (e) => escapeHtml(formatDate(e.created_at)) },
+      { render: (e) => severityCell(e.severity) },
+    ],
+  })
 }
 
 function renderAssetsTable() {
-  const tbody = $('assetsTableBody')
-  if (state.data.assets.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="3" class="empty-state" data-i18n="portal.no_data">No data available</td></tr>'
-    return
-  }
-
-  tbody.innerHTML = state.data.assets.map((a) => `
-    <tr>
-      <td>${escapeHtml(a.name || '')}</td>
-      <td>${escapeHtml(a.asset_type || '')}</td>
-      <td>${escapeHtml(a.district || '')}</td>
-    </tr>
-  `).join('')
+  renderTable('assetsTableBody', {
+    rows: state.data.assets || [],
+    columns: [
+      { render: (a) => escapeHtml(a.name || '—') },
+      { render: (a) => escapeHtml(metricLabel(a.asset_type)) },
+      { render: (a) => escapeHtml(a.district || '—') },
+    ],
+  })
 }
 
 function renderAlertsTable() {
-  const tbody = $('alertsTableBody')
-  const alerts = [...(state.data.alerts || [])].sort((a, b) => {
-    return new Date(b.created_at || 0) - new Date(a.created_at || 0)
-  }).slice(0, 100)
-
-  if (alerts.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="3" class="empty-state" data-i18n="portal.no_data">No data available</td></tr>'
-    return
-  }
-
-  tbody.innerHTML = alerts.map((a) => `
-    <tr>
-      <td>${escapeHtml(a.headline || a.event_type || '')}</td>
-      <td>${escapeHtml(a.severity || '')}</td>
-      <td>${formatDate(a.created_at)}</td>
-    </tr>
-  `).join('')
+  renderTable('alertsTableBody', {
+    rows: state.data.alerts || [],
+    sortKey: 'created_at',
+    columns: [
+      { render: (a) => escapeHtml(truncate(a.headline || a.event_type || '—', { max: 80 })) },
+      { render: (a) => severityCell(a.severity) },
+      { render: (a) => escapeHtml(formatDate(a.created_at)) },
+    ],
+  })
 }
 
 async function exportData(tab, format) {
@@ -186,20 +232,13 @@ async function exportData(tab, format) {
 }
 
 function formatDate(iso) {
-  if (!iso) return ''
-  return new Date(iso).toLocaleDateString()
+  // Ambiguous and locale-dependent: "9/28/2026" reads as 28 September in
+  // Nairobi and 9 February to a reader elsewhere in the same deployment.
+  return formatTimestamp(iso, { style: 'date', dash: '—' })
 }
 
-function escapeHtml(str) {
-  // `||` here dropped a legitimate 0 or false and rendered it as blank;
-  // `??` only replaces null and undefined.
-  return String(str ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[c]))
-}
+// escapeHtml, num, pct, truncate and sevClass come from /shared/fmt.js. This
+// file carried its own copies; the escape helper used `||`, which dropped a
+// legitimate 0 or false and rendered it blank.
 
 await init()

@@ -1054,6 +1054,43 @@ function hasUsableBbox(record) {
   return Boolean(box) && [box.west, box.south, box.east, box.north].every(Number.isFinite)
 }
 
+// The basemap and the graticule are functions of the frame alone — they never
+// look at a record — yet renderMap rebuilt both on every 30-second refresh,
+// reallocating a few hundred SVG nodes twice a minute to reproduce the picture
+// already on screen. Key the rebuild on the frame, so only a frame that
+// actually moved repaints the ground under the data.
+let _staticLayerFrame = ''
+function renderStaticLayers(bbox) {
+  const frame = `${bbox.minLon},${bbox.minLat},${bbox.maxLon},${bbox.maxLat}`
+  if (frame === _staticLayerFrame) return
+  _staticLayerFrame = frame
+  renderBasemap(bbox)
+  renderGraticule(bbox)
+}
+
+// Two risk blobs with the same score get the same fade, and the id said nothing
+// about the score — it was the blob's position in the array, which changes as
+// soon as one record filters out. Keying the definition on the opacity makes it
+// reusable; keying it on the index made every frame allocate a fresh copy of a
+// handful of distinct fades and threw the old ones away.
+const _riskGradients = new Map()
+function ensureRiskGradient(opacity) {
+  const key = String(opacity)
+  const id = `rg-${key.replace('.', '-')}`
+  if (_riskGradients.has(id)) return id
+  const grad = svgEl('radialGradient', { id, cx: '50%', cy: '50%', r: '50%' })
+  grad.append(
+    svgEl('stop', { offset: '0%',   'stop-color': 'oklch(65% 0.22 25)', 'stop-opacity': key }),
+    svgEl('stop', { offset: '100%', 'stop-color': 'oklch(65% 0.22 25)', 'stop-opacity': '0' }),
+  )
+  _riskGradients.set(id, grad)
+  // <defs> is never cleared now that the gradients outlive a frame. They are
+  // addressed by id from the ellipses, not by position, so a stale entry costs
+  // nothing and an evicted one would break every blob still pointing at it.
+  mapDefsEl?.append(grad)
+  return id
+}
+
 function renderMap(records) {
   // Records count as plottable if they have a point OR a usable bounding box.
   // Filtering on coordinates alone dropped every bbox-only hazard before the
@@ -1079,8 +1116,7 @@ function renderMap(records) {
     return true
   })
 
-  renderBasemap(bbox)
-  renderGraticule(bbox)
+  renderStaticLayers(bbox)
   mapHazardsEl.innerHTML = ''
   mapAssetsEl.innerHTML = ''
   mapRiskEl.innerHTML = ''
@@ -1088,7 +1124,6 @@ function renderMap(records) {
   if (mapRoadsEl) mapRoadsEl.innerHTML = ''
   if (mapRouteEl) mapRouteEl.innerHTML = ''
   if (mapFoodSecurityEl) mapFoodSecurityEl.innerHTML = ''
-  if (mapDefsEl) mapDefsEl.innerHTML = ''
 
   // The simulation overlay and road status persist across filter changes, so
   // a severity or source filter must not silently discard the flood extent the
@@ -1103,17 +1138,11 @@ function renderMap(records) {
   const risks   = visible.filter((r) => Number.isFinite(r.score))
 
   // Risk blobs (radial gradient fills). Score is 0..100; normalize to 0..1.
-  risks.forEach((r, i) => {
+  risks.forEach((r) => {
     const { x, y } = project(r.latitude, r.longitude, bbox)
     const normalized = Math.max(0, Math.min(1, (Number(r.score) || 0) / 100))
     if (normalized === 0) return
-    const gradId = `rg${i}`
-    const opacity = normalized * 0.45
-    const grad = svgEl('radialGradient', { id: gradId, cx: '50%', cy: '50%', r: '50%' })
-    const s1 = svgEl('stop', { offset: '0%',   'stop-color': 'oklch(65% 0.22 25)', 'stop-opacity': String(opacity) })
-    const s2 = svgEl('stop', { offset: '100%', 'stop-color': 'oklch(65% 0.22 25)', 'stop-opacity': '0' })
-    grad.append(s1, s2)
-    if (mapDefsEl) mapDefsEl.append(grad)
+    const gradId = ensureRiskGradient(normalized * 0.45)
     const radius = 18 + normalized * 42
     mapRiskEl.append(svgEl('ellipse', {
       cx: x, cy: y, rx: radius, ry: radius * 0.55,
@@ -1282,7 +1311,12 @@ function renderMapRecordList(entries) {
   })
 }
 
+let _legendDrawn = false
 function renderMapLegend() {
+  // Eight fixed swatches, rebuilt on every refresh for the life of the console
+  // to say the same thing. Drawn once; nothing about it varies with the data.
+  if (_legendDrawn) return
+  _legendDrawn = true
   mapLegendEl.innerHTML = ''
     const items = [
     { cls: 'hazard-flood',     label: 'Flood',     shape: 'circle' },
