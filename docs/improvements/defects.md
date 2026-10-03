@@ -45,9 +45,9 @@ under **Unreleased**; this table is the index into them.
 | DAT-07 | fixed | retention calls a real `store.remove()` on both backends | `store-conformance.test.js` |
 | INT-01 | fixed | `readRawBody` buffers once and caches; HMAC is live on the real route | `rapidpro-signature-live-route.test.js` |
 | INT-02 | fixed | backtest evaluates `metric`/`operator`/`threshold`; misses counted separately | `trigger-backtest.test.js` |
-| INT-03 | **not started** | trigger fields are stored and never read | — |
+| INT-03 | fixed | trigger evaluated against platform state; unverifiable triggers pay nothing; approval sourced from workflow instances; all three write paths log | `parametric-trigger.test.js` |
 | ALERT-05 | fixed | `response_rate_pct` counts responders, not messages; `null` when unknowable | `rapidpro-response-metrics.test.js` |
-| ALERT-03 | **not started** | calendar-bucket suppression | — |
+| ALERT-03 | fixed | rolling window from the last alert, not a calendar bucket | `alert-suppression.test.js` |
 
 Two findings were found while fixing these and are also fixed, without
 original IDs: a dead second authorization path (`isAuthorizedMutation`,

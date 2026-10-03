@@ -269,6 +269,57 @@ async function handleStacRoute(store, req, res, url) {
  * reason to know that, and picking the first row would hand them the interval
  * for a different statistic than the one they supplied.
  */
+/**
+ * Where a focal point approval came from.
+ *
+ * The disbursement route previously gated on `Boolean(body.focal_point_approved)`
+ * -- a field the same request set. The workflow machinery that could carry a
+ * real approval (`parametric_disbursement`, whose states include
+ * `focal_point_confirmed`) was never consulted, so a verified path existed and
+ * went unused. It is consulted now; an instance that does not exist, is the
+ * wrong type, or has not reached a confirmed state is a 409 rather than a
+ * silently accepted flag.
+ */
+function resolveFocalPointApproval(data, rule, body) {
+  if (!body.workflow_instance_id) {
+    const asserted = Boolean(body.focal_point_approved)
+    // No approval is being claimed beyond the flag. A rule that does not
+    // require one is approved by nobody, which is the rule's own decision.
+    if (!rule.requires_focal_point_approval) {
+      return { approved: false, source: null, workflow_instance_id: null, approved_by: null }
+    }
+    return {
+      approved: asserted,
+      source: asserted ? 'request_body' : null,
+      workflow_instance_id: null,
+      approved_by: asserted ? (body.approved_by || body.actor || null) : null,
+    }
+  }
+
+  const instance = (data.workflow_instances || []).find((w) => w.id === body.workflow_instance_id)
+  if (!instance) {
+    throw Object.assign(new Error(`Workflow instance ${body.workflow_instance_id} not found`), { statusCode: 409 })
+  }
+  if (instance.type !== 'parametric_disbursement') {
+    throw Object.assign(
+      new Error(`Workflow instance ${instance.id} is a ${instance.type} instance and cannot approve a disbursement`),
+      { statusCode: 409 }
+    )
+  }
+  if (!['focal_point_confirmed', 'chain_dispatched', 'closed'].includes(instance.state)) {
+    throw Object.assign(
+      new Error(`Workflow instance ${instance.id} is "${instance.state}"; focal point confirmation is required before a disbursement can be simulated`),
+      { statusCode: 409 }
+    )
+  }
+  return {
+    approved: true,
+    source: 'workflow',
+    workflow_instance_id: instance.id,
+    approved_by: instance.actor || null,
+  }
+}
+
 function contingencyByFeature(rows) {
   if (!Array.isArray(rows)) return {}
   const byFeature = {}
@@ -2169,9 +2220,17 @@ async function handleParametricRoute(store, data, req, res, url, route) {
       const body = await readRequestJson(req)
       try {
         const rule = normalizeParametricRule(body)
-        const updated = { ...data, parametric_rules: [...(data.parametric_rules || []), rule] }
+        // The money path wrote no action log: a rule that defines what gets
+        // paid, to whom, on what condition, could be created or edited with
+        // nothing recording who did it.
+        const log = actionLog('parametric_rules', 'created', rule, body.actor, req.__auth?.subject)
+        const updated = {
+          ...data,
+          parametric_rules: [...(data.parametric_rules || []), rule],
+          action_logs: [...(data.action_logs || []), log],
+        }
         await store.write(updated)
-        jsonResponse(res, 201, { success: true, data: rule })
+        jsonResponse(res, 201, { success: true, data: rule, action_log: log })
       } catch (err) {
         jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
       }
@@ -2196,8 +2255,9 @@ async function handleParametricRoute(store, data, req, res, url, route) {
       try {
         const updated_rule = normalizeParametricRule(body, existing)
         const rules = (data.parametric_rules || []).map((r) => r.id === route.id ? updated_rule : r)
-        await store.write({ ...data, parametric_rules: rules })
-        jsonResponse(res, 200, { success: true, data: updated_rule })
+        const log = actionLog('parametric_rules', 'updated', updated_rule, body.actor, req.__auth?.subject)
+        await store.write({ ...data, parametric_rules: rules, action_logs: [...(data.action_logs || []), log] })
+        jsonResponse(res, 200, { success: true, data: updated_rule, action_log: log })
       } catch (err) {
         jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
       }
@@ -2253,13 +2313,31 @@ async function handleParametricRoute(store, data, req, res, url, route) {
         }
       }
 
+      // The trigger is evaluated against the platform's own state, the same
+      // context alert rules see, so a parametric payout is decided by the data
+      // rather than asserted by the caller. An explicit trigger_value overrides
+      // it, for an operator quoting an observation the store has not ingested.
+      const context = {
+        counts: counts(data),
+        operations: operationalSummary(data),
+        data_quality: data.data_quality,
+      }
+      // An approval backed by a workflow instance is verified; one asserted in
+      // the request body is recorded as asserted. `focal_point_approved` still
+      // gates, but the disbursement now carries where the approval came from,
+      // and a named instance that is not actually approved is rejected.
+      const approval = resolveFocalPointApproval(data, rule, body)
       const result = simulateDisbursement(rule, {
         actor: body.actor || auth.subject || null,
-        focal_point_approved: Boolean(body.focal_point_approved),
+        focal_point_approved: approval.approved,
+        approval,
         sanctions,
+        context,
+        triggerValue: body.trigger_value,
       })
+      const log = actionLog('parametric_disbursements', 'simulated', result, body.actor, req.__auth?.subject)
       const disbursements = [...(data.parametric_disbursements || []), result]
-      await store.write({ ...data, parametric_disbursements: disbursements })
+      await store.write({ ...data, parametric_disbursements: disbursements, action_logs: [...(data.action_logs || []), log] })
       jsonResponse(res, 201, { success: true, data: result, sanctions })
     } catch (err) {
       jsonResponse(res, err.statusCode || 400, {

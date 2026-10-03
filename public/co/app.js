@@ -179,8 +179,13 @@ function renderEquity(rows) {
     body.innerHTML = '<tr><td colspan="5" class="empty-cell">No equity data yet.</td></tr>'
   } else {
     body.innerHTML = rows.map((r) => {
-      const acc = pct(r.accuracy_pct)
-      const isBreach = r.accuracy_pct !== null && r.dispatched >= 5 && r.accuracy_pct < 80
+      // The named field, and the sample it was computed over. `dispatched`
+      // counts every alert sent, including the ones still open and therefore
+      // not yet capable of being right or wrong -- gating a breach on that
+      // would flag a district for being slow to resolve.
+      const precision = r.dispatch_precision_pct ?? null
+      const acc = pct(precision)
+      const isBreach = precision !== null && (r.determined_dispatched ?? 0) >= 5 && precision < 80
       const breachChip = isBreach ? `<span class="chip-breach" data-i18n="co.equity_breach">${t('co.equity_breach', 'breach')}</span>` : ''
       const rowClass = isBreach ? 'breach-row' : ''
       const slug = (r.district || '').toLowerCase().replace(/\s+/g, '-')

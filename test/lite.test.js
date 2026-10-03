@@ -3780,10 +3780,18 @@ describe('Lindela Lite Phase 2 — Parametric, DHIS2, Demographics, Observabilit
     )
   })
 
-  it('simulateDisbursement returns tx_hash with sim_ prefix', () => {
-    const rule = normalizeParametricRule({ name: 'Flood', chain: 'ethereum-sepolia', requires_focal_point_approval: false })
-    const result = simulateDisbursement(rule, { actor: 'test_actor' })
+  it('simulateDisbursement returns tx_hash with sim_ prefix when the trigger is met', () => {
+    // A hash is minted for a payout that is owed. The old version minted one
+    // unconditionally, including for a rule that defines no trigger at all.
+    const rule = normalizeParametricRule({
+      name: 'Flood', chain: 'ethereum-sepolia', requires_focal_point_approval: false,
+      trigger_metric: 'counts.hazard_events', trigger_operator: '>=', trigger_threshold: 1,
+      disbursement_amount_local_currency: 5000,
+    })
+    const result = simulateDisbursement(rule, { actor: 'test_actor', context: { counts: { hazard_events: 3 } } })
     assert.ok(result.simulated === true)
+    assert.equal(result.trigger.met, true)
+    assert.equal(result.amount, 5000)
     assert.ok(result.tx_hash.startsWith('sim_'), `Expected sim_ prefix, got: ${result.tx_hash}`)
     assert.ok(result.disbursement_id)
     assert.equal(result.status, 'simulated')
@@ -3919,30 +3927,50 @@ describe('Lindela Lite Phase 2 — Parametric, DHIS2, Demographics, Observabilit
     const addr = listener.address()
     const baseUrl = `http://localhost:${addr.port}`
     try {
-      // Create a rule first
+      // A rule with a real trigger, so the payout is decided by the data.
       const ruleRes = await fetch(`${baseUrl}/api/v1/parametric-rules`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: 'Sim rule', chain: 'celo-alfajores', requires_focal_point_approval: false }),
+        body: JSON.stringify({
+          name: 'Sim rule', chain: 'celo-alfajores', requires_focal_point_approval: false,
+          trigger_metric: 'counts.hazard_events', trigger_operator: '>=', trigger_threshold: 1,
+          disbursement_amount_local_currency: 25000,
+        }),
       })
       const ruleJson = await ruleRes.json()
       const ruleId = ruleJson.data.id
 
-      // Simulate
-      const simRes = await fetch(`${baseUrl}/api/v1/parametric-rules/${ruleId}/simulate`, {
+      // The store holds no hazard events, so the trigger is not met and nothing
+      // is owed. This used to report a simulated payout of 25,000.
+      const unmetRes = await fetch(`${baseUrl}/api/v1/parametric-rules/${ruleId}/simulate`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ focal_point_approved: false, actor: 'test_op' }),
+      })
+      assert.equal(unmetRes.status, 201)
+      const unmet = await unmetRes.json()
+      assert.equal(unmet.data.status, 'trigger_not_met')
+      assert.equal(unmet.data.trigger.met, false)
+      assert.equal(unmet.data.amount, null, 'no payout is owed, so no amount is reported')
+      assert.equal(unmet.data.tx_hash, null, 'a transaction hash for a payout that is not owed is a hash of nothing')
+
+      // An operator quoting an observation the store has not ingested.
+      const simRes = await fetch(`${baseUrl}/api/v1/parametric-rules/${ruleId}/simulate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ focal_point_approved: false, actor: 'test_op', trigger_value: 4 }),
       })
       assert.equal(simRes.status, 201)
       const simJson = await simRes.json()
       assert.ok(simJson.data.tx_hash.startsWith('sim_'))
       assert.equal(simJson.data.status, 'simulated')
+      assert.equal(simJson.data.amount, 25000)
+      assert.equal(simJson.data.trigger.source, 'supplied')
 
       // Check disbursements list
       const listRes = await fetch(`${baseUrl}/api/v1/parametric-disbursements`)
       const listJson = await listRes.json()
-      assert.equal(listJson.data.length, 1)
+      assert.equal(listJson.data.length, 2)
     } finally {
       listener.close()
     }

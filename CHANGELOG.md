@@ -168,11 +168,90 @@ one place and read in another, with nothing checking that they agree.
   and `precision_lift` — a protocol with precision 0.5 that fires on every run
   has learned nothing, and the verdict now says so.
 
+**The money path.** Parametric insurance was the least-governed code in the
+repository.
+
+- **The trigger was stored and never read.** `normalizeParametricRule` persisted
+  `trigger_metric` and `trigger_threshold`; `simulateDisbursement` copied
+  `disbursement_amount_local_currency` unconditionally. Any POST to
+  `/parametric-rules/:id/simulate` produced a full payout — the defining
+  property of parametric cover, that it pays on an observed event rather than
+  an adjuster's judgement, was unimplemented. The trigger is now evaluated
+  against the platform's own state (the same context alert rules see), with
+  `trigger_operator` added and validated. Three outcomes, not two: met, not
+  met, and **not evaluable** — an unevaluated trigger is not a triggered one.
+  An unmet trigger pays nothing, reports `amount: null` rather than `0` (no
+  amount is owed; zero would read as a measured payout of nothing), and mints
+  no `tx_hash`, since a transaction for a payout that is not owed is a hash of
+  nothing. An operator may still quote an observation the store has not
+  ingested, recorded as `trigger.source: 'supplied'` so it cannot be confused
+  with the store's own reading.
+- **A rule with no trigger paid out on request.** The same defect wearing a
+  parametric label: no condition, full disbursement. It now pays nothing and
+  says why.
+- **The approval gate was a field the same request set.**
+  `Boolean(body.focal_point_approved)` meant a payout could be approved by the
+  request that requested it, while `src/workflows.js` defined a
+  `parametric_disbursement` workflow whose states include
+  `focal_point_confirmed` and was consulted nowhere. It is consulted now: a
+  named instance that does not exist, is the wrong workflow type, or has not
+  reached a confirmed state is a 409. Where no workflow backs the approval it
+  is still accepted, and recorded as
+  `focal_point_approval.source: 'request_body'` with `verified: false` — a
+  compliance reader needs to see that it was asserted, not upgraded into a
+  verification it did not get.
+- **None of the three parametric write paths wrote an action log.** A rule
+  defining what gets paid, to whom, on what condition could be created and
+  edited with nothing recording who did it. All three log now.
+
+**Alert suppression.** `Math.floor(Date.parse(now) / windowMs)` is a calendar
+grid anchored at the Unix epoch, so the bucket boundary had nothing to do with
+when the last alert was raised. Two evaluations two minutes apart either side
+of a boundary fell in different buckets and both fired: an operator who asked
+for a 120-minute suppression got two alerts, two dispatches, two sets of
+response metrics, and two open alerts inflating the equity KPIs. Suppression
+is now a rolling window measured from the most recent alert for that rule.
+Records predating `created_at` fall back to their bucket, and a record whose
+timestamp will not parse is treated as no evidence the window elapsed — the
+naive `Math.max` over a `NaN` would have returned `NaN`, `NaN < windowMs` is
+`false`, and the alert would have re-fired on top of itself.
+
 **Tests**
 
 - `test/store-conformance.test.js`, `test/flood-score-honesty.test.js`,
   `test/trigger-backtest.test.js`, `test/rapidpro-response-metrics.test.js`,
-  `test/counting-honesty.test.js`, `test/rapidpro-signature-live-route.test.js`.
+  `test/counting-honesty.test.js`, `test/rapidpro-signature-live-route.test.js`,
+  `test/alert-suppression.test.js`, `test/parametric-trigger.test.js`,
+  `test/falsy-zero.test.js`.
+
+### Fixed (falsy zero)
+
+A field that was never populated and a field that is zero are different facts,
+and the UI rendered both as `0`.
+
+- `pii.js` skipped coarsening any coordinate at exactly 0 degrees, so a point
+  on the equator or prime meridian was dropped from the privacy-preserving
+  output — the one location that cannot be coarsened away was the one removed.
+- The districts map used `if (!lat || !lon)`, dropping Null Island for the same
+  reason, and filtered through two independent truthiness checks that could
+  disagree about the same record.
+- The console map's severity filter admitted every record with **no** severity,
+  and the source filter one line below had the identical inverted defect: a
+  record with `source: null` passed every source filter.
+- Four `|| 0` coercions printed a zero for an absent value — an unfitted model
+  rendered "0% flood-month base rate" (the exact claim `src/analytics.js` warns
+  against) and a summary that never loaded rendered the reassuring half of the
+  sentence, "All N roads passable".
+
+Map record counts now report what they hid and why: `42 records — hidden by the
+filter: 6 with no severity`.
+
+24 tests, verified against a pristine `HEAD` tree (21 fail without the fixes),
+with each predicate separately mutated back to its buggy form so the guard is
+behavioural rather than a missing export. That mutation testing surfaced a gap
+in the obvious fix: `r.latitude ?? r.lat` shields `null` from the fallback but
+not `''`, and `Number('')` is `0`, so a tidy `Number.isFinite(Number(x))` guard
+passes a blank field and plants a dot on Null Island.
 
 ### Breaking changes
 

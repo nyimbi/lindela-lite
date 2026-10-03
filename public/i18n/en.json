@@ -78,7 +78,7 @@
   "co.data_gap": "data gap",
   "co.dispatches": "Dispatches",
   "co.download_pdf": "Download quarterly PDF",
-  "co.equity_accuracy": "Accuracy %",
+  "co.equity_precision": "Dispatch precision %",
   "co.equity_breach": "breach detected",
   "co.equity_breach_header": "Breach",
   "co.equity_title": "Equity by District",

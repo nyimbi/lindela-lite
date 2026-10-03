@@ -2,7 +2,7 @@ import { ALERT_EVENT_STATUSES, ALERT_RULE_STATUSES, PRIORITY_LEVELS } from './sc
 import { stableId, toNumber } from './utils.js'
 import { counts } from './operations.js'
 
-const OPERATORS = Object.freeze(['>', '>=', '<', '<=', '==', '!='])
+export const OPERATORS = Object.freeze(['>', '>=', '<', '<=', '==', '!='])
 const TRIGGER_MODES = Object.freeze(['shadow', 'live'])
 
 export function normalizeAlertRule(input, existing = null) {
@@ -104,8 +104,7 @@ export function evaluateAlertRules(data, context) {
     const value = resolveMetric(context, rule.metric)
     if (!Number.isFinite(value) || !compare(value, rule.operator, rule.threshold)) continue
     const bucket = suppressionBucket(now, rule.suppression_minutes)
-    const existing = data.alert_events.find((event) => event.rule_id === rule.id && event.suppression_bucket === bucket)
-    if (existing) continue
+    if (isSuppressed(data, rule, now)) continue
     const approvalState = rule.severity === 'low' ? 'auto_approved' : 'proposed'
     events.push({
       id: stableId('alert', [rule.id, bucket, value]),
@@ -312,11 +311,11 @@ export function evaluateInShadowMode(protocol, context) {
   }
 }
 
-function resolveMetric(context, path) {
+export function resolveMetric(context, path) {
   return String(path).split('.').reduce((value, part) => value?.[part], context)
 }
 
-function compare(value, operator, threshold) {
+export function compare(value, operator, threshold) {
   if (operator === '>') return value > threshold
   if (operator === '>=') return value >= threshold
   if (operator === '<') return value < threshold
@@ -329,6 +328,35 @@ function compare(value, operator, threshold) {
 function suppressionBucket(now, minutes) {
   const windowMs = Math.max(1, minutes) * 60000
   return Math.floor(Date.parse(now) / windowMs)
+}
+
+/**
+ * Suppression is a rolling window, not a calendar bucket.
+ *
+ * `Math.floor(t / windowMs)` is a grid anchored at the epoch, so two
+ * evaluations two minutes apart that straddle a boundary fall in different
+ * buckets and both raise. An operator setting a 120-minute suppression gets
+ * a duplicate alert — twice the dispatches, twice the response metrics, and
+ * two open alerts inflating the equity KPIs.
+ *
+ * The rule is what a person means by "do not re-alert for two hours": at most
+ * one alert per rule per elapsed window, measured from the last one.
+ */
+function isSuppressed(data, rule, now) {
+  const windowMs = Math.max(1, rule.suppression_minutes) * 60000
+  const prior = data.alert_events.filter((event) => event.rule_id === rule.id)
+  if (prior.length === 0) return false
+
+  const seen = prior.map((event) => Date.parse(event.created_at)).filter(Number.isFinite)
+  if (seen.length === 0) {
+    // Records written before created_at was carried: fall back to the bucket
+    // they do have, so old data still suppresses rather than alerting on top
+    // of itself.
+    return prior.some((event) => event.suppression_bucket === suppressionBucket(now, rule.suppression_minutes))
+  }
+  // Math.max over parse failures included would yield NaN; the filter above
+  // guarantees at least one finite value.
+  return Date.parse(now) - Math.max(...seen) < windowMs
 }
 
 function enumValue(value, allowed, field) {

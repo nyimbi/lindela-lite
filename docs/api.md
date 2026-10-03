@@ -656,15 +656,15 @@ Response: `Content-Type: application/pdf`, `Content-Disposition: attachment; fil
 
 Auth: none required. Returns per-district accuracy metrics grouped from alert_events and rapidpro_dispatches.
 
-Response: `{ success, data: EquityDistrict[] }` where each row includes `district`, `dispatched`, `acknowledged`, `false_positive`, `accuracy_pct`, `alerts_by_severity`, and `data_gaps`.
+Response: `{ success, data: EquityDistrict[] }` where each row includes `district`, `dispatched`, `acknowledged`, `false_positive`, `dispatch_precision_pct` (null when no dispatch in the district has an outcome yet; `accuracy_pct` is a deprecated alias), `determined_dispatched`, `data_gaps`, `alerts_by_severity`, and `data_gaps`.
 
 ### `GET /api/v1/equity/breaches`
 
-Auth: none required. Returns districts where `accuracy_pct < threshold` AND `dispatched >= 5`.
+Returns districts where `dispatch_precision_pct < threshold` AND the determined sample is large enough for the figure to mean something. A district with one resolved dispatch and a precision of 0% is below the threshold and below the sample floor; both conditions must hold, so a small district is not reported as a systematic failure.
 
 Query: `threshold` (float, default 80).
 
-Response: `{ success, data: [{ district, accuracy_pct, dispatched }] }`
+Response: `{ success, data: [{ district, dispatch_precision_pct, accuracy_pct, determined_dispatched, dispatched }] }`
 
 ### `POST /api/v1/equity/scan`
 
@@ -753,13 +753,40 @@ Update a parametric rule. Scope: `admin:*`.
 
 Simulate a disbursement against the given rule. Scope: `role:operator` or `admin:*`.
 
-Body: `{ focal_point_approved: bool, actor: string }`
+Body: `{ focal_point_approved: bool, workflow_instance_id?: string, trigger_value?: number, actor: string }`
 
-Returns HTTP 409 when `requires_focal_point_approval` is true and `focal_point_approved` is false.
+The rule's trigger is evaluated against the platform's own state — the same
+context alert rules see. `trigger_value` overrides it, for an operator quoting
+an observation the store has not yet ingested; the response records
+`trigger.source` as `supplied` or `context` so the two cannot be confused.
 
-Response: `{ success, data: { simulated: true, disbursement_id, chain, tx_hash, amount, currency, recipient_group_id, rule_id, status: 'simulated', simulated_at } }`
+Returns HTTP 409 when `requires_focal_point_approval` is true and no approval
+is presented, and when `workflow_instance_id` names an instance that does not
+exist, is not a `parametric_disbursement` workflow, or has not reached
+`focal_point_confirmed`.
 
-`tx_hash` always begins with `sim_`. No on-chain transaction is made.
+Response: `{ success, data: { simulated: true, disbursement_id, chain, tx_hash, amount, currency, recipient_group_id, rule_id, status, trigger, focal_point_approval, simulated_at } }`
+
+`status` is one of:
+
+| Status | Meaning |
+|---|---|
+| `simulated` | the trigger was met; `amount` and `tx_hash` are populated |
+| `trigger_not_met` | the trigger was evaluated and did not fire; `amount` and `tx_hash` are `null` |
+| `trigger_not_evaluated` | the rule defines no trigger, or the metric did not resolve to a number; `amount` and `tx_hash` are `null` |
+
+An unmet or unevaluable trigger reports `amount: null`, not `0`. Zero would
+read as a measured payout of nothing; null says no payout was due. No
+`tx_hash` is minted for an unpaid disbursement — a transaction for a payout
+that is not owed is a hash of nothing.
+
+`tx_hash` begins with `sim_` when present. No on-chain transaction is made.
+
+`focal_point_approval` records where the approval came from:
+`source: 'workflow'` with `verified: true` when a workflow instance backs it,
+or `source: 'request_body'` with `verified: false` when it was asserted by the
+same request that requested the disbursement. A compliance reader needs to see
+which, so an assertion is never upgraded into a verification it did not get.
 
 The disbursement is persisted to the `parametric_disbursements` collection.
 
