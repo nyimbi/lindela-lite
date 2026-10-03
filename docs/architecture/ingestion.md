@@ -266,7 +266,7 @@ sequenceDiagram
     end
     alt threw on every attempt
       CW-->>RI: "throw lastError (attempts = n)"
-      RI->>RI: "status = failed; errors = [message]"
+      RI->>RI: "status = failed, errors recorded"
     else returned
       CW-->>RI: "output + __attempts"
       RI->>RI: "countRecords(output) vs minimum_records"
