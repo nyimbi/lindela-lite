@@ -1,0 +1,210 @@
+diff --git a/docs/architecture/ingestion.md b/docs/architecture/ingestion.md
+index 25e4c35..91e0811 100644
+--- a/docs/architecture/ingestion.md
++++ b/docs/architecture/ingestion.md
+@@ -266,7 +266,7 @@ sequenceDiagram
+     end
+     alt threw on every attempt
+       CW-->>RI: "throw lastError (attempts = n)"
+-      RI->>RI: "status = failed; errors = [message]"
++      RI->>RI: "status = failed, errors = [message]"
+     else returned
+       CW-->>RI: "output + __attempts"
+       RI->>RI: "countRecords(output) vs minimum_records"
+diff --git a/src/analytics.js b/src/analytics.js
+index 0cf7128..357db48 100644
+--- a/src/analytics.js
++++ b/src/analytics.js
+@@ -295,11 +295,19 @@ export function computeDataQuality(data) {
+           geocoded_records: 0,
+           latest_record_at: null,
+           confidence_sum: 0,
++          confidence_count: 0,
+         })
+       }
+       const quality = bySource.get(source)
+       quality.records_by_collection[collection] = (quality.records_by_collection[collection] || 0) + 1
+       quality.total_records += 1
++      // Only computed records carry a model confidence. Raw source rows do not,
++      // and treating their absence as zero would drag the mean down for a source
++      // whose model has simply not run.
++      if (Number.isFinite(record.confidence)) {
++        quality.confidence_sum += record.confidence
++        quality.confidence_count += 1
++      }
+       if (Number.isFinite(record.latitude) && Number.isFinite(record.longitude)) quality.geocoded_records += 1
+       quality.latest_record_at = latestDate(quality.latest_record_at, record.observed_at || record.occurred_at || record.updated_at || record.generated_at)
+     }
+@@ -316,6 +324,7 @@ export function computeDataQuality(data) {
+         geocoded_records: 0,
+         latest_record_at: null,
+         confidence_sum: 0,
++        confidence_count: 0,
+       })
+     }
+     const quality = bySource.get(source)
+@@ -329,7 +338,14 @@ export function computeDataQuality(data) {
+     const runPenalty = quality.last_run_status === 'failed' ? 35 : quality.last_run_status === 'degraded' ? 15 : 0
+     const freshnessPenalty = freshnessPenaltyFor(quality.latest_record_at || quality.last_run_at)
+     const confidence = clamp(Math.round(geocodeCoverage * 55 + Math.min(quality.total_records, 25) * 1.8 - runPenalty - freshnessPenalty), 0, 100)
+-    const mean_confidence = quality.total_records > 0 ? Math.round(quality.confidence_sum / quality.total_records) : 0
++    // Null, not zero, when no record carried a confidence. `confidence_sum` was
++    // initialised and read here but never incremented anywhere, so this divided
++    // zero by the record count and reported 0 for every source — a confident
++    // "we have no confidence in any of this" for sources whose models were
++    // simply not part of this pass.
++    const mean_confidence = quality.confidence_count > 0
++      ? Math.round(quality.confidence_sum / quality.confidence_count)
++      : null
+     return {
+       ...quality,
+       geocode_coverage_pct: Math.round(geocodeCoverage * 100),
+diff --git a/src/ingestion.js b/src/ingestion.js
+index 7304a8d..8febf8f 100644
+--- a/src/ingestion.js
++++ b/src/ingestion.js
+@@ -102,14 +102,7 @@ export async function runIngestion(store, request = {}) {
+   }
+ 
+   const source_runs = []
+-  const merged = {
+-    climate_observations: [],
+-    hazard_events: [],
+-    conflict_events: [],
+-    service_assets: [],
+-    food_security_records: [],
+-    disease_observations: [],
+-  }
++  const merged = Object.fromEntries(OUTPUT_COLLECTIONS.map((key) => [key, []]))
+ 
+   for (const source of requestedSources) {
+     const startedAt = nowIso()
+@@ -331,14 +324,33 @@ async function runConnectorWithRetries(connector, request) {
+   throw lastError
+ }
+ 
++/**
++ * The collections a connector may return.
++ *
++ * Kept as one list because `countRecords`, `countRecordsByCollection` and the
++ * `merged` accumulator below all have to agree. They did not: the counts read
++ * four keys while ingestion merged six, so `ipc_hdx` and `who_gho` always
++ * counted zero, never cleared `minimum_records`, and reported `degraded` with
++ * "Expected at least 1 records; received 0" however many IPC classifications or
++ * outbreak observations they had actually fetched.
++ */
++const OUTPUT_COLLECTIONS = [
++  'climate_observations',
++  'hazard_events',
++  'conflict_events',
++  'service_assets',
++  'food_security_records',
++  'disease_observations',
++]
++
+ function countRecords(output) {
+-  return ['climate_observations', 'hazard_events', 'conflict_events', 'service_assets']
++  return OUTPUT_COLLECTIONS
+     .reduce((total, key) => total + (output?.[key]?.length || 0), 0)
+ }
+ 
+ 
+ function countRecordsByCollection(output) {
+-  return Object.fromEntries(['climate_observations', 'hazard_events', 'conflict_events', 'service_assets']
++  return Object.fromEntries(OUTPUT_COLLECTIONS
+     .map((key) => [key, output?.[key]?.length || 0]))
+ }
+ 
+diff --git a/src/postgres-store.js b/src/postgres-store.js
+index 3f5e9e5..8958448 100644
+--- a/src/postgres-store.js
++++ b/src/postgres-store.js
+@@ -161,8 +161,56 @@ export class PostgresStore {
+     )
+   }
+ 
+-  async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [], road_access = [] }) {
+-    return this.merge({ risk_scores, impact_assessments, data_quality, road_access })
++  /**
++   * Replace the derived analytics collections wholesale.
++   *
++   * This delegated to `merge()`, which is the opposite operation in two ways.
++   *
++   * It MERGED rather than replaced, so a region that stops qualifying — no
++   * longer in scope, no inputs — kept its last computed risk score forever.
++   * The JSON store replaced, so the two backends disagreed about whether stale
++   * analytics persist.
++   *
++   * It also took four parameters against JsonStore's six, so
++   * `population_at_risk` and `facilities_at_risk` were computed by
++   * `refreshAnalytics`, passed in, and silently discarded. On the Postgres
++   * backend the impact-based figures — the people-at-risk and
++   * facilities-at-risk that roadmap item 3 exists to produce — were never
++   * written at all.
++   *
++   * Delete-then-insert per collection, in one transaction.
++   */
++  async replaceAnalytics({
++    risk_scores = [],
++    impact_assessments = [],
++    data_quality = [],
++    population_at_risk = [],
++    facilities_at_risk = [],
++    road_access = [],
++  }) {
++    const client = await this.connect()
++    const collections = {
++      risk_scores,
++      impact_assessments,
++      data_quality,
++      population_at_risk,
++      facilities_at_risk,
++      road_access,
++    }
++
++    await client.query('BEGIN')
++    try {
++      for (const [collection, items] of Object.entries(collections)) {
++        await client.query('DELETE FROM lite_records WHERE collection = $1', [collection])
++        if (items.length) await this.upsertCollection(client, collection, items)
++      }
++      await client.query('COMMIT')
++    } catch (error) {
++      await client.query('ROLLBACK')
++      throw error
++    }
++
++    return this.read()
+   }
+ 
+   async close() {
+diff --git a/test/lite.test.js b/test/lite.test.js
+index 52bd0cf..e6fba82 100644
+--- a/test/lite.test.js
++++ b/test/lite.test.js
+@@ -5458,9 +5458,12 @@ describe('Lindela Lite IPC food security ingestion', () => {
+     // into the store; a key absent there is silently dropped (every collection
+     // was when this class of bug was found). Asserted on the source text
+     // because the map is not exported.
++    // The merged accumulator and the record counters are now both derived from
++    // one OUTPUT_COLLECTIONS list, so asserting on the old literal map syntax
++    // tested the spelling rather than the guarantee. Assert on the list.
+     const ingestionSource = await fs.readFile('src/ingestion.js', 'utf8')
+-    assert.ok(ingestionSource.includes('food_security_records: []'),
+-      'runIngestion drops collections missing from its merged map')
++    assert.ok(/OUTPUT_COLLECTIONS\s*=\s*\[[\s\S]*?'food_security_records'/.test(ingestionSource),
++      "OUTPUT_COLLECTIONS must name 'food_security_records' or runIngestion drops its output")
+   })
+ })
+ 
+@@ -5516,8 +5519,8 @@ describe('Lindela Lite WHO GHO outbreak context', () => {
+     // but the source must not read fresh forever without a window at all.
+     assert.ok(SOURCE_POLICIES.who_gho.stale_after_minutes > 0)
+     const ingestionSource = await fs.readFile('src/ingestion.js', 'utf8')
+-    assert.ok(ingestionSource.includes('disease_observations: []'),
+-      'runIngestion drops collections missing from its merged map')
++    assert.ok(/OUTPUT_COLLECTIONS\s*=\s*\[[\s\S]*?'disease_observations'/.test(ingestionSource),
++      "OUTPUT_COLLECTIONS must name 'disease_observations' or runIngestion drops its output")
+   })
+ })
+ 
