@@ -150,7 +150,21 @@ export function districtOverview(data, districtSlug) {
   // every alert the district has, so dividing it by the first 30 of them
   // described an arbitrary prefix as a district rate.
   const falseAlerts = allAlertEvents.filter(a => a.resolution_note && /false|invalid|noop/i.test(a.resolution_note))
-  const false_alert_rate = allAlertEvents.length
+  // An alert nobody resolved has no outcome, so it cannot be counted as a
+  // sound one either. Dividing by all alerts kept the denominator honest and
+  // threw the numerator's meaning away: with nothing ever resolved the
+  // numerator is zero and the rate read 0% — "no false alerts happened" where
+  // the truth is "no alert was ever looked at". The equity surface called the
+  // same district unmeasurable. One district's honest unknown was another's
+  // confident zero.
+  //
+  // So the denominator stays every alert the district raised — that is what a
+  // false-alert *rate* means, and it is what the sample blocks report — and the
+  // rate is null when no outcome has been recorded. Once an operator reviews
+  // anything, zero is a real answer: zero false alerts out of forty, read off
+  // the notes that exist.
+  const reviewedAlerts = allAlertEvents.filter(a => a.status === 'resolved' && a.resolution_note)
+  const false_alert_rate = reviewedAlerts.length
     ? (100 * falseAlerts.length) / allAlertEvents.length : null
 
   const lags = []
@@ -206,6 +220,11 @@ export function districtOverview(data, districtSlug) {
       people_reached,
       warning_to_action_median_hours,
       false_alert_rate,
+      // A rate with no denominator beside it is a claim, not a measurement. The
+      // same two fields name the sample on `src/kpi.js`, so an officer reading
+      // either page sees the same words.
+      false_alert_determined: reviewedAlerts.length,
+      false_alert_of_total: allAlertEvents.length,
       feeding_repositioning_rate,
       cold_chain_protection_rate,
     },

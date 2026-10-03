@@ -31,6 +31,9 @@ export function equityByDistrict(data) {
         dispatched: 0,
         acknowledged: 0,
         false_positive: 0,
+        // Alerts whose outcome someone actually recorded: resolved, with a
+        // note. Below this line there is nothing to be right or wrong about.
+        reviewed: 0,
         // The subset that can carry an outcome: dispatched AND resolved. The
         // old metric divided by every dispatch while subtracting false positives
         // that included alerts never dispatched — two different populations, so
@@ -67,6 +70,9 @@ export function equityByDistrict(data) {
     if (flaggedFalsePositive) {
       row.false_positive += 1
     }
+    if (alert.status === 'resolved' && alert.resolution_note) {
+      row.reviewed += 1
+    }
 
     if (wasDispatched && alert.status === 'resolved') {
       row.determined += 1
@@ -92,6 +98,14 @@ export function equityByDistrict(data) {
       row.determined > 0
         ? Math.round((10000 * (row.determined - row.determined_false_positive)) / row.determined) / 100
         : null
+    // The district's false-alert rate, defined exactly as `districtOverview`
+    // defines it: flagged false positives over every alert the district raised,
+    // and null when no alert has a recorded outcome. The two surfaces shipped
+    // the same concept under the same name with different denominators, so an
+    // officer comparing them got two answers and no way to tell which was which.
+    const false_alert_rate = row.reviewed > 0
+      ? (100 * row.false_positive) / row.alerts
+      : null
     return {
       district: row.district,
       alerts: row.alerts,
@@ -101,6 +115,9 @@ export function equityByDistrict(data) {
       determined_dispatched: row.determined,
       determined_false_positive: row.determined_false_positive,
       dispatch_precision_pct,
+      false_alert_rate,
+      false_alert_determined: row.reviewed,
+      false_alert_of_total: row.alerts,
       // Kept so existing consumers keep rendering. The value is the metric
       // above; the name is the old lie, and callers should migrate to
       // `dispatch_precision_pct`.
