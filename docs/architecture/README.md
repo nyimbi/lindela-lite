@@ -19,9 +19,15 @@ prose.
 | [data-model.md](data-model.md) | What is stored, how it is keyed, what idempotency rests on |
 | [ingestion.md](ingestion.md) | How external data becomes records |
 | [analytics-and-alerts.md](analytics-and-alerts.md) | How records become risk, and risk becomes an alert |
-| [dashboard.md](../dashboard.md) | The eight surfaces, the offline model, and what the browser can and cannot do |
-| [deployment.md](../deployment.md) | Topology, configuration, and what to do when it is down |
+| [frontend.md](frontend.md) | The eight surfaces, the module graph, the offline model, what the browser can and cannot do |
+| [deployment.md](deployment.md) | Topology, configuration, and what to do when it is down |
 | [decisions/](decisions/) | The decisions that shaped the above, and what they cost |
+
+Operating the deployment day to day lives in the guides this set sits beside:
+[platform.md](../platform.md) for configuration, [deployment.md](../deployment.md) for the
+one-click install, [dashboard.md](../dashboard.md) for the operator console, and
+[operations.md](../operations.md) for the runbook. `docs/architecture.md` is the
+shallower overview they assume; this set is the depth beneath it.
 
 ## Three facts worth knowing before reading further
 
