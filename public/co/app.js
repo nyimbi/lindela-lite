@@ -56,10 +56,22 @@ function falseAlertAnnotation(kpi) {
   return `${n} of ${of} alerts reviewed for outcome`
 }
 
+/**
+ * Format a KPI value.
+ *
+ * This applied `toFixed(1)` to everything, so a count of people rendered as
+ * "203.0 people" and a percentage as "100.0 %" — a spurious decimal place that
+ * reads as false precision on the quarterly numbers a donor reads. Counts are
+ * integers; percentages keep one place; a string is passed through.
+ */
 function fmtVal(v, unit = '') {
   if (v === null || v === undefined) return null
-  if (typeof v === 'number') return `${v.toFixed(1)}${unit}`
-  return `${v}${unit}`
+  if (typeof v !== 'number') return `${v}${unit}`
+  const isCount = unit === 'people' || unit === 'reporters' || unit === 'mappers' ||
+                  unit === 'releases' || unit === 'deliveries' || unit === 'assets'
+  if (isCount) return Math.round(v).toLocaleString()
+  if (unit === '%') return v.toFixed(1)
+  return v.toFixed(1)
 }
 
 function kpiTileHtml(label, value, unit, annotation, isDataGap) {
@@ -81,13 +93,13 @@ function renderKpi(kpi) {
   if (!grid) return
 
   const tiles = [
-    { key: 'co.kpi_people_reached', label: t('co.kpi_people_reached', 'People reached'), value: fmtVal(kpi.people_reached, ''), unit: 'people', annotation: '', gap: false },
-    { key: 'co.kpi_percent_u18', label: t('co.kpi_percent_u18', '% Children U18'), value: fmtVal(kpi.percent_children_u18, ''), unit: '%', annotation: '', gap: kpi.percent_children_u18 === null },
-    { key: 'co.kpi_percent_women', label: t('co.kpi_percent_women', '% Women and girls'), value: fmtVal(kpi.percent_women_and_girls, ''), unit: '%', annotation: '', gap: kpi.percent_women_and_girls === null },
-    { key: 'co.kpi_percent_pwd', label: t('co.kpi_percent_pwd', '% PwD'), value: fmtVal(kpi.percent_pwd, ''), unit: '%', annotation: '', gap: kpi.percent_pwd === null },
-    { key: 'co.kpi_reporters', label: t('co.kpi_reporters', 'Community reporters'), value: fmtVal(kpi.community_reporters_count, ''), unit: 'reporters', annotation: '', gap: false },
-    { key: 'co.kpi_mappers', label: t('co.kpi_mappers', 'Youth mappers'), value: fmtVal(kpi.youth_mappers_count, ''), unit: 'mappers', annotation: '', gap: kpi.youth_mappers_count === 0 },
-    { key: 'co.kpi_oss_releases', label: t('co.kpi_oss_releases', 'OSS releases'), value: fmtVal(kpi.oss_releases_count, ''), unit: 'releases', annotation: '', gap: false },
+    { key: 'co.kpi_people_reached', label: t('co.kpi_people_reached', 'People reached'), value: fmtVal(kpi.people_reached, 'people'), unit: 'people', annotation: '', gap: false },
+    { key: 'co.kpi_percent_u18', label: t('co.kpi_percent_u18', '% Children U18'), value: fmtVal(kpi.percent_children_u18, '%'), unit: '%', annotation: '', gap: kpi.percent_children_u18 === null },
+    { key: 'co.kpi_percent_women', label: t('co.kpi_percent_women', '% Women and girls'), value: fmtVal(kpi.percent_women_and_girls, '%'), unit: '%', annotation: '', gap: kpi.percent_women_and_girls === null },
+    { key: 'co.kpi_percent_pwd', label: t('co.kpi_percent_pwd', '% PwD'), value: fmtVal(kpi.percent_pwd, '%'), unit: '%', annotation: '', gap: kpi.percent_pwd === null },
+    { key: 'co.kpi_reporters', label: t('co.kpi_reporters', 'Community reporters'), value: fmtVal(kpi.community_reporters_count, 'reporters'), unit: 'reporters', annotation: '', gap: false },
+    { key: 'co.kpi_mappers', label: t('co.kpi_mappers', 'Youth mappers'), value: fmtVal(kpi.youth_mappers_count, 'mappers'), unit: 'mappers', annotation: '', gap: kpi.youth_mappers_count === 0 },
+    { key: 'co.kpi_oss_releases', label: t('co.kpi_oss_releases', 'OSS releases'), value: fmtVal(kpi.oss_releases_count, 'releases'), unit: 'releases', annotation: '', gap: false },
     // Labelled "Warning-to-action median" against a "<24h" UNICEF bid target, a
     // figure of 0.16 h sat right next to it. What it measures is how fast this
     // platform sent an SMS once a dispatch matched a signal — our own dispatch
@@ -95,14 +107,14 @@ function renderKpi(kpi) {
     // household to a field action being completed and reported, which this does
     // not observe at all. Naming it accurately matters more than the comparison
     // looking good next to a bid target.
-    { key: 'co.kpi_warning_to_action', label: t('co.kpi_warning_to_action', 'Signal-to-dispatch median'), value: fmtVal(kpi.warning_to_action_median_hours, ''), unit: 'hours', annotation: 'signal matched → SMS sent; not a field action', gap: kpi.warning_to_action_median_hours === null },
-    { key: 'co.kpi_feeding_repositioning', label: t('co.kpi_feeding_repositioning', 'Feeding repositioning rate'), value: fmtVal(kpi.feeding_supply_repositioning_rate, ''), unit: '%', annotation: '', gap: kpi.feeding_supply_repositioning_rate === null },
-    { key: 'co.kpi_cold_chain', label: t('co.kpi_cold_chain', 'Cold-chain protection rate'), value: fmtVal(kpi.cold_chain_protection_rate, ''), unit: '%', annotation: '', gap: kpi.cold_chain_protection_rate === null },
+    { key: 'co.kpi_warning_to_action', label: t('co.kpi_warning_to_action', 'Signal-to-dispatch median'), value: fmtVal(kpi.warning_to_action_median_hours, 'hours'), unit: 'hours', annotation: 'signal matched → SMS sent; not a field action', gap: kpi.warning_to_action_median_hours === null },
+    { key: 'co.kpi_feeding_repositioning', label: t('co.kpi_feeding_repositioning', 'Feeding repositioning rate'), value: fmtVal(kpi.feeding_supply_repositioning_rate, '%'), unit: '%', annotation: '', gap: kpi.feeding_supply_repositioning_rate === null },
+    { key: 'co.kpi_cold_chain', label: t('co.kpi_cold_chain', 'Cold-chain protection rate'), value: fmtVal(kpi.cold_chain_protection_rate, '%'), unit: '%', annotation: '', gap: kpi.cold_chain_protection_rate === null },
     // The denominator travels with the number. A proportion computed from one
     // determined alert swings between 0% and 100% on a single record, so the
     // sample size is shown rather than a threshold being invented to suppress it.
-    { key: 'co.kpi_false_alerts', label: t('co.kpi_false_alerts', 'False alert rate'), value: fmtVal(kpi.false_alert_rate, ''), unit: '%', annotation: falseAlertAnnotation(kpi), gap: kpi.false_alert_rate === null },
-    { key: 'co.kpi_api_uptime', label: t('co.kpi_api_uptime', 'API uptime'), value: fmtVal(kpi.api_uptime_pct, ''), unit: '%', annotation: '', gap: false },
+    { key: 'co.kpi_false_alerts', label: t('co.kpi_false_alerts', 'False alert rate'), value: fmtVal(kpi.false_alert_rate, '%'), unit: '%', annotation: falseAlertAnnotation(kpi), gap: kpi.false_alert_rate === null },
+    { key: 'co.kpi_api_uptime', label: t('co.kpi_api_uptime', 'API uptime'), value: fmtVal(kpi.api_uptime_pct, '%'), unit: '%', annotation: '', gap: false },
   ]
 
   grid.innerHTML = tiles.map((t) => kpiTileHtml(t.label, t.value, t.unit, t.annotation, t.gap)).join('')

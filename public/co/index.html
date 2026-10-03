@@ -118,7 +118,7 @@
 
       .kpi-tile-annotation {
         font-size: 0.7rem;
-        color: var(--accent, #4a9eff);
+        color: var(--brand);
         margin-top: 0.25rem;
       }
 
@@ -135,8 +135,8 @@
       .spark-label { font-size: 0.75rem; color: var(--ink-muted); }
       .spark-value { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
       .spark-delta { font-size: 0.75rem; margin-bottom: 0.35rem; }
-      .spark-delta.up { color: var(--ok, #27ae60); }
-      .spark-delta.down { color: var(--danger, #e05252); }
+      .spark-delta.up { color: var(--ok); }
+      .spark-delta.down { color: var(--danger); }
       .spark-delta.neutral { color: var(--ink-muted); }
       .spark-svg { display: block; overflow: visible; }
 
@@ -178,12 +178,12 @@
 
       tr:last-child td { border-bottom: none; }
 
-      .breach-row td { color: var(--danger, #e05252); }
+      .breach-row td { color: var(--danger); }
 
       .chip-breach {
         display: inline-block;
         font-size: 0.65rem;
-        background: #e05252;
+        background: var(--danger);
         color: #fff;
         border-radius: 3px;
         padding: 0 0.4rem;
@@ -210,7 +210,7 @@
 
       .hist-bar {
         width: 100%;
-        background: var(--accent, #4a9eff);
+        background: var(--brand);
         border-radius: 2px 2px 0 0;
         min-height: 2px;
         transform-origin: bottom;
@@ -246,7 +246,7 @@
       .btn:hover { background: var(--stroke); }
 
       .btn-primary {
-        background: var(--accent, #4a9eff);
+        background: var(--brand);
         color: #fff;
         border-color: transparent;
       }
