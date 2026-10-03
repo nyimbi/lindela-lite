@@ -424,6 +424,18 @@ export const SOURCE_ASSERTIONS = deepFreeze({
       note: 'The archive is worldwide and `countries: "all"` is supported, so a regional bound would be wrong here too.',
     },
     {
+      name: 'gdacs_archive.quarters walk forwards in time',
+      kind: 'monotonic_dates',
+      field: 'occurred_at',
+      // Ascending, unlike CHIRPS and NOAA above: the archive walks year by year
+      // and quarter 1..4 within each. A batch that runs backwards is a
+      // paginated query returning a different slice than it did last time,
+      // which on this feed is indistinguishable from the ~100 cap unless the
+      // ordering is checked.
+      order: 'ascending',
+      note: 'Forward walk expected; a reversal means the quarterly paging changed shape.',
+    },
+    {
       name: 'gdacs_archive.flood severity is not a fabricated zero',
       kind: 'value_range',
       field: 'severity',
@@ -659,6 +671,10 @@ export function runAssertions({ source, records = [], trailingRecords = [], opti
   const failures = []
   const fieldStats = {}
   const unmeasured = []
+  // Measured once and reported, so a reader of the run can see what the count
+  // assertion was judged against without having to re-run it.
+  const counts = trailingCounts(trailingRecords)
+  const trailing = { runs: counts.length, counts, median: median(counts) }
 
   for (const assertion of declared) {
     const context = { batch, trailingRecords, fieldStats, unmeasured, options }
@@ -693,7 +709,7 @@ export function runAssertions({ source, records = [], trailingRecords = [], opti
   return {
     ok: failures.length === 0,
     failures,
-    stats: baseStats({ source, batch, declared: declared.length, now, unmeasured, fieldStats, source_known: true }),
+    stats: baseStats({ source, batch, declared: declared.length, now, unmeasured, fieldStats, source_known: true, trailing }),
   }
 }
 
@@ -782,7 +798,11 @@ export function recordCountsFound({ source, collection, found, returned, cap = n
  */
 export function capRecords({ records = [], limit = null, source = null, collection = null, capName = null, reason = null } = {}) {
   const all = Array.isArray(records) ? records : []
-  const bounded = Number.isFinite(Number(limit)) && Number(limit) >= 0 ? Number(limit) : null
+  // `Number(null)` is 0, so a Number.isFinite test on the limit reads "no limit"
+  // as "keep nothing" and every uncapped batch silently becomes an empty one.
+  // The null check comes first, and this is exactly the falsy-zero class the
+  // rest of this module is about, caught by its own test.
+  const bounded = limit === null || limit === undefined ? null : (Number.isFinite(Number(limit)) && Number(limit) >= 0 ? Number(limit) : null)
   const kept = bounded === null ? all : all.slice(0, bounded)
   return {
     records: kept,
@@ -1041,6 +1061,10 @@ export function trailingCounts(trailingRecords) {
         const stated = Number(entry.records_processed ?? entry.count)
         if (Number.isFinite(stated)) return stated
         if (Array.isArray(entry.records)) return entry.records.length
+        // Anything else object-shaped is a record from one previous run, so it
+        // counts once. Returning NaN here instead would silently drop the whole
+        // window and leave the count assertion permanently unmeasured.
+        return 1
       }
       return NaN
     })
@@ -1052,17 +1076,20 @@ function trailingRunCount(trailingRecords) {
 }
 
 /**
- * Median rather than mean. One 40,000-row backfill among nine daily runs drags a
- * mean far enough up to make a genuine 4,000 shortfall look like the new normal.
+ * Lower median rather than mean, and rather than the usual two-element average.
+ * One 40,000-row backfill among nine 40-row runs does not drag a mean, and it
+ * barely moves the true median — but averaging the middle pair of
+ * [40, 40, 40, 40, 40, 40, 40, 40, 40_000] hands back 20,020 and makes every
+ * healthy daily run look like a 99% shortfall. The floor has to be the kind of
+ * number the source normally produces.
  */
 function median(values) {
   const numbers = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b)
   if (!numbers.length) return null
-  const middle = Math.floor(numbers.length / 2)
-  return numbers.length % 2 ? numbers[middle] : Math.round((numbers[middle - 1] + numbers[middle]) / 2)
+  return numbers[Math.floor((numbers.length - 1) / 2)]
 }
 
-function baseStats({ source, batch, declared, now, unmeasured = [], fieldStats = {}, source_known }) {
+function baseStats({ source, batch, declared, now, unmeasured = [], fieldStats = {}, source_known, trailing = null }) {
   const fields = fieldStats || {}
   const measuredFields = Object.entries(fields).filter(([, counted]) => counted.present > 0).length
   return {
@@ -1077,6 +1104,10 @@ function baseStats({ source, batch, declared, now, unmeasured = [], fieldStats =
     records_measured: batch.length,
     fields_measured: measuredFields,
     field_coverage: fields,
+    // What the count assertion was judged against. `median: null` means there
+    // was no window to judge against, which is a different statement from
+    // "compared and passed".
+    trailing,
     unmeasured,
     // Present so a zero batch that passed on a legitimate silence is visibly
     // different from a zero batch that passed because nothing checked it.
