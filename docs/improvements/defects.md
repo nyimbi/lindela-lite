@@ -35,7 +35,7 @@ under **Unreleased**; this table is the index into them.
 | SEC-03 | fixed | explicit read/write scope tables; unmapped mutation needs `admin:*` | `auth-deny-by-default.test.js` |
 | SEC-04 | fixed | malformed `LINDELA_LITE_TOKENS` throws instead of parsing to `[]` | `auth-deny-by-default.test.js` |
 | SEC-05 | fixed | scheme + resolved-address checks at registration *and* dispatch | `webhook-security.test.js` |
-| SEC-06 | not started | — | — |
+| SEC-06 | fixed | token carries `partner_org`; `filterRecords` scopes deny-by-default; `?partner_org=` refused; `GET /api/v1/auth-info` | `partner-isolation.test.js` |
 | DAT-01 | fixed | `write()` upserts through `insertRecords`; `payload_hash` persisted | `store-conformance.test.js` |
 | DAT-02 | fixed | one exported `OUTPUT_COLLECTIONS` drives accumulator, lineage and counts | `store-conformance.test.js` |
 | DAT-03 | fixed | mutation serialisation chain + temp-file rename | `store-conformance.test.js` |
@@ -322,6 +322,14 @@ The money path is unaudited, unruled, and self-approved.
 
 The partner portal promises per-organisation isolation and delivers the whole
 store to every partner.
+
+**Fixed 2026-10-03.** All three missing layers, and `GET /api/v1/export.csv`
+turned out to pass no context at all. Note what is *not* fixed: no collection
+carries a `partner_org` field, so a partner-scoped token now correctly sees an
+empty store. Tagging records per partner organisation is deployment data, not
+code, and the remaining gap is that operators must supply it — which is a
+better state than a filter that displays itself as applied while returning
+everything.
 
 ---
 

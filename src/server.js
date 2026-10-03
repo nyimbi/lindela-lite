@@ -373,6 +373,23 @@ async function handleApi(store, req, res, url) {
   const data = await store.read()
   req.__auth = auth
 
+  if (req.method === 'GET' && url.pathname === '/api/v1/auth-info') {
+    // What this token is, as the server understands it. The partner portal
+    // rendered its organisation from localStorage — a value the user typed,
+    // never checked against anything — so the interface showed an isolation
+    // that the server had no opinion about.
+    jsonResponse(res, 200, {
+      success: true,
+      data: {
+        subject: auth?.subject || null,
+        scopes: auth?.scopes || [],
+        partner_org: auth?.partner_org || null,
+        auth_configured: isAuthConfigured(),
+      },
+    })
+    return
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/v1/health') {
     jsonResponse(res, 200, {
       success: true,
@@ -430,7 +447,7 @@ async function handleApi(store, req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/outbox') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.events_outbox || [], url.searchParams, { data, collection: 'events_outbox' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.events_outbox || [], url.searchParams, { auth: req.__auth, data, collection: 'events_outbox' }) })
     return
   }
 
@@ -534,7 +551,7 @@ async function handleApi(store, req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/service-assets') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.service_assets, url.searchParams, { data, collection: 'service_assets' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.service_assets, url.searchParams, { auth: req.__auth, data, collection: 'service_assets' }) })
     return
   }
 
@@ -562,37 +579,37 @@ async function handleApi(store, req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/v1/events') {
     const records = [...data.hazard_events, ...data.conflict_events]
-    jsonResponse(res, 200, { success: true, data: filterRecords(records, url.searchParams, { data, collection: 'incidents' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(records, url.searchParams, { auth: req.__auth, data, collection: 'incidents' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/climate') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.climate_observations, url.searchParams, { data, collection: 'climate_observations' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.climate_observations, url.searchParams, { auth: req.__auth, data, collection: 'climate_observations' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/flood-risk') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams, { data, collection: 'risk_scores' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/conflict-risk') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.risk_scores.filter((risk) => risk.type === 'climate_conflict_risk'), url.searchParams, { data, collection: 'risk_scores' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.risk_scores.filter((risk) => risk.type === 'climate_conflict_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/service-impacts') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.impact_assessments, url.searchParams, { data, collection: 'impact_assessments' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.impact_assessments, url.searchParams, { auth: req.__auth, data, collection: 'impact_assessments' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/impact/population-at-risk') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.population_at_risk || [], url.searchParams, { data, collection: 'population_at_risk' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.population_at_risk || [], url.searchParams, { auth: req.__auth, data, collection: 'population_at_risk' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/impact/facilities-at-risk') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.facilities_at_risk || [], url.searchParams, { data, collection: 'facilities_at_risk' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.facilities_at_risk || [], url.searchParams, { auth: req.__auth, data, collection: 'facilities_at_risk' }) })
     return
   }
 
@@ -613,7 +630,7 @@ async function handleApi(store, req, res, url) {
   if (url.pathname === '/api/v1/food-security') {
     // Summary rides along with the list, like road-access: a caller paging the
     // records gets the roll-up for nothing instead of a second request.
-    const records = filterRecords(data.food_security_records || [], url.searchParams, { data, collection: 'food_security_records' })
+    const records = filterRecords(data.food_security_records || [], url.searchParams, { auth: req.__auth, data, collection: 'food_security_records' })
     jsonResponse(res, 200, { success: true, data: records, summary: summarizeFoodSecurity(records) })
     return
   }
@@ -624,7 +641,7 @@ async function handleApi(store, req, res, url) {
   }
 
   if (url.pathname === '/api/v1/disease-observations') {
-    const records = filterRecords(data.disease_observations || [], url.searchParams, { data, collection: 'disease_observations' })
+    const records = filterRecords(data.disease_observations || [], url.searchParams, { auth: req.__auth, data, collection: 'disease_observations' })
     jsonResponse(res, 200, { success: true, data: records, summary: summarizeDiseaseObservations(records) })
     return
   }
@@ -640,7 +657,7 @@ async function handleApi(store, req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/v1/flood-probability/models') {
     jsonResponse(res, 200, {
       success: true,
-      data: filterRecords(data.flood_probability_models || [], url.searchParams, { data, collection: 'flood_probability_models' }),
+      data: filterRecords(data.flood_probability_models || [], url.searchParams, { auth: req.__auth, data, collection: 'flood_probability_models' }),
     })
     return
   }
@@ -795,12 +812,12 @@ async function handleApi(store, req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/data-quality') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.data_quality, url.searchParams, { data, collection: 'data_quality' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.data_quality, url.searchParams, { auth: req.__auth, data, collection: 'data_quality' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/data-lineage') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.data_lineage || [], url.searchParams, { data, collection: 'data_lineage' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.data_lineage || [], url.searchParams, { auth: req.__auth, data, collection: 'data_lineage' }) })
     return
   }
 
@@ -965,7 +982,7 @@ async function handleApi(store, req, res, url) {
 
   if (url.pathname === '/api/v1/community-feedback') {
     if (req.method === 'GET') {
-      jsonResponse(res, 200, { success: true, data: filterRecords(data.community_feedback || [], url.searchParams, { data, collection: 'community_feedback' }) })
+      jsonResponse(res, 200, { success: true, data: filterRecords(data.community_feedback || [], url.searchParams, { auth: req.__auth, data, collection: 'community_feedback' }) })
       return
     }
     if (req.method === 'POST') {
@@ -990,12 +1007,12 @@ async function handleApi(store, req, res, url) {
       data: {
         generated_at: new Date().toISOString(),
         counts: counts(data),
-        flood_risk: filterRecords(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams, { data, collection: 'risk_scores' }),
-        climate_conflict_risk: filterRecords(data.risk_scores.filter((risk) => risk.type === 'climate_conflict_risk'), url.searchParams, { data, collection: 'risk_scores' }),
-        service_impacts: filterRecords(data.impact_assessments, url.searchParams, { data, collection: 'impact_assessments' }),
-        data_quality: filterRecords(data.data_quality, url.searchParams, { data, collection: 'data_quality' }),
+        flood_risk: filterRecords(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }),
+        climate_conflict_risk: filterRecords(data.risk_scores.filter((risk) => risk.type === 'climate_conflict_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }),
+        service_impacts: filterRecords(data.impact_assessments, url.searchParams, { auth: req.__auth, data, collection: 'impact_assessments' }),
+        data_quality: filterRecords(data.data_quality, url.searchParams, { auth: req.__auth, data, collection: 'data_quality' }),
         operations: operationalSummary(data),
-        alert_events: filterRecords(data.alert_events, url.searchParams, { data, collection: 'alert_events' }),
+        alert_events: filterRecords(data.alert_events, url.searchParams, { auth: req.__auth, data, collection: 'alert_events' }),
         recent_events: filterRecords([...data.hazard_events, ...data.conflict_events], url.searchParams),
       },
     })
@@ -1033,7 +1050,11 @@ async function handleApi(store, req, res, url) {
       ...data.alert_events,
       ...data.rapidpro_dispatches,
       ...data.rapidpro_inbound_messages,
-    ], url.searchParams)
+      ...data.service_assets,
+    // No context at all, so this route had neither district resolution nor
+    // tenant scoping. It is the single widest read in the API and the one
+    // SEC-01 found serving field reports and message bodies unauthenticated.
+    ], url.searchParams, { auth: req.__auth, data, collection: 'export' })
     res.writeHead(200, {
       'content-type': 'text/csv; charset=utf-8',
       'content-disposition': 'attachment; filename="lindela-lite-export.csv"',
@@ -1058,7 +1079,7 @@ async function handleIngestionRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.kind === 'schedules' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.ingestion_schedules, url.searchParams, { data, collection: 'ingestion_schedules' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.ingestion_schedules, url.searchParams, { auth: req.__auth, data, collection: 'ingestion_schedules' }) })
     return
   }
 
@@ -1222,7 +1243,7 @@ async function handleReportTemplateRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_templates, url.searchParams, { data, collection: 'report_templates' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_templates, url.searchParams, { auth: req.__auth, data, collection: 'report_templates' }) })
     return
   }
   if (req.method === 'GET' && route.id) {
@@ -1292,7 +1313,7 @@ async function handleReportRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.reports, url.searchParams, { data, collection: 'reports' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.reports, url.searchParams, { auth: req.__auth, data, collection: 'reports' }) })
     return
   }
   if (req.method === 'GET' && route.id) {
@@ -1378,7 +1399,7 @@ async function handleReportRoute(store, data, req, res, url, route) {
 
 async function handleReportDistributionRoute(store, data, req, res, url, route) {
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_distribution_runs, url.searchParams, { data, collection: 'report_distribution_runs' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_distribution_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_distribution_runs' }) })
     return
   }
   const run = data.report_distribution_runs.find((item) => item.id === route.id)
@@ -1424,7 +1445,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route) {
     return
   }
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_schedules, url.searchParams, { data, collection: 'report_schedules' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_schedules, url.searchParams, { auth: req.__auth, data, collection: 'report_schedules' }) })
     return
   }
   if (req.method === 'GET' && route.id) {
@@ -1474,7 +1495,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route) {
 
 async function handleReportScheduleRunRoute(store, data, req, res, url, route) {
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_schedule_runs, url.searchParams, { data, collection: 'report_schedule_runs' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_schedule_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_schedule_runs' }) })
     return
   }
   const run = data.report_schedule_runs.find((item) => item.id === route.id)
@@ -1712,12 +1733,12 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.kind === 'dispatches') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.rapidpro_dispatches, url.searchParams, { data, collection: 'rapidpro_dispatches' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.rapidpro_dispatches, url.searchParams, { auth: req.__auth, data, collection: 'rapidpro_dispatches' }) })
     return
   }
 
   if (req.method === 'GET' && route.kind === 'inbound') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.rapidpro_inbound_messages, url.searchParams, { data, collection: 'rapidpro_inbound_messages' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.rapidpro_inbound_messages, url.searchParams, { auth: req.__auth, data, collection: 'rapidpro_inbound_messages' }) })
     return
   }
 
@@ -1900,7 +1921,7 @@ async function handleAlertRoute(store, data, req, res, url, route) {
 
 async function handleTriggerRoute(store, data, req, res, url, route) {
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.trigger_protocols || [], url.searchParams, { data, collection: 'trigger_protocols' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.trigger_protocols || [], url.searchParams, { auth: req.__auth, data, collection: 'trigger_protocols' }) })
     return
   }
 
@@ -2146,7 +2167,7 @@ function parseLevels(raw) {
 
 async function handleWebhookRoute(store, data, req, res, url, route) {
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.webhook_subscriptions || [], url.searchParams, { data, collection: 'webhook_subscriptions' }) })
+    jsonResponse(res, 200, { success: true, data: filterRecords(data.webhook_subscriptions || [], url.searchParams, { auth: req.__auth, data, collection: 'webhook_subscriptions' }) })
     return
   }
 
@@ -2564,7 +2585,7 @@ function matchWorkflowRoute(pathname) {
 
 async function handleWorkflowRoute(store, data, req, res, url, route) {
   if (req.method === 'GET' && !route.id && !route.action) {
-    const records = filterRecords(data.workflow_instances, url.searchParams, { data, collection: 'workflow_instances' })
+    const records = filterRecords(data.workflow_instances, url.searchParams, { auth: req.__auth, data, collection: 'workflow_instances' })
     jsonResponse(res, 200, { success: true, data: records })
     return
   }

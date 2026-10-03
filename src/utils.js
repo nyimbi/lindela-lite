@@ -118,11 +118,32 @@ function parseRecordBbox(value) {
 }
 
 /**
- * @param {object} [context] optional `{ data, collection }`, used to resolve
- *   records that carry no location of their own. Without it a district filter
- *   matches nothing for those collections.
+ * @param {object} [context] optional `{ data, collection, auth }`. `data`
+ *   resolves records that carry no location of their own -- without it a
+ *   district filter matches nothing for those collections. `auth` carries the
+ *   authenticated principal; a token scoped to a partner organisation sees
+ *   only records tagged for it, and a `?partner_org=` in the query is refused
+ *   rather than trusted, because a client-supplied parameter is not access
+ *   control.
  */
 export function filterRecords(records, query, context = {}) {
+  const partnerOrg = context.auth?.partner_org || null
+  const claimedOrg = query.get('partner_org')
+  if (claimedOrg !== null) {
+    // The portal sent this on every request. The server read nothing, so every
+    // partner received the whole store while the interface showed the filter
+    // as applied. A parameter that looks like isolation must either be the
+    // isolation or be refused.
+    if (!partnerOrg || claimedOrg !== partnerOrg) {
+      const error = new Error(
+        partnerOrg
+          ? `partner_org=${claimedOrg} does not match this token's organisation`
+          : 'partner_org cannot be requested: this token is not scoped to a partner organisation'
+      )
+      error.statusCode = 403
+      throw error
+    }
+  }
   const districtRelations = buildDistrictRelations(context.data, context.collection, resolveDistrictFilter(query.get('district') || query.get('region')))
   const bbox = parseBbox(query.get('bbox'))
   const country = query.get('country')
@@ -148,7 +169,7 @@ export function filterRecords(records, query, context = {}) {
   const to = query.get('to') ? Date.parse(query.get('to')) : null
   const limit = Math.min(Math.max(Number(query.get('limit') || 500), 1), 5000)
 
-  return records
+  return (partnerOrg ? records.filter((item) => item?.partner_org === partnerOrg) : records)
     .filter((item) => recordInBbox(item, bbox))
     .filter((item) => !country || item.country === country || item.scope?.country === country)
     .filter((item) => !source || item.source === source || item.source_name === source)

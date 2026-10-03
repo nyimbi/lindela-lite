@@ -137,7 +137,20 @@ export function parseTokens(env = process.env) {
     if (!entry || typeof entry.token !== 'string' || !entry.token) {
       throw configError(`LINDELA_LITE_TOKENS[${index}] has no non-empty "token" string`)
     }
-    tokens.push({ token: entry.token, scopes: Array.isArray(entry.scopes) ? entry.scopes : [] })
+    if (entry.partner_org !== undefined && entry.partner_org !== null
+      && typeof entry.partner_org !== 'string') {
+      throw configError(`LINDELA_LITE_TOKENS[${index}] has a "partner_org" that is not a string`)
+    }
+    // An empty scopes array and a missing partner_org are different states and
+    // both are carried as given: the first is a token that can do nothing, the
+    // second is a token that is not scoped to an organisation. Defaulting one
+    // to the other is how a token intended for one partner ends up seeing all
+    // of them.
+    tokens.push({
+      token: entry.token,
+      scopes: Array.isArray(entry.scopes) ? entry.scopes : [],
+      partner_org: typeof entry.partner_org === 'string' && entry.partner_org ? entry.partner_org : null,
+    })
   }
   if (!tokens.length) {
     throw configError('LINDELA_LITE_TOKENS is an empty array, which would leave every route unauthenticated')
@@ -177,6 +190,11 @@ export function authenticate(req, env = process.env) {
     // message that carried the subject.
     token: presented,
     scopes: match.scopes || [],
+    // The organisation this token speaks for, or null for a token that speaks
+    // for the platform. `scopeToPartnerOrg` read a field that was never set
+    // here, so it always returned every record and the partner portal
+    // rendered its filter as applied.
+    partner_org: match.partner_org || null,
     subject: `token_${crypto.createHash('sha256').update(presented).digest('hex').slice(0, 12)}`,
   }
 }
@@ -238,7 +256,20 @@ export function hasRole(auth, role) {
   return auth.scopes.includes(`role:${role}`)
 }
 
+/**
+ * Restrict records to the organisation the authenticated token speaks for.
+ *
+ * Deny by default. The previous form kept records with no `partner_org` at
+ * all, on the reasoning that an untagged record belongs to nobody and so to
+ * everybody -- which is precisely the leak: every record predating the tag, and
+ * every record written by a path that does not set one, is visible to every
+ * partner.
+ *
+ * A partner-scoped token therefore sees nothing until records carry the field.
+ * That is the truthful answer for a deployment with no per-partner tagging, and
+ * it fails visibly rather than quietly handing over the store.
+ */
 export function scopeToPartnerOrg(records, auth, field = 'partner_org') {
   if (!auth?.partner_org) return records
-  return records.filter((record) => record[field] === auth.partner_org || !record[field])
+  return records.filter((record) => record?.[field] === auth.partner_org)
 }

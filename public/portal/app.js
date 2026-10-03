@@ -6,7 +6,10 @@ mountNavbar({ activePath: '/portal' })
 
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
-  partnerOrg: localStorage.getItem('lindela_lite_partner_org') || null,
+  // Not localStorage. The organisation this portal shows must be the one the
+  // server says the token speaks for, not one the browser remembered from a
+  // previous session on a shared machine.
+  partnerOrg: null,
   currentTab: 'risk',
   data: {
     risk: [],
@@ -17,6 +20,8 @@ const state = {
 }
 
 const $ = (id) => document.getElementById(id)
+
+const apiKey = () => localStorage.getItem('lindela_lite_api_key')
 
 const localeSelect = $('locale-select')
 const signoutBtn = $('signoutBtn')
@@ -39,13 +44,25 @@ async function init() {
 
   signoutBtn.addEventListener('click', () => {
     localStorage.removeItem('lindela_lite_api_key')
-    localStorage.removeItem('lindela_lite_partner_org')
     window.location.href = '/'
   })
 
+  // The organisation comes from the server, which is the only party that knows
+  // which token was presented. This used to be read from localStorage, so the
+  // header displayed whatever a previous session on a shared machine had
+  // typed — an isolation indicator with nothing behind it.
+  const identity = await apiFetch('/api/v1/auth-info', { token: apiKey() })
+    .then((r) => r?.data || null)
+    .catch(() => null)
+
+  state.partnerOrg = identity?.data?.partner_org || null
+
   if (!state.partnerOrg) {
-    authPanel.style.display = 'block'
-    contentArea.style.display = 'none'
+    // No partner scope on this token. Say so rather than showing the whole
+    // platform's data under a heading that implies it is this partner's.
+    partnerOrgDisplay.textContent = identity?.data?.auth_configured
+      ? 'No partner scope on this token'
+      : 'Authentication is not configured'
     return
   }
 
@@ -81,7 +98,7 @@ function setupTabs() {
 async function loadData() {
   const load = async (key, path) => {
     try {
-      return { [key]: (await apiFetch(path)).data || [], failed: null }
+      return { [key]: (await apiFetch(path, { token: apiKey() })).data || [], failed: null }
     } catch (error) {
       // Settle rather than reject: this is a read-only partner view of four
       // independent collections, and one dead endpoint should not blank the
@@ -93,10 +110,13 @@ async function loadData() {
   }
 
   const results = await Promise.all([
-    load('risk', `/api/v1/flood-risk?partner_org=${state.partnerOrg}`),
-    load('hazards', `/api/v1/events?partner_org=${state.partnerOrg}`),
-    load('assets', `/api/v1/service-assets?partner_org=${state.partnerOrg}`),
-    load('alerts', `/api/v1/rapidpro/dispatches?partner_org=${state.partnerOrg}`),
+    // No partner_org parameter. The server now refuses one that disagrees with
+    // the token and applies the token's own organisation itself, so sending it
+    // was claiming a scoping the server was not performing.
+    load('risk', '/api/v1/flood-risk'),
+    load('hazards', '/api/v1/events'),
+    load('assets', '/api/v1/service-assets'),
+    load('alerts', '/api/v1/rapidpro/dispatches'),
   ])
 
   for (const result of results) {
@@ -221,10 +241,9 @@ function renderAlertsTable() {
 async function exportData(tab, format) {
   const tabMap = { risk: 'flood-risk', hazards: 'events', assets: 'service-assets', alerts: 'rapidpro/dispatches' }
   const endpoint = `/api/v1/${tabMap[tab] || tab}`
-  const query = `?partner_org=${state.partnerOrg}`
 
   try {
-    const url = format === 'csv' ? `${endpoint}/export.csv${query}` : `${endpoint}/export.geojson${query}`
+    const url = format === 'csv' ? `${endpoint}/export.csv` : `${endpoint}/export.geojson`
     window.open(url, '_blank')
   } catch (error) {
     console.error('Export failed:', error)

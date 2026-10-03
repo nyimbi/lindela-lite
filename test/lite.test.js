@@ -2597,17 +2597,18 @@ describe('Lindela Lite auth', () => {
     assert.equal(hasRole(null, 'focal_point'), false)
   })
 
-  it('scopeToPartnerOrg filters records when partner_org set', () => {
+  it('scopeToPartnerOrg hides untagged records from a partner token', () => {
+    // The old filter kept records with no partner_org at all, reasoning that
+    // an untagged record belongs to nobody and therefore to everybody. That is
+    // the leak: every record written before the tag existed, and every record
+    // written by a path that does not set one, was visible to every partner.
     const records = [
       { id: 'r1', partner_org: 'org_a' },
       { id: 'r2', partner_org: 'org_b' },
       { id: 'r3' },
     ]
-    const auth = { partner_org: 'org_a' }
-    const filtered = scopeToPartnerOrg(records, auth)
-    assert.equal(filtered.length, 2)
-    assert.ok(filtered.some((r) => r.id === 'r1'))
-    assert.ok(filtered.some((r) => r.id === 'r3'))
+    const filtered = scopeToPartnerOrg(records, { partner_org: 'org_a' })
+    assert.deepEqual(filtered.map((r) => r.id), ['r1'])
   })
 
   it('scopeToPartnerOrg returns all records when partner_org not set', () => {
@@ -3126,12 +3127,8 @@ describe('Lindela Lite Partner Portal', () => {
       { id: '2', name: 'Asset B', partner_org: 'orgB' },
       { id: '3', name: 'Asset C' },
     ]
-    const auth = { partner_org: 'orgA' }
-    const filtered = scopeToPartnerOrg(records, auth)
-    assert.equal(filtered.length, 2)
-    assert.ok(filtered.some((r) => r.id === '1'))
-    assert.ok(filtered.some((r) => r.id === '3'))
-    assert.ok(!filtered.some((r) => r.id === '2'))
+    const filtered = scopeToPartnerOrg(records, { partner_org: 'orgA' })
+    assert.deepEqual(filtered.map((r) => r.id), ['1'])
   })
 
   it('scopeToPartnerOrg returns all records when no partner_org claim', () => {

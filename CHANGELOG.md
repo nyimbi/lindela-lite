@@ -84,6 +84,42 @@ Three further defects surfaced while fixing these and are also fixed:
   non-enumerable, so the log said nothing at all about the failure it was
   recording.
 
+### Fixed (multi-tenancy)
+
+Multi-tenancy was a no-op that displayed itself as working. Three layers were
+missing: the claim could not be expressed, could not be enforced, and could not
+be checked.
+
+- **The claim could not be expressed.** `scopeToPartnerOrg` keyed on
+  `auth.partner_org`, which `authenticate()` never set — so it always returned
+  every record — and it had no call sites in `src/` at all. Tokens may now carry
+  `partner_org`, and it is read from the token definition into the
+  authenticated principal.
+- **The claim could not be enforced.** `filterRecords` now applies the token's
+  organisation to every scoped read, *deny by default*: a record with no
+  `partner_org` is not visible to a partner token. The old form passed untagged
+  records through on the reasoning that they belong to nobody and therefore to
+  everybody, which is the leak — every record written before the tag existed,
+  and every record written by a path that does not set one, was visible to
+  every partner. A partner token now sees nothing until records carry the
+  field, which is the truthful answer for a deployment with no per-partner
+  tagging, and it fails visibly.
+- **The claim could not be checked.** `GET /api/v1/auth-info` returns the
+  subject, scopes and organisation as the server understands them. The portal
+  rendered its organisation from `localStorage` — a value the browser
+  remembered from a previous session on a shared machine — and sent
+  `?partner_org=<org>` on every request, which the server read nothing from.
+  That parameter is now refused unless it matches the token's own claim (403),
+  rather than silently ignored: a parameter that looks like isolation should
+  either be the isolation or be refused. The portal reads its identity from the
+  server and, when the token carries no partner scope, says so instead of
+  showing platform data under a partner's heading.
+- **`GET /api/v1/export.csv` passed no context at all** — no district
+  resolution, and now no tenant scoping either. It is the widest read in the
+  API and the route SEC-01 found serving field reports and message bodies
+  unauthenticated; an export that ignored the token would undo the scoping the
+  list routes now perform.
+
 ### Fixed (data integrity and metric honesty)
 
 Ten more defects, in three families: numbers that were counted wrong, numbers
