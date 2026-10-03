@@ -69,6 +69,10 @@ it reaches the caller. Half of them historically did not.
 |---|---|
 | `src/server.js` | The router. ~2,700 lines, every `/api/v1/*` route. |
 | `src/store.js` | `JsonStore` + the `COLLECTIONS` list every store keys off. |
+| `src/bitemporal.js` | History: what a record said before, and when the platform stopped believing it. |
+| `src/migrations.js` | Ordered, idempotent Postgres migrations with a `__schema` ledger. Never hand-write an `ALTER TABLE`. |
+| `src/assertions.js` | Per-source data assertions, as data. A failing batch is quarantined, not published. |
+| `src/freshness.js`, `src/circuit.js` | `ok \| quiet \| stale \| broken` per source, and the breaker that stops calling a dead one. |
 | `src/postgres-store.js` | `PostgresStore`. Same contract, different backend. |
 | `src/schema.js` | Normalized record shapes and `emptyStore()`. |
 | `src/ingestion.js` | `runIngestion`, `OUTPUT_COLLECTIONS`, source policies. |
@@ -88,10 +92,38 @@ it reaches the caller. Half of them historically did not.
 writes them, the consumer never asks for them, and every number still looks
 plausible.
 
+There is a fourth now: the `quarantine_*` collections, one per ingestable
+collection. A batch that fails its assertions is never merged, so without a
+home for it the store would receive it and nothing downstream could tell a
+condemned row from a published one.
+
 The same class of bug has appeared four times in this repository. Guard it with
 behaviour — assert that a stub connector's records come back out of the store —
 never by grepping source text for a collection name. Two guards that did exactly
 that passed with the bug fully present.
+
+## A module is not a feature until something calls it
+
+The most expensive pattern here is not a wrong number. It is a correct,
+well-tested module with no call site, which reads as shipped and behaves as
+nothing. Three of the chart library's six primitives are exported, tested, and
+called by no surface; a whole wave of ingestion modules landed the same way, and
+four of the eight were still uncalled after the effort that was explicitly
+aimed at this pattern.
+
+So: when you add a module, the same commit must add the call site, or say in
+`docs/improvements/status.md` that it has none. "Partial — module built, no
+caller" is an honest ledger entry; silence is not. And when a guard fires, check
+whether the guard or the fixture is fictional before changing either — a
+required-field assertion condemned every documented lite CSV upload because the
+documented format has no identifier column.
+
+Two traps that have each cost an hour:
+
+- `Number.isFinite(Number(null))` is `true`, because `Number(null) === 0`. A
+  "numeric fields only" filter built on it accepts every null in the dataset.
+- An unevaluated thing is not a false one, and a *deliberately* failing check
+  that measured nothing passes vacuously. Assert the measurement happened.
 
 ## An import is a claim about a dependency
 
@@ -130,7 +162,16 @@ The two backends must agree. `JsonStore.replaceAnalytics` stores six derived
 collections; `PostgresStore`'s once took four, so the impact figures were
 computed and silently dropped on Postgres alone. `test/store-conformance.test.js`
 is what makes that class of divergence impossible to reintroduce — it needs
-`LINDELA_LITE_TEST_DATABASE_URL` set to exercise the Postgres half.
+`LINDELA_LITE_TEST_DATABASE_URL` set to exercise the Postgres half, and no CI job
+sets it, so CI measures one adapter against a contract written for two.
+
+Schema changes go through `src/migrations.js`, never through hand-written
+`ALTER TABLE`s in `ensureSchema`. Each migration runs in its own transaction and
+records its own `__schema` ledger row, so a batch that fails halfway leaves the
+completed migrations applied and recorded — the alternative leaves the runner
+unable to say which half it reached. Migration 3 adds `region` and `observed_at`
+as generated columns over the JSONB body, because `observed_at` being a string
+inside JSON means nothing can index it as a timestamp.
 
 ## Reporting a number
 

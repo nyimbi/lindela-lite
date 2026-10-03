@@ -1260,6 +1260,42 @@ describe('Lindela Lite API', () => {
     assert.equal(impacts.data.length, 1)
   })
 
+  it('resolves one service asset by id, or says there is none', async () => {
+    // `GET /api/v1/service-assets/<id>` matched nothing and 404'd while the
+    // collection itself served fine — so a caller holding an asset id had no
+    // way to resolve one, including the routing endpoint, whose own error
+    // message tells you to pass asset ids.
+    //
+    // Self-sufficient on purpose: it posts its own asset rather than reading
+    // the one the previous test left behind, so it measures this route and not
+    // the ordering of the file.
+    const created = await fetch(`${baseUrl}/api/v1/service-assets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        service_assets: [{ name: 'Borehole 9', service_type: 'water', latitude: 3.2, longitude: 35.7, country: 'KE', capacity: 0 }],
+      }),
+    })
+    assert.equal(created.status, 201)
+    assert.equal((await created.json()).imported, 1)
+    // The POST response reports a count, not the record, so the id has to come
+    // from the list — this route exists precisely so a caller holding an id no
+    // longer has to page through a collection to resolve one.
+    const { data: assets } = await fetchJson(`${baseUrl}/api/v1/service-assets`)
+    const asset = assets.find((a) => a.name === 'Borehole 9')
+    assert.ok(asset, `the imported asset is not in the list: ${JSON.stringify(assets.map((a) => a.name))}`)
+
+    const one = await fetchJson(`${baseUrl}/api/v1/service-assets/${asset.id}`)
+    assert.equal(one.data.id, asset.id)
+    assert.equal(one.data.name, 'Borehole 9')
+    // A facility with a broken pump is a real record with capacity 0, and the
+    // round-trip must not turn that into a null or drop the row.
+    assert.equal(one.data.capacity, 0)
+
+    const missing = await fetch(`${baseUrl}/api/v1/service-assets/asset_does_not_exist`)
+    assert.equal(missing.status, 404, 'an unknown id is not an empty object')
+  })
+
   it('tracks ingestion health and runs due ingestion schedules', async () => {
     const status = await fetchJson(`${baseUrl}/api/v1/ingest/status`)
     assert.equal(status.success, true)

@@ -7,6 +7,60 @@ All additions are additive; no existing endpoint changed shape.
 
 ### Added
 
+**Quarantine, and the four modules that were only exported.** The ingestion
+layer gained declarative per-source assertions (`src/assertions.js`): data, not
+code, so a test can read the map, count it, and require that nothing is declared
+without being measured. A batch that fails is withheld from its live collection
+and written to a `quarantine_<collection>` store carrying the failures that
+condemned it, and the run reports `degraded` with the assertion text instead of
+publishing a bad batch and calling it a success. Six quarantine collections, one
+per ingestable collection, with a test asserting the list covers
+`OUTPUT_COLLECTIONS` in both directions — the same silent-key-list bug the store
+has twice already, one level down.
+
+A circuit breaker now gates each source before it is fetched. Three consecutive
+failures open it; an open circuit produces `status: 'skipped'` with a verdict
+naming the reason, reported distinctly from `ok` and from `broken`, because a skip
+is not a success and not a failure — it is "we did not look", and a source that
+is never called looks exactly like a source that has nothing to report.
+
+Freshness is judged against each source's own publication cadence rather than one
+flat deadline: `noaa_enso` on 35 days, `who_gho` on 730, the on-demand sources on
+none. The verdict reaches `GET /api/v1/ingest/status` as a `verdict` object
+*beside* the existing `status` string, so a quiet source and a dead source stop
+reporting the same thing and no existing consumer breaks.
+
+Provenance is real now. `upstream_url_or_endpoint` was hardcoded `null` and could
+not honestly be anything else, because no connector exposes the URLs it builds
+internally — `fetchWithRetry` now records what it fetched against the current run.
+`transform_version` is derived from the connector function's own body hash and
+moves when the parser moves, instead of being the typed-in `0.1.0`. Every
+published record is stamped with its run, and the lineage loop filters on it: it
+previously rebuilt a run-wide union inside the per-run iteration, so a nine-source
+run wrote nine identical rows each describing all nine.
+
+Records are bitemporal. `JsonStore.merge` still overwrites the live set by id,
+which is correct, but the value it replaces is now written to `record_versions`
+with `valid_from`/`valid_to`, so `valueAsOf` can reconstruct what the platform
+believed at a past instant. `updated_at` and friends are excluded from the
+revision test, or every daily re-ingest would report a change and the history
+would be noise.
+
+The Postgres store grew an ordered, idempotent migration runner with a `__schema`
+ledger and `schema_version`, replacing hand-written `ALTER TABLE`s issued on every
+boot. Each migration runs in its own transaction *and* records its own row, so a
+batch that fails halfway leaves the completed migrations applied and recorded
+rather than half-applied and unrecorded — which is the state a runner cannot
+describe and cannot resume from.
+
+Also added, tested and **not yet called by anything**: watermarks and resumable
+backfill (`src/watermarks.js`), source-agreement cross-validation
+(`src/agreement.js`), raw-payload capture and fixture replay (`src/capture.js`),
+pagination completeness tripwires (`src/completeness.js`) and the rate limiter
+that the connectors already declare (`src/rate-limit.js`). They are listed here
+as partial in `docs/improvements/status.md`, not as features — an exported
+function with no call site is a claim.
+
 **An i18n layer on the three surfaces that had none.** `districts/`,
 `scenarios/` and `parametric/` shipped no `data-i18n` at all, so
 `scripts/check-i18n.mjs` named them as surfaces with no layer rather than
@@ -95,6 +149,29 @@ base rate, the month count and the spread; it now draws all eight side by side,
 each with its own sample size, refused ones included.
 
 ### Fixed
+
+**A single service asset was unaddressable.** `GET /api/v1/service-assets/<id>`
+matched no route and 404'd while the collection itself listed fine, so a caller
+holding an asset id had no way to resolve one — including `POST
+/api/v1/routing/plan`, whose own error message tells you to pass asset ids
+rather than coordinates. `service-assets` is now in the id-routing table; the
+route is in `docs/openapi.yaml` with its 404, and a test asserts both that a
+known id resolves and that an unknown one is a 404 rather than an empty object.
+
+**Every documented lite CSV upload would have been quarantined.** The new
+`conflict_csv` assertion requires `source_id`, on the reasoning that the
+normalizer guarantees one. It does not: ACLED exports always carry
+`event_id_cnty`, but the lite format this project documents —
+`event_date,event_type,latitude,longitude,country,fatalities,title` — has no
+identifier column at all. The guard was right about the rule and wrong about its
+subject, and 100% of uploads in the one format we document would have landed in
+quarantine.
+
+The normalizer now mints the source identity from the same fields it already
+mints the record id from, and sets `source_id_minted: true` so nobody reads it as
+an upstream key. A guard that condemns healthy data is worse than no guard,
+because operators learn to ignore it — which is why this was found by a test
+that asserted `success` on a clean run rather than by reading the descriptor.
 
 **Nine mutating routes 403'd a caller holding the scope the docs named.**
 `READ_SCOPES` and `WRITE_SCOPES` were module-private, so the deny-by-default rule

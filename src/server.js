@@ -2783,6 +2783,11 @@ function matchOperationalRoute(pathname) {
     'field-reports': 'field_reports',
     'response-resources': 'response_resources',
     'action-logs': 'action_logs',
+    // Absent here, so `GET /api/v1/service-assets/<id>` matched nothing and 404'd
+    // while the collection itself served fine. A caller holding an asset id —
+    // the subject panel, the routing endpoint's own error message — had no way
+    // to resolve one record.
+    'service-assets': 'service_assets',
   }
   const match = pathname.match(/^\/api\/v1\/([^/]+)(?:\/([^/]+))?$/)
   if (!match || !routes[match[1]]) return null

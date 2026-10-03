@@ -4,10 +4,13 @@ What has actually shipped, verified against the tree rather than against the com
 Regenerate with `node docs/improvements/_build-status.mjs` after editing any
 `_status-*.json`.
 
-**3 shipped, 10 partial, 17 not started,** of 30.
-The two shipped are the two the project was built to make possible anyway: the API
-substrate a caller can integrate against (`ENH-30`) and a way to get your own data in
-(`ENH-25`).
+**7 shipped, 15 partial, 8 not started,** of 30.
+The two that shipped before this round were the two the project was built to make possible
+anyway: the API substrate a caller can integrate against (`ENH-30`) and a way to get your
+own data in (`ENH-25`). The five since are the ones where a claim had become load-bearing —
+a quarantine collection that had to exist for the store not to drop condemned batches on the
+floor (`ENH-07`), a history that had to exist before the next overwrite destroyed the only
+record of the previous value (`ENH-13`), and three that had stopped being honest.
 
 A status is **partial** when some of the described change is in the tree and the rest is
 not, and the detail says which is which. An exported function with no call site is not
@@ -29,16 +32,16 @@ nothing in the product.
 
 | | Enhancement | Status | Guarded by |
 |---|---|---|---|
-| ENH-06 | Freshness SLAs by cadence, with an `ok \| quiet \| stale \| broken` verdict | **not started** | — |
-| ENH-07 | Per-source data assertions with quarantine-on-fail | **not started** | — |
-| ENH-08 | Watermarks, incremental fetch, resumable backfill | **not started** | — |
-| ENH-09 | Source-agreement cross-validation | **not started** | — |
-| ENH-10 | Connector health scoring and circuit breaking | **not started** | — |
-| ENH-11 | Enforce the rate limits that are already declared | partial | `test/rapidpro-webhook-auth.test.js` |
-| ENH-12 | Raw payload retention, replay, and fixture seeding | **not started** | — |
-| ENH-13 | Bitemporal records | **not started** | — |
-| ENH-14 | Completeness tripwires for capped pagination | **not started** | — |
-| ENH-15 | Record-level provenance with real transform versions | **not started** | — |
+| ENH-06 | Freshness SLAs by cadence, with an `ok \| quiet \| stale \| broken` verdict | shipped | `test/freshness.test.js`, `test/ingestion-wiring.test.js` |
+| ENH-07 | Per-source data assertions with quarantine-on-fail | shipped | `test/assertions.test.js`, `test/ingestion-wiring.test.js` |
+| ENH-08 | Watermarks, incremental fetch, resumable backfill | partial | `test/watermarks.test.js` |
+| ENH-09 | Source-agreement cross-validation | partial | `test/source-agreement.test.js` |
+| ENH-10 | Connector health scoring and circuit breaking | partial | `test/circuit.test.js`, `test/ingestion-wiring.test.js` |
+| ENH-11 | Enforce the rate limits that are already declared | partial | `test/rate-limit.test.js`, `test/rapidpro-webhook-auth.test.js` |
+| ENH-12 | Raw payload retention, replay, and fixture seeding | partial | `test/capture.test.js` |
+| ENH-13 | Bitemporal records | shipped | `test/bitemporal-history.test.js` |
+| ENH-14 | Completeness tripwires for capped pagination | partial | `test/completeness.test.js` |
+| ENH-15 | Record-level provenance with real transform versions | shipped | `test/provenance.test.js`, `test/ingestion-wiring.test.js` |
 
 ## Group C — Visualization depth
 
@@ -67,7 +70,7 @@ nothing in the product.
 
 | | Enhancement | Status | Guarded by |
 |---|---|---|---|
-| ENH-29 | A store conformance suite, a real schema, and migrations | partial | `test/store-conformance.test.js` |
+| ENH-29 | A store conformance suite, a real schema, and migrations | partial | `test/store-conformance.test.js`, `test/migrations.test.js` |
 | ENH-30 | API substrate: pagination, conditional requests, idempotency, readiness | shipped | `test/api-substrate.test.js` |
 
 ---
@@ -127,109 +130,65 @@ Evidence:
 - `src/analytics.js:470`
 - `docs/improvements/enhancements.md:134`
 
-### ENH-06 — Freshness SLAs by cadence, with an `ok | quiet | stale | broken` verdict
-
-**not started.** SOURCE_POLICIES still carries only stale_after_minutes and a flat minimum_records; there is no cadence_days or min_expected_delta anywhere in src/. The health route (src/server.js:1339) returns sourceHealth(), which emits never_run|failed|stale|degraded|fresh — never `quiet` or `broken` — and the global 2/14/45-day clock at src/analytics.js:470-489 is untouched. minimum_records is still 1 for every regular source (src/ingestion.js:55-72).
-
-Evidence:
-
-- `src/ingestion.js:54-84`
-- `src/ingestion.js:368-378`
-- `src/server.js:1339`
-- `src/analytics.js:470-489`
-
-### ENH-07 — Per-source data assertions with quarantine-on-fail
-
-**not started.** No declarative assertion map and no quarantine collection exist; the four hand-written guards are all that is there (chirps.js:97, glofas.js:24, nasa-firms.js and who-gho.js equivalents). counts_found is recorded nowhere — src/connectors/chirps.js:105-106 slices to a 30-record limit and returns silently. Failed batches are published as usual via store.merge at src/ingestion.js:192.
-
-Evidence:
-
-- `src/connectors/chirps.js:97-106`
-- `src/connectors/glofas.js:24`
-- `src/ingestion.js:192`
-
 ### ENH-08 — Watermarks, incremental fetch, resumable backfill
 
-**not started.** No watermark or cursor state is persisted (no watermark/last_cursor/last_success_at identifiers in src/); open-meteo-archive.js:47-48 and open-meteo-flood.js:48 still default endDate to today and re-walk from 1981 every run, and both mint their record id from endDate (open-meteo-archive.js:73), so a fresh id is minted daily. Backfills remain synchronous loops with no progress or resume (gdacs-archive.js:45-74).
+**partial.** `src/watermarks.js` (27 tests) implements the per-source watermark, incremental fetch windows, resumable backfill cursors and the resume-after-crash case, but nothing calls it. The two archive connectors still default `endDate` to today and re-walk from 1981 on every run, and both still mint their record id from `endDate`, so a fresh id is minted daily and the whole backfill is re-downloaded forever. `gdacs-archive.js` remains a synchronous loop with no progress and no resume. This is the module-built-but-uncalled shape described under the patterns below: the logic is right and unreachable, and the work left is plumbing it into the three connectors.
 
 Evidence:
 
-- `src/connectors/open-meteo-archive.js:35-48`
-- `src/connectors/open-meteo-archive.js:73`
-- `src/connectors/open-meteo-flood.js:48`
-- `src/connectors/gdacs-archive.js:45-74`
+- `src/watermarks.js`
+- `src/connectors/open-meteo-archive.js:47`
+- `src/connectors/gdacs-archive.js:45`
 
 ### ENH-09 — Source-agreement cross-validation
 
-**not started.** There is no GeoTIFF reader and no agreement check: src/analytics/downscaling.js is 60 lines and contains no correlation, Pearson, disagreement or `disputed` logic, and no such identifiers exist in src/. CHIRPS still explicitly declines to decode pixels (chirps.js:23, chirps.js:91), so the two products cannot be compared. The volume-based confidence term in computeDataQuality (src/analytics.js:355) is unchanged.
+**partial.** `src/agreement.js` computes what the item asks for — Pearson and Spearman correlation with `minPearson: 0.5`, a paired-month count floor, a sign-disagreement rate capped at 0.25, and a four-value verdict of `agree | marginal | disputed | unavailable` — and it pairs on `period`, never on array index, which is the mistake that makes naive cross-product comparison meaningless. `unavailable` is returned rather than a fabricated verdict when either side is flat (`dx === 0 || dy === 0`), because a flat product carries no ordering information. Two things are missing: there is still no GeoTIFF reader (CHIRPS declines to decode pixels at src/connectors/chirps.js:23), so the two products cannot actually be compared in production; and no route surfaces `agreementReport` — the module is a library with no caller, which is the same defect ENH-16 has.
 
 Evidence:
 
-- `src/analytics/downscaling.js:1-60`
+- `src/agreement.js`
 - `src/connectors/chirps.js:23`
-- `src/analytics.js:355`
 
 ### ENH-10 — Connector health scoring and circuit breaking
 
-**not started.** failure_streak is still computed at src/ingestion.js:293 and read nowhere else — no circuit, no half-open probe, no skipped_circuit_open status. runDueIngestionSchedules (src/ingestion.js:236-264) retries every due schedule regardless of prior failures, and there is no connector success-rate/latency/payload-drift score.
+**partial.** The breaker is reached: `runIngestion` gates each source through `allowRequest` before it fetches, and an open circuit produces `status: 'skipped'` with `verdict` naming the reason — reported distinctly from `ok` and from `broken`, because a skip is not a success and not a failure, it is 'we did not look'. Failure streak was previously computed at src/ingestion.js and read nowhere else; it now opens the circuit after three consecutive failures, with a half-open probe and a cooldown. `src/circuit.js` also scores each source on latency, success rate and payload drift. Two things keep this partial: the breaker state is per-run, so it does not survive a process restart and a restarting poll loop still burns three failures every cycle; and the health score is computed but not surfaced on any route.
 
 Evidence:
 
-- `src/ingestion.js:293`
-- `src/ingestion.js:236-264`
-- `src/ingestion.js:309-323`
+- `src/circuit.js:62`
+- `src/circuit.js:67`
+- `src/circuit.js:143`
 
 ### ENH-11 — Enforce the rate limits that are already declared
 
-**partial.** Only the RapidPro client timeout shipped: src/rapidpro.js:370-379 aborts via RAPIDPRO_REQUEST_TIMEOUT_MS and is guarded by test/rapidpro-webhook-auth.test.js:214-224. The token bucket, concurrency cap, jitter and Retry-After handling in src/connectors/http.js do not exist — that file is 25 lines of plain exponential backoff — and the declared rateLimit fields (e.g. src/connectors/ipc-hdx.js:417 perMinute 20 against the unbounded Promise.all at ipc-hdx.js:265) remain documentation. The webhook branch of distributeReport still fetches with no timeout or AbortSignal (src/server.js:1814-1819), and there is no API rate limiter.
+**partial.** Unchanged from before and still the item's own words: the token bucket, concurrency cap, jitter and `Retry-After` handling exist as `src/rate-limit.js` with 30 tests, and nothing enforces them. `src/connectors/http.js` is still plain exponential backoff, and the declared `rateLimit` fields — `src/connectors/ipc-hdx.js:417` declares perMinute 20 against the unbounded `Promise.all` at ipc-hdx.js:265 — remain documentation. The webhook branch of `distributeReport` still fetches with no timeout and no AbortSignal (src/server.js:1814-1819), and there is still no API rate limiter. Only the RapidPro client timeout from the previous round is actually live (src/rapidpro.js:370-379).
 
 Evidence:
 
-- `src/rapidpro.js:370-379`
-- `test/rapidpro-webhook-auth.test.js:214-224`
-- `src/connectors/http.js:1-25`
+- `src/rate-limit.js`
+- `src/connectors/http.js:42`
 - `src/connectors/ipc-hdx.js:265`
-- `src/connectors/ipc-hdx.js:417`
-- `src/server.js:1814-1819`
+- `src/server.js:1814`
 
 ### ENH-12 — Raw payload retention, replay, and fixture seeding
 
-**not started.** No connector captures a response body: there is no raw_payload/capture/retrieval_url machinery in src/ — fetchWithRetry returns the parsed body and discards it (src/connectors/http.js:1-25). No replay mode exists for connectors, and no script seeds test/fixtures from captures; the 10 hand-assembled fixtures are consumed only by test/fixtures.test.js, which mocks globalThis.fetch per file.
+**partial.** `src/capture.js` (27 tests) plus `scripts/capture-fixtures.mjs` implement raw-payload retention, content-addressed fixture seeding and replay: `withCapture` wraps a fetch, stores the body, and can serve it back so a connector test replays bytes instead of mocking `globalThis.fetch`. The fixture capture path exists and can be run. What does not exist is the call site: no connector is wrapped in `withCapture`, so nothing is actually retained in production and no fixture in test/fixtures/ was produced by the script — they remain hand-assembled, which is the reason the capture exists.
 
 Evidence:
 
-- `src/connectors/http.js:1-25`
-- `test/fixtures.test.js:1-26`
+- `src/capture.js`
+- `scripts/capture-fixtures.mjs`
 - `test/fixtures/`
-
-### ENH-13 — Bitemporal records
-
-**not started.** Store semantics are unchanged: mergeById overwrites by id (src/store.js:161-173) and no collection in src/schema.js carries valid_from/valid_to. The only valid_from/valid_to in the codebase are the upstream IPC analysis-window columns copied at src/connectors/ipc-hdx.js:211-212, not record versioning — the prior value of a revised record remains unrecoverable.
-
-Evidence:
-
-- `src/store.js:161-173`
-- `src/schema.js:242`
-- `src/connectors/ipc-hdx.js:211-212`
 
 ### ENH-14 — Completeness tripwires for capped pagination
 
-**not started.** No pagination bookkeeping exists. gdacs-archive walks quarter windows and discards everything about each page except feature count (src/connectors/gdacs-archive.js:51-68) — no pages fetched, records seen, provider total, or full-last-page flag — and chirps.js:105-106 applies its 30-record cap without recording what it dropped. The possibly_incomplete flag appears nowhere in src/.
+**partial.** `src/completeness.js` (26 tests) implements the pagination bookkeeping the item asks for: pages fetched, records seen, provider-declared total, whether the last page was full, and a `possibly_incomplete` flag when a cap bit before a floor rather than after one. Nothing calls it. `gdacs-archive` still walks quarter windows and keeps nothing about each page except the feature count, and `chirps` still applies its 30-record cap without recording what it dropped, so a truncated walk is indistinguishable from a quiet upstream — which is the entire finding.
 
 Evidence:
 
-- `src/connectors/gdacs-archive.js:51-68`
-- `src/connectors/chirps.js:105-106`
-
-### ENH-15 — Record-level provenance with real transform versions
-
-**not started.** src/lineage.js is unchanged: upstream_url_or_endpoint is still hardcoded null and transform_version the constant '0.1.0' (lines 13-14), and no _provenance envelope exists on any record. The run-wide union bug the item describes is still present at src/ingestion.js:185-189, where allRecords is rebuilt from the full merged set inside the per-run loop, so a nine-source run still writes nine identical lineage rows. No test asserts on lineage content — data_lineage appears in tests only as an empty input collection (test/remaining-defects.test.js:295).
-
-Evidence:
-
-- `src/lineage.js:13-14`
-- `src/ingestion.js:184-190`
-- `test/remaining-defects.test.js:295`
+- `src/completeness.js`
+- `src/connectors/gdacs-archive.js:51`
+- `src/connectors/chirps.js:105`
 
 ### ENH-16 — A chart component library, shared by all eight surfaces
 
@@ -400,17 +359,14 @@ Evidence:
 
 ### ENH-29 — A store conformance suite, a real schema, and migrations
 
-**partial.** Part 1 shipped: test/store-conformance.test.js runs one behavioural contract against JsonStore and PostgresStore and is in both the npm test glob and the coverage set (package.json:9, package.json:13). It is also unguarded in practice for the backend that matters — the Postgres half only runs when LINDELA_LITE_TEST_DATABASE_URL is set (test/store-conformance.test.js:24) and no CI job sets it, so CI exercises the conformance suite against one adapter. Parts 2 and 3 are untouched: there is no migration runner and no schema_version column — src/schema.js:213 still hardcodes version: 1 and ensureSchema still issues hand-written ALTER TABLE statements (src/postgres-store.js:22-53) — and the single lite_records JSONB table remains, with no per-collection columns or indexes.
+**partial.** Part 1 shipped and parts 2 and 3 now have: `src/migrations.js` is an ordered, idempotent migration runner with a frozen three-migration list, `SCHEMA_VERSION = 3`, and a `__schema` ledger. Each migration runs in its own transaction *and* records its own ledger row, so a batch that fails halfway leaves the completed migrations applied and recorded rather than half-applied and unrecorded — the usual alternative leaves the runner unable to tell which half it reached. `PostgresStore.ensureSchema` reads `schema_version` and applies `pendingMigrations(from)` instead of issuing hand-written `ALTER TABLE`s on every boot. Migration 3 adds the two generated columns the JSONB table was missing — `region` as `body->>'district'` and `observed_at` as a real `timestamptz` rather than a string inside JSON — with indexes on each, so the queries that were doing `body->>'…'` per row now use one. Still partial: the Postgres half of the conformance suite still only runs when `LINDELA_LITE_TEST_DATABASE_URL` is set and no CI job sets it, so CI measures one adapter against a contract written for two; the single `lite_records` JSONB table remains, with per-collection columns added only as generated expressions over the body rather than as typed columns; and the two stores can still diverge, since `JsonStore.remove()` and the Postgres equivalents are asserted separately rather than by one shared driver.
 
 Evidence:
 
-- `test/store-conformance.test.js:57`
 - `test/store-conformance.test.js:24`
-- `package.json:9`
-- `package.json:13`
-- `.github/workflows/ci.yml:33`
-- `src/schema.js:213`
+- `src/migrations.js`
 - `src/postgres-store.js:22`
+- `src/schema.js:211`
 
 ---
 
@@ -418,6 +374,16 @@ Evidence:
 
 Three shapes recur, and each one is this repository's own defect class rather than a
 coincidence of what happened to get built.
+
+**The most recent wave reproduced the first pattern while trying to fix it.** Group B was
+the outlier — nine of ten items untouched — so eight modules were built in parallel with
+tests, and four of them were then wired into `runIngestion`: quarantine (`ENH-07`), the
+circuit gate (`ENH-10`), the freshness verdict on the status route (`ENH-06`) and record
+provenance (`ENH-15`). The other four — watermarks (`ENH-08`), agreement (`ENH-09`),
+capture (`ENH-12`) and completeness (`ENH-14`) — are still exported, tested and called by
+nothing, which is exactly the defect below, now four instances wider and written by the
+same effort that was fixing it. The ledger counts them partial for that reason and not
+because their logic is unfinished.
 
 **A capability landed where one call site existed and nowhere else.** The chart library
 (`ENH-16`) is 640 lines with 50 tests and is imported by 2 of 8 surfaces; `lineChart`,
@@ -440,6 +406,8 @@ scope. `ENH-29` still has it: a conformance suite that covers Postgres only when
 sets provides a database, so CI exercises one adapter and reports both. `ENH-24` has no test at
 all.
 
-Group B is the outlier and the honest answer is that it was not started: nine of ten items
-are untouched, and the one that moved (a request timeout on the RapidPro client) was a
-defect fix that happened to land inside the item's scope.
+Group B was the outlier and now is not, but it is not done either: four of ten shipped and
+six are partial, and in five of those six the missing half is the same half — a module that
+works, tested, and has no caller. The rate limiter is the sharpest case: the token bucket and
+the `Retry-After` handling are written, and the `perMinute 20` declared beside an unbounded
+`Promise.all` in the IPC connector is still documentation.

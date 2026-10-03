@@ -492,6 +492,20 @@ paths:
           description: Import accepted
         '400':
           description: Validation error
+  /api/v1/service-assets/{id}:
+    get:
+      summary: Get a service asset
+      description: >
+        The collection served fine while no single asset was addressable, so a
+        caller holding an id — the subject panel, and the routing endpoint's own
+        error message telling you to pass asset ids — had no way to resolve one.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Service asset
+        '404':
+          description: No such asset
   /api/v1/upload:
     get:
       summary: The bulk upload contract
