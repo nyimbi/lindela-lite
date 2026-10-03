@@ -178,8 +178,9 @@ the CI environment has no install-time failure surface beyond `pg`.
 
 **Harder**
 
-- **154 KB of `app.js`, ~45 KB gzipped**, served uncompressed to a browser that cannot tree-shake
-  what is not there. It is one module and it loads once per surface.
+- **154 KB of `app.js`, ~45 KB gzipped.** The server compresses it — every text response is gzipped
+  when the client accepts it — but nothing is tree-shaken, so a browser downloads the whole module
+  whether or not the operator touched the feature it contains.
 - **A missing module is a hard boot failure, not a degradation.** This is the sharpest cost, and it
   is a real one that has already been paid. `sw.js` records it:
   > *"It used to be a hand-written list, and a hand-written list of an import graph is wrong the

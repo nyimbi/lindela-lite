@@ -67,7 +67,8 @@ by sixteen third-party providers, several of which change their payloads without
 | Postgres JSONB parity | Effectively complete for this workload — indexing, transactions, `jsonb_exists` |
 
 **Rejected.** It buys what `JSONB` already buys and costs a deployment the product does not need.
-`docker-compose.yml` has two services, not three.
+`docker-compose.yml` has three services — `db`, `app` and a `scheduler` sidecar — and a fourth
+operational dependency would be the one nobody remembers to start.
 
 ### Two tables: documents plus a relational index over the queried fields
 
