@@ -254,5 +254,9 @@ for (const { phrase, claimed } of GUIDE_CLAIMS) {
 await import('./check-no-flood-probability.mjs')
 // i18n completeness: a surface must not offer a language it cannot render.
 await import('./check-i18n.mjs')
+// The API document against the route table. The endpoint-presence check above
+// tests a hand-written list, which is why nine live routes went undocumented;
+// this reads the served routes out of the server and requires the two to agree.
+await import('./check-openapi.mjs')
 
 console.log('validation ok')

@@ -5,6 +5,8 @@ info:
   description: Public API for climate-conflict, flood-risk, service-impact, and source-ingestion data.
 servers:
   - url: http://127.0.0.1:4177
+security:
+  - bearerAuth: []
 paths:
   /api/v1/analytics/bias-correct:
     post:
@@ -1373,7 +1375,242 @@ paths:
             text/csv:
               schema:
                 type: string
+  /api/v1/action-logs/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      summary: Read one action log
+      responses:
+        '200':
+          description: The action log
+        '404':
+          description: No such action log
+    patch:
+      summary: Annotate an action log
+      responses:
+        '200':
+          description: The annotated action log
+    delete:
+      summary: Delete an action log
+      responses:
+        '200':
+          description: Deleted
+  /api/v1/auth-info:
+    get:
+      summary: What this token is, as the server understands it
+      description: >-
+        Returns the subject fingerprint, scopes, and partner organisation the
+        presented token speaks for. partner_org is null for a platform token and
+        for any token presented when authentication is not configured - it is
+        never guessed from client-side storage.
+      responses:
+        '200':
+          description: Token identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthInfoResponse'
+  /api/v1/ready:
+    get:
+      summary: Readiness - can this instance serve a request right now
+      description: >-
+        Distinct from /api/v1/health, which reports only that the process is
+        alive. This probes the store and returns 503 when it cannot be read, so
+        a load balancer can route around an instance that cannot serve. Public,
+        like /health, and deliberately carries no records.
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: The store is unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+  /api/v1/districts:
+    get:
+      summary: List the districts the platform knows by name
+      responses:
+        '200':
+          description: Districts
+  /api/v1/impact/facilities-at-risk:
+    get:
+      summary: Service facilities at risk, by district
+      description: >-
+        Each facility is counted once. An earlier implementation multiplied a
+        facility by the number of hazards affecting it, so the totals did not
+        describe any set of real facilities.
+      responses:
+        '200':
+          description: Facilities at risk
+  /api/v1/kpi/monthly-series:
+    get:
+      summary: Monthly KPI series
+      responses:
+        '200':
+          description: Monthly series
+  /api/v1/kpi/snapshots:
+    get:
+      summary: Stored KPI snapshots
+      responses:
+        '200':
+          description: Snapshots
+  /api/v1/kpi/quarterly.pdf:
+    get:
+      summary: Quarterly KPI report as PDF
+      responses:
+        '200':
+          description: PDF
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+  /api/v1/kpi/refresh-snapshots:
+    post:
+      summary: Recompute and store KPI snapshots
+      responses:
+        '200':
+          description: Snapshots written
+  /api/v1/rapidpro/response-metrics:
+    get:
+      summary: RapidPro response metrics per alert event
+      description: >-
+        response_rate_pct is null when dispatches carry no recipient identity,
+        because replies cannot then be matched to people; the payload carries
+        response_rate_note explaining why. An absent value is not a zero.
+      responses:
+        '200':
+          description: Response metrics
+    post:
+      summary: Recompute RapidPro response metrics
+      responses:
+        '200':
+          description: Metrics written
+  /api/v1/workflows/metrics:
+    get:
+      summary: Workflow instance metrics
+      responses:
+        '200':
+          description: Workflow metrics
+    post:
+      summary: Recompute workflow instance metrics
+      responses:
+        '200':
+          description: Metrics written
+  /api/v1/demo/seed:
+    post:
+      summary: Load demonstration data
+      responses:
+        '200':
+          description: Seeded
+  /stac/catalog.json:
+    get:
+      summary: STAC catalogue of published items
+      responses:
+        '200':
+          description: STAC catalogue
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/metrics:
+    get:
+      summary: Prometheus-format request metrics
+      description: >-
+        Request rate, error rate, latency percentiles and route labels. Served
+        through the authentication gate rather than in front of it; route labels
+        are an enumeration aid, which is why the endpoint is not public.
+      responses:
+        '200':
+          description: Metrics in Prometheus text format
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/v1/workflows:
+    get:
+      summary: List workflow instances
+      responses:
+        '200':
+          description: Workflow instances
+        '400':
+          description: An unparseable cursor
+  /api/v1/workflows/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      summary: Read one workflow instance
+      responses:
+        '200':
+          description: The workflow instance
+        '404':
+          description: No such workflow instance
+  /api/v1/workflows/{id}/transition:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      summary: Move a workflow instance to its next state
+      responses:
+        '200':
+          description: The transitioned instance
+        '400':
+          description: The transition is not valid from the current state
+  /api/v1/trigger-protocols/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      summary: Read one trigger protocol
+      responses:
+        '200':
+          description: The trigger protocol
+  /api/v1/alert-events/{id}/approve:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      summary: Approve an alert event
+      responses:
+        '200':
+          description: The approved alert event
+  /api/v1/alert-events/{id}/reject:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      summary: Reject an alert event
+      responses:
+        '200':
+          description: The rejected alert event
+  /api/v1/alert-events/{id}.cap:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      summary: GeoJSON alert cap for an alert event
+      responses:
+        '200':
+          description: FeatureCollection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeoJsonFeatureCollection'
+  /api/v1/disease-observations/summary:
+    get:
+      summary: Outbreak context roll-up
+      responses:
+        '200':
+          description: Summary
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        Required on every route. Routes named in LINDELA_LITE_PUBLIC_PATHS are
+        reachable without a token; the default public set is /api/v1/health and
+        /api/v1/ready, neither of which returns records.
   parameters:
     Country:
       name: country
@@ -1426,6 +1663,108 @@ components:
       schema:
         type: string
   schemas:
+    PaginationMeta:
+      type: object
+      description: >-
+        Present on collection routes. total counts everything that matched the
+        filters; data carries one page. Without total a caller cannot tell an
+        empty collection from a truncated one.
+      required: [returned, limit, total, has_more, next_cursor]
+      properties:
+        returned:
+          type: integer
+          description: Records in this response
+        limit:
+          type: integer
+          maximum: 5000
+        total:
+          type: integer
+          description: Records that matched the filters, across all pages
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+          nullable: true
+          description: Pass back as ?cursor= to read the next page
+    ReadinessResponse:
+      type: object
+      required: [success, ready, store, idempotency, checked_at]
+      properties:
+        success:
+          type: boolean
+        ready:
+          type: boolean
+        store:
+          type: object
+          properties:
+            mode:
+              type: string
+            reachable:
+              type: boolean
+            latency_ms:
+              type: integer
+            error:
+              type: string
+              nullable: true
+        idempotency:
+          type: object
+          description: >-
+            The bound on the idempotency guarantee, reported rather than
+            implied. In-process, 24 hours, 1000 entries.
+          properties:
+            in_process:
+              type: boolean
+            ttl_hours:
+              type: integer
+        checked_at:
+          type: string
+    AuthInfoResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            subject:
+              type: string
+              nullable: true
+              description: Non-reversible fingerprint of the presented token
+            scopes:
+              type: array
+              items:
+                type: string
+            partner_org:
+              type: string
+              nullable: true
+            auth_configured:
+              type: boolean
+    GeoJsonFeatureCollection:
+      type: object
+      description: RFC 7946 FeatureCollection.
+      required: [type, features]
+      properties:
+        type:
+          type: string
+          enum: [FeatureCollection]
+        features:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [Feature]
+              geometry:
+                type: object
+                nullable: true
+                description: >-
+                  Null where the record has no usable geometry. The map used to
+                  drop records whose coordinates were exactly 0, which is the
+                  equator and the prime meridian.
+              properties:
+                type: object
     HealthResponse:
       type: object
       required: [success, status, version, counts, sources, exclusions, storage]

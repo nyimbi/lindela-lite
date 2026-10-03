@@ -133,6 +133,33 @@ Four things every list route and every mutation now has. See `src/utils.js`.
   separate dependency. `/ready` probes it, times out, and returns 503 with the
   error, so a load balancer can route around an instance that cannot serve.
 
+## The API document is checked, not trusted
+
+`scripts/check-openapi.mjs` parses `src/server.js` — literal
+`url.pathname === '...'` conditions and the eleven `match*Route` dispatchers —
+and fails if `docs/openapi.yaml` and the served routes disagree in either
+direction. Adding a route without documenting it fails; deleting one without
+undocumenting it fails.
+
+Two things about the checker worth knowing before you touch it. First, it
+compares **paths, not method/path pairs**: a sub-handler serving GET on a list
+and POST on a detail is modelled as serving both on both, because the fine
+method gating is not worth parsing and a wrong method is a documentation nicety
+while a wrong path is a broken client. Second, it prints what it parsed and
+what it could not, so the claim "the document matches the server" is always
+backed by a number. A checker that silently stops checking is worse than none.
+
+Three traps in parsing a path-matching regex, all of which produce plausible
+wrong answers rather than errors:
+
+- every separator is **escaped** (`/^\/api\/v1\/webhooks$/`), so a scanner
+  that treats `\` as opaque finds no separator at all;
+- an **unescaped** `/` is not a separator — `([^/]+)` contains one inside a
+  character class;
+- a group is **not always a parameter**: `(copy)` is one segment and
+  `(approve|reject)` is two, and reading either as a parameter invents
+  `/api/v1/x/{id}/{id}` and hides the routes that exist.
+
 ## CI
 
 `.github/workflows/ci.yml`, jobs `test`, `coverage`, `audit`, `sbom`,

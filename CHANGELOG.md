@@ -7,7 +7,21 @@ All additions are additive; no existing endpoint changed shape.
 
 ### Added
 
-**API substrate.** Four gaps, each of which a caller hits on the first
+**The API document is now checked against the code.** `docs/openapi.yaml` was
+hand-maintained, and the check that existed tested ~30 hand-listed endpoint
+strings for presence in the document — a test of the list, not of the server.
+Adding a route and forgetting to add it to the list passed, which is how nine
+live routes went undocumented while the document still validated.
+
+`scripts/check-openapi.mjs` reads the route surface out of `src/server.js` and
+fails when the two disagree, in both directions: a served route the document
+omits, and a documented route the server does not serve. It found **21** of the
+latter or former, including the entire workflows family (list, detail,
+transition) and `/api/v1/metrics`, which had never been documented at all.
+All are now described. 121 documented paths, 121 served routes, and the check
+runs in `npm run validate`.
+
+**The API substrate.** Four gaps, each of which a caller hits on the first
 integration.
 
 - **Collections report their total.** Every list route answered with a bare array
