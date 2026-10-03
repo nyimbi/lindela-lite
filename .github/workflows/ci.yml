@@ -10,6 +10,26 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The store conformance suite runs one contract against JsonStore and
+    # PostgresStore. Without this service it ran against JsonStore alone and
+    # still reported "both backends, one contract" - and the divergence it was
+    # written to catch (replaceAnalytics taking four collections on Postgres
+    # where the caller passes six) was a Postgres bug, so CI never had a chance
+    # to see it.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: lindela
+          POSTGRES_DB: lindela_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      LINDELA_LITE_TEST_DATABASE_URL: postgres://postgres:lindela@localhost:5432/lindela_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,6 +43,23 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
+    # Same service as the test job, because `test:coverage` runs
+    # `test/store-conformance.test.js` and that file now fails rather than
+    # silently covering one adapter.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: lindela
+          POSTGRES_DB: lindela_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      LINDELA_LITE_TEST_DATABASE_URL: postgres://postgres:lindela@localhost:5432/lindela_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

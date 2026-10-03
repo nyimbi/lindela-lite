@@ -82,6 +82,10 @@ export function askToConfirm({ title, intro, rows = [], confirmLabel = 'Confirm'
   }
   textInput?.addEventListener('input', evaluate)
   checkInput?.addEventListener('change', evaluate)
+  // Once, up front: an ungated confirmation starts disabled because that is the
+  // safe default for every dialog here, and only a gate can lift it. Without
+  // this the one dialog that has no gate could never be confirmed at all.
+  evaluate()
 
   const close = () => {
     confirmBtn.removeEventListener('click', confirm)
@@ -108,7 +112,6 @@ export function askToConfirm({ title, intro, rows = [], confirmLabel = 'Confirm'
 
   confirmBtn.addEventListener('click', confirm)
   cancelBtn?.addEventListener('click', close)
-  dialog.addEventListener('cancel', () => { /* Escape closes; that is deliberate enough */ })
 
   if (!dialog.dataset.mounted) {
     dialog.dataset.mounted = '1'

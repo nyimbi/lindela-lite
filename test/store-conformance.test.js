@@ -45,6 +45,32 @@ async function postgresBackend() {
 const backends = [{ name: 'json', make: jsonBackend }]
 if (testDatabaseUrl) backends.push({ name: 'postgres', make: postgresBackend })
 
+// A skipped backend is the same failure as a check that measured nothing: the
+// suite reads "store conformance — both backends, one contract" either way, and
+// the report says one adapter passed where the contract is about two. Nothing
+// in CI set LINDELA_LITE_TEST_DATABASE_URL, so PostgresStore ran at 0% function
+// coverage in CI for the entire life of this file — and the bug this suite was
+// written to catch (replaceAnalytics taking four collections on Postgres where
+// the caller passes six) was a Postgres bug.
+//
+// So the skip is announced. Locally, one line on stderr. Under CI, where the
+// Postgres service is defined, it is a failure: a green run that never touched
+// Postgres is not the run the job claims to have made.
+if (!testDatabaseUrl && process.env.CI) {
+  throw new Error(
+    'CI has no LINDELA_LITE_TEST_DATABASE_URL, so the store conformance suite ran '
+    + 'against JsonStore alone while reporting that it covers both backends. Add the '
+    + 'postgres service to the job and point this variable at it.',
+  )
+}
+if (!testDatabaseUrl) {
+  process.stderr.write(
+    'store-conformance: PostgresStore NOT exercised — LINDELA_LITE_TEST_DATABASE_URL is unset.\n'
+    + '  The contract below ran against JsonStore only. Any divergence between the two\n'
+    + '  adapters is unmeasured, which is the defect this file exists to find.\n',
+  )
+}
+
 const hazard = (id, extra = {}) => ({
   id,
   event_type: 'flood',

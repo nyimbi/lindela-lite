@@ -867,6 +867,14 @@ body.app-shell {
   font-weight: 500;
   border-radius: 999px;
   white-space: nowrap;
+  /* An explicit default, because the class is built from record state and the
+     vocabulary keeps growing. Without one, a status with no rule of its own
+     inherited from wherever it happened to sit — and four workflow states
+     rendered black on a near-black surface at 1.21:1, which is not a low
+     contrast ratio but the absence of text. An unmapped status must still be
+     legible; that it is not the one we styled is a lesser problem. */
+  background: var(--surface);
+  color: var(--ink-muted);
 }
 
 .status-open         { background: color-mix(in oklch, var(--warn) 14%, transparent);   color: var(--warn); }

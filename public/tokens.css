@@ -8,10 +8,13 @@
 
   --ink:             oklch(96% 0.005 260);
   --ink-muted:       oklch(75% 0.02 260);
-  /* Raised from 55% L. At 55% this measured 3.6:1 on --surface and 4.1:1 on
-     --bg — under the 4.5:1 AA floor everywhere it is used, and it carries
-     "never run" and "unknown", the two states an operator most needs to read. */
-  --ink-faint:       oklch(64% 0.02 260);
+    /* Raised twice from 55% L. At 55% this measured 3.6:1 on --surface and
+     4.1:1 on --bg; at 64% the pale-strip backgrounds still measured 4.03:1.
+     This token carries "not ingested" and "never run" — the states an
+     operator most needs to read, and the ones a light treatment erases
+     first. It sits close to --ink-muted deliberately: three lightnesses that
+     read as a hierarchy is one more than a status bar needs. */
+  --ink-faint:       oklch(72% 0.02 260);
 
   --brand:           oklch(70% 0.16 205);
   --brand-hover:     oklch(74% 0.16 205);

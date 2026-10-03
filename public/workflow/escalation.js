@@ -37,12 +37,47 @@ function ageDays(record, now) {
 }
 
 /**
+ * The section, built here rather than shipped in index.html.
+ *
+ * It arrives with the alert data it ranks rather than before it, which is the
+ * same moment the list beside it arrives.
+ */
+function buildView() {
+  const host = document.getElementById('escalationHost')
+  if (!host) return null
+  host.innerHTML = `
+<section id="escalationView" class="escalation" aria-labelledby="escalationHeading">
+  <div class="panel-header">
+    <h3 id="escalationHeading">Needs escalation <span id="escalationCount" class="tab-badge" hidden>0</span></h3>
+    <div class="escalation-head">
+      <label class="escalation-threshold" for="escalationDays">
+        <span>Open longer than (days)</span>
+        <input id="escalationDays" type="number" min="0" step="1" inputmode="numeric">
+      </label>
+      <button id="escalationToggle" class="btn btn-sm" type="button"
+              aria-expanded="false" aria-controls="escalationBody">Show</button>
+    </div>
+  </div>
+  <!-- An alert event carries no deadline. This view therefore ranks on how
+       long an alert has been open with nobody acting on it, and says so
+       rather than implying a due date exists. -->
+  <p class="ops-control-note">
+    Alert events record no deadline, so there is nothing to be past. This ranks
+    the alerts still marked open, oldest first, against the threshold above.
+    Raise it to widen what counts as overdue; lower it to narrow.
+  </p>
+  <div id="escalationBody" hidden></div>
+</section>`
+  return document.getElementById('escalationView')
+}
+
+/**
  * Mount the view. `getAlerts` is a function, not a value, because the console
  * repaints its alert list every thirty seconds and a view holding a snapshot
  * would disagree with the list above it.
  */
 export function mountEscalation({ getAlerts, openSubject }) {
-  const section = document.getElementById('escalationView')
+  const section = buildView()
   if (!section) return
   const toggle = document.getElementById('escalationToggle')
   const body = document.getElementById('escalationBody')
@@ -104,6 +139,11 @@ export function mountEscalation({ getAlerts, openSubject }) {
     })
   }
 
+  /** Open the collapsed list. The palette action reaches the view this way. */
+  function expand() {
+    if (toggle?.getAttribute('aria-expanded') !== 'true') toggle?.click()
+  }
+
   toggle?.addEventListener('click', () => {
     const open = body.hidden
     body.hidden = !open
@@ -112,5 +152,5 @@ export function mountEscalation({ getAlerts, openSubject }) {
   })
 
   render()
-  return { render }
+  return { render, expand }
 }

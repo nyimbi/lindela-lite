@@ -377,26 +377,7 @@
             </div>
             <div id="alertsList" class="list-container" role="list"></div>
             <nav id="alertsPager" class="pagination" aria-label="Alert pages" hidden></nav>
-            <section id="escalationView" class="escalation" aria-labelledby="escalationHeading">
-              <div class="panel-header">
-                <h3 id="escalationHeading">Needs escalation <span id="escalationCount" class="tab-badge" hidden>0</span></h3>
-                <div class="escalation-head">
-                  <label class="escalation-threshold" for="escalationDays">
-                    <span>Open longer than (days)</span>
-                    <input id="escalationDays" type="number" min="0" step="1" inputmode="numeric">
-                  </label>
-                  <button id="escalationToggle" class="btn btn-sm" type="button"
-                          aria-expanded="false" aria-controls="escalationBody">Show</button>
-                </div>
-              </div>
-              <p class="ops-control-note">
-                Alert events record no deadline, so there is nothing to be past.
-                This ranks the alerts still marked open, oldest first, against the
-                threshold above. Raise it to widen what counts as overdue; lower
-                it to narrow.
-              </p>
-              <div id="escalationBody" hidden></div>
-            </section>
+            <div id="escalationHost"></div>
           </div>
 
           <!-- Equity -->
@@ -528,57 +509,6 @@
                 <div id="triggerProtocolsList" class="list-container"></div>
               </section>
 
-              <section class="settings-section" id="opsApi">
-                <h3>Platform operations</h3>
-                <p class="settings-note">
-                  Routes with no other dashboard affordance. Each one reports what
-                  happened, including what it could not determine.
-                </p>
-
-                <div id="opsProtocols"></div>
-
-                <div class="ops-control" id="opsBiasCorrectControl">
-                  <h4>Bias-correct observations</h4>
-                  <p class="ops-control-note">
-                    Maps gridded values onto station baselines by quantile matching.
-                    Paste <code>{&quot;observations&quot;:[…],&quot;stations&quot;:[…]}</code>.
-                    Returns the corrected values and stores nothing.
-                  </p>
-                  <label class="visually-hidden" for="biasCorrectInput">Observations and stations payload</label>
-                  <textarea id="biasCorrectInput" rows="4" spellcheck="false"
-                    placeholder='{"observations":[{"country":"KE","precipitation_mm":12.4}],"stations":[{"country":"KE","precipitation_mm":9.1}]}'></textarea>
-                  <button id="opsBiasCorrect" class="btn btn-sm" type="button">Correct</button>
-                  <p class="ops-result" role="status" aria-live="polite"></p>
-                </div>
-
-                <div class="ops-control">
-                  <h4>Dispatch the outbox</h4>
-                  <p class="ops-control-note">
-                    Delivers pending outbox events to every active webhook subscription
-                    that matches them.
-                  </p>
-                  <button id="opsOutboxDispatch" class="btn btn-sm" type="button">Dispatch pending</button>
-                  <p class="ops-result" role="status" aria-live="polite"></p>
-                </div>
-
-                <div class="ops-control" id="opsRetentionControl">
-                  <h4>Apply retention</h4>
-                  <p class="ops-control-note">
-                    Deletes field reports and inbound RapidPro messages past the
-                    configured retention window. Irreversible, and gated hardest of
-                    anything in this console.
-                  </p>
-                  <button id="opsRetention" class="btn btn-sm btn-reject" type="button">Apply retention…</button>
-                  <p class="ops-result" role="status" aria-live="polite"></p>
-                </div>
-
-                <div class="ops-control" id="opsConnectorsControl">
-                  <h4>Connector registry</h4>
-                  <p class="ops-control-note">Every connector the platform can run, with its last run.</p>
-                  <button id="opsConnectors" class="btn btn-sm" type="button">Load registry</button>
-                  <p class="ops-result" role="status" aria-live="polite"></p>
-                </div>
-              </section>
 
               <section class="settings-section">
                 <h3>Webhooks</h3>
@@ -589,6 +519,8 @@
                   <button type="submit" class="btn btn-sm">Add webhook</button>
                 </form>
               </section>
+
+              <div id="opsApiHost"></div>
 
               <section class="settings-section">
                 <h3>Operations</h3>

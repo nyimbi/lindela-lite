@@ -3202,21 +3202,28 @@ function _renderAlertsPanel() {
  * `state.data.alerts` rather than taking a snapshot, so it cannot drift.
  */
 let escalation = null
-let escalationWanted = false
+let escalationReady = null
 
+/** Mount the view, and hand back the controller even if it was already up. */
 function ensureEscalation() {
-  if (escalation || escalationWanted) return
-  escalationWanted = true
-  lazy('/workflow/escalation.js').then((m) => {
+  if (escalation) return Promise.resolve(escalation)
+  if (escalationReady) return escalationReady
+  escalationReady = lazy('/workflow/escalation.js').then((m) => {
     escalation = m.mountEscalation({
       getAlerts: () => state.data.alerts?.data || [],
       openSubject: openSubjectPanel,
     })
     escalation?.render()
+    return escalation
   }).catch((err) => {
-    escalationWanted = false
+    // Not cached: a failed import would otherwise fail every later call
+    // identically, and the console would report a broken feature with no way to
+    // retry it.
+    escalationReady = null
     console.error('Escalation view failed to load:', err)
+    return null
   })
+  return escalationReady
 }
 
 $('alertFilterChips')?.addEventListener('click', (e) => {
@@ -3811,11 +3818,12 @@ const paletteResults = $('paletteResults')
 
 const PALETTE_BASE = [
   { icon: '1', label: 'Alerts tab',              category: 'Navigation', action: () => switchTab('alerts') },
+  // `escalation` rather than an id: the view builds its own markup when it
+  // loads, and app.js asking the document for an element the module owns is how
+  // the two drift apart.
   { icon: '!', label: 'Needs escalation',        category: 'Navigation', action: () => {
     switchTab('alerts')
-    const body = $('escalationBody')
-    const toggle = $('escalationToggle')
-    if (body?.hidden && toggle) toggle.click()
+    ensureEscalation().then(() => escalation?.expand())
   } },
   { icon: '2', label: 'Reports tab',             category: 'Navigation', action: () => switchTab('reports') },
   { icon: '3', label: 'Ingestion tab',           category: 'Navigation', action: () => switchTab('ingestion') },
@@ -4183,6 +4191,10 @@ $('triggerEquityAuditButton')?.addEventListener('click', async () => {
 await loadLocale(state.locale)
 await loadSources()
 restoreFiltersFromUrl()
+// The alerts panel is the boot panel, but nothing calls switchTab to reach it —
+// the markup ships with `active` on it. Mount its escalation section here, or
+// it waits for a tab switch the operator never makes.
+ensureEscalation()
 await refresh({ first: true })
 // The build version shown in the Settings panel comes from the health
 // endpoint, which reads package.json, rather than from a literal in the markup

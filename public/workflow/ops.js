@@ -118,19 +118,26 @@ async function runOutboxDispatch(out) {
 
 // --- Retention (irreversible) ------------------------------------------------
 
-const dayMs = 24 * 60 * 60 * 1000
-
+/**
+ * The scale of what retention would touch.
+ *
+ * Deliberately does not divide the records into "would be kept" and "would be
+ * deleted". The window is server-side configuration the API does not publish,
+ * and a preview that guessed 365 — the default in src/pii.js — would draw a
+ * confident line through an operator's field reports that no line in their
+ * deployment actually falls on. Counts and unageable records are true; the
+ * verdict is the server's.
+ */
 function retentionPlan(fieldReports, inbound) {
-  const now = Date.now()
-  const age = (record) => {
+  const ageable = (record) => {
     const stamp = record.occurred_at || record.created_at
     const parsed = stamp ? Date.parse(stamp) : Number.NaN
-    return Number.isFinite(parsed) ? (now - parsed) / dayMs : null
+    return Number.isFinite(parsed)
   }
-  const buckets = (list) => {
-    const kept = list.filter((r) => age(r) === null || age(r) <= 365).length
-    return { total: list.length, kept, unaged: list.filter((r) => age(r) === null).length }
-  }
+  const buckets = (list) => ({
+    total: list.length,
+    unaged: list.filter((r) => !ageable(r)).length,
+  })
   return { fieldReports: buckets(fieldReports), inbound: buckets(inbound) }
 }
 
@@ -179,11 +186,77 @@ async function renderConnectors(out) {
 // --- Mount -------------------------------------------------------------------
 
 /**
+ * The section, built here rather than shipped in index.html.
+ *
+ * Six routes that had a backend and no control anywhere in the console
+ * (JTBD-600 / DoD 13). It is markup with no meaning until this module mounts
+ * it, so shipping it in the first paint bought an empty-looking heading in
+ * Settings and about a kilobyte of every operator's first load.
+ */
+function buildSection() {
+  const host = document.getElementById('opsApiHost')
+  if (!host) return null
+  host.innerHTML = `
+<section class="settings-section" id="opsApi">
+  <h3>Platform operations</h3>
+  <p class="settings-note">
+    Routes with no other dashboard affordance. Each one reports what
+    happened, including what it could not determine.
+  </p>
+
+  <div id="opsProtocols"></div>
+
+  <div class="ops-control" id="opsBiasCorrectControl">
+    <h4>Bias-correct observations</h4>
+    <p class="ops-control-note">
+      Maps gridded values onto station baselines by quantile matching.
+      Paste <code>{&quot;observations&quot;:[…],&quot;stations&quot;:[…]}</code>.
+      Returns the corrected values and stores nothing.
+    </p>
+    <label class="visually-hidden" for="biasCorrectInput">Observations and stations payload</label>
+    <textarea id="biasCorrectInput" rows="4" spellcheck="false"
+      placeholder='{"observations":[{"country":"KE","precipitation_mm":12.4}],"stations":[{"country":"KE","precipitation_mm":9.1}]}'></textarea>
+    <button id="opsBiasCorrect" class="btn btn-sm" type="button">Correct</button>
+    <p class="ops-result" role="status" aria-live="polite"></p>
+  </div>
+
+  <div class="ops-control">
+    <h4>Dispatch the outbox</h4>
+    <p class="ops-control-note">
+      Delivers pending outbox events to every active webhook subscription
+      that matches them.
+    </p>
+    <button id="opsOutboxDispatch" class="btn btn-sm" type="button">Dispatch pending</button>
+    <p class="ops-result" role="status" aria-live="polite"></p>
+  </div>
+
+  <div class="ops-control" id="opsRetentionControl">
+    <h4>Apply retention</h4>
+    <p class="ops-control-note">
+      Deletes field reports and inbound RapidPro messages past the
+      configured retention window. Irreversible, and gated hardest of
+      anything in this console.
+    </p>
+    <button id="opsRetention" class="btn btn-sm btn-reject" type="button">Apply retention…</button>
+    <p class="ops-result" role="status" aria-live="polite"></p>
+  </div>
+
+  <div class="ops-control" id="opsConnectorsControl">
+    <h4>Connector registry</h4>
+    <p class="ops-control-note">Every connector the platform can run, with its last run.</p>
+    <button id="opsConnectors" class="btn btn-sm" type="button">Load registry</button>
+    <p class="ops-result" role="status" aria-live="polite"></p>
+  </div>
+</section>`
+  return document.getElementById('opsApi')
+}
+
+/**
  * Wire every control. Bound to the Settings tab, which is the one panel whose
  * job is the platform's own machinery rather than a situation on the ground.
  */
 export async function mountOps({ askToConfirm }) {
-  const root = document.getElementById('opsApi')
+  const root = buildSection()
   if (!root || root.dataset.mounted) return
   root.dataset.mounted = '1'
 
