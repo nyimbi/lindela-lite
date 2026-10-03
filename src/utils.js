@@ -335,7 +335,10 @@ export function parseCsv(text) {
 export function toCsv(records) {
   const flatRecords = records.map((record) => flattenRecord(record))
   const headers = [...new Set(flatRecords.flatMap((record) => Object.keys(record)))].sort()
-  const lines = [headers.join(',')]
+  // Headers are record keys, and a record key is still data: any field name a
+  // connector invents ends up on this line. Escape it like a value — a key
+  // holding a comma would otherwise shift every column to its right by one.
+  const lines = [headers.map((header) => csvEscape(header)).join(',')]
   for (const record of flatRecords) {
     lines.push(headers.map((header) => csvEscape(record[header])).join(','))
   }
@@ -355,9 +358,42 @@ function flattenRecord(record, prefix = '') {
   return flat
 }
 
+/**
+ * A spreadsheet evaluates a cell whose first character is `=`, `+`, `-` or `@`,
+ * and before it decides it discards leading tabs, carriage returns, newlines,
+ * ordinary spaces and other C0 control characters. So `^=` is not the test:
+ * "\t=1+1" and "  =cmd|'/c calc'!A1" both execute, and a check that only looked
+ * at the literal first character would wave both through. Quoting the field is
+ * no defence at all — Excel parses the content of a quoted cell exactly as it
+ * parses an unquoted one; the tab-prefix and space-prefix variants are the
+ * standard bypass of quoting-as-protection. The only prefix these applications
+ * agree on is the apostrophe, which forces the cell to text.
+ *
+ * The cost is deliberate and visible: a CSV read by a machine parser — pandas,
+ * R, `cut` — now sees `'=cmd...` and `'=foo` rather than the value. The value
+ * is still there, one byte earlier in the row, and Excel hides the apostrophe
+ * on open. Truncating or stripping the payload instead would silently rewrite
+ * what a health worker wrote, and this export is also the archive people check
+ * against the source record.
+ *
+ * Numbers are exempt, and must be. `-3.12` is a longitude, `+254700000000` is a
+ * phone number, `-0.5e3` is an elevation delta; escaping them would turn every
+ * numeric column of the widest read in the product into a string, which is a
+ * worse failure than the one being fixed. A bare numeric literal is not a
+ * formula in any of these applications — it has no operator in it to evaluate.
+ * The exemption requires the number to be the whole unprefixed cell: a tab or
+ * space before it is exactly the shape this function exists to distrust.
+ */
+function neutraliseFormula(text) {
+  const probe = text.replace(/^[\s\u0000-\u001f]+/, '')
+  if (!/^[=+\-@]/.test(probe)) return text
+  if (probe === text && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(text)) return text
+  return `'${text}`
+}
+
 function csvEscape(value) {
   if (value === null || value === undefined) return ''
-  const text = String(value)
+  const text = neutraliseFormula(String(value))
   if (/[",\n]/.test(text)) return `"${text.replaceAll('"', '""')}"`
   return text
 }
