@@ -1,5 +1,4 @@
 import { normalizeWorkflowInstance } from './workflows.js'
-import { stableId } from './utils.js'
 
 const FALSE_POSITIVE_NOTE = /false|invalid|noop/i
 const SEVERITIES = ['critical', 'high', 'medium', 'low']

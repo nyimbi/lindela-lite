@@ -1,5 +1,5 @@
 import { SERVICE_TYPES, ROAD_CLASSES, normalizeSeverity } from './schema.js'
-import { parseCsv, stableId, toNumber } from './utils.js'
+import { parseCsv, stableId } from './utils.js'
 
 /**
  * Bulk CSV upload with a row-level validation report.

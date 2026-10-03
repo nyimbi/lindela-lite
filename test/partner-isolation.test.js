@@ -201,3 +201,57 @@ describe('a partner claim can be checked', () => {
     })
   })
 })
+describe('the calibration figures are scoped like the records beside them', () => {
+	// JTBD-018 cited `calibrationReport` as evidence that
+	// GET /api/v1/assessments "includes calibration metadata". It did not: the
+	// function was exported, documented and called from nowhere. Wiring it
+	// creates a second way to learn about another tenant's data — a mean over
+	// scores the caller may not read — so the wiring has to carry the scope.
+	const scores = [
+		{ id: 's1', type: 'flood_risk', score: 40, confidence: 0.8, interval_width: 20, partner_org: 'orgA' },
+		{ id: 's2', type: 'flood_risk', score: 60, confidence: 0.6, interval_width: 30, partner_org: 'orgB' },
+		{ id: 's3', type: 'flood_risk', score: 20, confidence: 0.4, interval_width: 40 },
+	]
+
+	it('reports calibration at all, which is what the catalogue claims it does', async () => {
+		await withServer(async (base, store) => {
+			await store.merge({ risk_scores: scores })
+			const { data } = await (await get(base, '/api/v1/assessments', 'tok-plain')).json()
+			assert.ok(Array.isArray(data.calibration), 'the field the catalogue cites is present')
+			assert.equal(data.calibration.length, 1)
+			assert.equal(data.calibration[0].type, 'flood_risk')
+		})
+	})
+
+	it('averages only the scores the caller may see', async () => {
+		await withServer(async (base, store) => {
+			await store.merge({ risk_scores: scores })
+			const { data } = await (await get(base, '/api/v1/assessments', 'tok-a')).json()
+			const row = data.calibration.find((r) => r.type === 'flood_risk')
+			assert.equal(row.count, 1, "orgB's and untagged scores are not counted in orgA's calibration")
+			assert.equal(row.mean_score, 40)
+			assert.equal(row.mean_confidence, 0.8)
+		})
+	})
+
+	it('gives each partner a different mean from the same store', async () => {
+		await withServer(async (base, store) => {
+			await store.merge({ risk_scores: scores })
+			const mean = async (token) => {
+				const { data } = await (await get(base, '/api/v1/assessments', token)).json()
+				return data.calibration.find((r) => r.type === 'flood_risk').mean_score
+			}
+			assert.equal(await mean('tok-a'), 40)
+			assert.equal(await mean('tok-b'), 60)
+		})
+	})
+
+	it('reports an empty calibration rather than a mean of nothing', async () => {
+		await withServer(async (base, store) => {
+			await store.merge({ risk_scores: scores })
+			const { data } = await (await get(base, '/api/v1/assessments', 'tok-a')).json()
+			assert.ok(!data.calibration.some((r) => r.type === 'climate_conflict_risk'),
+				'a type with no visible scores is absent, not zero')
+		})
+	})
+})

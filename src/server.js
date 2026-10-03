@@ -7,7 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath } from './auth.js'
 import { logger, metrics, timer } from './observability.js'
-import { refreshAnalytics } from './analytics.js'
+import { refreshAnalytics, calibrationReport } from './analytics.js'
 import { biasCorrectClimate } from './analytics/downscaling.js'
 import { evaluateAlertRules, normalizeAlertRule, updateAlertEvent, approveAlertEvent, normalizeTriggerProtocol, backtestTriggerProtocol, evaluateInShadowMode } from './alerts.js'
 import {
@@ -51,14 +51,14 @@ import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { trainDistrictModels, predict } from './flood-probability.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
 import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots } from './kpi.js'
-import { KNOWN_DISTRICTS, resolveDistrict, districtOverview } from './districts.js'
+import { KNOWN_DISTRICTS, districtOverview } from './districts.js'
 import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from './equity.js'
 import { normalizeCommunityFeedback, feedbackSummaryByAlert } from './community.js'
 import { renderQuarterlyReportPdf } from './pdf.js'
 import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.js'
 import { normalizeParametricRule, simulateDisbursement } from './parametric.js'
 import { screenNames } from './sanctions.js'
-import { normalizeWorkflowInstance, transitionWorkflow, pendingForFocalPoint, workflowMetrics, WORKFLOW_TYPES, WORKFLOW_STATES, WORKFLOW_TRANSITIONS } from './workflows.js'
+import { normalizeWorkflowInstance, transitionWorkflow, workflowMetrics } from './workflows.js'
 import { recordRequestOutcome } from './observability.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -1268,6 +1268,14 @@ async function handleApiRequest(store, req, res, url) {
         // asking for /api/v1/assessments received every hazard and conflict
         // event in the platform while the four lists beside it were filtered.
         recent_events: filterRecords([...data.hazard_events, ...data.conflict_events], url.searchParams, { auth: req.__auth, data, collection: 'recent_events' }),
+        // `calibrationReport` was exported, documented in the JTBD catalogue as
+        // evidence this route "includes calibration metadata", and called from
+        // nowhere. A claim in a catalogue is not a feature. It is here now, over
+        // the same scoped score list its siblings use — otherwise a partner token
+        // would learn mean confidence over scores it cannot see.
+        calibration: calibrationReport({
+          risk_scores: filterRecords(data.risk_scores, url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }),
+        }),
       },
     })
     return

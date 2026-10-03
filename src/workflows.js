@@ -1,4 +1,4 @@
-import { stableId, toNumber } from './utils.js'
+import { stableId } from './utils.js'
 
 export const WORKFLOW_TYPES = Object.freeze([
   'anticipatory_alert',

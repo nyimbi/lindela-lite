@@ -598,6 +598,28 @@ A JTBD is considered fully supported by the workflow system when all of the foll
 11. **UI shows current state, owner, next action, blockers, deadline, and history.** Dashboard panel for the subject shows all of these without requiring the operator to navigate multiple screens.
 12. **Tests cover happy path, blocked path, authority failure, SLA breach, and reversal/reopen.** All five paths have named test cases in `test/lite.test.js` or a dedicated test file.
 13. **UI exists to perform the task and implied tasks.** Dashboard actions for all lifecycle transitions are present; no transition is API-only without a corresponding dashboard affordance.
+14. **The interface is operable without a mouse.** Every control is reachable and activatable by keyboard, focus is always visible, and the first tab stop on every surface is a skip link that bypasses the chrome.
+15. **Text meets a contrast floor.** Body text meets WCAG 2.2 AA (4.5:1); large text and non-text indicators meet 3:1. Severity is never encoded by colour alone.
+16. **Every surface names what it is.** One `h1`, a `main` landmark, ordered headings, and an accessible name on every control. A field, table header or image that a screen reader cannot name is a defect, not a polish item.
+17. **Layout survives a phone and 200% zoom.** No horizontal overflow at 360px, and content reflows at 400% without loss.
+18. **Async state is announced.** Loading, success and failure reach a live region. A user who cannot see a spinner must still learn that something happened.
+19. **Motion is optional.** `prefers-reduced-motion` is honoured on every surface, not only those that link the shared stylesheet.
+20. **The interface states what a number measures, in the metric's own units.** A field name is not a label. A number with no value says why, rather than rendering a dash that reads as zero.
+
+### Why items 14–20 exist
+
+They were absent from this catalogue and from the requirements traceability matrix — the same
+absence that let a skip link be shadowed on all eight surfaces, a 2.07:1 contrast ratio on the
+control that releases pre-agreed finance, and a `dd/mm/yyyy` timestamp on an approval screen
+run out of Kenya, Uganda, Sudan and Chad.
+
+The users this gap excludes are not hypothetical: the field population reaches this platform
+through SMS on low-end Android, on shared devices, often in a hurry. A requirement that is not
+written down is a requirement nobody tests, and a defect nobody tests is a defect that ships.
+
+Each item is enforced by a gate rather than by review: `npm run check:a11y` asserts 1, 4, 5, 6,
+7 and 9 across all eight surfaces; `npm run check:responsive` asserts 3 and 8; and
+`scripts/check-budget.mjs` bounds the first load the field pays for.
 
 ---
 

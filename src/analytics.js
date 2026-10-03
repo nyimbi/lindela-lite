@@ -2,9 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { riskLevel, severityWeight } from './schema.js'
 import { clamp, haversineKm, stableId } from './utils.js'
-import { computeEnsembleStats } from './analytics/ensemble.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
-import { biasCorrectClimate } from './analytics/downscaling.js'
 import { computeRoadAccess } from './road-access.js'
 
 export async function refreshAnalytics(store) {
