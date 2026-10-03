@@ -441,9 +441,9 @@ input[type="range"]:focus-visible::-moz-range-thumb     { box-shadow: 0 0 0 3px 
    reduced-motion treatment changes what the thing *is* rather than deleting
    it: a dimmer static ring still says "in progress", a removed one says
    nothing at all. */
- (prefers-reduced-motion: reduce) {
+@media (prefers-reduced-motion: reduce) {
   body { animation: skeleton-sweep 1.4s ease-in-out infinite; }
-  .spinner { animation: none; } opacity: 0.55; }
+  .spinner { animation: none; opacity: 0.55; }
   .skeleton { animation: none; background: var(--surface); }
 }
 
@@ -774,7 +774,3 @@ input[type="range"]:focus-visible::-moz-range-thumb     { box-shadow: 0 0 0 3px 
   .data-table tr { break-inside: avoid; }
   .data-table thead { display: table-header-group; }
 }
-
-/* NEGATIVE CONTROL — temporary */
-.l-navbar-brand { color: var(--surface); }
-.skip-link { display: none; }
