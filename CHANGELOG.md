@@ -84,8 +84,107 @@ Three further defects surfaced while fixing these and are also fixed:
   non-enumerable, so the log said nothing at all about the failure it was
   recording.
 
+### Fixed (data integrity and metric honesty)
+
+Ten more defects, in three families: numbers that were counted wrong, numbers
+that were computed from something other than what they were named after, and
+computation that was never wired to anything.
+
+**Counting.** The recurring bug is a list of collection names being written in
+one place and read in another, with nothing checking that they agree.
+
+- **`facilities_at_risk` counted facility-hazard pairs.** The loop was
+  `hazards × assets`, so a clinic within 25 km of three separate flood events
+  appeared three times in `at_risk_count` and contributed its
+  `population_served` three times to `total_population_served`. A district
+  under a flood cluster was reported as having more exposed population than it
+  has people. The loop order is inverted: assets outside, hazards inside, each
+  asset emitted once, and the per-hazard detail that made the duplicate look
+  legitimate (`hazard_count`, `high_severity_hazard_count`,
+  `worst_hazard_severity`) is preserved on the single record.
+- **`counts` reported the size of the sample, not the size of the population.**
+  `districtOverview` returned the 30 most recent field reports and reported
+  `counts.field_reports: 30`. The true total was 45. Worse, `false_alert_rate`
+  was computed over the window, so a district whose 31st-oldest alert was a
+  false alarm reported a rate its own records contradicted. Counts now come
+  from the full collection, and each truncated list carries
+  `samples.{field_reports,alert_events}.{total,returned,limit,truncated}` so a
+  caller can see the difference.
+- **Ingestion dropped every collection not in its merge map.** The accumulator
+  and the lineage rollup were written as two independent object literals over
+  the same six keys. Adding a connector that wrote a seventh collection would
+  have persisted records that no lineage entry counted. Both now derive from
+  the single exported `OUTPUT_COLLECTIONS`, and a registration test asserts it
+  agrees with `emptyStore()`.
+- **Concurrent writes lost records.** Every `JsonStore` mutation is a
+  read-modify-write of one file, and twenty overlapping `merge()` calls each
+  read the same snapshot before any of them wrote — six survivors from twenty
+  callers. The store now serialises mutations through a promise chain and
+  writes through a temp file plus `rename`, so a crash mid-write cannot leave a
+  truncated store. `replaceAnalytics` was six separate read-merge-write cycles
+  and could interleave with a concurrent ingest; it is now one serialised
+  cycle.
+
+**Metrics that measured something else.**
+
+- **`response_rate_pct` counted messages, not people.** It divided inbound
+  messages by dispatches, so one community health worker answering the same
+  alert twice — or a flow emitting several messages per answer — produced
+  200%. A percentage above 100 is not a rounding problem; it is a metric that
+  does not mean what its name says, and an operator cannot distinguish "twice
+  as responsive" from "broken". Replies are now matched to the dispatch
+  recipient and deduplicated. When the dispatches carry no recipient identity
+  there is no rate to report, so `response_rate_pct` is `null` with a note, and
+  the message count is still returned. `null` when nobody has answered yet
+  for the same reason: zero would report silence as a measured outcome, the
+  conflation the alert model already refuses with `false_alert: null`.
+- **Dispatch precision divided by the wrong denominator.** `equityByDistrict`
+  counted every dispatch but subtracted false positives that included alerts
+  never dispatched, and reported 100% for a district where every alert was
+  still open. It is now `dispatch_precision_pct`, over *determined* dispatches
+  only — resolved, with an outcome — and `null` when there are none.
+  `accuracy_pct` remains as an alias with a `data_gaps` entry saying not to
+  trust it.
+- **`/score` returned a bare probability.** The Wilson intervals and
+  contingency counts the model was actually fit to never left the server, so
+  the one number an integrator would quote was the one number with no way to
+  see it rests on four events. `/score` now returns `uncertainty.by_feature`,
+  keyed by the feature the caller supplied — `contingency()` returns a flat
+  array, and returning `row[0]` attributed the `max_7_day` interval to
+  whoever asked about `sum_90_day`.
+- **`/score` guessed the region.** With no `region` parameter it scored
+  `models[0]`, whichever district trained most recently. A caller who omitted
+  the parameter got an authoritative-looking answer about a district they
+  never asked about. With more than one model it now returns 400 and lists
+  `available_regions`.
+- **Trigger backtests ignored the trigger.** `backtestTriggerProtocol` never
+  read `metric`, `operator` or `threshold` and scored every run on "did any
+  hazard event follow", so backtesting a protocol and backtesting an unrelated
+  one produced identical numbers. It also classified every sample as a true or
+  false positive, which made `misses` identically zero and forced `recall` to
+  equal `precision` — two numbers that could never disagree, and so could never
+  disagree usefully. Runs are now scored against the protocol condition,
+  misses are counted separately, and the result reports the event base rate
+  and `precision_lift` — a protocol with precision 0.5 that fires on every run
+  has learned nothing, and the verdict now says so.
+
+**Tests**
+
+- `test/store-conformance.test.js`, `test/flood-score-honesty.test.js`,
+  `test/trigger-backtest.test.js`, `test/rapidpro-response-metrics.test.js`,
+  `test/counting-honesty.test.js`, `test/rapidpro-signature-live-route.test.js`.
+
 ### Breaking changes
 
+- `response_rate_pct` is now `null` rather than `0` when nobody has responded,
+  and `null` when dispatches carry no recipient identity. Consumers that
+  treated `0` as "no response" should treat `null` as "not yet known".
+- `equityByDistrict` returns `dispatch_precision_pct`; `accuracy_pct` is
+  retained as an alias.
+- `districtOverview.counts.*` are true totals, not sample sizes — the same
+  fields, different and correct values. `samples.*` reports the window.
+- `/api/v1/flood-probability/score` without `region` returns 400 when more
+  than one model is trained.
 - GET routes require authentication when `LINDELA_LITE_TOKENS` or
   `LINDELA_LITE_API_KEY` is set. Set `LINDELA_LITE_PUBLIC_PATHS` to reopen
   specific paths.

@@ -23,6 +23,44 @@ outside a laptop: **SEC-01** (every GET is unauthenticated), **SEC-04**
 (auth fails open), **DAT-03** (concurrent writes are silently lost), **DAT-01**
 (Postgres `write()` wipes the table and breaks dedup).
 
+## Remediation status
+
+The findings below are the original audit. Fixes are recorded in `CHANGELOG.md`
+under **Unreleased**; this table is the index into them.
+
+| ID | Status | Fix | Test |
+|---|---|---|---|
+| SEC-01 | fixed | all GETs require a token; explicit `LINDELA_LITE_PUBLIC_PATHS` | `auth-deny-by-default.test.js` |
+| SEC-02 | fixed | 503 unless a secret is set, or unsigned is opted into | `rapidpro-webhook-auth.test.js` |
+| SEC-03 | fixed | explicit read/write scope tables; unmapped mutation needs `admin:*` | `auth-deny-by-default.test.js` |
+| SEC-04 | fixed | malformed `LINDELA_LITE_TOKENS` throws instead of parsing to `[]` | `auth-deny-by-default.test.js` |
+| SEC-05 | fixed | scheme + resolved-address checks at registration *and* dispatch | `webhook-security.test.js` |
+| SEC-06 | not started | — | — |
+| DAT-01 | fixed | `write()` upserts through `insertRecords`; `payload_hash` persisted | `store-conformance.test.js` |
+| DAT-02 | fixed | one exported `OUTPUT_COLLECTIONS` drives accumulator, lineage and counts | `store-conformance.test.js` |
+| DAT-03 | fixed | mutation serialisation chain + temp-file rename | `store-conformance.test.js` |
+| DAT-04 | fixed | see CHANGELOG **Fixed (data integrity)** — concurrent ingest vs `replaceAnalytics` | `store-conformance.test.js` |
+| DAT-05 | fixed | `replaceAnalytics` replaces all six derived collections in one transaction | `store-conformance.test.js` |
+| DAT-06 | fixed | `facilities_at_risk` counts each asset once; `counts` are true totals | `counting-honesty.test.js` |
+| DAT-07 | fixed | retention calls a real `store.remove()` on both backends | `store-conformance.test.js` |
+| INT-01 | fixed | `readRawBody` buffers once and caches; HMAC is live on the real route | `rapidpro-signature-live-route.test.js` |
+| INT-02 | fixed | backtest evaluates `metric`/`operator`/`threshold`; misses counted separately | `trigger-backtest.test.js` |
+| INT-03 | **not started** | trigger fields are stored and never read | — |
+| ALERT-05 | fixed | `response_rate_pct` counts responders, not messages; `null` when unknowable | `rapidpro-response-metrics.test.js` |
+| ALERT-03 | **not started** | calendar-bucket suppression | — |
+
+Two findings were found while fixing these and are also fixed, without
+original IDs: a dead second authorization path (`isAuthorizedMutation`,
+deleted), and a `logger.error({err})` that serialized to `{}`.
+
+Note on the audit itself: **DAT-02 and DAT-06 were written slightly wrong**, and
+the corrections matter. DAT-02 said ingestion "merges six" where the real
+number was read off a literal rather than a shared constant — the fix is to
+make the constant shared, not merely to count correctly today. DAT-06 attributed
+the facility-multiplication defect to the loop and was right, but under-stated
+it: the same root cause (a collection name list written in two places)
+reproduced it, which is why it and DAT-02 share a fix.
+
 ---
 
 ## Critical

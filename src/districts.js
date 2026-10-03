@@ -51,6 +51,46 @@ function filterForDistrict(district, records) {
 
 const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, unknown: 4 }
 
+// The overview embeds sample arrays so the page can render without a second
+// fetch. The cap stays — an unbounded field-report list is a payload problem,
+// not a correctness one — but it must never stand in for the total.
+const SAMPLE_LIMIT = 30
+const SAMPLE_ORDER = 'most recent first; records with no timestamp keep store order at the end'
+
+const TIME_KEYS = ['created_at', 'reported_at', 'occurred_at', 'observed_at', 'sent_at', 'updated_at']
+
+function recordTime(record) {
+  for (const key of TIME_KEYS) {
+    const ms = Date.parse(record[key] ?? '')
+    if (Number.isFinite(ms)) return ms
+  }
+  return -Infinity
+}
+
+// `.slice(0, 30)` took the first 30 inserted, which is neither the 30 most
+// recent nor a sample of anything — a district with 400 field reports was told
+// it had 30. Sort before slicing so the retained window is the one an operator
+// opening the page actually wants to read, and say so in the payload.
+function newestFirst(records) {
+  return [...records].sort((a, b) => {
+    const ta = recordTime(a)
+    const tb = recordTime(b)
+    if (ta === -Infinity) return tb === -Infinity ? 0 : 1
+    if (tb === -Infinity) return -1
+    return tb - ta
+  })
+}
+
+function sampleBlock(total, returned) {
+  return {
+    total,
+    returned,
+    limit: SAMPLE_LIMIT,
+    truncated: total > returned,
+    order: SAMPLE_ORDER,
+  }
+}
+
 export function districtOverview(data, districtSlug) {
   const district = resolveDistrict(districtSlug)
   if (!district) return null
@@ -70,8 +110,10 @@ export function districtOverview(data, districtSlug) {
   const interventionIds = new Set(interventions.map((i) => i.id))
   const interventionTasks = (data.intervention_tasks || [])
     .filter((t) => interventionIds.has(t.intervention_id))
-  const fieldReports = filterForDistrict(district, data.field_reports || []).slice(0, 30)
-  const alertEvents = filterForDistrict(district, data.alert_events || []).slice(0, 30)
+  const allFieldReports = filterForDistrict(district, data.field_reports || [])
+  const allAlertEvents = filterForDistrict(district, data.alert_events || [])
+  const fieldReports = newestFirst(allFieldReports).slice(0, SAMPLE_LIMIT)
+  const alertEvents = newestFirst(allAlertEvents).slice(0, SAMPLE_LIMIT)
   const workflowInstances = filterForDistrict(district, data.workflow_instances || [])
   const hazardEvents = filterForDistrict(district, data.hazard_events || [])
   const riskScores = filterForDistrict(district, data.risk_scores || [])
@@ -104,9 +146,12 @@ export function districtOverview(data, districtSlug) {
   const cold_chain_protection_rate = coldChainWorkflows.length
     ? (100 * coldChainTerminal.length) / coldChainWorkflows.length : null
 
-  const falseAlerts = alertEvents.filter(a => a.resolution_note && /false|invalid|noop/i.test(a.resolution_note))
-  const false_alert_rate = alertEvents.length
-    ? (100 * falseAlerts.length) / alertEvents.length : null
+  // Over the whole district, not the returned window. The numerator is a scan of
+  // every alert the district has, so dividing it by the first 30 of them
+  // described an arbitrary prefix as a district rate.
+  const falseAlerts = allAlertEvents.filter(a => a.resolution_note && /false|invalid|noop/i.test(a.resolution_note))
+  const false_alert_rate = allAlertEvents.length
+    ? (100 * falseAlerts.length) / allAlertEvents.length : null
 
   const lags = []
   for (const d of dispatches) {
@@ -132,12 +177,20 @@ export function districtOverview(data, districtSlug) {
       incidents: incidents.length,
       interventions: interventions.length,
       tasks: interventionTasks.length,
-      field_reports: fieldReports.length,
-      alert_events: alertEvents.length,
+      field_reports: allFieldReports.length,
+      alert_events: allAlertEvents.length,
       workflow_instances: workflowInstances.length,
       hazard_events: hazardEvents.length,
       risk_scores: riskScores.length,
       community_feedback: communityFeedback.length,
+    },
+    // Every number in `counts` is a true total. The two arrays below are
+    // samples, and these blocks say how large they are and whether anything is
+    // missing — so a consumer can never mistake a 30-row window for a total
+    // without the payload telling it first.
+    samples: {
+      field_reports: sampleBlock(allFieldReports.length, fieldReports.length),
+      alert_events: sampleBlock(allAlertEvents.length, alertEvents.length),
     },
     active_hazards: activeHazards,
     risk_scores: riskScores,

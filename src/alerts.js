@@ -1,5 +1,6 @@
 import { ALERT_EVENT_STATUSES, ALERT_RULE_STATUSES, PRIORITY_LEVELS } from './schema.js'
 import { stableId, toNumber } from './utils.js'
+import { counts } from './operations.js'
 
 const OPERATORS = Object.freeze(['>', '>=', '<', '<=', '==', '!='])
 const TRIGGER_MODES = Object.freeze(['shadow', 'live'])
@@ -160,44 +161,145 @@ export function normalizeTriggerProtocol(input, existing = null) {
   }
 }
 
-export function backtestTriggerProtocol(protocol, data) {
-  const sourceRuns = data.source_runs || []
+/**
+ * Replays a trigger protocol over historical ingestion runs.
+ *
+ * This used to ignore `metric`, `operator` and `threshold` entirely and score
+ * every run on "did any hazard event happen in the next lead-time window" —
+ * so backtesting a protocol and backtesting a completely different one
+ * produced identical numbers. It also classified every sample as either a true
+ * or a false positive, which makes `misses` identically zero and `recall`
+ * numerically equal to `precision` for any protocol, so the two figures could
+ * never disagree and neither could mean anything.
+ *
+ * A backtest answers one question: does firing on this condition find events
+ * that a person would want to know about? That needs the base rate. A protocol
+ * with precision 0.60 when 60% of runs are followed by an event has learned
+ * nothing, and a report that does not say so invites the reader to believe it
+ * has.
+ */
+export function backtestTriggerProtocol(protocol, data, { buildContext = pointInTimeContext } = {}) {
   const hazardEvents = data.hazard_events || []
-  if (!sourceRuns.length || !hazardEvents.length) {
-    return { samples: 0, true_positives: 0, false_positives: 0, misses: 0, precision: 0, recall: 0 }
-  }
+  const runs = (data.source_runs || [])
+    .filter((run) => run.completed_at)
+    .sort((a, b) => Date.parse(a.completed_at) - Date.parse(b.completed_at))
+
   const leadTimeMs = (protocol.lead_time_days || 3) * 24 * 60 * 60 * 1000
+
   let truePositives = 0
   let falsePositives = 0
   let misses = 0
-  let samples = 0
-  for (const run of sourceRuns) {
-    if (!run.completed_at) continue
-    const runDate = new Date(run.completed_at).getTime()
-    samples++
-    const matchedEvents = hazardEvents.filter((event) => {
-      if (!event.occurred_at) return false
-      const eventDate = new Date(event.occurred_at).getTime()
-      return eventDate > runDate && eventDate <= runDate + leadTimeMs
-    })
-    if (matchedEvents.length > 0) {
-      truePositives++
-    } else {
-      falsePositives++
+  let trueNegatives = 0
+  let unevaluable = 0
+  const unevaluableMetrics = []
+
+  for (const run of runs) {
+    const runDate = Date.parse(run.completed_at)
+    const context = buildContext(data, run)
+    const value = resolveMetric(context, protocol.metric)
+    if (!Number.isFinite(value)) {
+      // Not a pass and not a fail: the condition could not be evaluated on
+      // this run, usually because the metric did not exist yet that early.
+      // Counting these as negatives would quietly punish the protocol for
+      // data it could not have had.
+      unevaluable += 1
+      unevaluableMetrics.push(run.id)
+      continue
     }
+
+    const wouldFire = compare(value, protocol.operator, protocol.threshold)
+    const eventFollowed = hazardEvents.some((event) => {
+      if (!event.occurred_at) return false
+      const occurred = Date.parse(event.occurred_at)
+      return occurred > runDate && occurred <= runDate + leadTimeMs
+    })
+
+    if (wouldFire && eventFollowed) truePositives += 1
+    else if (wouldFire) falsePositives += 1
+    else if (eventFollowed) misses += 1
+    else trueNegatives += 1
   }
-  misses = samples - truePositives - falsePositives
-  const precision = truePositives + falsePositives > 0 ? truePositives / (truePositives + falsePositives) : 0
-  const recall = truePositives + misses > 0 ? truePositives / (truePositives + misses) : 0
+
+  const evaluable = truePositives + falsePositives + misses + trueNegatives
+  const positives = truePositives + misses
+  const precision = truePositives + falsePositives > 0
+    ? truePositives / (truePositives + falsePositives)
+    : null
+  const recall = positives > 0 ? truePositives / positives : null
+  // The share of runs that were followed by an event anyway. Firing on
+  // everything would achieve exactly this precision.
+  const baseRate = evaluable > 0 ? positives / evaluable : null
+
   return {
-    samples,
+    metric: protocol.metric,
+    operator: protocol.operator,
+    threshold: protocol.threshold,
+    lead_time_days: protocol.lead_time_days || 3,
+    samples: runs.length,
+    evaluable,
+    unevaluable,
+    unevaluable_run_ids: unevaluableMetrics,
     true_positives: truePositives,
     false_positives: falsePositives,
     misses,
-    precision: Math.round(precision * 1000) / 1000,
-    recall: Math.round(recall * 1000) / 1000,
+    true_negatives: trueNegatives,
+    // null, not 0, when the denominator is empty. A backtest with nothing to
+    // evaluate has not found perfect precision.
+    precision: round3(precision),
+    recall: round3(recall),
+    f1: precision !== null && recall !== null && precision + recall > 0
+      ? round3((2 * precision * recall) / (precision + recall))
+      : null,
+    event_base_rate: round3(baseRate),
+    // Precision above the base rate is the whole claim. 1.0 means the
+    // protocol is exactly as good as firing on every run.
+    precision_lift: precision !== null && baseRate > 0 ? round3(precision / baseRate) : null,
+    verdict: backtestVerdict({ evaluable, unevaluable, precision, baseRate, wouldFireCount: truePositives + falsePositives }),
   }
 }
+
+function round3(value) {
+  return value === null ? null : Math.round(value * 1000) / 1000
+}
+
+function backtestVerdict({ evaluable, unevaluable, precision, baseRate, wouldFireCount }) {
+  if (!evaluable) {
+    return 'not evaluable: no ingestion run in the store had the data this protocol measures'
+  }
+  if (unevaluable > evaluable) {
+    return `weak evidence: only ${evaluable} of ${evaluable + unevaluable} runs could be evaluated; treat every figure below as provisional`
+  }
+  if (wouldFireCount === 0) {
+    return 'never fired: the condition was not met on any evaluable run, so precision and recall are undefined'
+  }
+  if (precision !== null && baseRate !== null && precision <= baseRate * 1.05) {
+    return `no better than firing always: precision ${round3(precision)} against an event base rate of ${round3(baseRate)}`
+  }
+  return 'outperformed firing on every run'
+}
+
+/**
+ * The metric context as it stood at the end of a given run.
+ *
+ * Built from records whose ingest timestamp is at or before the run completed,
+ * so a run is not scored against data it could not have seen. Without this the
+ * backtest leaks the future into its own evaluation.
+ */
+function pointInTimeContext(data, run) {
+  const cutoff = Date.parse(run.completed_at)
+  const asOf = (record) => {
+    const stamp = record.first_seen_at || record.created_at || record.observed_at || record.occurred_at
+    const parsed = stamp ? Date.parse(stamp) : Number.NaN
+    return !Number.isFinite(parsed) || parsed <= cutoff
+  }
+  const snapshot = { ...data }
+  for (const [collection, records] of Object.entries(data)) {
+    if (!Array.isArray(records)) continue
+    snapshot[collection] = records.filter(asOf)
+  }
+  return { counts: counts(snapshot), data_quality: snapshot.data_quality }
+}
+
 
 export function evaluateInShadowMode(protocol, context) {
   const value = resolveMetric(context, protocol.metric)

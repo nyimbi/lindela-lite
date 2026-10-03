@@ -378,3 +378,47 @@ function countBy(records, key) {
     return counts
   }, {})
 }
+
+export function counts(data) {
+  // Soft-deleted operational records are retained for history but excluded
+  // from live counts so /api/v1/health and /api/v1/assessments agree with
+  // the operational summary.
+  const live = (collection) => (data[collection] || []).filter((item) => !isDeleted(item)).length
+
+  return {
+    source_runs: data.source_runs.length,
+    ingestion_schedules: data.ingestion_schedules.length,
+    climate_observations: data.climate_observations.length,
+    hazard_events: data.hazard_events.length,
+    conflict_events: data.conflict_events.length,
+    service_assets: data.service_assets.length,
+    impact_assessments: data.impact_assessments.length,
+    risk_scores: data.risk_scores.length,
+    data_quality: data.data_quality.length,
+    population_at_risk: data.population_at_risk?.length || 0,
+    facilities_at_risk: data.facilities_at_risk?.length || 0,
+    data_lineage: data.data_lineage?.length || 0,
+    incidents: live('incidents'),
+    interventions: live('interventions'),
+    intervention_tasks: live('intervention_tasks'),
+    field_reports: live('field_reports'),
+    response_resources: live('response_resources'),
+    action_logs: data.action_logs.length,
+    alert_rules: data.alert_rules.length,
+    alert_events: data.alert_events.length,
+    trigger_protocols: data.trigger_protocols?.length || 0,
+    rapidpro_dispatches: data.rapidpro_dispatches.length,
+    rapidpro_inbound_messages: data.rapidpro_inbound_messages.length,
+    report_templates: data.report_templates.length,
+    reports: data.reports.length,
+    report_distribution_runs: data.report_distribution_runs.length,
+    report_schedules: data.report_schedules.length,
+    report_schedule_runs: data.report_schedule_runs.length,
+    workflow_instances: data.workflow_instances?.length || 0,
+    community_feedback: data.community_feedback?.length || 0,
+    parametric_rules: data.parametric_rules?.length || 0,
+    parametric_disbursements: data.parametric_disbursements?.length || 0,
+    webhook_subscriptions: data.webhook_subscriptions?.length || 0,
+    events_outbox: data.events_outbox?.length || 0,
+  }
+}

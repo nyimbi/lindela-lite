@@ -201,12 +201,40 @@ function pagedList(parent, label, items, render, { page = PAGE } = {}) {
   return det
 }
 
-function buildSvgMap(district, records) {
+/**
+ * A coordinate pair that is present, or null.
+ *
+ * 0 is a coordinate. The equator and the prime meridian both run through this
+ * project's districts, and `p.lat && p.lon` dropped every record sitting on
+ * either from the officer's map without a word. Absence has to be ruled out
+ * explicitly: `Number(null)` and `Number('')` are both 0, so the tidier-looking
+ * `Number.isFinite(Number(x))` reinstates the same defect and puts Null Island
+ * on the map.
+ *
+ * Exported so the map can be built and asserted on in a test rather than
+ * inferred from its source text.
+ */
+export function coordinatePair(lat, lon) {
+  if (lat === null || lat === undefined || lat === '') return null
+  if (lon === null || lon === undefined || lon === '') return null
+  if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) return null
+  return { lat: Number(lat), lon: Number(lon) }
+}
+
+/**
+ * A record's coordinates and the record itself, in either field naming, or null
+ * if it has no usable pair.
+ */
+const recordPoint = (r) => {
+  const pt = coordinatePair(r.latitude ?? r.lat, r.longitude ?? r.lon)
+  return pt ? { ...pt, record: r } : null
+}
+
+export function buildSvgMap(district, records) {
   const W = 320, H = 200, PAD = 24
-  const allPoints = [
-    { lat: district.center.lat, lon: district.center.lon },
-    ...records.map(r => ({ lat: r.latitude ?? r.lat, lon: r.longitude ?? r.lon })).filter(p => p.lat && p.lon),
-  ]
+  const centre = coordinatePair(district.center.lat, district.center.lon)
+  const recordPoints = records.map(recordPoint).filter(Boolean)
+  const allPoints = [...(centre ? [centre] : []), ...recordPoints]
   const lats = allPoints.map(p => p.lat)
   const lons = allPoints.map(p => p.lon)
   const minLat = Math.min(...lats), maxLat = Math.max(...lats)
@@ -220,15 +248,13 @@ function buildSvgMap(district, records) {
     return { x, y }
   }
 
-  const cx = project(district.center.lat, district.center.lon)
+  const cx = centre ? project(centre.lat, centre.lon) : { x: W / 2, y: H / 2 }
   let dots = ''
   let plotted = 0
-  for (const r of records) {
-    const lat = r.latitude ?? r.lat
-    const lon = r.longitude ?? r.lon
-    if (!lat || !lon) continue
+  for (const pt of recordPoints) {
     plotted += 1
-    const p = project(lat, lon)
+    const p = project(pt.lat, pt.lon)
+    const r = pt.record
     // Allowlisted, so a severity from the API cannot reach the style attribute.
     const col = r.severity ? `var(--sev-${sevClass(r.severity)})` : 'var(--brand)'
     dots += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4" fill="${col}" opacity="0.75"/>`
@@ -238,8 +264,14 @@ function buildSvgMap(district, records) {
   // `plotted`, not `records.length`: records with no coordinates are skipped
   // above, and a map labelled "42 recorded locations" over 39 dots is the sort
   // of small overstatement that makes a reader distrust the counts beside it.
+  // The shortfall is named rather than absorbed, so "how many did the map lose"
+  // is answerable from the map itself.
   const noun = plotted === 1 ? 'location' : 'locations'
-  const mapLabel = `Map of ${district.name}: ${plotted} recorded ${noun} plotted, with the district centre marked`
+  const skipped = records.length - plotted
+  const shortfall = skipped > 0
+    ? `; ${skipped} record${skipped === 1 ? '' : 's'} had no usable coordinates and ${skipped === 1 ? 'is' : 'are'} not shown`
+    : ''
+  const mapLabel = `Map of ${district.name}: ${plotted} recorded ${noun} plotted${shortfall}, with the district centre marked`
   return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${esc(mapLabel)}">
     <rect width="${W}" height="${H}" fill="var(--bg)"/>
     <circle cx="${cx.x.toFixed(1)}" cy="${cx.y.toFixed(1)}" r="8" fill="var(--brand)" opacity="0.25"/>

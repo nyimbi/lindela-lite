@@ -663,11 +663,16 @@ async function loadRoadStatus() {
     const body = await fetchJson('/api/v1/road-access')
     if (body?.success) {
       state.roadAccess = body.data || []
-      const cut = body.summary?.impassable || 0
+      // "0 impassable" and "the count did not load" both used to render as
+      // "All N roads passable" — the reassuring half of the sentence, from a
+      // field that was never filled in.
+      const cut = isUndetermined(body.summary?.impassable) ? null : Number(body.summary.impassable)
       if (roadStatusEl && roadOverlayToggle?.checked) {
-        roadStatusEl.textContent = cut
-          ? `${cut} of ${body.summary.total_roads} roads impassable`
-          : `All ${body.summary.total_roads} roads passable`
+        roadStatusEl.textContent = cut === null || !Number.isFinite(cut)
+          ? 'Road passability not published'
+          : cut
+            ? `${cut} of ${body.summary.total_roads} roads impassable`
+            : `All ${body.summary.total_roads} roads passable`
       }
       if (roadOverlayToggle?.checked) reRenderMapFromState()
     }
@@ -788,7 +793,15 @@ async function loadFloodProbabilityModels() {
     if (bestAny) {
       const t = bestAny.model.training
       const skill = bestAny.folds?.folds?.skill_over_base_rate
-      floodProbBestEl.textContent = `${bestAny.region_name}: ${Math.round((t.base_rate || 0) * 100)}% flood-month base rate`
+      // A base rate that was not fitted is not a base rate of zero. `|| 0`
+      // printed "0% flood-month base rate" for a model that published none,
+      // which is the exact conflation this project wrote the rule down about:
+      // an absent forecast is not a 0% chance of rain.
+      const baseRate = isUndetermined(t.base_rate) ? null : Number(t.base_rate)
+      floodProbBestEl.textContent = `${bestAny.region_name}: `
+        + (baseRate === null || !Number.isFinite(baseRate)
+          ? 'flood-month base rate not published'
+          : `${Math.round(baseRate * 100)}% flood-month base rate`)
         + (Number.isFinite(skill) ? `, skill +${Math.round(skill * 100)}% over base rate` : '')
       floodProbBestMetaEl.textContent = `${t.months} months · ${t.flood_months} flood months · trained ${String(bestAny.trained_at).slice(0, 10)}`
     }
@@ -1060,6 +1073,49 @@ function hasUsableBbox(record) {
   return Boolean(box) && [box.west, box.south, box.east, box.north].every(Number.isFinite)
 }
 
+/**
+ * A field the source never supplied a value for.
+ *
+ * `null` and `undefined` mean not determined, and so does the empty string a
+ * form field posts when the operator left it blank. `0` is a value — a score of
+ * 0, a latitude on the equator, a count of nothing yet — and reading it as
+ * absent is the same conflation running in the other direction: a record that
+ * says "zero" being treated as a record that says nothing.
+ */
+export function isUndetermined(value) {
+  return value === null || value === undefined || value === ''
+}
+
+/**
+ * What one filter bar does to one record.
+ *
+ * A filter set to a specific value admits records that carry that value and
+ * nothing else. `sevFilter && r.severity && r.severity !== sevFilter` read the
+ * missing severity as a match for every severity: choose Critical and the map
+ * still showed every record nobody had graded, indistinguishable from the
+ * critical ones. Not-determined is excluded now — and reported, because a
+ * filter that silently drops records is the same lie as one that silently keeps
+ * them, and the operator needs to know the number is a floor and not the whole
+ * picture.
+ *
+ * Exported, and free of DOM and of module state, so the decision can be tested
+ * without a browser. The four fields are the only inputs.
+ */
+export function evaluateMapFilters(record, filters = {}) {
+  const { severity = '', source = '', since = null, coldChainOnly = false } = filters
+  if (severity) {
+    if (isUndetermined(record.severity)) return { shown: false, undetermined: 'severity' }
+    if (record.severity !== severity) return { shown: false, undetermined: null }
+  }
+  if (source) {
+    if (isUndetermined(record.source)) return { shown: false, undetermined: 'source' }
+    if (record.source !== source) return { shown: false, undetermined: null }
+  }
+  if (since && !withinRange(record, since)) return { shown: false, undetermined: null }
+  if (coldChainOnly && !isColdChainAsset(record)) return { shown: false, undetermined: null }
+  return { shown: true, undetermined: null }
+}
+
 // The basemap and the graticule are functions of the frame alone — they never
 // look at a record — yet renderMap rebuilt both on every 30-second refresh,
 // reallocating a few hundred SVG nodes twice a minute to reproduce the picture
@@ -1170,12 +1226,19 @@ function renderMap(records) {
   const since = rangeStart($('mapTimeRange')?.value)
   const coldOnly = $('coldChainToggle')?.checked ? true : state.filters.coldChain
 
+  // The decision itself lives in `evaluateMapFilters`, which is pure and
+  // exported. What is added here is the tally: how many records the filter bar
+  // dropped because the field was never determined, as opposed to dropped
+  // because it held a different value.
+  let undeterminedSeverity = 0
+  let undeterminedSource = 0
   const visible = geo.filter((r) => {
-    if (sevFilter && r.severity && r.severity !== sevFilter) return false
-    if (srcFilter && r.source && r.source !== srcFilter) return false
-    if (since && !withinRange(r, since)) return false
-    if (coldOnly && !isColdChainAsset(r)) return false
-    return true
+    const verdict = evaluateMapFilters(r, {
+      severity: sevFilter, source: srcFilter, since, coldChainOnly: coldOnly,
+    })
+    if (verdict.undetermined === 'severity') undeterminedSeverity += 1
+    if (verdict.undetermined === 'source') undeterminedSource += 1
+    return verdict.shown
   })
 
   renderStaticLayers(bbox)
@@ -1200,9 +1263,17 @@ function renderMap(records) {
   const risks   = visible.filter((r) => Number.isFinite(r.score))
 
   // Risk blobs (radial gradient fills). Score is 0..100; normalize to 0..1.
+  //
+  // `Number(r.score) || 0` reads a score of 0 as an absent score and lands on
+  // the same number by luck. The filter above has already ruled absence out, so
+  // divide the score directly: a real 0 is a real 0 and takes the same path on
+  // purpose rather than by conflation.
   risks.forEach((r) => {
     const { x, y } = project(r.latitude, r.longitude, bbox)
-    const normalized = Math.max(0, Math.min(1, (Number(r.score) || 0) / 100))
+    const normalized = Math.max(0, Math.min(1, r.score / 100))
+    // A score of 0 is a genuine minimum, not a missing value. The blob would
+    // render at zero opacity, so there is nothing to draw — but say so with a
+    // comparison, not with the falsiness of the value standing in for one.
     if (normalized === 0) return
     const gradId = ensureRiskGradient(normalized * 0.45)
     const radius = 18 + normalized * 42
@@ -1276,7 +1347,17 @@ function renderMap(records) {
   renderMapLegend()
 
   const countEl = $('mapRecordCount')
-  if (countEl) countEl.textContent = `${visible.length} record${visible.length === 1 ? '' : 's'}`
+  if (countEl) {
+    const undetermined = []
+    if (undeterminedSeverity) undetermined.push(`${undeterminedSeverity} with no severity`)
+    if (undeterminedSource) undetermined.push(`${undeterminedSource} with no source`)
+    countEl.textContent = `${visible.length} record${visible.length === 1 ? '' : 's'}`
+      + (undetermined.length ? ` — hidden by the filter: ${undetermined.join(', ')}` : '')
+    countEl.title = undetermined.length
+      ? `The filter is set to a specific value. ${undetermined.join(' and ')} did not match it, so `
+        + 'they are not drawn. Choose "All" to see them.'
+      : ''
+  }
 
   // Classify the same way the draw loops above do, so the list says "asset" for
   // exactly the records drawn as squares. Classifying twice with two predicates

@@ -194,19 +194,51 @@ export function responseMetrics(data) {
       result[alertEventId] = {
         alert_event_id: alertEventId,
         dispatched_count: 0,
+        // Distinct responders, not inbound messages. See below.
         response_count: 0,
-        response_rate_pct: 0,
+        response_rate_pct: null,
         first_response_at: null,
         mean_response_seconds: 0,
+        responders: new Set(),
+        dispatchedTo: new Set(),
+        identity_available: true,
+        undispatched_responders: new Set(),
       }
     }
     result[alertEventId].dispatched_count++
+    // A dispatch with no sender identity means there is nothing to match a
+    // reply against; the rate becomes uncomputable rather than a message
+    // count wearing a percentage sign.
+    const recipient = dispatch.from || dispatch.contact_uuid
+    if (recipient) result[alertEventId].dispatchedTo.add(recipient)
+    else result[alertEventId].identity_available = false
   }
 
+  // Inbound messages are not replies. One CHW can answer the same alert twice,
+  // and a RapidPro flow can emit several messages per answer, so counting
+  // messages against dispatches yields a "rate" above 100 — which is how one
+  // dispatch and two messages produced 200%. Deduplicate on the sender and
+  // count distinct people who replied.
   for (const inbound of inbounds) {
     const alertEventId = inbound.alert_event_id
     if (!alertEventId || !result[alertEventId]) continue
-    result[alertEventId].response_count++
+    const responder = inbound.from || inbound.contact_uuid || inbound.contact_name || inbound.id
+    const metrics = result[alertEventId]
+    // Only people we actually alerted count toward the rate. A reply from
+    // someone who was never dispatched to is real and worth reporting, but
+    // counting them in the numerator drove the rate above 100% — a percentage
+    // that has stopped being a percentage.
+    if (metrics.dispatchedTo.has(responder)) {
+      if (!metrics.responders.has(responder)) {
+        metrics.responders.add(responder)
+        metrics.response_count++
+      }
+    } else if (!metrics.identity_available) {
+      // No identities to match on, so count the messages and say so.
+      metrics.response_count++
+    } else {
+      metrics.undispatched_responders.add(responder)
+    }
     if (!result[alertEventId].first_response_at || new Date(inbound.created_at) < new Date(result[alertEventId].first_response_at)) {
       result[alertEventId].first_response_at = inbound.created_at
     }
@@ -214,9 +246,22 @@ export function responseMetrics(data) {
 
   for (const alertEventId in result) {
     const metrics = result[alertEventId]
-    if (metrics.dispatched_count > 0) {
-      metrics.response_rate_pct = Math.round((metrics.response_count / metrics.dispatched_count) * 10000) / 100
+    // A dispatch nobody has answered yet is not a failure and not a success.
+    // `null` says the question is still open; 0 would report silence as a
+    // measured outcome.
+    // null when nobody has answered yet. A dispatch with no reply is an open
+    // question, not a measured 0% — the same conflation the alert model refuses
+    // elsewhere with `false_alert: null`.
+    metrics.response_rate_pct = metrics.response_count > 0 && metrics.identity_available
+      ? Math.round((metrics.response_count / metrics.dispatched_count) * 10000) / 100
+      : null
+    if (!metrics.identity_available) {
+      metrics.response_rate_note = 'dispatches carry no recipient identity, so replies cannot be matched to people; response_count is a count of inbound messages, not a rate'
     }
+    metrics.undispatched_response_count = metrics.undispatched_responders.size
+    delete metrics.responders
+    delete metrics.dispatchedTo
+    delete metrics.undispatched_responders
     if (metrics.response_count > 0 && metrics.first_response_at) {
       const dispatchTimes = dispatches
         .filter((d) => d.alert_event_id === alertEventId)
