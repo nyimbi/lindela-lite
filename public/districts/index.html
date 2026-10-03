@@ -28,6 +28,13 @@
            situation row, which bounds its own map and table, so widening the
            container costs nothing there. */
         max-width: 1440px;
+        /* `body` is a column flex container, and an auto margin on the cross
+           axis cancels the stretch every flex item otherwise gets. That is why
+           `main` was 606px wide at 1280, 1024 and 768 alike: the grid was
+           never given a viewport to fill, only its own content to hug. The
+           margin is still what centres the block at wide widths; `width: 100%`
+           is what gives it a width in the first place. */
+        width: 100%;
         margin-inline: auto;
         display: flex;
         flex-direction: column;
@@ -343,6 +350,10 @@
         color: var(--ink-muted);
       }
       .list-footer .btn { min-height: var(--size-control); }
+      /* `.btn` sets `display: inline-flex`, and an author `display` beats the UA
+         sheet's `[hidden] { display: none }` — so a hidden show-all button
+         stayed on screen after the list was already whole. */
+      .list-footer .btn[hidden] { display: none; }
       .list-footer:has(> .btn[hidden]) { justify-content: flex-start; }
 
       /* SVG map */
