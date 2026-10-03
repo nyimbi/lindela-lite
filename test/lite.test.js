@@ -928,6 +928,29 @@ describe('Lindela Lite analytics', () => {
     assert.equal(stats.count, 5)
   })
 
+  it('reports percentiles of nothing as absent, not as zero', () => {
+    // A spread of 0 says every ensemble member agreed. A mean of 0 says they all
+    // came back zero. An empty array says neither, and five confident zeros is a
+    // claim about a forecast nobody made.
+    for (const empty of [[], null, undefined, 'not an array']) {
+      const stats = computeEnsembleStats(empty)
+      assert.equal(stats.count, 0)
+      for (const key of ['p10', 'p50', 'p90', 'mean', 'stddev']) {
+        assert.equal(stats[key], null, `${key} for ${JSON.stringify(empty)}`)
+      }
+    }
+  })
+
+  it('keeps a real zero in the ensemble as a real value', () => {
+    // The converse: zero rainfall is a measurement, and the mean of an ensemble
+    // whose members all returned zero is genuinely zero.
+    const stats = computeEnsembleStats([0, 0, 0])
+    assert.equal(stats.mean, 0)
+    assert.equal(stats.p50, 0)
+    assert.equal(stats.stddev, 0)
+    assert.equal(stats.count, 3)
+  })
+
   it('computes population at risk for hazards near service assets', () => {
     const dataWithAssets = {
       ...data,
