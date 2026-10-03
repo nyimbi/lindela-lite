@@ -24,13 +24,37 @@ import { elevationAt, elevationWindow, lonLatToTile, tileBounds, loadTile, MAX_Z
  * SRTM-derived tiles). That is meaningful when a water level differs from a
  * road surface by tens of metres, and meaningless at the margin. Every response
  * therefore carries the vertical resolution so a caller can decide.
+ *
+ * Vertical *reference* is a separate matter and was previously unstated. Every
+ * height here is a difference within one datum, and the code holds no geoid or
+ * ellipsoid model: it can name the datum it is working in, and it can take an
+ * offset a caller has derived elsewhere, but it cannot convert between datums.
+ * A depth in metres whose datum is unknown is not comparable to any other
+ * depth in metres, so the datum is an explicit input and appears in every
+ * response. See `verticalReference`.
  */
 
 const DEFAULT_LEVELS_M = [0.5, 1, 2, 3, 5]
 
 // Terrarium tiles carry terrain only. Values at or below this are void
-// (no-data sentinels), not sea-floor depth.
+// (no-data sentinels), not sea-floor depth. depthAtPoint has always refused
+// these; the grid refused nothing, so a coastal cell the dataset does not cover
+// came back as several hundred metres of water.
 const NO_DATA_FLOOR_M = -400
+
+/**
+ * The vertical reference the source tiles are published in.
+ *
+ * AWS terrain-tiles states its Terrarium heights are referenced to mean sea
+ * level. That is the source's statement, not something this code verifies, and
+ * the distinction is load-bearing: nothing here can check it, and nothing here
+ * can produce a number outside it.
+ */
+export const SOURCE_DATUM = 'terrarium_mean_sea_level'
+
+const DATUM_NOTE = 'Heights are differences inside one vertical reference. This code holds no '
+  + 'geoid or ellipsoid model, so it can name the datum it is working in but cannot convert '
+  + 'between datums: a conversion has to arrive as an explicit offset_m from the caller.'
 
 /**
  * Rejects levels that cannot correspond to a real water surface.
@@ -52,6 +76,50 @@ function validateLevel(levelM) {
 }
 
 /**
+ * Resolves the vertical reference a response is expressed in.
+ *
+ * Three cases, and only three:
+ *
+ * - No datum declared, or the source datum declared. Resolved, no shift. The
+ *   default is the source datum, and it is documented as such.
+ * - An offset supplied (with or without a datum name). Resolved; the offset is
+ *   applied to every elevation before any depth is taken, and recorded as
+ *   caller-supplied because that is exactly what it is — an unverifiable
+ *   assertion from outside.
+ * - A foreign datum declared with no offset. NOT resolved, and no number is
+ *   produced. Emitting a source-datum depth labelled with someone else's datum
+ *   is a number with a caveat; this product's policy is the other way round,
+ *   an absent value is not a zero.
+ */
+function verticalReference(datum, offsetM) {
+  const declared = typeof datum === 'string' && datum.trim() !== ''
+  const name = declared ? datum.trim() : SOURCE_DATUM
+  const offset = Number.isFinite(offsetM) ? offsetM : null
+  const base = { datum: name, declared_by: declared ? 'caller' : 'source_default', note: DATUM_NOTE, resolution_m: 15 }
+
+  if (offset !== null) {
+    return { ...base, offset_applied_m: offset, offset_source: 'caller_supplied', resolved: true, reason: null }
+  }
+  if (!declared || name === SOURCE_DATUM) {
+    return { ...base, offset_applied_m: null, offset_source: 'none', resolved: true, reason: null }
+  }
+  return {
+    ...base,
+    offset_applied_m: null,
+    offset_source: 'none',
+    resolved: false,
+    reason: `datum '${name}' is not the source datum ('${SOURCE_DATUM}') and no offset_m was supplied; `
+      + 'no geoid model is available here to derive the shift, so no height is reported in it',
+  }
+}
+
+/** Rounds to centimetres and normalises -0 to 0, so a sea-level cell is 0, not -0. */
+function round2(value) {
+  const rounded = Math.round(value * 100) / 100
+  return rounded === 0 ? 0 : rounded
+}
+
+/**
  * Elevation, but only where the underlying data actually exists.
  */
 async function sampleElevation(lat, lon, options) {
@@ -68,6 +136,7 @@ async function sampleElevation(lat, lon, options) {
  */
 export async function depthAtPoint(lat, lon, levelM, options = {}) {
   if (!Number.isFinite(levelM)) throw new Error('level_m must be a finite number')
+  const vertical = verticalReference(options.datum, options.datum_offset_m)
   const levelCheck = validateLevel(levelM)
   if (!levelCheck.ok) {
     return {
@@ -77,8 +146,10 @@ export async function depthAtPoint(lat, lon, levelM, options = {}) {
       elevation_m: null,
       depth_m: null,
       flooded: null,
+      datum_resolved: vertical.resolved,
       data_available: false,
       reason: levelCheck.reason,
+      vertical_reference: vertical,
     }
   }
   const sample = await sampleElevation(lat, lon, options)
@@ -90,25 +161,47 @@ export async function depthAtPoint(lat, lon, levelM, options = {}) {
       elevation_m: null,
       depth_m: null,
       flooded: null,
+      datum_resolved: vertical.resolved,
       data_available: false,
       reason: sample.error,
+      vertical_reference: vertical,
     }
   }
-  const elevation = sample.value
+  if (!vertical.resolved) {
+    // Terrain exists; the requested datum is the part that does not. The
+    // ground is real and its depth would be real, but only in the source
+    // datum — so it is withheld rather than relabelled.
+    return {
+      lat,
+      lon,
+      level_m: levelM,
+      elevation_m: null,
+      depth_m: null,
+      flooded: null,
+      datum_resolved: false,
+      data_available: true,
+      reason: vertical.reason,
+      vertical_reference: vertical,
+    }
+  }
 
+  // 0 is a legitimate offset and a legitimate elevation: `??` not `||`.
+  const elevation = sample.value + (vertical.offset_applied_m ?? 0)
   const depth = levelM - elevation
   return {
     lat,
     lon,
     level_m: levelM,
-    elevation_m: Math.round(elevation * 100) / 100,
-    depth_m: Math.round(depth * 100) / 100,
+    elevation_m: round2(elevation),
+    depth_m: round2(depth),
     flooded: depth > 0,
     // Depth below which a walking adult or a light vehicle is impeded.
     // Thresholds are conventional rather than site-specific; they are exposed
     // so they can be overridden per deployment.
     passability: depthPassability(depth, options),
+    datum_resolved: true,
     data_available: true,
+    vertical_reference: vertical,
     vertical_resolution_m: 15,
     source: 'AWS terrain-tiles-prod (Terrarium/SRTM)',
   }
@@ -130,7 +223,7 @@ function depthPassability(depth, options = {}) {
  * Returns the grid plus the water level needed to interpret it, so a map can
  * shade cells without re-deriving anything.
  */
-export async function depthGrid({ south, west, north, east, levelM, gridSize = 32, zoom, tileOptions = {} }) {
+export async function depthGrid({ south, west, north, east, levelM, gridSize = 32, zoom, datum, datumOffsetM, tileOptions = {} }) {
   if (![south, west, north, east].every(Number.isFinite)) throw new Error('bounds must be finite numbers')
   if (north <= south || east <= west) throw new Error('bounds must define a non-degenerate box')
   const size = clamp(Math.floor(gridSize), 2, 256)
@@ -167,7 +260,9 @@ export async function depthGrid({ south, west, north, east, levelM, gridSize = 3
     }
   }
 
-  return summarizeGrid({ elevations, size, south, west, north, east, levelM, zoom: targetZoom })
+  return summarizeGrid({
+    elevations, size, south, west, north, east, levelM, zoom: targetZoom, datum, datumOffsetM,
+  })
 }
 
 /** Chooses the coarsest zoom where the box fits inside a small tile footprint. */
@@ -211,28 +306,75 @@ function elevationFromDecodedTile(decoded, tile, zoom, lat, lon) {
 }
 
 /** Turns a raw elevation grid into depths, coverage and a GeoJSON polygon set. */
-function summarizeGrid({ elevations, size, south, west, north, east, levelM, zoom }) {
+function summarizeGrid({ elevations, size, south, west, north, east, levelM, zoom, datum, datumOffsetM }) {
   const levels = Array.isArray(levelM) ? levelM : [levelM]
-  const depth = new Float64Array(size * size)
+  const vertical = verticalReference(datum, datumOffsetM)
+  const offset = vertical.offset_applied_m ?? 0
+
+  // A cell is usable only if the tile held terrain for it. A missing tile is
+  // NaN; a cell at or below NO_DATA_FLOOR_M is the other kind of absent — a
+  // sentinel or sea floor the dataset does not claim to hold. Both are NaN
+  // from here on, so nothing downstream can mistake one for depth. depthGrid
+  // had no such filter, which is how a coastal box reported hundreds of
+  // metres of water over ground it had never measured.
+  const usable = new Float64Array(elevations.length).fill(NaN)
+  let voidCells = 0
+  for (let i = 0; i < elevations.length; i += 1) {
+    const elevation = elevations[i]
+    if (Number.isNaN(elevation)) continue
+    if (elevation <= NO_DATA_FLOOR_M) {
+      voidCells += 1
+      continue
+    }
+    usable[i] = elevation + offset
+  }
+
+  // Refused datum: the geometry is real but the numbers would be in the source
+  // datum, so no depth, no area and no elevation range is stated in it.
+  if (!vertical.resolved) {
+    const blank = new Float64Array(size * size).fill(NaN)
+    return {
+      bounds: { south, west, north, east },
+      size,
+      zoom,
+      level_m: levels[0],
+      levels_m: levels,
+      coverage_pct: null,
+      void_cells: voidCells,
+      elevation_range_m: null,
+      per_level: levels.map((level) => ({ level_m: level, flooded_cells: null, coverage_pct: null, area_sq_km: null })),
+      depth_grid: Array.from(blank, () => null),
+      extent_geojson: { type: 'FeatureCollection', features: [] },
+      datum_resolved: false,
+      reason: vertical.reason,
+      vertical_reference: vertical,
+      vertical_resolution_m: 15,
+      source: 'AWS terrain-tiles-prod (Terrarium/SRTM)',
+      model: 'static water-surface elevation; no flow routing or storage modelled',
+      generated_at: new Date().toISOString(),
+    }
+  }
+
+  const depth = new Float64Array(size * size).fill(NaN)
   let dataCells = 0
   let minElev = Infinity
   let maxElev = -Infinity
 
-  for (let i = 0; i < elevations.length; i += 1) {
-    if (Number.isNaN(elevations[i])) continue
+  for (let i = 0; i < usable.length; i += 1) {
+    if (Number.isNaN(usable[i])) continue
     dataCells += 1
-    if (elevations[i] < minElev) minElev = elevations[i]
-    if (elevations[i] > maxElev) maxElev = elevations[i]
+    if (usable[i] < minElev) minElev = usable[i]
+    if (usable[i] > maxElev) maxElev = usable[i]
   }
 
-  const coveragePct = dataCells ? Math.round((dataCells / elevations.length) * 10000) / 100 : 0
+  const coveragePct = dataCells ? Math.round((dataCells / usable.length) * 10000) / 100 : 0
 
   // Per-level coverage, so a map can offer a depth selector without refetching.
   const perLevel = levels.map((level) => {
     let cells = 0
     let areaSqKm = 0
-    for (let i = 0; i < elevations.length; i += 1) {
-      if (!Number.isNaN(elevations[i]) && level - elevations[i] > 0) {
+    for (let i = 0; i < usable.length; i += 1) {
+      if (!Number.isNaN(usable[i]) && level - usable[i] > 0) {
         cells += 1
         areaSqKm += cellAreaSqKm(south, west, north, east, size)
       }
@@ -246,9 +388,9 @@ function summarizeGrid({ elevations, size, south, west, north, east, levelM, zoo
   })
 
   const primary = levels[0]
-  for (let i = 0; i < elevations.length; i += 1) {
-    if (Number.isNaN(elevations[i])) continue
-    depth[i] = primary - elevations[i]
+  for (let i = 0; i < usable.length; i += 1) {
+    if (Number.isNaN(usable[i])) continue
+    depth[i] = primary - usable[i]
   }
 
   return {
@@ -258,12 +400,17 @@ function summarizeGrid({ elevations, size, south, west, north, east, levelM, zoo
     level_m: primary,
     levels_m: levels,
     coverage_pct: coveragePct,
-    elevation_range_m: dataCells ? { min: Math.round(minElev * 100) / 100, max: Math.round(maxElev * 100) / 100 } : null,
+    void_cells: voidCells,
+    elevation_range_m: dataCells ? { min: round2(minElev), max: round2(maxElev) } : null,
     per_level: perLevel,
-    depth_grid: Array.from(depth, (d) => (Number.isFinite(d) ? Math.round(d * 100) / 100 : null)),
+    // NaN cells serialise as null, not 0. A no-data cell at 0 m of depth reads
+    // as "measured, and dry" — a measurement that was never taken.
+    depth_grid: Array.from(depth, (d) => (Number.isFinite(d) ? round2(d) : null)),
     // Coarse polygons, one per contiguous run per row. Enough to shade a map
     // without shipping 10k points; not a hydrology product.
     extent_geojson: contoursToGeoJson(depth, size, south, west, north, east, 0),
+    datum_resolved: true,
+    vertical_reference: vertical,
     vertical_resolution_m: 15,
     source: 'AWS terrain-tiles-prod (Terrarium/SRTM)',
     model: 'static water-surface elevation; no flow routing or storage modelled',
@@ -348,16 +495,26 @@ export async function terrainContext(lat, lon, options = {}) {
     }
   }
 
+  // Relief is a difference and survives any datum; absolute heights do not.
+  const vertical = verticalReference(options.datum, options.datum_offset_m)
+  const shift = vertical.resolved ? (vertical.offset_applied_m ?? 0) : 0
+  const absolute = (value) => (vertical.resolved ? round2(value + shift) : null)
+
   return {
     available: true,
-    elevation_m: Number.isFinite(centre) ? Math.round(centre * 100) / 100 : null,
-    local_min_m: Math.round(min * 100) / 100,
-    local_max_m: Math.round(max * 100) / 100,
-    local_relief_m: Math.round((max - min) * 100) / 100,
-    local_mean_m: Math.round(mean * 100) / 100,
+    datum_resolved: vertical.resolved,
+    reason: vertical.resolved ? null : vertical.reason,
+    elevation_m: Number.isFinite(centre) ? absolute(centre) : null,
+    local_min_m: absolute(min),
+    local_max_m: absolute(max),
+    local_relief_m: round2(max - min),
+    local_mean_m: absolute(mean),
     surrounding_higher_pct: comparable ? Math.round((higher / comparable) * 100) / 100 : null,
     terrain: terrainLabel(higher / Math.max(comparable, 1), max - min),
     radius_deg: options.radiusDeg ?? 0.02,
+    vertical_reference: vertical,
+    vertical_resolution_m: 15,
+    source: 'AWS terrain-tiles-prod (Terrarium/SRTM)',
     generated_at: new Date().toISOString(),
   }
 }
@@ -378,6 +535,7 @@ export async function depthProfile(lat, lon, options = {}) {
   }
   const onset = profile.find((p) => p.flooded)
   const unavailable = profile.find((p) => p.data_available === false)
+  const unresolved = profile.find((p) => p.datum_resolved === false)
   return {
     lat,
     lon,
@@ -387,10 +545,16 @@ export async function depthProfile(lat, lon, options = {}) {
     data_available: !unavailable || profile.some((p) => p.data_available === true),
     // Distinct from data_available: we have terrain here, and the point is dry
     // at every level asked about. That is a real answer, not a gap.
-    inundated: Boolean(onset),
-    reason: unavailable && profile.every((p) => p.data_available === false)
-      ? unavailable.reason
-      : null,
+    //
+    // When the datum is unresolved this is not a real answer at all — we have
+    // terrain and cannot say what reference it is measured against — so it is
+    // null rather than the false "not inundated" that Boolean(onset) would give.
+    inundated: unresolved ? null : Boolean(onset),
+    datum_resolved: !unresolved,
+    reason: unresolved
+      ? unresolved.reason
+      : (unavailable && profile.every((p) => p.data_available === false) ? unavailable.reason : null),
+    vertical_reference: profile[0]?.vertical_reference ?? null,
     vertical_resolution_m: 15,
     source: 'AWS terrain-tiles-prod (Terrarium/SRTM)',
     generated_at: new Date().toISOString(),
