@@ -20,3 +20,6 @@ artifacts/screens/
 # Agent instructions — local to each contributor's tooling, not product source
 CLAUDE.md
 AGENTS.md
+
+# Operator bootstrap script with environment-specific credentials
+start-claude.sh
