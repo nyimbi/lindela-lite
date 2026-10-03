@@ -293,6 +293,11 @@ export function parseRetryAfter(headerValue, { now = Date.now } = {}) {
     return seconds === 0 ? null : seconds * SECOND
   }
 
+  // Date.parse is a generous parser, not a validator: it reads '-5' as the year
+  // 2000 and '1.2.3' as 3 February. An HTTP-date always carries a month name,
+  // so a letter is the cheapest honest test for "this is meant to be a date".
+  if (!/[a-z]/i.test(raw) || raw.startsWith('-') || raw.startsWith('+')) return null
+
   const at = Date.parse(raw)
   if (Number.isNaN(at)) return null
 
@@ -332,8 +337,20 @@ export function coerceLimit(declared) {
   // that would reject it.
   if (declared.ratePerWindow !== undefined) return pair(declared.ratePerWindow, declared.windowMs)
 
-  for (const key of Object.keys(PER_KEYS)) {
-    if (declared[key] !== undefined) return pair(declared[key], PER_KEYS[key])
+  // The declared key is matched case-insensitively against PER_KEYS rather than
+  // looked up by its own spelling: the connector writes `perMinute` and the
+  // table is keyed lowercase, so an exact lookup silently found nothing and
+  // every `{ perMinute: N }` read as an unreadable declaration.
+  //
+  // A `windowMs` alongside a per-unit key has to agree with it. Silently
+  // dropping one half of a contradictory declaration is how `{ perMinute: 10,
+  // windowMs: 0 }` becomes "10 per minute" and a limiter that looks configured
+  // is running on the wrong window.
+  for (const [key, value] of Object.entries(declared)) {
+    const unit = PER_KEYS[key.toLowerCase()]
+    if (unit === undefined) continue
+    if (declared.windowMs !== undefined && declared.windowMs !== unit) return null
+    return pair(value, unit)
   }
 
   for (const key of ['requests', 'max', 'count']) {
@@ -348,7 +365,7 @@ function fromString(value) {
   if (!match) return null
   const unit = UNITS[match[2].toLowerCase()]
   if (!unit) return null
-  return pair(match[1], unit)
+  return pair(Number(match[1]), unit)
 }
 
 function pair(rate, windowMs) {
@@ -406,13 +423,17 @@ export function createBudget({ totalMs, name = 'unnamed', expectedRequests = 0, 
     remaining,
     /** Reserve one request against the budget. Counts even when it is denied. */
     issue() {
+      // The wait belongs to the request being issued, so it is computed against
+      // the slots that exist *before* this one takes one. Counting first would
+      // hand out a shorter interval for every request and overrun the budget by
+      // the length of the run.
       const left = remainingMs()
+      const waitMs = left > 0 ? remaining() : null
+      issued += 1
       if (left <= 0) {
-        issued += 1
         return { allowed: false, waitMs: null, reason: `${name}: wall-clock budget of ${totalMs}ms exhausted` }
       }
-      issued += 1
-      return { allowed: true, waitMs: remaining(), reason: null }
+      return { allowed: true, waitMs, reason: null }
     },
     issued: () => issued,
     elapsedMs: () => now() - startedAt,

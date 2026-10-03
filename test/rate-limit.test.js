@@ -216,13 +216,18 @@ describe('concurrency cap', () => {
     assert.equal(lim.inFlight(), 2)
     assert.equal(lim.queued(), 2)
 
-    const releases = await Promise.all(pending.slice(0, 2))
+    const [first, second] = await Promise.all(pending.slice(0, 2))
+    first()
     await tick()
-    assert.equal(lim.inFlight(), 2, 'a release admits exactly one waiter')
+    assert.equal(lim.inFlight(), 2, 'a release frees a slot and admits exactly one waiter')
     assert.equal(lim.queued(), 1)
 
-    releases.forEach((release) => release())
-    assert.equal(lim.inFlight(), 0)
+    second()
+    await tick()
+    // Two slots freed, two waiters admitted: the cap holds at 2 rather than
+    // dropping the waiters on the floor or letting a third run alongside.
+    assert.equal(lim.inFlight(), 2)
+    assert.equal(lim.queued(), 0)
   })
 
   it('ignores a double release so the cap cannot drift above its setting', async () => {
@@ -412,12 +417,14 @@ describe('createBudget', () => {
     const guarded = createBudget({ totalMs: 1000, name: 'gdacs_archive', now: clock.now })
     assert.equal(guarded.remaining(), 0, 'no denominator, no pacing — the budget is a guard only')
 
-    const paced = createBudget({ totalMs: 1000, name: 'ipc_hdx', expectedRequests: 2, now: clock.now })
-    assert.equal(paced.remaining(), 500)
+    const paced = createBudget({ totalMs: 1000, name: 'ipc_hdx', expectedRequests: 4, now: clock.now })
+    assert.equal(paced.remaining(), 250)
+    assert.equal(paced.issue().waitMs, 250, 'the first request waits a quarter of the run')
+    assert.equal(paced.remaining(), 333, 'each issue leaves the rest of the run to fewer requests')
     paced.issue()
     paced.issue()
-    assert.equal(paced.issued(), 2)
-    assert.equal(paced.remaining(), 500)
+    paced.issue()
+    assert.equal(paced.issued(), 4)
   })
 
   it('rejects a budget with no positive duration', () => {
