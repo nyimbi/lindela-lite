@@ -484,7 +484,9 @@ preserves them:
 - **The OKLCH discipline is real.** `styles.css` contains 49 `oklch()` literals and **zero** hex/rgb/hsl.
   Every SVG paint attribute in `index.html` uses `currentColor`. The problem is that the values were never
   lifted into tokens, not that the discipline is absent.
-- **64 KB gzipped for the entire console**, with zero third-party runtime dependencies and no CDN or
+- **No third-party runtime dependencies, no CDN and no webfont.** The console's own first load
+  is ~103 KB gzipped, dominated by a 44 KB script; `scripts/check-budget.mjs` measures it and
+  fails the build above 112 KB. For
   webfont. For a product targeting low-bandwidth field use, this is excellent and should be protected as
   a budget.
 - **The CO dashboard is a genuinely good surface** — KPI cards, sparklines, deltas, `data gap` badges that
@@ -963,7 +965,7 @@ and the corrections are recorded here rather than quietly edited away
 | Phase | State | Evidence |
 |---|---|---|
 | 0 — correctness | done | offline boot fixed at the root: the precache is a derived breadth-first closure over the import graph (`shellGraph` in `public/sw.js`), not a hand-kept list, so an added import cannot be forgotten and a missing module is asserted in `test/web-chw-offline.test.js`; `skipWaiting`/`claim`; offline queue routed through `shared/runtime.js`; `refresh()` settles per-panel and names failures; `res.ok` checked via shared `apiFetch`; XSS closed in `co` and `districts`; `escapeHtml` preserves `0`/`false`; four undefined classes defined; checkbox class; `:focus-visible` replaces two `outline: none` |
-| 1 — serving | done | 238 KB → 65 KB over the wire (3.7×); ETag revalidation, per-type `cache-control`, `sw.js` `no-cache`; fifteen static branches collapsed into one `sendFile`; CSP + `nosniff` + `frame-ancestors` + `referrer-policy` + `permissions-policy`; SW API cache bounded and TTL-pruned |
+| 1 — serving | done | 238 KB → 65 KB over the wire (3.7×), measured on the response path; the console's full first load is 103 KB over 16 assets and is now budgeted; ETag revalidation, per-type `cache-control`, `sw.js` `no-cache`; fifteen static branches collapsed into one `sendFile`; CSP + `nosniff` + `frame-ancestors` + `referrer-policy` + `permissions-policy`; SW API cache bounded and TTL-pruned |
 | 2 — one design system | in progress | 7 of 8 surfaces link `tokens.css` + `styles.css` + `components.css`; the console links `styles.css` only (`public/index.html:8`); `shared/fmt.js`, `shared/labels.js` created; `apiFetch`/`apiSettled`/`submitOrQueue` adopted by every surface; duplicated `escapeHtml`, date, number and severity helpers removed (178 LOC); responsive gate enforces the 24px AA target floor |
 | 3 — content design | in progress | `labels.js` names every metric; focal-point card states the comparison and the consequence; scenario workbench opens on five named presets; workflow ribbon leads with a total; CO counts are integers; blockchain IDs truncated; `shared/fmt.js` gives one time format with a zone and one duration format |
 | 4 — accessibility | done | one `<h1>`, `<main>` and skip link on all 8; 38 `<th>` scoped; 0 unlabelled inputs; 0 missing `alt`; severity contrast fixed on two surfaces (was 2.2–4.3:1); `--ink-faint` raised above AA; CHW live regions and focus management; map focusable with keyboard pan/zoom and a textual record list; print stylesheet; focal-point dialog focus + stale-state fix |

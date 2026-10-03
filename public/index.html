@@ -7,6 +7,10 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#0e1520">
     <link rel="stylesheet" href="/styles.css">
+    <!-- The console was the one surface not linking the shared component layer,
+         so every component added to components.css reached seven of eight
+         surfaces and not this one. -->
+    <link rel="stylesheet" href="/components.css">
   </head>
   <body class="app-shell">
     <a class="skip-link" href="#railPanel">Skip to alerts and panels</a>
