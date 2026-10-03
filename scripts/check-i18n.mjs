@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * i18n completeness guard.
+ * i18n completeness and coverage guard.
  *
  * A surface can offer a language it cannot render. The CHW app offered nine
  * languages and had CHW strings for three, so a health worker selecting
@@ -12,31 +12,70 @@
  * and the flow still submits correctly. Only reading the screen shows that a
  * health worker in the field cannot read the app.
  *
- * Two rules:
- *  1. Every key a surface puts in the DOM must exist in every language that
- *     surface offers. A missing key renders as the raw key.
- *  2. A surface may only offer a language whose keys for that surface are
- *     complete. Partial coverage is not localisation.
+ * Three rules, then an honest report of what is still missing:
+ *
+ *  1. Every key a surface puts in the DOM exists in `en.json`. The shared
+ *     runtime resolves a missing key to the key itself (`catalog[key] || key`),
+ *     so a key absent from every catalogue is a key name on a page.
+ *  2. A surface may only offer a locale whose catalogue renders every string
+ *     that surface's markup names. Partial coverage is not localisation, and
+ *     the floor is 100% of the strings the surface actually shows, not 100% of
+ *     the catalogue — a surface that shows six strings is not required to have
+ *     translated the other 221.
+ *  3. Every locale file covers at least `COVERAGE_FLOOR` keys of `en.json`.
+ *     Those numbers are measured, not targets. Coverage ran 17%–92% and nothing
+ *     looked at it, so it fell and stayed fallen; a floor is what makes the next
+ *     deletion of a translated string visible.
+ *
+ * What is deliberately not a failure:
+ *  - A surface with no `data-i18n` at all. Three have none and cannot be wired
+ *    here; they are named in the output instead of being silently counted as
+ *    passing.
+ *  - `KNOWN_UNTRANSLATED`, the short list of strings an offered locale genuinely
+ *    lacks. Named, printed, and counted: an entry that is fixed must be deleted,
+ *    and a *new* missing key fails rather than joining the list by default.
  */
 import fs from 'node:fs'
 import path from 'node:path'
 
 const ROOT = path.join(import.meta.dirname, '..')
+const PUBLIC = path.join(ROOT, 'public')
+const LOCALE_DIR = path.join(PUBLIC, 'i18n')
 
-/** Surfaces that render their own markup and therefore own their own strings. */
-const SURFACES = [
-  {
-    name: 'CHW app',
-    html: 'public/chw/index.html',
-    // Only this surface's own namespace is required; the navbar and footer are
-    // shared and covered by their own surfaces.
-    prefix: 'chw.',
-    optionSelector: 'locale-select',
-  },
-]
+/**
+ * Keys each locale must keep covering, measured 2026-10-03. These may only go
+ * up; lowering one is a deliberate act, not a side effect of a merge.
+ */
+const COVERAGE_FLOOR = {
+  am: 38,
+  ar: 54,
+  din: 57,
+  fr: 38,
+  km: 54,
+  nk: 54,
+  pt: 38,
+  so: 100,
+  sw: 211,
+}
+
+/**
+ * Strings an offered locale is known not to render. Every entry is debt with a
+ * name on it; the count is printed with every run so it cannot quietly grow.
+ */
+const KNOWN_UNTRANSLATED = {
+  chw: { so: ['footer.powered'] },
+}
+
+/** The namespace whose coverage the per-surface table reports. */
+const OWN_NAMESPACE = {
+  chw: 'chw',
+  co: 'co',
+  portal: 'portal',
+  'focal-point': 'focal-point',
+}
 
 function loadLocale(code) {
-  const p = path.join(ROOT, 'public/i18n', `${code}.json`)
+  const p = path.join(LOCALE_DIR, `${code}.json`)
   if (!fs.existsSync(p)) return null
   try {
     return JSON.parse(fs.readFileSync(p, 'utf8'))
@@ -45,73 +84,160 @@ function loadLocale(code) {
   }
 }
 
+function localeFiles() {
+  return fs.readdirSync(LOCALE_DIR)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => f.replace(/\.json$/, ''))
+    .sort()
+}
+
 /** Language codes offered by a surface's own selector. */
-function offeredLocales(html, selectorId) {
+function offeredLocales(html, selectorId = 'locale-select') {
   const select = html.match(new RegExp(`<select[^>]*id="${selectorId}"[^>]*>([\\s\\S]*?)</select>`))
   if (!select) return []
-  return [...select[1].matchAll(/<option\s+value="([a-z]{2,3})"/g)].map((m) => m[1])
+  return [...new Set([...select[1].matchAll(/<option\s+value="([a-z]{2,3})"/g)].map((m) => m[1]))]
 }
 
 /** i18n keys a surface puts into the DOM. */
 function usedKeys(html, prefix) {
   const all = [...html.matchAll(/data-i18n(?:-title)?="([^"]+)"/g)].map((m) => m[1])
-  return [...new Set(all.filter((k) => k.startsWith(prefix)))].sort()
+  return [...new Set(all.filter((k) => prefix ? k.startsWith(prefix) : true))].sort()
+}
+
+/**
+ * Keys a surface's JavaScript asks for by name. Not a rendering failure on their
+ * own — each surface's `t()` carries an English fallback — but a key no
+ * catalogue carries is a string no language can ever translate, so they are
+ * reported.
+ */
+function scriptKeys(dir) {
+  const file = path.join(PUBLIC, dir, 'app.js')
+  if (!fs.existsSync(file)) return []
+  const js = fs.readFileSync(file, 'utf8')
+  return [...new Set([...js.matchAll(/\bt\(\s*'([a-z][a-z0-9_-]*\.[a-z0-9_.]+)'/g)].map((m) => m[1]))].sort()
 }
 
 let failed = false
 const notes = []
 
-for (const surface of SURFACES) {
-  const html = fs.readFileSync(path.join(ROOT, surface.html), 'utf8')
-  const keys = usedKeys(html, surface.prefix)
-  const offered = offeredLocales(html, surface.optionSelector)
+const en = loadLocale('en')
+if (!en) {
+  console.error('✖ public/i18n/en.json does not exist — it is the catalogue every other is measured against')
+  process.exit(1)
+}
+const enKeys = Object.keys(en)
 
-  if (!keys.length) {
-    notes.push(`${surface.name}: no ${surface.prefix} keys found in ${surface.html} — check the markup`)
+/** Every shipped surface, whether or not it has an i18n layer. */
+const surfaces = fs.readdirSync(PUBLIC)
+  .filter((dir) => fs.existsSync(path.join(PUBLIC, dir, 'index.html')))
+  .sort()
+  .map((dir) => {
+    const html = fs.readFileSync(path.join(PUBLIC, dir, 'index.html'), 'utf8')
+    return { dir, html, keys: usedKeys(html), offered: offeredLocales(html), scriptKeys: scriptKeys(dir) }
+  })
+
+// --- Rule 1: a key in the DOM that no catalogue carries ---------------------
+
+for (const surface of surfaces) {
+  const missing = surface.keys.filter((k) => !(k in en))
+  if (missing.length) {
+    console.error(
+      `✖ ${surface.dir}/index.html names ${missing.length} key(s) that public/i18n/en.json does not define:\n`
+      + `    ${missing.join('\n    ')}\n`
+      + '  A key missing from the base catalogue is rendered as the key name itself. Add it to\n'
+      + '  en.json and to every locale this surface offers.',
+    )
+    failed = true
+  }
+  const unsourceable = surface.scriptKeys.filter((k) => !(k in en))
+  if (unsourceable.length) {
+    notes.push(`  ${surface.dir} asks for ${unsourceable.length} key(s) no catalogue defines: ${unsourceable.join(', ')}`)
+  }
+}
+
+// --- Rule 2: a surface may only offer what it can render --------------------
+
+console.log('Offered locales against every string a surface shows:')
+for (const surface of surfaces) {
+  // A surface with no keys is reported once, at the end, under the surfaces
+  // that have no i18n layer. Repeating it here would read as a pass.
+  if (!surface.keys.length) continue
+  if (!surface.offered.length) {
+    notes.push(`  ${surface.dir.padEnd(13)} translates ${surface.keys.length} strings and offers no language`)
     continue
   }
-  if (!offered.length) {
-    notes.push(`${surface.name}: no language selector found (#${surface.optionSelector})`)
-    continue
-  }
-
-  for (const code of offered) {
+  const problems = []
+  for (const code of surface.offered) {
     const locale = loadLocale(code)
     if (!locale) {
-      console.error(`✖ ${surface.name} offers "${code}" but public/i18n/${code}.json does not exist`)
+      console.error(`✖ ${surface.dir} offers "${code}" but public/i18n/${code}.json does not exist`)
+      problems.push(`${code}: no catalogue`)
       failed = true
       continue
     }
-    const missing = keys.filter((k) => !(k in locale))
+    const allowed = new Set(KNOWN_UNTRANSLATED[surface.dir]?.[code] || [])
+    const missing = surface.keys.filter((k) => !(k in locale) && !allowed.has(k))
+    const known = surface.keys.filter((k) => !(k in locale) && allowed.has(k))
+    if (known.length) {
+      notes.push(`  ${surface.dir.padEnd(13)} ${code} still lacks ${known.join(', ')} (known, untranslated)`)
+    }
     if (missing.length) {
       console.error(
-        `✖ ${surface.name} offers "${code}" but ${missing.length} of ${keys.length} strings are missing:\n`
+        `✖ ${surface.dir} offers "${code}" but ${missing.length} of its ${surface.keys.length} strings are missing:\n`
         + `    ${missing.join('\n    ')}\n`
-        + `  A missing key renders as the raw key name in the UI. Either translate these or\n`
-        + `  remove "${code}" from the selector until it is complete.`,
+        + '  A missing key renders as the raw key name in the UI. Either translate these or\n'
+        + '  remove "' + code + '" from the selector until it is complete.',
       )
+      problems.push(`${code}: ${missing.length} missing`)
       failed = true
     }
   }
+  if (!problems.length) console.log(`  ${surface.dir.padEnd(13)} ${surface.offered.join(', ').padEnd(28)} complete`)
+}
+console.log('')
 
-  // Report coverage for every locale file, so an in-progress translation is
-  // visible rather than silently absent.
-  const localeDir = path.join(ROOT, 'public/i18n')
-  for (const file of fs.readdirSync(localeDir).filter((f) => f.endsWith('.json'))) {
-    const code = file.replace(/\.json$/, '')
-    const locale = loadLocale(code)
-    const missing = keys.filter((k) => !(k in locale)).length
-    const status = missing === 0 ? 'complete' : `${missing} missing`
-    notes.push(`  ${code.padEnd(4)} ${String(keys.length - missing).padStart(2)}/${keys.length} ${status}${offered.includes(code) ? ' (offered)' : ' (not offered)'}`)
+// --- Rule 3: coverage may not fall below the measured floor -----------------
+
+console.log(`Catalogue coverage against en.json (${enKeys.length} keys):`)
+for (const code of localeFiles()) {
+  const locale = loadLocale(code)
+  const have = enKeys.filter((k) => k in locale).length
+  const pct = ((have / enKeys.length) * 100).toFixed(1)
+  const floor = COVERAGE_FLOOR[code]
+  const verdict = floor === undefined ? 'base' : have >= floor ? 'ok' : `BELOW FLOOR ${floor}`
+  if (floor !== undefined && have < floor) {
+    console.error(
+      `✖ ${code}.json covers ${have} of ${enKeys.length} keys, below the recorded floor of ${floor}.`
+      + ' A translated string was removed or a locale file was truncated.',
+    )
+    failed = true
   }
+  console.log(`  ${code.padEnd(4)} ${String(have).padStart(3)}/${enKeys.length}  ${String(pct).padStart(5)}%  ${verdict}`)
+}
+console.log('')
+
+// --- The CHW table, unchanged in shape --------------------------------------
+// Kept as its own report because it is the per-namespace view: the offered-
+// locale rule above reads every key the CHW page shows, this reads only chw.*.
+
+const chwHtml = fs.readFileSync(path.join(PUBLIC, 'chw', 'index.html'), 'utf8')
+const chwKeys = usedKeys(chwHtml, 'chw.')
+const chwOffered = offeredLocales(chwHtml)
+
+notes.push(`CHW i18n coverage for CHW strings:`)
+for (const code of localeFiles()) {
+  const locale = loadLocale(code)
+  const missing = chwKeys.filter((k) => !(k in locale)).length
+  const status = missing === 0 ? 'complete' : `${missing} missing`
+  notes.push(`  ${code.padEnd(4)} ${String(chwKeys.length - missing).padStart(2)}/${chwKeys.length} ${status}${chwOffered.includes(code) ? ' (offered)' : ' (not offered)'}`)
 }
 
-if (notes.length) {
-  console.log(`${surfaceLabel()} i18n coverage for CHW strings:`)
-  for (const n of notes) console.log(n)
+const unlayered = surfaces.filter((s) => !s.keys.length).map((s) => s.dir)
+if (unlayered.length) {
+  notes.push(`  surfaces with no i18n layer at all: ${unlayered.join(', ')}`)
 }
 
-function surfaceLabel() { return 'CHW' }
+for (const n of notes) console.log(n)
 
 if (failed) process.exit(1)
 console.log('i18n ok')

@@ -70,6 +70,123 @@ function fill(template, vars) {
   return String(template).replace(/\{(\w+)\}/g, (_, k) => (k in vars ? vars[k] : `{${k}}`))
 }
 
+/**
+ * Every section, and the element that holds its rows.
+ *
+ * `load()` empties both before it fetches. `hidden` was doing two jobs at once —
+ * "not shown" and "not loaded" — and doing neither: nothing hid anything at the
+ * start of a load, so after a quarter change the previous quarter's table stayed
+ * on screen under the new quarter's heading, and the announcement counted it as
+ * loaded because it was not hidden. A reader comparing a KPI tile against the
+ * equity table beneath it was reading two different quarters, and the status
+ * line said everything had loaded.
+ */
+const SECTIONS = [
+  { id: 'kpi-section', body: 'kpi-grid' },
+  { id: 'trend-section', body: 'trend-grid' },
+  { id: 'cohort-section', body: 'cohort-body' },
+  { id: 'equity-section', body: 'equity-body' },
+  { id: 'qoq-section', body: 'qoq-body' },
+  { id: 'histogram-section', body: 'histogram' },
+  { id: 'feedback-section', body: 'feedback-body' },
+]
+
+/** Section ids this load actually painted. */
+let painted = new Set()
+
+function beginLoad() {
+  painted = new Set()
+  for (const { id, body } of SECTIONS) {
+    const el = document.getElementById(id)
+    if (el) el.hidden = true
+    const holder = document.getElementById(body)
+    if (holder) holder.innerHTML = ''
+  }
+}
+
+/** The only way a section becomes visible, so the count cannot drift from it. */
+function show(id) {
+  const el = document.getElementById(id)
+  if (el) el.hidden = false
+  painted.add(id)
+}
+
+/**
+ * What to report, counted from what was painted rather than from what a fetch
+ * returned. A 200 carrying an empty array paints nothing, and a section that
+ * failed to repaint must not be counted against the period on screen.
+ */
+export function loadState(sectionIds, paintedIds) {
+  const done = new Set(paintedIds)
+  const loaded = sectionIds.filter((id) => done.has(id)).length
+  return { loaded, total: sectionIds.length, unpainted: sectionIds.filter((id) => !done.has(id)) }
+}
+
+// ---------------------------------------------------------------
+// The period the charts actually cover
+// ---------------------------------------------------------------
+//
+// /api/v1/kpi/monthly-series has no period parameter: it computes the last N
+// months ending *this month*, for any N. The KPI tiles beside it come from
+// /api/v1/kpi/quarterly?quarter=Q&year=Y. So on any quarter but the current one
+// the trend chart showed months after the quarter in its own heading — a chart
+// of last quarter under this quarter's tiles, which is what the audit recorded.
+// The window is selected here instead: ask the server for enough months to reach
+// back past the selected quarter, then keep only the twelve that end in it.
+
+const TREND_MONTHS = 12
+
+/** Absolute month number for a 'YYYY-MM' string, or null if that is not one. */
+function monthIndex(month) {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(month ?? ''))
+  if (!m) return null
+  return Number(m[1]) * 12 + Number(m[2]) - 1
+}
+
+/** The last month of Q1..Q4, as a 1-12 month number. Null for anything else. */
+export function quarterEndMonth(quarter) {
+  const m = /^Q([1-4])$/.exec(String(quarter ?? ''))
+  return m ? Number(m[1]) * 3 : null
+}
+
+/**
+ * How many trailing months to ask for so the window that *ends* at the selected
+ * quarter is inside the range the server returns. A future quarter needs no
+ * extra; the filter then returns everything the server has.
+ */
+export function monthsBackFor(quarter, year, months = TREND_MONTHS, now = new Date()) {
+  const end = quarterEndMonth(quarter)
+  if (end === null || !Number.isFinite(Number(year))) return months
+  const target = Number(year) * 12 + end - 1
+  const today = now.getUTCFullYear() * 12 + now.getUTCMonth()
+  return months + Math.max(0, today - target)
+}
+
+/** The `months` months ending in the selected quarter, oldest first. */
+export function selectTrendWindow(series, quarter, year, months = TREND_MONTHS) {
+  const end = quarterEndMonth(quarter)
+  if (!Array.isArray(series) || end === null) return []
+  const last = Number(year) * 12 + end - 1
+  const first = last - months + 1
+  return series
+    .filter((s) => s && typeof s.month === 'string')
+    .filter((s) => {
+      const i = monthIndex(s.month)
+      return i !== null && i >= first && i <= last
+    })
+    .sort((a, b) => a.month.localeCompare(b.month))
+}
+
+/**
+ * The range the chart covers, written as it is: two ISO months, no prose, no
+ * language. The heading said "last 12 months" whatever the quarter, which is
+ * the claim the data cannot support once the reader picks a past one.
+ */
+export function windowLabel(series) {
+  if (!series?.length) return ''
+  return `${series[0].month} → ${series[series.length - 1].month}`
+}
+
 function currentQuarter() {
   const m = new Date().getUTCMonth() + 1
   if (m <= 3) return 'Q1'
@@ -155,7 +272,7 @@ function renderKpi(kpi) {
   ]
 
   grid.innerHTML = tiles.map((t) => kpiTileHtml(t.label, t.value, t.unit, t.annotation, t.gap)).join('')
-  document.getElementById('kpi-section').hidden = false
+  show('kpi-section')
 }
 
 function renderCohort(cohort) {
@@ -169,7 +286,7 @@ function renderCohort(cohort) {
     <td class="num-cell">${dash(cohort.pwd)}</td>
     <td class="num-cell">${dash(cohort.refugees_idps)}</td>
   </tr>`
-  document.getElementById('cohort-section').hidden = false
+  show('cohort-section')
 }
 
 function renderEquity(rows) {
@@ -198,7 +315,7 @@ function renderEquity(rows) {
       </tr>`
     }).join('')
   }
-  document.getElementById('equity-section').hidden = false
+  show('equity-section')
 }
 
 const LAG_BUCKETS = [
@@ -265,7 +382,7 @@ function renderHistogram(dispatches) {
     </table>`
   }
 
-  document.getElementById('histogram-section').hidden = false
+  show('histogram-section')
 }
 
 /** One sentence naming where most dispatches landed and how many there were. */
@@ -294,7 +411,7 @@ function renderFeedback(summary) {
       <td class="num-cell">${num(row.action_taken_count, { int: true })}</td>
     </tr>`).join('')
   }
-  document.getElementById('feedback-section').hidden = false
+  show('feedback-section')
 }
 
 /**
@@ -420,6 +537,8 @@ function sparkCard(label, series, field, unit = '') {
 
 function renderTrend(series) {
   const grid = document.getElementById('trend-grid')
+  const caption = document.getElementById('trend-window')
+  if (caption) caption.textContent = windowLabel(series)
   if (!grid || !series || !series.length) return
   grid.innerHTML = [
     sparkCard(t('co.trend_people_reached', 'People reached'), series, 'people_reached', 'people'),
@@ -427,7 +546,7 @@ function renderTrend(series) {
     sparkCard(t('co.trend_false_alert', 'False alert rate'), series, 'false_alert_rate', '%'),
     sparkCard(t('co.trend_cold_chain', 'Cold-chain rate'), series, 'cold_chain_protection_rate', '%'),
   ].join('')
-  document.getElementById('trend-section').hidden = false
+  show('trend-section')
 }
 
 function renderQoQ(series) {
@@ -465,7 +584,7 @@ function renderQoQ(series) {
     ${fmtCell(avg(q.months, 'false_alert_rate'))}
     ${fmtCell(avg(q.months, 'cold_chain_protection_rate'))}
   </tr>`).join('')
-  document.getElementById('qoq-section').hidden = false
+  show('qoq-section')
 }
 
 function updateExportBtn(quarter, year) {
@@ -473,7 +592,7 @@ function updateExportBtn(quarter, year) {
   if (btn) btn.href = `/api/v1/kpi/quarterly.pdf?quarter=${quarter}&year=${year}`
 }
 
-async function load() {
+export async function load() {
   const quarterSel = document.getElementById('quarter-select')
   const yearSel = document.getElementById('year-select')
 
@@ -486,11 +605,15 @@ async function load() {
   const loading = document.getElementById('loading-banner')
   if (loading) loading.hidden = false
 
-  // Counted from the sections, not from the requests: a 200 carrying an empty
-  // array loads a table and an error response does not, and the announcement
-  // is about what a reader can now see.
-  const sections = ['kpi-section', 'cohort-section', 'trend-section', 'qoq-section',
-                    'equity-section', 'histogram-section', 'feedback-section']
+  // Everything on screen belongs to the period being left, not the one being
+  // loaded, so it goes before the first fetch rather than after the first paint.
+  beginLoad()
+
+  // Counted from what the renderers painted, not from what the requests
+  // returned and not from what happens to be visible: a 200 carrying an empty
+  // array paints nothing, an error paints nothing, and a section still showing
+  // the previous quarter is exactly the case that must not be counted.
+  const sections = SECTIONS.map((s) => s.id)
   let failed = 0
 
   try {
@@ -499,7 +622,7 @@ async function load() {
       fetch('/api/v1/equity/by-district'),
       fetch('/api/v1/rapidpro/dispatches'),
       fetch('/api/v1/community-feedback/summary'),
-      fetch('/api/v1/kpi/monthly-series'),
+      fetch(`/api/v1/kpi/monthly-series?monthsBack=${monthsBackFor(q, y)}`),
     ])
 
     if (kpiRes.ok) {
@@ -537,9 +660,14 @@ async function load() {
 
     if (trendRes.ok) {
       const { data: series } = await trendRes.json()
-      if (series && series.length) {
-        renderTrend(series)
-        renderQoQ(series)
+      // The series is trailing-to-now whatever quarter is selected; the charts
+      // belong to the selected quarter, so the window is cut here.
+      const win = selectTrendWindow(series, q, y)
+      if (win.length) {
+        renderTrend(win)
+        renderQoQ(win)
+      } else {
+        renderTrend([])
       }
     } else {
       failed += 2
@@ -552,18 +680,20 @@ async function load() {
     if (loading) loading.hidden = true
   }
 
-  const loaded = sections.filter((id) => !document.getElementById(id)?.hidden).length
+  const { loaded, unpainted } = loadState(sections, [...painted])
   if (loaded === 0) {
     announce(
       fill(t('co.status_failed', 'Could not load the dashboard for {period}.'), { period }),
       { errorText: fill(t('co.error_body', 'None of the quarterly figures could be loaded. Reload the page to try again.'), { period }) },
     )
-  } else if (failed > 0) {
+  } else if (failed > 0 || unpainted.length) {
+    // {failed} counts sections, not requests: the kpi response paints two of
+    // them, and a request that failed but painted anyway has nothing missing.
     announce(
       fill(t('co.status_partial', 'Loaded {loaded} of {total} sections for {period}; {failed} could not be loaded.'),
-        { loaded: String(loaded), total: String(sections.length), period, failed: String(failed) }),
+        { loaded: String(loaded), total: String(sections.length), period, failed: String(unpainted.length) }),
       { errorText: fill(t('co.error_partial', '{failed} of {total} sections could not be loaded. The figures shown are the ones that did load.'),
-        { failed: String(failed), total: String(sections.length) }) },
+        { failed: String(unpainted.length), total: String(sections.length) }) },
     )
   } else {
     announce(fill(t('co.status_loaded', 'Loaded {loaded} sections for {period}.'),

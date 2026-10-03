@@ -65,6 +65,15 @@
         letter-spacing: 0.03em;
       }
 
+      /* The period a chart covers. Two ISO months, no prose: the range is the
+         claim, and it is the same in every language. */
+      .chart-window {
+        font-size: 0.7rem;
+        color: var(--ink-muted);
+        font-variant-numeric: tabular-nums;
+        margin: -0.5rem 0 0.75rem;
+      }
+
       /* KPI grid */
       .kpi-grid {
         display: grid;
@@ -252,7 +261,11 @@
       <div id="loading-banner">Loading...</div>
 
       <section id="trend-section" hidden>
-        <h2 data-i18n="co.trend_title">Trend (last 12 months)</h2>
+        <h2 data-i18n="co.trend_title">Trend</h2>
+        <!-- The trend window is chosen by the reader in the header, so the
+             heading cannot say which twelve months it is. app.js writes the
+             range here from the months actually plotted. -->
+        <p class="chart-window" id="trend-window"></p>
         <div class="kpi-grid" id="trend-grid"></div>
       </section>
 

@@ -129,7 +129,7 @@
   "co.trend_cold_chain": "Cold-chain rate",
   "co.trend_false_alert": "False alert rate",
   "co.trend_people_reached": "People reached",
-  "co.trend_title": "Trend (last 12 months)",
+  "co.trend_title": "Trend",
   "co.trend_warning_to_action": "Signal-to-dispatch",
   "dispatch.cancel": "Cancel",
   "dispatch.confirm": "Approve and send",
