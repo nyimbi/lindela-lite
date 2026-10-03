@@ -437,8 +437,11 @@
     </header>
 
     <main id="main" tabindex="-1">
-      <div class="pending-queue">
+      <div class="pending-queue" id="pendingQueue" tabindex="-1">
         <h2 data-i18n="focal-point.pending">Pending review</h2>
+        <!-- Approving a trigger is the highest-consequence action in this
+             product and its outcome reached no assistive technology. -->
+        <p class="visually-hidden" id="decisionOutcome" role="status" aria-live="polite"></p>
         <div id="pendingList"></div>
       </div>
 
@@ -459,20 +462,20 @@
     </footer>
 
     <!-- Approval/Rejection Dialog -->
-    <dialog id="decisionDialog" aria-labelledby="decisionTitle">
+    <dialog id="decisionDialog" aria-labelledby="decisionTitle" aria-describedby="decisionReasonLabel">
       <div class="dialog-header">
-        <h2 id="decisionTitle"></h2>
+        <h2 id="decisionTitle">Confirm decision</h2>
         <button class="dialog-close" type="button" aria-label="Close">×</button>
       </div>
       <div class="dialog-body">
         <div class="form-group">
-          <label for="reasonSelect" data-i18n="focal-point.reason">Reason</label>
+          <label for="reasonSelect" id="decisionReasonLabel" data-i18n="focal-point.reason">Reason</label>
           <select id="reasonSelect" required></select>
         </div>
       </div>
       <div class="dialog-actions">
         <button class="btn-cancel" id="dialogCancelBtn" type="button" data-i18n="action.cancel">Cancel</button>
-        <button id="dialogConfirmBtn" type="button" style="background: var(--focal-point-approve-bg, #10b981); color: white;"></button>
+        <button id="dialogConfirmBtn" type="button" class="btn btn-primary">Confirm</button>
       </div>
     </dialog>
 

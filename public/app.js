@@ -34,6 +34,9 @@ const state = {
   _paletteItems: [],
   _paletteIndex: 0,
   _dispatchGateAlert: null,
+  // A source restored from the URL before /api/v1/sources has populated the
+  // filter; consumed by the next populateMapSourceFilter.
+  _restoredSource: null,
   // Flood simulation and road status overlays. floodAreaKey records which
   // district the current grid covers; the overlays survive map re-renders and
   // are redrawn from here.
@@ -1454,8 +1457,8 @@ function toggleMapRecordList(force) {
 $('mapListToggle')?.addEventListener('click', () => toggleMapRecordList())
 
 // Map filter triggers re-render
-$('mapSeverity')?.addEventListener('change', reRenderMapFromState)
-$('mapSource')?.addEventListener('change', reRenderMapFromState)
+$('mapSeverity')?.addEventListener('change', () => { syncFiltersToUrl(); reRenderMapFromState() })
+$('mapSource')?.addEventListener('change', () => { syncFiltersToUrl(); reRenderMapFromState() })
 
 // Flood simulation and road overlay controls
 floodSimulateBtn?.addEventListener('click', loadFloodSimulation)
@@ -1659,10 +1662,14 @@ async function refresh() {
 function populateMapSourceFilter(sources) {
   const sel = $('mapSource')
   if (!sel) return
-  const current = sel.value
+  const restored = state._restoredSource
+  state._restoredSource = null
+  const current = restored || sel.value
   sel.innerHTML = `<option value="">All</option>` +
     sources.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join('')
-  if (current) sel.value = current
+  // A source that no longer exists leaves the filter on All rather than on a
+  // value the select cannot represent, which would silently match everything.
+  if (current && [...sel.options].some((o) => o.value === current)) sel.value = current
 }
 
 // =============================================================
@@ -1742,7 +1749,15 @@ function renderWorkflowsTab(byType, totals = {}) {
   const selectType = (card) => {
     state.workflowTypeFilter = card.dataset.type
     grid.querySelectorAll('.workflow-metric').forEach((c) => c.classList.toggle('active', c === card))
+    syncFiltersToUrl()
     setStatus(`Filtering alerts by ${card.dataset.type.replace(/_/g, ' ')}.`)
+  }
+
+  // A type restored from the URL has to read as selected once the tiles are
+  // rebuilt, or the persisted filter looks like it did nothing at all.
+  if (state.workflowTypeFilter) {
+    grid.querySelectorAll('.workflow-metric')
+      .forEach((c) => c.classList.toggle('active', c.dataset.type === state.workflowTypeFilter))
   }
 
   grid.querySelectorAll('.workflow-metric').forEach((card) => {
@@ -1874,14 +1889,22 @@ function openDispatchGateDialog(alert) {
   state._dispatchGateAlert = alert
   $('dispatchGateSeverity').textContent = escapeHtml(alert.severity || '—')
   $('dispatchGateRule').textContent = escapeHtml(alert.rule_name || alert.metric || '—')
+  rememberDialogOpener(dialog)
   dialog.showModal()
 }
 
 function closeDispatchGateDialog() {
-  const dialog = $('dispatchGateDialog')
-  if (dialog) dialog.close()
-  state._dispatchGateAlert = null
+  $('dispatchGateDialog')?.close()
 }
+
+// The held alert is cleared on `close`, not on the cancel button. Dismissing the
+// gate with Esc left a high-severity alert in state, and the next confirm — the
+// button is re-enabled the moment the dialog goes away — dispatched whatever
+// the operator had abandoned ten minutes earlier.
+$('dispatchGateDialog')?.addEventListener('close', () => {
+  state._dispatchGateAlert = null
+  restoreDialogFocus($('dispatchGateDialog'))
+})
 
 // =============================================================
 // Tabs
@@ -1892,6 +1915,11 @@ function switchTab(name) {
     const active = btn.dataset.tab === name
     btn.classList.toggle('active', active)
     btn.setAttribute('aria-selected', String(active))
+    // Roving tabindex. The markup declares role="tablist"/"tab" and
+    // aria-selected, which promises one stop for the whole group and arrow-key
+    // movement; without it Tab walked five buttons to reach one panel and the
+    // arrows did nothing, so the declared pattern was decoration.
+    btn.tabIndex = active ? 0 : -1
   })
   document.querySelectorAll('.rail-panel').forEach((panel) => {
     const active = panel.id === `panel-${name}`
@@ -1909,6 +1937,105 @@ function switchTab(name) {
 document.querySelectorAll('.rail-tab').forEach((btn) => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab))
 })
+
+// The active tab is the only one reachable by Tab, set here because the boot
+// path never calls switchTab — the markup's `active` class is the initial state.
+document.querySelectorAll('.rail-tab').forEach((btn) => {
+  btn.tabIndex = btn.classList.contains('active') ? 0 : -1
+})
+
+const railTablist = document.querySelector('.rail-tabs')
+railTablist?.addEventListener('keydown', (e) => {
+  const tabs = [...railTablist.querySelectorAll('.rail-tab')]
+  const from = tabs.indexOf(document.activeElement)
+  if (from < 0) return
+  let to = null
+  if (e.key === 'ArrowRight')       to = (from + 1) % tabs.length
+  else if (e.key === 'ArrowLeft')   to = (from - 1 + tabs.length) % tabs.length
+  else if (e.key === 'Home')        to = 0
+  else if (e.key === 'End')         to = tabs.length - 1
+  else return
+  // Selection follows focus: this console has no deferred-activation case —
+  // every panel's render is one fetch or one innerHTML — and a tab that looks
+  // focused but does nothing is the same trap the role attributes caused.
+  e.preventDefault()
+  switchTab(tabs[to].dataset.tab)
+  tabs[to].focus()
+})
+
+// =============================================================
+// URL filter state
+// =============================================================
+/**
+ * Filters in the query string.
+ *
+ * JTBD-089: an operator who narrowed the map to one severity and one source
+ * lost the whole view to an accidental reload, because every filter lived only
+ * in memory and the console redrew from defaults. The query string is the one
+ * form of console state that survives a reload, can be pasted to a colleague and
+ * can be linked from an incident note.
+ *
+ * Only non-default values are written, so a shared link carries what the
+ * operator chose and nothing else, and an absent parameter always means the
+ * default the markup ships with.
+ */
+const FILTER_DEFAULTS = { sev: '', source: '', range: '7d', cold: '', alerts: 'all', workflow: '' }
+
+const FILTER_READERS = {
+  sev:      () => $('mapSeverity')?.value || '',
+  source:   () => $('mapSource')?.value || '',
+  range:    () => $('mapTimeRange')?.value || '',
+  cold:     () => ($('coldChainToggle')?.checked ? '1' : ''),
+  alerts:   () => state.alertFilter,
+  workflow: () => state.workflowTypeFilter || '',
+}
+
+function syncFiltersToUrl() {
+  const params = new URLSearchParams(window.location.search)
+  for (const [key, read] of Object.entries(FILTER_READERS)) {
+    const value = read()
+    if (value && value !== FILTER_DEFAULTS[key]) params.set(key, value)
+    else params.delete(key)
+  }
+  const query = params.toString()
+  // replaceState, not pushState: a filter change should not bury the operator's
+  // back button under a stack of identical console states, and the 30-second
+  // refresh rewriting the URL must never add one.
+  history.replaceState(null, '', query ? `${location.pathname}?${query}` : location.pathname)
+}
+
+/** Apply a restored value only if the control still offers it. */
+function applyFilterValue(id, value) {
+  const el = $(id)
+  if (!el || !value) return false
+  if (![...el.options].some((o) => o.value === value)) return false
+  el.value = value
+  return true
+}
+
+function syncAlertFilterChips() {
+  document.querySelectorAll('#alertFilterChips .chip').forEach((chip) => {
+    chip.classList.toggle('active', chip.dataset.filter === state.alertFilter)
+  })
+}
+
+function restoreFiltersFromUrl() {
+  const params = new URLSearchParams(window.location.search)
+  applyFilterValue('mapSeverity', params.get('sev'))
+  applyFilterValue('mapTimeRange', params.get('range'))
+  // The source list arrives from /api/v1/sources and is empty until it does, so
+  // a restored source has nowhere to land yet. Hand it forward rather than
+  // dropping it, and let populateMapSourceFilter discard it if the feed is gone.
+  const source = params.get('source')
+  if (source) state._restoredSource = source
+
+  if (params.get('cold') === '1' && $('coldChainToggle')) $('coldChainToggle').checked = true
+  state.filters.coldChain = Boolean($('coldChainToggle')?.checked)
+
+  state.alertFilter = params.get('alerts') || 'all'
+  state.workflowTypeFilter = params.get('workflow') || null
+  syncAlertFilterChips()
+}
 
 // =============================================================
 // Alerts panel
@@ -1980,7 +2107,8 @@ $('alertFilterChips')?.addEventListener('click', (e) => {
   const chip = e.target.closest('.chip')
   if (!chip) return
   state.alertFilter = chip.dataset.filter
-  document.querySelectorAll('#alertFilterChips .chip').forEach((c) => c.classList.toggle('active', c === chip))
+  syncAlertFilterChips()
+  syncFiltersToUrl()
   renderAlertsPanel()
 })
 
@@ -2447,6 +2575,36 @@ const detailDialog  = $('detailDialog')
 const detailTitleEl = $('detailTitle')
 const detailBodyEl  = $('detailBody')
 
+/**
+ * Where the keyboard was before a modal dialog took it.
+ *
+ * A dialog restores focus to whatever had it when it closed, but most dialogs
+ * here are opened by clicking an SVG marker: a <circle> is not focusable, so
+ * activeElement is <body> and focus falls back to the top of the document. The
+ * operator closes the detail and has to Tab through the whole header again to
+ * get back to the map. Remember the opener and put it back, or land on the rail
+ * rather than nowhere.
+ */
+const _dialogOpeners = new WeakMap()
+
+function rememberDialogOpener(dialog) {
+  const active = document.activeElement
+  _dialogOpeners.set(dialog, active === document.body ? null : active)
+}
+
+function restoreDialogFocus(dialog) {
+  const opener = _dialogOpeners.get(dialog)
+  _dialogOpeners.delete(dialog)
+  // tabIndex >= 0, not just isConnected: the opener may be a live button that
+  // the 30-second refresh has already replaced, or an element the console
+  // marked unfocusable. Focusing either is a no-op that still loses the place.
+  if (opener && opener.isConnected && opener.tabIndex >= 0) {
+    opener.focus()
+    return
+  }
+  $('railPanel')?.focus()
+}
+
 function openDetailDialog(record) {
   if (!detailDialog) return
   const label = record.title || record.name || record.event_type || record.id || 'Detail'
@@ -2455,12 +2613,17 @@ function openDetailDialog(record) {
   detailBodyEl.innerHTML = `<dl>${entries.map(([k, v]) =>
     `<dt>${escapeHtml(k.replaceAll('_', ' '))}</dt><dd>${escapeHtml(String(v ?? ''))}</dd>`
   ).join('')}</dl>`
+  rememberDialogOpener(detailDialog)
   detailDialog.showModal()
 }
 
 detailDialog?.addEventListener('click', (e) => {
   if (e.target === detailDialog) detailDialog.close()
 })
+
+// `close` rather than a click handler: Esc, the backdrop and the close button
+// all end the dialog, and only the event fires for every one of them.
+detailDialog?.addEventListener('close', () => restoreDialogFocus(detailDialog))
 
 document.querySelectorAll('.dialog-close').forEach((btn) => {
   btn.addEventListener('click', () => btn.closest('dialog')?.close())
@@ -2517,7 +2680,7 @@ function renderPaletteResults(query) {
   state._paletteIndex = 0
 
   paletteResults.innerHTML = items.map((item, i) => `
-    <li class="palette-result${i === 0 ? ' selected' : ''}"
+    <li class="palette-result${i === 0 ? ' selected' : ''}" id="paletteOption${i}"
         data-index="${i}" role="option" aria-selected="${i === 0}">
       <span class="palette-result-icon">${escapeHtml(item.icon)}</span>
       <span class="palette-result-label">${escapeHtml(item.label)}</span>
@@ -2531,18 +2694,56 @@ function renderPaletteResults(query) {
       items[i]?.action?.()
     })
   })
+
+  syncPaletteSelection()
+}
+
+/**
+ * Point the selection at the active option.
+ *
+ * The arrow keys move a class on an <li>, and DOM focus never leaves the input,
+ * so without aria-activedescendant a screen reader announced an unchanged search
+ * box while the user arrowed through it. And because the highlight moved without
+ * the scroll moving, anything past the fold was selected and invisible — the list
+ * looked stuck at the top no matter how far down the operator had gone.
+ */
+function syncPaletteSelection() {
+  const options = [...paletteResults.querySelectorAll('.palette-result')]
+  if (!options.length) {
+    paletteInput?.removeAttribute('aria-activedescendant')
+    paletteResults.removeAttribute('aria-activedescendant')
+    return
+  }
+  const index = Math.min(state._paletteIndex, options.length - 1)
+  state._paletteIndex = index
+  options.forEach((li, i) => {
+    const selected = i === index
+    li.classList.toggle('selected', selected)
+    li.setAttribute('aria-selected', String(selected))
+  })
+  const activeId = options[index].id
+  paletteInput?.setAttribute('aria-activedescendant', activeId)
+  paletteResults.setAttribute('aria-activedescendant', activeId)
+  options[index].scrollIntoView({ block: 'nearest' })
 }
 
 paletteInput?.addEventListener('input', debounce((e) => renderPaletteResults(e.target.value), 100))
 
 paletteInput?.addEventListener('keydown', (e) => {
-  const items = paletteResults.querySelectorAll('.palette-result')
+  const count = paletteResults.querySelectorAll('.palette-result').length
+  if (!count) return
   if (e.key === 'ArrowDown') {
     e.preventDefault()
-    state._paletteIndex = Math.min(state._paletteIndex + 1, items.length - 1)
+    state._paletteIndex = Math.min(state._paletteIndex + 1, count - 1)
   } else if (e.key === 'ArrowUp') {
     e.preventDefault()
     state._paletteIndex = Math.max(state._paletteIndex - 1, 0)
+  } else if (e.key === 'Home') {
+    e.preventDefault()
+    state._paletteIndex = 0
+  } else if (e.key === 'End') {
+    e.preventDefault()
+    state._paletteIndex = count - 1
   } else if (e.key === 'Enter') {
     e.preventDefault()
     cmdPalette.close()
@@ -2551,11 +2752,7 @@ paletteInput?.addEventListener('keydown', (e) => {
   } else {
     return
   }
-  items.forEach((li, i) => {
-    const selected = i === state._paletteIndex
-    li.classList.toggle('selected', selected)
-    li.setAttribute('aria-selected', String(selected))
-  })
+  syncPaletteSelection()
 })
 
 cmdPalette?.addEventListener('click', (e) => {
@@ -2578,9 +2775,13 @@ document.addEventListener('keydown', (e) => {
     return
   }
 
+  // Native Esc already closes a modal dialog, and this second handler closed it
+  // again on the same keypress — so which of the two close listeners ran first
+  // decided whether the dialog's own teardown (clearing held state, restoring
+  // focus) saw an open or an already-closed element. Only a dialog opened with
+  // show() rather than showModal() still needs us.
   if (e.key === 'Escape') {
-    document.querySelectorAll('dialog[open]').forEach((dlg) => dlg.close())
-    return
+    document.querySelectorAll('dialog[open]:not(:modal)').forEach((dlg) => dlg.close())
   }
 
   if (inInput) return
@@ -2654,6 +2855,7 @@ if (dialogClose) dialogClose.addEventListener('click', closeDispatchGateDialog)
 // =============================================================
 $('coldChainToggle')?.addEventListener('change', (e) => {
   state.filters.coldChain = e.target.checked
+  syncFiltersToUrl()
   reRenderMapFromState()
 })
 
@@ -2755,6 +2957,7 @@ setInterval(refresh, 30_000)
 // =============================================================
 await loadLocale(state.locale)
 await loadSources()
+restoreFiltersFromUrl()
 await refresh()
 // The build version shown in the Settings panel comes from the health
 // endpoint, which reads package.json, rather than from a literal in the markup

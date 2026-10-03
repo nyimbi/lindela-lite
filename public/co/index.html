@@ -8,21 +8,12 @@
     <meta name="theme-color" content="#0e1520">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/components.css">
+    <!-- Page-specific rules only. The reset, the body box, the buttons, the
+         table frame and .visually-hidden all come from /styles.css and
+         /components.css, which this page already links; the block below used to
+         re-declare them, which is how two surfaces ended up with two spellings
+         of danger red and one with the reset applied twice. -->
     <style>
-      @import '/tokens.css';
-
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      html { font-size: 16px; }
-      body {
-        font-family: system-ui, -apple-system, sans-serif;
-        background: var(--bg);
-        color: var(--ink);
-        line-height: 1.5;
-        min-height: 100vh;
-        display: flex;
-        flex-direction: column;
-      }
-
       header {
         background: var(--bg-elevated);
         border-bottom: 1px solid var(--stroke);
@@ -53,25 +44,17 @@
         flex-wrap: wrap;
       }
 
-      select {
-        background: var(--bg);
-        color: var(--ink);
-        border: 1px solid var(--stroke);
-        border-radius: 4px;
-        padding: 0.25rem 0.5rem;
-        font-size: 0.875rem;
-        cursor: pointer;
-      }
+      /* styles.css already gives every select its box; only the pointer cue is
+         missing, and a donor using a mouse should not have to guess. */
+      select { cursor: pointer; }
 
       main {
-        flex: 1;
-        padding: 1.25rem;
-        display: flex;
-        flex-direction: column;
-        gap: 1.5rem;
         max-width: 1200px;
         width: 100%;
         margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
       }
 
       section h2 {
@@ -150,34 +133,8 @@
         line-height: 1.6;
       }
 
-      /* Tables */
-      .table-wrap {
-        overflow-x: auto;
-      }
-
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.85rem;
-      }
-
-      th {
-        text-align: left;
-        padding: 0.4rem 0.6rem;
-        font-size: 0.75rem;
-        font-weight: 600;
-        color: var(--ink-muted);
-        border-bottom: 1px solid var(--stroke);
-      }
-
-      td {
-        padding: 0.4rem 0.6rem;
-        border-bottom: 1px solid var(--stroke);
-        vertical-align: middle;
-      }
-
-      tr:last-child td { border-bottom: none; }
-
+      /* Table cells, padding and header styling are components.css's job, scoped
+         to .table-wrap. Only the breach treatment is this surface's own. */
       .breach-row td { color: var(--danger); }
 
       .chip-breach {
@@ -228,31 +185,6 @@
         color: var(--ink-muted);
       }
 
-      /* Buttons */
-      .btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.4rem;
-        padding: 0.4rem 0.875rem;
-        background: var(--bg-elevated);
-        color: var(--ink);
-        border: 1px solid var(--stroke);
-        border-radius: 4px;
-        font-size: 0.85rem;
-        cursor: pointer;
-        text-decoration: none;
-      }
-
-      .btn:hover { background: var(--stroke); }
-
-      .btn-primary {
-        background: var(--brand);
-        color: #fff;
-        border-color: transparent;
-      }
-
-      .btn-primary:hover { opacity: 0.9; }
-
       /* Footer */
       footer {
         padding: 0.75rem 1.25rem;
@@ -274,6 +206,15 @@
         text-align: center;
         color: var(--ink-muted);
         font-size: 0.875rem;
+      }
+
+      /* A table inside .visually-hidden is still laid out at its min-content
+         width — the wrapper is 1px, the cells are not — so it registers as
+         horizontal overflow on a 360px screen even though nothing is visible.
+         A fixed layout is the only table algorithm that honours the 1px. */
+      .data-alt {
+        table-layout: fixed;
+        width: 100%;
       }
     </style>
   </head>
@@ -309,6 +250,13 @@
     </header>
 
     <main id="main" tabindex="-1">
+      <!-- Changing the quarter or year replaces six tables and two charts in
+           place. Nothing in that exchange is announced, so a screen reader user
+           hears the same page twice; and a failed fetch wrote to console.error
+           alone, leaving stale numbers on screen with no hint they were stale. -->
+      <p id="load-status" class="visually-hidden" role="status" aria-live="polite"></p>
+      <div id="load-error" class="error-panel" role="alert" hidden></div>
+
       <div id="loading-banner">Loading...</div>
 
       <section id="trend-section" hidden>
@@ -322,9 +270,10 @@
       </section>
 
       <section id="cohort-section" hidden>
-        <h2>Cohort</h2>
+        <h2 data-i18n="co.cohort_title">Cohort</h2>
         <div class="table-wrap">
           <table class="cohort-table" id="cohort-table">
+            <caption class="visually-hidden" data-i18n="co.caption_cohort">Cohort breakdown for the selected quarter</caption>
             <thead>
               <tr>
                 <th scope="col" data-i18n="co.cohort_total">Total</th>
@@ -343,13 +292,17 @@
         <h2 data-i18n="co.equity_title">Equity by District</h2>
         <div class="table-wrap">
           <table id="equity-table">
+            <caption class="visually-hidden" data-i18n="co.caption_equity">Dispatch and acknowledgement by district</caption>
             <thead>
               <tr>
                 <th scope="col" data-i18n="equity.district_column">District</th>
                 <th scope="col" data-i18n="equity.dispatched">Dispatched</th>
                 <th scope="col" data-i18n="equity.acknowledged">Acknowledged</th>
-                <th scope="col">Accuracy %</th>
-                <th scope="col"></th>
+                <th scope="col" data-i18n="co.equity_accuracy">Accuracy %</th>
+                <!-- This column carried no name at all, so it announced as an
+                     empty cell and the "breach detected" chip below it had no
+                     header to belong to. -->
+                <th scope="col" data-i18n="co.equity_breach_header">Breach</th>
               </tr>
             </thead>
             <tbody id="equity-body" class="equity-row"></tbody>
@@ -361,6 +314,7 @@
         <h2 data-i18n="co.qoq_title">Quarter-over-quarter</h2>
         <div class="table-wrap">
           <table id="qoq-table">
+            <caption class="visually-hidden" data-i18n="co.caption_qoq">Quarter-over-quarter summary</caption>
             <thead>
               <tr>
                 <th scope="col" data-i18n="co.qoq_quarter">Quarter</th>
@@ -377,17 +331,26 @@
 
       <section id="histogram-section" hidden>
         <h2 data-i18n="co.signal_histogram">Signal-to-Action Lag</h2>
-        <div class="histogram" id="histogram" aria-label="Dispatch lag histogram"></div>
+        <!-- role="img" is what makes the aria-label the alternative to the bars
+             rather than a caption floating beside them; the bars themselves are
+             then presentational. The real alternative — every bucket and its
+             count — is the table app.js writes into #histogram-data. -->
+        <div class="histogram" id="histogram" role="img" aria-label="Dispatch lag histogram"></div>
+        <div class="visually-hidden" id="histogram-data"></div>
       </section>
 
       <section id="feedback-section" hidden>
         <h2 data-i18n="co.feedback_title">Community Feedback</h2>
         <div class="table-wrap">
           <table id="feedback-table">
+            <caption class="visually-hidden" data-i18n="co.caption_feedback">Community feedback by alert</caption>
             <thead>
               <tr>
-                <th scope="col">Alert</th>
-                <th scope="col">Count</th>
+                <!-- These two carried no data-i18n while their siblings did, so a
+                     Swahili reader got an English header above four Kiswahili
+                     ones — which reads as a translation fault in the data. -->
+                <th scope="col" data-i18n="co.feedback_alert">Alert</th>
+                <th scope="col" data-i18n="co.feedback_count">Count</th>
                 <th scope="col" data-i18n="feedback.positive">Positive</th>
                 <th scope="col" data-i18n="feedback.negative">Negative</th>
                 <th scope="col" data-i18n="feedback.unclear">Unclear</th>

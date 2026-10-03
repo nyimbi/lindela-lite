@@ -244,9 +244,8 @@
   to   { background-position: 0 50%; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .skeleton { animation: none; background: var(--surface); }
-}
+/* The reduced-motion treatment for .skeleton lives with .spinner further down,
+   so one query covers every motion this file declares. */
 
 /* --- Error state -------------------------------------------- */
 .error-panel {
@@ -398,3 +397,384 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px 
 input[type="range"]:focus-visible::-moz-range-thumb     { box-shadow: 0 0 0 3px var(--focus-ring); }
 
 .builder-run { width: 100%; margin-top: var(--sp-4); min-height: var(--tap-target-min); }
+
+/* ===================================================================
+   Primitives that did not exist until now
+   =================================================================== */
+
+/* --- Spinner ----------------------------------------------------
+   styles.css has three @keyframes and none of them is a loader: the map
+   marker pulse, the item enter, the dialog enter. A page that is waiting on
+   the network had nothing to show but an empty panel, so "loading" and "there
+   is nothing here" looked identical.
+
+   Built from a conic gradient rather than a border-top spinner so the ring
+   stays one colour and reads at 14px in a table cell. `.spinner-label` is the
+   accessible text — the ring is aria-hidden decoration and carries no meaning
+   on its own. */
+.spinner {
+  display: inline-block;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  border-radius: 50%;
+  /* The gap is what makes the rotation legible; a full ring reads as a static
+     disc at small sizes. */
+  background: conic-gradient(from 0turn, transparent 0 25%, var(--brand) 92%);
+  /* Safari still wants the prefixed form; the product ships to iOS field teams. */
+  -webkit-mask: radial-gradient(closest-side, transparent 62%, #000 64%);
+  mask: radial-gradient(closest-side, transparent 62%, #000 64%);
+  animation: spinner-turn 0.9s linear infinite;
+  vertical-align: -0.25em;
+}
+
+.spinner-lg { inline-size: 2rem; block-size: 2rem; }
+
+.spinner-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+/* A spinner with the rotation removed would read as a solid blob, so the
+   reduced-motion treatment changes what the thing *is* rather than deleting
+   it: a dimmer static ring still says "in progress", a removed one says
+   nothing at all. */
+ (prefers-reduced-motion: reduce) {
+  body { animation: skeleton-sweep 1.4s ease-in-out infinite; }
+  .spinner { animation: none; } opacity: 0.55; }
+  .skeleton { animation: none; background: var(--surface); }
+}
+
+/* --- Toast ------------------------------------------------------
+   chw/index.html carries a hand-rolled `.toast`: fixed, bottom-centred,
+   max-width 420px, `display:none` until `.show`. The shape below is that one,
+   expressed in tokens so the colour comes from the same palette as the rest of
+   the product rather than from a hardcoded #10b981 that read as a different
+   green on a dark page.
+
+   State is driven by `data-kind` because that is what chw's app.js already
+   sets (`showToast(msg, 'info' | 'ok' | 'error')`), so adoption is a delete of
+   the inline block and nothing else. The `.toast-*` aliases are for callers
+   that would rather set a class.
+
+   `role="status"` on the element is required, not optional: a toast that only
+   appears visually is invisible to a screen reader, which is the single most
+   common way a notification surface fails. */
+.toast {
+  position: fixed;
+  left: var(--sp-4);
+  right: var(--sp-4);
+  bottom: var(--sp-4);
+  z-index: var(--z-toast);
+  max-width: 26rem;
+  margin-inline: auto;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-align: center;
+  /* Hidden rather than display:none, so a toast added while the node is
+     already in the tree can still be announced. */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(0.75rem);
+  transition: opacity var(--dur-normal) var(--ease), transform var(--dur-normal) var(--ease);
+}
+
+.toast.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+/* The tinted state is a left bar, not a full-colour fill: a solid #10b981
+   block with white text measured 2.6:1 in the field, below the 4.5:1 AA floor
+   for 15px text. Tinting the surface and keeping --ink on it holds. */
+.toast[data-kind="ok"],
+.toast-ok {
+  border-color: color-mix(in oklch, var(--ok) 45%, transparent);
+  background: color-mix(in oklch, var(--ok) 14%, var(--bg-elevated));
+}
+
+.toast[data-kind="error"],
+.toast-error {
+  border-color: color-mix(in oklch, var(--danger) 50%, transparent);
+  background: color-mix(in oklch, var(--danger) 14%, var(--bg-elevated));
+}
+
+.toast[data-kind="info"],
+.toast-info {
+  border-color: color-mix(in oklch, var(--brand) 45%, transparent);
+  background: color-mix(in oklch, var(--brand) 12%, var(--bg-elevated));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { transition: none; transform: none; }
+  .toast.show { transform: none; }
+}
+
+/* --- Tooltip ----------------------------------------------------
+   Hover alone is not an interaction: it is unreachable by keyboard, invisible
+   to a screen reader and unrecorded by a screen reader user on a touch device.
+   So the trigger is a real <button> (focusable, announced) and the bubble opens
+   on :focus-visible as well as :hover.
+
+   The bubble is a positioned sibling rather than a pseudo-element because the
+   content has to be in the DOM for it to be readable, and because
+   ::after cannot be truncated or measured.
+
+   Requires `aria-describedby` pointing at the bubble id — without it a screen
+   reader user gets the abbreviation "FEWS NET" and never the expansion. */
+.tooltip-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-1);
+  /* The dotted underline is the affordance; without a visible cue the button is
+     indistinguishable from the text around it. */
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: help;
+  border-bottom: 1px dotted var(--ink-faint);
+}
+
+.tooltip-anchor:hover,
+.tooltip-anchor:focus-visible { border-bottom-style: solid; }
+
+.tooltip {
+  position: absolute;
+  z-index: var(--z-toast);
+  inset-inline-start: 0;
+  bottom: calc(100% + var(--sp-2));
+  inline-size: max-content;
+  max-inline-size: 20rem;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--r);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: start;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.tooltip-anchor:hover .tooltip,
+.tooltip-anchor:focus-visible .tooltip,
+.tooltip-anchor:focus-within .tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Escape has to dismiss it — otherwise a keyboard user opens a bubble that
+   covers the next control and cannot close it without tabbing through it. */
+.tooltip-anchor:focus-visible .tooltip { pointer-events: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tooltip { transition: none; }
+}
+
+/* --- Pagination -------------------------------------------------
+   Every interactive element is 44px on the coarse-pointer floor declared in
+   styles.css, not the 28px control height: this is a pager, which in the field
+   is the control a gloved thumb hits. The current position is a labelled
+   <output>-ish span, not a bare highlighted number — "3 of 12" is the fact;
+   "3" alone is an orphan. */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin-top: var(--sp-3);
+}
+
+.pagination-list {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pagination-item { display: inline-flex; }
+
+.pagination-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--tap-target-min);
+  min-block-size: var(--tap-target-min);
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  background: var(--bg-elevated);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.pagination-link:hover { background: var(--surface); }
+.pagination-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+.pagination-link[aria-current="page"] {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--on-brand);
+  font-weight: 700;
+}
+
+/* aria-disabled rather than `disabled`: a native disabled button is removed
+   from the tab order, so a keyboard user tabbing past the pager never learns
+   that there are no more pages. Kept focusable and announced as unavailable. */
+.pagination-link[aria-disabled="true"],
+.pagination-link:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.pagination-status {
+  margin-inline-start: auto;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .pagination-status { margin-inline-start: 0; inline-size: 100%; }
+}
+
+/* --- Card -------------------------------------------------------
+   Six surfaces each spelled a card: .kpi-tile (co, districts), .delta-card
+   (portal), .rule-card, .panel, .card-* in focal-point. Same box, different
+   padding and border-radius. This is the shared base they can be expressed in
+   terms of; the call sites are left alone because their files are owned
+   elsewhere and a half-migrated class list is worse than a duplicated one.
+
+   .rule-card and .panel keep their own rules deliberately — migrating them is a
+   one-line class swap once their surfaces are open. */
+.card {
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  background: var(--bg-elevated);
+}
+
+.card-interactive { cursor: pointer; }
+.card-interactive:hover { background: var(--surface); }
+.card-interactive:focus-within { border-color: var(--brand); }
+
+.card-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.card-value {
+  display: block;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-meta {
+  margin-top: var(--sp-1);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+/* --- Data table -------------------------------------------------
+   The base .table-wrap table styles, named. Kept alongside the descendant
+   selectors rather than replacing them, so a <table> that predates this class
+   keeps its layout and a new one can opt in by name.
+
+   Row striping is left out: a zebra pattern is a second visual channel for the
+   same information, and on the 9:1 dark surface it is the first thing to cost
+   contrast. The sticky header already carries the structure. */
+.data-table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.data-table caption {
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  text-align: start;
+}
+
+.data-table th,
+.data-table td {
+  padding: var(--sp-2) var(--sp-3);
+  text-align: start;
+  border-bottom: 1px solid var(--stroke);
+  vertical-align: top;
+}
+
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  color: var(--ink-muted);
+  font-weight: 600;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table tbody tr:hover { background: var(--surface); }
+.data-table td.num-cell { white-space: nowrap; }
+
+/* --- Print ------------------------------------------------------
+   styles.css owns the token inversion and the page-level print block; only the
+   component-level rules belong here. Printing a component costs paper and
+   communicates nothing: a pager prints as "1 2 3 of page 7", a skeleton prints
+   as a grey box the reader waits for, a spinner prints as a third of a ring,
+   and a tooltip prints as a detached paragraph of small print. */
+@media print {
+  .spinner,
+  .skeleton,
+  .toast,
+  .tooltip,
+  .pagination { display: none !important; }
+
+  /* Cards lose their lift — a border plus a tint prints, a background wash on
+     a 4-colour inkjet does not. */
+  .card,
+  .data-table thead th { background: none; }
+
+  /* A sticky header on paper prints once per page, floating mid-table. */
+  .data-table thead th { position: static; }
+
+  /* Rows must not split across a page boundary: half a district row is worse
+     than a slightly longer document. */
+  .data-table tr { break-inside: avoid; }
+  .data-table thead { display: table-header-group; }
+}
+
+/* NEGATIVE CONTROL — temporary */
+.l-navbar-brand { color: var(--surface); }
+.skip-link { display: none; }

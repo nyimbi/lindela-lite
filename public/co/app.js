@@ -6,7 +6,8 @@
 // one. District names, alert event ids and quarter labels were interpolated
 // into innerHTML raw. The helpers now come from the shared module.
 
-import { esc, formatTimestamp, num, pct } from '/shared/fmt.js'
+import { esc, formatTimestamp, num, pct, truncate } from '/shared/fmt.js'
+import { metricLabel } from '/shared/labels.js'
 
 let currentLocale = 'en'
 let i18n = {}
@@ -31,6 +32,35 @@ function applyI18n() {
     const key = el.dataset.i18n
     if (i18n[key]) el.textContent = i18n[key]
   })
+}
+
+/**
+ * What to say, and how loudly, about the last load.
+ *
+ * A quarter change swaps six tables and two charts without moving the reading
+ * position, so the only evidence a screen reader has that anything happened is
+ * if we say so. Failures went to console.error and left the previous quarter's
+ * figures standing with nothing marking them as stale — which is the failure
+ * mode this codebase is most careful about elsewhere, so it should not be the
+ * one place a stale number is shown silently.
+ *
+ * One polite region, and a visible panel that is an alert rather than a status,
+ * because a missing table is not something to wait for.
+ */
+function announce(statusText, { errorText } = {}) {
+  const status = document.getElementById('load-status')
+  if (status) status.textContent = statusText
+  const panel = document.getElementById('load-error')
+  if (!panel) return
+  panel.hidden = !errorText
+  if (errorText) {
+    panel.innerHTML = `<strong>${esc(t('co.error_heading', 'This dashboard did not load'))}</strong>` +
+      `<p>${esc(errorText)}</p>`
+  }
+}
+
+function fill(template, vars) {
+  return String(template).replace(/\{(\w+)\}/g, (_, k) => (k in vars ? vars[k] : `{${k}}`))
 }
 
 function currentQuarter() {
@@ -167,6 +197,16 @@ const LAG_BUCKETS = [
   { label: '48h+', max: Infinity },
 ]
 
+/**
+ * The histogram as a sentence, and as the numbers behind it.
+ *
+ * The bars were a labelled empty div: aria-label on a div with no role
+ * announces the label and nothing else, so the chart was five coloured
+ * rectangles with no values. role="img" makes the summary the alternative and
+ * the bars presentational; the table carries the full distribution, because a
+ * donor asking "how many went past 24 hours" is asking for one bucket, not for
+ * the shape.
+ */
 function renderHistogram(dispatches) {
   const container = document.getElementById('histogram')
   if (!container) return
@@ -193,7 +233,38 @@ function renderHistogram(dispatches) {
     </div>`
   }).join('')
 
+  const total = counts.reduce((a, b) => a + b, 0)
+  container.setAttribute('aria-label', histogramSummary(counts, total))
+
+  const data = document.getElementById('histogram-data')
+  if (data) {
+    data.innerHTML = `<table class="data-alt">
+      <caption>${esc(t('co.histogram_table_caption', 'Dispatches by signal-to-dispatch lag'))}</caption>
+      <thead>
+        <tr>
+          <th scope="col">${esc(t('co.lag_bucket', 'Lag'))}</th>
+          <th scope="col">${esc(t('co.dispatches', 'Dispatches'))}</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${LAG_BUCKETS.map((b, i) => `<tr><th scope="row">${esc(b.label)}</th><td>${counts[i]}</td></tr>`).join('')}
+        <tr><th scope="row">${esc(t('co.total', 'Total'))}</th><td>${total}</td></tr>
+      </tbody>
+    </table>`
+  }
+
   document.getElementById('histogram-section').hidden = false
+}
+
+/** One sentence naming where most dispatches landed and how many there were. */
+function histogramSummary(counts, total) {
+  if (!total) return t('co.histogram_empty', 'No dispatches recorded for this period')
+  const peak = counts.indexOf(Math.max(...counts))
+  const sentence = fill(t('co.histogram_summary', 'Most dispatches were sent within {bucket}; {total} dispatches in total.'), {
+    bucket: LAG_BUCKETS[peak].label,
+    total: String(total),
+  })
+  return truncate(sentence, { max: 200 })
 }
 
 function renderFeedback(summary) {
@@ -227,7 +298,7 @@ function renderFeedback(summary) {
  * month shows as a single dot rather than being stretched into a trend line it
  * does not support.
  */
-function buildSparkline(values, w = 200, h = 40, pad = 4) {
+function buildSparkline(values, label, w = 200, h = 40, pad = 4) {
   if (!values || values.length < 2) return ''
   const indexed = values
     .map((v, i) => ({ v, i }))
@@ -249,10 +320,66 @@ function buildSparkline(values, w = 200, h = 40, pad = 4) {
   const line = indexed.length > 1
     ? `<polyline points="${pts}" fill="none" stroke="var(--brand)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>`
     : ''
-  return `<svg class="spark-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+  return `<svg class="spark-svg" role="img" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-label="${esc(label)}">` +
     line +
     `<circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3" fill="var(--accent,#4a9eff)"/>` +
     `</svg>`
+}
+
+/**
+ * A value the way the tile prints it.
+ *
+ * The sentence, the table and the tile have to agree: if the table rounds where
+ * the tile does not, a reader comparing them concludes one of them is lying.
+ */
+function fmtPoint(v) {
+  if (v === null || v === undefined) return '—'
+  if (typeof v !== 'number') return String(v)
+  return v.toFixed(v % 1 === 0 ? 0 : 1)
+}
+
+/**
+ * The sparkline said in words, and the twelve months behind it.
+ *
+ * The delta on the card is a glyph and a hue — neither of which survives a
+ * screen reader — and neither says what it rose from. The sentence names the
+ * direction and the two endpoints; the table carries every month, so "the
+ * twelve months behind the arrow" are actually available rather than inferred.
+ *
+ * Months with no value are counted, not drawn and not quietly dropped: a rise
+ * measured over four months and the same rise over twelve are different claims.
+ */
+function sparkA11y(label, series, field, values) {
+  const determined = values.filter((v) => v !== null && v !== undefined)
+  const first = determined[0]
+  const last = determined[determined.length - 1]
+  const months = t('co.months', '{n} months').replace('{n}', String(values.length))
+
+  if (determined.length < 2) {
+    return fill(t('co.spark_single', '{label}, {months}: {value} recorded in {n} month(s); not enough data for a trend'), {
+      label, months, value: fmtPoint(first), n: String(determined.length),
+    })
+  }
+  const dir = last > first ? t('co.spark_rising', 'rising') : last < first ? t('co.spark_falling', 'falling') : t('co.spark_flat', 'unchanged')
+  return fill(t('co.spark_summary', '{label}, {months}: {dir} from {first} to {last}, {n} months with a value'), {
+    label, months, dir, first: fmtPoint(first), last: fmtPoint(last), n: String(determined.length),
+  })
+}
+
+/** The series behind one sparkline, as a table a screen reader can walk. */
+function sparkSeriesTable(label, series, field) {
+  const head = `<thead><tr><th scope="col">${esc(t('co.month', 'Month'))}</th>` +
+    `<th scope="col">${esc(metricLabel(field))}</th></tr></thead>`
+  const rows = [...series].reverse().map((s) => {
+    const v = s[field]
+    const cell = v === null || v === undefined ? t('co.no_value', 'not recorded') : fmtPoint(v)
+    return `<tr><th scope="row">${esc(s.month || '—')}</th><td>${esc(cell)}</td></tr>`
+  }).join('')
+  return `<div class="visually-hidden"><table class="data-alt">
+    <caption>${esc(fill(t('co.spark_caption', '{label} by month'), { label }))}</caption>
+    ${head}
+    <tbody>${rows}</tbody>
+  </table></div>`
 }
 
 function sparkCard(label, series, field, unit = '') {
@@ -269,14 +396,13 @@ function sparkCard(label, series, field, unit = '') {
       deltaHtml = `<span class="spark-delta ${cls}">${arrow} ${sign}${pct.toFixed(1)}% vs prev month</span>`
     }
   }
-  const displayVal = latest !== null && latest !== undefined
-    ? (typeof latest === 'number' ? latest.toFixed(latest % 1 === 0 ? 0 : 1) : latest)
-    : '—'
+  const displayVal = fmtPoint(latest)
   return `<div class="spark-tile">
     <span class="spark-label">${label}</span>
     <span class="spark-value">${displayVal}<span style="font-size:0.8rem;font-weight:400;color:var(--ink-muted)">${unit ? ' ' + unit : ''}</span></span>
     ${deltaHtml}
-    ${buildSparkline(values)}
+    ${buildSparkline(values, truncate(sparkA11y(label, series, field, values), { max: 300 }))}
+    ${sparkSeriesTable(label, series, field)}
   </div>`
 }
 
@@ -344,8 +470,16 @@ async function load() {
 
   updateExportBtn(q, y)
 
+  const period = `${y} ${q}`
   const loading = document.getElementById('loading-banner')
   if (loading) loading.hidden = false
+
+  // Counted from the sections, not from the requests: a 200 carrying an empty
+  // array loads a table and an error response does not, and the announcement
+  // is about what a reader can now see.
+  const sections = ['kpi-section', 'cohort-section', 'trend-section', 'qoq-section',
+                    'equity-section', 'histogram-section', 'feedback-section']
+  let failed = 0
 
   try {
     const [kpiRes, equityRes, dispatchRes, feedbackRes, trendRes] = await Promise.all([
@@ -364,21 +498,29 @@ async function load() {
       if (sigEl) sigEl.textContent = `signed ${formatTimestamp(kpi.generated_at)}`
       const genEl = document.getElementById('gen-time')
       if (genEl) genEl.textContent = kpi.generated_at || ''
+    } else {
+      failed += 2
     }
 
     if (equityRes.ok) {
       const { data: equity } = await equityRes.json()
       renderEquity(equity || [])
+    } else {
+      failed += 1
     }
 
     if (dispatchRes.ok) {
       const { data: dispatches } = await dispatchRes.json()
       renderHistogram(dispatches || [])
+    } else {
+      failed += 1
     }
 
     if (feedbackRes.ok) {
       const { data: summary } = await feedbackRes.json()
       renderFeedback(summary || [])
+    } else {
+      failed += 1
     }
 
     if (trendRes.ok) {
@@ -387,11 +529,33 @@ async function load() {
         renderTrend(series)
         renderQoQ(series)
       }
+    } else {
+      failed += 2
     }
   } catch (err) {
+    // One rejected fetch rejects the whole Promise.all, so nothing rendered.
     console.error('CO dashboard load error:', err)
+    failed = sections.length
   } finally {
     if (loading) loading.hidden = true
+  }
+
+  const loaded = sections.filter((id) => !document.getElementById(id)?.hidden).length
+  if (loaded === 0) {
+    announce(
+      fill(t('co.status_failed', 'Could not load the dashboard for {period}.'), { period }),
+      { errorText: fill(t('co.error_body', 'None of the quarterly figures could be loaded. Reload the page to try again.'), { period }) },
+    )
+  } else if (failed > 0) {
+    announce(
+      fill(t('co.status_partial', 'Loaded {loaded} of {total} sections for {period}; {failed} could not be loaded.'),
+        { loaded: String(loaded), total: String(sections.length), period, failed: String(failed) }),
+      { errorText: fill(t('co.error_partial', '{failed} of {total} sections could not be loaded. The figures shown are the ones that did load.'),
+        { failed: String(failed), total: String(sections.length) }) },
+    )
+  } else {
+    announce(fill(t('co.status_loaded', 'Loaded {loaded} sections for {period}.'),
+      { loaded: String(loaded), period }))
   }
 }
 

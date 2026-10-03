@@ -187,12 +187,20 @@ async function renderProtocols(protocols) {
     return
   }
 
-  const filtered = protocols.filter((p) => p.mode === 'live' || p.mode !== 'shadow')
+  // This was `p.mode === 'live' || p.mode !== 'shadow'`, which is true for
+  // every protocol including undefined — a filter that answered no question and
+  // looked like it did. Shadow protocols are pre-authorised drafts that have
+  // not been activated; showing them beside live ones invites approving one by
+  // mistake, so they are labelled rather than silently mixed in.
+  const filtered = protocols
   protocolsList.innerHTML = filtered.map((p) => `
     <div class="protocol-item">
       <div>
-        <div class="protocol-name">${escapeHtml(p.name)}</div>
-        <div class="protocol-expiry">${p.metric} >= ${p.threshold}</div>
+        <div class="protocol-name">
+          ${escapeHtml(p.name)}
+          ${p.mode === 'shadow' ? '<span class="chip chip-neutral">shadow — not yet active</span>' : ''}
+        </div>
+        <div class="protocol-expiry">${escapeHtml(metricLabel(p.metric))} ≥ ${escapeHtml(String(p.threshold ?? '—'))}</div>
       </div>
     </div>
   `).join('')
@@ -237,13 +245,39 @@ function openDecisionDialog(mode) {
   dialogConfirmBtn.textContent = mode === 'approve' ? 'Approve' : 'Reject'
   dialogConfirmBtn.style.background = mode === 'approve' ? 'var(--focal-point-approve-bg, #10b981)' : 'var(--focal-point-reject-bg, #ef4444)'
 
+  // The trigger is re-rendered when the list reloads, so focus is captured here
+  // and restored on close only if it is still in the document.
+  state.dialogReturnFocus = document.activeElement
   decisionDialog.showModal()
 }
 
-dialogCancelBtn.addEventListener('click', () => {
-  decisionDialog.close()
+decisionDialog.addEventListener('close', () => {
+  const back = state.dialogReturnFocus
+  state.dialogReturnFocus = null
+  if (back && document.contains(back) && typeof back.focus === 'function') {
+    back.focus({ preventScroll: true })
+  } else {
+    // The card this decision came from is gone after a reload. Land somewhere
+    // real rather than letting focus fall to <body>.
+    $('pendingQueue')?.focus?.({ preventScroll: true })
+  }
+})
+
+/**
+ * Clear the pending decision when the dialog goes away by any route.
+ *
+ * Esc and a backdrop click close a native <dialog> without running the cancel
+ * button's handler, so `currentWorkflowId` and `currentDialogMode` survived a
+ * dismissal and the next confirm acted on a workflow the operator had already
+ * walked away from.
+ */
+decisionDialog.addEventListener('close', () => {
   state.currentWorkflowId = null
   state.currentDialogMode = null
+})
+
+dialogCancelBtn.addEventListener('click', () => {
+  decisionDialog.close()
 })
 
 decisionDialog.querySelector('.dialog-close').addEventListener('click', () => {
@@ -255,8 +289,15 @@ decisionDialog.querySelector('.dialog-close').addEventListener('click', () => {
 dialogConfirmBtn.addEventListener('click', async () => {
   if (!state.currentWorkflowId || !state.currentDialogMode) return
 
+  // The trigger is disabled while the transition is in flight so a second click
+  // cannot dispatch the same decision twice. Approving releases finance.
+  dialogConfirmBtn.disabled = true
+  const mode = state.currentDialogMode
+  const district = pendingList?.querySelector(`[data-workflow-id="${CSS.escape(state.currentWorkflowId)}"]`)
+    ?.closest('.workflow-card')?.querySelector('.detail-row .detail-value')?.textContent?.trim()
+
   try {
-    const nextState = state.currentDialogMode === 'approve' ? 'approved' : 'rejected'
+    const nextState = mode === 'approve' ? 'approved' : 'rejected'
     await apiFetch(`/api/v1/workflows/${state.currentWorkflowId}/transition`, {
       method: 'POST',
       body: {
@@ -268,11 +309,30 @@ dialogConfirmBtn.addEventListener('click', async () => {
     decisionDialog.close()
     state.currentWorkflowId = null
     state.currentDialogMode = null
+    // Say what happened and to whom, in a region that is announced. The status
+    // line is visual-only, so a screen-reader user got confirmation of nothing.
+    announceDecision(
+      mode === 'approve'
+        ? `Approved. Pre-agreed finance is released for ${district || 'the district'}.`
+        : `Rejected. No finance is released for ${district || 'the district'}.`
+    )
     await loadData()
   } catch (error) {
+    announceDecision(`Could not record the decision: ${error.message}. Nothing was changed.`)
     statusText.textContent = `Error: ${error.message}`
+  } finally {
+    dialogConfirmBtn.disabled = false
   }
 })
+
+/** Announce a decision outcome to assistive technology. */
+function announceDecision(message) {
+  const el = $('decisionOutcome')
+  if (!el) return
+  // Re-setting identical text does not re-announce; clear first.
+  el.textContent = ''
+  requestAnimationFrame(() => { el.textContent = message })
+}
 
 // escapeHtml now comes from /shared/fmt.js. It was a fourth copy of the
 // same function; this one used `||`, which dropped a legitimate 0 or false.
