@@ -263,8 +263,8 @@ export function scoreConnector({ outcomes = [] } = {}) {
     ? null
     : round(
         CIRCUIT_SCORE_WEIGHTS.success_rate * success_rate * 100
-        + CIRCUIT_SCORE_WEIGHTS.latency * latencyScore(p95_latency_ms)
-        + CIRCUIT_SCORE_WEIGHTS.record_drift * (1 - Math.min(drift.ratio, 1)),
+        + CIRCUIT_SCORE_WEIGHTS.latency * latencyScore(p95_latency_ms) * 100
+        + CIRCUIT_SCORE_WEIGHTS.record_drift * (1 - Math.min(drift.ratio, 1)) * 100,
       )
 
   return {

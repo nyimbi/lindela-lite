@@ -128,8 +128,9 @@ describe('circuit breaker: the three distinct reasons', () => {
 
     const reasons = new Set([healthy.reason, allowRequest(failing, 'flood', { now: T0 }).reason, skipped.reason])
     assert.equal(reasons.size, 3, `expected three distinct reasons, got ${[...reasons].join(', ')}`)
-    assert.ok(!reasons.has('ok'), 'a skipped run must not report ok — nothing was fetched')
-    assert.ok(!skipped.reason.includes('ok'), 'a skipped run must not report ok — nothing was fetched')
+    assert.deepEqual([...reasons].sort(), ['broken', 'ok', 'skipped_circuit_open'])
+    assert.equal(healthy.reason, 'ok')
+    assert.equal(skipped.reason, 'skipped_circuit_open')
   })
 
   it('a tripped-but-below-threshold source is reported broken while still callable', () => {
@@ -260,25 +261,39 @@ describe('scoreConnector: the anti-vacuous guard', () => {
 
   it('a fully failing history scores near zero rather than null', () => {
     // The failure mode is symmetric: a score that never drops is as useless as one
-    // that is always perfect.
-    const outcomes = Array.from({ length: 6 }, (_, i) => ({
+    // that is always perfect. It still scores, because every component here is
+    // measured — the record counts are present, so refusing a score would be the
+    // over-correction.
+    const counts = [500, 480, 520, 510, 490, 505]
+    const outcomes = counts.map((record_count, i) => ({
       ok: false,
       latency_ms: CIRCUIT_LATENCY_BUDGET_MS,
-      record_count: 0,
+      record_count,
       at: T0 + i * MINUTE,
     }))
     const scored = scoreConnector({ outcomes })
     assert.equal(scored.reason, null)
     assert.equal(scored.success_rate, 0)
-    assert.ok(scored.score <= 5, `a dead source must score near zero, got ${scored.score}`)
+    assert.ok(scored.score < 20, `a source failing every run must score near zero, got ${scored.score}`)
+  })
+
+  it('a history of zero-record failures is unscoreable, not zero', () => {
+    // Every signal says the source returned nothing, so the drift baseline is zero
+    // and there is nothing to divide by. Refusing to score is the honest answer;
+    // emitting 0.0 here would be indistinguishable from a stable empty payload.
+    const outcomes = Array.from({ length: 6 }, (_, i) => ({ ok: false, latency_ms: 100, record_count: 0, at: T0 + i * MINUTE }))
+    const scored = scoreConnector({ outcomes })
+    assert.equal(scored.score, null)
+    assert.equal(scored.reason, CIRCUIT_SCORE_REASONS.RECORD_DRIFT_UNKNOWN)
+    assert.equal(scored.drift_samples, 6, 'the counts were recorded — six of them — they just have no baseline to divide by')
   })
 
   it('only the trailing window is scored', () => {
-    const old = Array.from({ length: 5 }, () => ({ ok: false, latency_ms: 100, record_count: 1, at: T0 }))
-    const recent = Array.from({ length: 5 }, () => ({ ok: true, latency_ms: 200, record_count: 50, at: minutes(1) }))
+    const old = Array.from({ length: CIRCUIT_HISTORY_WINDOW }, () => ({ ok: false, latency_ms: 100, record_count: 1, at: T0 }))
+    const recent = Array.from({ length: CIRCUIT_HISTORY_WINDOW }, () => ({ ok: true, latency_ms: 200, record_count: 50, at: minutes(1) }))
     const scored = scoreConnector({ outcomes: [...old, ...recent] })
     assert.equal(scored.samples, CIRCUIT_HISTORY_WINDOW)
-    assert.equal(scored.success_rate, 0.5, 'only the last window counts; a dead month must not follow a healthy one forever')
+    assert.equal(scored.success_rate, 1, 'only the last window counts; a dead month must not follow a healthy one forever')
   })
 
   it('payload drift is measured against the preceding counts', () => {
