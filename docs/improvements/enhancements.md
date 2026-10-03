@@ -663,6 +663,28 @@ instead of decorative.
 
 **Effort:** M.
 
+**Status: implemented 2026-10-03, in two parts.** Cursor pagination with a
+total-count envelope, ETag/conditional requests, idempotency keys and the
+readiness endpoint are in `src/utils.js` (`collectionPage`, `jsonResponse`,
+`createIdempotencyStore`) and `src/server.js` (`/api/v1/ready`, the `handleApi`
+idempotency wrapper). Tests in `test/api-substrate.test.js`; each piece was
+reverted and confirmed to fail before being restored.
+
+Two things in the spec above are **not** done and remain open:
+
+1. **Generated OpenAPI from the route table, diffed in CI.** The route table
+   lives in `scopeForRoute`'s two tables and in `handleApiRequest`'s chain of
+   `if` statements; neither is machine-readable as a specification. Extracting
+   one is real work and is not started.
+2. **The evidence line is now partly stale.** "Exports are uncapped and
+   unauthenticated (SEC-01)" was fixed earlier — exports now require
+   `read:export` and are tenant-scoped. The uncapped part still stands:
+   `filterRecords` clamps `limit` to 5000, but the CSV and GeoJSON exports are
+   built from the whole store, not from a filtered page.
+
+`/api/v1/assessments` also had one unscoped list (`recent_events`); found and
+fixed while threading pagination.
+
 ---
 
 ## What is deliberately not on this list

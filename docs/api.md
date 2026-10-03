@@ -4,7 +4,10 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 
 ## Endpoints
 
-- `GET /api/v1/health` returns service status, storage mode, store counts, and available source ids.
+- `GET /api/v1/health` returns service status, storage mode, store counts, and available source ids. Liveness only.
+- `GET /api/v1/ready` probes the store and returns `503` when it cannot be read. Readiness: distinct from `/health`
+  because the store is a separate dependency, and a load balancer polling only `/health` keeps an instance in
+  rotation that cannot serve a single request. Public, like `/health`; carries no records.
 - `GET /api/v1/sources` lists source capabilities and last source runs.
 - `POST /api/v1/ingest/run` runs one or more ingestors.
 - `GET /api/v1/ingest/status` returns per-source health, policy, schedule, last run, and failure-streak details.
@@ -90,7 +93,62 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 - `service_type=health`
 - `from=2026-01-01`
 - `to=2026-01-31`
-- `limit=100`
+- `limit=100` (default 500, clamped to 5000)
+- `cursor=<next_cursor>` (see below)
+
+## Pagination
+
+Collection routes return an envelope, not a bare array:
+
+```json
+{ "success": true, "data": [], "returned": 0, "limit": 500, "total": 0,
+  "has_more": false, "next_cursor": null }
+```
+
+`total` counts everything that matched the filters. `data` is one page. Without
+the total a caller cannot distinguish an empty collection from a truncated one,
+which is the same conflation the district overview counts used to carry.
+
+To page: pass `next_cursor` back as `?cursor=`. A cursor that does not name a
+record in the current result set is a `400` — resuming from nothing would replay
+the first page while the caller believed it was reading further in. A record
+deleted between pages invalidates its cursor, so a cursor is a position in one
+result set, not a permanent address.
+
+## Conditional Requests
+
+Successful `200` responses carry an `ETag` and `cache-control: no-cache`. Send
+`If-None-Match` to get a bodyless `304` when nothing has changed:
+
+```bash
+etag=$(curl -sD - -o /dev/null localhost:4177/api/v1/events | grep -i '^etag' | cut -d' ' -f2 | tr -d '\r')
+curl -s -H "If-None-Match: $etag" localhost:4177/api/v1/events -o /dev/null -w '%{http_code}\n'   # 304
+```
+
+`201` responses are not tagged: a created resource is not a cacheable
+representation of a collection.
+
+## Idempotency
+
+Send `Idempotency-Key` on any `POST`, `PUT`, `PATCH` or `DELETE`. A repeat within
+the window replays the original response and sets `idempotency-replayed: true`.
+
+- The key is scoped by **caller, method and path** before lookup. Unscoped, two
+  partners both using `"1"` would receive each other's writes.
+- A key reused with a **different body** is a `409` with `idempotency-conflict`,
+  not a replay. Answering with a receipt for work that was never done is worse
+  than running the request.
+- **Failures are never cached.** A `500` replayed for 24 hours would turn a
+  transient fault into a permanent one.
+- The window is **24 hours, in-process, capped at 1000 entries**. The store is
+  one process, so this bounds the guarantee rather than eliminating it.
+  `GET /api/v1/ready` reports the bound; do not assume more than it says.
+
+```bash
+curl -X POST localhost:4177/api/v1/ingest/run \
+  -H 'content-type: application/json' -H 'Idempotency-Key: run-2026-10-03-a' \
+  -d '{"sources":["service_assets"],"service_assets":[...]}'
+```
 
 ## Ingestion Example
 

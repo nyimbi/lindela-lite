@@ -96,7 +96,10 @@ export function publicPaths(env = process.env) {
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean)
-  return ['/api/v1/health', ...configured]
+  // `/ready` is public so a load balancer can reach it. It carries no records:
+  // store mode, reachability and latency. Anything more would be a map of the
+  // deployment's internals for anyone who can reach the port.
+  return ['/api/v1/health', '/api/v1/ready', ...configured]
 }
 
 export function isPublicPath(pathname, env = process.env) {

@@ -5,6 +5,45 @@
 Flood, access-risk, seasonal-signal, food-security, and outbreak-context capability.
 All additions are additive; no existing endpoint changed shape.
 
+### Added
+
+**API substrate.** Four gaps, each of which a caller hits on the first
+integration.
+
+- **Collections report their total.** Every list route answered with a bare array
+  truncated at `limit` and said nothing about what else existed, so "we found
+  nothing" and "we found five hundred" were the same response. List routes now
+  return `returned`, `limit`, `total`, `has_more` and `next_cursor` alongside
+  `data`. Pagination is cursor-based: pass `next_cursor` back as `cursor`. A
+  cursor naming a record that is not in the result set is a `400`, because
+  silently restarting from the beginning looks like progress and is not.
+- **Conditional requests.** The static-asset path computed ETags; the API did
+  not and sent `cache-control: no-store`, so every poll from every open console
+  re-downloaded the full payload to be told nothing had changed. Successful
+  `200`s now carry an `ETag` and `cache-control: no-cache`, and an
+  `If-None-Match` match answers `304` with no body.
+- **Idempotency keys.** `Idempotency-Key` on any `POST`/`PUT`/`PATCH`/`DELETE`.
+  A repeat inside the window replays the original response byte for byte, with
+  `idempotency-replayed: true`. The key is scoped by caller, method and path
+  before lookup — unscoped, two partners both using `"1"` would receive each
+  other's writes, a cross-tenant read manufactured entirely from request headers.
+  A key reused with a *different* body is a `409`, not a replay: answering with
+  a receipt for work that was never done is worse than running the request.
+  Failures are never cached. The window is 24 hours, in-process, capped at 1000
+  entries, and reported by `/api/v1/ready` rather than left to be assumed.
+- **`GET /api/v1/ready`**, distinct from `/api/v1/health`. Health answers "is
+  this process running"; readiness answers "can it serve a request right now".
+  The store is a separate dependency that can be unreachable while the process
+  answers `/health` with `200` — so a load balancer polling only `/health` keeps
+  a broken instance in rotation and hands every user a `500` it could have
+  routed around. Readiness probes the store, times out, and reports `503` with
+  the error. Public, like `/health`, and deliberately carries no records.
+
+**Partner isolation, one route further.** `GET /api/v1/assessments` scoped four
+of its five record lists and left `recent_events` with no context at all — the
+only unscoped list on the route, so a partner token received every hazard and
+conflict event in the platform beside four correctly filtered lists.
+
 ### Fixed
 
 **Security. Ten defects.** The headline is that authentication was, in effect,

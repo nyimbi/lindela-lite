@@ -126,7 +126,7 @@ function parseRecordBbox(value) {
  *   rather than trusted, because a client-supplied parameter is not access
  *   control.
  */
-export function filterRecords(records, query, context = {}) {
+export function filterRecords(records, query, context = {}, { unlimited = false } = {}) {
   const partnerOrg = context.auth?.partner_org || null
   const claimedOrg = query.get('partner_org')
   if (claimedOrg !== null) {
@@ -169,7 +169,7 @@ export function filterRecords(records, query, context = {}) {
   const to = query.get('to') ? Date.parse(query.get('to')) : null
   const limit = Math.min(Math.max(Number(query.get('limit') || 500), 1), 5000)
 
-  return (partnerOrg ? records.filter((item) => item?.partner_org === partnerOrg) : records)
+  const matched = (partnerOrg ? records.filter((item) => item?.partner_org === partnerOrg) : records)
     .filter((item) => recordInBbox(item, bbox))
     .filter((item) => !country || item.country === country || item.scope?.country === country)
     .filter((item) => !source || item.source === source || item.source_name === source)
@@ -192,7 +192,109 @@ export function filterRecords(records, query, context = {}) {
       if (to && timestamp > to) return false
       return true
     })
-    .slice(0, limit)
+  return unlimited ? matched : matched.slice(0, limit)
+}
+
+/**
+ * A collection response that can say how much it is not showing you.
+ *
+ * `filterRecords` alone answered "here are up to `limit` records" with nothing
+ * about what else exists, so a caller could not distinguish an empty collection
+ * from a truncated one. Every consumer that wanted to show a count had to
+ * re-derive it by fetching with a raised limit, which is a second full scan
+ * and a second chance to disagree with the first.
+ *
+ * `total` is what matched the filters, `returned` is what this page carries,
+ * and `has_more` says whether asking again is worth it.
+ */
+export function collectionPage(records, query, context = {}) {
+  const matched = filterRecords(records, query, context, { unlimited: true })
+  const cursor = decodeCursor(query.get('cursor'))
+  const limit = Math.min(Math.max(Number(query.get('limit') || 500), 1), 5000)
+
+  let start = 0
+  if (cursor) {
+    const at = matched.findIndex((item) => item?.id === cursor)
+    if (at < 0) {
+      // Resuming from nothing would silently replay page one while the caller
+      // believes it is reading further in. Refusing is the honest answer.
+      const error = new Error(
+        `cursor does not identify a record in this result set; it may have been deleted, or belong to a different query`,
+      )
+      error.statusCode = 400
+      throw error
+    }
+    start = at + 1
+  }
+
+  const page = matched.slice(start, start + limit)
+  const last = page.length ? page[page.length - 1] : null
+  const hasMore = start + page.length < matched.length
+  return {
+    returned: page.length,
+    limit,
+    total: matched.length,
+    has_more: hasMore,
+    // Only meaningful when there is a following page; a cursor to the end of
+    // the set is an invitation to make one more empty request.
+    next_cursor: hasMore && last ? encodeCursor(last.id) : null,
+    data: page,
+  }
+}
+
+/**
+ * Idempotency keys for mutating requests.
+ *
+ * In-process, with a TTL, and deliberately so: this deployment is one process
+ * against one store, so the memory of an in-flight retry is the whole of the
+ * problem. A retry that arrives inside the window gets the original response
+ * back rather than a second incident. A retry that arrives after it gets a
+ * fresh write, which is the honest behaviour -- the guarantee is bounded, and
+ * the bound is reported in the header rather than implied.
+ */
+export function createIdempotencyStore({ ttlMs = 24 * 60 * 60 * 1000, maxEntries = 1000 } = {}) {
+  const entries = new Map()
+
+  return {
+    /**
+     * `undefined` means "no key, proceed". An object is the recorded outcome,
+     * either `{ replay: true, status, body }` from a previous attempt or
+     * `{ commit: fn }` to run and then record.
+     */
+    lookup(key, fingerprint) {
+      if (!key) return undefined
+      const hit = entries.get(key)
+      if (!hit) return undefined
+      if (hit.expiresAt <= Date.now()) {
+        entries.delete(key)
+        return undefined
+      }
+      // Refresh insertion order so the eviction below is least-recently-used.
+      entries.delete(key)
+      entries.set(key, hit)
+      // The same key with a different body is a client bug, and replaying
+      // would answer with a receipt for work that was never done -- the caller
+      // would read an import count describing a batch they did not send.
+      if (fingerprint && hit.fingerprint && fingerprint !== hit.fingerprint) {
+        return { conflict: true, status: 409, body: { success: false, error: 'Idempotency-Key was already used with a different request body' } }
+      }
+      return { replay: true, status: hit.status, body: hit.body }
+    },
+
+    async run(key, status, fn, fingerprint) {
+      if (!key) return await fn()
+      const outcome = await fn()
+      if (entries.size >= maxEntries) {
+        entries.delete(entries.keys().next().value)
+      }
+      entries.set(key, { status, body: outcome, fingerprint, expiresAt: Date.now() + ttlMs })
+      return outcome
+    },
+
+    get size() {
+      return entries.size
+    },
+  }
 }
 
 export function parseCsv(text) {
@@ -278,14 +380,78 @@ export function toGeoJson(records) {
   }
 }
 
-export function jsonResponse(res, status, body, headers = {}) {
+/**
+ * A JSON response that can be revalidated.
+ *
+ * The static-asset path already computed ETags; the API did not, so every poll
+ * from every open dashboard transferred the full payload to be told nothing had
+ * changed. The console redraws on a 30-second timer, which is twelve-plus
+ * endpoints re-downloading unchanged data per minute per user.
+ *
+ * `no-store` is deliberately dropped in favour of `no-cache` + an ETag: the
+ * response must not be cached without revalidation, and it must be
+ * revalidatable. `304` carries no body, which is the entire point.
+ */
+export function jsonResponse(res, status, body, headers = {}, req = res?.req || null) {
   const payload = JSON.stringify(body)
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    ...headers,
-  })
+  const outgoing = { 'content-type': 'application/json; charset=utf-8', ...headers }
+
+  if (status === 200 && req && !headers.etag && !headers.ETag) {
+    const etag = etagFor(payload)
+    outgoing.etag = etag
+    outgoing['cache-control'] = 'no-cache'
+    const tags = ifNoneMatch(req)
+    if (tags.includes('*') || tags.includes(etag)) {
+      res.writeHead(304, { etag, 'cache-control': 'no-cache' })
+      res.end()
+      return
+    }
+  }
+  if (!outgoing['cache-control']) outgoing['cache-control'] = 'no-store'
+  // Idempotency replay needs the body that was actually sent. Captured here,
+  // where every response passes, rather than at the call sites.
+  if (res.__capture) {
+    try {
+      res.__capture(status, JSON.parse(payload))
+    } catch {
+      // A non-JSON body is not replayable; the first attempt still succeeded.
+    }
+  }
+  res.writeHead(status, outgoing)
   res.end(payload)
+}
+
+/**
+ * `If-None-Match` per RFC 9110: a list of tags, `*`, or weak tags.
+ *
+ * Weak comparison is correct here: the tag identifies the representation, and
+ * a byte-identical body serialised twice must match regardless of how either
+ * side chose to label its strength.
+ */
+function ifNoneMatch(req) {
+  const header = req?.headers?.['if-none-match']
+  if (!header) return []
+  const raw = String(header).trim()
+  if (raw === '*') return ['*']
+  return raw.split(',').map((entry) => entry.trim().replace(/^W\//, ''))
+}
+
+function etagFor(payload) {
+  return `"${crypto.createHash('sha256').update(payload).digest('hex').slice(0, 32)}"`
+}
+
+export function encodeCursor(id) {
+  if (!id) return null
+  return Buffer.from(String(id), 'utf8').toString('base64url')
+}
+
+export function decodeCursor(raw) {
+  if (!raw) return null
+  try {
+    return Buffer.from(String(raw), 'base64url').toString('utf8')
+  } catch {
+    return null
+  }
 }
 
 const DEFAULT_MAX_BODY_BYTES = Number(process.env.LINDELA_LITE_MAX_BODY_BYTES || 5 * 1024 * 1024)

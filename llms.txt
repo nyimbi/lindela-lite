@@ -91,6 +91,48 @@ computed and silently dropped on Postgres alone. `test/store-conformance.test.js
 is what makes that class of divergence impossible to reintroduce — it needs
 `LINDELA_LITE_TEST_DATABASE_URL` set to exercise the Postgres half.
 
+## Reporting a number
+
+The repository has one recurring shape of bug, and it is not a typo: a figure
+is computed from something other than what its name says, and it looks
+plausible. Instances fixed so far, each with a test that fails without the fix:
+
+- `response_rate_pct` divided messages by dispatches and reported 200%. It now
+  counts distinct people, and is `null` — not `0` — when the figure is not
+  computable.
+- Dispatch precision divided by every dispatch while subtracting false positives
+  from alerts never dispatched.
+- `false_alert_rate` was computed over a 30-row window and reported as the
+  district's rate.
+- An unfitted model rendered "0% flood-month base rate"; an absent severity
+  passed every severity filter.
+
+So: **an absent value is not a zero, and an unevaluated thing is not a false
+one.** Prefer `null` with a note over a number that would have to be explained.
+`src/equity.js`, `src/rapidpro.js` and `src/parametric.js` all carry this
+convention in their field comments.
+
+## The API substrate
+
+Four things every list route and every mutation now has. See `src/utils.js`.
+
+- **List routes return a total, not just a page.** `{ data, returned, limit,
+  total, has_more, next_cursor }`. `total` counts everything that matched the
+  filters; `data` is one page. Without it a caller cannot tell an empty
+  collection from a truncated one. Page with `?cursor=<next_cursor>&limit=N`.
+  An unknown cursor is a 400 — silently restarting from the top looks like
+  progress and is not.
+- **200s carry an `ETag`** and honour `If-None-Match` with a bodyless 304. This
+  is why `jsonResponse` reads `res.req`: Node populates it, so the request
+  reaches the response without being threaded through thirty-odd call sites.
+- **`Idempotency-Key` on mutating requests.** A repeat replays the original
+  response. The key is scoped by caller, method and path before lookup, and a
+  key reused with a different body is a 409. In-process, 24h, capped at 1000
+  entries — a bounded guarantee, reported by `/api/v1/ready`, never implied.
+- **`/api/v1/health` is liveness; `/api/v1/ready` is readiness.** The store is a
+  separate dependency. `/ready` probes it, times out, and returns 503 with the
+  error, so a load balancer can route around an instance that cannot serve.
+
 ## CI
 
 `.github/workflows/ci.yml`, jobs `test`, `coverage`, `audit`, `sbom`,

@@ -37,7 +37,7 @@ import {
 } from './reports.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
-import { filterRecords, jsonResponse, readRawBody, readRequestJson, toCsv, toGeoJson, stableId } from './utils.js'
+import { collectionPage, createIdempotencyStore, filterRecords, jsonResponse, readRawBody, readRequestJson, toCsv, toGeoJson, stableId } from './utils.js'
 import { redactPii, applyRetention, loadPolicy } from './pii.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
@@ -337,7 +337,94 @@ function contingencyByFeature(rows) {
   return byFeature
 }
 
+/**
+ * One process, one store: the memory of an in-flight retry is the whole of the
+ * problem idempotency keys solve here, so it lives in this process's memory.
+ * A retry inside the window replays the original response byte for byte; a
+ * retry after it writes again. The bound is reported, never implied.
+ */
+const idempotency = createIdempotencyStore({ ttlMs: 24 * 60 * 60 * 1000, maxEntries: 1000 })
+
+/**
+ * Scoped by caller, method and path before use.
+ *
+ * An unscoped key would let one caller name another's response: two partners
+ * both using `key: "1"` would receive each other's incidents, which is a
+ * cross-tenant read manufactured entirely from request headers.
+ */
+function idempotencyKey(req, subject, url) {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return null
+  const raw = req.headers['idempotency-key']
+  if (raw === undefined || raw === null || raw === '') return null
+  const key = String(raw)
+  if (key.length > 255 || !/^[\x21-\x7e]+$/.test(key)) {
+    const error = new Error('Idempotency-Key must be 1-255 printable ASCII characters with no spaces')
+    error.statusCode = 400
+    throw error
+  }
+  // `anonymous` when auth is not configured: with no identities in play every
+  // caller already reads every record, so a shared replay namespace grants
+  // nothing that the route was not already granting. Under auth the subject
+  // carries the separation, and that is the case the scoping exists for.
+  return `${subject || 'anonymous'}\u0000${req.method}\u0000${url.pathname}\u0000${key}`
+}
+
 async function handleApi(store, req, res, url) {
+  let key
+  try {
+    // Resolved here as well as inside handleApiRequest: the key must be scoped
+    // to the caller, and the caller is only known once the token is read.
+    // Cheap, pure, and a failure to authenticate simply yields no subject —
+    // the request is then refused a moment later on its own merits.
+    const subject = (isAuthConfigured() && !isPublicPath(url.pathname) ? authenticate(req) : null)?.subject
+    key = idempotencyKey(req, subject, url)
+  } catch (error) {
+    jsonResponse(res, error.statusCode || 400, { success: false, error: error.message })
+    return
+  }
+  if (!key) return handleApiRequest(store, req, res, url)
+
+  // Buffered before dispatch so a retry can be compared with the attempt it
+  // claims to repeat. `readRawBody` memoises, so the handler still reads a
+  // body rather than an exhausted stream.
+  let fingerprint = null
+  try {
+    fingerprint = createHash('sha256').update(await readRawBody(req)).digest('hex')
+  } catch (error) {
+    // Only the size rejection is a client error. Anything else is rethrown: a
+    // blanket catch here would silently turn the fingerprint off and leave
+    // idempotency working on the key alone, which is exactly the weaker
+    // behaviour this code exists to prevent.
+    if (!error.statusCode) throw error
+    jsonResponse(res, error.statusCode, { success: false, error: error.message })
+    return
+  }
+
+  const replay = idempotency.lookup(key, fingerprint)
+  if (replay) {
+    if (replay.conflict) {
+      jsonResponse(res, replay.status, replay.body, { 'idempotency-conflict': 'true' })
+      return
+    }
+    jsonResponse(res, replay.status, replay.body, { 'idempotency-replayed': 'true', 'idempotency-window': 'open' })
+    return
+  }
+
+  let captured = null
+  res.__capture = (status, body) => { captured = { status, body } }
+  try {
+    await handleApiRequest(store, req, res, url)
+  } finally {
+    delete res.__capture
+  }
+  // Only a success is worth replaying. Caching a 500 would convert a transient
+  // failure into a permanent one for the length of the window.
+  if (captured && captured.status < 400) {
+    await idempotency.run(key, captured.status, async () => captured.body, fingerprint)
+  }
+}
+
+async function handleApiRequest(store, req, res, url) {
   let auth = null
   if (isAuthConfigured()) {
     if (url.pathname === '/api/v1/rapidpro/field-report' && req.method === 'POST') {
@@ -369,6 +456,35 @@ async function handleApi(store, req, res, url) {
       }
     }
   }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/ready') {
+    // Health answers "is this process running". Readiness answers "can it serve
+    // a request right now" — which is a different question, because the store
+    // is a separate dependency that can be unreachable while the process is
+    // perfectly alive and still answering /health with 200. A load balancer
+    // polling only /health will keep a broken instance in rotation and hand
+    // every user a 500 it could have routed around.
+    const started = Date.now()
+    const timeoutMs = Number(url.searchParams.get('timeout_ms') || 2000)
+    let probe = { ok: true, error: null }
+    try {
+      await withTimeout(store.read(), timeoutMs)
+    } catch (error) {
+      probe = { ok: false, error: error?.name === 'TimeoutError' ? `store did not respond within ${timeoutMs}ms` : String(error?.message || error) }
+    }
+    const latency = Date.now() - started
+    const ready = probe.ok
+    jsonResponse(res, ready ? 200 : 503, {
+      success: ready,
+      ready,
+      store: { mode: store.mode || 'custom', reachable: probe.ok, latency_ms: latency, error: probe.error },
+      // Reported, not implied: the whole bound on the idempotency guarantee.
+      idempotency: { in_process: true, ttl_hours: 24 },
+      checked_at: new Date().toISOString(),
+    })
+    return
+  }
+
 
   const data = await store.read()
   req.__auth = auth
@@ -447,7 +563,7 @@ async function handleApi(store, req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/outbox') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.events_outbox || [], url.searchParams, { auth: req.__auth, data, collection: 'events_outbox' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.events_outbox || [], url.searchParams, { auth: req.__auth, data, collection: 'events_outbox' }) })
     return
   }
 
@@ -551,7 +667,7 @@ async function handleApi(store, req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/service-assets') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.service_assets, url.searchParams, { auth: req.__auth, data, collection: 'service_assets' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.service_assets, url.searchParams, { auth: req.__auth, data, collection: 'service_assets' }) })
     return
   }
 
@@ -579,37 +695,37 @@ async function handleApi(store, req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/v1/events') {
     const records = [...data.hazard_events, ...data.conflict_events]
-    jsonResponse(res, 200, { success: true, data: filterRecords(records, url.searchParams, { auth: req.__auth, data, collection: 'incidents' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(records, url.searchParams, { auth: req.__auth, data, collection: 'incidents' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/climate') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.climate_observations, url.searchParams, { auth: req.__auth, data, collection: 'climate_observations' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.climate_observations, url.searchParams, { auth: req.__auth, data, collection: 'climate_observations' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/flood-risk') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/conflict-risk') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.risk_scores.filter((risk) => risk.type === 'climate_conflict_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.risk_scores.filter((risk) => risk.type === 'climate_conflict_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/service-impacts') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.impact_assessments, url.searchParams, { auth: req.__auth, data, collection: 'impact_assessments' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.impact_assessments, url.searchParams, { auth: req.__auth, data, collection: 'impact_assessments' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/impact/population-at-risk') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.population_at_risk || [], url.searchParams, { auth: req.__auth, data, collection: 'population_at_risk' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.population_at_risk || [], url.searchParams, { auth: req.__auth, data, collection: 'population_at_risk' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/impact/facilities-at-risk') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.facilities_at_risk || [], url.searchParams, { auth: req.__auth, data, collection: 'facilities_at_risk' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.facilities_at_risk || [], url.searchParams, { auth: req.__auth, data, collection: 'facilities_at_risk' }) })
     return
   }
 
@@ -657,7 +773,7 @@ async function handleApi(store, req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/v1/flood-probability/models') {
     jsonResponse(res, 200, {
       success: true,
-      data: filterRecords(data.flood_probability_models || [], url.searchParams, { auth: req.__auth, data, collection: 'flood_probability_models' }),
+      ...collectionPage(data.flood_probability_models || [], url.searchParams, { auth: req.__auth, data, collection: 'flood_probability_models' }),
     })
     return
   }
@@ -812,12 +928,12 @@ async function handleApi(store, req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/data-quality') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.data_quality, url.searchParams, { auth: req.__auth, data, collection: 'data_quality' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.data_quality, url.searchParams, { auth: req.__auth, data, collection: 'data_quality' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/data-lineage') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.data_lineage || [], url.searchParams, { auth: req.__auth, data, collection: 'data_lineage' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.data_lineage || [], url.searchParams, { auth: req.__auth, data, collection: 'data_lineage' }) })
     return
   }
 
@@ -982,7 +1098,7 @@ async function handleApi(store, req, res, url) {
 
   if (url.pathname === '/api/v1/community-feedback') {
     if (req.method === 'GET') {
-      jsonResponse(res, 200, { success: true, data: filterRecords(data.community_feedback || [], url.searchParams, { auth: req.__auth, data, collection: 'community_feedback' }) })
+      jsonResponse(res, 200, { success: true, ...collectionPage(data.community_feedback || [], url.searchParams, { auth: req.__auth, data, collection: 'community_feedback' }) })
       return
     }
     if (req.method === 'POST') {
@@ -1013,7 +1129,11 @@ async function handleApi(store, req, res, url) {
         data_quality: filterRecords(data.data_quality, url.searchParams, { auth: req.__auth, data, collection: 'data_quality' }),
         operations: operationalSummary(data),
         alert_events: filterRecords(data.alert_events, url.searchParams, { auth: req.__auth, data, collection: 'alert_events' }),
-        recent_events: filterRecords([...data.hazard_events, ...data.conflict_events], url.searchParams),
+        // The only record list on this route that was never scoped. Every
+        // sibling above threads `auth`; this one did not, so a partner token
+        // asking for /api/v1/assessments received every hazard and conflict
+        // event in the platform while the four lists beside it were filtered.
+        recent_events: filterRecords([...data.hazard_events, ...data.conflict_events], url.searchParams, { auth: req.__auth, data, collection: 'recent_events' }),
       },
     })
     return
@@ -1079,7 +1199,7 @@ async function handleIngestionRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.kind === 'schedules' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.ingestion_schedules, url.searchParams, { auth: req.__auth, data, collection: 'ingestion_schedules' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.ingestion_schedules, url.searchParams, { auth: req.__auth, data, collection: 'ingestion_schedules' }) })
     return
   }
 
@@ -1243,7 +1363,7 @@ async function handleReportTemplateRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_templates, url.searchParams, { auth: req.__auth, data, collection: 'report_templates' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.report_templates, url.searchParams, { auth: req.__auth, data, collection: 'report_templates' }) })
     return
   }
   if (req.method === 'GET' && route.id) {
@@ -1313,7 +1433,7 @@ async function handleReportRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.reports, url.searchParams, { auth: req.__auth, data, collection: 'reports' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.reports, url.searchParams, { auth: req.__auth, data, collection: 'reports' }) })
     return
   }
   if (req.method === 'GET' && route.id) {
@@ -1399,7 +1519,7 @@ async function handleReportRoute(store, data, req, res, url, route) {
 
 async function handleReportDistributionRoute(store, data, req, res, url, route) {
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_distribution_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_distribution_runs' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.report_distribution_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_distribution_runs' }) })
     return
   }
   const run = data.report_distribution_runs.find((item) => item.id === route.id)
@@ -1445,7 +1565,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route) {
     return
   }
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_schedules, url.searchParams, { auth: req.__auth, data, collection: 'report_schedules' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.report_schedules, url.searchParams, { auth: req.__auth, data, collection: 'report_schedules' }) })
     return
   }
   if (req.method === 'GET' && route.id) {
@@ -1495,7 +1615,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route) {
 
 async function handleReportScheduleRunRoute(store, data, req, res, url, route) {
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.report_schedule_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_schedule_runs' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.report_schedule_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_schedule_runs' }) })
     return
   }
   const run = data.report_schedule_runs.find((item) => item.id === route.id)
@@ -1733,12 +1853,12 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.kind === 'dispatches') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.rapidpro_dispatches, url.searchParams, { auth: req.__auth, data, collection: 'rapidpro_dispatches' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.rapidpro_dispatches, url.searchParams, { auth: req.__auth, data, collection: 'rapidpro_dispatches' }) })
     return
   }
 
   if (req.method === 'GET' && route.kind === 'inbound') {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.rapidpro_inbound_messages, url.searchParams, { auth: req.__auth, data, collection: 'rapidpro_inbound_messages' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.rapidpro_inbound_messages, url.searchParams, { auth: req.__auth, data, collection: 'rapidpro_inbound_messages' }) })
     return
   }
 
@@ -1848,7 +1968,7 @@ async function handleAlertRoute(store, data, req, res, url, route) {
     // incident, tasks through the intervention, dispatches through the alert
     // event — the same way districtOverview does. Without it those collections
     // matched nothing and a district reported no activity it plainly had.
-    jsonResponse(res, 200, { success: true, data: filterRecords(data[route.collection], url.searchParams, { data, collection: route.collection }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data[route.collection], url.searchParams, { data, collection: route.collection }) })
     return
   }
 
@@ -1921,7 +2041,7 @@ async function handleAlertRoute(store, data, req, res, url, route) {
 
 async function handleTriggerRoute(store, data, req, res, url, route) {
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.trigger_protocols || [], url.searchParams, { auth: req.__auth, data, collection: 'trigger_protocols' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.trigger_protocols || [], url.searchParams, { auth: req.__auth, data, collection: 'trigger_protocols' }) })
     return
   }
 
@@ -1995,7 +2115,7 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
 
   if (req.method === 'GET' && !route.id) {
     const records = includeDeleted ? data[route.collection] : data[route.collection].filter((item) => !isDeleted(item))
-    jsonResponse(res, 200, { success: true, data: filterRecords(records, url.searchParams, { data, collection: route.collection }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(records, url.searchParams, { data, collection: route.collection }) })
     return
   }
 
@@ -2167,7 +2287,7 @@ function parseLevels(raw) {
 
 async function handleWebhookRoute(store, data, req, res, url, route) {
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, data: filterRecords(data.webhook_subscriptions || [], url.searchParams, { auth: req.__auth, data, collection: 'webhook_subscriptions' }) })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.webhook_subscriptions || [], url.searchParams, { auth: req.__auth, data, collection: 'webhook_subscriptions' }) })
     return
   }
 
@@ -2585,8 +2705,7 @@ function matchWorkflowRoute(pathname) {
 
 async function handleWorkflowRoute(store, data, req, res, url, route) {
   if (req.method === 'GET' && !route.id && !route.action) {
-    const records = filterRecords(data.workflow_instances, url.searchParams, { auth: req.__auth, data, collection: 'workflow_instances' })
-    jsonResponse(res, 200, { success: true, data: records })
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.workflow_instances, url.searchParams, { auth: req.__auth, data, collection: 'workflow_instances' }) })
     return
   }
 
@@ -2733,6 +2852,20 @@ function acceptsGzip(req) {
   const header = req?.headers?.['accept-encoding'] || ''
   // "gzip;q=0" is an explicit refusal; a bare substring test would ignore it.
   return /(^|,)\s*gzip\s*(;|,|$)/i.test(header) && !/gzip\s*;\s*q=0(\.0+)?\s*(;|,|$)/i.test(header)
+}
+
+function withTimeout(promise, ms) {
+  let timer
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`timed out after ${ms}ms`)
+        error.name = 'TimeoutError'
+        reject(error)
+      }, ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
 }
 
 function etagFor(buffer) {
