@@ -1,3 +1,47 @@
+import { toGeoJson, readCoordinate } from './utils.js'
+
+/**
+ * The catalog's collections, in one place.
+ *
+ * This list was written in four. The catalog advertised three child links; the
+ * collection renderer validated against a hardcoded `validIds`; and `server.js`
+ * spelled the same three-way `if/else` out twice — once for the STAC route and
+ * once for the OGC route. They agree today, and the mechanism by which they
+ * would stop agreeing is that anyone adding a collection edits the two the
+ * server needs and forgets the two in this file. The result would be a collection
+ * the catalog advertises and the server 404s, or worse, one the server serves and
+ * the catalog never mentions.
+ *
+ * This is the same defect class as `COLLECTIONS` vs `OUTPUT_COLLECTIONS`, and the
+ * fix is the same: one list, derived from, with a test that walks it.
+ */
+export const STAC_COLLECTIONS = Object.freeze([
+  {
+    id: 'hazard-events',
+    title: 'Hazard Events',
+    description: 'Hazard events from disaster monitoring systems',
+    resolve: (data) => [...(data.hazard_events || []), ...(data.conflict_events || [])],
+  },
+  {
+    id: 'service-assets',
+    title: 'Service Assets',
+    description: 'Critical service assets and infrastructure',
+    resolve: (data) => data.service_assets || [],
+  },
+  {
+    id: 'risk-scores',
+    title: 'Risk Scores',
+    description: 'Computed flood and conflict risk scores',
+    resolve: (data) => data.risk_scores || [],
+  },
+])
+
+/** The records behind a collection id, or null when the id is not one of ours. */
+export function resolveStacCollection(data, collectionId) {
+  const entry = STAC_COLLECTIONS.find((c) => c.id === collectionId)
+  return entry ? entry.resolve(data) : null
+}
+
 export function stacCatalog(baseUrl) {
   return {
     type: 'Catalog',
@@ -6,24 +50,12 @@ export function stacCatalog(baseUrl) {
     title: 'Lindela Lite Hazards',
     description: 'Spatiotemporal Asset Catalog of hazards, service assets, and risk scores from Lindela Lite',
     links: [
-      {
+      ...STAC_COLLECTIONS.map((c) => ({
         rel: 'child',
-        href: `${baseUrl}/stac/collections/hazard-events`,
-        title: 'Hazard Events',
+        href: `${baseUrl}/stac/collections/${c.id}`,
+        title: c.title,
         type: 'application/json',
-      },
-      {
-        rel: 'child',
-        href: `${baseUrl}/stac/collections/service-assets`,
-        title: 'Service Assets',
-        type: 'application/json',
-      },
-      {
-        rel: 'child',
-        href: `${baseUrl}/stac/collections/risk-scores`,
-        title: 'Risk Scores',
-        type: 'application/json',
-      },
+      })),
       {
         rel: 'root',
         href: `${baseUrl}/stac/catalog.json`,
@@ -41,21 +73,9 @@ export function stacCatalog(baseUrl) {
 }
 
 export function stacCollection(collectionId, records, baseUrl) {
-  const validIds = ['hazard-events', 'service-assets', 'risk-scores']
-  if (!validIds.includes(collectionId)) {
+  const entry = STAC_COLLECTIONS.find((c) => c.id === collectionId)
+  if (!entry) {
     throw Object.assign(new Error(`Invalid collection id: ${collectionId}`), { statusCode: 400 })
-  }
-
-  const titles = {
-    'hazard-events': 'Hazard Events',
-    'service-assets': 'Service Assets',
-    'risk-scores': 'Risk Scores',
-  }
-
-  const descriptions = {
-    'hazard-events': 'Hazard events from disaster monitoring systems',
-    'service-assets': 'Critical service assets and infrastructure',
-    'risk-scores': 'Computed flood and conflict risk scores',
   }
 
   const filtered = records.filter((r) => readCoordinate(r.latitude) !== null && readCoordinate(r.longitude) !== null)
@@ -67,8 +87,8 @@ export function stacCollection(collectionId, records, baseUrl) {
     stac_version: '1.0.0',
     stac_extensions: ['https://stac-extensions.github.io/projection/v1.0.0/schema.json'],
     id: collectionId,
-    title: titles[collectionId],
-    description: descriptions[collectionId],
+    title: entry.title,
+    description: entry.description,
     license: 'CC-BY-4.0',
     extent: {
       // STAC permits a collection with no spatial extent. Emitting `[null]` is
@@ -115,15 +135,6 @@ export function stacCollection(collectionId, records, baseUrl) {
  * planetary-computing — put every FIRMS forest-fire notification that has no
  * coordinates into the Gulf of Guinea, one per event, at Null Island.
  */
-function readCoordinate(value) {
-  if (value === null || value === undefined) return null
-  // Whitespace-only and other blank strings coerce to 0 just as `null` does, so
-  // they are trimmed away before the numeric check rather than after it.
-  if (typeof value === 'string' && value.trim() === '') return null
-  const number = Number(value)
-  return Number.isFinite(number) ? number : null
-}
-
 export function stacItem(record, collectionId, baseUrl) {
   const lat = readCoordinate(record.latitude)
   const lon = readCoordinate(record.longitude)
@@ -185,23 +196,23 @@ export function stacItem(record, collectionId, baseUrl) {
   }
 }
 
+/**
+ * OGC API Features Part 1 wraps `toGeoJson` in the paging fields.
+ *
+ * The feature construction was a second copy of the one in `src/utils.js`,
+ * written independently and matching it today. It also filtered coordinates with
+ * bare `Number.isFinite`, so a coordinate stored as the string `"3.12"` — which
+ * `readCoordinate` accepts, and which the STAC path therefore admits — dropped the
+ * record here. Two renderers of the same geometry disagreed about what a
+ * coordinate is, which is the falsy-zero class of defect wearing a different hat.
+ */
 export function ogcFeatureCollection(records) {
-  const filtered = records.filter((r) => Number.isFinite(r.latitude) && Number.isFinite(r.longitude))
+  const collection = toGeoJson(records)
 
   return {
-    type: 'FeatureCollection',
-    features: filtered.map((item) => ({
-      type: 'Feature',
-      geometry: {
-        type: 'Point',
-        coordinates: [item.longitude, item.latitude],
-      },
-      properties: Object.fromEntries(
-        Object.entries(item).filter(([key]) => key !== 'latitude' && key !== 'longitude')
-      ),
-    })),
-    numberMatched: filtered.length,
-    numberReturned: filtered.length,
+    ...collection,
+    numberMatched: collection.features.length,
+    numberReturned: collection.features.length,
     timeStamp: new Date().toISOString(),
     links: [
       {

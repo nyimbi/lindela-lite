@@ -38,11 +38,26 @@ export function normalizeAlertRule(input, existing = null) {
 
 export function updateAlertEvent(existing, patch) {
   if (!existing) throw Object.assign(new Error('Record not found'), { statusCode: 404 })
+  // PATCH semantics, stated once: a key present in the body is a decision about
+  // that field, including a decision to clear it. `Object.hasOwn` is the only
+  // test that says so, because `null` is the value an operator sends to unset an
+  // owner — and every merge operator in this file quietly disagreed about that.
+  //
+  // `||` said "keep the old value unless the new one is truthy", so an owner could
+  // be assigned and never unassigned, and a resolution note could be added and
+  // never withdrawn. `??` is better and still wrong: it falls through on `null`
+  // too, which is exactly the value needed to clear. What makes the difference
+  // between silence and a statement is whether the key was sent at all.
+  //
+  // `false_alert` below already used `??` and had the same flaw for the same
+  // reason; it is corrected here rather than left inconsistent.
+  const stated = (key) => (Object.hasOwn(patch, key) ? patch[key] : existing[key])
+
   return {
     ...existing,
-    status: enumValue(patch.status || existing.status, ALERT_EVENT_STATUSES, 'status'),
-    owner: patch.owner || existing.owner || null,
-    resolution_note: patch.resolution_note || existing.resolution_note || null,
+    status: enumValue(stated('status') ?? 'open', ALERT_EVENT_STATUSES, 'status'),
+    owner: stated('owner') ?? null,
+    resolution_note: stated('resolution_note') ?? null,
     // Whether this alert was a false alarm, recorded as data rather than
     // inferred from prose.
     //
@@ -55,7 +70,7 @@ export function updateAlertEvent(existing, patch) {
     //
     // Null means not determined, which is the honest default and is what lets the
     // KPI report "not yet measurable" instead of a confident zero.
-    false_alert: determination(patch.false_alert ?? existing.false_alert),
+    false_alert: determination(stated('false_alert')),
     updated_at: new Date().toISOString(),
   }
 }

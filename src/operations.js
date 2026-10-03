@@ -384,6 +384,12 @@ export function counts(data) {
   // from live counts so /api/v1/health and /api/v1/assessments agree with
   // the operational summary.
   const live = (collection) => (data[collection] || []).filter((item) => !isDeleted(item)).length
+  // A total over rows that may not exist is null, not 0. Analytics has not run
+  // yet is a different state from analytics having run and found nothing, and
+  // `?? null` is the only way the panel can tell them apart.
+  const sumOf = (rows, key) => (Array.isArray(rows)
+    ? rows.reduce((total, row) => total + (Number.isFinite(row?.[key]) ? row[key] : 0), 0)
+    : null)
 
   return {
     source_runs: data.source_runs.length,
@@ -395,8 +401,23 @@ export function counts(data) {
     impact_assessments: data.impact_assessments.length,
     risk_scores: data.risk_scores.length,
     data_quality: data.data_quality.length,
-    population_at_risk: data.population_at_risk?.length || 0,
-    facilities_at_risk: data.facilities_at_risk?.length || 0,
+    // Both of these were `.length`, and both lengths are of something other than
+    // what the key names. `population_at_risk` is keyed by *hazard* — one row
+    // per hazard, because each hazard has its own exposed population — so its
+    // length is a hazard count. `facilities_at_risk` is keyed by *service type*
+    // — one row per type, holding the assets of that type in an `assets` array —
+    // so its length is the number of service types the platform knows about,
+    // which is a property of the schema rather than of the data, and would read
+    // the same on an empty store as on a full one.
+    //
+    // A summary panel saying "7 facilities at risk" beside "12 population at
+    // risk" is two numbers computed from something other than what they say.
+    // The row counts are kept under honest names, and the figures an operator
+    // actually wants are given their own keys.
+    population_at_risk_rows: data.population_at_risk?.length ?? null,
+    population_at_risk_total: sumOf(data.population_at_risk, 'population_at_risk'),
+    facilities_at_risk_types: data.facilities_at_risk?.length ?? null,
+    facilities_at_risk_total: sumOf(data.facilities_at_risk, 'at_risk_count'),
     data_lineage: data.data_lineage?.length || 0,
     incidents: live('incidents'),
     interventions: live('interventions'),

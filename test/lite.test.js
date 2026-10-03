@@ -1701,7 +1701,12 @@ describe('Lindela Lite API', () => {
       assert.equal(payload.data.incident_id, incident.data.id)
       assert.deepEqual(payload.data.needs, ['fuel', 'water'])
       assert.equal(payload.data.latitude, 3.12)
-      assert.equal(payload.inbound.from, '+254711111111')
+      // Masked. This assertion read `+254711111111`, which is to say the test
+      // pinned the sender's number in cleartext to the response — so the leak
+      // was a specification and not an oversight. Redaction is on by default;
+      // the last four digits are what let an operator recognise a repeat
+      // reporter, which is why this is masked and not hashed away.
+      assert.equal(payload.inbound.from, 'xxxx1111')
 
       const inbound = await fetchJson(`${baseUrl}/api/v1/rapidpro/inbound`)
       assert.ok(inbound.data.some((message) => message.source_id === 'rapidpro-message-1'))

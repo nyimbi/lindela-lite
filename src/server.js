@@ -38,8 +38,8 @@ import {
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
 import { collectionPage, createIdempotencyStore, filterRecords, jsonResponse, readRawBody, readRequestJson, toCsv, toGeoJson, stableId } from './utils.js'
-import { redactPii, applyRetention, loadPolicy } from './pii.js'
-import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection } from './stac.js'
+import { redactPii, applyRetention, loadPolicy, retentionWindowDays } from './pii.js'
+import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
 import { emit, dispatchPending } from './outbox.js'
 import { summarizeRoadAccess } from './road-access.js'
@@ -207,14 +207,13 @@ async function handleStacRoute(store, req, res, url) {
     const collectionId = collectionMatch[1]
     const itemId = collectionMatch[2]
 
-    let records = []
-    if (collectionId === 'hazard-events') {
-      records = [...data.hazard_events, ...data.conflict_events]
-    } else if (collectionId === 'service-assets') {
-      records = data.service_assets
-    } else if (collectionId === 'risk-scores') {
-      records = data.risk_scores
-    } else {
+    // One resolver, shared with the OGC route below. The same three-way
+    // if/else used to be written out in both places, and the catalog's child
+    // links and `stacCollection`'s id check were two further copies of the same
+    // list. Four copies of a collection list is four chances to add a
+    // collection to three of them — see STAC_COLLECTIONS in src/stac.js.
+    const records = resolveStacCollection(data, collectionId)
+    if (records === null) {
       jsonResponse(res, 404, { success: false, error: 'Collection not found' })
       return
     }
@@ -243,14 +242,8 @@ async function handleStacRoute(store, req, res, url) {
   if (ogcMatch && req.method === 'GET') {
     const collectionId = ogcMatch[1]
 
-    let records = []
-    if (collectionId === 'hazard-events') {
-      records = [...data.hazard_events, ...data.conflict_events]
-    } else if (collectionId === 'service-assets') {
-      records = data.service_assets
-    } else if (collectionId === 'risk-scores') {
-      records = data.risk_scores
-    } else {
+    const records = resolveStacCollection(data, collectionId)
+    if (records === null) {
       jsonResponse(res, 404, { success: false, error: 'Collection not found' })
       return
     }
@@ -626,8 +619,22 @@ async function handleApiRequest(store, req, res, url) {
 
   if (req.method === 'POST' && url.pathname === '/api/v1/maintenance/apply-retention') {
     const policy = await loadPolicy()
-    const fieldReportRetention = applyRetention(data.field_reports, policy.retentionDays)
-    const inboundRetention = applyRetention(data.rapidpro_inbound_messages, policy.retentionDays)
+    const windowDays = retentionWindowDays(policy)
+    if (windowDays === null) {
+      // Refusing is the point. A window that is not a positive finite number
+      // used to become NaN, and `age > NaN` is false for every record — so the
+      // route expired nothing, reported `success: true`, and the retention job
+      // passed silently on every run. An operator who is told the window is not
+      // configured can fix it; one who is told `expired: 0` files it under
+      // "nothing to do" and keeps every field report the deployment ever took.
+      jsonResponse(res, 400, {
+        success: false,
+        error: `retentionDays is not a positive number (got ${JSON.stringify(policy.retentionDays)}); set it in data/pii-policy.json or LINDELA_LITE_PII_POLICY. Nothing was deleted.`,
+      })
+      return
+    }
+    const fieldReportRetention = applyRetention(data.field_reports, windowDays)
+    const inboundRetention = applyRetention(data.rapidpro_inbound_messages, windowDays)
     // remove(), not merge(). merge() keyed on id, so re-merging the survivors
     // over the originals left every expired record exactly where it was — the
     // route reported `{success: true, expired: 1}` and deleted nothing (DAT-07).

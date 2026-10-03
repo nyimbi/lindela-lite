@@ -62,6 +62,11 @@ const CAP_SCOPES = Object.freeze(['Public', 'Restricted', 'Private'])
 export function renderCapXml(alertEvent = {}, options = {}) {
   const {
     sender = 'lindela-lite@example.org',
+    // `<senderName>` is not a child of `<alert>` in CAP 1.2 — it lives inside
+    // `<info>`, between `<expires>` and `<headline>`. It was destructured here
+    // and then never emitted, which is the third dead knob in this renderer
+    // after `sender` (which does appear) and the pre-fix `scope`: an option a
+    // caller can set, which changes nothing.
     senderName = 'Lindela Lite',
     scope: scopeOverride = null,
   } = options
@@ -109,6 +114,7 @@ export function renderCapXml(alertEvent = {}, options = {}) {
     <urgency>${urgency}</urgency>
     <severity>${severity}</severity>
     <certainty>${certainty}</certainty>
+    <senderName>${escapeXml(senderName)}</senderName>
     <headline>${headline}</headline>
     <description>${description}</description>
     <area>

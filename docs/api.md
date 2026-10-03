@@ -35,6 +35,15 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 - `GET /api/v1/service-impacts` returns service-delivery impact assessments.
 - `GET /api/v1/data-quality` returns source freshness, geocoding coverage, and confidence summaries.
 - `GET /api/v1/operations/summary` returns operational counts and status breakdowns.
+  Two of its keys were renamed because they named something other than what they
+  counted: `population_at_risk` and `facilities_at_risk` were both `.length` of a
+  list, and those lists are keyed by hazard and by service type respectively — so
+  "facilities at risk" was reporting the number of service types the schema knows.
+  The row counts are now `population_at_risk_rows` and
+  `facilities_at_risk_types`; the figures an operator wants are
+  `population_at_risk_total` and `facilities_at_risk_total`. All four are `null`
+  before analytics has run, which is a different state from a run that found
+  nothing.
 - `GET /api/v1/incidents` and `POST /api/v1/incidents` list and create incidents.
 - `GET /api/v1/incidents/:id` and `PATCH /api/v1/incidents/:id` inspect and update an incident.
 - `GET /api/v1/interventions` and `POST /api/v1/interventions` list and create intervention plans.
@@ -622,11 +631,21 @@ Response: `{ success, data: ConnectorSpec[] }`
 
 Auth: `admin:*`. Applies configured data-retention policy: anonymises or deletes PII fields on records older than the retention window.
 
-Body: `{ dry_run?: bool, actor?: string }`
+Body: none. Takes no parameters.
 
-Response: `{ success, affected: int, dry_run: bool }`
+Response:
+```json
+{ "success": true,
+  "field_reports":           { "kept": 42, "expired": 7 },
+  "rapidpro_inbound_messages": { "kept": 3,  "expired": 0 } }
+```
 
-Side effect: modifies field_reports, rapidpro_inbound_messages, and action_logs in-place. Writes an action_log entry per affected collection.
+Side effect: **deletes** the expired `field_reports` and `rapidpro_inbound_messages` by id. This is the
+only hard delete in the API; see [ADR-007](architecture/decisions/ADR-007-soft-delete.md).
+
+Returns `400` when `retentionDays` is not a positive number, and deletes nothing. That refusal is
+deliberate — a non-numeric window used to become `NaN`, and `age > NaN` is false for every record, so
+the route expired nothing and reported `success: true` on every run.
 
 ---
 

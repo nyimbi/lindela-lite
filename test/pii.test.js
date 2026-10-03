@@ -287,8 +287,13 @@ describe('pii phone masking', () => {
     assert.equal(out.urn, undefined, 'masking must not invent fields')
   })
 
-  it('strips a tel: prefix but keeps the shape', () => {
-    assert.equal(redactPii({ phone: 'tel:+254712345678' }).phone, 'xxxx5678')
+  it('keeps a tel: prefix, so the redacted value is still a URN', () => {
+    // It used to return `xxxx5678` — the same string as for a bare number, so a
+    // column that had been URNs became a column of unparseable text and two
+    // subscribers sharing a suffix became indistinguishable.
+    assert.equal(redactPii({ phone: 'tel:+254712345678' }).phone, 'tel:xxxx5678')
+    assert.equal(redactPii({ phone: '+254712345678' }).phone, 'xxxx5678',
+      'and a bare number must not acquire a prefix it never had')
   })
 
   it('does not mangle a number it cannot mask', () => {

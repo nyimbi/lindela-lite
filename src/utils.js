@@ -398,16 +398,37 @@ function csvEscape(value) {
   return text
 }
 
+/**
+ * A coordinate as a number, or null when it is not one.
+ *
+ * The guard has to rule absence out before it asks about the number.
+ * `Number.isFinite(Number(x))` looks like it does both and does neither:
+ * `Number(null)` and `Number('')` are both 0, so a record on the equator and a
+ * record with no coordinates at all are the same point. Whitespace is trimmed
+ * for the same reason — `Number('  ')` is 0 as well.
+ *
+ * This is why `toGeoJson` filters on `readCoordinate` rather than on
+ * `Number.isFinite(item.latitude)`: a coordinate that arrived as the string
+ * `"3.12"` is a real coordinate, and the STAC path has always accepted it.
+ */
+export function readCoordinate(value) {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string' && value.trim() === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
 export function toGeoJson(records) {
   return {
     type: 'FeatureCollection',
     features: records
-      .filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude))
-      .map((item) => ({
+      .map((item) => ({ item, lat: readCoordinate(item.latitude), lon: readCoordinate(item.longitude) }))
+      .filter(({ lat, lon }) => lat !== null && lon !== null)
+      .map(({ item, lat, lon }) => ({
         type: 'Feature',
         geometry: {
           type: 'Point',
-          coordinates: [item.longitude, item.latitude],
+          coordinates: [lon, lat],
         },
         properties: Object.fromEntries(
           Object.entries(item).filter(([key]) => key !== 'latitude' && key !== 'longitude'),

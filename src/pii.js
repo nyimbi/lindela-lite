@@ -43,6 +43,20 @@ export function redactPii(record, config = {}) {
     if (record.contact_urn) {
       result.contact_urn = maskPhone(record.contact_urn)
     }
+    // Same drift, third field. `rapidpro_inbound_messages.from` is the sender's
+    // number in E.164, taken straight off the webhook payload and stored as
+    // received. Every other phone-shaped field was masked; this one was missed
+    // because the masker's list was written from the CHW shape and the webhook
+    // has a different one. A test asserted the cleartext value back, which made
+    // the leak a specification rather than an accident — see
+    // `test/privacy-rapidpro-inbound.test.js`.
+    //
+    // Masking, not hashing: the last four digits are what let an operator
+    // recognise a reporter who has called before, and that is the whole
+    // operational reason the field is there.
+    if (record.from) {
+      result.from = maskPhone(record.from)
+    }
   }
 
   if (cfg.coarsenGeoToH3Cell !== null && cfg.coarsenGeoToH3Cell !== undefined) {
@@ -87,11 +101,27 @@ export function applyRetention(records, retentionDays, now = Date.now()) {
   return { kept, expired }
 }
 
+/**
+ * The effective policy, always complete.
+ *
+ * It returned whatever the file or the environment variable happened to parse
+ * to, and every caller that read `policy.retentionDays` directly — rather than
+ * handing the object to `redactPii`, which merges — got `undefined` the moment a
+ * deployment set any single key. `applyRetention` then computed
+ * `undefined * 86_400_000` as `NaN`, and `age > NaN` is false for every record
+ * in the store. So a deployment that configured one privacy setting to opt out
+ * of name redaction silently kept every field report forever, and
+ * `POST /api/v1/maintenance/apply-retention` reported `{success: true, expired: 0}`
+ * about it — the DAT-07 no-op, arriving by a different door and a week later.
+ *
+ * Merging here rather than at each call site means there is one policy shape,
+ * which is the only way the fourth key is as safe as the first three.
+ */
 export async function loadPolicy() {
   const envPolicy = process.env.LINDELA_LITE_PII_POLICY
   if (envPolicy) {
     try {
-      return JSON.parse(envPolicy)
+      return mergePolicy(JSON.parse(envPolicy))
     } catch {
       // Fall through to file check
     }
@@ -100,12 +130,27 @@ export async function loadPolicy() {
   try {
     const filePath = 'data/pii-policy.json'
     const content = await fs.readFile(filePath, 'utf8')
-    return JSON.parse(content)
+    return mergePolicy(JSON.parse(content))
   } catch {
     // Return default if file doesn't exist
   }
 
-  return DEFAULT_POLICY
+  return mergePolicy({})
+}
+
+/**
+ * Apply the retention window to one collection.
+ *
+ * A window that is not a positive finite number purges nothing and says so.
+ * Silently expiring everything on `NaN` would be the worse of the two failures,
+ * but returning an empty `expired` without a reason is what let the `NaN` window
+ * go unnoticed — a retention job that reports success forever is a retention job
+ * nobody is running.
+ */
+export function retentionWindowDays(policy) {
+  const days = policy?.retentionDays
+  if (!Number.isFinite(days) || days <= 0) return null
+  return days
 }
 
 /**
@@ -129,15 +174,32 @@ function hashString(value) {
   return `sha256:${saltId(salt)}:${digest.slice(0, DIGEST_HEX_CHARS)}`
 }
 
+/**
+ * Keep the last four digits, drop the rest.
+ *
+ * Two things it used to get wrong, both of which made the masked value either
+ * unparseable or fully reversible.
+ *
+ * It dropped the `tel:` scheme. `maskPhone('tel:+254711111111')` returned
+ * `xxxx1111` — the same string as for a bare number, so a column that had been
+ * URNs became a column of unparseable text, and two different subscribers with
+ * the same last four digits became indistinguishable where before they were not.
+ *
+ * And it masked anything four characters or longer. `maskPhone('+254')` returned
+ * `xxxx+254`: the whole input, inside the mask, with a prefix that says it was
+ * redacted. Six characters is the shortest thing that could plausibly be a
+ * number; below that there is nothing to redact, and the honest answer is to
+ * return the input and let it be obviously not a phone number.
+ */
 function maskPhone(value) {
   if (!value) return value
   const str = String(value)
   const telPrefix = 'tel:'
   const hasPrefix = str.startsWith(telPrefix)
   const phone = hasPrefix ? str.slice(telPrefix.length) : str
-  if (phone.length < 4) return str
+  if (phone.length < 6) return str
   const lastFour = phone.slice(-4)
-  return `xxxx${lastFour}`
+  return `${hasPrefix ? telPrefix : ''}xxxx${lastFour}`
 }
 
 // -------------------------------------------------------------------

@@ -218,9 +218,39 @@ export function elevationFromTile(decoded, tile, zoom, lat, lon) {
 }
 
 /**
- * Sampled elevation window around a point, for a local slope/basin analysis.
- * Returns { values, grid, step_degrees, size } or null if unavailable.
+ * Sample a window against an already-decoded tile. Pure; no fetch.
+ *
+ * Split out from `elevationWindow` so the void-cell rule below is testable
+ * without a network. A DEM tile's nodata region is ocean, or coverage the
+ * provider did not have, and both are places where the platform has no idea
+ * what the ground does — so a void sample is `NaN`, not `0`. It used to be
+ * written as the `null` that `elevationFromTile` returns, into a `Float64Array`,
+ * and a typed array coerces `null` to zero: every uncovered sample came back as
+ * sea level. `terrainContext`'s `.filter(Number.isFinite)` was the guard that
+ * should have caught it, and it was dead code because a zero is a perfectly
+ * finite elevation.
+ *
+ * `NaN` also serialises to `null`, which is the platform's convention for an
+ * absent value, so this needs no special case at the HTTP boundary.
  */
+export function elevationWindowFromTile(decoded, tile, zoom, lat, lon, { radiusDeg = 0.02, size = 33 } = {}) {
+  const stepLat = (radiusDeg * 2) / (size - 1)
+  const stepLon = (radiusDeg * 2) / (size - 1)
+  const values = new Float64Array(size * size).fill(NaN)
+
+  for (let row = 0; row < size; row += 1) {
+    const sampleLat = lat + radiusDeg - row * stepLat
+    for (let col = 0; col < size; col += 1) {
+      const sampleLon = lon - radiusDeg + col * stepLon
+      const value = elevationFromTile(decoded, tile, zoom, sampleLat, sampleLon)
+      values[row * size + col] = value === null ? NaN : value
+    }
+  }
+
+  return { values, size, step_degrees: { lat: stepLat, lon: stepLon }, center: { lat, lon }, bounds: tileBounds(tile.x, tile.y, zoom) }
+}
+
+/** Fetch the covering tile and sample a window around a point, or null if unavailable. */
 export async function elevationWindow(lat, lon, options = {}) {
   const zoom = clamp(Math.floor(options.zoom ?? 12), MIN_ZOOM, MAX_ZOOM)
   const radiusDeg = options.radiusDeg ?? 0.02
@@ -234,21 +264,7 @@ export async function elevationWindow(lat, lon, options = {}) {
     return null
   }
 
-  const bounds = tileBounds(tile.x, tile.y, zoom)
-  const stepLat = (radiusDeg * 2) / (size - 1)
-  const stepLon = (radiusDeg * 2) / (size - 1)
-  const values = new Float64Array(size * size)
-
-  for (let row = 0; row < size; row += 1) {
-    const sampleLat = lat + radiusDeg - row * stepLat
-    for (let col = 0; col < size; col += 1) {
-      const sampleLon = lon - radiusDeg + col * stepLon
-      const value = elevationFromTile(decoded, tile, zoom, sampleLat, sampleLon)
-      values[row * size + col] = value
-    }
-  }
-
-  return { values, size, step_degrees: { lat: stepLat, lon: stepLon }, center: { lat, lon }, bounds }
+  return elevationWindowFromTile(decoded, tile, zoom, lat, lon, { radiusDeg, size })
 }
 
 export function elevationAtCacheInfo() {
