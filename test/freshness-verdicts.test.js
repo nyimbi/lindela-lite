@@ -258,7 +258,7 @@ describe('freshness verdicts', () => {
       })), 'quiet', `${source} must not go stale for silence`)
     }
 
-    for (const source of ['service_assets', 'acled_csv', 'conflict_csv', 'dhis2']) {
+    for (const source of ['service_assets', 'acled_csv', 'conflict_csv']) {
       assert.equal(SOURCE_POLICIES[source].interval_minutes, null)
       assert.equal(CADENCE_DAYS[source].cadence_days, null)
       assert.equal(verdictFor(forSource(source, {
@@ -266,6 +266,18 @@ describe('freshness verdicts', () => {
         lastSuccessRun: null,
       })), 'quiet', `${source} must not go stale for silence`)
     }
+
+    // DHIS2 is the awkward one: it carries interval_minutes: 360 like a
+    // scheduled source, but minimum_records: 0 and no configuration until an
+    // operator supplies base_url and api_token. It has a cadence of null, so
+    // the deadline never arms — which is the point of putting the deadline on
+    // cadence_days and not on the interval.
+    assert.equal(SOURCE_POLICIES.dhis2.interval_minutes, 360)
+    assert.equal(CADENCE_DAYS.dhis2.cadence_days, null)
+    assert.equal(verdictFor(forSource('dhis2', {
+      lastRun: run({ records: 0, at: daysAgo(900) }),
+      lastSuccessRun: null,
+    })), 'quiet')
   })
 
   it('still calls an on-demand source broken when its run failed', () => {
