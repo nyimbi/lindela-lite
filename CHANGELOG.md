@@ -40,7 +40,51 @@ coordinate, because the equator and the prime meridian are ordinary places; that
 is the falsy-zero conflation this codebase has been bitten by repeatedly, and
 `latitude && longitude` is not used here.
 
+### Added
+
+**A chart library.** Seven of eight surfaces showed no chart of anything — a
+sentence in a `<span>`. The four charts that did exist were four unrelated
+implementations: a `<polyline>` in `co/`, a CSS-`<div>` bar chart in `co/`, two
+pixel-height `<div>`s in `scenarios/`, and 39 `svgEl()` calls in the situation
+map. So the visualization ceiling was not a styling problem; the thing the work
+needs to build did not exist.
+
+`public/shared/charts.js` — `lineChart` (with an optional uncertainty band),
+`barChart`, `stackedBar`, `heatmap`, `smallMultiples`, `sparkline`, and the
+scale helpers they rest on. Every function takes a data array and returns
+strings, which is why 49 tests can assert on what a chart actually drew without a
+browser.
+
+Four properties every chart holds to:
+
+- **An absent value is not a zero.** A gap breaks the line rather than being
+  bridged, a missing heatmap cell is a dashed outline rather than the lowest
+  colour in the ramp, and a missing bar is not a zero-height bar. A null
+  rendered as zero is a claim about the world.
+- **Every chart ships a table.** The SVG is `aria-hidden`; the table is its
+  sibling. A hue and a slope do not survive a screen reader.
+- **The extent is data-derived, shared and printed.** Bars are comparable only
+  against one axis, and an axis nobody can read is a decoration.
+- **Colour comes from `tokens.css`, never from a literal.** A hex inside an SVG
+  would not follow a retune of the palette for contrast.
+
+`smallMultiples` generalises an instinct the console already had:
+`loadFloodProbabilityModels` deliberately kept districts that *refused* a model
+rather than hiding them, because "this district has 40 months, not the 60
+required" is actionable and a blank strip is not. The console strip used to
+reduce eight districts to one headline `skill_over_base_rate` and discard the
+base rate, the month count and the spread; it now draws all eight side by side,
+each with its own sample size, refused ones included.
+
 ### Fixed
+
+**The sparkline connected across a missing month.** `public/co/app.js` filtered
+nulls out of the series and drew one polyline through what remained, so
+`[10, null, 30]` rendered as a continuous line through a month nobody measured.
+It breaks the line at the gap now. The regression guard for this in
+`test/lite.test.js` asserted on the *source text* of `public/co/app.js` — it
+would have gone on passing against a file that no longer contained the behaviour
+the moment the code moved. It calls the function instead.
 
 **A bulk upload reported success on a file that contained a bad row.** The
 `ok` verdict was `rows.length + invalidRows === parsed.length` — arithmetic that

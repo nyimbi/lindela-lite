@@ -336,12 +336,12 @@
 
       <section id="histogram-section" hidden>
         <h2 data-i18n="co.signal_histogram">Signal-to-Action Lag</h2>
-        <!-- role="img" is what makes the aria-label the alternative to the bars
-             rather than a caption floating beside them; the bars themselves are
-             then presentational. The real alternative — every bucket and its
-             count — is the table app.js writes into #histogram-data. -->
+        <!-- role="img" makes the aria-label the alternative to the bars rather
+             than a caption floating beside them. The bar chart itself is
+             aria-hidden and ships its own <table> sibling into #histogram, which
+             is where every bucket and its count now live — a separate
+             visually-hidden container was a second place to keep in sync. -->
         <div class="histogram" id="histogram" role="img" aria-label="Dispatch lag histogram"></div>
-        <div class="visually-hidden" id="histogram-data"></div>
       </section>
 
       <section id="feedback-section" hidden>

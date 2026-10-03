@@ -81,7 +81,7 @@ function stubElement(tag = 'DIV') {
 const CO_IDS = [
   'quarter-select', 'year-select', 'locale-select', 'export-btn', 'loading-banner',
   'load-status', 'load-error', 'kpi-grid', 'cohort-body', 'equity-body', 'qoq-body',
-  'histogram', 'histogram-data', 'feedback-body', 'trend-grid', 'trend-window',
+  'histogram', 'feedback-body', 'trend-grid', 'trend-window',
   'sig-hash', 'gen-time', 'main',
   'kpi-section', 'trend-section', 'cohort-section', 'equity-section', 'qoq-section',
   'histogram-section', 'feedback-section',

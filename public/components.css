@@ -753,6 +753,114 @@ input[type="range"]:focus-visible::-moz-range-thumb     { box-shadow: 0 0 0 3px 
 .data-table tbody tr:hover { background: var(--surface); }
 .data-table td.num-cell { white-space: nowrap; }
 
+/* --- Charts -----------------------------------------------------
+   The eight surfaces had four unrelated graphics implementations between them:
+   a <polyline> in co/, a CSS-<div> bar chart in co/, two pixel-height <div>s
+   in scenarios/, and 39 svgEl() calls in the situation map. These are the rules
+   for the one shared set in public/shared/charts.js.
+
+   The SVG is `aria-hidden` and always ships a `.chart-table` sibling, so nothing
+   here is load-bearing for a screen reader. What is load-bearing is contrast:
+   --ink-muted on --bg for tick labels, --stroke for grid lines. Grid lines sit
+   below the 4.5:1 text floor deliberately — they are a scale reference, not a
+   value, and a chart whose grid competes with its data is worse than one
+   without. */
+.chart {
+  display: block;
+  inline-size: 100%;
+  block-size: auto;
+  color: var(--brand);
+  overflow: visible;
+}
+
+.chart-tick {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+}
+
+.chart-grid line { stroke-linecap: square; }
+.chart-band { pointer-events: none; }
+.chart-cell { shape-rendering: crispEdges; }
+
+/* A missing cell is a dashed outline. It must not be the lowest colour in the
+   ramp, which would say "the driest thing on this map". */
+.chart-cell-missing { opacity: 0.7; }
+
+/* The accessible table is not decoration; it is the chart for anyone who cannot
+   see the chart. Collapsed to a caption-sized summary by default and expanded
+   on focus or hover so it does not push the page around. */
+.chart-table {
+  margin-block-start: var(--sp-2);
+  overflow-x: auto;
+}
+
+.chart-table table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.chart-table caption {
+  text-align: start;
+  color: var(--ink);
+  font-weight: 600;
+  padding-block-end: var(--sp-1);
+}
+
+.chart-table th,
+.chart-table td {
+  text-align: start;
+  padding: var(--sp-1) var(--sp-2);
+  border-block-end: 1px solid var(--stroke);
+  white-space: nowrap;
+}
+
+.chart-table .num {
+  text-align: end;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--chart-cols, 3), minmax(0, 1fr));
+  gap: var(--sp-4);
+}
+
+/* A facet with no chart is still a facet: "Refused: 40 months of 60" is
+   actionable and a blank tile is not, which is why smallMultiples renders the
+   panel rather than dropping it. */
+.chart-panel {
+  margin: 0;
+  padding: var(--sp-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  min-inline-size: 0;
+}
+
+.chart-panel-title {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  margin-block-end: var(--sp-2);
+}
+
+.chart-panel-note,
+.chart-panel-refused {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+.chart-panel-refused { color: var(--warn); }
+
+/* A chart is 100% wide but not infinitely tall — a 480x180 viewBox stretched
+   across a 1200px rail renders its 10px type at 25px and its bars as slabs. */
+@media (min-width: 900px) {
+  .chart-grid { grid-template-columns: repeat(var(--chart-cols, 2), minmax(0, 1fr)); }
+}
+
 /* --- Print ------------------------------------------------------
    styles.css owns the token inversion and the page-level print block; only the
    component-level rules belong here. Printing a component costs paper and

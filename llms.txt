@@ -73,6 +73,7 @@ it reaches the caller. Half of them historically did not.
 | `src/schema.js` | Normalized record shapes and `emptyStore()`. |
 | `src/ingestion.js` | `runIngestion`, `OUTPUT_COLLECTIONS`, source policies. |
 | `src/connectors/` | 17 connectors; `spec.js` is the SDK (`defineConnector`). |
+| `public/shared/charts.js` | Five chart primitives + `sparkline`. **Pure**: every function returns strings, no DOM, so `test/charts.test.js` asserts on what was drawn without a browser. Rules: an absent value is never a zero, every chart ships an `aria-hidden` SVG plus a table sibling, one shared data-derived extent, colour only from tokens. |
 | `src/upload.js` | `POST /api/v1/upload`. Bulk CSV import: per-collection column contract, row-level validation report, `dry_run`. A batch with any rejected row writes nothing — see `docs/api.md` § Bulk Upload. |
 | `src/analytics/` | Flood probability, impact, downscaling, ensemble. |
 | `public/` | Eight PWA surfaces. No framework, no build step, no bundler. |

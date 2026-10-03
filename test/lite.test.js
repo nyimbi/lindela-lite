@@ -18,6 +18,10 @@ import { spec as openMeteoSpec } from '../src/connectors/open-meteo.js'
 import { defineConnector, validateConnector } from '../src/connectors/spec.js'
 import { emit, dispatchPending } from '../src/outbox.js'
 import { normalizeWebhookSubscription } from '../src/webhooks.js'
+import { sparkline } from '../public/shared/charts.js'
+
+/** The `points` attribute of every polyline in a rendered chart. */
+const lines = (markup) => [...markup.matchAll(/<polyline[^>]*points="([^"]*)"/g)].map((m) => m[1])
 import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from '../src/scenarios.js'
 import { Pg0Manager } from '../src/pg0.js'
 import { createStoreFromEnv } from '../src/storage.js'
@@ -5301,12 +5305,22 @@ describe('Lindela Lite false-alert trend', () => {
     // Gaps used to be filled with 0 before plotting, so a month with no recorded
     // outcome drew as a flat line sitting on the axis — indistinguishable from a
     // month in which nothing happened.
-    const app = await fs.readFile('public/co/app.js', 'utf8')
-    const spark = app.slice(app.indexOf('function buildSparkline'), app.indexOf('function sparkCard'))
-    assert.ok(!/values\.map\(v => v \?\? 0\)/.test(spark),
-      'a sparkline must not fill missing values with zero')
-    assert.ok(/indexed\.length > 1/.test(spark),
-      'a single plotted value is a dot, not a trend line')
+    //
+    // This used to assert on the *source text* of `public/co/app.js`, which is
+    // how the guard stopped guarding: the sparkline moved to
+    // `public/shared/charts.js` and the regexes went on searching a file that no
+    // longer contained the behaviour, matching nothing and passing. The check
+    // below calls the function instead, so a future move cannot silently retire
+    // it. See `test/charts.test.js`, which is where the full coverage lives.
+    const spark = sparkline([10, null, 30, null], { label: 'x' })
+    assert.equal(spark.missing, 2)
+    assert.equal(spark.total, 4)
+    // The gap breaks the line: neither run has two consecutive points, so there
+    // is no line at all — only the endpoint dot on the last observed value.
+    assert.equal(lines(spark.svg).length, 0)
+    assert.equal((spark.svg.match(/<circle/g) || []).length, 1)
+    assert.equal(sparkline([1, 2, 3], { label: 'x' }).svg.includes('<polyline'), true,
+      'three consecutive values do draw a line')
   })
 
   it('states the denominator beside the rate on the KPI tile', async () => {

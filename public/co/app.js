@@ -8,6 +8,7 @@
 
 import { esc, formatTimestamp, num, pct, truncate } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
+import { barChart, sparkline } from '/shared/charts.js'
 
 let currentLocale = 'en'
 let i18n = {}
@@ -329,12 +330,11 @@ const LAG_BUCKETS = [
 /**
  * The histogram as a sentence, and as the numbers behind it.
  *
- * The bars were a labelled empty div: aria-label on a div with no role
- * announces the label and nothing else, so the chart was five coloured
- * rectangles with no values. role="img" makes the summary the alternative and
- * the bars presentational; the table carries the full distribution, because a
- * donor asking "how many went past 24 hours" is asking for one bucket, not for
- * the shape.
+ * This was a labelled empty div: aria-label on a div with no role announces the
+ * label and nothing else, so the chart was five coloured rectangles with no
+ * values. The bars are now the shared `barChart`, and the table it ships beside
+ * the SVG carries the full distribution — a donor asking "how many went past 24
+ * hours" is asking for one bucket, not for the shape.
  */
 function renderHistogram(dispatches) {
   const container = document.getElementById('histogram')
@@ -350,38 +350,17 @@ function renderHistogram(dispatches) {
     if (bucketIdx >= 0) counts[bucketIdx] += 1
   }
 
-  const maxCount = Math.max(...counts, 1)
-  const maxPx = 70
-
-  container.innerHTML = LAG_BUCKETS.map((b, i) => {
-    const h = Math.round((counts[i] / maxCount) * maxPx)
-    return `<div class="hist-bar-wrap">
-      <span class="hist-count">${counts[i]}</span>
-      <div class="hist-bar" style="height:${h}px"></div>
-      <span class="hist-label">${b.label}</span>
-    </div>`
-  }).join('')
-
   const total = counts.reduce((a, b) => a + b, 0)
+  const chart = barChart({
+    labels: LAG_BUCKETS.map((b) => b.label),
+    series: [{ name: t('co.dispatches', 'Dispatches'), values: counts }],
+    xLabel: t('co.lag_bucket', 'Lag'),
+    caption: t('co.histogram_table_caption', 'Dispatches by signal-to-dispatch lag'),
+    title: t('co.histogram_table_caption', 'Dispatches by signal-to-dispatch lag'),
+  }, { height: 190, pad: { left: 40, bottom: 30 } })
+
+  container.innerHTML = chart.svg + chart.table
   container.setAttribute('aria-label', histogramSummary(counts, total))
-
-  const data = document.getElementById('histogram-data')
-  if (data) {
-    data.innerHTML = `<table class="data-alt">
-      <caption>${esc(t('co.histogram_table_caption', 'Dispatches by signal-to-dispatch lag'))}</caption>
-      <thead>
-        <tr>
-          <th scope="col">${esc(t('co.lag_bucket', 'Lag'))}</th>
-          <th scope="col">${esc(t('co.dispatches', 'Dispatches'))}</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${LAG_BUCKETS.map((b, i) => `<tr><th scope="row">${esc(b.label)}</th><td>${counts[i]}</td></tr>`).join('')}
-        <tr><th scope="row">${esc(t('co.total', 'Total'))}</th><td>${total}</td></tr>
-      </tbody>
-    </table>`
-  }
-
   show('histogram-section')
 }
 
@@ -427,32 +406,15 @@ function renderFeedback(summary) {
  * month shows as a single dot rather than being stretched into a trend line it
  * does not support.
  */
+/**
+ * The sparkline, from the shared library.
+ *
+ * The logic here was already right about the thing it is easy to get wrong — a
+ * lone plotted value is a dot, not a trend — so it moved rather than being
+ * rewritten. What it gained is being reachable from every surface.
+ */
 function buildSparkline(values, label, w = 200, h = 40, pad = 4) {
-  if (!values || values.length < 2) return ''
-  const indexed = values
-    .map((v, i) => ({ v, i }))
-    .filter((p) => p.v !== null && p.v !== undefined)
-  if (!indexed.length) return ''
-  const xs = values.length - 1
-  const min = Math.min(...indexed.map((p) => p.v))
-  const max = Math.max(...indexed.map((p) => p.v))
-  const range = max - min || 1
-  const xStep = xs > 0 ? (w - pad * 2) / xs : 0
-  const at = (p) => [
-    pad + p.i * xStep,
-    h - pad - ((p.v - min) / range) * (h - pad * 2),
-  ]
-  const pts = indexed.map((p) => at(p).map((n) => n.toFixed(1)).join(',')).join(' ')
-  const last = at(indexed[indexed.length - 1])
-  // Only draw a connecting line when there is more than one plotted point;
-  // a lone value is a dot, not a trend.
-  const line = indexed.length > 1
-    ? `<polyline points="${pts}" fill="none" stroke="var(--brand)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>`
-    : ''
-  return `<svg class="spark-svg" role="img" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-label="${esc(label)}">` +
-    line +
-    `<circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3" fill="var(--accent,#4a9eff)"/>` +
-    `</svg>`
+  return sparkline(values, { label, width: w, height: h, pad }).svg
 }
 
 /**

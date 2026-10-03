@@ -9,6 +9,7 @@ import { fillAppVersion } from '/shared/app-version.js'
 import { apiFetch, apiSettled, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
 import { applyLocaleToDocument, esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
+import { barChart, smallMultiples } from '/shared/charts.js'
 import { formatRelative } from '/shared/fmt.js'
 
 initServiceWorker()
@@ -814,9 +815,65 @@ async function loadFloodProbabilityModels() {
       + 'reported GDACS floods. Reporting-conditioned: the probability is a flood entering the archive, '
       + 'not water at a given elevation.'
       + (notes.length ? ` Not trained: ${notes.join('; ')}.` : '')
+    renderFloodProbabilityPanels(models)
   } catch {
     if (floodProbStripEl) floodProbStripEl.hidden = true
   }
+}
+
+/**
+ * Every district side by side, each with its own sample size.
+ *
+ * This strip used to reduce every trained district to the single best
+ * `skill_over_base_rate` and print that one as the headline. The base rate, the
+ * month count and the spread were discarded, which is the wrong trade: a
+ * district with 60 months of skill +40% and a district with 12 months of skill
+ * +40% are the same headline and completely different claims, and the reader
+ * could not tell which they were looking at.
+ *
+ * The refused districts stay in the grid too, under their own titles, for the
+ * reason this function already kept them in the note: "this district has 40
+ * months, not the 60 required" is actionable and a blank strip is not.
+ */
+function renderFloodProbabilityPanels(models) {
+  if (!floodProbStripEl) return
+  const existing = floodProbStripEl.querySelector('.chart-grid')
+  if (existing) existing.remove()
+
+  const panels = models.map((m) => {
+    const title = m.region_name || 'Unnamed district'
+    if (!m.model) {
+      return { title, chart: null, refused: m.refusal || 'Not trained: insufficient data' }
+    }
+    const t = m.model.training || {}
+    const skill = Number(m.folds?.folds?.skill_over_base_rate)
+    // A base rate that was not fitted is not a base rate of zero. Drawing it as
+    // a zero-height bar would say "no floods in this district", which is the
+    // conflation the headline text already refuses to commit.
+    const baseRate = isUndetermined(t.base_rate) ? null : Number(t.base_rate)
+    const chart = barChart({
+      labels: ['Base rate', 'Skill over base'],
+      series: [{ name: title, values: [
+        baseRate === null || !Number.isFinite(baseRate) ? null : baseRate * 100,
+        Number.isFinite(skill) ? skill * 100 : null,
+      ] }],
+      format: (v) => `${Math.round(v)}%`,
+      caption: `${title} — flood-month base rate and validated skill`,
+      title,
+      empty: 'No base rate or skill published for this district',
+    }, { height: 140, pad: { left: 40, bottom: 34 } })
+    const months = Number.isFinite(Number(t.months)) ? Number(t.months) : null
+    return {
+      title,
+      chart,
+      note: `${months === null ? 'month count not published' : `${months} months`}`
+        + `${Number.isFinite(Number(t.flood_months)) ? ` · ${t.flood_months} flood months` : ''}`
+        + `${Number.isFinite(skill) ? '' : ' · skill not validated'}`,
+    }
+  })
+
+  const grid = smallMultiples(panels, { columns: Math.min(4, panels.length) })
+  if (grid.html) floodProbStripEl.insertAdjacentHTML('beforeend', grid.html)
 }
 
 // =============================================================

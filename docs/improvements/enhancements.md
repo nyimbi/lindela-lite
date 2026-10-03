@@ -375,7 +375,43 @@ trained district to the single best `skill_over_base_rate`, discarding the base
 rate, the month count and the spread. Small multiples are exactly the fix: eight
 districts side by side, each with its sample size, beats one headline district.
 
-**Effort:** M.
+**Effort:** M. — **SHIPPED** (2026-10-03).
+
+**What shipped.** `public/shared/charts.js` and `test/charts.test.js` (49 tests).
+Five primitives — `lineChart` (with an optional uncertainty band), `barChart`,
+`stackedBar`, `heatmap`, `smallMultiples` — plus `sparkline` and the scale
+helpers they rest on (`extentOf`, `scale`, `ticks`, `completeness`).
+
+Two design decisions worth recording, because they are the reason the tests can
+run without a browser:
+
+- **Every function returns strings, not DOM.** A component library would have
+  needed jsdom or a live page; a string-returning one is testable by asserting on
+  what was drawn, which is the same reason `public/shared/map-frame.js` and
+  `evictionPlan` in `public/sw.js` are pure. Same constraint, same reason.
+- **The SVG is `aria-hidden` and always ships a `.chart-table` sibling.** Not a
+  nicety: the SVG's `role="presentation"` and the table's contents are two
+  statements about the same data, and if one can drift the other is the
+  authoritative copy. Every chart returns `{svg, table, label, missing, total}`.
+
+**Two surfaces are wired.** `public/co/app.js` drops its private `<polyline>`
+sparkline and its CSS-`<div>` histogram — the only two charts that existed
+anywhere — and calls the library. The `#histogram-data` container went with
+them: the chart's own table replaced a second place to keep in sync.
+`public/app.js`'s `loadFloodProbabilityModels` now renders small multiples instead
+of reducing eight districts to one headline.
+
+`public/scenarios/app.js` keeps its delta bar. It is a *diverging* single-value
+chart around a zero rule, which is not one of the five primitives and which the
+library has no honest way to express without losing the zero anchor; replacing a
+correct chart with an approximation is not a consolidation.
+
+**One behaviour changed rather than being carried across.** The CO sparkline
+filtered nulls out and connected what remained, so `[10, null, 30]` drew a line
+through a month nobody measured. It breaks the line at the gap now, as
+`lineChart` always did. `test/lite.test.js`'s existing guard for this asserted on
+the *source text* of `public/co/app.js` and would have gone on passing against a
+file that no longer contained the behaviour — it calls `sparkline` instead.
 
 ### ENH-17 — Render uncertainty as geometry, not as a footnote
 

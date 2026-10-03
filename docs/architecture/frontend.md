@@ -168,6 +168,7 @@ flowchart LR
     RT["runtime.js<br/><i>apiFetch, apiSettled,<br/>submitOrQueue, initI18n,<br/>initOfflineQueue, initServiceWorker</i>"]
     FMT["fmt.js<br/><i>esc, num, time, locale table</i>"]
     LBL["labels.js"]
+    CH["charts.js<br/><i>line, bar, stacked, heatmap,<br/>small multiples, sparkline</i>"]
     NAV["navbar.js"]
     VER["app-version.js"]
   end
@@ -181,17 +182,17 @@ flowchart LR
 
   DM["shared/demo.js<br/><i>script tag, not an import</i>"]
 
-  D --> RT & FMT & LBL & MF & BM & SE & FB & VER
+  D --> RT & FMT & LBL & CH & MF & BM & SE & FB & VER
   P --> RT & FMT & LBL & NAV
   C --> RT & NAV
-  O --> FMT & LBL
+  O --> FMT & LBL & CH
   DI --> RT & FMT
   F --> RT & FMT & LBL & NAV
   PA --> RT & FMT
   S --> RT & FMT
 
-  subgraph MARK["Surfaces that never touch shared/"]
-    NONE1["co/app.js — fmt, labels only<br/>no runtime, no navbar"]
+  subgraph MARK["Surfaces that never touch runtime.js"]
+    NONE1["co/app.js — fmt, labels, charts<br/>no runtime, no navbar"]
     NONE2["districts/app.js, scenarios/app.js<br/>no navbar"]
     NONE3["parametric/app.js<br/>no navbar, no labels"]
   end

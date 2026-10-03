@@ -181,4 +181,7 @@ credited, not claimed as new findings.
 5. **ENH-06 and ENH-07** — freshness verdicts and assertions. Unglamorous, and the
    difference between an operator trusting source health and ignoring it.
 6. **ENH-16 first**, because the chart library makes the other seven visualization
-   items composition rather than invention.
+   items composition rather than invention. **SHIPPED** 2026-10-03:
+   `public/shared/charts.js`, 5 primitives + `sparkline`, 49 tests; `co/` and
+   the console wired. Pure string-returning functions, no DOM — see
+   `enhancements.md` for why, and for the one existing chart deliberately kept.
