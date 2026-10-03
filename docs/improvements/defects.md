@@ -344,11 +344,13 @@ store to every partner.
 ### Data correctness
 
 - **DATA-01 — `/api/v1/flood-probability/score` with no `region` scores an
+  **Fixed 2026-10-03.** With no `region`, a single trained model is still used; with several the route refuses and lists them. The response now carries `uncertainty.by_feature` — the empirical co-occurrence counts and Wilson intervals the model was fit to — so the probability is no longer a bare number. Guarded by `test/flood-score-honesty.test.js`.
   arbitrary district.** `src/server.js:560-563` sorts all models by `trained_at`
   and takes `models[0]`. **Reproduced semantics:** asking for flood probability
   without naming a region returns whichever district trained most recently, with
   no indication that a different district was chosen.
 - **DATA-02 — The scored probability ships bare.** `src/server.js:583` returns a
+  **Fixed 2026-10-03.** `/score` now returns `uncertainty.by_feature`, keyed by the feature the caller supplied, carrying the threshold, the months above it, the flood months, the conditional probability and its Wilson interval, plus a note stating these are empirical co-occurrence counts and not a confidence interval on the fitted estimate. A model trained before these counts existed returns an empty map rather than omitting the field.
   number with no interval, no sample size, and no contingency table, while the
   model computes all three. The honesty lives in the model card, not the payload.
 - **DATA-03 — `computeFacilitiesAtRisk` counts each asset once per nearby

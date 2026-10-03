@@ -262,6 +262,30 @@ async function handleStacRoute(store, req, res, url) {
   jsonResponse(res, 404, { success: false, error: 'Not found' })
 }
 
+/**
+ * The trained model's contingency rows, keyed by the feature they describe.
+ *
+ * `contingency()` returns a flat array; a caller asking about max_7_day has no
+ * reason to know that, and picking the first row would hand them the interval
+ * for a different statistic than the one they supplied.
+ */
+function contingencyByFeature(rows) {
+  if (!Array.isArray(rows)) return {}
+  const byFeature = {}
+  for (const row of rows) {
+    if (!row || typeof row.feature !== 'string') continue
+    byFeature[row.feature] = {
+      threshold_mm: row.threshold_mm,
+      months_above_threshold: row.months_above_threshold,
+      flood_months_above_threshold: row.flood_months_above_threshold,
+      conditional_probability: row.conditional_probability,
+      conditional_probability_wilson: row.conditional_probability_wilson,
+      lift_over_base_rate: row.lift_over_base_rate,
+    }
+  }
+  return byFeature
+}
+
 async function handleApi(store, req, res, url) {
   let auth = null
   if (isAuthConfigured()) {
@@ -610,6 +634,21 @@ async function handleApi(store, req, res, url) {
     const models = (data.flood_probability_models || [])
       .filter((m) => m.model)
       .sort((a, b) => Date.parse(b.trained_at) - Date.parse(a.trained_at))
+
+    // With no region named, a single trained model is unambiguous and safe to
+    // use. More than one is not: the old behaviour took models[0], which is
+    // whichever district happened to train most recently, so a caller who
+    // omitted the parameter got an authoritative-looking number about a
+    // district they never asked about. Ask which one instead.
+    if (!region && models.length > 1) {
+      jsonResponse(res, 400, {
+        success: false,
+        error: 'region is required: more than one flood-probability model is trained, and scoring against whichever trained most recently would answer a question nobody asked',
+        available_regions: models.map((m) => m.region_name),
+      })
+      return
+    }
+
     const latest = region
       ? models.find((m) => String(m.region_name).toUpperCase() === region.toUpperCase())
       : models[0]
@@ -641,6 +680,17 @@ async function handleApi(store, req, res, url) {
         trained_at: latest.trained_at,
         model: latest.model,
         folds: latest.folds,
+        // The uncertainty behind this number, which used to stay on the server.
+        // `probability` is a point estimate from the fitted logistic model; the
+        // contingency rows are the empirical rainfall-flood co-occurrence
+        // counts it was fit to, each with a Wilson interval and the number of
+        // months the count rests on. A caller reading only `probability` sees
+        // an authoritative-looking figure with no idea that it may rest on four
+        // events.
+        uncertainty: {
+          note: 'conditional_probability and its Wilson interval are the empirical co-occurrence count at each feature threshold, not a confidence interval on the fitted point estimate. Read months_above_threshold before quoting the probability.',
+          by_feature: contingencyByFeature(latest.contingency),
+        },
         basis: latest.basis,
         label_source: latest.label_source,
         months_kept: latest.months_kept,
