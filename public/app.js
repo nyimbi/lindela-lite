@@ -3863,6 +3863,8 @@ let recordSearch = null
 /** The index the palette last drew, so a resolved index repaints exactly once. */
 let paintedRecordIndex = null
 
+const sentence = (text) => text.charAt(0).toUpperCase() + text.slice(1)
+
 function renderPaletteResults(query) {
   const q = query.trim().toLowerCase()
 
@@ -3913,9 +3915,9 @@ function renderPaletteResults(query) {
       <span class="palette-result-category">${escapeHtml(item.category)}</span>
     </li>
   `).join('') + (q && !items.length
-    ? `<li class="empty-note" role="presentation" style="padding:var(--sp-3) var(--sp-4)">No action or record matches.${caveat ? ` ${escapeHtml(caveat)}` : ''}</li>`
+    ? `<li class="empty-note" role="presentation" style="padding:var(--sp-3) var(--sp-4)">No action or record matches.${caveat ? ` ${escapeHtml(sentence(caveat))}` : ''}</li>`
     : caveat
-      ? `<li class="empty-note" role="presentation" style="padding:var(--sp-3) var(--sp-4)">${escapeHtml(caveat)}</li>`
+      ? `<li class="empty-note" role="presentation" style="padding:var(--sp-3) var(--sp-4)">${escapeHtml(sentence(caveat))}</li>`
       : '')
 
   paletteResults.querySelectorAll('.palette-result').forEach((li, i) => {

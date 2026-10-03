@@ -1,5 +1,6 @@
 import { emptyStore } from './schema.js'
-import { COLLECTIONS } from './store.js'
+import { COLLECTIONS, supersededVersions } from './store.js'
+import { BITEMPORAL_COLLECTIONS } from './bitemporal.js'
 import { nowIso } from './utils.js'
 
 export class PostgresStore {
@@ -129,6 +130,30 @@ export class PostgresStore {
     try {
       await client.query('BEGIN')
       for (const { collection, items } of writes) {
+        // ENH-13. Read the predecessors before the upsert overwrites them.
+        // Doing this inside the same transaction as the write is the whole
+        // point: two concurrent merges of the same record must not both read
+        // the same predecessor and each write a history row claiming to be
+        // the sole prior value.
+        //
+        // Deliberately the same helper the JsonStore path uses. Two
+        // implementations of "was this a revision" would disagree on exactly
+        // the boundary cases, and the disagreement would be invisible until
+        // somebody diffed the two stores.
+        if (BITEMPORAL_COLLECTIONS.includes(collection)) {
+          const { rows: predecessors } = await client.query(
+            'SELECT body FROM lite_records WHERE collection = $1 AND id = ANY($2::text[])',
+            [collection, items.map((item) => item.id)],
+          )
+          const superseded = supersededVersions(
+            collection,
+            predecessors.map((row) => row.body),
+            items,
+          )
+          if (superseded.length) {
+            await this.insertRecords(client, 'record_versions', superseded)
+          }
+        }
         await this.upsertCollection(client, collection, items)
       }
       await client.query('COMMIT')

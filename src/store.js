@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { emptyStore } from './schema.js'
 import { nowIso } from './utils.js'
+import { BITEMPORAL_COLLECTIONS, isRevision, versionRow } from './bitemporal.js'
 
 export const COLLECTIONS = [
   'source_runs',
@@ -47,6 +48,11 @@ export const COLLECTIONS = [
   'food_security_records',
   'disease_observations',
   'flood_probability_models',
+  // ENH-13. Every superseded value of a record upstream revises in place. Not
+  // in emptyStore()-adjacent lists by accident: it is a real collection, and
+  // leaving it off this list would drop every history row silently — the exact
+  // silent-key-list bug the comment above warns about, one level down.
+  'record_versions',
 ]
 
 export class JsonStore {
@@ -102,10 +108,17 @@ export class JsonStore {
     return this.#serialise(async () => {
       const current = await this.read()
       const next = { ...current }
+      const superseded = []
       for (const collection of COLLECTIONS) {
         const incoming = partial[collection] || []
         if (!incoming.length) continue
         next[collection] = mergeById(current[collection] || [], incoming)
+        if (BITEMPORAL_COLLECTIONS.includes(collection)) {
+          superseded.push(...supersededVersions(collection, current[collection] || [], incoming))
+        }
+      }
+      if (superseded.length) {
+        next.record_versions = mergeById(current.record_versions || [], superseded)
       }
       return this.#writeFile(next)
     })
@@ -156,6 +169,43 @@ export class JsonStore {
       })
     })
   }
+}
+
+/**
+ * The history rows a merge is about to destroy.
+ *
+ * Returns the *previous* values, before `mergeById` overwrites them. A record
+ * that is unchanged — the same `payload_hash` arriving again, which is what a
+ * healthy daily re-ingest looks like — produces nothing. Only a revision does,
+ * because only a revision loses information.
+ *
+ * Call this before the merge, not after. After, the previous value is gone,
+ * which is the entire problem this module exists to fix.
+ */
+export function supersededVersions(collection, existing, incoming, { sourceRunId = null, at = nowIso() } = {}) {
+  const before = new Map(existing.map((item) => [item.id, item]))
+  const rows = []
+  for (const item of incoming) {
+    const previous = before.get(item.id)
+    if (!isRevision(previous, item)) continue
+    try {
+      rows.push(versionRow({
+        collection,
+        recordId: item.id,
+        previous,
+        next: item,
+        supersededAt: at,
+        sourceRunId: item.source_run_id || sourceRunId,
+      }))
+    } catch {
+      // A record with no timestamp at all cannot open an interval, and
+      // versionRow says so. Dropping the row is correct here: an unbounded
+      // history entry would make valueAsOf() return a value for times it
+      // cannot justify, which is the failure mode bitemporality is meant to
+      // eliminate. The overwrite still happens; we decline to lie about when.
+    }
+  }
+  return rows
 }
 
 export function mergeById(existing, incoming) {
