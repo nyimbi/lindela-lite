@@ -939,11 +939,32 @@ separate renegotiations with the same cascade.
 Tracked against the phases above. Each line was verified by a real render or a
 failing check, not by reading the diff.
 
+**Correction, 2026-10-03.** Two cells below claimed more than the tree delivered,
+and the corrections are recorded here rather than quietly edited away
+(`docs/improvements/defects.md` WEB-12). Both were checked against the code:
+
+- Phase 0's "full module graph precached" was **false when written**. `APP_SHELL`
+  precached eight `/shared/*.js` modules and the entry points, but omitted
+  `/shared/fmt.js`, `/shared/labels.js` and `/components.css` — all three imported
+  by the surfaces it precached. Each repair to that list was a hand-maintained
+  snapshot of an import graph, so it was wrong the moment anyone added an import.
+  Offline boot was therefore broken for every surface. **Now fixed properly:**
+  there is no list. `shellGraph()` in `public/sw.js` walks a breadth-first closure
+  over `<link href>`, `<script src>`, `@import` and `from '…'`, and
+  `test/web-chw-offline.test.js` runs that closure against the real `public/` tree
+  and asserts it reaches the three files it used to miss. Forgetting the worker
+  again is now a test failure, not an offline boot failure.
+- Phase 2's "all 8 surfaces link `tokens.css` + `styles.css` + `components.css`"
+  is **still false**. Seven of eight do; the console (`public/index.html:9`) links
+  only `/styles.css`. It resolves the tokens transitively, because `styles.css:6`
+  does `@import url('/tokens.css')`, so the defect is a missing component layer,
+  not an unstyled console. Phase 2 stays open for this reason.
+
 | Phase | State | Evidence |
 |---|---|---|
-| 0 — correctness | done | offline boot fixed (full module graph precached, `skipWaiting`/`claim`); offline queue routed through `shared/runtime.js`; `refresh()` settles per-panel and names failures; `res.ok` checked via shared `apiFetch`; XSS closed in `co` and `districts`; `escapeHtml` preserves `0`/`false`; four undefined classes defined; checkbox class; `:focus-visible` replaces two `outline: none` |
+| 0 — correctness | done | offline boot fixed at the root: the precache is a derived breadth-first closure over the import graph (`shellGraph` in `public/sw.js`), not a hand-kept list, so an added import cannot be forgotten and a missing module is asserted in `test/web-chw-offline.test.js`; `skipWaiting`/`claim`; offline queue routed through `shared/runtime.js`; `refresh()` settles per-panel and names failures; `res.ok` checked via shared `apiFetch`; XSS closed in `co` and `districts`; `escapeHtml` preserves `0`/`false`; four undefined classes defined; checkbox class; `:focus-visible` replaces two `outline: none` |
 | 1 — serving | done | 238 KB → 65 KB over the wire (3.7×); ETag revalidation, per-type `cache-control`, `sw.js` `no-cache`; fifteen static branches collapsed into one `sendFile`; CSP + `nosniff` + `frame-ancestors` + `referrer-policy` + `permissions-policy`; SW API cache bounded and TTL-pruned |
-| 2 — one design system | done | all 8 surfaces link `tokens.css` + `styles.css` + `components.css`; `shared/fmt.js`, `shared/labels.js` created; `apiFetch`/`apiSettled`/`submitOrQueue` adopted by every surface; duplicated `escapeHtml`, date, number and severity helpers removed (178 LOC); responsive gate enforces the 24px AA target floor |
+| 2 — one design system | in progress | 7 of 8 surfaces link `tokens.css` + `styles.css` + `components.css`; the console links `styles.css` only (`public/index.html:8`); `shared/fmt.js`, `shared/labels.js` created; `apiFetch`/`apiSettled`/`submitOrQueue` adopted by every surface; duplicated `escapeHtml`, date, number and severity helpers removed (178 LOC); responsive gate enforces the 24px AA target floor |
 | 3 — content design | in progress | `labels.js` names every metric; focal-point card states the comparison and the consequence; scenario workbench opens on five named presets; workflow ribbon leads with a total; CO counts are integers; blockchain IDs truncated; `shared/fmt.js` gives one time format with a zone and one duration format |
 | 4 — accessibility | in progress | one `<h1>`, `<main>` and skip link on all 8; 38 `<th>` scoped; 0 unlabelled inputs; 0 missing `alt`; severity contrast fixed on two surfaces (was 2.2–4.3:1); `--ink-faint` raised above AA; CHW live regions and focus management; map focusable with keyboard pan/zoom and a textual record list; print stylesheet; focal-point dialog focus + stale-state fix |
 | 5 — i18n and RTL | done | per-surface locale reconciliation enforced by `scripts/check-i18n-offers.mjs`; three surfaces were offering languages at 0% coverage; `lang`/`dir` now driven from one locale table |

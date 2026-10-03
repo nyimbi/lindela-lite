@@ -677,6 +677,42 @@ components.css". Neither is true: see WEB-06 and the fact that the console is th
 one surface that does not link `components.css`. A planning document that records
 completed work which is not complete will be trusted by the next reader.
 
+**Verified 2026-10-03 against the working tree, and then fixed.** Both claims were
+false at the time of writing, and both were false *now* rather than merely
+false-when-written — the obvious explanation is wrong. `public/sw.js` had been
+edited since the audit and the edit was a real fix: `SHARED_MODULES` added the
+eight `/shared/*.js` modules and `APP_SHELL` added every surface entry point. It
+was a partial fix, and each repair was a hand-maintained snapshot of an import
+graph — which is wrong the moment anyone adds an import. `/shared/fmt.js`,
+`/shared/labels.js` and `/components.css` were still missing from a list whose
+own comment (`public/sw.js:13`) claimed to be "the full module graph of every
+surface, not just the entry point". A missing ES module is a hard
+module-resolution error rather than a degraded load, so the console failed to
+boot offline entirely: the one case the offline work exists for.
+
+**WEB-06 is now fixed.** `public/sw.js` no longer holds a list. `shellGraph(load,
+origin)` walks a breadth-first closure over the reference graph from eight
+`ENTRY_PATHS` plus four `BOOTSTRAP_ASSETS`, following `<link href>`,
+`<script src>`, `@import`, and `from '…'` / bare `import '…'` in `.js`, resolving
+each against the fetching URL. Cross-origin and `/api/` references are dropped. A
+list that cannot be wrong is worth more than a longer list: `test/web-chw-offline.test.js`
+runs the closure against the real `public/` tree on disk and asserts it reaches
+`/shared/fmt.js`, `/shared/labels.js`, `/components.css` and `/sw.js` — so adding
+an import and forgetting the worker is now a test failure rather than an offline
+boot failure nobody sees. `cache.add()` rejects per item, so one missing asset
+costs one entry instead of the whole shell; a worker that installs with a hole is
+never repaired, because the next install runs only on a version bump.
+
+The stylesheet half is narrower than it looks and **remains open**. The console
+(`public/index.html:9`) links only `/styles.css`, so `components.css` is genuinely
+absent — but `public/styles.css:6` does `@import url('/tokens.css')`, so the
+console does resolve the tokens transitively. The defect is a missing component
+layer, not an unstyled or token-less page.
+
+`docs/plans/ui-ux-world-class.md` records the correction visibly rather than
+editing it silently: Phase 0 returns to `done` on the strength of the derived
+graph, Phase 2 stays `in progress` with "7 of 8", and a dated note above the
+table explains both.
 ---
 
 ## Medium and low, grouped

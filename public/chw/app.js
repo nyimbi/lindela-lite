@@ -127,6 +127,26 @@ function showScreen(name) {
   }
 }
 
+/**
+ * Hand a report to the offline queue, and say so only once it is stored.
+ *
+ * The toast used to be unconditional: the report was declared queued as soon as
+ * `enqueue()` was *called*, and `enqueue()` resolved successfully when it had
+ * stored nothing at all — no IndexedDB, or a write the browser then aborted. A
+ * health worker was told their report was saved, watched the wizard reset, and
+ * walked away. Nothing about a discarded report looks like a discarded report.
+ *
+ * So the acknowledgement has to arrive from the store. A throw leaves the wizard
+ * standing, with everything they typed still in it, and the caller's catch
+ * reports the failure — which is the one outcome in which retrying is the right
+ * thing to do.
+ */
+async function queueReport(path, options, what) {
+  const result = await window.lindelaQueue.enqueue(path, options)
+  if (!result?.queued) throw new Error('the offline queue did not confirm the report')
+  showToast(t('chw.report_queued', { what }), 'info')
+}
+
 let toastTimer = null
 
 function showToast(message, kind = 'info') {
@@ -244,8 +264,7 @@ async function submitSymptomReport() {
 
   try {
     if (!navigator.onLine) {
-      await window.lindelaQueue.enqueue('/api/v1/chw/report', { method: 'POST', body })
-      showToast(t('chw.report_queued', { what: 'symptom report' }), 'info')
+      await queueReport('/api/v1/chw/report', { method: 'POST', body }, 'symptom report')
     } else {
       const res = await apiFetch('/api/v1/chw/report', { method: 'POST', body })
       showToast(t('chw.report_sent', { what: 'symptom report' }), 'ok')
@@ -286,8 +305,7 @@ function setupIncidentScreen() {
 
     try {
       if (!navigator.onLine) {
-        await window.lindelaQueue.enqueue('/api/v1/chw/report', { method: 'POST', body })
-        showToast(t('chw.report_queued', { what: 'symptom report' }), 'info')
+        await queueReport('/api/v1/chw/report', { method: 'POST', body }, 'symptom report')
       } else {
         const res = await apiFetch('/api/v1/chw/report', { method: 'POST', body })
         showToast(t('chw.report_sent', { what: 'symptom report' }), 'ok')
@@ -330,11 +348,10 @@ function setupReplyScreen() {
 
     try {
       if (!navigator.onLine) {
-        await window.lindelaQueue.enqueue('/api/v1/chw/reply', {
+        await queueReport('/api/v1/chw/reply', {
           method: 'POST',
           body: { alert_event_id: alertId, message },
-        })
-        showToast(t('chw.report_queued', { what: 'symptom report' }), 'info')
+        }, 'symptom report')
       } else {
         const res = await apiFetch('/api/v1/chw/reply', {
           method: 'POST',

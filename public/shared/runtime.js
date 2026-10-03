@@ -52,11 +52,47 @@ export async function initOfflineQueue() {
         req.onerror = () => resolve()
       })
     },
+    /**
+     * Persist a request for later replay.
+     *
+     * This used to be `if (!this.db) return` followed by a fire-and-forget
+     * `store.add`, so both an unavailable IndexedDB (private mode, storage
+     * pressure, a blocked upgrade) and a failed write resolved successfully:
+     * the caller showed the health worker "Report queued", reset the wizard,
+     * and the report existed nowhere. `flush()` had already been hardened
+     * against exactly this; the write path had not.
+     *
+     * It now throws unless the record is committed, and returns
+     * `{ queued: true, id }` when it is. A queued report is a report the user
+     * still has to send, and the only way to say so honestly is for the store
+     * to confirm it before anyone is told anything.
+     */
     async enqueue(path, options) {
-      if (!this.db) return
-      const tx = this.db.transaction(['requests'], 'readwrite')
-      const store = tx.objectStore('requests')
-      store.add({ path, options, timestamp: Date.now() })
+      if (!this.db) {
+        throw new Error('This device has no offline storage, so the report was not saved')
+      }
+      let id
+      try {
+        const tx = this.db.transaction(['requests'], 'readwrite')
+        const store = tx.objectStore('requests')
+        id = await new Promise((resolve, reject) => {
+          let key
+          // Transaction completion, not the request's own success: a quota
+          // error or a constraint violation aborts the transaction after the
+          // request has already reported success, and a record the store then
+          // drops must not read as saved.
+          tx.oncomplete = () => resolve(key)
+          tx.onabort = () => reject(tx.error || new Error('The offline queue write was aborted'))
+          tx.onerror = () => reject(tx.error || new Error('The offline queue write failed'))
+          const req = store.add({ path, options, timestamp: Date.now() })
+          req.onsuccess = () => {
+            key = req.result
+          }
+          req.onerror = () => reject(req.error || new Error('The offline queue write failed'))
+        })
+      } catch (error) {
+        throw new Error(error?.message || 'The offline queue write failed')
+      }
       window.dispatchEvent(new CustomEvent('lindela-queue-changed'))
       // Ask the service worker to register a Background Sync. The page flushes
       // on `online`, on an interval and on load, but none of those fire if the
@@ -69,6 +105,7 @@ export async function initOfflineQueue() {
       } catch {
         // No Background Sync here; the periodic in-page flush covers it.
       }
+      return { queued: true, id }
     },
     /** How many reports are waiting to send. Surfaced so the promise is visible. */
     async pendingCount() {
@@ -207,14 +244,14 @@ export async function apiSettled(path, options) {
  *
  * Online writes go straight through. Offline writes go to IndexedDB, where the
  * service worker's `replayQueue` picks them up — either on Background Sync or on
- * the page's own flush. Returns `{queued: true}` rather than throwing, because a
- * queued write is a success the user should be told about plainly.
+ * the page's own flush. Returns `{queued: true, id}` only once the store has
+ * committed the record; a queue that could not take it throws, because the
+ * caller has a report in hand that has not been filed and must be told so.
  */
 export async function submitOrQueue(path, body, { headers } = {}) {
   if (navigator.onLine) return apiFetch(path, { method: 'POST', body, headers })
   if (window.lindelaQueue) {
-    await window.lindelaQueue.enqueue(path, { method: 'POST', body, headers })
-    return { queued: true }
+    return window.lindelaQueue.enqueue(path, { method: 'POST', body, headers })
   }
   throw new Error('Offline and no queue is available')
 }

@@ -1,7 +1,7 @@
 // Bumped with every release. Cache-first static assets are only safe while
 // this changes: with a fixed name, a deployed fix never reaches an operator
 // who has the app open, because the old app.js is served from cache forever.
-const CACHE_NAME = 'lindela-lite-v3'
+const CACHE_NAME = 'lindela-lite-v4'
 const API_CACHE_NAME = 'lindela-lite-api-v1'
 
 // API responses are cached in their own bucket so they can be expired by age
@@ -10,28 +10,22 @@ const API_CACHE_NAME = 'lindela-lite-api-v1'
 const API_TTL_MS = 24 * 60 * 60 * 1000
 const API_MAX_ENTRIES = 200
 
-// The full module graph of every surface, not just the entry point.
-//
-// This list used to hold five paths and omitted all seven /shared/*.js modules
-// that app.js imports. A missing ES module is a hard module-resolution error,
-// not a degraded load, so the console failed to boot offline entirely — the
-// one case the offline work exists for. Anything reachable from a surface's
-// <script type="module"> graph belongs here.
-//
-// Entries are added individually rather than via addAll: one 404 must not
-// discard the rest of the shell.
-const SHARED_MODULES = [
-	'/shared/navbar.js',
-	'/shared/runtime.js',
-	'/shared/demo.js',
-	'/shared/basemap.js',
-	'/shared/flood-bands.js',
-	'/shared/map-frame.js',
-	'/shared/seasonal.js',
-	'/shared/app-version.js',
-]
-
-const SURFACES = [
+/**
+ * The surfaces whose HTML is the root of the precache graph.
+ *
+ * The rest of the shell is *derived* from these by following every reference
+ * the HTML and the modules it pulls in make: <script src>, inline module
+ * imports, <link href>, `@import`, and `from '…'` inside .js.
+ *
+ * It used to be a hand-written list, and a hand-written list of an import graph
+ * is wrong the moment anyone adds an import. It omitted all seven /shared/*.js
+ * modules app.js needs, then /shared/fmt.js, /shared/labels.js and
+ * /components.css after someone repaired it by hand — each repair a snapshot,
+ * each snapshot a chance to forget. A missing ES module is a hard
+ * module-resolution error rather than a degraded load, so the console failed to
+ * boot offline entirely: the one case the offline work exists for.
+ */
+export const SURFACES = [
 	'',
 	'/portal/',
 	'/chw/',
@@ -42,61 +36,147 @@ const SURFACES = [
 	'/scenarios/',
 ]
 
-const APP_SHELL = [
-	'/index.html',
-	'/app.js',
-	'/styles.css',
-	'/tokens.css',
-	'/manifest.webmanifest',
+export const ENTRY_PATHS = SURFACES.map((surface) => `${surface}index.html`.replace(/^index\.html$/, '/index.html'))
+
+/**
+ * Files no import graph can name, because they are fetched at runtime by URL
+ * rather than imported.
+ *
+ * `/sw.js` is here because a worker that did not survive the update it was
+ * meant to install is a worker that cannot serve the next offline load. The
+ * rest are pulled by `fetch()` and by the manifest, which the browser reads
+ * without telling the page.
+ */
+export const BOOTSTRAP_ASSETS = [
+	'/sw.js',
 	'/icon.svg',
+	'/manifest.webmanifest',
 	'/i18n/en.json',
-	...SHARED_MODULES,
-	...SURFACES,
-	'/portal/index.html',
-	'/portal/app.js',
-	'/portal/manifest.webmanifest',
-	'/chw/index.html',
-	'/chw/app.js',
-	'/chw/manifest.webmanifest',
-	'/co/index.html',
-	'/co/app.js',
-	'/co/manifest.webmanifest',
-	'/districts/index.html',
-	'/districts/app.js',
-	'/districts/manifest.webmanifest',
-	'/focal-point/index.html',
-	'/focal-point/app.js',
-	'/focal-point/manifest.webmanifest',
-	'/parametric/index.html',
-	'/parametric/app.js',
-	'/parametric/manifest.webmanifest',
-	'/scenarios/index.html',
-	'/scenarios/app.js',
-	'/scenarios/manifest.webmanifest',
 ]
 
-self.addEventListener('install', (event) => {
+// Text we can walk for further references. Anything else (svg, json, the
+// webmanifest) is a leaf: fetching its bytes to scan for URLs would cost a
+// request per asset for nothing.
+const TRAVERSABLE = /\.(?:html|css|js)$/
+
+// One pass, all three grammars. The patterns are anchored on tag or keyword
+// names that do not occur in the other two languages, so a file never has to be
+// told what it is before it is parsed.
+const REFERENCE_PATTERNS = [
+	/<link\b[^>]*?\bhref=["']([^"']+)["']/gi,
+	/<script\b[^>]*?\bsrc=["']([^"']+)["']/gi,
+	/@import\s+(?:url\(\s*)?["']?([^"')\s]+)["']?/gi,
+	/(?:^|[\s;}])(?:import|export)\b[^'"]*?\bfrom\s*["']([^"']+)["']/g,
+	/(?:^|[\s;}])(?:import|assert)\s*["']([^"']+)["']/g,
+]
+
+/**
+ * Every local reference a fetched file makes, as absolute same-origin paths.
+ *
+ * Cross-origin references are dropped (a font CDN is not ours to precache and
+ * would fail the install anyway) along with /api/ URLs, which are served
+ * network-first and belong in the API bucket.
+ */
+export function parseReferences(text, baseUrl) {
+	const origin = new URL(baseUrl).origin
+	const paths = new Set()
+	for (const pattern of REFERENCE_PATTERNS) {
+		pattern.lastIndex = 0
+		for (const match of text.matchAll(pattern)) {
+			const raw = match[1].trim()
+			if (!raw || raw.startsWith('#') || raw.startsWith('data:')) continue
+			let resolved
+			try {
+				resolved = new URL(raw, baseUrl)
+			} catch {
+				continue
+			}
+			if (resolved.origin !== origin) continue
+			if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') continue
+			if (resolved.pathname.startsWith('/api/')) continue
+			paths.add(resolved.pathname)
+		}
+	}
+	return [...paths]
+}
+
+/**
+ * Breadth-first closure of the shell over the reference graph.
+ *
+ * `load` takes a URL and returns a Response, or null / a throw, both of which
+ * mean "not precacheable". The test passes a loader that reads the repo's
+ * public/ tree, which is the only reason this can be checked without a browser:
+ * the list that used to live here was never checked against anything.
+ */
+export async function shellGraph(load, origin) {
+	const paths = new Set()
+	const visited = new Set()
+	const queue = [...ENTRY_PATHS, ...BOOTSTRAP_ASSETS]
+	for (let i = 0; i < queue.length; i += 1) {
+		const path = queue[i]
+		if (visited.has(path)) continue
+		visited.add(path)
+		paths.add(path)
+		const url = new URL(path, origin)
+		let response = null
+		try {
+			response = await load(url)
+		} catch {
+			continue
+		}
+		if (!response || !response.ok || !TRAVERSABLE.test(path)) continue
+		let text = ''
+		try {
+			text = await response.clone().text()
+		} catch {
+			continue
+		}
+		for (const ref of parseReferences(text, url)) {
+			if (visited.has(ref)) continue
+			queue.push(ref)
+		}
+	}
+	return [...paths].sort()
+}
+
+// The worker globals are not assumed to exist: this module is imported by
+// test/web-chw-offline.test.js to check the precache graph against the real
+// files on disk, and a top-level `self.addEventListener` would throw there.
+const SW = typeof self === 'undefined' ? null : self
+
+SW?.addEventListener('install', (event) => {
 	event.waitUntil(
-		caches
-			.open(CACHE_NAME)
-			.then((cache) =>
-				Promise.all(
-					APP_SHELL.map((path) =>
-						// cache.add() rejects per-item, so a single missing asset
-						// costs one entry rather than the whole shell.
-						cache.add(new Request(path, { cache: 'reload' })).catch(() => {})
-					)
-				)
-			)
+		precache()
 			// Take over immediately. Without this a new worker installs and waits,
 			// and the previous one keeps serving until every tab for the origin
 			// closes — on a long-lived ops console that is effectively never, so a
 			// deployed fix never reached the operator it was deployed for.
-			.then(() => self.skipWaiting())
+			.then(() => SW.skipWaiting())
 	)
 })
 
-self.addEventListener('activate', (event) => {
+/**
+ * Cache everything the reference graph reaches, one asset at a time.
+ *
+ * `cache.add()` rejects per item, so a single missing asset costs one entry
+ * rather than the whole shell — but a worker that installs with a hole in its
+ * cache will never be repaired, because the next install only runs on a version
+ * bump. So an asset that could not be fetched is recorded, and the ones that
+ * could be are still cached: a degraded shell that boots beats none.
+ */
+async function precache() {
+	const cache = await caches.open(CACHE_NAME)
+	const paths = await shellGraph(async (url) => {
+		const response = await fetch(url, { cache: 'reload' })
+		return response.ok ? response : null
+	}, SW.location.origin)
+	await Promise.all(
+		paths.map((path) => cache.add(new Request(path, { cache: 'reload' })).catch(() => {}))
+	)
+	return paths.length
+}
+
+SW?.addEventListener('activate', (event) => {
 	event.waitUntil(
 		caches
 			.keys()
@@ -119,7 +199,7 @@ self.addEventListener('activate', (event) => {
 	)
 })
 
-self.addEventListener('fetch', (event) => {
+SW?.addEventListener('fetch', (event) => {
 	const url = new URL(event.request.url)
 
 	// Network-first for API calls, falling back to the last good response and
@@ -215,13 +295,13 @@ async function pruneApiCache() {
 	}
 }
 
-self.addEventListener('sync', (event) => {
+SW?.addEventListener('sync', (event) => {
 	if (event.tag === 'lindela-queue') {
 		event.waitUntil(replayQueue())
 	}
 })
 
-self.addEventListener('message', (event) => {
+SW?.addEventListener('message', (event) => {
 	if (event.data.type === 'flushQueue') {
 		event.waitUntil(replayQueue())
 	}
