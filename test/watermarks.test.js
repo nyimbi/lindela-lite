@@ -310,18 +310,25 @@ describe('backfillProgress', () => {
     }
   })
 
-  it('reports 0 only alongside started: true', () => {
-    // The distinction the guard is really about. A one-day range whose first
-    // chunk has not landed is a *measured* zero — the crawl exists and has done
-    // none of its work — so 0 is the true answer there, and `started` is what
-    // tells it apart from the unmeasured case above. Without the flag, both look
-    // identical and a stalled crawl is indistinguishable from one that never ran.
-    const state = beginBackfill({}, ARCHIVE, { from: '1981-01-01', to: '1981-01-01', jobId: 'j1', at: 't0' })
-    const p = backfillProgress(state, ARCHIVE)
-    assert.equal(p.started, true)
-    assert.equal(p.total, 1)
-    assert.equal(p.ratio, 0)
-    assert.equal(backfillProgress(createWatermarkState(), ARCHIVE).started, false)
+  it('reports 0 only alongside started: true, and so never reports 0 at all', () => {
+    // The distinction the guard is really about. `started` means a chunk has come
+    // back and moved the cursor — so a crawl that has measured nothing is
+    // unmeasured, and a crawl that has measured something has done something.
+    // 0 is unreachable, which is the point: the number a stall would have to
+    // masquerade as is never on offer.
+    let state = beginBackfill({}, ARCHIVE, { from: '1981-01-01', to: '1981-01-01', jobId: 'j1', at: 't0' })
+    const opened = backfillProgress(state, ARCHIVE)
+    assert.equal(opened.started, false)
+    assert.equal(opened.ratio, null)
+
+    state = advanceBackfill(state, ARCHIVE, { cursor: '1981-01-01' })
+    const done = backfillProgress(state, ARCHIVE)
+    assert.equal(done.started, true)
+    assert.equal(done.ratio, 1, 'a finished one-day crawl is complete, not empty')
+
+    for (const shape of [createWatermarkState(), opened && beginBackfill({}, ARCHIVE, { from: '1981-01-01', to: '1990-01-01', jobId: 'j1' })]) {
+      assert.notEqual(backfillProgress(shape, ARCHIVE).ratio, 0)
+    }
   })
 })
 
