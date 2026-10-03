@@ -100,7 +100,7 @@ function row(label, value, { missing } = {}) {
  * Kept as one place so the wording is identical in every panel and a reader who
  * has seen it once knows what it means the second time.
  */
-function unrecorded(attribute, schemaNote) {
+function unrecorded(schemaNote) {
   return `<span class="subject-unrecorded">Not recorded</span> <span class="subject-unrecorded-note">${esc(schemaNote)}</span>`
 }
 
@@ -182,9 +182,9 @@ function renderUnattached(instance) {
     <dl class="subject-attrs">
       ${row('Current state', esc(String(instance.state || '').replace(/_/g, ' ')))}
       ${row('Owner', instance.owner ? esc(instance.owner) : '<span class="subject-unrecorded">Not recorded</span> <span class="subject-unrecorded-note">owner is an empty string on every instance raised without one.</span>')}
-      ${row('Next action', unrecorded('next action', NO_NEXT_ACTION))}
-      ${row('Blockers', unrecorded('blockers', NO_BLOCKERS))}
-      ${row('Deadline', unrecorded('deadline', NO_DEADLINE))}
+      ${row('Next action', unrecorded(NO_NEXT_ACTION))}
+      ${row('Blockers', unrecorded(NO_BLOCKERS))}
+      ${row('Deadline', unrecorded(NO_DEADLINE))}
     </dl>
     <h3 class="subject-section">History</h3>
     ${historyList(instance.transitions || [])}
@@ -207,9 +207,9 @@ function renderSubject({ kind, record, workflow, logs, workflowFailed }) {
       ${row('Owner', owner
         ? esc(owner)
         : '<span class="subject-unrecorded">Not recorded</span> <span class="subject-unrecorded-note">the workflow schema has an owner field and nothing writes it in this deployment.</span>')}
-      ${row('Next action', unrecorded('next action', NO_NEXT_ACTION))}
-      ${row('Blockers', unrecorded('blockers', NO_BLOCKERS))}
-      ${row('Deadline', unrecorded('deadline', NO_DEADLINE))}
+      ${row('Next action', unrecorded(NO_NEXT_ACTION))}
+      ${row('Blockers', unrecorded(NO_BLOCKERS))}
+      ${row('Deadline', unrecorded(NO_DEADLINE))}
       ${row('Subject', `${esc(spec.label)} <code>${esc(record.id)}</code>`)}
       ${row('Opened', record.created_at ? `${esc(formatRelative(record.created_at))} · ${esc(formatTimestamp(record.created_at))}` : '<span class="subject-unrecorded">Not recorded</span>')}
     </dl>
