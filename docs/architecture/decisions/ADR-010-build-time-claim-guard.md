@@ -10,7 +10,7 @@ The product's honesty problem is not arithmetic. The arithmetic is mostly right.
 **a claim, once written down, outlives the code that justified it.**
 
 `docs/demo-audit-2026-10-02.md` records the pattern with some precision. A KPI was *"mislabelled
-against a UNICEF bid target"*; the label was correct on the screen and wrong in the document that left
+against an external response-time target"*; the label was correct on the screen and wrong in the document that left
 the building. A README listed sources that did not exist. The OpenAPI specification covered 63 of 89
 endpoints. Each of those passed every functional test, because the test asserted the code, and the
 defect was in the prose beside it.
