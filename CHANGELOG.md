@@ -271,12 +271,12 @@ implement the most functional defensible option, never invented coefficients):
   impossible. Verified across all seeded alerts: 0 at (0,0), 0 placeholder texts.
 
 - **"Warning-to-action median" was this platform's own SMS latency, presented
-  against the UNICEF bid target.** The figure is the median hours from a dispatch
+  against an external response-time target.** The figure is the median hours from a dispatch
   matching a signal to that dispatch being sent — how fast our own API enqueued an
-  SMS. UNICEF's warning-to-action runs from a warning reaching a household to a
+  SMS. Warning-to-action in the field-response sense runs from a warning reaching a household to a
   field action being completed and reported, which this system does not observe at
   all. It was labelled "Warning-to-action median", annotated "target: <24h", showed
-  0.16 h, and the quarterly PDF printed "UNICEF bid target: warning-to-action < 24h"
+  0.16 h, and the quarterly PDF printed "warning-to-action < 24h"
   directly beneath the number. Read quickly, that is a system asserting it meets a
   humanitarian outcome target.
 

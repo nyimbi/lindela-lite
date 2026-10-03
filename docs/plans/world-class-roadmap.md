@@ -56,7 +56,7 @@ Replace the currently-unauthenticated `/api/v1/*` with OIDC (via a thin verifier
 Add configurable PII redaction (names, phone, precise geo to H3 cell) in `src/schema.js` normalizers and a background `retention` task that ages out raw personal data per a policy file. *Why:* GDPR + national data-protection acts (Kenya DPA, Uganda DPA) apply the moment you touch SMS metadata; this is a legal, not a nice-to-have.
 
 **16. Signed, reproducible releases and SBOM**
-Add SLSA-level provenance to the CI (`.github/workflows/ci.yml`), generate a CycloneDX SBOM, sign the Docker image with cosign. *Why:* humanitarian buyers (WFP, UNICEF, ICRC) are actively requiring supply-chain attestations; a zero-runtime-deps posture makes this a cheap win you should broadcast.
+Add SLSA-level provenance to the CI (`.github/workflows/ci.yml`), generate a CycloneDX SBOM, sign the Docker image with cosign. *Why:* humanitarian buyers (WFP, ICRC, and national programmes) are actively requiring supply-chain attestations; a zero-runtime-deps posture makes this a cheap win you should broadcast.
 
 ## Reliability, Observability & Scale
 

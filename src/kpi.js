@@ -48,7 +48,7 @@ function _quarterDateRange(quarter, year) {
 /**
  * Hours from a dispatch matching a signal to that dispatch being sent.
  *
- * The system's own dispatch latency. Not warning-to-action in the UNICEF sense,
+ * The system's own dispatch latency. Not warning-to-action in the field-response sense,
  * which runs from a warning reaching a household to a field action being
  * completed and reported.
  */
@@ -67,7 +67,7 @@ export const WARNING_TO_ACTION_MEASURE =
   'median hours from a dispatch matching a signal (matched_signal_at) to that dispatch being sent (sent_at)'
 
 export const WARNING_TO_ACTION_LIMIT =
-  "System dispatch latency only: how long this platform took to send an SMS once a dispatch matched a signal. It is not warning-to-action in the UNICEF sense, which runs from a warning reaching a household to a field action being completed and reported. It is not comparable to the UNICEF bid target, and a low value does not mean the response was fast."
+  "System dispatch latency only: how long this platform took to send an SMS once a dispatch matched a signal. It is not warning-to-action in the field-response sense, which runs from a warning reaching a household to a field action being completed and reported. It is not comparable to any external response-time target, and a low value does not mean the response was fast."
 
 export function kpiSnapshotForPeriod(records, from, to, dateField = null) {
   const fromTs = new Date(from).getTime()
@@ -139,8 +139,8 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   // Warning-to-action median hours.
   //
   // This measures how long the platform took to send an SMS once a dispatch
-  // matched a signal. It is not warning-to-action in the UNICEF sense, and the
-  // CO dashboard used to present it as such next to a "<24h" UNICEF bid target,
+  // matched a signal. It is not warning-to-action in the field-response sense, and the
+  // CO dashboard used to present it as such next to a "<24h" external target,
   // which invites the conclusion that a fast-looking figure means the response
   // was fast.
   //

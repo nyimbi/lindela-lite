@@ -1,6 +1,6 @@
 # Demo audit, 2026-10-02
 
-A claim-by-claim audit of what a UNICEF Venture Fund panel would see, run against
+A claim-by-claim audit of what an external review panel would see, run against
 a live seeded store and a screenshot of the running dashboard. Recorded because
 the pattern matters more than the individual fixes: **almost every defect found
 here looked entirely correct.**
@@ -21,11 +21,11 @@ Three methods, in increasing order of yield:
    bug, which is the most consequential of the lot and was invisible to every
    check in the suite.
 4. **Extracting the artefact.** Reading the text out of the quarterly PDF found a
-   headline KPI mislabelled against a UNICEF bid target. Every dashboard check
+   headline KPI mislabelled against an external target. Every dashboard check
    passed, because the label is correct on the screen and wrong in the document
    that leaves the building.
 5. **Extracting the other artefacts.** The quarterly PDF found a mislabelled KPI
-   against a UNICEF bid target; the CAP feed — the format external alerting
+   against an external target; the CAP feed — the format external alerting
    systems consume — turned out to be placeholder text with every alert placed at
    Null Island. Both are valid documents. Neither was wrong in any field a
    dashboard check would read.
@@ -70,7 +70,7 @@ produced it. Two green suites had been passing for the wrong reason.
 | 20 | The CO dashboard's "false alert rate" was a regex over free-text notes divided by all alerts: 0%, meaning nothing. | asking what the headline KPI measured | see changelog |
 | 21 | The scenario workbench did not run at all: `json.data` on a top-level response, then a `null` element id. Errors were caught and shown as text, so every check passed. | exercising the last unexamined surface | `see changelog` |
 | 22 | Scenario deltas labelled "(mean %)" and coloured red, from an uncalibrated score. Every asset showed a fabricated +75 change because no baseline was ever attached. | reading the rendered result | see changelog |
-| 23 | "Warning-to-action median" was the platform's own SMS dispatch latency, labelled against the UNICEF <24h bid target — 0.16 h next to a humanitarian outcome the system never measures. | extracting text from the quarterly PDF | see changelog |
+| 23 | "Warning-to-action median" was the platform's own SMS dispatch latency, labelled against an external <24h target — 0.16 h next to a humanitarian outcome the system never measures. | extracting text from the quarterly PDF | see changelog |
 | 24 | The CAP alert feed was placeholder text with a 50 km circle at (0,0) for every alert, because it read fields alert events do not carry. Valid XML, wrong location. | extracting the interchange artefact | `see changelog` |
 | 25 | Every report was an empty document — `section_ids` set, `sections` empty — so exports had no content and SMS summaries announced "0 incidents, 0 open alerts". Two were marked `distributed`. | opening a distributed report | `see changelog` |
 | 26 | `filterRecords` ignores unknown parameters, so a `district`-scoped report applied no filter at all: the Turkana SITREP reported all 280 hazard events from 50+ countries as district figures. | comparing report scope against the store | `see changelog` |
@@ -141,7 +141,7 @@ Found because the seasonal strip read "0 of 5 overlapping seasons" while
 only. `AGREED_MODEL_BASIS` remains `null` and the guard enforces it.
 
 **Outbreak and food-security tracking** — scoping in
-`outbreak-and-food-security-scoping.md`. Requires UNICEF policy approval and an
+`outbreak-and-food-security-scoping.md`. Requires policy approval and an
 IPC/FSIN licence. No connector written.
 
 ## What to check first in a panel

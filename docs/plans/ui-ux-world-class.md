@@ -34,7 +34,7 @@ consequence of that one fact.
 | Rendered output | Headless Chrome at 1440×2400, 414×1500, 1280×4000 for every surface |
 | Static analysis | Repo-wide greps for hardcoded colour, breakpoints, `aria-*`, `focus-visible`, `outline`, media queries, `innerHTML` escaping |
 | Context | `docs/dashboard.md`, `platform.md`, `i18n.md`, `demo-guide.md`, `demo-audit-2026-10-02.md`, `scripts/check-dashboard-browser.mjs`, `scripts/check-i18n.mjs` |
-| Product intent | `docs/plans/world-class-roadmap.md`, JTBD catalogue, UNICEF traceability matrix |
+| Product intent | `docs/plans/world-class-roadmap.md`, JTBD catalogue, requirements traceability matrix |
 
 Screenshots were decisive: several defects below are invisible in source review and obvious on screen.
 
@@ -454,8 +454,8 @@ docs, and **both are unmet by construction**:
 - JTBD-002 and 007 — **no UI confirmation or diff preview** before defaults are written, and no UI
   confirmation for the ACLED licence gate.
 
-**T5.7 `docs/unicef-requirements-traceability.md` has no UI row anywhere.** Every evidence cell names a
-file, endpoint, commit or PDF. Two consequences: §1.5 marks the UNICEF bid indicators (people reached,
+**T5.7 The requirements traceability matrix has no UI row anywhere.** Every evidence cell names a
+file, endpoint, commit or PDF. Two consequences: §1.5 marks the delivery indicators (people reached,
 % U18, % women and girls, % PWD, warning-to-action latency, API uptime) **Met against `src/kpi.js` — a
 KPI function with no stated rendering surface**, and §2.8 records that `tx_hash` is a SHA-256 digest
 prefixed `sim_`, not a transaction — *"the risk is that the T2 answer drifts from what the doc says."*
@@ -755,7 +755,7 @@ records."* A command-palette-style search already exists on the console; extend 
 simulation digest, not a blockchain transaction (T5.7) — §2.8 of the traceability matrix warns that the T2
 answer will drift, and this table is where it visibly does.
 
-**6.8 Add a UI row to `docs/unicef-requirements-traceability.md`.** §1.5 is marked Met against `src/kpi.js`
+**6.8 Add a UI row to the requirements traceability matrix.** §1.5 is marked Met against `src/kpi.js`
 with no rendering surface. Either add a UI evidence column, or downgrade the claim. A requirement matrix
 that cannot see the UI is how this audit's Tier 0 defects survived.
 
@@ -836,12 +836,12 @@ disclaimer rather than an operator's brief.
 
 Close the documentation gaps this audit exposed, so the next audit inherits fewer unknowns:
 
-- Add a **UI evidence column** and a UI requirement row to `docs/unicef-requirements-traceability.md` (T5.7).
+- Add a **UI evidence column** and a UI requirement row to the traceability matrix (T5.7).
 - Add the **first accessibility requirements** — contrast floor, keyboard operability, target size,
   plain-language — to the JTBD catalogue's Definition of Done. They are absent from every document (T5.8).
 - Record the **dark-only decision** and its rationale in `docs/`, per Phase 2.1.
 - Fix the doc defects found in passing: the `CHANGELOG.md` contradiction
-  (`unicef-requirements-traceability.md:161` vs `:55`), 5.11 numbered before 5.10 (`:120` before `:121`),
+  (a changelog the same document says exists), 5.11 numbered before 5.10,
   six actors used in the table but missing from the glossary (`:23–36`), and `demo-audit-2026-10-02.md`'s
   30-row table whose closing prose still says "thirteen".
 - Retire `jtbd:645`'s caveat — *"Dashboard UI completeness was not confirmed by running or rendering the
@@ -862,7 +862,7 @@ For this product, the bar is not visual polish. It is:
 5. **A country office** can export a quarterly PDF that survives the printing.
 6. **An operator in a dead zone** gets a console that boots, shows the last known state, and clearly says
    what is stale and why.
-7. **A donor reviewing the UNICEF traceability matrix** can see a UI evidence column, and can read the
+7. **A reviewer checking the traceability matrix** can see a UI evidence column, and can read the
    number behind every tile on screen.
 
 Phases 0–6 deliver 1–6. Phases 7–11 keep them true.

@@ -5332,25 +5332,25 @@ describe('Lindela Lite signal-to-dispatch latency', () => {
       dispatches: [dispatch({})],
     }, { quarter: 'Q3', year: 2026 })
     assert.equal(kpi.warning_to_action_is_field_outcome, false)
-    assert.match(WARNING_TO_ACTION_LIMIT, /not warning-to-action in the UNICEF sense/i)
-    assert.match(WARNING_TO_ACTION_LIMIT, /not comparable to the UNICEF bid target/i)
+    assert.match(WARNING_TO_ACTION_LIMIT, /not warning-to-action in the field-response sense/i)
+    assert.match(WARNING_TO_ACTION_LIMIT, /not comparable to any external response-time target/i)
     assert.match(kpi.warning_to_action_measure, /matched_signal_at.*sent_at/)
   })
 
-  it('does not print the bid target beside it as if being assessed', async () => {
+  it('does not print the external target beside it as if being assessed', async () => {
     const pdf = await fs.readFile('src/pdf.js', 'utf8')
     const app = await fs.readFile('public/co/app.js', 'utf8')
     // The PDF row and the dashboard tile must both name what is measured.
     assert.ok(/Signal-to-dispatch median/.test(pdf), 'the PDF row must not be labelled warning-to-action')
     assert.ok(/Signal-to-dispatch median/.test(app), 'the CO tile must not be labelled warning-to-action')
     assert.ok(!/target: <24h/.test(app),
-      "the '<24h' UNICEF target must not annotate a figure that does not measure it")
+      "the '<24h' external target must not annotate a figure that does not measure it")
     // Asserted on phrases that sit within a single template literal; the full
     // sentence is split across lines for width, so matching the joined sentence
     // against the source tests the layout rather than the claim.
-    assert.ok(/bid target for reference/.test(pdf), 'the PDF must keep the bid target as context')
+    assert.ok(/target for reference/.test(pdf), 'the PDF must keep the external target as context')
     assert.ok(/comparable to that target/.test(pdf),
-      'the PDF must say this figure is not comparable to the bid target')
+      'the PDF must say this figure is not comparable to that target')
   })
 })
 

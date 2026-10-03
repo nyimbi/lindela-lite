@@ -17,7 +17,7 @@ function buildTextLines(kpi) {
   const period = kpi.period || {}
   const cohort = kpi.cohort || {}
 
-  lines.push({ text: `Lindela Lite - UNICEF Climate & Health KPI Report`, size: 16, bold: true, y: 760 })
+  lines.push({ text: `Lindela Lite - Climate & Health KPI Report`, size: 16, bold: true, y: 760 })
   lines.push({ text: `Period: ${period.quarter || '-'} ${period.year || '-'}  |  ${period.from ? period.from.slice(0, 10) : ''} to ${period.to ? period.to.slice(0, 10) : ''}`, size: 10, y: 740 })
   lines.push({ text: `Generated: ${kpi.generated_at || new Date().toISOString()}`, size: 9, y: 728 })
 
@@ -68,7 +68,7 @@ function buildTextLines(kpi) {
   // being assessed against it. Kept as reference, explicitly separated, with the
   // caveat on its own lines so it cannot be skimmed past.
   lines.push({ text: `Data gaps: ${(kpi.data_gaps || []).map((g) => g.field).join(', ') || 'none'}`, size: 7, y: 68 })
-  lines.push({ text: `UNICEF bid target for reference: warning-to-action < 24h. The signal-to-dispatch`, size: 7, y: 56 })
+  lines.push({ text: `External target for reference: warning-to-action < 24h. The signal-to-dispatch`, size: 7, y: 56 })
   lines.push({ text: `median above is this platform's own SMS latency, not a field action, and is not`, size: 7, y: 48 })
   lines.push({ text: `comparable to that target. A low value does not mean the response was fast.`, size: 7, y: 40 })
   lines.push({ text: `Signature (SHA-256/16): ${signatureHash(kpi)}`, size: 8, y: 28 })

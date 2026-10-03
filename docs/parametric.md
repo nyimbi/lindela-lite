@@ -1,6 +1,6 @@
 # Parametric Disbursement Simulator
 
-**Testnet only.** No real funds move. All chains in this module are testnets per the UNICEF Venture Fund pilot commitment (bid §10).
+**Testnet only.** No real funds move. All chains in this module are testnets. No real funds move.
 
 ## Commitment
 

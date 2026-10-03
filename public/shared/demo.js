@@ -43,7 +43,7 @@ const STEPS = [
     path: '/co',
     highlight: '.trend-section, .kpi-grid, main',
     title: 'CO dashboard + trend',
-    narration: 'Quarterly KPIs matched to UNICEF bid indicators. Twelve-month trend and quarter-over-quarter.',
+    narration: 'Quarterly delivery KPIs. Twelve-month trend and quarter-over-quarter.',
   },
 ]
 

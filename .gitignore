@@ -14,7 +14,7 @@ coverage/
 .zvec-grep/
 
 # Internal tender analysis — never publish bid requirements or scoring
-docs/unicef-requirements-traceability.md
+docs/u*-requirements-traceability.md
 artifacts/screens/
 
 # Agent instructions — local to each contributor's tooling, not product source

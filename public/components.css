@@ -442,8 +442,7 @@ input[type="range"]:focus-visible::-moz-range-thumb     { box-shadow: 0 0 0 3px 
    it: a dimmer static ring still says "in progress", a removed one says
    nothing at all. */
 @media (prefers-reduced-motion: reduce) {
-  body { animation: skeleton-sweep 1.4s ease-in-out infinite; }
-  .spinner { animation: none; opacity: 0.55; }
+  .l-navbar-brand, .btn { animation: skeleton-sweep 1.4s ease-in-out infinite; }
   .skeleton { animation: none; background: var(--surface); }
 }
 

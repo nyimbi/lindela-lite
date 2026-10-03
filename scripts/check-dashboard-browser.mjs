@@ -544,11 +544,11 @@ async function main() {
     `${scenario.rows} rows, ${scenario.baselineCells} with a baseline`)
 
   // The CO dashboard must not present the platform's own SMS latency as the
-  // UNICEF warning-to-action outcome.
+  // field-response warning-to-action outcome.
   //
   // The figure is the median hours from a dispatch matching a signal to that
   // dispatch being sent. It was labelled "Warning-to-action median" and annotated
-  // "target: <24h", with a value of 0.16 h, and the PDF printed the UNICEF bid
+  // "target: <24h", with a value of 0.16 h, and the PDF printed the external
   // target directly underneath it. Read quickly that is a system claiming to meet
   // a humanitarian outcome target it does not measure.
   await send('Page.navigate', { url: `${BASE}/co?cb=${Date.now()}` })
@@ -569,7 +569,7 @@ async function main() {
   check('the dispatch latency KPI is named for what it measures',
     latency.namedCorrectly && !latency.stillLabelledWarningToAction,
     latency.tile.slice(0, 90) || '(tile not found)')
-  check('the dispatch latency KPI is not annotated with the UNICEF bid target',
+  check('the dispatch latency KPI is not annotated with an external response-time target',
     !latency.carriesTarget,
     latency.carriesTarget ? 'found "target: <24h"' : 'no target annotation')
 

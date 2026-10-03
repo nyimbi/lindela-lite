@@ -763,7 +763,7 @@ async function handleApi(store, req, res, url) {
       return
     }
     const buf = renderQuarterlyReportPdf(kpi)
-    const filename = `unicef-kpi-${kpi.period.year}-${kpi.period.quarter}.pdf`
+    const filename = `lindela-kpi-${kpi.period.year}-${kpi.period.quarter}.pdf`
     res.writeHead(200, {
       'content-type': 'application/pdf',
       'content-disposition': `attachment; filename="${filename}"`,

@@ -612,7 +612,7 @@ Response: `{ success, data: RapidProInboundMessage }` — 201.
 
 ### `GET /api/v1/kpi/quarterly`
 
-Auth: none required. Returns quarterly KPI computation matched to UNICEF bid indicators.
+Auth: none required. Returns the quarterly KPI computation.
 
 Query: `quarter` (Q1|Q2|Q3|Q4, default current), `year` (int, default current).
 
@@ -650,7 +650,7 @@ Auth: none required. Returns the quarterly KPI report as a minimal PDF 1.4 docum
 
 Query: same as `/api/v1/kpi/quarterly`.
 
-Response: `Content-Type: application/pdf`, `Content-Disposition: attachment; filename="unicef-kpi-<year>-<quarter>.pdf"`.
+Response: `Content-Type: application/pdf`, `Content-Disposition: attachment; filename="lindela-kpi-<year>-<quarter>.pdf"`.
 
 ### `GET /api/v1/equity/by-district`
 

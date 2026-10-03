@@ -231,14 +231,14 @@ function buildServiceAssets() {
   const assets = []
   const assetDefs = [
     // Clinics
-    { name: 'Kakuma Health Centre', type: 'health', region: REGIONS[0], meta: { cold_chain: true, unicef_supported: true, beneficiaries: 1200, beds: 24 } },
-    { name: 'Lodwar District Hospital Annex', type: 'health', region: REGIONS[0], meta: { cold_chain: true, unicef_supported: true, beneficiaries: 3400, beds: 60 } },
-    { name: 'Bor State Hospital Outpost', type: 'health', region: REGIONS[1], meta: { cold_chain: true, unicef_supported: true, beneficiaries: 2100, beds: 30 } },
-    { name: 'Tonj Road Clinic', type: 'health', region: REGIONS[1], meta: { cold_chain: false, unicef_supported: true, beneficiaries: 800, beds: 10 } },
-    { name: 'Aweil Town Health Post', type: 'health', region: REGIONS[2], meta: { cold_chain: true, unicef_supported: true, beneficiaries: 1500, beds: 20 } },
-    { name: 'Wau Road Community Clinic', type: 'health', region: REGIONS[2], meta: { cold_chain: false, unicef_supported: false, beneficiaries: 620, beds: 8 } },
-    { name: 'Moroto CHC', type: 'health', region: REGIONS[3], meta: { cold_chain: true, unicef_supported: true, beneficiaries: 1800, beds: 35 } },
-    { name: 'Mandera County Hospital Annex', type: 'health', region: REGIONS[4], meta: { cold_chain: true, unicef_supported: true, beneficiaries: 2600, beds: 45 } },
+    { name: 'Kakuma Health Centre', type: 'health', region: REGIONS[0], meta: { cold_chain: true, partner_supported: true, beneficiaries: 1200, beds: 24 } },
+    { name: 'Lodwar District Hospital Annex', type: 'health', region: REGIONS[0], meta: { cold_chain: true, partner_supported: true, beneficiaries: 3400, beds: 60 } },
+    { name: 'Bor State Hospital Outpost', type: 'health', region: REGIONS[1], meta: { cold_chain: true, partner_supported: true, beneficiaries: 2100, beds: 30 } },
+    { name: 'Tonj Road Clinic', type: 'health', region: REGIONS[1], meta: { cold_chain: false, partner_supported: true, beneficiaries: 800, beds: 10 } },
+    { name: 'Aweil Town Health Post', type: 'health', region: REGIONS[2], meta: { cold_chain: true, partner_supported: true, beneficiaries: 1500, beds: 20 } },
+    { name: 'Wau Road Community Clinic', type: 'health', region: REGIONS[2], meta: { cold_chain: false, partner_supported: false, beneficiaries: 620, beds: 8 } },
+    { name: 'Moroto CHC', type: 'health', region: REGIONS[3], meta: { cold_chain: true, partner_supported: true, beneficiaries: 1800, beds: 35 } },
+    { name: 'Mandera County Hospital Annex', type: 'health', region: REGIONS[4], meta: { cold_chain: true, partner_supported: true, beneficiaries: 2600, beds: 45 } },
     // Water
     { name: 'Kakuma Borehole Station 1', type: 'water', region: REGIONS[0], meta: { beneficiaries: 3500, asset_subtype: 'borehole', operational: true } },
     { name: 'Lodwar Water Yard', type: 'water', region: REGIONS[0], meta: { beneficiaries: 2800, asset_subtype: 'water_yard', operational: true } },
@@ -247,12 +247,12 @@ function buildServiceAssets() {
     { name: 'Moroto Borehole East', type: 'water', region: REGIONS[3], meta: { beneficiaries: 2200, asset_subtype: 'borehole', operational: false } },
     { name: 'Mandera Water Kiosk Cluster', type: 'water', region: REGIONS[4], meta: { beneficiaries: 3100, asset_subtype: 'water_yard', operational: true } },
     // Schools
-    { name: 'Kakuma Primary School', type: 'school', region: REGIONS[0], meta: { enrolment: 820, feeding_programme: true, unicef_supported: true } },
-    { name: 'Lodwar Girls Primary', type: 'school', region: REGIONS[0], meta: { enrolment: 640, feeding_programme: true, unicef_supported: false } },
-    { name: 'Bor Model Primary', type: 'school', region: REGIONS[1], meta: { enrolment: 910, feeding_programme: true, unicef_supported: true } },
-    { name: 'Aweil East Primary', type: 'school', region: REGIONS[2], meta: { enrolment: 750, feeding_programme: false, unicef_supported: true } },
-    { name: 'Moroto Township Primary', type: 'school', region: REGIONS[3], meta: { enrolment: 680, feeding_programme: true, unicef_supported: true } },
-    { name: 'Mandera Boys Primary', type: 'school', region: REGIONS[4], meta: { enrolment: 800, feeding_programme: true, unicef_supported: true } },
+    { name: 'Kakuma Primary School', type: 'school', region: REGIONS[0], meta: { enrolment: 820, feeding_programme: true, partner_supported: true } },
+    { name: 'Lodwar Girls Primary', type: 'school', region: REGIONS[0], meta: { enrolment: 640, feeding_programme: true, partner_supported: false } },
+    { name: 'Bor Model Primary', type: 'school', region: REGIONS[1], meta: { enrolment: 910, feeding_programme: true, partner_supported: true } },
+    { name: 'Aweil East Primary', type: 'school', region: REGIONS[2], meta: { enrolment: 750, feeding_programme: false, partner_supported: true } },
+    { name: 'Moroto Township Primary', type: 'school', region: REGIONS[3], meta: { enrolment: 680, feeding_programme: true, partner_supported: true } },
+    { name: 'Mandera Boys Primary', type: 'school', region: REGIONS[4], meta: { enrolment: 800, feeding_programme: true, partner_supported: true } },
     // Roads
     { name: 'Turkana B4 Supply Route', type: 'road', region: REGIONS[0], meta: { length_km: 82, condition: 'fair', flood_risk: 'high' } },
     { name: 'Bor-Malakal Highway Segment', type: 'road', region: REGIONS[1], meta: { length_km: 45, condition: 'poor', flood_risk: 'critical' } },

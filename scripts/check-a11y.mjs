@@ -391,34 +391,67 @@ function probeFocus() {
 }
 
 /**
- * 8: reduced motion. getAnimations() is the only honest question to ask — a
- * CSS @media query in our own stylesheet proves only that *we* honoured it,
- * while an animation started from app.js or an inline style does not go through
- * the stylesheet at all.
+ * 8: reduced motion.
+ *
+ * Two probes, because neither alone is honest.
+ *
+ * document.getAnimations() sees everything including animations started from
+ * app.js, and it is the obvious choice — except it returns an empty array on a
+ * page whose computed animation-name is demonstrably "skeleton-sweep" and
+ * infinite. Verified: on a backgrounded or freshly-navigated tab Chrome has not
+ * necessarily instantiated the CSSAnimation yet, so the probe passes vacuously
+ * on exactly the surfaces most likely to violate. That is an unverified
+ * assertion dressed as a check.
+ *
+ * getComputedStyle is the reliable half: it has already applied the
+ * prefers-reduced-motion media query by the time we read it, so "this element
+ * is still set to animate forever" is answered directly. It cannot see the Web
+ * Animations API, so the getAnimations() scan runs alongside it rather than
+ * instead of it.
  */
 function probeMotion() {
-  const running = document.getAnimations().filter((a) => {
-    const timing = a.effect && a.effect.getComputedTiming()
-    if (!timing) return false
-    const infinite = timing.iterations === Infinity ||
-      String(timing.iterations) === 'Infinity' ||
-      timing.iterations === null // null iterations == infinite in the Web Animations IDL
-    return infinite && a.playState === 'running'
-  })
-  return {
-    total: document.getAnimations().length,
-    running: running.slice(0, 4).map((a) => {
-      const target = a.effect && a.effect.target
-      const cls = target ? String(target.className || '').split(' ').filter(Boolean).slice(0, 2) : []
-      return {
-        name: a.animationName || (target ? String(target.className) : 'unknown'),
-        el: target
-          ? { sel: target.id ? '#' + target.id : target.tagName.toLowerCase() + cls.map((c) => '.' + c).join('') }
-          : null,
-      }
-    }),
-    count: running.length,
+  const describeEl = (el) => {
+    const cls = String(el.className || '').split(' ').filter(Boolean).slice(0, 2)
+    return { sel: el.id ? '#' + el.id : el.tagName.toLowerCase() + cls.map((c) => '.' + c).join('') }
   }
+
+  const running = []
+  let scanned = 0
+  for (const el of document.querySelectorAll('*')) {
+    const s = getComputedStyle(el)
+    const names = (s.animationName || '').split(',').map((n) => n.trim())
+    if (!names.length || (names.length === 1 && names[0] === 'none')) continue
+    const iters = s.animationIterationCount.split(',').map((n) => n.trim())
+    const states = s.animationPlayState.split(',').map((n) => n.trim())
+    const durs = s.animationDuration.split(',').map((n) => n.trim())
+    names.forEach((name, i) => {
+      if (!name || name === 'none') return
+      scanned += 1
+      const iteration = iters[i] ?? iters[0] ?? '1'
+      const duration = durs[i] ?? durs[0] ?? '0s'
+      // An infinite iteration count with no duration never advances, so it is
+      // not motion. A paused animation is not motion either.
+      if (iteration !== 'infinite') return
+      if (duration === '0s') return
+      if (states[i] === 'paused') return
+      running.push({ name, ...describeEl(el), source: 'css' })
+    })
+  }
+
+  const seen = new Set(running.map((r) => r.sel))
+  for (const a of document.getAnimations()) {
+    const timing = a.effect && a.effect.getComputedTiming()
+    if (!timing) continue
+    const infinite = timing.iterations === Infinity || String(timing.iterations) === 'Infinity'
+    if (!infinite || a.playState !== 'running') continue
+    const target = a.effect.target
+    if (!target || !target.tagName) continue
+    const d = describeEl(target)
+    if (seen.has(d.sel)) continue
+    running.push({ name: a.animationName || 'web-animations', ...d, source: 'waapi' })
+  }
+
+  return { scanned, total: document.getAnimations().length, running: running.slice(0, 4), count: running.length }
 }
 
 /** 9: reflow at 320px. Same facts check-responsive measures, at the width WCAG asks for. */
@@ -601,8 +634,8 @@ async function main() {
     r.reducedMotion = {
       pass: m.count === 0,
       detail: m.count === 0
-        ? `no infinite animation running under reduce (${m.total} animations total)`
-        : `${m.count} running — ` + top(m.running, (a) => `${a.name} on ${a.el ? a.el.sel : '?'}`),
+        ? `no infinite animation under reduce (${m.scanned} declared, ${m.total} live)`
+        : `${m.count} infinite — ` + top(m.running, (a) => `${a.name} on ${a.sel} [${a.source}]`),
     }
     await session.send('Emulation.setEmulatedMedia', { features: [] })
 

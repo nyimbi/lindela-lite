@@ -37,12 +37,12 @@ function applyI18n() {
 /**
  * What to say, and how loudly, about the last load.
  *
- * A quarter change swaps six tables and two charts without moving the reading
- * position, so the only evidence a screen reader has that anything happened is
- * if we say so. Failures went to console.error and left the previous quarter's
- * figures standing with nothing marking them as stale — which is the failure
- * mode this codebase is most careful about elsewhere, so it should not be the
- * one place a stale number is shown silently.
+ * A quarter change swaps four tables, a KPI grid and five charts without moving
+ * the reading position, so the only evidence a screen reader has that anything
+ * happened is if we say so. Failures went to console.error and left the
+ * previous quarter's figures standing with nothing marking them as stale —
+ * which is the failure mode this codebase is most careful about elsewhere, so
+ * it should not be the one place a stale number is shown silently.
  *
  * One polite region, and a visible panel that is an alert rather than a status,
  * because a missing table is not something to wait for.
@@ -59,6 +59,13 @@ function announce(statusText, { errorText } = {}) {
   }
 }
 
+/**
+ * `{name}` interpolation for the status sentences.
+ *
+ * An unknown placeholder is left as written rather than blanked: a translator
+ * who mistypes a key should see `{perod}` in the running interface, not a
+ * sentence with a hole in it.
+ */
 function fill(template, vars) {
   return String(template).replace(/\{(\w+)\}/g, (_, k) => (k in vars ? vars[k] : `{${k}}`))
 }
@@ -130,10 +137,10 @@ function renderKpi(kpi) {
     { key: 'co.kpi_reporters', label: t('co.kpi_reporters', 'Community reporters'), value: fmtVal(kpi.community_reporters_count, 'reporters'), unit: 'reporters', annotation: '', gap: false },
     { key: 'co.kpi_mappers', label: t('co.kpi_mappers', 'Youth mappers'), value: fmtVal(kpi.youth_mappers_count, 'mappers'), unit: 'mappers', annotation: '', gap: kpi.youth_mappers_count === 0 },
     { key: 'co.kpi_oss_releases', label: t('co.kpi_oss_releases', 'OSS releases'), value: fmtVal(kpi.oss_releases_count, 'releases'), unit: 'releases', annotation: '', gap: false },
-    // Labelled "Warning-to-action median" against a "<24h" UNICEF bid target, a
+    // Labelled "Warning-to-action median" against a "<24h" external target, a
     // figure of 0.16 h sat right next to it. What it measures is how fast this
     // platform sent an SMS once a dispatch matched a signal — our own dispatch
-    // latency. UNICEF's warning-to-action runs from a warning reaching a
+    // latency. Warning-to-action in the field-response sense runs from a warning reaching a
     // household to a field action being completed and reported, which this does
     // not observe at all. Naming it accurately matters more than the comparison
     // looking good next to a bid target.
@@ -349,7 +356,7 @@ function fmtPoint(v) {
  * Months with no value are counted, not drawn and not quietly dropped: a rise
  * measured over four months and the same rise over twelve are different claims.
  */
-function sparkA11y(label, series, field, values) {
+function sparkA11y(label, values) {
   const determined = values.filter((v) => v !== null && v !== undefined)
   const first = determined[0]
   const last = determined[determined.length - 1]
@@ -401,7 +408,7 @@ function sparkCard(label, series, field, unit = '') {
     <span class="spark-label">${label}</span>
     <span class="spark-value">${displayVal}<span style="font-size:0.8rem;font-weight:400;color:var(--ink-muted)">${unit ? ' ' + unit : ''}</span></span>
     ${deltaHtml}
-    ${buildSparkline(values, truncate(sparkA11y(label, series, field, values), { max: 300 }))}
+    ${buildSparkline(values, truncate(sparkA11y(label, values), { max: 300 }))}
     ${sparkSeriesTable(label, series, field)}
   </div>`
 }

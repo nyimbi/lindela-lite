@@ -1,6 +1,6 @@
 # Demo Guide
 
-Lindela Lite ships with a demo-data pipeline aligned to the UNICEF Climate and Health 2026 pilot regions: Turkana (KE), Bor (SS), Aweil (SS), Moroto (UG), Mandera (KE).
+Lindela Lite ships with a demo-data pipeline covering five East African pilot regions: Turkana (KE), Bor (SS), Aweil (SS), Moroto (UG), Mandera (KE).
 
 ## Preconditions
 
@@ -338,7 +338,7 @@ in the build**, for different reasons — see
 Summary if asked: IPC data requires a licence we do not have and the site blocks
 automated access; WHO outbreak data *is* keyless, but what is available is
 country-level annual aggregates, which cannot drive district response. The
-remainder is a UNICEF policy judgement about publishing disease geography, and
+remainder is a policy judgement about publishing disease geography, and
 it is not ours to make.
 
 What *is* shipped answers the downstream question honestly: given a forecast

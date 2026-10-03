@@ -1,7 +1,7 @@
 {
   "name": "Lindela CO Dashboard",
   "short_name": "Lindela CO",
-  "description": "UNICEF Country Office read-only KPI and equity dashboard",
+  "description": "Country Office read-only KPI and equity dashboard",
   "start_url": "/co/",
   "display": "standalone",
   "background_color": "#0e1520",

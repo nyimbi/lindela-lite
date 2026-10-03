@@ -10,9 +10,9 @@
   <link rel="stylesheet" href="/components.css">
     <!-- Page-specific rules only. The reset, the body box, the buttons, the
          table frame and .visually-hidden all come from /styles.css and
-         /components.css, which this page already links; the block below used to
-         re-declare them, which is how two surfaces ended up with two spellings
-         of danger red and one with the reset applied twice. -->
+         /components.css, which this page already links; this block used to
+         re-declare them, so every rule below was written twice on this page
+         and twice again on each surface that copied it. -->
     <style>
       header {
         background: var(--bg-elevated);
@@ -250,10 +250,11 @@
     </header>
 
     <main id="main" tabindex="-1">
-      <!-- Changing the quarter or year replaces six tables and two charts in
-           place. Nothing in that exchange is announced, so a screen reader user
-           hears the same page twice; and a failed fetch wrote to console.error
-           alone, leaving stale numbers on screen with no hint they were stale. -->
+      <!-- Changing the quarter or year replaces four tables, a KPI grid and
+           five charts in place. Nothing in that exchange is announced, so a
+           screen reader hears the same page twice; and a failed fetch wrote to
+           console.error alone, leaving the previous quarter's figures on screen
+           with nothing marking them as stale. -->
       <p id="load-status" class="visually-hidden" role="status" aria-live="polite"></p>
       <div id="load-error" class="error-panel" role="alert" hidden></div>
 

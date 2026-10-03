@@ -3,7 +3,7 @@
 **Status: scoping only. Nothing implemented, deliberately.**
 
 This document exists because both capabilities are explicitly *not* a
-connector to add quietly. Outbreak surveillance is a UNICEF policy question,
+connector to add quietly. Outbreak surveillance is a policy question,
 and IPC data is licensed. This records what we verified, what is technically
 possible, what is not, and the decisions required before any of it is built.
 
@@ -51,7 +51,7 @@ could not replicate.
 
 ### Decision required
 
-1. **Does UNICEF have an existing IPC/FSIN data agreement we can join?** If yes,
+1. **Is there an existing IPC/FSIN data agreement we can join?** If yes,
    this becomes feasible. If no, IPC should be represented as an explicitly
    unavailable input rather than approximated.
 2. **Is FENIX reachable from the deployment environment?** It failed from ours,
@@ -110,7 +110,7 @@ Even if suitable data existed, the objective flags this correctly:
 - WHO data carries a stated licence permitting use with attribution. It is
   *national aggregate*, so the individual-privacy exposure is low, but any move
   toward subnational or facility granularity raises it sharply.
-- This is squarely a UNICEF policy judgement, not an engineering call. We should
+- This is squarely a policy judgement, not an engineering call. We should
   not be the party deciding it.
 
 ### What we have not done, deliberately
@@ -133,7 +133,7 @@ operator controls, not surveillance instrumentation we introduced.
 
 ## 4. Decisions required before any implementation
 
-1. **UNICEF policy approval** for outbreak data surfacing, at whatever
+1. **Policy approval** for outbreak data surfacing, at whatever
    granularity. Recommended: treat as a hard gate — no code without written
    policy, given the stigmatisation and funding-flow implications.
 2. **Licence/access** for IPC. Without an FSIN agreement, IPC should appear in
