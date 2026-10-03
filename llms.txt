@@ -17,15 +17,19 @@ source file is the authority.
 
 ```bash
 npm test              # node --test test/*.test.js
-npm run validate      # OpenAPI endpoint presence, model-basis status,
-                      # capability guard, i18n completeness
+npm run validate      # model-basis status, capability guard, i18n
+                      # completeness, and the OpenAPI document against the
+                      # route table
 npm run test:coverage # thresholds: lines 75, branches 60, functions 75
 ```
 
-`validate` checks that a hand-maintained endpoint list in `scripts/validate.mjs`
-is present in `docs/openapi.yaml`. It does **not** derive that list from the
-router, so a route added without a spec entry passes. It also does not check
-internal doc links.
+`validate` used to check that a hand-maintained endpoint list in
+`scripts/validate.mjs` appeared in `docs/openapi.yaml`. That tested the list, not
+the server: adding a route and forgetting the list passed, which is how nine live
+routes went undocumented. `scripts/check-openapi.mjs` now reads the routes out of
+`src/server.js` and requires the two to agree in both directions — see *The API
+document is checked, not trusted* below. It still does not check internal doc
+links.
 
 `npm test` and `npm run validate` must both exit 0. Never gate a check on a
 pipe (`npm test | tail -5`) — `tail` masks the exit code and truncates the
@@ -159,6 +163,29 @@ wrong answers rather than errors:
 - a group is **not always a parameter**: `(copy)` is one segment and
   `(approve|reject)` is two, and reading either as a parameter invents
   `/api/v1/x/{id}/{id}` and hides the routes that exist.
+
+## The frontend derives its precache, it does not list it
+
+`public/sw.js` exports `shellGraph(load, origin)`, a breadth-first closure over
+`<link href>`, `<script src>`, `@import` and `from '…'`, starting from eight
+`ENTRY_PATHS` plus four `BOOTSTRAP_ASSETS`. Cross-origin and `/api/` references
+are dropped. The point is not the mechanism: the point is that a hand-kept list
+of an import graph is wrong the moment anyone adds an import, and that the list
+was wrong three times in a row — five paths, then eight shared modules, then the
+entry points — each repair a snapshot and each snapshot an omission. A missing
+ES module is a hard module-resolution error, not a degraded load, so the console
+failed to boot offline entirely.
+
+`shellGraph` takes its loader as an argument precisely so the closure can be
+tested without a browser: `test/web-chw-offline.test.js` runs it against the real
+`public/` tree on disk. If you add an import, that test is what stops the worker
+from going stale — do not reintroduce a constant.
+
+**The frontend gates mostly need a browser and mostly have not been run.** The
+family is `check:a11y`, `check:responsive`, `check:dashboard`. They require Chrome
+on `:9222` and a server on `:4177`, and CI runs none of them. A fix in those files
+is a claim until someone runs the gate; `docs/improvements/defects.md` marks
+WEB-10 exactly that way.
 
 ## CI
 
