@@ -104,6 +104,8 @@ have `/api/v1/health` report the auth posture so it is visible.
 
 ### DAT-03 — Concurrent writes to the JSON store are silently lost
 
+**Fixed 2026-10-03.** Mutations serialise through an in-process promise chain; writes land via temp-file + `rename`. Guarded by *does not lose records under concurrent writes* in `test/store-conformance.test.js`.
+
 `src/store.js:75-83`
 
 ```js
@@ -133,6 +135,8 @@ and write to a temp file then `rename()` (see DAT-04).
 
 ### DAT-01 — `PostgresStore.write()` wipes the table and permanently breaks dedup
 
+**Fixed 2026-10-03.** `write()` routes through `insertRecords()`, which persists `payload_hash`. Guarded by *keeps payload_hash through a full write so dedup survives*.
+
 `src/postgres-store.js:70-82`
 
 ```js
@@ -161,6 +165,8 @@ backend after any write.
 
 ### DAT-02 — `countRecords` reads four collections while ingestion merges six
 
+**Fixed 2026-10-03.** One exported `OUTPUT_COLLECTIONS` list now drives the accumulator, both counters, the run `counts`, and the per-run lineage record (which was separately truncated to four). Guarded by *reports the records a single-collection source actually produced*.
+
 Full write-up in [_research/00-audit-baseline.md](_research/00-audit-baseline.md#d1-countrecords-reads-four-collections-while-ingestion-merges-six).
 Short form: `src/ingestion.js:334-342` hardcodes four collection names; the merge
 accumulator at `:105-111` handles six.
@@ -170,6 +176,8 @@ records; received 0` after fetching hundreds of classifications. Ingestion claim
 failure while succeeding, which trains operators to ignore the health signal.
 
 ### DAT-05 — `PostgresStore.replaceAnalytics` discards the impact figures
+
+**Fixed 2026-10-03.** Six-collection signature, delete-then-insert per collection in one transaction. Guarded by *replaceAnalytics stores all six derived collections* and *replaces rather than accumulates stale rows*.
 
 `src/postgres-store.js:164`
 
@@ -204,6 +212,8 @@ Combined with SEC-03, a read-only token can arm an SSRF probe. `distributeReport
 (`src/server.js:1380`) then fetches it with no timeout and no signature.
 
 ### DAT-07 — The retention endpoint purges nothing and reports success
+
+**Fixed 2026-10-03.** Both stores gained `remove()`; the route calls it. Guarded by *deletes the records it reports as expired*, which did not exist before — the endpoint had no test at all.
 
 `src/server.js:373-391` computes `expired`, then calls `store.merge` with only
 `kept`. Neither store adapter has a delete path; `merge` cannot remove.

@@ -68,6 +68,48 @@ describe('Lindela Lite STAC', () => {
   })
 })
 
+describe('Lindela Lite retention', () => {
+  // The route reported `{success: true, expired: 1}` while deleting nothing,
+  // and no test exercised it at all — it merged the survivors back over the
+  // originals, and merge keys on id. Asserted at the HTTP boundary because the
+  // bug was in the wiring between applyRetention() and the store, not in
+  // either end.
+  it('deletes the records it reports as expired', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-retention-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await store.merge({
+      field_reports: [
+        { id: 'fr-old', occurred_at: '2020-01-01T00:00:00.000Z', body: 'three years old' },
+        { id: 'fr-new', occurred_at: new Date().toISOString(), body: 'today' },
+      ],
+      rapidpro_inbound_messages: [
+        { id: 'im-old', occurred_at: '2020-01-01T00:00:00.000Z', body: 'three years old' },
+        { id: 'im-new', occurred_at: new Date().toISOString(), body: 'today' },
+      ],
+    })
+
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://localhost:${listener.address().port}`
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/maintenance/apply-retention`, { method: 'POST' })
+      assert.equal(res.status, 200)
+      const body = await res.json()
+      assert.equal(body.success, true)
+      assert.equal(body.field_reports.expired, 1, 'the report is only true if something was deleted')
+
+      const after_ = await store.read()
+      assert.deepEqual(after_.field_reports.map((r) => r.id), ['fr-new'],
+        'an expired field report must actually be gone from the store')
+      assert.deepEqual(after_.rapidpro_inbound_messages.map((r) => r.id), ['im-new'],
+        'an expired inbound message must actually be gone from the store')
+    } finally {
+      listener.close()
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('Lindela Lite CAP', () => {
   it('renders valid CAP 1.2 XML that names the real hazard', () => {
     const alert = {
@@ -5454,13 +5496,19 @@ describe('Lindela Lite IPC food security ingestion', () => {
     assert.ok(PUBLIC_INGESTION_SOURCES.includes('ipc_hdx'), 'the source must be selectable in public ingestion')
     assert.equal(SOURCE_POLICIES.ipc_hdx.regular, true)
     assert.ok(SOURCE_POLICIES.ipc_hdx.minimum_records >= 1, 'an empty IPC ingest is a degraded run, not success')
-    // The merged-collections map inside runIngestion routes connector output
-    // into the store; a key absent there is silently dropped (every collection
-    // was when this class of bug was found). Asserted on the source text
-    // because the map is not exported.
-    const ingestionSource = await fs.readFile('src/ingestion.js', 'utf8')
-    assert.ok(ingestionSource.includes('food_security_records: []'),
-      'runIngestion drops collections missing from its merged map')
+    // Behavioural, not source text. This assertion used to grep ingestion.js
+    // for the string 'food_security_records: []' — which reads the accumulator
+    // (correct) while the actual defect sat in countRecords() fifty lines away,
+    // and which fails the moment the accumulator is refactored to derive from
+    // the shared list that fixes the bug. Asserting on spelling is how this
+    // bug class got trusted three times.
+    const { OUTPUT_COLLECTIONS } = await import('../src/ingestion.js')
+    assert.ok(OUTPUT_COLLECTIONS.includes('food_security_records'),
+      'food_security_records must be an ingestion output collection')
+    assert.ok(
+      OUTPUT_COLLECTIONS.every((key) => Array.isArray(emptyStore()[key])),
+      'every ingestion output collection must exist in emptyStore or it is dropped before the store sees it',
+    )
   })
 })
 
@@ -5515,9 +5563,9 @@ describe('Lindela Lite WHO GHO outbreak context', () => {
     // WHO series are annual; staleness lives in the summary (20160 minutes),
     // but the source must not read fresh forever without a window at all.
     assert.ok(SOURCE_POLICIES.who_gho.stale_after_minutes > 0)
-    const ingestionSource = await fs.readFile('src/ingestion.js', 'utf8')
-    assert.ok(ingestionSource.includes('disease_observations: []'),
-      'runIngestion drops collections missing from its merged map')
+    const { OUTPUT_COLLECTIONS } = await import('../src/ingestion.js')
+    assert.ok(OUTPUT_COLLECTIONS.includes('disease_observations'),
+      'disease_observations must be an ingestion output collection')
   })
 })
 

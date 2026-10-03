@@ -83,16 +83,22 @@ export const SOURCE_POLICIES = Object.freeze({
   dhis2: { interval_minutes: 360, timeout_ms: 20000, retries: 1, stale_after_minutes: 720, minimum_records: 0, regular: false },
 })
 
-export function getConnector(sourceId) {
+export function getConnector(sourceId, connectors = CONNECTORS) {
   if (BLOCKED_SOURCE_IDS.includes(sourceId)) {
     throw new Error(`${sourceId} ingestion is intentionally excluded from Lindela Lite`)
   }
-  const connector = CONNECTORS[sourceId]
+  const connector = connectors[sourceId]
   if (!connector) throw new Error(`Unknown source: ${sourceId}`)
   return connector
 }
 
-export async function runIngestion(store, request = {}) {
+/**
+ * `options.connectors` overrides the built-in connector map. It exists so the
+ * ingestion path can be driven end to end in tests without network access —
+ * the registration guards for the silent-key-list bug class used to assert on
+ * source text precisely because they could not do this.
+ */
+export async function runIngestion(store, request = {}, { connectors = CONNECTORS } = {}) {
   const requestedSources = request.sources?.length ? request.sources : PUBLIC_INGESTION_SOURCES
   for (const source of requestedSources) {
     if (BLOCKED_SOURCE_IDS.includes(source)) {
@@ -102,18 +108,11 @@ export async function runIngestion(store, request = {}) {
   }
 
   const source_runs = []
-  const merged = {
-    climate_observations: [],
-    hazard_events: [],
-    conflict_events: [],
-    service_assets: [],
-    food_security_records: [],
-    disease_observations: [],
-  }
+  const merged = Object.fromEntries(OUTPUT_COLLECTIONS.map((key) => [key, []]))
 
   for (const source of requestedSources) {
     const startedAt = nowIso()
-    const connector = getConnector(source)
+    const connector = getConnector(source, connectors)
     const policy = SOURCE_POLICIES[source] || {}
     const sourceRequest = {
       ...request,
@@ -185,12 +184,7 @@ export async function runIngestion(store, request = {}) {
   const data_lineage = []
   for (let i = 0; i < source_runs.length; i++) {
     const run = source_runs[i]
-    const allRecords = [
-      ...merged.climate_observations,
-      ...merged.hazard_events,
-      ...merged.conflict_events,
-      ...merged.service_assets,
-    ]
+    const allRecords = OUTPUT_COLLECTIONS.flatMap((key) => merged[key])
     const lineageRecord = recordLineage(store, run, allRecords)
     data_lineage.push(lineageRecord)
   }
@@ -198,12 +192,9 @@ export async function runIngestion(store, request = {}) {
   const data = await store.merge({ ...merged, source_runs, data_lineage })
   return {
     source_runs,
-    counts: {
-      climate_observations: merged.climate_observations.length,
-      hazard_events: merged.hazard_events.length,
-      conflict_events: merged.conflict_events.length,
-      service_assets: merged.service_assets.length,
-    },
+    counts: Object.fromEntries(
+      OUTPUT_COLLECTIONS.map((key) => [key, merged[key].length]),
+    ),
     data,
   }
 }
@@ -331,14 +322,37 @@ async function runConnectorWithRetries(connector, request) {
   throw lastError
 }
 
+/**
+ * The collections a connector may return, in one place.
+ *
+ * Three consumers key off this: the merge accumulator, countRecords(), and
+ * countRecordsByCollection(). They used to be three separate lists and the
+ * counters named four of the six — so `ipc_hdx`, which returns only
+ * food_security_records, reported "degraded — expected at least 1 records;
+ * received 0" on a fully successful run. Ingestion claimed failure on exactly
+ * the two newest and most operationally important sources, which is how an
+ * operator learns to stop trusting the health signal that would have told them
+ * data was lost.
+ *
+ * Export it and assert on it. A guard that greps source text for the spelling
+ * of a collection name passes with this bug fully present.
+ */
+export const OUTPUT_COLLECTIONS = [
+  'climate_observations',
+  'hazard_events',
+  'conflict_events',
+  'service_assets',
+  'food_security_records',
+  'disease_observations',
+]
+
 function countRecords(output) {
-  return ['climate_observations', 'hazard_events', 'conflict_events', 'service_assets']
+  return OUTPUT_COLLECTIONS
     .reduce((total, key) => total + (output?.[key]?.length || 0), 0)
 }
 
-
 function countRecordsByCollection(output) {
-  return Object.fromEntries(['climate_observations', 'hazard_events', 'conflict_events', 'service_assets']
+  return Object.fromEntries(OUTPUT_COLLECTIONS
     .map((key) => [key, output?.[key]?.length || 0]))
 }
 

@@ -1,0 +1,112 @@
+# Lindela Lite
+
+> Open-source climate-conflict and flood-impact toolkit. Ingests public data,
+> normalizes it into simple schemas, computes transparent baseline risk scores,
+> and serves them over an HTTP API with a no-build frontend.
+
+This file is the map an agent needs to work in this repository without reading
+all 28,000 lines. It is a map, not a summary — where a claim here matters, the
+source file is the authority.
+
+- Package: `@lindela/lite`, private, MIT, Node >= 20, ESM throughout.
+- Runtime dependencies: `pg` and nothing else. `npm test` needs no database.
+- Single process, single port (`LINDELA_LITE_PORT` or 4177), single Postgres
+  table (`lite_records`) or a single JSON file.
+
+## Verify before you claim
+
+```bash
+npm test              # node --test test/*.test.js
+npm run validate      # OpenAPI endpoint presence, model-basis status,
+                      # capability guard, i18n completeness
+npm run test:coverage # thresholds: lines 75, branches 60, functions 75
+```
+
+`validate` checks that a hand-maintained endpoint list in `scripts/validate.mjs`
+is present in `docs/openapi.yaml`. It does **not** derive that list from the
+router, so a route added without a spec entry passes. It also does not check
+internal doc links.
+
+`npm test` and `npm run validate` must both exit 0. Never gate a check on a
+pipe (`npm test | tail -5`) — `tail` masks the exit code and truncates the
+pass/fail summary, which is the last line. Redirect to a file and read it.
+
+## The rule that governs the whole codebase
+
+**Flood probability here is empirical co-occurrence, not hydrology.** It is not
+a return period, not a recurrence interval, not an annual exceedance
+probability. Any of that vocabulary appearing in the tree fails the build via
+`scripts/check-no-flood-probability.mjs`, which scans `src/`, `public/`,
+`scripts/`, `test/`, and `docs/`. The one permitted exception is
+`docs/flood-probability-model-basis.md`.
+
+This extends into the payload contract:
+
+- Risk "percentiles" are **sensitivity bands**. They were renamed so they would
+  stop reading as quantiles.
+- `false_alert: null` means *not determined*, not zero.
+- A missing forecast is not a 0% chance of rain.
+- `0` and `null` are different. A coordinate at 0° is a coordinate. Use
+  `Number.isFinite(Number(x))`, never truthiness, on nullable numerics.
+
+When you add a numeric output, ask what qualification the docs carry and whether
+it reaches the caller. Half of them historically did not.
+
+## Layout
+
+| Path | What lives there |
+|---|---|
+| `src/server.js` | The router. ~2,700 lines, every `/api/v1/*` route. |
+| `src/store.js` | `JsonStore` + the `COLLECTIONS` list every store keys off. |
+| `src/postgres-store.js` | `PostgresStore`. Same contract, different backend. |
+| `src/schema.js` | Normalized record shapes and `emptyStore()`. |
+| `src/ingestion.js` | `runIngestion`, `OUTPUT_COLLECTIONS`, source policies. |
+| `src/connectors/` | 17 connectors; `spec.js` is the SDK (`defineConnector`). |
+| `src/analytics/` | Flood probability, impact, downscaling, ensemble. |
+| `public/` | Eight PWA surfaces. No framework, no build step, no bundler. |
+| `test/` | `node:test`. `store-conformance.test.js` runs one contract against every backend. |
+| `docs/` | Architecture, OpenAPI, improvements audit, model basis. |
+
+## Three lists that must agree
+
+`COLLECTIONS` (store), `OUTPUT_COLLECTIONS` (ingestion), `emptyStore()`
+(schema). When they drift, records vanish with no error anywhere: the producer
+writes them, the consumer never asks for them, and every number still looks
+plausible.
+
+The same class of bug has appeared four times in this repository. Guard it with
+behaviour — assert that a stub connector's records come back out of the store —
+never by grepping source text for a collection name. Two guards that did exactly
+that passed with the bug fully present.
+
+## Storage backends
+
+Four modes via `LINDELA_LITE_DB_MODE`: `auto`, `postgres`, `pg0`, `json`.
+`postgres` and `pg0` are the same `PostgresStore`; `auto` prefers Postgres if
+`DATABASE_URL` is set, then pg0, then JSON.
+
+The two backends must agree. `JsonStore.replaceAnalytics` stores six derived
+collections; `PostgresStore`'s once took four, so the impact figures were
+computed and silently dropped on Postgres alone. `test/store-conformance.test.js`
+is what makes that class of divergence impossible to reintroduce — it needs
+`LINDELA_LITE_TEST_DATABASE_URL` set to exercise the Postgres half.
+
+## CI
+
+`.github/workflows/ci.yml`, jobs `test`, `coverage`, `audit`, `sbom`,
+`live-sources`, `dashboard`, and `provenance` (tag pushes only, gated on the
+first four).
+
+**There is no Postgres in CI.** No job sets `LINDELA_LITE_TEST_DATABASE_URL`, so
+`test/store-conformance.test.js` runs its Postgres half as a silent skip and
+`src/postgres-store.js` sits near 0% function coverage in the coverage gate —
+on the backend every production deployment selects. Treat that as a known gap,
+not as a passing test.
+
+## Conventions
+
+- Node package; the Python conventions in the surrounding `CLAUDE.md` do not apply.
+- Tests use `node:test`. No mocking — real objects, real local HTTP server.
+- Records are keyed on `id`, minted by `stableId(prefix, parts)`.
+- Every connector declares a `rateLimit` in its policy. Whether it is *enforced*
+  is a separate question — check, do not assume.

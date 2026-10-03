@@ -374,9 +374,14 @@ async function handleApi(store, req, res, url) {
     const policy = await loadPolicy()
     const fieldReportRetention = applyRetention(data.field_reports, policy.retentionDays)
     const inboundRetention = applyRetention(data.rapidpro_inbound_messages, policy.retentionDays)
-    await store.merge({
-      field_reports: fieldReportRetention.kept,
-      rapidpro_inbound_messages: inboundRetention.kept,
+    // remove(), not merge(). merge() keyed on id, so re-merging the survivors
+    // over the originals left every expired record exactly where it was — the
+    // route reported `{success: true, expired: 1}` and deleted nothing (DAT-07).
+    await store.remove({
+      collection: {
+        field_reports: fieldReportRetention.expired.map((record) => record.id),
+        rapidpro_inbound_messages: inboundRetention.expired.map((record) => record.id),
+      },
     })
     jsonResponse(res, 200, {
       success: true,

@@ -5,7 +5,65 @@
 Flood, access-risk, seasonal-signal, food-security, and outbreak-context capability.
 All additions are additive; no existing endpoint changed shape.
 
+### Fixed
+
+Storage correctness. Six defects, all of which presented as working code.
+
+- **`replaceAnalytics` dropped two derived collections on Postgres.** The method
+  took four parameters where the caller passes six, so `population_at_risk` and
+  `facilities_at_risk` — people at risk, facilities at risk — were computed,
+  passed in, and never written. Impact-based forecasting worked on the JSON
+  backend and was silently absent on Postgres, which is the default backend
+  whenever `DATABASE_URL` is set. It also delegated to `merge()` where `replace()`
+  was meant, so a region that stopped qualifying kept its last risk score
+  forever, and the two backends disagreed about whether stale analytics survive
+  depending on an environment variable.
+- **`write()` disabled content-addressed dedup permanently.** `payload_hash` is a
+  first-class column that `merge()` reads to skip re-ingested identical upstream
+  data. The full-table rewrite path omitted it, so after a single `write()` call
+  every stored hash read back `null`, no incoming hash could ever match, and
+  dedup was dead for the life of the table — with no error anywhere, because a
+  null hash simply never matches.
+- **`JsonStore` lost writes under concurrency.** Every mutation is a
+  read-modify-write of one file. Twenty concurrent merges left six survivors:
+  each caller read the same snapshot and the last writer won. All mutations are
+  now serialised through an in-process promise chain. Writes also go to a temp
+  file and are `rename()`d into place, so an interrupted write leaves the
+  previous store intact instead of a truncated JSON file.
+- **Retention deleted nothing.** `POST /api/v1/maintenance/apply-retention`
+  merged the surviving records back over the originals, and `merge()` keys on
+  `id` — so the route reported `{success: true, expired: 1}` and every expired
+  record stayed exactly where it was. Both stores gained `remove()`, the
+  counterpart to `merge()`, and the route now calls it.
+- **Ingestion reported failure on success.** `countRecords()` and
+  `countRecordsByCollection()` named four collections while the merge accumulator
+  handled six. `ipc_hdx` returns only `food_security_records` and `who_gho` only
+  `disease_observations`, so both produced
+  `degraded — Expected at least 1 records; received 0` on fully successful runs.
+  An operator watching source health sees a healthy food-security pipeline as
+  broken and learns to ignore the health signal that would have told them data
+  was lost. All three consumers now derive from one exported
+  `OUTPUT_COLLECTIONS` list, as do the run's `counts` and the per-run lineage
+  record, which were separately truncated to the same four collections.
+- **Two regression guards asserted on source text.** They read `src/ingestion.js`
+  and checked that the string `food_security_records: []` was present — which
+  tests the accumulator (correct) while the actual defect sat in `countRecords`
+  fifty lines away, and which fails the moment the accumulator is refactored to
+  derive from the shared list that *fixes* the bug. Replaced with behavioural
+  assertions driven through stub connectors. No test covered retention at all,
+  which is why that no-op survived; it is now covered at the HTTP boundary.
+
 ### Added
+
+- `llms.txt` — a map of the repository for agents: how to verify, the model
+  contract, the three collection lists that must agree, and the known gaps.
+- `test/store-conformance.test.js` — one behavioural contract run against every
+  storage backend. This is what makes the class of defect above impossible to
+  reintroduce: it would have failed on the four-collection `replaceAnalytics`,
+  the missing `payload_hash`, and the concurrency loss. Set
+  `LINDELA_LITE_TEST_DATABASE_URL` to exercise the Postgres half; without it that
+  half silently skips. `runIngestion` now takes an injectable connector map so
+  the ingestion path is testable without network access.
 
 - `GET /api/v1/flood-depth`. Static inundation from an operator-supplied water
   surface elevation, using keyless AWS Terrarium (SRTM) terrain — no API key and

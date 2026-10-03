@@ -29,6 +29,10 @@ is long-form and evidence-dense; the three documents above are the synthesis.
 (DAT-02 and DAT-05), prepared by the audit and reverted from the working tree so
 every line number here reproduces from a clean `HEAD`.
 
+**Both are now applied**, along with DAT-01, DAT-03 and DAT-07. Fixes are marked
+inline in [defects.md](defects.md) with the test that guards them. `proposed-fixes.patch`
+is kept for provenance only — do not reapply it.
+
 ---
 
 ## The short version
