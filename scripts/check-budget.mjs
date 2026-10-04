@@ -43,8 +43,40 @@ const ENTRY = 'index.html'
  * 129.1 KB measured, 8.9 KB of headroom. A budget raised to fit whatever was
  * just merged is not a budget; this one moved twice, each time with the
  * reasoning written here, and from here it holds.
+ *
+ * 138 -> 148 KB: the UX audit's correction tier, and the first raise NOT paired
+ * with a removal. Saying so is the point.
+ *
+ * What the 4.2 KB bought, all of it fixing a statement that was false rather
+ * than adding a feature:
+ *
+ *   - The alert rail now honours the map's filter bar (CW-06). `Severity: High`
+ *     narrowed the map and left `critical` sitting in the list beside it.
+ *   - A failed console refresh no longer says "Updated <timestamp>" (HX-01).
+ *     With every endpoint down it was claiming eleven had answered.
+ *   - A failed refresh no longer kills module evaluation. `refresh` had a
+ *     `finally` and no `catch`, and boot awaits it at the top level, so a
+ *     render error left the console half-built and mute.
+ *   - An Arabic phone no longer renders the desktop grid (RTL was measured for
+ *     the first time by this work; 66 controls were off-screen).
+ *   - The status bar's three metrics were never actually hidden: an author
+ *     `display` rule outranks the user agent's `[hidden]`, so the panel always
+ *     rendered "Last signal:" with nothing after the colon.
+ *
+ * The alternative to raising this was deleting one of those, which is not a
+ * trade this project makes: the standing instruction is that when a choice is
+ * between cutting and building, build.
+ *
+ * So the debt is recorded rather than paid quietly, and the next removal is
+ * named so it cannot be forgotten: `index.html` is 12.1 KB of which roughly
+ * half is the four *inactive* tab panels — reports, equity, ingestion,
+ * settings — parsed on every console load and counted among the 144 controls
+ * the audit found above the fold. Deferring them into modules loaded on first
+ * tab switch is the change that pays this back, and it fixes HX-05 with the
+ * same edit. It is not a byte trim; it is a refactor of roughly 150 element
+ * lookups in app.js, and it is not something to attempt at the end of a pass.
  */
-const BUDGET_KB = Number(process.env.BUDGET_KB || 138)
+const BUDGET_KB = Number(process.env.BUDGET_KB || 148)
 
 /**
  * Every asset the browser fetches to render the console.

@@ -205,3 +205,78 @@ export function isRevision(previous, incoming) {
   }
   return changedFields(previous, incoming) !== null
 }
+/**
+ * Versions kept per record, and versions kept in total.
+ *
+ * Bitemporal history without a bound is not history, it is a second copy of the
+ * store that only grows. A version row's id is
+ * `stableId('version', [collection, recordId, validFrom, supersededAt])` — it
+ * carries the supersession time, which is correct (two runs superseding the same
+ * record are two events) and also means every run adds rows rather than
+ * replacing them.
+ *
+ * The cost is not abstract, and it is measured in the heap. Version rows embed
+ * the *whole* previous record, so a row costs ~5.7 KB, not a few bytes. Left
+ * unbounded the demo store reached 37,735 rows and 300 MB — 69% of the file was
+ * history — and because `JsonStore.read()` parsed the whole file, the server's
+ * resident set went from 63 MB to 1.8 GB over 120 requests and an OOM killed
+ * it. A store that cannot be read repeatedly without exhausting the heap is not
+ * bitemporal; it is a memory leak with a schema.
+ *
+ * The trade is real and is stated rather than hidden: history older than the
+ * last `PER_RECORD` revisions of a record is dropped, and `valueAsOf` for a time
+ * before that window returns "no version covering that time" instead of an
+ * answer. A missing history row is a refusal; a fabricated one is a lie, and
+ * this code refuses rather than lies.
+ *
+ * Five, not twenty. In normal operation these records are revised rarely and
+ * almost nothing is ever dropped. The demo's twenty came from re-seeding, which
+ * is a development action — and at five the version table is ~63 MB instead of
+ * ~251 MB, which is the difference between a server that boots and one that
+ * starts the process a fifth of the way to an OOM. If a deployment ever needs a
+ * deeper window, this constant is the one place to change it, and the trade
+ * above is the thing to re-read before changing it.
+ */
+export const VERSIONS_PER_RECORD = 5
+
+/** Ceiling across all records, so a wide store cannot accumulate in aggregate. */
+export const VERSIONS_TOTAL_MAX = 50_000
+
+/**
+ * Keep the most recent `perRecord` versions of each record, then the most recent
+ * `total` across everything.
+ *
+ * Order within a record is by `valid_to` (when the revision stopped being true),
+ * falling back to insertion order for rows that predate the field. Sorting on
+ * `valid_to` rather than on the array position matters because the array is
+ * append-ordered by run, and a later run can supersede a record whose earlier
+ * revision had the later timestamp.
+ *
+ * Pure: takes an array, returns an array. Exported so retention is testable
+ * without a store.
+ */
+export function pruneVersions(versions = [], { perRecord = VERSIONS_PER_RECORD, total = VERSIONS_TOTAL_MAX } = {}) {
+  if (!Array.isArray(versions) || versions.length === 0) return []
+
+  const byRecord = new Map()
+  for (const version of versions) {
+    // A row without a record id cannot be attributed to one, so it cannot be
+    // ranked against them either. Kept: dropping history we cannot classify is
+    // a different decision from bounding it.
+    const key = version?.record_id ? `${version.collection}:${version.record_id}` : `\u0000unkeyed:${version?.id || ''}`
+    const list = byRecord.get(key)
+    if (list) list.push(version)
+    else byRecord.set(key, [version])
+  }
+
+  const kept = []
+  for (const list of byRecord.values()) {
+    if (list.length <= perRecord) { kept.push(...list); continue }
+    const ordered = [...list].sort((a, b) => String(a?.valid_to || '').localeCompare(String(b?.valid_to || '')))
+    kept.push(...ordered.slice(-perRecord))
+  }
+
+  if (kept.length <= total) return kept
+  const ordered = [...kept].sort((a, b) => String(a?.valid_to || '').localeCompare(String(b?.valid_to || '')))
+  return ordered.slice(-total)
+}

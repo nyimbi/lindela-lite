@@ -43,6 +43,10 @@ initServiceWorker()
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
   catalog: {},
+  // Panels the last refresh could not reach. Empty until a refresh runs and
+  // nothing failed; a surface that has never polled has not checked anything,
+  // and the workflow panel must not say otherwise.
+  failedSources: new Set(),
   activeTab: 'alerts',
   alertFilter: 'all',
   workflowTypeFilter: null,
@@ -2639,6 +2643,13 @@ async function refresh({ first = false, force = false } = {}) {
     const failed = results.filter((r) => r.failed).map((r) => r.failed)
     const merged = Object.assign({}, ...results)
 
+    // Which panels this refresh could not reach, so a panel that falls back to
+    // its previous contents can say so. Without this the fallback is silent:
+    // `load` returns `null` for a failed name, the assignment is skipped, and
+    // `state.data.workflows` keeps whatever it held — on a cold start it holds
+    // nothing at all, and `|| []` turns "never checked" into "there are none".
+    state.failedSources = new Set(failed)
+
     const health = merged.health
     if (health) {
       state.data.health = health
@@ -2689,8 +2700,13 @@ async function refresh({ first = false, force = false } = {}) {
         ;(index[wf.type] ||= new Set()).add(wf.subject_id)
       }
       state.workflowAlertIds = index
-      renderWorkflowInstanceList()
     }
+    // Outside the guard on purpose. Inside it, this ran only on success, so a
+    // failed request left the panel showing whatever the previous refresh had
+    // written — or, on a cold start, an empty box with no explanation at all.
+    // The renderer branches on `state.failedSources`, so it has something
+    // different to say in each case and must be reached in both.
+    renderWorkflowInstanceList()
 
     if (merged.climate) {
       state.data.climate = merged.climate
@@ -2730,7 +2746,20 @@ async function refresh({ first = false, force = false } = {}) {
 
     loadSignalToAction().catch(() => {})
 
-    if (failed.length) {
+    // A partial failure and a total one are different sentences, and the total
+    // one is the only one that was being written. When every panel missed, the
+    // status line still said "Updated <timestamp>" — a claim that eleven
+    // endpoints answered, none of which did. `Updated` is the load-bearing word
+    // and it was the false one: the panels beneath it render their last known
+    // values, so an operator reading a fresh timestamp would reasonably take
+    // them as current.
+    const totalFailure = failed.length >= results.length
+    if (totalFailure) {
+      _refreshFailures += 1
+      connectionStatus?.classList.add('degraded')
+      setStatus('Could not reach the server. Nothing on this screen has been checked — '
+        + 'the figures shown are the last that were.')
+    } else if (failed.length) {
       _refreshFailures += 1
       setStatus(
         `Updated ${formatTimestamp(new Date())} — ` +
@@ -2744,6 +2773,21 @@ async function refresh({ first = false, force = false } = {}) {
       connectionStatus?.classList.remove('degraded')
       setStatus(`Updated ${formatTimestamp(new Date())}. GDELT excluded.`)
     }
+  } catch (err) {
+    // This had a `finally` and no `catch`, which is the worst pairing: a render
+    // error propagated out of `refresh`, and because boot does
+    // `await refresh({ first: true })` at the top level of the module, it
+    // rejected module evaluation. Everything after that line — the escalation
+    // mount, the app version, half of the bindings — never ran, and the console
+    // sat there looking alive with a status bar that had never been written.
+    // Nothing in the UI said anything was wrong, because nothing had been able
+    // to say it.
+    //
+    // A failed refresh is now a failed refresh: reported, and the poll carries
+    // on. One panel's render error must not cost the operator the other eleven.
+    console.error('Refresh failed while rendering:', err)
+    setStatus(`Refresh could not be completed: ${err.message}. The figures below are the last that were.`)
+    connectionStatus?.classList.add('degraded')
   } finally {
     _refreshInFlight = false
     schedulePoll()
@@ -2846,9 +2890,21 @@ async function loadWorkflowMetrics() {
       rejected: payload?.data?.rejected ?? 0,
     }
   } catch (err) {
-    // The tiles still render from whatever byType holds, so the breakdown stays
-    // useful even when the totals request fails.
+    // The tiles render from whatever byType holds, but the *totals* do not:
+    // with no payload the summary falls back to summing byType, which is empty,
+    // and prints "0 open / 0 closed". A zero here reads as "every workflow has
+    // been dealt with" — the most consequential false statement this console
+    // makes — when the truth is that nobody has asked.
     console.error('Failed to load workflow metrics:', err)
+    state.failedSources = new Set([...(state.failedSources || []), 'workflowMetrics'])
+    for (const id of ['workflowOpen', 'workflowClosed', 'workflowRejected']) {
+      const el = $(id)
+      if (el) el.textContent = '—'
+    }
+    const wrap = $('workflowRejectedWrap')
+    if (wrap) wrap.hidden = true
+    const typeCount = $('workflowTypeCount')
+    if (typeCount) typeCount.textContent = 'not checked'
   }
   renderWorkflowsTab(byType, totals)
 }
@@ -2948,6 +3004,18 @@ function openSubjectPanel(ref) {
 function renderWorkflowInstanceList() {
   const list = $('workflowInstanceList')
   if (!list) return
+  // "No open workflow instances" is a finding — it says every workflow has been
+  // closed. It is also what this panel printed when the request had never been
+  // answered, because a failed load leaves `state.data.workflows` unset and
+  // `|| []` cannot tell an empty queue from an unchecked one.
+  if (state.failedSources?.has('workflows')) {
+    list.innerHTML = '<p class="workflow-empty">The open workflows have not been checked. '
+      + 'The request did not get an answer, so this is not an empty list.</p>'
+    const failedCount = $('workflowInstanceCount')
+    if (failedCount) failedCount.textContent = 'not checked'
+    return
+  }
+
   const instances = state.data.workflows?.data || []
   const open = instances.filter((w) => !['closed', 'rejected'].includes(w.state))
   const count = $('workflowInstanceCount')
@@ -3837,11 +3905,37 @@ async function distributeLatestReport() {
 // =============================================================
 // Ingestion panel
 // =============================================================
+/**
+ * The ingestion tab's source picker.
+ *
+ * `await`ed at the top level of the module. With a bare `fetch` and no catch, a
+ * dead server rejected here and threw out of module evaluation — so
+ * `restoreFiltersFromUrl`, `ensureEscalation`, `watchEvidenceSurfaces` and the
+ * first `refresh` never ran. The console did not report an outage; it booted
+ * half-built and said nothing, which is the same failure as the empty-state
+ * lie one layer down and harder to notice.
+ *
+ * So: `apiFetch` (which raises a status-bearing error rather than a bare
+ * `TypeError`), and a grid that states the failure rather than going blank.
+ */
 async function loadSources() {
-  const response = await fetch('/api/v1/sources')
-  const payload = await response.json()
   const grid = $('sourceGrid')
   if (!grid) return
+  let payload
+  try {
+    payload = await apiFetch('/api/v1/sources', { headers: authHeaders() })
+  } catch (err) {
+    // An empty picker reads as "this platform has no sources", which is a claim
+    // about the system rather than about the connection. Say which it is.
+    grid.innerHTML = '<p class="workflow-empty">The source list has not been checked. '
+      + 'The request did not get an answer, so this is not an empty list.</p>'
+    return
+  }
+  if (!Array.isArray(payload?.data)) {
+    grid.innerHTML = '<p class="workflow-empty">The source list has not been checked — '
+      + 'the server answered with something that is not a source list.</p>'
+    return
+  }
   const defaultSources = ['open_meteo', 'gdacs', 'glofas', 'chirps', 'nasa_firms']
   grid.innerHTML = payload.data.map((source) => `
     <label title="${escapeHtml(source.name)}">
@@ -4631,7 +4725,15 @@ $('triggerEquityAuditButton')?.addEventListener('click', async () => {
 // =============================================================
 // Boot
 // =============================================================
-await loadLocale(state.locale)
+// Every boot step is guarded individually rather than the sequence being
+// wrapped in one try. A single catch around the lot would restore nothing on a
+// partial outage — the locale would stay unset and the URL filters would stay
+// unrestored because an unrelated step failed first. Each step that can reject
+// handles its own failure; the ones below are synchronous and cannot.
+await loadLocale(state.locale).catch((err) => {
+  console.error('Boot: locale catalogue did not load', err)
+  setStatus('The language catalogue did not load. The interface is showing English strings.')
+})
 await loadSources()
 restoreFiltersFromUrl()
 // The alerts panel is the boot panel, but nothing calls switchTab to reach it —

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { emptyStore } from './schema.js'
 import { nowIso } from './utils.js'
-import { BITEMPORAL_COLLECTIONS, isRevision, versionRow } from './bitemporal.js'
+import { BITEMPORAL_COLLECTIONS, isRevision, pruneVersions, versionRow } from './bitemporal.js'
 
 /**
  * The six collections `replaceAnalytics` owns.
@@ -213,13 +213,57 @@ export class JsonStore {
     // first's records (20 concurrent POSTs left 6 survivors). This promise
     // chain makes the cycles run one at a time, in arrival order.
     this.tail = Promise.resolve()
+    // The parsed store, and the file identity it was parsed from. See `read()`.
+    this.#parsed = null
+    this.#parsedStamp = null
   }
 
+  #parsed = null
+  #parsedStamp = null
+
+  /**
+   * The whole store, parsed.
+   *
+   * This re-read and re-parsed the file on every call, and every API request
+   * calls it. With a 364 MB store that is roughly 1.8 GB of live JS objects
+   * allocated per request: 120 requests took the process from 63 MB to 1.8 GB
+   * and then an OOM killed the server. Not a slow path — a fatal one, and it
+   * looked like a leak in code nobody had changed.
+   *
+   * So the parse is held and reused until the file changes. The stamp is
+   * mtime + byte size: `write()` goes through `#writeFile`, which renames a
+   * temp file over the target, so a write is always a new identity, and the
+   * write path additionally stamps the cache directly rather than trusting the
+   * filesystem to notice.
+   *
+   * **The returned object is shared and must not be mutated.** Every mutator
+   * here — `merge`, `remove`, `write` — runs behind `#serialise` and builds its
+   * own object, and `mergeById` is pure, so nothing in this module writes
+   * through the value `read()` returned. A caller that mutates it corrupts the
+   * cache for every later reader, which is why this is written down rather than
+   * left to be discovered.
+   */
   async read() {
+    let stamp
+    try {
+      const stat = await fs.stat(this.filePath)
+      stamp = `${stat.mtimeMs}:${stat.size}`
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        this.#parsed = emptyStore()
+        this.#parsedStamp = null
+        return this.#parsed
+      }
+      throw error
+    }
+
+    if (this.#parsed && this.#parsedStamp === stamp) return this.#parsed
+
     try {
       const raw = await fs.readFile(this.filePath, 'utf8')
-      const parsed = JSON.parse(raw)
-      return { ...emptyStore(), ...parsed }
+      this.#parsed = { ...emptyStore(), ...JSON.parse(raw) }
+      this.#parsedStamp = stamp
+      return this.#parsed
     } catch (error) {
       if (error.code === 'ENOENT') return emptyStore()
       throw error
@@ -247,6 +291,12 @@ export class JsonStore {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true })
     await fs.writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`)
     await fs.rename(tmp, this.filePath)
+    // The cache is refreshed here rather than left to be invalidated by the next
+    // `stat`. Doing it at the write means a read immediately after a write
+    // cannot race the filesystem's timestamp granularity and serve the previous
+    // snapshot — a mtime that has not visibly advanced yet.
+    this.#parsed = next
+    this.#parsedStamp = null
     return next
   }
 
@@ -270,7 +320,13 @@ export class JsonStore {
         }
       }
       if (superseded.length) {
-        next.record_versions = mergeById(current.record_versions || [], superseded)
+        // Pruned on every write, not on a retention job. A version table that
+        // is only bounded when someone remembers to run the job is not bounded,
+        // and the failure is a heap exhaustion rather than a stale row — see
+        // `pruneVersions` for the measurement.
+        next.record_versions = pruneVersions(
+          mergeById(current.record_versions || [], superseded),
+        )
       }
       return this.#writeFile(next)
     })

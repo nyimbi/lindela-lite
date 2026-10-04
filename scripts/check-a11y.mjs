@@ -569,7 +569,44 @@ async function main() {
     return true
   })
 
-  const results = new Map(PAGES.map(([n]) => [n, {}]))
+  /**
+ * Wait for the surface to be the one we asked for.
+ *
+ * This gate used to sleep a fixed 2s after every navigation. That measured
+ * whichever page happened to be loaded, and when the server was down it
+ * reported the result identically to a surface that genuinely ships no
+ * landmark: `0 <main>` on all eight. A failure mode that means "the laptop was
+ * busy" or "nothing was listening" is one people learn to ignore.
+ *
+ * So it polls for the document to be complete and to hold its landmark, but it
+ * gives up and says so rather than waiting out the full budget on every one of
+ * 32 navigations.
+ */
+async function settle(session, { timeoutMs = 20_000 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  let last = null
+  while (Date.now() < deadline) {
+    last = await call(session, () => ({
+      ready: document.readyState,
+      path: location.pathname,
+      title: document.title,
+      landmarks: document.querySelectorAll('main, [role="main"]').length,
+    }))
+    if (last.ready === 'complete' && last.landmarks > 0) return true
+    await sleep(300)
+  }
+  // Distinguish "did not arrive" from "arrived and is wrong", because they need
+  // different fixes and only one of them is in the markup.
+  const offline = last?.title === last?.path || /^(127\.0\.0\.1|localhost)$/.test(String(last?.title))
+  console.error(
+    offline
+      ? `  ! nothing is serving ${last.path} (the page loaded is the browser's error page). Assertions against it are meaningless.`
+      : `  ! ${last.path} did not load within ${timeoutMs}ms (readyState=${last.ready}, landmarks=${last.landmarks}).`,
+  )
+  return false
+}
+
+const results = new Map(PAGES.map(([n]) => [n, {}]))
 
   for (const [name, path] of PAGES) {
     const r = results.get(name)
@@ -580,7 +617,7 @@ async function main() {
       ...DESKTOP_VIEWPORT, deviceScaleFactor: 1, mobile: false,
     })
     await session.send('Page.navigate', { url: BASE + path })
-    await sleep(2000)
+    await settle(session)
 
     const s = await call(session, probeStructure)
 
@@ -656,7 +693,7 @@ async function main() {
       features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
     })
     await session.send('Page.navigate', { url: BASE + path })
-    await sleep(2000)
+    await settle(session)
     const m = await call(session, probeMotion)
     r.reducedMotion = {
       pass: m.count === 0,
@@ -671,7 +708,7 @@ async function main() {
       ...ZOOM_VIEWPORT, deviceScaleFactor: 1, mobile: true,
     })
     await session.send('Page.navigate', { url: BASE + path })
-    await sleep(2000)
+    await settle(session)
     const z = await call(session, probeZoom)
     r.zoom = {
       pass: z.overflow <= 1 && z.clippedCount === 0,
@@ -703,7 +740,7 @@ async function main() {
     })
     for (const [name, path] of PAGES) {
       await session.send('Page.navigate', { url: BASE + path })
-      await sleep(1600)
+      await settle(session)
       const applied = await call(session, function () {
         return {
           theme: document.documentElement.getAttribute('data-theme'),

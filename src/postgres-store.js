@@ -1,6 +1,6 @@
 import { emptyStore } from './schema.js'
 import { COLLECTIONS, DERIVED_COLLECTIONS, assertDeclaredCollection, assertDeclaredCollections, sortRecords, supersededVersions } from './store.js'
-import { BITEMPORAL_COLLECTIONS } from './bitemporal.js'
+import { BITEMPORAL_COLLECTIONS, VERSIONS_PER_RECORD } from './bitemporal.js'
 import { nowIso } from './utils.js'
 import { pendingMigrations, targetVersion } from './migrations.js'
 
@@ -255,6 +255,13 @@ export class PostgresStore {
             items,
           )
           if (superseded.length) {
+            // Bounded on insert. The JSON store prunes in memory because it
+            // holds the whole table; Postgres has to ask, and asking only when
+            // someone remembers is how the demo store reached 37,735 rows.
+            // A collection that is already at the cap contributes no new
+            // versions until something prunes it — which would silently stop
+            // recording history, so the prune runs first.
+            await this.pruneVersions(client)
             await this.insertRecords(client, 'record_versions', superseded)
           }
         }
@@ -279,6 +286,36 @@ export class PostgresStore {
    * - otherwise the incoming body is shallow-merged over the stored body so
    *   PATCH-style updates preserve fields the caller did not send
    */
+  /**
+   * Bound the version table.
+   *
+   * The window is kept per record: a record's own most recent
+   * `VERSIONS_PER_RECORD` revisions, decided in SQL so the table is never
+   * materialised whole. Rows whose record has dropped below the cap are left
+   * alone; rows beyond it are the oldest for their record and go.
+   *
+   * `valueAsOf` for the recent past is unaffected. History older than the
+   * window returns "no version covering that time", which is the honest answer
+   * and is better than the alternative this replaces: a table that grows until
+   * the process cannot read it twice.
+   */
+  async pruneVersions(client) {
+    await client.query(
+      `DELETE FROM lite_records v
+        WHERE v.collection = 'record_versions'
+          AND v.id IN (
+            SELECT id FROM (
+              SELECT id, row_number() OVER (
+                PARTITION BY body->>'record_id'
+                ORDER BY body->>'valid_to' DESC NULLS LAST
+              ) AS rank
+              FROM lite_records WHERE collection = 'record_versions'
+            ) ranked WHERE ranked.rank > $1
+          )`,
+      [VERSIONS_PER_RECORD],
+    )
+  }
+
   async upsertCollection(client, collection, items) {
     const { rows: existingHashes } = await client.query(
       `SELECT payload_hash FROM lite_records
