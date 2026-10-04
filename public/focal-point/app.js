@@ -1,4 +1,4 @@
-import { initI18n, t, apiFetch, initOfflineBanner, initServiceWorker } from '/shared/runtime.js'
+import { initI18n, t, apiFetch, initOfflineBanner, initServiceWorker, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { esc as escapeHtml, formatTimestamp, sevClass } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { mountNavbar } from '/shared/navbar.js'
@@ -685,6 +685,7 @@ window.addEventListener('offline', () => {
 })
 
 await initI18n(state.locale)
+autoMarkScrollableRegions()
 document.documentElement.lang = state.locale
 document.documentElement.dir = state.locale === 'ar' ? 'rtl' : 'ltr'
 loadData()

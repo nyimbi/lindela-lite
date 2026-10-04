@@ -21,10 +21,16 @@
   <body class="app-shell">
     <a class="skip-link" href="#railPanel">Skip to alerts and panels</a>
 
-    <div id="offlineBanner" class="offline-banner" hidden>
+    <!-- A labelled region, not a bare div. The banner was a direct child of
+         <body>, so it sat outside every landmark: axe reported it on all eight
+         surfaces as content a screen reader cannot navigate to by region, which
+         is the one navigation mode a landmark list exists to serve. It also
+         carries the most urgent message the product has, and it was the one
+         message outside the structure. -->
+    <section id="offlineBanner" class="offline-banner" aria-label="Connection status" role="status" hidden>
       <span data-i18n="banner.offline">Offline. Changes will sync when you reconnect.</span>
       <span id="queuedBadge" class="queued-badge" hidden></span>
-    </div>
+    </section>
 
 
     <!-- The ribbon used to be eight tiles labelled with alert-rule names
@@ -38,7 +44,11 @@
          is what produced two stacked bars with the same name on them. This row is
          console-only: storage mode, connection, refresh, command palette. -->
     <p id="shareViewStatus" class="visually-hidden" role="status" aria-live="polite"></p>
-    <div class="console-toolbar">
+    <!-- Also a labelled region. Same finding: the row holding the language
+         picker, the storage mode, the connection badge and the refresh button
+         was outside every landmark. `role="toolbar"` would not have helped —
+         a toolbar is a widget, not a landmark. -->
+    <section class="console-toolbar" aria-label="Console controls">
       <div class="console-toolbar-controls">
       <select id="locale-select" aria-label="Language">
         <option value="en">English</option>
@@ -104,7 +114,7 @@
                   aria-expanded="false" aria-controls="mapRecordList">Show as list</button>
         </div>
       </div>
-    </div>
+    </section>
     <section id="workflowOverview" class="workflow-ribbon" aria-label="Workflow overview">
       <div class="workflow-summary">
         <span class="workflow-summary-count" id="workflowOpen">—</span>

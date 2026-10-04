@@ -1,4 +1,4 @@
-import { initI18n, t, apiFetch, initOfflineBanner } from '/shared/runtime.js'
+import { initI18n, t, apiFetch, initOfflineBanner, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
 import { ERROR, EMPTY, describeState, distinguishFailure } from '/shared/states.js'
 import { esc as escapeHtml, formatTimestamp, num, pct, sevClass, truncate } from '/shared/fmt.js'
@@ -369,3 +369,4 @@ function formatDate(iso) {
 // legitimate 0 or false and rendered it blank.
 
 await init()
+autoMarkScrollableRegions()

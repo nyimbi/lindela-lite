@@ -7,7 +7,7 @@ import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventS
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState, seasonalCalendar, seasonalCalendarNote } from '/shared/seasonal.js'
 import { decodeView, encodeView, isCustom, resolveView, shareUrl } from '/shared/view-state.js'
 import { fillAppVersion } from '/shared/app-version.js'
-import { apiFetch, apiSettled, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
+import { apiFetch, apiSettled, autoMarkScrollableRegions, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
 import { applyLocaleToDocument, esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { formatRelative } from '/shared/fmt.js'
@@ -4763,6 +4763,10 @@ await loadLocale(state.locale).catch((err) => {
   setStatus('The language catalogue did not load. The interface is showing English strings.')
 })
 await loadSources()
+// Every panel repaints every thirty seconds, so a boot-time sweep would cover
+// only the tables that happened to exist at boot. Observed instead — see
+// `autoMarkScrollableRegions`.
+autoMarkScrollableRegions()
 restoreFiltersFromUrl()
 // The alerts panel is the boot panel, but nothing calls switchTab to reach it —
 // the markup ships with `active` on it. Mount its escalation section here, or

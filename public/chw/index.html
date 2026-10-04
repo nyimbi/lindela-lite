@@ -476,14 +476,19 @@
       </div>
     </header>
 
-    <div class="privacy-toggle">
-      <input type="checkbox" id="includeNameToggle">
-      <label for="includeNameToggle" class="privacy-info">
-        <span data-i18n="chw.include_name">Include my name</span> — <span data-i18n="chw.privacy_note">Your identity stays private.</span>
-      </label>
-    </div>
-
     <main id="main" tabindex="-1">
+      <!-- Inside <main>, not between the header and it.
+           Outside, this control was in no landmark at all — the one control on
+           the surface that decides whether the health worker is identified in
+           every report they file. It is content, not chrome: it belongs in the
+           main region with the thing it configures. -->
+      <div class="privacy-toggle">
+        <input type="checkbox" id="includeNameToggle">
+        <label for="includeNameToggle" class="privacy-info">
+          <span data-i18n="chw.include_name">Include my name</span> — <span data-i18n="chw.privacy_note">Your identity stays private.</span>
+        </label>
+      </div>
+
       <!-- Home screen -->
       <div id="homeScreen" class="screen active home-screen">
         <h1 class="screen-title" data-i18n="chw.home">Health Report</h1>

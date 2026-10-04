@@ -6,7 +6,7 @@
 // with a question, not a blank form, so the surface now opens on five named
 // scenarios and Run sits with the results it produces.
 
-import { apiFetch, initI18n } from '/shared/runtime.js'
+import { apiFetch, initI18n, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { esc, formatRelative, num, signed } from '/shared/fmt.js'
 
 const BASE = '/api/v1'
@@ -691,3 +691,4 @@ async function init() {
 }
 
 init()
+autoMarkScrollableRegions()

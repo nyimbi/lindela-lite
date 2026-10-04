@@ -6,7 +6,7 @@
 // and a table whose 32-character identifiers were wide enough to push the last
 // column off the right edge of the viewport with no way to scroll to it.
 
-import { initI18n, t as lookup, apiFetch } from '/shared/runtime.js'
+import { initI18n, t as lookup, apiFetch, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { esc, formatTimestamp, num, truncateId } from '/shared/fmt.js'
 
 const BASE = '/api/v1'
@@ -479,3 +479,4 @@ async function init() {
 }
 
 init()
+autoMarkScrollableRegions()

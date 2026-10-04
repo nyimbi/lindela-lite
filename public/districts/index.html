@@ -407,7 +407,11 @@
     <!-- Outside #app on purpose. clearApp() empties that element on every
          route, so a picker placed inside it would survive exactly until the
          first district rendered and then take itself out of the page. -->
-    <div class="page-locale">
+    <!-- A complementary landmark. The picker must survive every route, which is
+         why it cannot live inside <main> — and outside, it was in no landmark
+         at all. This surface offers English alone, so an English label is the
+         correct label rather than an untranslated one. -->
+    <aside class="page-locale" aria-label="Language">
       <!-- The languages offered here are exactly the ones whose catalogue
            renders every key this page names, which today is English alone.
            Widening the picker without the translations behind it is the
@@ -416,7 +420,7 @@
       <select id="locale-select">
         <option value="en">English</option>
       </select>
-    </div>
+    </aside>
     <main id="app" tabindex="-1" aria-busy="true">
       <!-- Declared here and never re-created by app.js. A live region that the
            render wipes is a live region nobody hears: the element a screen

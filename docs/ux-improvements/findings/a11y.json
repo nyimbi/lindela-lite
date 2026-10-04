@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T13:02:25.558Z",
+  "generatedAt": "2026-10-04T19:07:19.666Z",
   "engine": "axe-core 4.13.0, tags wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa,best-practice",
   "conditions": [
     "dark@1440",
@@ -18,58 +18,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "span[data-i18n=\"banner.offline\"]"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>"
-            },
-            {
-              "target": [
-                "#locale-select"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<select id=\"locale-select\" aria-label=\"Language\">"
-            },
-            {
-              "target": [
-                "#storageMode"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span id=\"storageMode\" class=\"badge badge-storage\">json</span>"
-            },
-            {
-              "target": [
-                "#connectionStatus"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span id=\"connectionStatus\" class=\"badge badge-connection\">online</span>"
-            },
-            {
-              "target": [
-                ".filter-label:nth-child(7)"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<label class=\"filter-label\">"
-            }
-          ],
-          "nodeCount": 9
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "dashboard",
@@ -80,58 +29,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "span[data-i18n=\"banner.offline\"]"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>"
-            },
-            {
-              "target": [
-                "#locale-select"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<select id=\"locale-select\" aria-label=\"Language\">"
-            },
-            {
-              "target": [
-                "#storageMode"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span id=\"storageMode\" class=\"badge badge-storage\">json</span>"
-            },
-            {
-              "target": [
-                "#connectionStatus"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span id=\"connectionStatus\" class=\"badge badge-connection\">online</span>"
-            },
-            {
-              "target": [
-                ".filter-label:nth-child(7)"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<label class=\"filter-label\">"
-            }
-          ],
-          "nodeCount": 9
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "dashboard",
@@ -142,86 +40,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "color-contrast",
-          "impact": "serious",
-          "help": "Elements must meet minimum color contrast ratio thresholds",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=axeAPI",
-          "tags": [
-            "cat.color",
-            "wcag2aa",
-            "wcag143",
-            "TTv5",
-            "TT13.c",
-            "EN-301-549",
-            "EN-9.1.4.3",
-            "ACT",
-            "RGAAv4",
-            "RGAA-3.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "span[data-i18n=\"banner.offline\"]"
-              ],
-              "failureSummary": "Fix any of the following:   Element has insufficient color contrast of 2.73 (foreground color: #0c0902, background color: #814900, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1",
-              "html": "<span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>"
-            }
-          ],
-          "nodeCount": 1
-        },
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "span[data-i18n=\"banner.offline\"]"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>"
-            },
-            {
-              "target": [
-                "#locale-select"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<select id=\"locale-select\" aria-label=\"Language\">"
-            },
-            {
-              "target": [
-                "#storageMode"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span id=\"storageMode\" class=\"badge badge-storage\">json</span>"
-            },
-            {
-              "target": [
-                "#connectionStatus"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span id=\"connectionStatus\" class=\"badge badge-connection\">online</span>"
-            },
-            {
-              "target": [
-                ".filter-label:nth-child(7)"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<label class=\"filter-label\">"
-            }
-          ],
-          "nodeCount": 9
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "dashboard",
@@ -232,86 +51,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "color-contrast",
-          "impact": "serious",
-          "help": "Elements must meet minimum color contrast ratio thresholds",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=axeAPI",
-          "tags": [
-            "cat.color",
-            "wcag2aa",
-            "wcag143",
-            "TTv5",
-            "TT13.c",
-            "EN-301-549",
-            "EN-9.1.4.3",
-            "ACT",
-            "RGAAv4",
-            "RGAA-3.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "span[data-i18n=\"banner.offline\"]"
-              ],
-              "failureSummary": "Fix any of the following:   Element has insufficient color contrast of 2.73 (foreground color: #0c0902, background color: #814900, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1",
-              "html": "<span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>"
-            }
-          ],
-          "nodeCount": 1
-        },
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "span[data-i18n=\"banner.offline\"]"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>"
-            },
-            {
-              "target": [
-                "#locale-select"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<select id=\"locale-select\" aria-label=\"Language\">"
-            },
-            {
-              "target": [
-                "#storageMode"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span id=\"storageMode\" class=\"badge badge-storage\">json</span>"
-            },
-            {
-              "target": [
-                "#connectionStatus"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span id=\"connectionStatus\" class=\"badge badge-connection\">online</span>"
-            },
-            {
-              "target": [
-                ".filter-label:nth-child(7)"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<label class=\"filter-label\">"
-            }
-          ],
-          "nodeCount": 9
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "dashboard",
@@ -322,58 +62,7 @@
         "bg": "oklch(0%  0 0)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "span[data-i18n=\"banner.offline\"]"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>"
-            },
-            {
-              "target": [
-                "#locale-select"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<select id=\"locale-select\" aria-label=\"Language\">"
-            },
-            {
-              "target": [
-                "#storageMode"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span id=\"storageMode\" class=\"badge badge-storage\">json</span>"
-            },
-            {
-              "target": [
-                "#connectionStatus"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<span id=\"connectionStatus\" class=\"badge badge-connection\">online</span>"
-            },
-            {
-              "target": [
-                ".filter-label:nth-child(7)"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<label class=\"filter-label\">"
-            }
-          ],
-          "nodeCount": 9
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "portal",
@@ -384,28 +73,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "landmark-one-main",
-          "impact": "moderate",
-          "help": "Document should have one main landmark",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/landmark-one-main?application=axeAPI",
-          "tags": [
-            "cat.semantics",
-            "best-practice"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "html"
-              ],
-              "failureSummary": "Fix all of the following:   Document does not have a main landmark",
-              "html": "<html lang=\"en\" dir=\"ltr\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "portal",
@@ -416,28 +84,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "landmark-one-main",
-          "impact": "moderate",
-          "help": "Document should have one main landmark",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/landmark-one-main?application=axeAPI",
-          "tags": [
-            "cat.semantics",
-            "best-practice"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "html"
-              ],
-              "failureSummary": "Fix all of the following:   Document does not have a main landmark",
-              "html": "<html lang=\"en\" dir=\"ltr\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "portal",
@@ -448,28 +95,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "landmark-one-main",
-          "impact": "moderate",
-          "help": "Document should have one main landmark",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/landmark-one-main?application=axeAPI",
-          "tags": [
-            "cat.semantics",
-            "best-practice"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "html"
-              ],
-              "failureSummary": "Fix all of the following:   Document does not have a main landmark",
-              "html": "<html lang=\"en\" dir=\"ltr\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "portal",
@@ -480,28 +106,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "landmark-one-main",
-          "impact": "moderate",
-          "help": "Document should have one main landmark",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/landmark-one-main?application=axeAPI",
-          "tags": [
-            "cat.semantics",
-            "best-practice"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "html"
-              ],
-              "failureSummary": "Fix all of the following:   Document does not have a main landmark",
-              "html": "<html lang=\"en\" dir=\"ltr\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "portal",
@@ -512,28 +117,7 @@
         "bg": "oklch(0%  0 0)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "landmark-one-main",
-          "impact": "moderate",
-          "help": "Document should have one main landmark",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/landmark-one-main?application=axeAPI",
-          "tags": [
-            "cat.semantics",
-            "best-practice"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "html"
-              ],
-              "failureSummary": "Fix all of the following:   Document does not have a main landmark",
-              "html": "<html lang=\"en\" dir=\"ltr\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "chw",
@@ -544,30 +128,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".privacy-toggle"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"privacy-toggle\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "chw",
@@ -578,30 +139,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".privacy-toggle"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"privacy-toggle\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "chw",
@@ -612,30 +150,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".privacy-toggle"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"privacy-toggle\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "chw",
@@ -646,30 +161,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".privacy-toggle"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"privacy-toggle\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "chw",
@@ -680,30 +172,7 @@
         "bg": "oklch(0%  0 0)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".privacy-toggle"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"privacy-toggle\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "co",
@@ -714,37 +183,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "scrollable-region-focusable",
-          "impact": "serious",
-          "help": "Scrollable region must have keyboard access",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/scrollable-region-focusable?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "wcag2a",
-            "wcag211",
-            "wcag213",
-            "TTv5",
-            "TT4.a",
-            "EN-301-549",
-            "EN-9.2.1.1",
-            "EN-9.2.1.3",
-            "RGAAv4",
-            "RGAA-7.3.2"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".chart-table"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"chart-table\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "co",
@@ -755,58 +194,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "scrollable-region-focusable",
-          "impact": "serious",
-          "help": "Scrollable region must have keyboard access",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/scrollable-region-focusable?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "wcag2a",
-            "wcag211",
-            "wcag213",
-            "TTv5",
-            "TT4.a",
-            "EN-301-549",
-            "EN-9.2.1.1",
-            "EN-9.2.1.3",
-            "RGAAv4",
-            "RGAA-7.3.2"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "#cohort-section > .table-wrap"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"table-wrap\">"
-            },
-            {
-              "target": [
-                "#qoq-section > .table-wrap"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"table-wrap\">"
-            },
-            {
-              "target": [
-                ".chart-table"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"chart-table\">"
-            },
-            {
-              "target": [
-                "#feedback-section > .table-wrap"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"table-wrap\">"
-            }
-          ],
-          "nodeCount": 4
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "co",
@@ -817,37 +205,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "scrollable-region-focusable",
-          "impact": "serious",
-          "help": "Scrollable region must have keyboard access",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/scrollable-region-focusable?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "wcag2a",
-            "wcag211",
-            "wcag213",
-            "TTv5",
-            "TT4.a",
-            "EN-301-549",
-            "EN-9.2.1.1",
-            "EN-9.2.1.3",
-            "RGAAv4",
-            "RGAA-7.3.2"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".chart-table"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"chart-table\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "co",
@@ -858,58 +216,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "scrollable-region-focusable",
-          "impact": "serious",
-          "help": "Scrollable region must have keyboard access",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/scrollable-region-focusable?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "wcag2a",
-            "wcag211",
-            "wcag213",
-            "TTv5",
-            "TT4.a",
-            "EN-301-549",
-            "EN-9.2.1.1",
-            "EN-9.2.1.3",
-            "RGAAv4",
-            "RGAA-7.3.2"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "#cohort-section > .table-wrap"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"table-wrap\">"
-            },
-            {
-              "target": [
-                "#qoq-section > .table-wrap"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"table-wrap\">"
-            },
-            {
-              "target": [
-                ".chart-table"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"chart-table\">"
-            },
-            {
-              "target": [
-                "#feedback-section > .table-wrap"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"table-wrap\">"
-            }
-          ],
-          "nodeCount": 4
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "co",
@@ -920,37 +227,7 @@
         "bg": "oklch(0%  0 0)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "scrollable-region-focusable",
-          "impact": "serious",
-          "help": "Scrollable region must have keyboard access",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/scrollable-region-focusable?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "wcag2a",
-            "wcag211",
-            "wcag213",
-            "TTv5",
-            "TT4.a",
-            "EN-301-549",
-            "EN-9.2.1.1",
-            "EN-9.2.1.3",
-            "RGAAv4",
-            "RGAA-7.3.2"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".chart-table"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"chart-table\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "districts",
@@ -961,30 +238,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".page-locale"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"page-locale\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "districts",
@@ -995,30 +249,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".page-locale"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"page-locale\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "districts",
@@ -1029,30 +260,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".page-locale"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"page-locale\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "districts",
@@ -1063,30 +271,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".page-locale"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"page-locale\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "districts",
@@ -1097,30 +282,7 @@
         "bg": "oklch(0%  0 0)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".page-locale"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"page-locale\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "focal-point",
@@ -1131,30 +293,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "#offlineBanner"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div id=\"offlineBanner\" class=\"offline-banner\" hidden=\"\">\n      <span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>\n    </div>"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "focal-point",
@@ -1165,30 +304,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "#offlineBanner"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div id=\"offlineBanner\" class=\"offline-banner\" hidden=\"\">\n      <span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>\n    </div>"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "focal-point",
@@ -1199,30 +315,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "#offlineBanner"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div id=\"offlineBanner\" class=\"offline-banner\" hidden=\"\">\n      <span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>\n    </div>"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "focal-point",
@@ -1233,30 +326,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "#offlineBanner"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div id=\"offlineBanner\" class=\"offline-banner\" hidden=\"\">\n      <span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>\n    </div>"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "focal-point",
@@ -1267,30 +337,7 @@
         "bg": "oklch(0%  0 0)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                "#offlineBanner"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div id=\"offlineBanner\" class=\"offline-banner\" hidden=\"\">\n      <span data-i18n=\"banner.offline\">Offline. Changes will sync when you reconnect.</span>\n    </div>"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "parametric",
@@ -1301,37 +348,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "scrollable-region-focusable",
-          "impact": "serious",
-          "help": "Scrollable region must have keyboard access",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/scrollable-region-focusable?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "wcag2a",
-            "wcag211",
-            "wcag213",
-            "TTv5",
-            "TT4.a",
-            "EN-301-549",
-            "EN-9.2.1.1",
-            "EN-9.2.1.3",
-            "RGAAv4",
-            "RGAA-7.3.2"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".table-wrap"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"table-wrap\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "parametric",
@@ -1342,37 +359,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "scrollable-region-focusable",
-          "impact": "serious",
-          "help": "Scrollable region must have keyboard access",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/scrollable-region-focusable?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "wcag2a",
-            "wcag211",
-            "wcag213",
-            "TTv5",
-            "TT4.a",
-            "EN-301-549",
-            "EN-9.2.1.1",
-            "EN-9.2.1.3",
-            "RGAAv4",
-            "RGAA-7.3.2"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".table-wrap"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"table-wrap\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "parametric",
@@ -1383,37 +370,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "scrollable-region-focusable",
-          "impact": "serious",
-          "help": "Scrollable region must have keyboard access",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/scrollable-region-focusable?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "wcag2a",
-            "wcag211",
-            "wcag213",
-            "TTv5",
-            "TT4.a",
-            "EN-301-549",
-            "EN-9.2.1.1",
-            "EN-9.2.1.3",
-            "RGAAv4",
-            "RGAA-7.3.2"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".table-wrap"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"table-wrap\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "parametric",
@@ -1424,37 +381,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "scrollable-region-focusable",
-          "impact": "serious",
-          "help": "Scrollable region must have keyboard access",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/scrollable-region-focusable?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "wcag2a",
-            "wcag211",
-            "wcag213",
-            "TTv5",
-            "TT4.a",
-            "EN-301-549",
-            "EN-9.2.1.1",
-            "EN-9.2.1.3",
-            "RGAAv4",
-            "RGAA-7.3.2"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".table-wrap"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"table-wrap\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "parametric",
@@ -1465,37 +392,7 @@
         "bg": "oklch(0%  0 0)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "scrollable-region-focusable",
-          "impact": "serious",
-          "help": "Scrollable region must have keyboard access",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/scrollable-region-focusable?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "wcag2a",
-            "wcag211",
-            "wcag213",
-            "TTv5",
-            "TT4.a",
-            "EN-301-549",
-            "EN-9.2.1.1",
-            "EN-9.2.1.3",
-            "RGAAv4",
-            "RGAA-7.3.2"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".table-wrap"
-              ],
-              "failureSummary": "Fix any of the following:   Element should have focusable content   Element should be focusable",
-              "html": "<div class=\"table-wrap\">"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "scenarios",
@@ -1506,30 +403,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".locale-bar"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"locale-bar\">\n    <label for=\"locale-select\" class=\"visually-hidden\" data-i18n=\"scenarios.locale_label\">Language</label>\n    <select id=\"locale-select\">\n      <option value=\"en\">English</option>\n    </select>\n  </div>"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "scenarios",
@@ -1540,30 +414,7 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".locale-bar"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"locale-bar\">\n    <label for=\"locale-select\" class=\"visually-hidden\" data-i18n=\"scenarios.locale_label\">Language</label>\n    <select id=\"locale-select\">\n      <option value=\"en\">English</option>\n    </select>\n  </div>"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "scenarios",
@@ -1574,30 +425,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".locale-bar"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"locale-bar\">\n    <label for=\"locale-select\" class=\"visually-hidden\" data-i18n=\"scenarios.locale_label\">Language</label>\n    <select id=\"locale-select\">\n      <option value=\"en\">English</option>\n    </select>\n  </div>"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "scenarios",
@@ -1608,30 +436,7 @@
         "bg": "oklch(98.5% 0.003 260)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".locale-bar"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"locale-bar\">\n    <label for=\"locale-select\" class=\"visually-hidden\" data-i18n=\"scenarios.locale_label\">Language</label>\n    <select id=\"locale-select\">\n      <option value=\"en\">English</option>\n    </select>\n  </div>"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     },
     {
       "surface": "scenarios",
@@ -1642,30 +447,7 @@
         "bg": "oklch(0%  0 0)",
         "stored": null
       },
-      "violations": [
-        {
-          "id": "region",
-          "impact": "moderate",
-          "help": "All page content should be contained by landmarks",
-          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
-          "tags": [
-            "cat.keyboard",
-            "best-practice",
-            "RGAAv4",
-            "RGAA-9.2.1"
-          ],
-          "nodes": [
-            {
-              "target": [
-                ".locale-bar"
-              ],
-              "failureSummary": "Fix any of the following:   Some page content is not contained by landmarks",
-              "html": "<div class=\"locale-bar\">\n    <label for=\"locale-select\" class=\"visually-hidden\" data-i18n=\"scenarios.locale_label\">Language</label>\n    <select id=\"locale-select\">\n      <option value=\"en\">English</option>\n    </select>\n  </div>"
-            }
-          ],
-          "nodeCount": 1
-        }
-      ]
+      "violations": []
     }
   ]
 }

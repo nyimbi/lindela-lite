@@ -9,7 +9,7 @@
 import { esc, formatTimestamp, num, pct, truncate } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { barChart, sparkline } from '/shared/charts.js'
-import { apiFetch } from '/shared/runtime.js'
+import { apiFetch, autoMarkScrollableRegions } from '/shared/runtime.js'
 
 let currentLocale = 'en'
 let i18n = {}
@@ -727,6 +727,9 @@ function init() {
   quarterSel?.addEventListener('change', load)
   yearSel?.addEventListener('change', load)
 
+  // The dashboard swaps four tables per quarter change; a fixed sweep at boot
+  // would miss every one of them. Observed instead — see `autoMarkScrollableRegions`.
+  autoMarkScrollableRegions()
   loadLocale('en').then(() => { load(); renderExportPreview() })
 }
 

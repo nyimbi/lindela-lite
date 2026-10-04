@@ -492,11 +492,17 @@
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to pending review</a>
-    <div id="offlineBanner" class="offline-banner" hidden>
-      <span data-i18n="banner.offline">Offline. Changes will sync when you reconnect.</span>
-    </div>
-
     <header>
+      <!-- The offline banner lives inside the page header, not beside it.
+           A direct child of <body> is outside every landmark, so axe reported
+           it on all five conditions as content a screen reader cannot reach by
+           region — and this is the message most worth reaching. It is also the
+           only fix available that needs no new translation in the seven
+           locales this surface offers. -->
+      <div id="offlineBanner" class="offline-banner" hidden>
+        <span data-i18n="banner.offline">Offline. Changes will sync when you reconnect.</span>
+      </div>
+
       <!-- The page title was a <span>, so the document had no <h1> at all and
            ran h2 -> h3 -> h3 with the brand doing the heading's job. -->
       <h1 class="header-brand">

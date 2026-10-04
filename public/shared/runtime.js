@@ -368,6 +368,61 @@ export function t(key, params = {}) {
  * Skips a region that already holds something focusable — an interactive table
  * does not need a tab stop of its own, and adding one is noise in the tab ring.
  */
+/**
+ * Keep the sweep running, so a table added by the next refresh is covered.
+ *
+ * `markScrollableRegions` existed and was imported by nobody: eight surfaces
+ * each call it never, and axe reported `scrollable-region-focusable` on ten
+ * regions across the product — a table a keyboard can see and cannot reach.
+ * Calling it once at boot fixes the tables that exist at boot and nothing that
+ * arrives afterwards, which on a console that redraws every thirty seconds is
+ * almost nothing.
+ *
+ * So it observes, debounced. A mutation burst is one sweep, not one per node:
+ * a 30-second refresh replaces a panel's contents in a few hundred mutations,
+ * and sweeping each would be work proportional to the wrong thing. The sweep
+ * itself is cheap and skips anything already marked, so an unchanged region is
+ * two attribute lookups.
+ */
+let _scrollObserver = null
+
+export function autoMarkScrollableRegions(root = typeof document !== 'undefined' ? document.body : null) {
+  // No MutationObserver, or no body to watch: nothing to do.
+  //
+  // Not defensive for its own sake. `test/falsy-zero.test.js` loads `app.js`
+  // into a `vm` to pull `evaluateMapFilters` out of it, and this module is
+  // evaluated at the top level there. A boot-time `new MutationObserver(...)`
+  // threw `ReferenceError: MutationObserver is not defined` inside that test's
+  // `before` hook, which failed the whole map-filter suite for a reason that had
+  // nothing to do with what it tests. A shared helper that assumes a browser
+  // cannot be imported by a Node test, and this one has to be.
+  if (typeof MutationObserver === 'undefined') return
+  if (!root || !root.addEventListener) return
+  if (_scrollObserver) return
+  let pending = false
+  const sweep = () => {
+    if (pending) return
+    pending = true
+    // A microtask would coalesce one task's mutations; a short timer also
+    // coalesces across the synchronous innerHTML writes a render performs, and
+    // runs after the browser has laid the new table out — which is when the
+    // overflow that decides whether it needs a tab stop actually exists.
+    setTimeout(() => {
+      pending = false
+      markScrollableRegions(document)
+    }, 0)
+  }
+  _scrollObserver = new MutationObserver(sweep)
+  _scrollObserver.observe(root, { childList: true, subtree: true })
+  sweep()
+}
+
+/** Stop the sweep. Exported for tests; nothing in the product needs it. */
+export function stopAutoMarkScrollableRegions() {
+  _scrollObserver?.disconnect()
+  _scrollObserver = null
+}
+
 export function markScrollableRegions(root = document) {
   const candidates = root.querySelectorAll('.table-wrap, .chart-table, [data-scrollable]')
   for (const el of candidates) {

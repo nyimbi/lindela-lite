@@ -1,4 +1,4 @@
-import { initI18n, t, apiFetch, initOfflineBanner, initOfflineQueue } from '/shared/runtime.js'
+import { initI18n, t, apiFetch, initOfflineBanner, initOfflineQueue, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
 import { esc as escapeHtml } from '/shared/fmt.js'
 import { ERROR, QUEUED, describeState, distinguishFailure } from '/shared/states.js'
@@ -823,3 +823,4 @@ function setupReplyScreen() {
 }
 
 await init()
+autoMarkScrollableRegions()

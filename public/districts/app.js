@@ -10,7 +10,7 @@
 // the URL hash. The console, by contrast, had 55 uses of one escapeHtml — the
 // discipline existed, in one file.
 
-import { apiFetch, initI18n } from '/shared/runtime.js'
+import { apiFetch, autoMarkScrollableRegions, initI18n } from '/shared/runtime.js'
 import { esc, formatTimestamp, formatRelative, num, pct, sevClass } from '/shared/fmt.js'
 import {
   districtsShareUrl, encodeDistrictsView, isDistrictsViewCustom, resolveDistrictsView,
@@ -951,6 +951,7 @@ async function init() {
   // because `set()` re-reads English by literal path and re-stamps the DOM —
   // which is why the bug survived every click-through test.
   await initI18n(currentLocale())
+autoMarkScrollableRegions()
   document.title = t('districts.title', 'Lindela Districts')
 
   const localeSel = document.getElementById('locale-select')
