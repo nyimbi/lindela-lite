@@ -626,6 +626,113 @@ export function smallMultiples(panels, options = {}) {
 }
 
 /**
+ * The series key.
+ *
+ * Not decoration. `charts.js` draws more than one series wherever more than one
+ * exists, and a chart with two colours and no key is a chart whose two colours
+ * mean whatever the reader guesses. The label is text in a `<li>`, so the key is
+ * readable by a screen reader and readable when the swatch renders as nothing at
+ * all — which is what happens in forced-colours mode, where `background-color`
+ * is discarded and only the text survives.
+ */
+export function legend(entries, { title = '' } = {}) {
+  const list = (entries || []).filter((e) => e && (e.name || e.label))
+  if (!list.length) return ''
+  return `<div class="chart-legend-wrap">${title ? `<span class="chart-legend-title" id="chart-legend-title">${esc(title)}</span>` : ''}` +
+    `<ul class="chart-legend"${title ? ' aria-labelledby="chart-legend-title"' : ''} role="list">` +
+    list.map((e) => `<li class="chart-legend-item">` +
+      `<span class="chart-legend-swatch" style="background:${esc(e.color || 'var(--brand)')}" aria-hidden="true"></span>` +
+      `<span class="chart-legend-label">${esc(e.name || e.label)}</span></li>`).join('') +
+    '</ul></div>'
+}
+
+/**
+ * A line of prose that belongs to the chart above it.
+ *
+ * ENH-17 puts this in the requirements directly: `not_included` and the
+ * band-nature caveat have to be readable *with the chart*, not in a report three
+ * screens down. `tone` is a class hook and nothing more — the library chooses
+ * what reads as a caveat, so no surface ends up styling its own way to say
+ * something the others say differently.
+ *
+ * Escaped, because every caller of this in the product ends up interpolating a
+ * record's own `limits` prose, which is user-supplied text on several routes.
+ */
+export function caption(text, { tone = 'note', class: extra = '' } = {}) {
+  const body = String(text ?? '').trim()
+  if (!body) return ''
+  return `<p class="chart-caption chart-caption-${esc(tone)}${extra ? ` ${esc(extra)}` : ''}">${esc(body)}</p>`
+}
+
+/**
+ * One value, one zero rule, sign carries the meaning.
+ *
+ * `public/scenarios/app.js` has always had this chart as two pixel-height
+ * `<div>`s, and ENH-16 recorded why it was left unconsolidated: it is a diverging
+ * single-value chart around a zero anchor, and approximating it with a `barChart`
+ * loses the anchor — a bar from zero and a bar from a midpoint are different
+ * claims and only one of them is honest about what zero means here. So the
+ * library grows the primitive instead of leaving one surface out of it.
+ *
+ * `data` is `{ label, value, positive, negative, format }`. The negative arm and
+ * the positive arm get separate tokens because a single hue for both signs is a
+ * chart that needs a legend to be read, and a legend nobody looks at.
+ */
+export function divergingBar(data, options = {}) {
+  const opts = { ...DEFAULT, ...options, pad: { ...DEFAULT.pad, left: 8, right: 8, bottom: 24, ...(options.pad || {}) } }
+  const value = numeric(data?.value)
+  if (value === null) return emptyChart(opts, data?.empty || 'Not recorded')
+
+  const box = plotBox(opts)
+  // Symmetric by construction: an asymmetric domain around zero makes a value of
+  // +3 look smaller than -3 for reasons that have nothing to do with the data,
+  // and the sign is the entire content of this chart.
+  const reach = Math.max(Math.abs(value), numeric(options.minReach) || 0) || 1
+  const y = scale([-reach, reach], box.y1, box.y0)
+  const zeroY = y(0)
+  const positive = data.positive || { label: data.positiveLabel || 'Increase', color: 'var(--brand)' }
+  const negative = data.negative || { label: data.negativeLabel || 'Decrease', color: 'var(--cold)' }
+  const arm = value >= 0 ? positive : negative
+  const top = Math.min(y(value), zeroY)
+  const barH = Math.max(1, Math.abs(zeroY - y(value)))
+
+  let inner = svg('line', {
+    x1: box.x0, x2: box.x1, y1: zeroY.toFixed(1), y2: zeroY.toFixed(1),
+    stroke: 'var(--stroke-strong)', 'stroke-width': 1.5,
+  })
+  inner += svg('rect', {
+    class: `chart-bar chart-diverge chart-diverge-${value >= 0 ? 'positive' : 'negative'}`,
+    x: box.x0, y: top.toFixed(1), width: box.x1 - box.x0, height: barH.toFixed(1),
+    fill: arm.color, rx: 2,
+  })
+  inner += svg('text', {
+    x: (box.x0 + box.x1) / 2, y: (top + barH / 2 + 4).toFixed(1), 'text-anchor': 'middle',
+    class: 'chart-diverge-value', fill: 'var(--on-brand)',
+  }, esc(opts.format(value)))
+  inner += svg('text', {
+    x: (box.x0 + box.x1) / 2, y: zeroY + (value >= 0 ? 16 : -8), 'text-anchor': 'middle',
+    class: 'chart-tick', fill: 'var(--ink-muted)',
+  }, esc('0'))
+  for (const side of [positive, negative]) {
+    inner += svg('text', {
+      x: side === positive ? box.x1 : box.x0, y: box.y1 + 16,
+      'text-anchor': side === positive ? 'end' : 'start',
+      class: 'chart-tick', fill: 'var(--ink-faint)',
+    }, esc(side.label))
+  }
+
+  return {
+    svg: frame(opts, inner),
+    table: dataTable(data.caption || data.title || data.label || 'Change', ['Measure', 'Value'],
+      [[data.label || 'Change', describe(value, opts.format)]]),
+    label: data.title || `${data.label || 'Change'}: ${opts.format(value)}`,
+    direction: value >= 0 ? 'positive' : 'negative',
+    missing: 0,
+    total: 1,
+  }
+}
+
+/**
  * The sparkline: a line, a last-value dot, and no axes.
  *
  * Moved here from `public/co/app.js:430`. Two behaviours changed rather than
