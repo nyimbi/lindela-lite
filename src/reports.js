@@ -8,6 +8,13 @@ import {
 } from './schema.js'
 import { filterRecords, stableId, toNumber, haversineKm } from './utils.js'
 import { resolveDistrict } from './districts.js'
+import {
+  MATCH_RADIUS_KM,
+  MIN_EVENTS,
+  MIN_MONTHS,
+  MODEL_BASIS,
+  MODEL_BASIS_DISCHARGE,
+} from './flood-probability.js'
 
 export const SECTION_LIBRARY = Object.freeze([
   'executive_summary',
@@ -846,4 +853,241 @@ function stripUndefined(value) {
 function formatMetricValue(value) {
   if (value && typeof value === 'object') return JSON.stringify(value)
   return String(value)
+}
+
+// ---------------------------------------------------------------------------
+// ENH-27: an export that carries the narrative
+// ---------------------------------------------------------------------------
+//
+// `/export.csv` and `/export.geojson` return the source-record appendix and
+// nothing else. The caveats, the refusals and the reasoning live in
+// `export.md`, so a spreadsheet handed to a country office says nothing about
+// which rows are uncertain — and a CSV *cannot*, because a CSV has nowhere to
+// put a caveat that a reader will not delete along with the column.
+//
+// The narrative therefore travels with the numbers, in the same artefact, in
+// the order a reader meets it: what was measured, what was refused, and what
+// this export does not license them to conclude. The three blocks are
+// separated because a reader who skims reads the first and skips the rest, and
+// the first block is the one that can be mistaken for a finding.
+//
+// The rule this is built against: an export must not state a capability the
+// system does not have. `calibrationReport` returns `brier_score: null`
+// unconditionally — not zero, not a poor score, an absent measurement — and
+// `trainDistrictModels` refuses every pilot district at the `MIN_EVENTS` floor.
+// Both are stated here as refusals with their reasons. A number printed where
+// the module returns null is the exact defect this repository has shipped and
+// fixed twice, and the export is where it would be hardest to notice.
+
+/**
+ * Refusal vocabulary, taken from the module that refuses.
+ *
+ * Imported rather than retyped so the export cannot drift from the code. If
+ * `MODEL_BASIS` changes what the model is, this text changes with it in the
+ * same commit, which is the only way a quoted refusal stays true.
+ */
+export const EXPORT_BASIS_LIMITS = Object.freeze({
+  rainfall_conditioned: MODEL_BASIS.what_a_probability_is_not,
+  discharge_conditioned: MODEL_BASIS_DISCHARGE.what_a_probability_is_not,
+  discharge_label_caveat: MODEL_BASIS_DISCHARGE.label_caveat,
+  routes_rejected: MODEL_BASIS.rejection_reasons,
+  floors: Object.freeze({
+    min_months: MIN_MONTHS,
+    min_events: MIN_EVENTS,
+    match_radius_km: MATCH_RADIUS_KM,
+  }),
+  calibration_refusal:
+    'brier_score is null on every calibration summary because nothing joins those stored '
+    + 'records to observed outcomes. A null is an absent measurement, not a poor one, and '
+    + 'rendering it as 0 or as a dash beside other figures would assert a result nobody computed.',
+})
+
+/**
+ * What a refused export says instead of a number.
+ *
+ * One function, used everywhere, so there is exactly one spelling of "the
+ * system declined to answer" in the codebase. The alternative — each call site
+ * picking its own dash — is how `null` becomes `0` by accumulation.
+ */
+export function refused(reason, detail = null) {
+  return `refused — ${reason}${detail ? ` (${detail})` : ''}`
+}
+
+/**
+ * Build the three narrative blocks for an export.
+ *
+ * Composes with what exists rather than replacing it: `report.warnings` is
+ * whatever `buildReportWarnings` already computed for this report, the flood
+ * refusals come from whatever `trainDistrictModels` returned, and the
+ * calibration refusals from the calibration rows themselves. Nothing here
+ * recomputes a figure; the export's job is to say which figures exist and which
+ * do not, not to produce more.
+ */
+export function buildExportNarrative({ report = null, data = {}, flood = null, calibration = [] } = {}) {
+  const measured = []
+  const refusedItems = []
+  const limits = []
+
+  // --- what was measured -------------------------------------------------
+  const sections = report?.sections || []
+  if (sections.length) {
+    for (const section of sections) {
+      measured.push({
+        claim: section.content?.summary || section.title,
+        source_refs: (section.source_refs || []).length,
+        collections: [...new Set((section.source_refs || []).map((ref) => ref.collection))],
+      })
+    }
+  } else {
+    measured.push({
+      claim: 'Nothing. This export carries no generated findings.',
+      source_refs: 0,
+      collections: [],
+    })
+  }
+  measured.push({
+    claim: `${(report?.source_refs || []).length} source record(s) are reproduced in the appendix below.`,
+    source_refs: (report?.source_refs || []).length,
+    collections: [...new Set((report?.source_refs || []).map((ref) => ref.collection))],
+  })
+
+  // --- what was refused --------------------------------------------------
+  for (const warning of report?.warnings || []) refusedItems.push({ subject: 'report scope', reason: warning })
+
+  const models = data.flood_probability_models || []
+  const regions = models.length ? new Set(models.map((model) => model.region_name)) : new Set()
+  for (const refusal of flood?.refusals || []) {
+    refusedItems.push({ subject: `flood probability, ${refusal.region}`, reason: refusal.refusal })
+    regions.add(refusal.region)
+  }
+  for (const model of models) {
+    if (!model.model) {
+      refusedItems.push({ subject: `flood probability, ${model.region_name}`, reason: model.refusal || 'no model produced' })
+    }
+  }
+  if (!models.length && !(flood?.refusals || []).length) {
+    refusedItems.push({
+      subject: 'flood probability',
+      reason:
+        `no district has a trained model and no district was refused on this run. The model needs `
+        + `${MIN_MONTHS} months and ${MIN_EVENTS} flood-label events within ${MATCH_RADIUS_KM} km; `
+        + 'no figure is available for any district from this export.',
+    })
+  }
+  for (const row of calibration || []) {
+    if (row.brier_score === null || row.brier_score === undefined) {
+      refusedItems.push({ subject: `calibration, ${row.type}`, reason: EXPORT_BASIS_LIMITS.calibration_refusal })
+    }
+  }
+  if (!(calibration || []).length) {
+    refusedItems.push({
+      subject: 'calibration',
+      reason: 'no risk scores are in scope, so no calibration summary — and therefore no skill figure — exists for this export.',
+    })
+  }
+
+  // --- what a reader must not conclude -----------------------------------
+  limits.push(EXPORT_BASIS_LIMITS.routes_rejected)
+  limits.push(EXPORT_BASIS_LIMITS.rainfall_conditioned)
+  if (models.some((model) => model.label_source === 'glofas_discharge')) {
+    limits.push(EXPORT_BASIS_LIMITS.discharge_conditioned)
+    limits.push(EXPORT_BASIS_LIMITS.discharge_label_caveat)
+  }
+  limits.push(
+    'Counts of events are counts of what reached this platform. A source that is silent, late or '
+    + 'unattributed is absent from the total, so a low count is not evidence that little happened.',
+  )
+  limits.push(
+    'This export is a snapshot of the store at generation time and carries no validation against '
+    + 'observed outcomes. Nothing in it is calibrated.',
+  )
+
+  return {
+    generated_at: new Date().toISOString(),
+    measured,
+    refused: refusedItems,
+    limits,
+    provenance: data.__provenance ?? null,
+  }
+}
+
+/**
+ * One line of provenance per exported row: `source_id`, `observed_at`,
+ * `payload_hash`.
+ *
+ * ENH-27 asks for it on every exported row, which is the right place — a
+ * caveat above a table is a caveat about the table, and a caveat beside a row is
+ * about that row. The three fields are the ones that answer "where did this
+ * come from and is this the same thing I saw last quarter": which source, when
+ * it was observed rather than when it was ingested, and whether the bytes
+ * behind it are the same bytes.
+ */
+export function rowProvenanceLine(record = {}) {
+  const parts = [
+    `source_id=${record.source_id || record.source || 'unattributed'}`,
+    `observed_at=${record.observed_at || record.event_date || record.occurred_at || 'unstated'}`,
+    `payload_hash=${record.payload_hash || record.content_hash || 'none recorded'}`,
+  ]
+  if (record.provenance?.origin) {
+    parts.push(`origin=${record.provenance.origin}`)
+    parts.push('is_live_observation=false')
+  }
+  return parts.join(' ')
+}
+
+/** The exported rows, each with its provenance line attached. */
+export function provenanceAnnotatedRows(records = []) {
+  return records.map((record) => ({
+    ...record,
+    provenance_line: rowProvenanceLine(record),
+  }))
+}
+
+/**
+ * Render the export: the existing Markdown report, plus the narrative, plus a
+ * provenance-stamped appendix.
+ *
+ * `renderReportMarkdown` is called, not reimplemented, so the export and the
+ * `export.md` endpoint cannot disagree about what the report says. The
+ * narrative goes above the body — a reader who stops after the first screen
+ * should have met the refusals — and the stamped appendix goes below it.
+ */
+export function renderExportMarkdown(report, data = {}, options = {}) {
+  const narrative = options.narrative || buildExportNarrative({ report, data, ...options })
+  const body = renderReportMarkdown(report, options)
+  const rows = provenanceAnnotatedRows(recordsForReportSources(report, data))
+  const lines = [body.trimEnd(), '', '---', '', '## What was measured', '']
+
+  for (const item of narrative.measured) {
+    lines.push(`- ${item.claim}${item.source_refs ? ` (${item.source_refs} source reference(s): ${item.collections.join(', ') || 'none'})` : ' (no source references)'}`)
+  }
+
+  lines.push('', '## What was refused', '')
+  if (narrative.refused.length) {
+    for (const item of narrative.refused) lines.push(`- ${item.subject}: ${refused(item.reason)}`)
+  } else {
+    lines.push('- Nothing in scope was refused, which is itself a statement about sample size, not a clean bill of health.')
+  }
+
+  lines.push('', '## What this export does not support', '')
+  for (const limit of narrative.limits) lines.push(`- ${limit}`)
+
+  if (narrative.provenance) {
+    lines.push('', '## Provenance of this export', '')
+    lines.push(`- ${narrative.provenance.note || 'stamped as non-live'}`)
+    if (narrative.provenance.urls?.length) lines.push(`- replayed from ${narrative.provenance.urls.length} captured URL(s)`)
+  }
+
+  if (rows.length) {
+    // Not "Source Appendix": `renderReportMarkdown` already emitted that
+    // heading for the report's own ref list, and two sections with one name in
+    // one document is a heading a reader cannot navigate by.
+    lines.push('', '## Row Provenance', '', 'Every row below carries its own provenance line.', '')
+    for (const row of rows) {
+      lines.push(`- ${row.report_source_collection}:${row.id} — ${row.provenance_line}`)
+    }
+  }
+
+  lines.push('')
+  return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()}\n`
 }

@@ -33,11 +33,16 @@
  * For storage, `CAPTURE_COLLECTION` names the collection to use if captures go
  * through the JSON store, and `CaptureStore` is the in-memory form with the
  * content-addressed dedupe the JSON store cannot give. `pruneCaptures` is the
- * retention boundary. `createReplayStore(captures)` is the `fetch`-shaped
- * object to assign in a test: it replays captured bytes and refuses, loudly,
- * anything it does not hold. `seedFixturesFromCaptures(captures, { targetDir })`
- * writes the suite's on-disk fixture shape; `scripts/capture-fixtures.mjs` is a
- * thin CLI over it.
+ * retention boundary and `RETENTION_POLICY` states it; pruning leaves a
+ * tombstone rather than a gap, so a URL that expired replays as *pruned* and not
+ * as empty. `createReplayStore(captures, { tombstones })` is the `fetch`-shaped
+ * object to assign in a test: it replays captured bytes, refuses loudly anything
+ * it does not hold, and carries a `provenance` stamp that says the bytes are a
+ * replay rather than an observation. `stampReplayProvenance` puts that stamp on
+ * records built from a replay; there is no way to take it off.
+ * `seedFixturesFromCaptures(captures, { targetDir })` writes the suite's on-disk
+ * fixture shape, with the same stamp in its manifest;
+ * `scripts/capture-fixtures.mjs` is a thin CLI over it.
  */
 
 import { createHash } from 'node:crypto'
@@ -71,6 +76,45 @@ export const CAPTURE_KINDS = Object.freeze(['json', 'xml', 'html', 'csv', 'text'
 export const DEFAULT_RETENTION_DAYS = 30
 
 export const HASH_ALGORITHM = 'sha256'
+
+/**
+ * The retention policy, in one object rather than a bare constant.
+ *
+ * The window is only defensible if it is *stated* — a reader of a store file, a
+ * CLI run or an export has to be able to learn what the rule is without
+ * reading `pruneCaptures`. So the number, what it is keyed on, what happens
+ * afterwards and why it is that long travel together, and `retentionWindow()`
+ * renders them as one sentence for a log line or a manifest note.
+ */
+export const RETENTION_POLICY = Object.freeze({
+  retention_days: DEFAULT_RETENTION_DAYS,
+  keyed_on: 'retrieved_at',
+  boundary: 'inclusive — a capture retrieved exactly retention_days ago is kept',
+  on_expiry: 'pruned with a tombstone, never silently dropped',
+  rationale:
+    'A provider changes format after the deploy that broke on it, so the failure this '
+    + 'defends against arrives late and the only way to reproduce it is the bytes that failed. '
+    + 'Thirty days is also the point where content addressing has done its job: a feed '
+    + 're-fetched daily for a month is one stored body with seen_count 30, not thirty bodies.',
+})
+
+/** One sentence stating the retention rule. Used by the CLI and the seeder. */
+export function retentionWindow(policy = RETENTION_POLICY) {
+  return `captures are kept ${policy.retention_days} days from first retrieval (${policy.keyed_on}, `
+    + `${policy.boundary}); on expiry they are ${policy.on_expiry}. ${policy.rationale}`
+}
+
+/**
+ * The stamp every replayed payload carries.
+ *
+ * The product rule is that a replayed or synthesised value is never presented as
+ * a live observation, and this is the mechanism rather than the intention: the
+ * store hands the stamp out, `stampReplayProvenance` puts it on anything built
+ * from a capture, and `assertLiveObservation` refuses a record that carries it
+ * when something tries to present it as measured. A fixture leaking into a
+ * production read is exactly that failure with the label removed.
+ */
+export const REPLAY_ORIGIN = 'capture_replay'
 
 /** File extension per kind — the half of the fixture naming that *is* derivable. */
 const KIND_EXTENSIONS = Object.freeze({
@@ -133,6 +177,33 @@ export class ReplayMissError extends Error {
     )
     this.name = 'ReplayMissError'
     this.url = url
+  }
+}
+
+/**
+ * Thrown when a replay is asked for a URL whose capture exists but has expired.
+ *
+ * Distinct from {@link ReplayMissError} on purpose. "Never captured" and
+ * "captured, then pruned" are different facts about the world, and a caller
+ * acting on the first recaptures while a caller acting on the second has to go
+ * looking for a window that closed weeks ago. Collapsing them into one error
+ * makes an honest retention window indistinguishable from a store that was
+ * never populated — which is the same class of defect as a replay answering an
+ * empty 200.
+ */
+export class ReplayPrunedError extends Error {
+  constructor(url, tombstone) {
+    const prunedOn = tombstone?.pruned_at ? new Date(tombstone.pruned_at).toISOString().slice(0, 10) : 'an unrecorded date'
+    const retrieved = tombstone?.retrieved_at ? new Date(tombstone.retrieved_at).toISOString().slice(0, 10) : 'an unrecorded date'
+    super(
+      `capture for ${url} was retrieved ${retrieved} and pruned on ${prunedOn} under the `
+      + `${tombstone?.retention_days ?? RETENTION_POLICY.retention_days}-day retention window — `
+      + 'the bytes are gone, so this is not an empty result and not a miss. Re-capture it, or '
+      + 'seed the fixture from a store written before the window closed.',
+    )
+    this.name = 'ReplayPrunedError'
+    this.url = url
+    this.tombstone = tombstone ?? null
   }
 }
 
@@ -266,9 +337,11 @@ export function capturePayload({ url, source, status, contentType, body, retriev
  */
 export class CaptureStore {
   #byHash = new Map()
+  #tombstones = new Map()
 
-  constructor(entries = []) {
+  constructor(entries = [], { tombstones = [] } = {}) {
     for (const entry of entries) this.#insert(entry)
+    for (const stone of tombstones) this.adoptTombstone(stone)
   }
 
   get size() {
@@ -298,32 +371,147 @@ export class CaptureStore {
    * Returns `{ entry, duplicate }` rather than the entry alone, because "did
    * this store a new body or recognise an old one" is the only question a
    * caller has, and a bare entry cannot answer it.
+   *
+   * Accepts a capture's own field names as well as the creation parameters.
+   * Reloading a store file means holding stored entries, and `content_type`
+   * spelled differently from `contentType` was enough for an XML capture to
+   * come back classified as `binary` and land in the fixture suite as `.bin` —
+   * the content type is what says how the provider presented the bytes, and it
+   * is the field the GloFAS defect turned on.
    */
-  add(params) {
-    const capture = capturePayload(params)
-    return this.#insert(capture)
+  add(params = {}) {
+    const capture = capturePayload({
+      ...params,
+      url: params.url,
+      source: params.source,
+      status: params.status,
+      contentType: params.contentType ?? params.content_type,
+      body: params.body,
+      retrievedAt: params.retrievedAt ?? params.retrieved_at,
+      headers: params.headers,
+    })
+    const { entry, duplicate } = this.#insert(capture)
+    if (!duplicate && params.seen_count > 1) {
+      // Re-inserting a body that was seen several times must not quietly reset
+      // it to one sighting; the seen count is the evidence the dedupe worked.
+      const merged = Object.freeze({ ...entry, seen_count: params.seen_count, last_seen_at: params.last_seen_at ?? entry.last_seen_at })
+      this.#byHash.set(merged.content_hash, merged)
+      return { entry: merged, duplicate }
+    }
+    return { entry, duplicate }
   }
 
   /**
-   * Drop captures older than the retention window, in place.
+   * Drop captures older than the retention window, in place, leaving a record.
    *
    * Pruning keys on `retrieved_at` — first sighting — not `last_seen_at`. A
    * body still being refetched daily is in active use and must survive; a body
    * last seen in March is the one a March regression needs.
+   *
+   * The bytes go and a tombstone stays: hash, URL, source, when it was
+   * retrieved, when it was pruned, and under which window. That is the
+   * difference between an honest retention policy and a `delete` — a store that
+   * forgets on purpose can still answer "was this ever captured, and when did
+   * it stop being available", and a replay against a pruned URL can say pruned
+   * rather than answering empty.
    */
   prune(options = {}) {
     const now = options.now ?? new Date()
+    const retentionDays = options.retentionDays ?? DEFAULT_RETENTION_DAYS
     const before = this.#byHash.size
-    const kept = pruneCaptures(this.list(), { ...options, now })
+    const kept = pruneCaptures(this.list(), { ...options, now, retentionDays })
     const keptHashes = new Set(kept.map((entry) => entry.content_hash))
+    const prunedAt = new Date(epochOf(now)).toISOString()
     for (const hash of [...this.#byHash.keys()]) {
-      if (!keptHashes.has(hash)) this.#byHash.delete(hash)
+      if (keptHashes.has(hash)) continue
+      const entry = this.#byHash.get(hash)
+      this.#byHash.delete(hash)
+      this.#tombstones.set(hash, Object.freeze({
+        content_hash: hash,
+        url: entry.url,
+        source: entry.source,
+        kind: entry.kind,
+        byte_length: entry.byte_length,
+        retrieved_at: entry.retrieved_at,
+        last_seen_at: entry.last_seen_at,
+        seen_count: entry.seen_count,
+        pruned_at: prunedAt,
+        retention_days: retentionDays,
+        reason: 'retention_window_expired',
+      }))
     }
     return { pruned: before - this.#byHash.size, kept: this.#byHash.size }
   }
 
+  /** Every pruned capture this store has seen, oldest first. */
+  tombstones() {
+    return [...this.#tombstones.values()].sort((a, b) => epochOf(a.pruned_at) - epochOf(b.pruned_at))
+  }
+
+  /**
+   * Record a tombstone from elsewhere — a store file read back from disk, or a
+   * sibling process's prune. A tombstone that cannot be reloaded is a retention
+   * window that quietly stops being explainable after one restart.
+   */
+  adoptTombstone(stone) {
+    if (!stone || typeof stone !== 'object' || typeof stone.content_hash !== 'string' || stone.content_hash === '') {
+      throw new TypeError('a tombstone must carry the content_hash of what it records')
+    }
+    if (this.#byHash.has(stone.content_hash)) {
+      // The body is held again, so the expiry no longer describes anything.
+      // Keeping it would have a replay refuse a URL the store can serve.
+      this.#tombstones.delete(stone.content_hash)
+      return false
+    }
+    this.#tombstones.set(stone.content_hash, Object.freeze({ ...stone }))
+    return true
+  }
+
+  /** The tombstone for a hash, or null. */
+  tombstone(hash) {
+    return this.#tombstones.get(hash) ?? null
+  }
+
+  /** The most recent tombstone for a URL, or null if that URL never expired. */
+  prunedFor(url) {
+    return this.tombstones().filter((stone) => stone.url === url).pop() ?? null
+  }
+
+  /**
+   * The provenance stamp a replay of this store's captures carries.
+   *
+   * `asOf` is the replay moment and is used the same way `createReplayStore`
+   * uses it — bodies retrieved after it are excluded — so the stamp describes
+   * exactly the bodies a replay would serve. `as_of` is then the newest of
+   * *those*, not the moment of the read: a replay of a September capture read in
+   * October is September evidence, and dating it October asserts a currency the
+   * bytes do not have. `now` is reported separately for the same reason.
+   */
+  replayProvenance({ asOf = null, now = new Date() } = {}) {
+    const cutoff = asOf === null ? null : epochOf(asOf)
+    const held = this.list().filter((entry) => cutoff === null || epochOf(entry.retrieved_at) <= cutoff)
+    const pruned = this.tombstones().filter((stone) => cutoff === null || epochOf(stone.retrieved_at) <= cutoff)
+    if (!held.length && !pruned.length) return null
+    const retrieved = held.map((entry) => epochOf(entry.retrieved_at))
+    const prunedAt = pruned.map((stone) => epochOf(stone.pruned_at))
+    return Object.freeze({
+      origin: REPLAY_ORIGIN,
+      is_live_observation: false,
+      captured_bodies: held.length,
+      pruned_bodies: pruned.length,
+      urls: Object.freeze([...new Set(held.map((entry) => entry.url))]),
+      as_of: retrieved.length ? new Date(Math.max(...retrieved)).toISOString() : null,
+      replayed_at: new Date(epochOf(now)).toISOString(),
+      earliest_retrieved_at: retrieved.length ? new Date(Math.min(...retrieved)).toISOString() : null,
+      last_pruned_at: prunedAt.length ? new Date(Math.max(...prunedAt)).toISOString() : null,
+      note:
+        'Replayed from retained captures, not measured live. A fixture or a replayed body '
+        + 'is never a live observation; records built from one must carry this stamp.',
+    })
+  }
+
   toJSON() {
-    return serialiseCaptures(this.list())
+    return serialiseCaptures(this.list(), { tombstones: this.tombstones() })
   }
 
   #insert(capture) {
@@ -390,8 +578,14 @@ export function latestCaptureFor(captures, url) {
  *
  * `asOf` replays the body as it stood at a moment, which is how a
  * "what did the feed say on 14 March" question gets answered.
+ *
+ * `tombstones` carries what retention already pruned. Without it a pruned URL
+ * is indistinguishable from one never captured, and both look the same to a
+ * caller as "the provider returned nothing" — the failure this module exists
+ * to keep visible. With it, the miss says *pruned*, names the dates, and points
+ * at the fix.
  */
-export function createReplayStore(captures, { asOf = null } = {}) {
+export function createReplayStore(captures, { asOf = null, tombstones = [] } = {}) {
   const list = [...captures]
   const index = new Map()
   for (const entry of list) {
@@ -400,8 +594,13 @@ export function createReplayStore(captures, { asOf = null } = {}) {
     if (!current || epochOf(entry.retrieved_at) >= epochOf(current.retrieved_at)) index.set(entry.url, entry)
   }
 
+  const stones = [...tombstones].sort((a, b) => epochOf(a.pruned_at) - epochOf(b.pruned_at))
+  const prunedByUrl = new Map()
+  for (const stone of stones) prunedByUrl.set(stone.url, stone)
+
   const requested = []
   const misses = []
+  const prunedMisses = []
 
   const store = async (url, init = {}) => {
     const target = String(url instanceof URL ? url.href : url)
@@ -412,6 +611,16 @@ export function createReplayStore(captures, { asOf = null } = {}) {
     const entry = index.get(target)
     if (!entry) {
       misses.push(target)
+      const stone = prunedByUrl.get(target)
+      // Only a URL the store actually held and then dropped counts as pruned.
+      // A tombstone whose retrieved_at is after `asOf` means the capture
+      // existed but had not happened yet at the replayed moment, which is a
+      // miss in time rather than an expiry, and saying "pruned" there would be
+      // its own small lie.
+      if (stone && !(asOf && epochOf(stone.retrieved_at) > epochOf(asOf))) {
+        prunedMisses.push(target)
+        throw new ReplayPrunedError(target, stone)
+      }
       throw new ReplayMissError(target, index.size)
     }
     return replayResponse(entry)
@@ -421,6 +630,29 @@ export function createReplayStore(captures, { asOf = null } = {}) {
   store.urls = () => [...index.keys()]
   store.requested = requested
   store.misses = misses
+  store.prunedMisses = prunedMisses
+  store.tombstones = stones
+  /**
+   * What every record built from this replay must be stamped with.
+   *
+   * Counts and URLs describe what this replay can actually serve — after the
+   * `asOf` filter, not before it. A stamp that claimed bodies the replay would
+   * refuse is a stamp that overstates the evidence, which is the one thing this
+   * provenance exists to prevent.
+   */
+  store.provenance = Object.freeze({
+    origin: REPLAY_ORIGIN,
+    is_live_observation: false,
+    captured_bodies: index.size,
+    replayed_urls: Object.freeze([...index.keys()]),
+    pruned_bodies: stones.length,
+    as_of: index.size
+      ? new Date(Math.max(...[...index.values()].map((entry) => epochOf(entry.retrieved_at)))).toISOString()
+      : null,
+    note:
+      'Replayed from retained captures, not measured live. A replayed body is never a live '
+      + 'observation; records derived from one must carry this stamp or not be published.',
+  })
   return store
 }
 
@@ -609,6 +841,18 @@ export async function seedFixturesFromCaptures(captures, { targetDir, nameFor = 
   const manifest = {
     generated_at: new Date().toISOString(),
     note: 'Provenance for the fixtures beside this file. The bodies are verbatim captures.',
+    // Stated once, at the top, rather than only per line: the whole directory is
+    // replayed evidence. A test reader that opens one of these files is reading
+    // a recording of a provider response, not a live observation, and anything
+    // derived from it inherits that.
+    replay: Object.freeze({
+      origin: REPLAY_ORIGIN,
+      is_live_observation: false,
+      retention: RETENTION_POLICY,
+      statement:
+        'Every file in this directory is a replayed capture. Records built from these bytes '
+        + 'carry this provenance and must never be presented as live observations.',
+    }),
     fixtures: fixtures.sort((a, b) => a.file.localeCompare(b.file)),
     superseded,
   }
@@ -654,14 +898,22 @@ function fixtureNameFor(capture, nameFor) {
 /**
  * Serialise captures for storage: body as base64, because JSON has no bytes and
  * a utf-8 round trip corrupts a binary capture into plausible-looking text.
+ *
+ * Tombstones are stored alongside the bodies, without one. A store file that
+ * remembered what it held but not what it dropped could not answer "why does
+ * this fixture no longer replay", and would make the retention window look
+ * like data loss rather than a stated policy.
  */
-export function serialiseCaptures(entries) {
-  return JSON.stringify({
+export function serialiseCaptures(entries, { tombstones = [] } = {}) {
+  const document = {
     format: 'lindela-capture-store',
     version: 1,
     hash_algorithm: HASH_ALGORITHM,
+    retention: RETENTION_POLICY,
     entries: entries.map((entry) => ({ ...entry, body: entry.body.toString('base64') })),
-  })
+  }
+  if (tombstones.length) document.tombstones = tombstones
+  return JSON.stringify(document)
 }
 
 /**
@@ -670,13 +922,18 @@ export function serialiseCaptures(entries) {
  * A truncated or edited capture file would otherwise replay confident wrong
  * bytes, and the resulting test failure would be blamed on the connector. The
  * store is evidence; evidence that has been corrupted has to say so.
+ *
+ * Returns entries, and hangs the tombstones off `.tombstones` so an existing
+ * caller doing `parseCaptures(text)` still gets its array — an array with a
+ * property, which is the one way to carry the pruning history without breaking
+ * every array method the callers already use.
  */
 export function parseCaptures(serialised) {
   const parsed = JSON.parse(typeof serialised === 'string' ? serialised : String(serialised))
   if (parsed?.format !== 'lindela-capture-store') {
     throw new TypeError('not a capture store document')
   }
-  return parsed.entries.map((entry) => {
+  const entries = parsed.entries.map((entry) => {
     const body = Buffer.from(entry.body, 'base64')
     const hash = contentHash(body)
     if (hash !== entry.content_hash) {
@@ -684,6 +941,41 @@ export function parseCaptures(serialised) {
     }
     return Object.freeze({ ...entry, body })
   })
+  const tombstones = Object.freeze((parsed.tombstones || []).map((stone) => Object.freeze({ ...stone })))
+  Object.defineProperty(entries, 'tombstones', { value: tombstones, enumerable: false })
+  Object.defineProperty(entries, 'retention', { value: parsed.retention ?? null, enumerable: false })
+  return entries
+}
+
+/**
+ * Stamp a value as replayed rather than observed.
+ *
+ * Used at the seam where bytes become records: a record built from a replayed
+ * capture carries `provenance.origin = REPLAY_ORIGIN` and
+ * `is_live_observation = false`, which is what stops a fixture from reading as
+ * a measurement one layer downstream. The stamp is a deep-ish clone of a
+ * frozen value rather than a mutation, so the original object is untouched.
+ */
+export function stampReplayProvenance(value, provenance = {}) {
+  const stamp = Object.freeze({
+    origin: REPLAY_ORIGIN,
+    is_live_observation: false,
+    ...provenance,
+  })
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map((item) => stampReplayProvenance(item, provenance))
+  return Object.freeze({ ...value, provenance: stamp })
+}
+
+/**
+ * The inverse, as a predicate rather than a remover.
+ *
+ * There is deliberately no `unstamp`. A record's replay provenance is a fact
+ * about how it was produced; dropping the stamp to make it publishable would
+ * be exactly the fixture-leak this exists to prevent.
+ */
+export function isReplayDerived(value) {
+  return Boolean(value && typeof value === 'object' && value.provenance?.origin === REPLAY_ORIGIN)
 }
 
 /** Header entries from a Map, Headers instance or plain object. */
