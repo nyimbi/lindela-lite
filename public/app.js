@@ -1458,15 +1458,48 @@ function renderBasemap(bbox) {
     }
   }
 
-  // Land layer
+  // Land layer.
+  //
+  // The fill is the UNION of the country rings, not a stack of them. They share
+  // edges and overlap along them — Ethiopia's ring runs through Kenya's,
+  // Somalia's through Ethiopia's, Uganda's through Kenya's — so six
+  // independent 60%-opacity washes do not average to one land tone, they
+  // compound: 1-(1-0.6)^n puts two overlaps at 84%, three at 94%, four at 97%.
+  // The canvas was therefore tiled with three or four unrelated greys and
+  // near-black wedges along every shared border, none of which is geography.
+  //
+  // Anchoring the frame on the five pilot districts exposed exactly that. At
+  // the old Horn-wide 21x25 frame the land sat as a band on the left with
+  // ocean around it, so the wedges were the periphery of the picture; at
+  // 14.5x6.2 the six rings are all larger than the viewport and the compounded
+  // stack covers the whole frame — a grey mass with markers floating on it.
+  //
+  // All six rings wind the same way (shoelace sign negative for every one), so
+  // nonzero fill-rule merges them into a single outline instead of punching
+  // holes where they cross. One 60% wash, one land tone. The borders are drawn
+  // by the stroked pass underneath, which costs one element more and keeps the
+  // CSS in charge of both colour and theme — an inline fill would hard-code a
+  // dark navy into a map that also renders on a light background.
   if (mapLandEl) {
     mapLandEl.innerHTML = ''
-    for (const [, { name, ring }] of Object.entries(REGION_POLYGONS)) {
-      const path = svgEl('path', { d: ringToPath(ring, bbox) })
+    const landFill = svgEl('path', {
+      d: Object.values(REGION_POLYGONS).map(({ ring }) => ringToPath(ring, bbox)).join(' '),
+      'fill-rule': 'nonzero',
+    })
+    // Stroke-width 0: this pass owns the fill, and stroking the union here
+    // would overdraw the borders the pass below already draws.
+    landFill.style.strokeWidth = '0'
+    mapLandEl.append(landFill)
+    for (const { name, ring } of Object.values(REGION_POLYGONS)) {
+      const outline = svgEl('path', { d: ringToPath(ring, bbox) })
       const titleEl = svgEl('title')
       titleEl.textContent = name
-      path.append(titleEl)
-      mapLandEl.append(path)
+      outline.append(titleEl)
+      // No fill on this pass. `.land-layer path` in styles.css sets one, and a
+      // presentation attribute loses to it — refilling each country here is
+      // the compounded stack all over again.
+      outline.style.fill = 'none'
+      mapLandEl.append(outline)
     }
   }
 
@@ -1856,6 +1889,9 @@ function renderMap(records) {
   // because it held a different value.
   let undeterminedSeverity = 0
   let undeterminedSource = 0
+  // Reported areas too big to place on this map. Counted, never dropped
+  // silently: they stay in the record list and open the same detail dialog.
+  let tooLargeToLocate = 0
   const visible = geo.filter((r) => {
     const verdict = evaluateMapFilters(r, {
       severity: sevFilter, source: srcFilter, since, coldChainOnly: coldOnly,
@@ -1937,11 +1973,19 @@ function renderMap(records) {
       if (box && [box.west, box.south, box.east, box.north].every(Number.isFinite)) {
         const nw = project(Math.min(box.north, 90), box.west, bbox)
         const se = project(Math.max(box.south, -90), box.east, bbox)
+        let footWidth = 0
+        let footHeight = 0
         const foot = svgEl('rect', {
-          x: Math.min(nw.x, se.x),
-          y: Math.min(nw.y, se.y),
-          width: Math.abs(se.x - nw.x),
-          height: Math.abs(se.y - nw.y),
+          // Clipped to the viewport. A GDACS alert can span half a
+          // continent, and once the frame tightened to the pilot districts that
+          // box projected to several times the viewBox — a 3,000px rectangle
+          // over the map, hiding everything under it. A reported area larger
+          // than the view is not a marker; it is "somewhere in this region",
+          // which the legend and the detail dialog already say.
+          x: Math.max(0, Math.min(nw.x, se.x)),
+          y: Math.max(0, Math.min(nw.y, se.y)),
+          width: (footWidth = Math.min(SVG_W, Math.abs(se.x - nw.x))),
+          height: (footHeight = Math.min(SVG_H, Math.abs(se.y - nw.y))),
           class: `hazard-footprint ${hazardClass(r.event_type)} hazard-footprint-${safeClass(r.severity)}`,
         })
         const footTitle = svgEl('title')
@@ -1952,6 +1996,33 @@ function renderMap(records) {
         foot.setAttribute('role', 'button')
         foot.setAttribute('aria-label', footTitle.textContent)
         foot.setAttribute('stroke-dasharray', severityDash(r.severity))
+
+        // A reported area that fills the frame is not a marker. Clipped to the
+        // viewport it is still a translucent sheet over every point hazard
+        // beneath it, which is worse than showing none: it says "a flood
+        // somewhere in here" by hiding the map that would say where.
+        // From the dimensions already computed, not `getBBox()`: the element is
+        // not in the document yet, and a detached element reports a zero box, so
+        // every footprint measured 0% of the viewport and none was dimmed.
+        // A box this large cannot be located on this map. It is not a marker
+        // with a wide extent; it is "somewhere in this region", and drawing it
+        // as a translucent sheet hides every point hazard beneath it — four
+        // overlapping 10% fills read as one opaque grey shape over the map.
+        //
+        // So it is not drawn here. The count line names how many, the record
+        // list carries them, and the detail dialog shows the extent. Losing it
+        // from the map is not losing it from the product; the alternative is a
+        // map nobody can read.
+        //
+        // Measured from the dimensions already computed, not `getBBox()`: the
+        // element is not in the document yet, and a detached element reports a
+        // zero box, so an earlier attempt measured every footprint at 0% of the
+        // viewport and dimmed none of them.
+        const share = (footWidth * footHeight) / (SVG_W * SVG_H)
+        if (share > 0.15) {
+          tooLargeToLocate += 1
+          return
+        }
         foot.addEventListener('click', () => openDetailDialog(r))
         foot.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetailDialog(r) }
@@ -2048,7 +2119,14 @@ function renderMap(records) {
     const undetermined = []
     if (undeterminedSeverity) undetermined.push(`${undeterminedSeverity} with no severity`)
     if (undeterminedSource) undetermined.push(`${undeterminedSource} with no source`)
-    countEl.textContent = `${visible.length} record${visible.length === 1 ? '' : 's'}`
+    // Reported areas too large to place on this map are counted rather than
+    // drawn, so they are named here instead of vanishing. They remain in the
+    // record list and open the same detail dialog.
+    const placed = visible.length - tooLargeToLocate
+    const parts = [`${placed} on map`]
+    if (tooLargeToLocate) parts.push(`${tooLargeToLocate} reported area${tooLargeToLocate === 1 ? '' : 's'} too large to place`)
+    if (undetermined.length) parts.push(undetermined.join(', '))
+    countEl.textContent = parts.join(' · ')
       + (undetermined.length ? ` — hidden by the filter: ${undetermined.join(', ')}` : '')
     countEl.title = undetermined.length
       ? `The filter is set to a specific value. ${undetermined.join(' and ')} did not match it, so `

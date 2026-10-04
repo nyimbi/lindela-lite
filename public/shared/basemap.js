@@ -75,11 +75,29 @@ export const PILOT_DISTRICTS = [
   { slug: 'mandera',  name: 'Mandera',  country: 'KE', center: [41.8569, 3.9366], radius_km: 150 },
 ]
 
-// Approximate Indian Ocean coastal water strip east of Somalia/Kenya/Tanzania.
-// Drawn under land polygons — only the unoccupied eastern strip shows through.
+// The Indian Ocean east of Somalia, Kenya and Tanzania.
+//
+// This was a rectangle from lon 40 to lon 52, meant to be a stub for the sea
+// and harmless because it was drawn under the land. It is not harmless: the
+// land layer is a 60% wash, not an opaque plate, so the water tints through it
+// and the rectangle's western edge shows as a hard vertical seam down the map.
+// Widened frame, seam at the edge; frame anchored on the pilot districts, seam
+// at lon 40 straight through the middle of Kenya.
+//
+// So the western edge follows the coast instead. It traces the country rings'
+// own eastern vertices offset 0.6 degrees inland: those rings carry 15-30
+// vertices per country, so where the sea is drawn slightly wrong it is drawn
+// slightly wrong UNDER the land, where the 60% land wash hides it. Bias it too
+// far and that same wash stops being an outline and starts being a two-tone
+// map — 3 degrees inland put the sea under most of Somalia and the land came
+// out uniformly dark. A polygon that poked past the coast would paint sea
+// inside Somalia, which is worse.
 export const INDIAN_OCEAN_POLYGON = [
-  [40.0, -12.0], [52.0, -12.0], [52.0, 15.5],
-  [40.0, 15.5],  [40.0, -12.0],
+  [50.7, 15.5], [52.5, 15.5], [52.5, -12.0], [39.9, -11.5],
+  [39.9, -6.0], [39.1, -4.0], [39.6, -3.2], [40.2, -1.8],
+  [41.4, -0.8], [42.9, 0.0], [44.9, 1.5], [47.4, 3.5],
+  [49.4, 6.5], [50.4, 8.5], [50.9, 11.0], [50.7, 11.8],
+  [50.7, 15.5],
 ]
 
 // Lake Victoria: shared by Uganda, Kenya, Tanzania.
