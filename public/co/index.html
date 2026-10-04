@@ -294,7 +294,12 @@
            screen reader hears the same page twice; and a failed fetch wrote to
            console.error alone, leaving the previous quarter's figures on screen
            with nothing marking them as stale. -->
-      <p id="load-status" class="visually-hidden" role="status" aria-live="polite"></p>
+      <!-- Ships already in the working state. The module that drives it does
+           not arrive until every script on the page has been fetched, and this
+           region previously stayed empty until a terminal sentence replaced
+           nothing — so a screen-reader user heard about the *result* and was
+           told nothing at all while the result was being waited for. -->
+      <p id="load-status" class="visually-hidden" role="status" aria-live="polite" data-state="working">Loading…</p>
       <div id="load-error" class="error-panel" role="alert" hidden></div>
 
       <div id="loading-banner">Loading...</div>

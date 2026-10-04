@@ -142,24 +142,11 @@
         margin-bottom: 1rem;
       }
 
-      .severity-chip {
-        display: inline-block;
-        padding: 0.25rem 0.75rem;
-        border-radius: 12px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-      }
-
-      /* These were pastel light-mode chips (#fecaca on #7f1d1d) sitting on a
-         oklch(15%) dark page — the only light elements on the screen, and a
-         severity scale that matched nothing else in the product. Now they
-         resolve to the same --sev-* tokens every other surface uses, so one
-         severity reads identically everywhere. */
-      .severity-critical { background: color-mix(in oklch, var(--sev-critical) 18%, transparent); color: var(--ink); border-color: var(--sev-critical); }
-      .severity-high     { background: color-mix(in oklch, var(--sev-high) 18%, transparent);     color: var(--ink); border-color: var(--sev-high); }
-      .severity-medium   { background: color-mix(in oklch, var(--sev-medium) 18%, transparent);   color: var(--ink); border-color: var(--sev-medium); }
-      .severity-low      { background: color-mix(in oklch, var(--sev-low) 18%, transparent);      color: var(--ink); border-color: var(--sev-low); }
+      /* The severity chip used to be declared here too — a 12px uppercase pill,
+         which is what HX-07 measured: the same word rendered four ways across
+         the product. It is now one rule in components.css covering every
+         spelling, and this surface renders it through shared/fmt.js's
+         `sevChipHtml` rather than interpolating its own class pair. */
 
       .workflow-details {
         margin-bottom: 1rem;
@@ -563,7 +550,13 @@
 
     <footer>
       <span id="connectionStatus" style="color: var(--ink-muted);">●</span>
-      <span id="statusText" style="margin-left: 0.5rem; font-size: 0.875rem;"></span>
+      <!-- Ships with the working state already in it. The module that replaces
+           it does not arrive until the browser has finished fetching every
+           script on this surface, and on a field connection that is seconds of
+           an empty page described by nothing. A status line that starts blank
+           and is populated by the first load is only honest about work that
+           has already begun. -->
+      <span id="statusText" style="margin-left: 0.5rem; font-size: 0.875rem;" role="status" aria-live="polite" data-state="loading">Loading…</span>
     </footer>
 
     <!-- Approval/Rejection Dialog -->

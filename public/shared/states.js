@@ -22,6 +22,16 @@ export const OK = 'ok'
 export const EMPTY = 'empty'
 export const ERROR = 'error'
 /**
+ * Work in flight. Not a failure and not a result.
+ *
+ * The reason it is in this module rather than in each surface's markup is that
+ * a loading state written once per surface is a loading state that outlives its
+ * request on whichever surface nobody tested. The body below says out loud that
+ * it will be replaced, because a status line that goes quiet and stays quiet is
+ * indistinguishable from one that is still working.
+ */
+export const LOADING = 'loading'
+/**
  * Not an error and not an empty list: work exists, is held locally, and has not
  * been sent. On a CHW's phone this is the normal case, not a fault. Rendering
  * it as either of the other two states is a lie in opposite directions — one
@@ -69,7 +79,7 @@ export function distinguishFailure({ ok = false, error = null, isEmpty = false }
  * been checked, and this is not an empty list. The second clause is the whole
  * point — it denies the inference the reader would otherwise make.
  *
- * @param {'ok'|'empty'|'error'|'queued'} state
+ * @param {'ok'|'empty'|'error'|'queued'|'loading'} state
  * @param {{ subject?: string, noun?: string, queuedCount?: number, what?: string,
  *           holdsWork?: boolean }} [detail]
  * @returns {{ title: string, body: string, tone: 'neutral'|'warning'|'critical',
@@ -77,6 +87,19 @@ export function distinguishFailure({ ok = false, error = null, isEmpty = false }
  */
 export function describeState(state, { subject = 'These records', noun, queuedCount = 0, what = 'they', holdsWork = false } = {}) {
   switch (state) {
+    case LOADING:
+      return {
+        title: 'Loading…',
+        // The second clause is the load-bearing one. A working state that says
+        // nothing about its own end is a status line that can sit at "Loading…"
+        // for the rest of the session, and a reader who has learned that the
+        // line lies learns to ignore it.
+        body: `Checking ${noun || subject}. This is replaced once the server answers — and if it cannot.`,
+        tone: 'neutral',
+        retryable: false,
+        action: null,
+      }
+
     case ERROR:
       return {
         title: 'Could not reach the server',
@@ -163,4 +186,78 @@ export function distinguishCollection(results, detail = {}) {
   const empty = entries.every(([, r]) => distinguishFailure(r) === EMPTY)
   const state = empty ? EMPTY : OK
   return { state, ...describeState(state, detail), failed: [] }
+}
+
+/**
+ * The sentence for something the reader tried to do that did not happen.
+ *
+ * `describeState` covers *loads*. A write failure is a different event with a
+ * different obligation: the reader is owed both that it failed and that nothing
+ * changed, because the instinct after a failed save is to press the button
+ * again, and the instinct before pressing it is to wonder what was half-done.
+ *
+ * There is no `reason` parameter, and that omission is the point. The obvious
+ * thing to pass is `error.message`, and that is what every surface used to do —
+ * which put "Failed to fetch", "NetworkError when attempting to fetch resource"
+ * and "HTTP 502" inside sentences written for people. The machine text belongs
+ * in the console, where it is actionable; `nextStep` is where the words go.
+ *
+ * @param {{ action: string, nextStep?: string }} detail
+ * @returns {{ title: string, body: string, tone: 'critical', retryable: false,
+ *             action: string|null }}
+ */
+export function describeActionFailure({ action, nextStep = 'Nothing was changed. Try again.' } = {}) {
+  return {
+    title: `Could not ${action}`,
+    body: nextStep,
+    tone: 'critical',
+    retryable: false,
+    action: null,
+  }
+}
+
+/**
+ * A running tally of loads, so a slow earlier one cannot overwrite a fast later
+ * one and strand the surface at "Loading…".
+ *
+ * Period change on the quarterly dashboard and the retry button on every
+ * failure state both start a load while another may still be in flight. Without
+ * an ordering check the *older* response is the one that lands last, and a
+ * surface that has moved on renders the words and figures of the period the
+ * reader just left. `start` returns a token; a load may only write to the
+ * screen if `isCurrent(token)` still holds when it settles.
+ *
+ * `pending` is the other half of the honesty rule: a caller that starts a load
+ * and throws away its token has left the surface loading forever, and the only
+ * way a test can catch that is to ask.
+ *
+ * @returns {{ start: () => number, isCurrent: (t: number) => boolean,
+ *             settle: (t: number) => number|null, pending: boolean }}
+ */
+export function createLoadSequence() {
+  let issued = 0
+  let settled = 0
+  return {
+    start() {
+      issued += 1
+      // A new load supersedes any load still running: the previous one can no
+      // longer be settled, so it cannot claim the surface at the end.
+      return issued
+    },
+    isCurrent(token) {
+      return token === issued
+    },
+    /** Settle a load, or return `null` if a newer one has taken over. */
+    settle(token) {
+      if (token !== issued) return null
+      settled = token
+      return token
+    },
+    get pending() {
+      return issued !== settled
+    },
+    get token() {
+      return issued
+    },
+  }
 }

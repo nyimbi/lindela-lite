@@ -711,7 +711,12 @@
       <div id="replyScreen" class="screen">
         <h2 class="screen-title" data-i18n="chw.reply_alert">Reply to alert</h2>
         <div id="alertCard" class="form-group" style="padding: 1rem; background: var(--surface); border: 1px solid var(--stroke); border-radius: 8px;">
-          <p id="alertText" style="font-size: 0.875rem; color: var(--ink-muted);">Loading alert...</p>
+          <!-- Not "Loading alert...". That string was static markup, so it was a claim
+               about work in progress made before anything had been requested,
+               and it stayed on screen whenever nothing had driven it. The card
+               now owns its own states and the working one is written by the
+               request that is running. -->
+          <p id="alertText" style="font-size: 0.875rem; color: var(--ink-muted);" role="status" aria-live="polite" data-state="idle">No alert loaded yet.</p>
         </div>
         <div class="form-group">
           <label for="replyMessage" data-i18n="chw.reply_message">Your reply</label>

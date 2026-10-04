@@ -10,6 +10,18 @@ import { esc, formatTimestamp, num, pct, truncate } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { barChart, sparkline } from '/shared/charts.js'
 import { apiFetch, autoMarkScrollableRegions } from '/shared/runtime.js'
+import { createLoadSequence } from '/shared/states.js'
+
+/**
+ * One load in flight at a time.
+ *
+ * Changing quarter twice quickly starts two loads, and without an ordering
+ * check the *slower earlier* one renders last — a funner reading 2026 Q3 who
+ * has already asked for Q4, shown Q3 under a Q4 heading. The same guard is what
+ * stops the status line being stranded at the working state by a response that
+ * lost.
+ */
+const loadSequence = createLoadSequence()
 
 let currentLocale = 'en'
 let i18n = {}
@@ -49,9 +61,16 @@ function applyI18n() {
  * One polite region, and a visible panel that is an alert rather than a status,
  * because a missing table is not something to wait for.
  */
-function announce(statusText, { errorText } = {}) {
+function announce(statusText, { errorText, state: stateName } = {}) {
   const status = document.getElementById('load-status')
-  if (status) status.textContent = statusText
+  if (status) {
+    status.textContent = statusText
+    // `working` is not a result, and a live region that only ever carries
+    // results cannot say "still working". The attribute is how a test — and
+    // the next person after them — tells the three apart without having to
+    // time a fetch.
+    status.dataset.state = stateName || (errorText ? 'error' : 'done')
+  }
   const panel = document.getElementById('load-error')
   if (!panel) return
   panel.hidden = !errorText
@@ -627,6 +646,16 @@ export async function load() {
   const sections = SECTIONS.map((s) => s.id)
   let failed = 0
 
+  // The working state, said out loud rather than implied by a banner. The
+  // banner has been here since the first version; what it could not do is reach
+  // a screen reader, and the status line could not describe work in progress
+  // because it only ever held the terminal sentence.
+  //
+  // `announce` is called again at the end on both the success and the failure
+  // path, so the working state cannot outlive its request.
+  const token = loadSequence.start()
+  announce(fill(t('co.status_loading', 'Checking the figures for {period}.'), { period }), { state: 'working' })
+
   try {
     const [kpiRes, equityRes, dispatchRes, feedbackRes, trendRes] = await Promise.all([
       fetch(`/api/v1/kpi/quarterly?quarter=${q}&year=${y}`),
@@ -690,6 +719,12 @@ export async function load() {
   } finally {
     if (loading) loading.hidden = true
   }
+
+  // A load that a newer one superseded has already painted nothing; announcing
+  // its outcome would put a terminal sentence next to a dashboard that has
+  // already moved on to another period.
+  if (!loadSequence.isCurrent(token)) return
+  loadSequence.settle(token)
 
   const { loaded, unpainted } = loadState(sections, [...painted])
   if (loaded === 0) {

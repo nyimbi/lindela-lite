@@ -92,6 +92,7 @@ function makeElement(tag = 'div', id = '') {
 async function bootChw({ geolocation = null } = {}) {
 	const en = JSON.parse(read('public/i18n/en.json'))
 	const runtime = await import(path.join(ROOT, 'public/shared/runtime.js'))
+	const states = await import(path.join(ROOT, 'public/shared/states.js'))
 
 	const HEADINGS = {
 		home: 'Health Report',
@@ -196,6 +197,9 @@ async function bootChw({ geolocation = null } = {}) {
 		navigator: navigatorStub,
 		fetch: fakeFetch,
 		...runtime,
+		// The state vocabulary the app imports by name. It is pure and DOM-free,
+		// so the real module runs in the vm untouched.
+		...states,
 		mountNavbar() {},
 	}
 	context.window = { addEventListener() {}, dispatchEvent: () => true, __i18n: null }

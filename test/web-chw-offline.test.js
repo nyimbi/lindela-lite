@@ -6,6 +6,7 @@ import vm from 'node:vm'
 import { describe, it } from 'node:test'
 
 import { submitOrQueue } from '../public/shared/runtime.js'
+import * as states from '../public/shared/states.js'
 
 // Imported dynamically and tolerated as an empty object: a service worker that
 // reaches for `self` at module scope cannot be imported at all under Node, and
@@ -221,6 +222,9 @@ async function bootChw({ online = false, indexedDB = null, appJs = null } = {}) 
 		// The real implementations, not stand-ins: the defect being guarded is
 		// in this code, so replacing it with a mock would test the mock.
 		...runtime,
+		// The state vocabulary the app imports by name. It is pure and DOM-free,
+		// so the real module runs in the vm untouched.
+		...states,
 		mountNavbar() {},
 	}
 	context.globalThis = context
@@ -267,8 +271,11 @@ describe('WEB-05 — the CHW offline queue', () => {
 
 		const { text, kind } = app.toast()
 		assert.equal(kind, 'error', 'a discarded report must not be reported as an ordinary one')
-		assert.match(text, /Could not save/)
+		assert.match(text, /Could not send the symptom report/)
 		assert.doesNotMatch(text, /saved on this phone/)
+		// CE-04/CE-06: the exception's own text is a name for something
+		// happening in software. It goes to the console, not to a health worker.
+		assert.doesNotMatch(text, /Failed to fetch|NetworkError|HTTP \d|\{[a-z_]+\}/)
 	})
 
 	it('keeps the wizard standing when the report was not stored', async () => {
@@ -302,7 +309,8 @@ describe('WEB-05 — the CHW offline queue', () => {
 		}
 
 		assert.equal(app.toast().kind, 'error')
-		assert.match(app.toast().text, /Could not save/)
+		assert.match(app.toast().text, /Could not send the symptom report/)
+		assert.doesNotMatch(app.toast().text, /Failed to fetch|NetworkError|HTTP \d/)
 		assert.equal(app.state().symptom.type, 'fever')
 	})
 

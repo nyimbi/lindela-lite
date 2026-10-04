@@ -5408,7 +5408,14 @@ describe('Lindela Lite scenario workbench', () => {
     const s = runScenario(data, { precipitation_multiplier: 2 })
     assert.equal(s.diff.unit, 'score points')
     assert.match(s.model_limit, /not a percentage, not a probability, and not a forecast/i)
-    assert.match(s.model_limit, /calibrated_uncertainty: false/)
+    // The disclaimer is prose. A field name spliced into the middle of it reads
+    // as a debug artefact and undercuts a paragraph whose whole job is to earn
+    // trust, so the claim is made in English and the field name is nowhere in
+    // the sentence. `calibrated_uncertainty` is still in the payload, where a
+    // consumer needs it; it is not in the sentence a reader reads.
+    assert.match(s.model_limit, /has not been calibrated for uncertainty/i)
+    assert.doesNotMatch(s.model_limit, /calibrated_uncertainty/)
+    assert.doesNotMatch(s.model_limit, /\b[a-z]+_[a-z_]+\b/, 'no machine identifiers in the disclaimer')
     assert.ok(Number.isFinite(s.diff.baseline_flood_risk_mean), 'the baseline the delta is measured against must be reported')
     assert.ok(Number.isFinite(s.diff.scenario_flood_risk_mean))
   })

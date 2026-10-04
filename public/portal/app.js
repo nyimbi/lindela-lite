@@ -1,7 +1,7 @@
 import { initI18n, t, apiFetch, initOfflineBanner, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
-import { ERROR, EMPTY, describeState, distinguishFailure } from '/shared/states.js'
-import { esc as escapeHtml, formatTimestamp, num, pct, sevClass, truncate } from '/shared/fmt.js'
+import { ERROR, EMPTY, LOADING, OK, createLoadSequence, describeState, distinguishFailure } from '/shared/states.js'
+import { esc as escapeHtml, formatTimestamp, num, pct, sevChipHtml, truncate } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 mountNavbar({ activePath: '/portal' })
 
@@ -28,6 +28,29 @@ const $ = (id) => document.getElementById(id)
 
 const apiKey = () => localStorage.getItem('lindela_lite_api_key')
 
+/** One load in flight at a time. `loadData` is reachable from its own retry
+ *  button, and two overlapping partner loads would otherwise let the slower,
+ *  older response write last. */
+const loadSequence = createLoadSequence()
+
+/**
+ * The surface's status line, and the only three things it is ever allowed to
+ * say.
+ *
+ * It was absent entirely, so a partner watched a blank page through two
+ * sequential round trips and could not distinguish a portal that was working
+ * from a portal that was broken. `setLoadState` is deliberately the only way to
+ * write to it: the working state cannot be left behind, because every call
+ * site that starts a load also calls this once it has settled.
+ */
+function setLoadState(stateName, detail = {}) {
+  const el = $('load-status')
+  if (!el) return
+  const copy = describeState(stateName, detail)
+  el.dataset.state = stateName
+  el.textContent = copy.title
+}
+
 const localeSelect = $('locale-select')
 const signoutBtn = $('signoutBtn')
 const authPanel = $('authPanel')
@@ -37,6 +60,11 @@ const partnerOrgDisplay = $('partnerOrg')
 async function init() {
   await initI18n(state.locale)
   initOfflineBanner()
+
+  // Set here rather than only in the HTML: a retry re-enters `init`, and the
+  // partner is owed the working state again for the round trip that retry
+  // starts.
+  setLoadState(LOADING, { noun: 'this partner portal' })
 
   localeSelect.value = state.locale
   localeSelect.addEventListener('change', async (e) => {
@@ -89,6 +117,9 @@ async function init() {
     partnerOrgDisplay.textContent = identity?.data?.auth_configured
       ? 'No partner scope on this token'
       : 'Authentication is not configured'
+    // The server answered; the partner's scope is the reason there is nothing
+    // to show. The loading line has no work left to describe.
+    setLoadState(OK)
     return
   }
 
@@ -122,6 +153,9 @@ function setupTabs() {
 }
 
 async function loadData() {
+  const token = loadSequence.start()
+  setLoadState(LOADING, { noun: 'the four tables' })
+
   const load = async (key, path) => {
     try {
       const data = (await apiFetch(path, { token: apiKey() })).data || []
@@ -151,6 +185,13 @@ async function loadData() {
     load('alerts', '/api/v1/rapidpro/dispatches'),
   ])
 
+  // A load superseded by a newer one writes nothing at all — not even to
+  // `state`. Its rows are for a partner view the reader has already moved
+  // past, and letting it reach the shared state while withholding only the
+  // render would leave the tables on screen describing one period and the
+  // state behind them describing another.
+  if (!loadSequence.isCurrent(token)) return
+
   const loaded = Object.assign({}, ...results)
   for (const key of COLLECTIONS) {
     state.data[key] = loaded[key].data
@@ -168,7 +209,13 @@ async function loadData() {
   renderAssetsTable()
   renderAlertsTable()
 
+  // Settled on both paths, before the render branch below decides what to say.
+  // A status line that resolves when the answer arrives but not when the
+  // request dies is the same defect as one that never resolves.
+  loadSequence.settle(token)
+
   const failed = COLLECTIONS.filter((k) => state.loaded[k] === ERROR)
+  setLoadState(failed.length ? ERROR : OK)
   $('portalError')?.remove()
   if (failed.length) {
     const copy = describeState(ERROR, {
@@ -221,6 +268,7 @@ function renderStatePanel(container, copy, { retry } = {}) {
 function renderIdentityFailure() {
   authPanel.style.display = 'block'
   partnerOrgDisplay.textContent = 'Connection lost'
+  setLoadState(ERROR, { subject: 'This partner portal' })
 
   // The panel ships with "Authentication required" and "Sign in with your
   // partner credentials". On a dead socket both are false — the partner is not
@@ -291,8 +339,7 @@ function renderTable(bodyId, { rows, columns, sortKey, limit = 100, collection }
   }
 }
 
-const severityCell = (value) =>
-  `<span class="sev-chip sev-${sevClass(value)}">${escapeHtml(value || 'unknown')}</span>`
+const severityCell = (value) => sevChipHtml(value)
 
 function renderRiskTable() {
   renderTable('riskTableBody', {

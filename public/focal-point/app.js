@@ -1,8 +1,8 @@
 import { initI18n, t, apiFetch, initOfflineBanner, initServiceWorker, autoMarkScrollableRegions } from '/shared/runtime.js'
-import { esc as escapeHtml, formatTimestamp, sevClass } from '/shared/fmt.js'
+import { esc as escapeHtml, formatTimestamp, sevChipHtml } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { mountNavbar } from '/shared/navbar.js'
-import { ERROR, describeState, distinguishFailure } from '/shared/states.js'
+import { ERROR, LOADING, OK, createLoadSequence, describeActionFailure, describeState, distinguishFailure } from '/shared/states.js'
 mountNavbar({ activePath: '/focal-point' })
 
 // Registration used to be hand-rolled here *and* performed by initServiceWorker
@@ -23,6 +23,9 @@ const state = {
 }
 
 const $ = (id) => document.getElementById(id)
+
+/** One load in flight at a time, so a superseded response cannot write last. */
+const loadSequence = createLoadSequence()
 
 /** `t`, but with a fallback: `t` echoes the key back when nothing is translated. */
 const tr = (key, fallback) => {
@@ -102,7 +105,15 @@ function renderQueueState(container, stateName, { subject, retry }) {
 async function loadData() {
   connectionStatus.textContent = '●'
   connectionStatus.style.color = 'var(--ok)'
-  statusText.textContent = 'Loading...'
+
+  // One running tally for the whole surface. A retry clicked twice, or a retry
+  // overlapping the periodic refresh, would otherwise let the *older* response
+  // write last — and the older response is the one for a queue that has since
+  // changed.
+  const token = loadSequence.start()
+  const working = describeState(LOADING, { noun: 'the approval queue, the protocols and the decisions' })
+  statusText.textContent = working.title
+  statusText.dataset.state = LOADING
 
   // Settled, not all-or-nothing: a dead protocol endpoint must not blank the
   // approval queue, and a dead queue must not blank the protocol list. Each is
@@ -120,6 +131,13 @@ async function loadData() {
     load(`/api/v1/trigger-protocols`),
     load(`/api/v1/alert-events`),
   ])
+
+  // A load superseded by a newer one writes nothing at all — not even to
+  // `state`. Its queue is one the operator has already moved past, and letting
+  // it reach the cards while withholding only the status line would put the
+  // wrong approvals on screen. This is also what stops a second click on the
+  // retry button stranding the surface at "Loading…": the loser simply leaves.
+  if (!loadSequence.isCurrent(token)) return
 
   const states = {
     pending: distinguishFailure({ ok: !workflows.error, error: workflows.error, isEmpty: !workflows.data?.data?.length }),
@@ -163,18 +181,27 @@ async function loadData() {
   }
 
   const anyFailed = Object.values(states).includes(ERROR)
+  // The working state is retired here and only here — on the failure path as
+  // well as the success path. A status line that resolves when the answer
+  // arrives but not when the request dies is the same defect as one that never
+  // resolves.
+  loadSequence.settle(token)
+  statusText.dataset.state = anyFailed ? ERROR : OK
   if (anyFailed) {
     connectionStatus.style.color = 'var(--sev-high)'
-    statusText.textContent = 'Could not reach the server'
+    statusText.textContent = describeState(ERROR, { subject: 'The approval queue, the protocols and the decisions' }).title
   } else {
-    statusText.textContent = 'Ready'
+    const counts = `${state.pending.length} to review · ${state.protocols.length} active`
+    statusText.textContent = `Ready — ${counts}.`
   }
 }
 
-function severityClass(severity) {
-  // Allowlisted: this value came off the API and was interpolated straight
-  // into a class name.
-  return `severity-${sevClass(severity)}`
+function severityChip(severity) {
+  // Allowlisted: this value came off the API and was interpolated straight into
+  // a class name. shared/fmt.js emits the one class pair every surface styles
+  // (HX-07); this surface used to declare its own `.severity-*` pair and render
+  // `HIGH` in a 12px pill where the console rendered `high` in a 3px one.
+  return sevChipHtml(severity)
 }
 
 /** Absolute, with its zone. `toLocaleString` gave "9/28/2026, 6:55:29 AM". */
@@ -400,7 +427,7 @@ async function renderPending(workflows, alertIndex = new Map(), protocols = []) 
   return `
     <div class="workflow-card">
       <div class="card-header">
-        <span class="severity-chip ${severityClass(severity)}">${escapeHtml(severity)}</span>
+        ${severityChip(severity)}
         <span class="card-district">${escapeHtml(district || 'District not stated')}</span>
         <span class="queue-position">${i + 1} of ${total}</span>
       </div>
@@ -655,8 +682,19 @@ dialogConfirmBtn.addEventListener('click', async () => {
     )
     await loadData()
   } catch (error) {
-    announceDecision(`Could not record the decision: ${error.message}. Nothing was changed.`)
-    statusText.textContent = `Error: ${error.message}`
+    // `error.message` is a machine handle — "Failed to fetch", "HTTP 502", a
+    // field name. It goes to the console, where it is worth something. It does
+    // not go into a sentence the operator reads, because there it is noise that
+    // looks like an explanation. This is the same sentence every surface now
+    // uses for a failed write, so it can be grepped and so it can be learned.
+    console.error('focal-point: decision transition failed', error)
+    const failure = describeActionFailure({
+      action: 'record the decision',
+      nextStep: 'Nothing was approved or rejected, and the queue is unchanged. Try again.',
+    })
+    announceDecision(`${failure.title}. ${failure.body}`)
+    statusText.textContent = failure.title
+    statusText.dataset.state = ERROR
   } finally {
     dialogConfirmBtn.disabled = false
   }

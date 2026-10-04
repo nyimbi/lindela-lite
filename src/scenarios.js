@@ -255,7 +255,7 @@ export function runScenario(data, input = {}) {
       scenario_conflict_risk_mean: round2(conflict_risk_scenario),
       regions_compared: risk_scores.length,
     },
-    model_limit: 'Delta is the change in the mean of an uncalibrated 0-100 sensitivity score, in score points. It is not a percentage, not a probability, and not a forecast: the underlying score reflects data coverage as well as conditions, and carries calibrated_uncertainty: false.',
+    model_limit: 'Delta is the change in the mean of an uncalibrated 0-100 sensitivity score, in score points. It is not a percentage, not a probability, and not a forecast: the underlying score reflects data coverage as well as conditions, and has not been calibrated for uncertainty.',
     generated_at: nowIso(),
   }
 }

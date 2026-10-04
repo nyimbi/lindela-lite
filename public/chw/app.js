@@ -1,7 +1,7 @@
 import { initI18n, t, apiFetch, initOfflineBanner, initOfflineQueue, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
 import { esc as escapeHtml } from '/shared/fmt.js'
-import { ERROR, QUEUED, describeState, distinguishFailure } from '/shared/states.js'
+import { ERROR, LOADING, QUEUED, createLoadSequence, describeActionFailure, describeState, distinguishFailure } from '/shared/states.js'
 mountNavbar({ activePath: '/chw' })
 
 const state = {
@@ -60,6 +60,9 @@ let userLocationError = null
 
 /** A geolocation attempt in flight, so a second tap cannot start a second one. */
 let geoRequest = null
+
+/** One alert fetch in flight at a time, so a superseded response cannot paint. */
+const alertLoads = createLoadSequence()
 
 /** Why there is no fix, in the words of the person holding the phone. */
 const GEO_FAILURES = {
@@ -363,6 +366,33 @@ async function refreshQueueStatus() {
 window.addEventListener('lindela-queue-changed', () => { refreshQueueStatus() })
 window.addEventListener('lindela-queue-flushed', () => { refreshQueueStatus() })
 
+/**
+ * One sentence for a report or reply that did not reach the server.
+ *
+ * All three submission paths used to render `error.message` into the toast:
+ * "Could not save: Failed to fetch. Nothing was lost — try again." A health
+ * worker holding a phone in a place with two bars of signal is told the word
+ * "fetch", which is a name for something happening in software and not for
+ * something happening to their report. The machine text goes to the console,
+ * where it is worth something; the sentence is a sentence.
+ *
+ * The same three events also used to fail in three different shapes. They are
+ * now one template from /shared/states.js, so it can be grepped and learned.
+ */
+function reportSendFailure(error, what) {
+  console.error(`chw: ${what} not sent`, error)
+  // The shared template always produces a sentence; the catalogue supplies a
+  // translated one where this locale has it. `t` echoes the key back when it
+  // does not, and a health worker must never be shown `chw.save_failed`.
+  const fallback = describeActionFailure({
+    action: `send the ${what}`,
+    nextStep: 'Nothing was saved and nothing was lost — if there is no connection, it will wait on this phone until there is one.',
+  })
+  const sentence = `${fallback.title}. ${fallback.body}`
+  const translated = t('chw.save_failed', { what })
+  showToast(!translated || translated === 'chw.save_failed' ? sentence : translated, 'error')
+}
+
 function showToast(message, kind = 'info') {
   toast.textContent = message
   toast.dataset.kind = kind
@@ -376,8 +406,12 @@ function setupHomeScreen() {
   $('reportSymptomBtn').addEventListener('click', () => showScreen('symptom'))
   $('reportIncidentBtn').addEventListener('click', () => showScreen('incident'))
   $('replyAlertBtn').addEventListener('click', async () => {
-    await loadLastAlert()
+    // The screen opens first and the card fills itself in front of the worker.
+    // It used to await the fetch before showing anything, so on a slow link the
+    // tap did nothing at all for the length of a round trip — the working state
+    // it now renders was being written to a hidden element.
     showScreen('reply')
+    await loadLastAlert()
   })
 }
 
@@ -600,7 +634,7 @@ async function submitSymptomReport() {
     showScreen('home')
     refreshQueueStatus()
   } catch (error) {
-    showToast(t('chw.save_failed', { reason: error.message }), 'error')
+    reportSendFailure(error, 'symptom report')
   }
 }
 
@@ -722,7 +756,7 @@ function setupIncidentScreen() {
       showScreen('home')
       refreshQueueStatus()
     } catch (error) {
-      showToast(t('chw.save_failed', { reason: error.message }), 'error')
+      reportSendFailure(error, 'incident report')
     }
   })
 
@@ -746,6 +780,17 @@ async function loadLastAlert() {
   // alert would be filed against the wrong event, and the server would accept it.
   delete text.dataset.alertId
 
+  // The working state, written by the request that is running rather than left
+  // behind in the HTML. "Loading alert..." used to be static markup, so it was
+  // on screen before anything had been asked for, and it stayed on screen if the
+  // request died without ever reaching this function again. A word that means
+  // "working" and is not driven by the working is the same defect as a spinner
+  // that outlives its request.
+  const token = alertLoads.start()
+  const working = describeState(LOADING, { noun: 'the latest alert' })
+  text.dataset.state = LOADING
+  text.textContent = `${working.title} ${working.body}`
+
   let res = null
   let error = null
   try {
@@ -754,11 +799,18 @@ async function loadLastAlert() {
     error = err
   }
 
+  // A second tap on "Reply" supersedes the first; its response must not paint
+  // over the card the second one is already loading.
+  if (!alertLoads.isCurrent(token)) return
+
   const stateName = distinguishFailure({
     ok: !error,
     error,
     isEmpty: !res?.data?.length,
   })
+
+  // Settled on both paths. The working state above has a single exit.
+  alertLoads.settle(token)
 
   if (stateName === ERROR) {
     const queued = await window.lindelaQueue?.pendingCount?.() ?? 0
@@ -798,6 +850,12 @@ function setupReplyScreen() {
 
     if (!message) return
 
+    // The reply is the only submission here whose button stays reachable for
+    // the duration of the request, and the only one with a message field the
+    // worker would have to retype. Disabled while it is in flight, restored on
+    // both outcomes.
+    const replyBtn = $('replySubmitBtn')
+    replyBtn.disabled = true
     try {
       if (!navigator.onLine) {
         await queueReport('/api/v1/chw/reply', {
@@ -815,7 +873,9 @@ function setupReplyScreen() {
       showScreen('home')
       refreshQueueStatus()
     } catch (error) {
-      showToast(t('chw.save_failed', { reason: error.message }), 'error')
+      reportSendFailure(error, 'reply')
+    } finally {
+      replyBtn.disabled = false
     }
   })
 

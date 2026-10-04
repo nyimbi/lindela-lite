@@ -4,8 +4,11 @@ import { describe, it } from 'node:test'
 import {
   EMPTY,
   ERROR,
+  LOADING,
   OK,
   QUEUED,
+  createLoadSequence,
+  describeActionFailure,
   describeState,
   distinguishCollection,
   distinguishFailure,
@@ -149,5 +152,117 @@ describe('distinguishCollection', () => {
     // A caller that never loaded anything has checked nothing. Rendering the
     // empty state there is the original defect in miniature.
     assert.equal(distinguishCollection({}).state, ERROR)
+  })
+})
+describe('LOADING — the state a request is in, not a result', () => {
+  it('is one of the four screens, and is distinct from empty', () => {
+    // Not empty. The defect CE-07 records is a request that is visibly in
+    // flight rendering as though there were nothing to show, or — worse —
+    // sitting on a status line for the rest of the session.
+    assert.notEqual(LOADING, EMPTY)
+    assert.notEqual(LOADING, OK)
+    assert.notEqual(LOADING, ERROR)
+  })
+
+  it('names what is being checked', () => {
+    const copy = describeState(LOADING, { noun: 'the approval queue' })
+    assert.match(copy.title, /Loading/)
+    assert.match(copy.body, /the approval queue/)
+  })
+
+  it('promises a terminal state, because a spinner that can outlive its request is the defect', () => {
+    // The sentence has to say what happens next. A working state that says
+    // nothing about its own end is one nobody can tell from a hung request.
+    const copy = describeState(LOADING, { noun: 'the latest alert' })
+    assert.match(copy.body, /replaced once the server answers/)
+    assert.match(copy.body, /if it cannot/)
+  })
+
+  it('reads as a sentence with no detail at all, rather than as a key or a blank', () => {
+    // No noun supplied: the surface said nothing about what it was fetching,
+    // and the fallback must still be a sentence a person can read.
+    const copy = describeState(LOADING)
+    assert.match(copy.body, /Checking .+\./)
+    assert.doesNotMatch(copy.body, /undefined|null|\{\w+\}/)
+  })
+
+  it('is never retryable — there is nothing to retry yet', () => {
+    assert.equal(describeState(LOADING, { noun: 'x' }).retryable, false)
+    assert.equal(describeState(LOADING, { noun: 'x' }).action, null)
+  })
+})
+
+describe('createLoadSequence — a status line that cannot be stranded', () => {
+  it('reports pending until the load that is running settles', () => {
+    const seq = createLoadSequence()
+    assert.equal(seq.pending, false, 'nothing has been started, so nothing is pending')
+    const token = seq.start()
+    assert.equal(seq.pending, true)
+    seq.settle(token)
+    assert.equal(seq.pending, false, 'a settled load is not pending, on the success path or the failure path')
+  })
+
+  it('refuses to settle a load that a newer one has superseded', () => {
+    // Changing the quarter twice, or clicking a retry while the first retry is
+    // still running: the loser must not write last. This is the failure that
+    // strands a status line at "Loading…" and paints the wrong period.
+    const seq = createLoadSequence()
+    const first = seq.start()
+    const second = seq.start()
+    assert.equal(seq.isCurrent(first), false)
+    assert.equal(seq.isCurrent(second), true)
+    assert.equal(seq.settle(first), null, 'a superseded load writes nothing')
+    assert.equal(seq.settle(second), second)
+  })
+
+  it('does not let a superseded load leave the surface pending-free', () => {
+    // The newer load is still running, so the surface is still working. A
+    // `settle` that ignored the token would mark the surface done while the
+    // only request that matters has not answered.
+    const seq = createLoadSequence()
+    const first = seq.start()
+    seq.start()
+    assert.equal(seq.settle(first), null)
+    assert.equal(seq.pending, true)
+  })
+
+  it('hands out a fresh token every time', () => {
+    const seq = createLoadSequence()
+    assert.notEqual(seq.start(), seq.start())
+    const third = seq.start()
+    assert.equal(seq.token, third)
+  })
+})
+
+describe('describeActionFailure — one sentence for something that did not happen', () => {
+  it('names the action in the title and the next step in the body', () => {
+    const copy = describeActionFailure({
+      action: 'record the decision',
+      nextStep: 'Nothing was approved or rejected. Try again.',
+    })
+    assert.equal(copy.title, 'Could not record the decision')
+    assert.equal(copy.body, 'Nothing was approved or rejected. Try again.')
+    assert.equal(copy.tone, 'critical')
+  })
+
+  it('has no parameter through which a machine string can be interpolated', () => {
+    // CE-04 and CE-06 are the same defect seen from two ends: `error.message`
+    // spliced into a sentence. "Failed to fetch" and "HTTP 502" are names for
+    // events in software, not for anything happening to the reader's work. The
+    // signature is the guard — `reason` is not an accepted key, so no call site
+    // can reach for it.
+    // Passing a `reason` is not an error — it is silently not used, which is
+    // the point: an untranslated extra property cannot reach the sentence.
+    const accepted = describeActionFailure({ reason: 'Failed to fetch' }).body
+    assert.doesNotMatch(accepted, /Failed to fetch/)
+    assert.doesNotMatch(accepted, /\breason\b/)
+  })
+
+  it('defaults to the two facts a reader needs before pressing the button again', () => {
+    const copy = describeActionFailure({ action: 'save the report' })
+    assert.match(copy.body, /Nothing was changed/)
+    assert.match(copy.body, /Try again/)
+    assert.equal(copy.retryable, false)
+    assert.equal(copy.action, null)
   })
 })

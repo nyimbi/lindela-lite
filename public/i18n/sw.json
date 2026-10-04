@@ -125,6 +125,7 @@
   "co.spark_summary": "{label}, {months}: {dir} kuanzia {first} hadi {last}, miezi {n} yenye thamani",
   "co.status_failed": "Imeshindikana kupakia dashibodi kwa {period}.",
   "co.status_loaded": "Sehemu {loaded} zimepakia kwa {period}.",
+  "co.status_loading": "Inakagua takwimu za {period}.",
   "co.status_partial": "Sehemu {loaded} kati ya {total} zimepakia kwa {period}; {failed} hazikuweza kupakiwa.",
   "co.title": "Dashibodi ya CO ya Lindela",
   "co.total": "Jumla",

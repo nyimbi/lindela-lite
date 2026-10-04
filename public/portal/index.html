@@ -281,6 +281,18 @@
         .export-buttons { flex-direction: column; }
         .export-btn { width: 100%; }
       }
+    /* The status line. Hidden the moment the surface reaches a terminal
+         state — the failure case leaves its own panel behind, which is where
+         the reader is sent. */
+      .portal-load-status {
+        margin: 0.5rem 0;
+        font-size: 0.875rem;
+        color: var(--ink-muted);
+      }
+      .portal-load-status[data-state="ok"],
+      .portal-load-status[data-state="error"] {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -310,6 +322,14 @@
     </header>
 
     <main id="main" tabindex="-1">
+    <!-- The portal had no status region at all: it fetched the partner's
+         identity and then four collections, and during both the page was a
+         blank <main> that said nothing. A partner on a slow link could not
+         tell a portal that was loading from a portal that was broken. Ships
+         in the working state so the gap before the module arrives is covered
+         too, and it is replaced on both the success and the failure path. -->
+    <p id="load-status" class="portal-load-status" role="status" aria-live="polite" data-state="loading">Loading…</p>
+
     <div id="authPanel" class="auth-panel" style="display: none;">
       <h2 data-i18n="portal.auth_required">Authentication required</h2>
       <p data-i18n="portal.auth_message">Sign in with your partner credentials to access the portal.</p>
