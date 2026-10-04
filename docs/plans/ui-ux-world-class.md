@@ -1024,3 +1024,23 @@ imported and never exported, and `rateLimiterFor` was called while declared as
 the call sites' expectations, not from a stated design, so the shape of the
 per-run recording — whether it should also carry response metadata, and what
 happens on a nested begin — is still undecided.
+
+### Closed
+
+All eleven phases are closed. `docs/improvements/status.md` records the thirty
+enhancement items as shipped, each with what the code does and where it refuses
+rather than guessing.
+
+Two things the last round of work found that the plan did not anticipate:
+
+- **Map colour was never tokenised.** The layers used raw `oklch()` literals in
+  `styles.css`, so the token layer could not reach them and the landmass rendered
+  as one dark-grey block on the light theme. Dark looked correct only because
+  SVG's default fill is black, so the invalid `var()` happened to match. A theme
+  block that a token was missing from entirely renders worse than no theme work
+  at all, because the fallback is invisible.
+- **The chart primitives had no call sites.** `lineChart` could draw an
+  uncertainty band and two tests guarded it, and no chart in the product ever
+  passed one to a reader. The same shape as the pager that had never rendered.
+  A capability with tests and no call site is not shipped.
+
