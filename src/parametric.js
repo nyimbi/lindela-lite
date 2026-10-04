@@ -40,6 +40,25 @@ function numberOrNull(value, field) {
   return n
 }
 
+/**
+ * The longest a rule name may be.
+ *
+ * 120 characters is roughly the longest string a person will read in one go
+ * before losing the thread, and it is the ceiling the parametric form's
+ * `maxlength` and the card's two-line clamp both assume. The client-side
+ * measures are a rendering decision; this one is the validation, and a rule
+ * created through the API bypasses the form entirely.
+ */
+export const MAX_RULE_NAME = 120
+
+function ruleName(value, existing) {
+  const name = String(value || existing?.name || 'Unnamed rule')
+  if (name.length > MAX_RULE_NAME) {
+    throw badRequest(`name must be at most ${MAX_RULE_NAME} characters, got ${name.length}`)
+  }
+  return name
+}
+
 export function normalizeParametricRule(input, existing = null) {
   const now = nowIso()
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -97,7 +116,7 @@ export function normalizeParametricRule(input, existing = null) {
 
   return {
     id: input.id || existing?.id || stableId('parametric_rule', [input.name, chain, now]),
-    name: input.name || existing?.name || 'Unnamed rule',
+    name: ruleName(input.name, existing),
     chain,
     contract_address: input.contract_address ?? existing?.contract_address ?? null,
     trigger_metric: input.trigger_metric ?? existing?.trigger_metric ?? null,

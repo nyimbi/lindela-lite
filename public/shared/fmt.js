@@ -85,9 +85,36 @@ export function sevClass(severity) {
   return SEVERITIES.has(s) ? s : 'medium'
 }
 
-/** Severity to an allowlisted class token, safe for any attribute position. */
+/**
+ * The class attribute for a severity chip.
+ *
+ * Returns `sev-chip sev-<level>` and nothing else. This helper existed and
+ * handed out `chip chip-<level>` — a spelling no surface's own CSS declared
+ * until one of them did, by which point severity was being styled four ways
+ * across the product (HX-07). A helper that emits a class string other than
+ * the one the stylesheet knows is worse than no helper, because the bypass is
+ * invisible at the call site.
+ *
+ * The returned string is safe in any attribute position: the level comes from
+ * the allowlist above and the prefix is a literal.
+ */
 export function sevChip(severity) {
-  return `chip chip-${sevClass(severity)}`
+  return `sev-chip sev-${sevClass(severity)}`
+}
+
+/**
+ * A complete severity chip: the canonical classes, the word, and the word
+ * again in a `title`.
+ *
+ * The `title` is what makes truncation safe. Any surface that shortens a
+ * severity label must still hand over the full one somewhere; the console's
+ * alert rail already does this for rule names and this is the same rule applied
+ * to the severity word itself.
+ */
+export function sevChipHtml(severity) {
+  const level = sevClass(severity)
+  const word = String(severity || '').trim().toLowerCase() || 'unknown'
+  return `<span class="${sevChip(severity)}" title="${esc(word)}">${esc(word)}</span>`
 }
 
 /**

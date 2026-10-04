@@ -846,34 +846,11 @@ body.app-shell {
   margin-top: var(--sp-1);
 }
 
-/* Severity chips */
-.sev-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 6px;
-  font-size: 0.625rem;
-  font-weight: 700;
-  border-radius: var(--r-sm);
-  letter-spacing: 0.03em;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-/* Severity read as tinted text at 10px. Measured against the body surface,
-   --sev-critical on its own 18% tint lands at roughly 4.3:1 — under the 4.5:1
-   AA floor for normal text — and 10px is well below the 12px at which a chip
-   stops being "large text" and gets the relaxed 3:1.
-
-   The fill now carries the hue and the text is body ink, which clears the floor
-   comfortably at any size. The word is always present beside the colour, so the
-   encoding never depends on hue alone. */
-.sev-chip { font-size: var(--text-xs); }
-
-.sev-critical { background: color-mix(in oklch, var(--sev-critical) 22%, transparent); color: var(--ink); box-shadow: inset 0 0 0 1px var(--sev-critical); }
-.sev-high     { background: color-mix(in oklch, var(--sev-high) 22%, transparent);     color: var(--ink); box-shadow: inset 0 0 0 1px var(--sev-high); }
-.sev-medium   { background: color-mix(in oklch, var(--sev-medium) 22%, transparent);   color: var(--ink); box-shadow: inset 0 0 0 1px var(--sev-medium); }
-.sev-low      { background: color-mix(in oklch, var(--sev-low) 22%, transparent);      color: var(--ink); box-shadow: inset 0 0 0 1px var(--sev-low); }
-.sev-unknown  { background: var(--surface);                                             color: var(--ink-muted); }
+/* Severity chips live in components.css, in one block covering all four class
+   spellings this product accumulated (`.sev-`, `.severity-`, `.chip-`, and the
+   one fmt.js invented). They used to be declared here for the console alone,
+   which is how the same word ended up a 3px square in one place and a 12px
+   pill in another — HX-07. */
 
 /* Status pills */
 .status-pill {

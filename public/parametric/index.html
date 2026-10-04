@@ -45,9 +45,12 @@
     }
 
     /* A 500-character rule name rendered as a 4301px element and pushed the
-       whole page sideways. The schema states no length for a name, so none is
-       invented here; the card is made to hold whatever it is given instead. */
-    .rule-card .rule-head strong { overflow-wrap: anywhere; }
+       whole page sideways (HX-14). It is clamped in components.css now
+       (`.clamp-2`), and `overflow-wrap: anywhere` below stays as the backstop
+       for anything that outgrows even the clamp. Clamping alone would delete a
+       fact, so every clamped element on this page also carries the full value
+       in a `title`, the same rule the console follows on alert rule names. */
+    .rule-card .rule-name { overflow-wrap: anywhere; }
     .rule-card .rule-meta span { overflow-wrap: anywhere; }
   </style>
 </head>
@@ -108,7 +111,7 @@
           <div>
             <label for="ruleName" data-i18n="parametric.field_name">Name</label>
             <input id="ruleName" type="text" placeholder="e.g. Flood trigger — Turkana" required
-                   aria-describedby="ruleNameError">
+                   maxlength="120" aria-describedby="ruleNameError">
             <p class="field-error" id="ruleNameError" hidden></p>
           </div>
           <div>

@@ -15,7 +15,7 @@
  * alerts with the definition of old hidden is a list nobody can argue with.
  */
 
-import { esc, formatRelative, num, sevClass } from '/shared/fmt.js'
+import { esc, formatRelative, num, sevChipHtml } from '/shared/fmt.js'
 
 const THRESHOLD_KEY = 'lindela_lite_escalation_days'
 const DEFAULT_DAYS = 3
@@ -122,7 +122,7 @@ export function mountEscalation({ getAlerts, openSubject }) {
     body.innerHTML = `<ul class="escalation-list">${rows.map(({ record, age }) => `
       <li class="escalation-item">
         <div>
-          <span class="sev-chip sev-${sevClass(record.severity)}">${esc(record.severity || 'unknown')}</span>
+          ${sevChipHtml(record.severity)}
           <span class="escalation-name">${esc(record.rule_name || record.id || '')}</span>
           <div class="escalation-meta">
             ${age === null

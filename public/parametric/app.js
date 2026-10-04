@@ -126,16 +126,16 @@ function renderRules() {
   list.innerHTML = rules.map((r) => `
     <div class="rule-card" data-rule-id="${esc(r.id)}">
       <div class="rule-head">
-        <strong>${esc(r.name)}</strong>
+        <strong class="rule-name clamp-2" title="${esc(r.name)}">${esc(r.name)}</strong>
         <span class="chain-badge">${esc(r.chain)}</span>
         <span class="muted-sm">${esc(r.status)}</span>
         <button type="button" class="btn btn-secondary rule-remove" data-remove-rule="${esc(r.id)}"
                 aria-label="${esc(removeLabel(r))}">Remove</button>
       </div>
       <div class="rule-meta">
-        <span><span class="meta-key">${esc(t('parametric.meta_triggers_when', 'Triggers when'))}</span> ${esc(metricLabel(r.trigger_metric))} ${r.trigger_threshold === null || r.trigger_threshold === undefined ? '' : `≥ ${esc(r.trigger_threshold)}`}</span>
-        <span><span class="meta-key">${esc(t('parametric.meta_releases', 'Releases'))}</span> ${num(r.disbursement_amount_local_currency, { int: true })} ${esc(r.currency || '')}</span>
-        <span><span class="meta-key">${esc(t('parametric.meta_focal_approval', 'Focal point approval'))}</span> ${esc(r.requires_focal_point_approval ? t('parametric.approval_required', 'required') : t('parametric.approval_not_required', 'not required'))}</span>
+        <span class="clamp-2" title="${esc(metricLabel(r.trigger_metric))}"><span class="meta-key">${esc(t('parametric.meta_triggers_when', 'Triggers when'))}</span> ${esc(metricLabel(r.trigger_metric))} ${r.trigger_threshold === null || r.trigger_threshold === undefined ? '' : `≥ ${esc(r.trigger_threshold)}`}</span>
+        <span class="clamp-2" title="${esc(t('parametric.meta_releases', 'Releases'))} ${esc(num(r.disbursement_amount_local_currency, { int: true }))} ${esc(r.currency || '')}"><span class="meta-key">${esc(t('parametric.meta_releases', 'Releases'))}</span> ${num(r.disbursement_amount_local_currency, { int: true })} ${esc(r.currency || '')}</span>
+        <span class="clamp-2"><span class="meta-key">${esc(t('parametric.meta_focal_approval', 'Focal point approval'))}</span> ${esc(r.requires_focal_point_approval ? t('parametric.approval_required', 'required') : t('parametric.approval_not_required', 'not required'))}</span>
       </div>
     </div>
   `).join('')

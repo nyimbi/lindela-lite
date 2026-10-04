@@ -37,62 +37,142 @@
   color: var(--ink);
 }
 
-/* --- Severity: shape and texture ---------------------------
-   The word beside the tint already existed. These two are the redundancy the
-   plan asked for, and they live here rather than in styles.css because three
-   surfaces spell the severity class three ways — `.sev-`, `.severity-`,
-   `.chip-` — and covering only the console's spelling would leave two of the
-   three reading hue alone.
+/* --- Severity chip -----------------------------------------
+   HX-07. Four surfaces spelled the same concept four ways, and the audit
+   measured the result: `/districts/` rendered `CRITICAL` in a 3px grey-on-tint
+   square, `/focal-point/` rendered `HIGH` in a 12px pill, the console rendered
+   `low` in a 3px pill with a different tint strength, and `shared/fmt.js`'s own
+   `sevChip()` handed out a fifth spelling. A user hopping between the district
+   list and the console re-learned what severity looked like on every hop.
 
-   Two channels because they fail independently: the glyph is a shape (survives
-   any deficiency and greyscale printing), the hatch is a texture (survives a
-   projector with no colour). */
+   One box, one case, one tint, one marker. The word is lowercase because that
+   is what the console — the densest and most-used surface — already did and the
+   two others were shouting over it; the glyph and the hatch below carry the
+   signal that the shouting used to.
 
-.sev-critical::before,
-.severity-critical::before,
-.chip-critical::before { content: var(--sev-marker-critical) ' '; }
-.sev-high::before,
-.severity-high::before,
-.chip-high::before { content: var(--sev-marker-high) ' '; }
-.sev-medium::before,
-.severity-medium::before,
-.chip-medium::before { content: var(--sev-marker-medium) ' '; }
-.sev-low::before,
-.severity-low::before,
-.chip-low::before { content: var(--sev-marker-low) ' '; }
-.sev-unknown::before,
-.severity-unknown::before,
-.chip-unknown::before,
-.chip-neutral::before { content: var(--sev-marker-unknown) ' '; }
+   The foreground is body ink on a hue tint, not white on the raw hue. Measured,
+   the raw hue at this size lands at ~3.2:1 for critical and ~2.2:1 for low —
+   three of four below the 4.5:1 AA floor, on the most operationally urgent
+   attribute in the product. The word is always present beside the tint, so
+   meaning never depends on hue alone.
+
+   Every selector below is prefixed with `body` deliberately. Two surfaces carry
+   their own copy of these rules in an inline <style> that loads after this file
+   and wins a specificity tie; `body` outranks them so the one chip declared
+   here is the one that renders. The copies are deleted as each of those files
+   is next opened — the selectors here are the record of what they must
+   converge to. */
+
+body .sev-chip,
+body .severity-chip,
+body .chip-critical,
+body .chip-high,
+body .chip-medium,
+body .chip-low,
+body .chip-unknown,
+body .chip-neutral,
+body .chip-ok {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  border-radius: var(--r-sm);
+  border: 0;
+  line-height: 1.5;
+  text-transform: none;
+  color: var(--ink);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+body .sev-unknown,
+body .chip-unknown,
+body .chip-neutral { background: var(--surface); color: var(--ink-muted); }
+
+body .sev-critical,
+body .chip-critical {
+  background: color-mix(in oklch, var(--sev-critical) 22%, transparent);
+  box-shadow: inset 0 0 0 1px var(--sev-critical);
+}
+body .sev-high,
+body .chip-high {
+  background: color-mix(in oklch, var(--sev-high) 22%, transparent);
+  box-shadow: inset 0 0 0 1px var(--sev-high);
+}
+body .sev-medium,
+body .chip-medium {
+  background: color-mix(in oklch, var(--sev-medium) 22%, transparent);
+  box-shadow: inset 0 0 0 1px var(--sev-medium);
+}
+body .sev-low,
+body .chip-low {
+  background: color-mix(in oklch, var(--sev-low) 22%, transparent);
+  box-shadow: inset 0 0 0 1px var(--sev-low);
+}
+/* Sentiment's positive pole. Not a severity class, so it stays out of the
+   severity ramp — but it is the same chip, and leaving it at a different tint
+   strength and with a border would make it the fifth spelling. */
+body .chip-ok {
+  background: color-mix(in oklch, var(--ok) 22%, transparent);
+  box-shadow: inset 0 0 0 1px var(--ok);
+}
+
+/* Shape and texture: the redundancy for anyone who cannot see the tint. Two
+   channels because they fail independently — the glyph is a shape (survives any
+   colour vision deficiency and greyscale printing), the hatch is a texture
+   (survives a projector with no colour left to project). */
+
+body .sev-critical::before,
+body .severity-critical::before,
+body .chip-critical::before { content: var(--sev-marker-critical) ' '; }
+body .sev-high::before,
+body .severity-high::before,
+body .chip-high::before { content: var(--sev-marker-high) ' '; }
+body .sev-medium::before,
+body .severity-medium::before,
+body .chip-medium::before { content: var(--sev-marker-medium) ' '; }
+body .sev-low::before,
+body .severity-low::before,
+body .chip-low::before { content: var(--sev-marker-low) ' '; }
+body .sev-unknown::before,
+body .severity-unknown::before,
+body .chip-unknown::before,
+body .chip-neutral::before { content: var(--sev-marker-unknown) ' '; }
+/* `.chip-ok` gets no marker on purpose. Sentiment is not on the severity ramp,
+   and borrowing low's '●' for it would put two unrelated meanings on one
+   glyph — the same collision the ramp exists to prevent. */
 
 /* 0.85em, so a 12px chip widens by two characters rather than four.
    `.sev-chip` is flex-shrink:0 in a nowrap row: every character here is one the
    row cannot give up at 320px, and check-a11y.mjs's reflow probe measures it. */
-.sev-chip::before,
-.severity-chip::before,
-.chip::before { font-size: 0.85em; line-height: 1; }
+body .sev-chip::before,
+body .severity-chip::before,
+body .chip-critical::before,
+body .chip-high::before,
+body .chip-medium::before,
+body .chip-low::before,
+body .chip-unknown::before,
+body .chip-neutral::before { font-size: 0.85em; line-height: 1; }
 
 /* Densest hatch is the worst class; `low` gets none at all, because a texture
    meaning "slightly less bad" is worse than one meaning "nothing here". */
-.sev-critical,
-.severity-critical,
-.chip-critical {
+body .sev-critical,
+body .chip-critical {
   background-image: repeating-linear-gradient(
     45deg,
     color-mix(in oklch, var(--sev-critical) 28%, transparent) 0 2px,
     transparent 2px var(--sev-hatch-critical));
 }
-.sev-high,
-.severity-high,
-.chip-high {
+body .sev-high,
+body .chip-high {
   background-image: repeating-linear-gradient(
     45deg,
     color-mix(in oklch, var(--sev-high) 28%, transparent) 0 2px,
     transparent 2px var(--sev-hatch-high));
 }
-.sev-medium,
-.severity-medium,
-.chip-medium {
+body .sev-medium,
+body .chip-medium {
   background-image: repeating-linear-gradient(
     90deg,
     color-mix(in oklch, var(--sev-medium) 28%, transparent) 0 2px,
@@ -117,6 +197,33 @@
   color: var(--ink-muted);
   font-size: var(--text-sm);
 }
+
+/* --- Clamping long values ------------------------------------
+   HX-14. A 500-character rule name rendered a 4301px element inside a 375px
+   viewport, and its `.rule-meta` sibling 3371px. The page-level scrollWidth was
+   contained only because an ancestor scrolled, so the overflow was invisible to
+   every gate while pushing the whole card grid out of alignment.
+
+   `min-width: 0` is not optional in a flex or grid child: without it the item
+   sizes to its content's min-content width and the clamp has nothing to clamp
+   against. `-webkit-line-clamp` is the only line-clamp with browser support
+   that does not require a fixed height, and the value is short enough to stay
+   declarative.
+
+   A clamp alone deletes a fact. Every element carrying one must also carry the
+   full value in a `title` — the same rule the console already follows on alert
+   rule names, where `truncate()` shortens the visible text and `title=` keeps
+   the original one hop away. */
+.clamp-2,
+.clamp-3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.clamp-2 { -webkit-line-clamp: 2; }
+.clamp-3 { -webkit-line-clamp: 3; }
 
 /* --- Notices ------------------------------------------------ */
 /* Replaces hardcoded pastel panels (#f0fdf4, #fffbeb, #fef2f2) that had been
@@ -207,6 +314,16 @@
   align-items: center;
   gap: var(--sp-2);
   flex-wrap: wrap;
+}
+
+/* The rule name is the only thing distinguishing one rule card from the next,
+   so it is the element that must not be the one that overflows. `flex-basis:
+   12rem` rather than `auto` so the name claims a share of the row and the
+   badges keep theirs; `min-width: 0` so `.clamp-2` on the name has a width to
+   clamp against rather than the content's min-content width. */
+.rule-head > .rule-name {
+  flex: 1 1 12rem;
+  min-width: 0;
 }
 
 /* The metadata line was a run-on string with pipes. A definition grid reads as
