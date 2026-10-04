@@ -34,11 +34,20 @@ export const SCHEMA_VERSION = 3
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
-    name: 'payload_hash column',
-    // The statement this build used to issue on every connect. Kept as
+    name: 'payload_hash and ledger columns',
+    // The statements this build used to issue on every connect. Kept as
     // migration 1 because a database created before payload_hash existed is
     // still out there, and rewriting the column list in place would be a
     // migration disguised as a CREATE TABLE.
+    //
+    // The ledger column is here rather than in migration 2 for a reason that
+    // only a real database reveals: the runner records each migration's
+    // completion by inserting a row that names `schema_version`, so the column
+    // has to exist before the *first* ledger row can be written. With the
+    // statement in migration 2, applying migration 1 on a fresh database
+    // failed with `column "schema_version" of relation "lite_records" does not
+    // exist` — and no test noticed, because every Postgres test in the project
+    // skipped itself.
     up: [
       'ALTER TABLE lite_records ADD COLUMN IF NOT EXISTS payload_hash TEXT',
       `UPDATE lite_records
@@ -47,16 +56,17 @@ export const MIGRATIONS = Object.freeze([
       `CREATE INDEX IF NOT EXISTS lite_records_collection_hash_idx
          ON lite_records (collection, payload_hash)
        WHERE payload_hash IS NOT NULL`,
+      'ALTER TABLE lite_records ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1',
     ],
   }),
   Object.freeze({
     version: 2,
-    name: 'schema_version ledger',
-    // The column that makes the rest possible. `IF NOT EXISTS` because this is
-    // also the statement that creates it, and the first migration in the list
-    // has to be safe to run against a table that predates the ledger.
+    name: 'schema_version ledger index',
+    // The ledger is three rows at most and read once per connect, so this index
+    // buys little. It is here because it was there, and removing it is a
+    // downgrade someone would have to reason about on a deployment where the
+    // ledger has grown rows this project has not imagined.
     up: [
-      'ALTER TABLE lite_records ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1',
       `CREATE INDEX IF NOT EXISTS lite_records_schema_version_idx
          ON lite_records (schema_version)
        WHERE collection = '__schema'`,
@@ -74,11 +84,69 @@ export const MIGRATIONS = Object.freeze([
     // columns — a region column that a client could set to something other
     // than what the body says is a query that returns the wrong rows.
     up: [
+      // Three spellings of the same idea, because the connectors disagree and
+      // an index that only answers for one of them answers for a third of the
+      // queries made of it.
       `ALTER TABLE lite_records ADD COLUMN IF NOT EXISTS region TEXT
-         GENERATED ALWAYS AS (body->>'district') STORED`,
+         GENERATED ALWAYS AS (
+           COALESCE(body->>'district', body->>'region', body->>'area')
+         ) STORED`,
+      // The long hand is the only hand available.
+      //
+      // A generated column's expression must be IMMUTABLE, and every obvious
+      // way of turning `body->>'observed_at'` into a timestamptz is not:
+      // `::timestamptz` and `::timestamp` both resolve to STABLE input
+      // functions, and so does the two-argument `to_timestamp(text, text)`.
+      // Postgres rejects all three with "generation expression is not
+      // immutable". `make_timestamp` is immutable, and `timezone(text,
+      // timestamp)` is immutable, so together they parse an ISO-8601 instant
+      // into a timestamptz that a STORED column may hold.
+      //
+      // The regex guard is what makes this safe against the field the sixteen
+      // connectors actually send: a record with `observed_at: ''` or
+      // `observed_at: 'last Tuesday'` becomes NULL rather than failing the
+      // INSERT that stores it. A migration that rejects the data this product
+      // ingests is not a migration, it is an outage on a district server.
+      //
+      // The nested CASE is the second half of that promise. The regex admits
+      // `2026-02-31T00:00:00Z` — nine digits and a T — and `make_timestamp`
+      // answers that with "date field value out of range", so every month, day
+      // and hour is range-checked before it is handed over. Without those
+      // checks a single malformed row already in the table makes migration 3
+      // fail on the machine that has to run it.
+      //
+      // February is capped at 28, so 29 February yields NULL in a leap year.
+      // One day in four, for a column whose whole job is to make a query
+      // cheaper, is a trade worth making; rejecting the writes is not.
       `ALTER TABLE lite_records ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ
          GENERATED ALWAYS AS (
-           NULLIF(body->>'observed_at', '')::timestamptz
+           CASE
+             WHEN body->>'observed_at'
+                  ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}'
+             THEN CASE
+               WHEN substring(body->>'observed_at', 6, 2)::int BETWEEN 1 AND 12
+                AND substring(body->>'observed_at', 9, 2)::int BETWEEN 1 AND CASE
+                      substring(body->>'observed_at', 6, 2)::int
+                      WHEN 2 THEN 28 WHEN 4 THEN 30 WHEN 6 THEN 30
+                      WHEN 9 THEN 30 WHEN 11 THEN 30 ELSE 31 END
+                AND substring(body->>'observed_at', 12, 2)::int <= 23
+                AND substring(body->>'observed_at', 15, 2)::int <= 59
+                AND substring(body->>'observed_at', 18, 2)::int <= 60
+               THEN timezone('UTC', make_timestamp(
+                 substring(body->>'observed_at', 1, 4)::int,
+                 substring(body->>'observed_at', 6, 2)::int,
+                 substring(body->>'observed_at', 9, 2)::int,
+                 substring(body->>'observed_at', 12, 2)::int,
+                 substring(body->>'observed_at', 15, 2)::int,
+                 (
+                   substring(body->>'observed_at', 18, 2)::int
+                   + COALESCE(NULLIF(substring(body->>'observed_at', 21, 3), '')::numeric, 0) / 1000
+                 )::double precision
+               ))
+               ELSE NULL
+             END
+             ELSE NULL
+           END
          ) STORED`,
       `CREATE INDEX IF NOT EXISTS lite_records_region_idx
          ON lite_records (collection, region)

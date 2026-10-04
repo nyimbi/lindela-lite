@@ -4,73 +4,192 @@ import { emptyStore } from './schema.js'
 import { nowIso } from './utils.js'
 import { BITEMPORAL_COLLECTIONS, isRevision, versionRow } from './bitemporal.js'
 
-export const COLLECTIONS = [
-  'source_runs',
-  'ingestion_schedules',
+/**
+ * The six collections `replaceAnalytics` owns.
+ *
+ * Declared here rather than in the two method signatures because the signature
+ * is where they drifted: `PostgresStore.replaceAnalytics` once took four
+ * parameters where the caller passes six, so `population_at_risk` and
+ * `facilities_at_risk` — the figures that turn hazard intensity into
+ * consequence — were computed and thrown away, and nothing errored. A list this
+ * method reads cannot be short by one without the test noticing, because both
+ * adapters iterate the same declaration.
+ */
+export const DERIVED_COLLECTIONS = Object.freeze([
+  'risk_scores',
+  'impact_assessments',
+  'data_quality',
+  'population_at_risk',
+  'facilities_at_risk',
+  'road_access',
+])
+
+/**
+ * The ingestable collections that get a quarantine home.
+ *
+ * One entry produces one `quarantine_<collection>` key, so the name of a
+ * quarantine collection cannot be spelled differently from the collection it
+ * shadows — the failure the six hand-written names were one typo away from.
+ */
+export const QUARANTINE_SOURCES = Object.freeze([
   'climate_observations',
   'hazard_events',
   'conflict_events',
   'service_assets',
-  'impact_assessments',
-  'risk_scores',
-  'data_quality',
-  'population_at_risk',
-  'facilities_at_risk',
-  'data_lineage',
-  'incidents',
-  'interventions',
-  'intervention_tasks',
-  'field_reports',
-  'response_resources',
-  'action_logs',
-  'alert_rules',
-  'alert_events',
-  'trigger_protocols',
-  'rapidpro_dispatches',
-  'rapidpro_inbound_messages',
-  'report_templates',
-  'reports',
-  'report_distribution_runs',
-  'report_schedules',
-  'report_schedule_runs',
-  'events_outbox',
-  'webhook_subscriptions',
-  'workflow_instances',
-  'community_feedback',
-  'parametric_rules',
-  'parametric_disbursements',
-  'kpi_snapshots',
-  'road_access',
-  // Every collection JsonStore.merge writes must be listed here: the loop
-  // below keys strictly off COLLECTIONS, and an unlisted collection's records
-  // are dropped silently — the same class of bug the runIngestion merged map
-  // had, caught first by the food-security API test.
   'food_security_records',
   'disease_observations',
-  'flood_probability_models',
-  // ENH-13. Every superseded value of a record upstream revises in place. Not
-  // in emptyStore()-adjacent lists by accident: it is a real collection, and
-  // leaving it off this list would drop every history row silently — the exact
+])
+
+/**
+ * The timestamp cascade both adapters order a collection by.
+ *
+ * Newest first, first field present wins. Declared rather than inlined in
+ * `recordTimestamp` because it is part of the contract: PostgresStore used to
+ * order by an `updated_at` column it set to `now()` on write, so the two stores
+ * disagreed about the order of the same records for the life of the project —
+ * invisible unless you diff two stores holding the same data.
+ *
+ * `id` breaks ties, so the order is total. Without it two records sharing a
+ * timestamp sort by whatever order the backend happened to fetch them in, which
+ * is the DB's insertion order on Postgres and the file's on JSON — the same
+ * records, two different lists, no error.
+ */
+export const SORT_FIELDS = Object.freeze([
+  'updated_at',
+  'completed_at',
+  'generated_at',
+  'observed_at',
+  'occurred_at',
+  'created_at',
+  'started_at',
+])
+
+/** Metadata keys that live alongside collections in a write payload. */
+const STORE_METADATA_KEYS = Object.freeze(['version', 'updated_at'])
+
+/**
+ * The one declaration every storage adapter is checked against.
+ *
+ * Three lists in this repo once described the same 39 collections: this one,
+ * `emptyStore()` in schema.js, and the accumulator map in `runIngestion`. They
+ * drifted independently and cost three separate incidents — a collection whose
+ * records were dropped with no error, a health source that reported failure on
+ * a fully successful run, and a first access to `store.record_versions` that
+ * threw on a fresh file. ADR-002 calls this the single most repeated
+ * structural bug in the codebase, and it is worth treating as a design smell
+ * rather than three coincidences.
+ *
+ * So: one list, and the two adapters derive from it rather than keeping their
+ * own. `write()` and `merge()` now *throw* on a key that is not declared rather
+ * than ignoring it, which converts the third occurrence from a production
+ * mystery into a stack trace pointing at the missing line.
+ *
+ * `emptyStore()` in schema.js still spells its keys out — it is a different
+ * module's export and a schema.js import here would be a cycle — so
+ * `test/store-schema-declaration.test.js` asserts the two agree from both
+ * sides. That test is the drift alarm for the copy this file cannot replace.
+ */
+export const SCHEMA = Object.freeze([
+  { key: 'source_runs' },
+  { key: 'ingestion_schedules' },
+  { key: 'climate_observations' },
+  { key: 'hazard_events' },
+  { key: 'conflict_events' },
+  { key: 'service_assets' },
+  { key: 'impact_assessments', derived: true },
+  { key: 'risk_scores', derived: true },
+  { key: 'data_quality', derived: true },
+  { key: 'population_at_risk', derived: true },
+  { key: 'facilities_at_risk', derived: true },
+  { key: 'data_lineage' },
+  { key: 'incidents' },
+  { key: 'interventions' },
+  { key: 'intervention_tasks' },
+  { key: 'field_reports' },
+  { key: 'response_resources' },
+  { key: 'action_logs' },
+  { key: 'alert_rules' },
+  { key: 'alert_events' },
+  { key: 'trigger_protocols' },
+  { key: 'rapidpro_dispatches' },
+  { key: 'rapidpro_inbound_messages' },
+  { key: 'report_templates' },
+  { key: 'reports' },
+  { key: 'report_distribution_runs' },
+  { key: 'report_schedules' },
+  { key: 'report_schedule_runs' },
+  { key: 'events_outbox' },
+  { key: 'webhook_subscriptions' },
+  { key: 'workflow_instances' },
+  { key: 'community_feedback' },
+  { key: 'parametric_rules' },
+  { key: 'parametric_disbursements' },
+  { key: 'kpi_snapshots' },
+  { key: 'road_access', derived: true },
+  // Added after their own incidents, and listed here for the same reason each
+  // time: JsonStore.merge keys strictly off COLLECTIONS, so an unlisted
+  // collection's records are dropped silently — the same class of bug the
+  // runIngestion merged map had, caught first by the food-security API test.
+  { key: 'food_security_records' },
+  { key: 'disease_observations' },
+  { key: 'flood_probability_models' },
+  // ENH-13. Every superseded value of a record upstream revises in place.
+  // Leaving it off this list would drop every history row silently — the exact
   // silent-key-list bug the comment above warns about, one level down.
-  'record_versions',
-  // ENH-07. One quarantine collection per ingestable collection, holding the
-  // batches that failed their assertions together with the failures that
-  // condemned them. They need their own collections rather than a flag on the
-  // good records because the point is that a condemned batch is never merged:
-  // quarantining in place would mean the store holds records nothing published
-  // and nothing downstream can tell apart from real ones.
-  //
-  // Six hand-written names, and the same silent-drop failure if one is missing.
-  // `test/ingestion-wiring.test.js` asserts this list covers every key
-  // OUTPUT_COLLECTIONS produces, so a new collection cannot be added without
-  // either its quarantine home or that failure.
-  'quarantine_climate_observations',
-  'quarantine_hazard_events',
-  'quarantine_conflict_events',
-  'quarantine_service_assets',
-  'quarantine_food_security_records',
-  'quarantine_disease_observations',
-]
+  { key: 'record_versions' },
+  // ENH-07. Quarantine homes are declared, not hand-named: one per
+  // QUARANTINE_SOURCES entry, appended below.
+].map((entry) => Object.freeze({ kind: 'records', ...entry })).concat(
+  QUARANTINE_SOURCES.map((source) => Object.freeze({
+    key: `quarantine_${source}`,
+    kind: 'quarantine',
+    quarantines: source,
+  })),
+))
+
+/** Every declared collection name. The only spelling either adapter reads. */
+export const COLLECTIONS = Object.freeze(SCHEMA.map((entry) => entry.key))
+
+const COLLECTION_SET = new Set(COLLECTIONS)
+
+/** True when `collection` is one this store can hold. */
+export function isDeclared(collection, declared = COLLECTIONS) {
+  return declared.includes(collection)
+}
+
+/**
+ * Throws if a write payload names a collection this store does not have.
+ *
+ * The silent version of this function is the loop it replaces, and it is the
+ * single most expensive line in this file by incident count. A payload carrying
+ * a key that is not in SCHEMA has exactly one cause — a collection was added
+ * somewhere other than the declaration — and the cost of not noticing is that
+ * the caller is told the write succeeded while its records go nowhere.
+ *
+ * `declared` is injectable so a test can drop a key from the declaration and
+ * watch this fire. That is the only way to know the guard still guards.
+ */
+export function assertDeclaredCollections(payload, declared = COLLECTIONS) {
+  if (!payload || typeof payload !== 'object') return
+  const undeclared = Object.keys(payload)
+    .filter((key) => !STORE_METADATA_KEYS.includes(key) && !declared.includes(key))
+  if (!undeclared.length) return
+  throw new Error(
+    `Undeclared collection${undeclared.length > 1 ? 's' : ''}: ${undeclared.join(', ')}. `
+    + 'Records for a collection missing from SCHEMA are dropped without error — add it there first.',
+  )
+}
+
+/**
+ * Throws on one undeclared collection. The `remove()` guard, which has always
+ * been explicit there, kept for the same reason `remove()` kept it.
+ */
+export function assertDeclaredCollection(collection) {
+  if (!COLLECTION_SET.has(collection)) {
+    throw new Error(`Unknown collection: ${collection}`)
+  }
+  return collection
+}
 
 export class JsonStore {
   constructor(filePath = process.env.LINDELA_LITE_STORE || path.resolve('data/lindela-lite-store.json')) {
@@ -118,10 +237,12 @@ export class JsonStore {
   }
 
   async write(data) {
+    assertDeclaredCollections(data)
     return this.#serialise(() => this.#writeFile(data))
   }
 
   async merge(partial) {
+    assertDeclaredCollections(partial)
     return this.#serialise(async () => {
       const current = await this.read()
       const next = { ...current }
@@ -157,7 +278,7 @@ export class JsonStore {
       const current = await this.read()
       const next = { ...current }
       for (const [collection, ids] of Object.entries(doomedByCollection)) {
-        if (!COLLECTIONS.includes(collection)) throw new Error(`Unknown collection: ${collection}`)
+        assertDeclaredCollection(collection)
         const doomed = new Set(ids || [])
         if (!doomed.size) continue
         next[collection] = (current[collection] || []).filter((record) => !doomed.has(record.id))
@@ -167,23 +288,24 @@ export class JsonStore {
   }
 
   /**
-   * Replaces the six derived collections wholesale, leaving ingested data alone.
+   * Replaces the derived collections wholesale, leaving ingested data alone.
    * A region that stops qualifying must lose its stale risk_scores row, so this
    * is a replace and not a merge — PostgresStore.replaceAnalytics did the
    * opposite for years (DAT-05).
+   *
+   * Which collections are replaced is read from DERIVED_COLLECTIONS, not from
+   * this signature. A seventh derived collection is one entry in the
+   * declaration, and neither adapter can be short one without both being short
+   * the same way.
    */
-  async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [], population_at_risk = [], facilities_at_risk = [], road_access = [] }) {
+  async replaceAnalytics(payload = {}) {
+    assertDeclaredCollections(payload)
+    const replacement = Object.fromEntries(
+      DERIVED_COLLECTIONS.map((collection) => [collection, payload[collection] || []]),
+    )
     return this.#serialise(async () => {
       const current = await this.read()
-      return this.#writeFile({
-        ...current,
-        risk_scores,
-        impact_assessments,
-        data_quality,
-        population_at_risk,
-        facilities_at_risk,
-        road_access,
-      })
+      return this.#writeFile({ ...current, ...replacement })
     })
   }
 }
@@ -248,16 +370,34 @@ export function mergeById(existing, incoming) {
     }
   }
 
-  return [...map.values()].sort((a, b) => recordTimestamp(b).localeCompare(recordTimestamp(a)))
+  return sortRecords([...map.values()])
+}
+
+/**
+ * The order both adapters return a collection in: newest first, id ascending
+ * for ties.
+ *
+ * Exported because PostgresStore has to reach it. It used to order by an
+ * `updated_at` column stamped with `now()` at write time, which meant a
+ * re-ingested older record sorted above a newer one and the two stores returned
+ * the same records in different orders — a divergence invisible to any test
+ * that sorted before comparing.
+ */
+export function sortRecords(records) {
+  return [...records].sort((a, b) => {
+    const byTime = recordTimestamp(b).localeCompare(recordTimestamp(a))
+    if (byTime !== 0) return byTime
+    return String(a.id).localeCompare(String(b.id))
+  })
 }
 
 function recordTimestamp(record) {
-  return String(record.updated_at
-    || record.completed_at
-    || record.generated_at
-    || record.observed_at
-    || record.occurred_at
-    || record.created_at
-    || record.started_at
-    || '')
+  // Presence, not truthiness. A record whose only timestamp field is 0 is a
+  // record with a timestamp, and treating it as absent is the falsy-zero bug
+  // this repo has already paid for twice in a different column.
+  for (const field of SORT_FIELDS) {
+    const value = record[field]
+    if (value !== undefined && value !== null && value !== '') return String(value)
+  }
+  return ''
 }

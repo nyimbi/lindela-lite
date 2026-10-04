@@ -1,5 +1,5 @@
 import { emptyStore } from './schema.js'
-import { COLLECTIONS, supersededVersions } from './store.js'
+import { COLLECTIONS, DERIVED_COLLECTIONS, assertDeclaredCollection, assertDeclaredCollections, sortRecords, supersededVersions } from './store.js'
 import { BITEMPORAL_COLLECTIONS } from './bitemporal.js'
 import { nowIso } from './utils.js'
 import { pendingMigrations, targetVersion } from './migrations.js'
@@ -92,19 +92,38 @@ export class PostgresStore {
   /**
    * The version the database is actually at.
    *
-   * Zero for a database that predates the ledger. Zero is the right answer
-   * rather than null because every migration is written to be idempotent — the
-   * statements themselves decide whether they have already run, so replaying
-   * them against a partially-migrated database is safe. That is the property
-   * that lets this ship to a district server nobody has ever inspected.
+   * Zero for a database that predates the ledger — and zero for a database
+   * where the ledger column does not exist yet at all. That second case is not
+   * hypothetical: `ensureSchema()` reads the version *before* applying
+   * anything, so on a database created by this very method the column arrives
+   * with migration 2. Querying it unconditionally throws
+   * `column "schema_version" does not exist`, and because every Postgres test
+   * in the project skipped itself, nothing had ever run this path against a
+   * fresh database to notice.
+   *
+   * Zero is the right answer rather than null because every migration is
+   * written to be idempotent — the statements themselves decide whether they
+   * have already run, so replaying them against a partially-migrated database
+   * is safe. That is the property that lets this ship to a district server
+   * nobody has ever inspected.
    */
   async readSchemaVersion(pool = this.pool) {
-    const { rows } = await pool.query(
-      `SELECT schema_version FROM lite_records
-       WHERE collection = '__schema'
-       ORDER BY schema_version DESC
-       LIMIT 1`,
-    )
+    let rows
+    try {
+      ;({ rows } = await pool.query(
+        `SELECT schema_version FROM lite_records
+         WHERE collection = '__schema'
+         ORDER BY schema_version DESC
+         LIMIT 1`,
+      ))
+    } catch (error) {
+      // 42P01 undefined_table, 42703 undefined_column. Anything else is a real
+      // fault — a connection refused, a permission denied — and is rethrown,
+      // because "the database is at version 0" would send the runner to replay
+      // every migration against a server it cannot reach.
+      if (error.code !== '42P01' && error.code !== '42703') throw error
+      return 0
+    }
     const version = rows[0]?.schema_version
     return Number.isInteger(version) ? version : 0
   }
@@ -134,11 +153,20 @@ export class PostgresStore {
     for (const row of rows) {
       if (COLLECTIONS.includes(row.collection)) store[row.collection].push(row.body)
     }
+    // The same comparator JsonStore uses. The ORDER BY above is kept only so
+    // rows[0] is the most recently written row for the store's own updated_at;
+    // ordering the collections themselves in SQL used to disagree with the JSON
+    // backend, because this column is stamped with now() at write time and so
+    // sorts by insertion rather than by when the record describes.
+    for (const collection of COLLECTIONS) {
+      store[collection] = sortRecords(store[collection])
+    }
     store.updated_at = rows[0]?.updated_at ? new Date(rows[0].updated_at).toISOString() : nowIso()
     return store
   }
 
   async write(data) {
+    assertDeclaredCollections(data)
     await this.ensureSchema()
     const next = { ...emptyStore(), ...data, updated_at: nowIso() }
     const client = await this.pool.connect()
@@ -193,6 +221,7 @@ export class PostgresStore {
   }
 
   async merge(partial) {
+    assertDeclaredCollections(partial)
     await this.ensureSchema()
     const writes = []
     for (const collection of COLLECTIONS) {
@@ -293,7 +322,7 @@ export class PostgresStore {
     try {
       await client.query('BEGIN')
       for (const [collection, ids] of Object.entries(doomedByCollection)) {
-        if (!COLLECTIONS.includes(collection)) throw new Error(`Unknown collection: ${collection}`)
+        assertDeclaredCollection(collection)
         if (!ids?.length) continue
         await client.query(
           'DELETE FROM lite_records WHERE collection = $1 AND id = ANY($2::text[])',
@@ -311,7 +340,7 @@ export class PostgresStore {
   }
 
   /**
-   * Replaces the six derived collections wholesale.
+   * Replaces the derived collections wholesale.
    *
    * This previously took four parameters where the caller passes six and then
    * delegated to merge(), so on Postgres `population_at_risk` and
@@ -319,18 +348,16 @@ export class PostgresStore {
    * regions that no longer qualify survived forever (DAT-05). JsonStore got
    * this right; the two backends disagreed on impact figures depending on which
    * one an environment variable selected.
+   *
+   * The set now comes from DERIVED_COLLECTIONS, the same declaration JsonStore
+   * reads, so neither adapter can name four where the other names six.
    */
-  async replaceAnalytics({ risk_scores = [], impact_assessments = [], data_quality = [],
-    population_at_risk = [], facilities_at_risk = [], road_access = [] }) {
+  async replaceAnalytics(payload = {}) {
+    assertDeclaredCollections(payload)
     await this.ensureSchema()
-    const replacement = {
-      risk_scores,
-      impact_assessments,
-      data_quality,
-      population_at_risk,
-      facilities_at_risk,
-      road_access,
-    }
+    const replacement = Object.fromEntries(
+      DERIVED_COLLECTIONS.map((collection) => [collection, payload[collection] || []]),
+    )
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
