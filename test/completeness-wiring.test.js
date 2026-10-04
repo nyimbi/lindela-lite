@@ -108,7 +108,8 @@ function gdacsArchive(perWindow) {
   return async (url) => {
     const target = new URL(String(url))
     const from = target.searchParams.get('fromDate')
-    const answer = await perWindow(from)
+    const to = target.searchParams.get('toDate')
+    const answer = await perWindow(from, to)
     if (answer instanceof Error) throw answer
     return {
       ok: true,
@@ -228,7 +229,11 @@ describe('chirps: what the walk found, what it kept, and what it dropped', () =>
 describe('gdacs_archive: a capped quarter is no longer a quiet quarter', () => {
   it('flags the window that came back at the cap and names it', async () => {
     const result = await withStubbedFetch(
-      gdacsArchive((from) => ({ features: gdacsFeatures(from.endsWith('-03-31') ? 100 : 12) })),
+      // `toDate` is what ends 03-31, not `fromDate`: a quarter window runs from
+      // 01-01 to 03-31, so testing the from-date end meant the cap branch was
+      // never exercised and the test asserted against a window the connector had
+      // never been asked to fill.
+      gdacsArchive((from, to) => ({ features: gdacsFeatures(to.endsWith('-03-31') ? 100 : 12) })),
       () => gdacsArchiveConnector.ingest({ archive_start_year: THIS_YEAR, retries: 0 }))
 
     const completeness = result.completeness
@@ -277,7 +282,7 @@ describe('gdacs_archive: a capped quarter is no longer a quiet quarter', () => {
     // "there may have been more behind us"; a failed fetch means we do not know
     // what is there, and the run must not be reported as a guess about it.
     const result = await withStubbedFetch(
-      gdacsArchive((from) => (from.endsWith('-03-31') ? new Error('HTTP 503') : { features: gdacsFeatures(12) })),
+      gdacsArchive((from, to) => (to.endsWith('-03-31') ? new Error('HTTP 503') : { features: gdacsFeatures(12) })),
       () => gdacsArchiveConnector.ingest({ archive_start_year: THIS_YEAR, retries: 0 }))
 
     const completeness = result.completeness
@@ -300,7 +305,7 @@ describe('gdacs_archive: a capped quarter is no longer a quiet quarter', () => {
     // gap as a quiet quarter, and the walk-around is quarter windows precisely
     // because individual windows are unreliable.
     const result = await withStubbedFetch(
-      gdacsArchive((from) => ({ features: gdacsFeatures(from.endsWith('-03-31') ? 0 : 12) })),
+      gdacsArchive((from, to) => ({ features: gdacsFeatures(to.endsWith('-03-31') ? 0 : 12) })),
       () => gdacsArchiveConnector.ingest({ archive_start_year: THIS_YEAR, retries: 0 }))
 
     assert.equal(verdictName(result.completeness), 'incomplete')

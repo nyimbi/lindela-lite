@@ -30,6 +30,8 @@ import path from 'node:path'
 import { describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import { getConnector } from '../src/ingestion.js'
+
 import {
   WATERMARK_SOURCES,
   SERIES_FLOOR,
@@ -386,13 +388,20 @@ describe('WATERMARK_SOURCES', () => {
     // of string literals against another list of string literals, and the
     // failure being caught is a rename in `spec.js` that leaves this list
     // pointing at a connector that no longer ingests under that name.
-    const dir = path.join(ROOT, 'src', 'connectors')
-    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.js'))
+    // Asked of the runtime registry rather than of the source text.
+    //
+    // The previous version grepped each file for `id: 'open_meteo_archive'`, and
+    // a connector that hoisted its id into a `SOURCE` constant stopped matching —
+    // a refactor that changed no behaviour at all failed the guard. A text guard
+    // here can only ever test spelling. `getConnector` is the thing ingestion
+    // actually calls, so asserting on it tests the thing that matters, and it
+    // cannot pass vacuously: a missing id throws rather than matching nothing.
     for (const source of WATERMARK_SOURCES) {
-      const found = files.some((f) => new RegExp(`id: '${source}'`).test(fs.readFileSync(path.join(dir, f), 'utf8')))
-      assert.ok(found, `no connector declares id '${source}'`)
+      const connector = getConnector(source)
+      assert.ok(connector, `no connector is registered under id '${source}'`)
+      assert.equal(connector.id, source, `'${source}' resolves to a connector with a different id`)
+      assert.equal(typeof connector.ingest, 'function', `'${source}' has no ingest()`)
     }
-    assert.ok(files.length > 0, 'connector directory read returned nothing; the guard would pass vacuously')
   })
 
   it('the flood series floor matches the connector default', () => {

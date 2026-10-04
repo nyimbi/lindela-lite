@@ -2,6 +2,7 @@ import { fetchWithRetry } from './http.js'
 import { stableId } from '../utils.js'
 import { defineConnector } from './spec.js'
 import { DEFAULT_COUNTRIES } from './ipc-hdx.js'
+import { assessPagination, mergeCompleteness } from '../completeness.js'
 
 /**
  * GDACS historical flood events, from the event-search archive API.
@@ -30,9 +31,39 @@ import { DEFAULT_COUNTRIES } from './ipc-hdx.js'
  * flood, not an observed location. It is stored with that caveat in the
  * metadata, because downstream matching (districts by radius) needs a point,
  * but nothing here may suggest the flood happened precisely there.
+ *
+ * Quarter windows are not a workaround that always works. GDACS caps a query at
+ * ~100 results, and a capped quarter and a genuinely quiet quarter return the
+ * same 100 rows, so walking quarters only helps if a capped one is visible
+ * afterwards. Every window is now assessed on its own shape and the windows are
+ * merged into one verdict — the run says which windows hit the cap instead of
+ * dropping the distinction between "GDACS had nothing there" and "GDACS stopped
+ * telling us at 100".
+ *
+ * There is no upstream total to check against. Probed live on 2026-10-03, the
+ * archive answers with a bare GeoJSON FeatureCollection (`type`, `features`,
+ * `bbox`) and no count anywhere in it, so every verdict here rests on page
+ * shape and the ~100 cap. That is the `possibly_incomplete` tier and not the
+ * `incomplete` one, and the distinction is honest rather than a limitation to
+ * paper over: a counted shortfall is an answer, a full window is a guess.
  */
 
 const ARCHIVE_ROOT = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH'
+
+/** GDACS' own per-query result cap. The verdict depends on knowing its value. */
+const WINDOW_CAP = 100
+
+/**
+ * The verdict as a name rather than as two booleans. The same three lines as in
+ * chirps.js, deliberately: `completeness.js` exports the vocabulary but no
+ * reader for its own output, and a connector importing a helper from another
+ * connector is a worse coupling than six duplicated lines.
+ */
+function completenessVerdictName(verdict) {
+  if (!verdict) return 'incomplete'
+  if (verdict.complete === true) return 'complete'
+  return verdict.possibly_incomplete === true ? 'possibly_incomplete' : 'incomplete'
+}
 
 async function connectorIngest(options = {}) {
   const hazard_events = []
@@ -43,11 +74,21 @@ async function connectorIngest(options = {}) {
   const thisQuarter = quarterOf(new Date())
   const countries = optionCountrySet(options)
 
+  // One entry per planned window, in order. The walk's verdict is merged from
+  // these at the end: a crawl needs one answer, not a verdict per page.
+  const windowVerdicts = []
+  const flaggedWindows = []
+  let windowsPlanned = 0
+  let pagesFetched = 0
+  let recordsSeen = 0
+
   for (let year = startYear; year <= thisQuarter.year; year += 1) {
     // The current quarter is only complete up to today, but partial is fine —
     // the archive answers with what it has for the window.
     const lastQuarter = year === thisQuarter.year ? thisQuarter.quarter : 4
     for (let q = 1; q <= lastQuarter; q += 1) {
+      const label = `${year}-Q${q}`
+      windowsPlanned += 1
       try {
         const window = quarterRange(year, q)
         const text = await fetchWithRetry(`${ARCHIVE_ROOT}?fromDate=${window.from}&toDate=${window.to}`, {
@@ -59,9 +100,37 @@ async function connectorIngest(options = {}) {
         try { payload = JSON.parse(text) } catch {
           throw new Error(`GDACS archive ${window.from}..${window.to} did not return JSON`)
         }
+        pagesFetched += 1
         const features = Array.isArray(payload?.features) ? payload.features : []
+        recordsSeen += features.length
+
+        // A window that came back full is the shape that means GDACS stopped
+        // answering at its cap. Probed live 2026-10-03: the payload is a bare
+        // FeatureCollection with no total, so there is nothing to check that
+        // against and the cap plus the page shape are the whole of the evidence.
+        const verdict = assessPagination({
+          pagesFetched: 1,
+          recordsSeen: features.length,
+          providerTotal: null,
+          pageSize: WINDOW_CAP,
+          cappedAt: WINDOW_CAP,
+          lastPageFull: features.length >= WINDOW_CAP,
+        })
+        windowVerdicts.push(verdict)
+        if (!verdict.complete) flaggedWindows.push(label)
+
         if (!features.length) {
           errors.push(`gdacs_archive: window ${window.from}..${window.to} returned no features`)
+          // Recorded as `incomplete` rather than left out: a window that read as
+          // empty may be a quiet quarter or an empty answer, and mergeCompleteness
+          // treats an entry that claims nothing as the worst case rather than
+          // letting a gap read as evidence of a whole crawl.
+          windowVerdicts.push({
+            complete: false,
+            possibly_incomplete: false,
+            reason: `window ${label} returned no features, which is not evidence that the quarter was empty`,
+            counts_found: 0,
+          })
           continue
         }
         for (const feature of features) {
@@ -70,14 +139,53 @@ async function connectorIngest(options = {}) {
         }
       } catch (error) {
         errors.push(`gdacs_archive: window ${year}-Q${q}: ${error.message}`)
+        // The window was never read, so whatever GDACS holds for it is unknown —
+        // not zero. Merged as incomplete, which outranks the full-page guess a
+        // successful window would have contributed.
+        windowVerdicts.push({
+          complete: false,
+          possibly_incomplete: false,
+          reason: `window ${label} was not read (${error.message}); nothing behind it was counted`,
+          counts_found: null,
+        })
       }
     }
+  }
+
+  const merged = mergeCompleteness(windowVerdicts)
+  const completeness = {
+    ...merged,
+    // `merged.pages` counts every assessed window, failed ones included; this
+    // counts only the windows that actually came back. They differ whenever a
+    // fetch failed, which is exactly when the difference matters.
+    pages_fetched: pagesFetched,
+    windows_planned: windowsPlanned,
+    records_seen: recordsSeen,
+    // Fewer than records_seen by design: the flood and country filters drop
+    // events on purpose, so this gap is a decision and not a shortfall.
+    records_kept: hazard_events.length,
+    // The walk ends when the planned quarters run out. It is never the cap that
+    // ends it — GDACS caps a window and the connector moves to the next one
+    // unaware — so "stopped early" here means a window was abandoned unread,
+    // not that we chose to quit.
+    walk_end: pagesFetched === windowsPlanned ? 'plan_exhausted' : 'plan_abandoned',
+    windows_stopped_before: windowsPlanned - pagesFetched,
+    flagged_windows: flaggedWindows,
+    cap: WINDOW_CAP,
+    provider_total: null,
+  }
+
+  if (!completeness.complete) {
+    // The verdict also travels in `errors` because that is the one channel
+    // runIngestion carries into the source run's record; a run that returns a
+    // verdict nobody stores is the defect this file was written to remove.
+    errors.push(`gdacs_archive: archive walk is ${completenessVerdictName(merged)} — ${merged.reason}`)
   }
 
   if (!hazard_events.length && !errors.some((e) => /window/.test(e))) {
     errors.push('gdacs_archive: no flood events retained across the archive')
   }
-  return { hazard_events, errors }
+  return { hazard_events, errors, completeness }
 }
 
 function quarterOf(date) {
@@ -159,6 +267,7 @@ export const spec = defineConnector({
     },
     outputSchema: {
       hazard_events: 'flood archive events; severity null (GDACS publishes a fill-in zero for floods)',
+      completeness: '{complete, possibly_incomplete, reason, counts_found, pages_fetched, windows_planned, records_seen, records_kept, walk_end, flagged_windows}; one verdict for the whole archive walk',
     },
   },
   defaults: {

@@ -1,5 +1,6 @@
 import { fetchWithRetry } from './http.js'
 import { stableId } from '../utils.js'
+import { assessPagination, recordCap } from '../completeness.js'
 
 const INDEX_URL = 'https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/'
 const FILE_PATTERN = /chirps-v2\.0\.(\d{4}\.\d{2}\.\d{2})\.tif(?:\.gz)?/g
@@ -27,7 +28,85 @@ const YEAR_DIR_PATTERN = />(\d{4})\/</g
  * This is a limitation worth stating plainly: this connector tells you what
  * data exists and where to get it, not what fell. Anything that needs actual
  * rainfall numbers must state which source it used.
+ *
+ * It also reports what the walk cost. `.slice(0, limit)` used to drop up to 700
+ * of 730 daily files with nothing in the return value saying so, and the
+ * dropped files were indistinguishable from days with no rainfall product at
+ * all. The completeness block is that missing evidence. Note what it measures:
+ * the count of files the index offered against the count this run kept. It
+ * never needs a pixel reader for that, because "how many rasters exist" is a
+ * property of the directory listing, not of the pixels inside them. Decoding
+ * pixels would be a different question — did we read every value in every file —
+ * and one this connector cannot answer, which `values_included: false` on each
+ * record already says out loud.
  */
+
+/**
+ * The verdict as a name rather than as two booleans.
+ *
+ * `completeness.js` exports the vocabulary but not a function that reads its
+ * own booleans back into it, so this is the three-line inverse of
+ * `verdictFor`. Duplicated here and in gdacs-archive rather than exported from
+ * one place because both connectors need it and neither owns the module.
+ */
+function completenessVerdictName(verdict) {
+  if (!verdict) return 'incomplete'
+  if (verdict.complete === true) return 'complete'
+  return verdict.possibly_incomplete === true ? 'possibly_incomplete' : 'incomplete'
+}
+
+/**
+ * What the walk found, what it kept, and whether the gap between them is
+ * recorded anywhere.
+ *
+ * `counts_found` is the pre-cap count — the number of daily files the probed
+ * year directories actually offered. It is `null`, not `0`, when nothing was
+ * found and no cap bound, because "we looked and there was nothing" and "we
+ * never looked" are different claims and this repo has paid for conflating
+ * them once already.
+ */
+function chirpsCompleteness({ found, kept, limit, pagesFetched }) {
+  const cap = recordCap({
+    found,
+    taken: kept.length,
+    cap: limit,
+    reason: `chirps keeps the ${limit} most recent dates and drops the rest`,
+  })
+
+  const lastPageFull = kept.length >= limit
+  const verdict = assessPagination({
+    pagesFetched,
+    recordsSeen: kept.length,
+    // The index is a directory listing, not a paginated API, so there is no
+    // provider page size. The cap is the only bound on a run.
+    pageSize: limit,
+    // Nothing to be full, strictly: what can come back full is the retained
+    // slice, and a slice filled to its limit is the shape that means "there
+    // may have been more behind this".
+    lastPageFull,
+    // The CHIRPS index declares no total — it is an HTML listing of hrefs — so
+    // the only expectation available is the connector's own count of it, and
+    // it is passed only when records were actually dropped. `expectedTotal`
+    // is the module's fallback for a provider that reports nothing, and it
+    // yields a counted shortfall rather than a guess.
+    expectedTotal: found > kept.length ? found : null,
+  })
+
+  return {
+    ...verdict,
+    // recordCap's count, not assessPagination's: this connector's question is
+    // how much was dropped, so the pre-cap number is the one that answers it.
+    counts_found: cap.counts_found,
+    records_kept: cap.records,
+    cap: limit,
+    capped: cap.capped,
+    cap_reason: cap.cap_reason,
+    pages_fetched: pagesFetched,
+    provider_total: null,
+    last_page_full: lastPageFull,
+  }
+}
+
 export const chirpsConnector = {
   id: 'chirps',
   async ingest(options = {}) {
@@ -39,6 +118,26 @@ export const chirpsConnector = {
     // Only the most recent years need probing: the walk is for finding recent
     // daily files, not building a catalogue of the whole archive.
     const maxYears = Number.isFinite(options.chirps_years) ? Number(options.chirps_years) : 2
+    // Keep only the most recent requested number of dates.
+    const limit = options.limit || 30
+    let probed = 0
+
+    /**
+     * The single exit, so no path returns records without the accounting.
+     * A truncated walk also leaves a line in `errors`, because that is the one
+     * channel `runIngestion` carries from a connector's return value into the
+     * source run's own record — without it the verdict is returned to a direct
+     * caller and then dropped on the floor by the pipeline that actually runs
+     * this connector.
+     */
+    const finish = (records) => {
+      const kept = records.slice(0, limit)
+      const completeness = chirpsCompleteness({ found: records.length, kept, limit, pagesFetched: probed })
+      if (!completeness.complete) {
+        errors.push(`chirps: walk is ${completenessVerdictName(completeness)} — ${completeness.reason}`)
+      }
+      return { climate_observations: kept, errors, completeness }
+    }
 
     try {
       const html = await fetchWithRetry(indexUrl, { timeoutMs, retries, parse: 'text' })
@@ -49,10 +148,9 @@ export const chirpsConnector = {
 
       if (!years.length) {
         errors.push('chirps: product index lists no year directories; upstream layout may have changed again')
-        return { climate_observations, errors }
+        return finish([])
       }
 
-      let probed = 0
       let filesFound = 0
 
       for (const year of years) {
@@ -101,8 +199,6 @@ export const chirpsConnector = {
       errors.push(`chirps: ${error.message}`)
     }
 
-    // Keep only the most recent requested number of dates.
-    const limit = options.limit || 30
-    return { climate_observations: climate_observations.slice(0, limit), errors }
+    return finish(climate_observations)
   },
 }

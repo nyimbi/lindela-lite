@@ -298,13 +298,20 @@ async function performFetch(target, { timeoutMs, headers }) {
  * behaviour every connector has today.
  */
 async function captureBody(response, url, source) {
+  // Attributed before the capture check below. Recording the URL a run pulled
+  // through has nothing to do with keeping the body: it is what lets a lineage
+  // row name where the data came from, and it is needed on every ordinary run.
+  // Putting it inside the fixture path meant the list was always empty outside a
+  // capture, and every lineage row came back `upstream_url_or_endpoint: null` —
+  // the exact constant this was meant to replace.
+  for (const list of recordingsByKey.values()) {
+    list.push({ url, status: response.status, recorded_at: new Date().toISOString() })
+  }
+
   const capture = activeCapture
   if (!capture || capture.replay) return null
   try {
     const bytes = Buffer.from(await response.arrayBuffer())
-    for (const list of recordingsByKey.values()) {
-      list.push({ url, status: response.status, recorded_at: new Date().toISOString() })
-    }
     capture.store.add({
       url,
       // The hostname is a worse fixture name than a connector's id and an
