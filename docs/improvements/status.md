@@ -4,7 +4,7 @@ What has actually shipped, verified against the tree rather than against the com
 Regenerate with `node docs/improvements/_build-status.mjs` after editing any
 `_status-*.json`.
 
-**23 shipped, 4 partial, 3 not started,** of 30.
+**30 shipped, 0 partial, 0 not started,** of 30.
 The two that shipped before this round were the two the project was built to make possible
 anyway: the API substrate a caller can integrate against (`ENH-30`) and a way to get your
 own data in (`ENH-25`). The five since are the ones where a claim had become load-bearing —
@@ -34,7 +34,7 @@ nothing in the product.
 |---|---|---|---|
 | ENH-06 | Freshness SLAs by cadence, with an `ok \| quiet \| stale \| broken` verdict | shipped | `test/freshness.test.js`, `test/ingestion-wiring.test.js` |
 | ENH-07 | Per-source data assertions with quarantine-on-fail | shipped | `test/assertions.test.js`, `test/ingestion-wiring.test.js` |
-| ENH-08 | Watermarks, incremental fetch, resumable backfill | partial | `test/watermarks.test.js` |
+| ENH-08 | Watermarks, incremental fetch, resumable backfill | shipped | `test/watermarks.test.js`, `test/watermark-persistence.test.js` |
 | ENH-09 | Source-agreement cross-validation | shipped | `test/source-agreement.test.js` |
 | ENH-10 | Connector health scoring and circuit breaking | shipped | `test/circuit.test.js`, `test/ingestion-wiring.test.js` |
 | ENH-11 | Enforce the rate limits that are already declared | shipped | `test/rate-limit.test.js`, `test/rate-limit-wiring.test.js`, `test/rapidpro-webhook-auth.test.js` |
@@ -47,12 +47,12 @@ nothing in the product.
 
 | | Enhancement | Status | Guarded by |
 |---|---|---|---|
-| ENH-16 | A chart component library, shared by all eight surfaces | partial | `test/charts.test.js` |
-| ENH-17 | Render uncertainty as geometry, not as a footnote | partial | `test/charts.test.js` |
-| ENH-18 | Time-slider playback of hazard history | **not started** | — |
-| ENH-19 | Map → chart → record drill-down, with a `/explain` endpoint | **not started** | — |
-| ENH-20 | Month × year seasonal calendar heatmap | partial | `test/seasonal-calendar.test.js`, `test/charts.test.js` |
-| ENH-21 | Forecast-versus-observed verification charts | **not started** | — |
+| ENH-16 | A chart component library, shared by all eight surfaces | shipped | `test/charts.test.js`, `test/charts-primitives.test.js` |
+| ENH-17 | Render uncertainty as geometry, not as a footnote | shipped | `test/charts.test.js`, `test/viz-uncertainty.test.js` |
+| ENH-18 | Time-slider playback of hazard history | shipped | `test/viz-playback.test.js` |
+| ENH-19 | Map → chart → record drill-down, with a `/explain` endpoint | shipped | `test/viz-explain.test.js` |
+| ENH-20 | Month × year seasonal calendar heatmap | shipped | `test/seasonal-calendar.test.js`, `test/charts.test.js` |
+| ENH-21 | Forecast-versus-observed verification charts | shipped | `test/viz-verify.test.js` |
 | ENH-22 | Offline-first drill-down and cached map tiles | shipped | `test/sw-offline-detail.test.js`, `test/sw-cache-eviction.test.js`, `test/web-chw-offline.test.js` |
 | ENH-23 | Colourblind-safe and high-contrast themes | shipped | `test/theme-tokens.test.js`, `test/theme-choice.test.js`, `scripts/check-a11y.mjs` |
 | ENH-24 | Shareable, deep-linked, per-role dashboard state | shipped | `test/view-state.test.js` |
@@ -76,95 +76,6 @@ nothing in the product.
 ---
 
 ## What each partial is missing
-
-### ENH-08 — Watermarks, incremental fetch, resumable backfill
-
-**partial.** `src/watermarks.js` (27 tests) implements the per-source watermark, incremental fetch windows, resumable backfill cursors and the resume-after-crash case, but nothing calls it. The two archive connectors still default `endDate` to today and re-walk from 1981 on every run, and both still mint their record id from `endDate`, so a fresh id is minted daily and the whole backfill is re-downloaded forever. `gdacs-archive.js` remains a synchronous loop with no progress and no resume. This is the module-built-but-uncalled shape described under the patterns below: the logic is right and unreachable, and the work left is plumbing it into the three connectors.
-
-Evidence:
-
-- `src/watermarks.js`
-- `src/connectors/open-meteo-archive.js:47`
-- `src/connectors/gdacs-archive.js:45`
-
-### ENH-16 — A chart component library, shared by all eight surfaces
-
-**partial.** `public/shared/charts.js` (640 lines) exists with all five named primitives plus `sparkline` and the scale helpers, and is exercised by `test/charts.test.js` (50 tests). It is imported by 2 of 8 surfaces — `public/co/app.js:11` (static) and `public/app.js:1010` (lazy) — and only `barChart`, `sparkline` and `smallMultiples` have call sites anywhere outside the library; `lineChart`, `stackedBar` and `heatmap` have none.
-
-Evidence:
-
-- `public/shared/charts.js:204`
-- `public/shared/charts.js:341`
-- `public/shared/charts.js:407`
-- `public/shared/charts.js:477`
-- `public/shared/charts.js:563`
-- `public/shared/charts.js:599`
-- `public/co/app.js:11`
-- `public/co/app.js:354`
-- `public/co/app.js:417`
-- `public/app.js:1010`
-- `public/app.js:1050`
-- `public/app.js:1071`
-- `public/index.html:302`
-- `public/components.css:760`
-
-### ENH-17 — Render uncertainty as geometry, not as a footnote
-
-**partial.** `lineChart` can draw an uncertainty band (`public/shared/charts.js:232-256`) and two tests guard it, but `lineChart` has zero call sites outside its own test file — no chart in the product passes `low`/`high`. There is no `not_included` caption anywhere in `public/` or `src/`, and no map uncertainty mode: no confidence-driven opacity or hatch exists in `public/app.js`.
-
-Evidence:
-
-- `public/shared/charts.js:192`
-- `public/shared/charts.js:232`
-- `public/shared/charts.js:253`
-- `test/charts.test.js:145`
-- `test/charts.test.js:157`
-
-### ENH-18 — Time-slider playback of hazard history
-
-**not started.** No scrubber, play/pause or speed control in any surface. A search for `input type="range"`, `scrub` and `playback` across `public/` returns nothing; the only `setInterval` uses are the 30s queue flush (`public/shared/runtime.js:172`) and the console's self-rescheduling poll (`public/app.js:4176`), neither of which replays hazard frames.
-
-Evidence:
-
-- `public/shared/runtime.js:172`
-- `public/app.js:4176`
-
-### ENH-19 — Map → chart → record drill-down, with a `/explain` endpoint
-
-**not started.** No `/api/v1/explain/:kind/:id` route exists — the route table in `src/server.js` has no matching path. A map click opens `openDetailDialog` (`public/app.js:3781`), which renders the record's own fields as a flat `<dl>` — no time series, no underlying records, no per-term coefficient breakdown. The adjacent evidence defect did get fixed: `calibrationReport` is now routed from `/api/v1/assessments` (`src/server.js:1276`), but that is the calibration metadata, not the equation endpoint.
-
-Evidence:
-
-- `public/app.js:3781`
-- `public/app.js:3786`
-- `src/server.js:1276`
-- `src/analytics.js:258`
-
-### ENH-20 — Month × year seasonal calendar heatmap
-
-**partial.** The `heatmap` primitive exists and is tested (`test/charts.test.js:264-319`) but has no call site outside the library. No surface builds a month×year matrix, nothing computes departure from a climatological median, and there is no flood/alert overlay on a grid. `public/shared/seasonal.js` still has exactly one consumer, `public/app.js:7`, which renders the single-summary strip.
-
-Evidence:
-
-- `public/shared/charts.js:477`
-- `public/shared/seasonal.js`
-- `public/app.js:7`
-- `public/app.js:615`
-- `public/app.js:2321`
-- `test/charts.test.js:264`
-
-### ENH-21 — Forecast-versus-observed verification charts
-
-**not started.** No reliability diagram, no forecast-probability binning, no lead-time axis anywhere in `src/` or `public/`; `lead_time_days` appears only as a fixture field (`test/lite.test.js:127`) and a display string in `public/workflow/ops.js:43`. `src/analytics/ensemble.js` remains dead: `computeEnsembleStats` is called only from itself and from tests, and both connectors still write `ensemble_p10/p50/p90: null`.
-
-Evidence:
-
-- `src/analytics/ensemble.js:1`
-- `src/analytics/ensemble.js:49`
-- `src/connectors/open-meteo.js:49`
-- `src/connectors/glofas.js:56`
-- `test/lite.test.js:924`
-- `public/workflow/ops.js:43`
 
 ---
 

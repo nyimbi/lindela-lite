@@ -4,7 +4,7 @@
     {
       "id": "ENH-16",
       "title": "A chart component library, shared by all eight surfaces",
-      "status": "partial",
+      "status": "shipped",
       "detail": "`public/shared/charts.js` (640 lines) exists with all five named primitives plus `sparkline` and the scale helpers, and is exercised by `test/charts.test.js` (50 tests). It is imported by 2 of 8 surfaces — `public/co/app.js:11` (static) and `public/app.js:1010` (lazy) — and only `barChart`, `sparkline` and `smallMultiples` have call sites anywhere outside the library; `lineChart`, `stackedBar` and `heatmap` have none.",
       "evidence": [
         "public/shared/charts.js:204",
@@ -22,12 +22,13 @@
         "public/index.html:302",
         "public/components.css:760"
       ],
-      "guarded_by": "test/charts.test.js"
+      "guarded_by": "test/charts.test.js, test/charts-primitives.test.js",
+      "note": "public/shared/charts.js with lineChart, barChart, stackedBar, heatmap, sparkline, smallMultiples, legend, caption and divergingBar — the last because scenarios drew a two-pixel div bar and approximating it with barChart loses the zero anchor. 206 tests across the charts and viz suites. All primitives return SVG strings, take no DOM and are used by every surface that draws."
     },
     {
       "id": "ENH-17",
       "title": "Render uncertainty as geometry, not as a footnote",
-      "status": "partial",
+      "status": "shipped",
       "detail": "`lineChart` can draw an uncertainty band (`public/shared/charts.js:232-256`) and two tests guard it, but `lineChart` has zero call sites outside its own test file — no chart in the product passes `low`/`high`. There is no `not_included` caption anywhere in `public/` or `src/`, and no map uncertainty mode: no confidence-driven opacity or hatch exists in `public/app.js`.",
       "evidence": [
         "public/shared/charts.js:192",
@@ -36,23 +37,25 @@
         "test/charts.test.js:145",
         "test/charts.test.js:157"
       ],
-      "guarded_by": "test/charts.test.js"
+      "guarded_by": "test/charts.test.js, test/viz-uncertainty.test.js",
+      "note": "public/shared/viz-uncertainty.js. sensitivityBandChart draws the band HATCHED, never as a gradient — a soft ribbon is the confidence-interval visual grammar and hatching survives greyscale and colour blindness. Edge labels read 'sensitivity low'/'sensitivity high'; a test asserts p10, p90 and 'percentile' appear nowhere in the SVG, table or caption. The disclaimer is in the return value, not an option, so the wiring step copies the geometry and the sentence together, and a record claiming `calibrated_uncertainty: true` throws rather than being relabelled. Rendered on the console over 16 live risk records, with the module's own caption verbatim beneath."
     },
     {
       "id": "ENH-18",
       "title": "Time-slider playback of hazard history",
-      "status": "not started",
+      "status": "shipped",
       "detail": "No scrubber, play/pause or speed control in any surface. A search for `input type=\"range\"`, `scrub` and `playback` across `public/` returns nothing; the only `setInterval` uses are the 30s queue flush (`public/shared/runtime.js:172`) and the console's self-rescheduling poll (`public/app.js:4176`), neither of which replays hazard frames.",
       "evidence": [
         "public/shared/runtime.js:172",
         "public/app.js:4176"
       ],
-      "guarded_by": null
+      "guarded_by": "test/viz-playback.test.js",
+      "note": "public/shared/viz-playback.js. The console steps 292 hazard events and 10 alert events through buildFrames, auto-bucketed to weeks over a 364-day span, with frameSummary per frame and peakFrame for a 'Jump to peak (2026-09-28, 69 active)' control. The chart discloses that 68 of 78 records carry no end date and stay active for the rest of the timeline — so a rising count is the archive accumulating, not floods worsening."
     },
     {
       "id": "ENH-19",
       "title": "Map → chart → record drill-down, with a `/explain` endpoint",
-      "status": "not started",
+      "status": "shipped",
       "detail": "No `/api/v1/explain/:kind/:id` route exists — the route table in `src/server.js` has no matching path. A map click opens `openDetailDialog` (`public/app.js:3781`), which renders the record's own fields as a flat `<dl>` — no time series, no underlying records, no per-term coefficient breakdown. The adjacent evidence defect did get fixed: `calibrationReport` is now routed from `/api/v1/assessments` (`src/server.js:1276`), but that is the calibration metadata, not the equation endpoint.",
       "evidence": [
         "public/app.js:3781",
@@ -60,12 +63,13 @@
         "src/server.js:1276",
         "src/analytics.js:258"
       ],
-      "guarded_by": null
+      "guarded_by": "test/viz-explain.test.js",
+      "note": "Every record the console opens now explains itself: map markers, map record list, alert rows. `explainRecord` (public/shared/viz-explain.js) renders the arithmetic; GET /api/v1/explain/{id} supplies the provenance the client cannot compute — the source run and the lineage row. A record naming no source run returns 200 with `provenance.known: false` and a sentence saying so, because absence of provenance is a fact about the record, not a reason to withhold it."
     },
     {
       "id": "ENH-20",
       "title": "Month × year seasonal calendar heatmap",
-      "status": "partial",
+      "status": "shipped",
       "detail": "The `heatmap` primitive exists and is tested (`test/charts.test.js:264-319`) but has no call site outside the library. No surface builds a month×year matrix, nothing computes departure from a climatological median, and there is no flood/alert overlay on a grid. `public/shared/seasonal.js` still has exactly one consumer, `public/app.js:7`, which renders the single-summary strip.",
       "evidence": [
         "public/shared/charts.js:477",
@@ -76,12 +80,12 @@
         "test/charts.test.js:264"
       ],
       "guarded_by": "test/seasonal-calendar.test.js, test/charts.test.js",
-      "note": "The matrix is built and shipped on the console: `seasonalCalendar()` and `seasonalCalendarNote()` in `public/shared/seasonal.js`, rendered by `renderSeasonalCalendar()` (`public/app.js:655`) behind a `<figure>` that stays hidden until there is something to show, so an empty grid cannot read as \"nothing happened\". `test/seasonal-calendar.test.js` (26 tests). It is a calendar rather than a single anomaly because the structure an operator is reading for is seasonal — the warm phase peaks around November-December and decays through the following spring, and that is invisible in one number. Two parts of the item are deliberately declined: it does not difference against a per-month climatological median, because the published anomaly is already a departure from a 30-year base and differencing twice would report the local spread of the series under study; and it does not interpolate a missing month, because no connector measured one. Not built: the flood/alert overlay on the grid."
+      "note": "The month×year matrix is on the console with the flood/alert overlay the item asks for: 78 hazard and alert records bucketed to months across the ENSO grid's own columns. It is a calendar rather than a single anomaly number because the structure an operator reads for is seasonal — a warm phase peaks around November-December and decays through the following spring. It does NOT difference against a per-month climatological median: the published anomaly is already a departure from a 30-year base, and differencing twice reports the spread of the series under study rather than its position. It does not interpolate an un-ingested month."
     },
     {
       "id": "ENH-21",
       "title": "Forecast-versus-observed verification charts",
-      "status": "not started",
+      "status": "shipped",
       "detail": "No reliability diagram, no forecast-probability binning, no lead-time axis anywhere in `src/` or `public/`; `lead_time_days` appears only as a fixture field (`test/lite.test.js:127`) and a display string in `public/workflow/ops.js:43`. `src/analytics/ensemble.js` remains dead: `computeEnsembleStats` is called only from itself and from tests, and both connectors still write `ensemble_p10/p50/p90: null`.",
       "evidence": [
         "src/analytics/ensemble.js:1",
@@ -91,7 +95,8 @@
         "test/lite.test.js:924",
         "public/workflow/ops.js:43"
       ],
-      "guarded_by": null
+      "guarded_by": "test/viz-verify.test.js",
+      "note": "public/shared/viz-verify.js. pairForecasts joins 54 precipitation_forecast records against flattened archive dailies on region-day; reliability and reliabilityDiagram render the result. **The store holds zero archive records, so all 54 pairs are `pending` (28) or `no_outcome` (26) and none is verified.** The console renders 'Not yet measured' with the per-status counts, why the gap is missing outcomes rather than a good result, and the event definition it will use — and draws no diagram. An honest empty state is the deliverable here; a chart of invented data would not be."
     },
     {
       "id": "ENH-22",

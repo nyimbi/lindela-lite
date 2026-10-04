@@ -31,14 +31,15 @@
     {
       "id": "ENH-08",
       "title": "Watermarks, incremental fetch, resumable backfill",
-      "status": "partial",
+      "status": "shipped",
       "detail": "`src/watermarks.js` (27 tests) implements the per-source watermark, incremental fetch windows, resumable backfill cursors and the resume-after-crash case, but nothing calls it. The two archive connectors still default `endDate` to today and re-walk from 1981 on every run, and both still mint their record id from `endDate`, so a fresh id is minted daily and the whole backfill is re-downloaded forever. `gdacs-archive.js` remains a synchronous loop with no progress and no resume. This is the module-built-but-uncalled shape described under the patterns below: the logic is right and unreachable, and the work left is plumbing it into the three connectors.",
       "evidence": [
         "src/watermarks.js",
         "src/connectors/open-meteo-archive.js:47",
         "src/connectors/gdacs-archive.js:45"
       ],
-      "guarded_by": "test/watermarks.test.js"
+      "guarded_by": "test/watermarks.test.js, test/watermark-persistence.test.js",
+      "note": "src/watermarks.js is pure — state in, state out, nothing stored — and the connector contract already accepted and returned `options.watermark_state` / `output.watermark_state`. Nothing supplied either end, so a 40-year archive walked its whole series on every run and re-downloaded it to discover nothing was new. Now a declared collection, read once at the start of a run and written back only for sources that reported a position, so an interrupted run keeps its cursor instead of losing it. Backfills resume through `resumeBackfill` and report through `backfillProgress`. test/watermark-persistence.test.js: the second run resumes from what the first stored; an unwired connector keeps its position rather than resetting it; sources do not read each other's."
     },
     {
       "id": "ENH-09",
