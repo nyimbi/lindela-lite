@@ -52,7 +52,7 @@ const NON_SEMANTIC_FIELDS = new Set([
 ])
 
 /**
- * Which fields actually differ between two versions of a record.
+ * Which values actually differ between two versions of a record.
  *
  * Returns null when nothing meaningful changed. The null is load-bearing: the
  * caller must not write a version row for a merge that carried no new
@@ -63,23 +63,100 @@ const NON_SEMANTIC_FIELDS = new Set([
  * A field present in one version and absent in the other is a change. An absent
  * field is not a null field, and collapsing the two would report a deletion
  * every time an optional upstream column simply stopped being sent.
+ *
+ * **Leaves, not top-level keys.** This used to compare `before[key] !== after[key]`
+ * and store both sides whole, so one changed integer inside `metadata` carried
+ * every sibling on both sides with it:
+ *
+ *     "changed_fields": { "metadata": { "from": {enrolment, feeding_programme, ...},
+ *                                         "to":   {enrolment, feeding_programme, ...} } }
+ *
+ * That is 3.6 KB to record that `enrolment` went from 820 to 815. It was 99 MB
+ * of the version table's 172 MB — the history stored each record twice, once as
+ * a snapshot and once as a delta that was nearly as large as the snapshot.
+ *
+ * So it descends into plain objects and reports the path to the leaf that moved.
+ * The version row already carries the whole previous value in `body`, and
+ * `valueAsOf` reads only `body`; `changed_fields` exists to answer "what
+ * changed", and a leaf path answers it in a fraction of the bytes.
+ *
+ * Arrays, dates, buffers and everything else stay atomic. An index-wise array
+ * diff would be smaller and unreadable: `enrolment: [820 -> 815]` for the third
+ * element of a forty-element array tells a reader nothing about what happened.
  */
 export function changedFields(before = {}, after = {}) {
-  const keys = new Set([...Object.keys(before), ...Object.keys(after)])
   const changed = {}
+  diffInto('', before, after, changed, 0)
+  return Object.keys(changed).length ? changed : null
+}
+
+/** How deep to descend before comparing whole. Beyond this, size beats precision. */
+const MAX_DIFF_DEPTH = 6
+
+/** Only a plain object is worth descending into. */
+function isPlainObject(value) {
+  if (value === null || typeof value !== 'object') return false
+  if (Array.isArray(value)) return false
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+/**
+ * Path segment quoting.
+ *
+ * `metadata.enrolment` is a readable path; it is also ambiguous, because a
+ * literal top-level key named `enrolment` under a literal key named `metadata`
+ * produces the identical string. Records carry free text from upstream
+ * connectors, so a dotted key is not hypothetical.
+ *
+ * An ambiguous path is worse than a large one: nobody can act on "the field
+ * `a.b` under `a` changed" without first working out which it was. So a segment
+ * containing a dot is bracketed — `["a.b"]` — which cannot be confused with a
+ * descent, and reads as what it is.
+ */
+function segment(key) {
+  return typeof key === 'string' && key.includes('.') ? `[${JSON.stringify(key)}]` : key
+}
+
+function joinPath(prefix, key) {
+  const part = segment(key)
+  return prefix ? `${prefix}.${part}` : part
+}
+
+function diffInto(prefix, before, after, changed, depth) {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)])
   for (const key of keys) {
     if (NON_SEMANTIC_FIELDS.has(key)) continue
+
     const had = Object.hasOwn(before, key)
     const has = Object.hasOwn(after, key)
+    const path = joinPath(prefix, key)
+
+    // Present on one side only: report the whole subtree as added or removed.
+    // A key that vanished is rare and worth the bytes.
     if (had !== has) {
-      changed[key] = { from: had ? before[key] : null, to: has ? after[key] : null, presence: had ? 'removed' : 'added' }
+      changed[path] = {
+        from: had ? before[key] : null,
+        to: has ? after[key] : null,
+        presence: had ? 'removed' : 'added',
+      }
       continue
     }
-    if (before[key] !== after[key]) {
-      changed[key] = { from: before[key], to: after[key] }
+
+    const a = before[key]
+    const b = after[key]
+
+    const descendable = isPlainObject(a) && isPlainObject(b) && depth < MAX_DIFF_DEPTH
+    if (descendable) {
+      diffInto(path, a, b, changed, depth + 1)
+      continue
     }
+
+    // `!==` rather than a falsy check: 0 deaths and 0 mm of rain are values, and
+    // a check that treats them as absent would report the record unchanged when
+    // a 3 became a 0.
+    if (a !== b) changed[path] = { from: a, to: b }
   }
-  return Object.keys(changed).length ? changed : null
 }
 
 /**

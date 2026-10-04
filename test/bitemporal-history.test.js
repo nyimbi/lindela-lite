@@ -88,6 +88,75 @@ describe('what counts as a revision', () => {
     assert.equal(changedFields(hazard(), hazard({ updated_at: '2026-10-03T00:00:00.000Z' })), null)
   })
 
+  it('reports the leaf that moved, not the object that contained it', () => {
+    // The version row already carries the whole previous value in `body`, and
+    // `valueAsOf` reads only `body`. Storing both sides of a nested object to
+    // record one changed integer made `changed_fields` 99 MB of the version
+    // table's 172 MB — the history held each record twice.
+    const meta = (enrolment) => ({
+      enrolment, feeding_programme: true, partner_supported: true,
+      caseload: 50, district_id: 'turkana', source_run_id: 'run-7', notes: 'x',
+    })
+    const diff = changedFields(
+      { id: 'f-1', metadata: meta(820) },
+      { id: 'f-1', metadata: meta(815) },
+    )
+    assert.deepEqual(diff, { 'metadata.enrolment': { from: 820, to: 815 } })
+
+    const wholeSubtree = JSON.stringify({ metadata: { from: meta(820), to: meta(815) } })
+    assert.ok(JSON.stringify(diff).length < wholeSubtree.length / 4,
+      'a one-integer change must not cost the same as the object it lives in')
+  })
+
+  it('keeps an array atomic rather than diffing it by index', () => {
+    // `a: [820 -> 815]` at index 2 of a forty-element list tells a reader
+    // nothing about what happened. The whole array is the honest unit.
+    assert.deepEqual(changedFields({ a: [1, 2, 3] }, { a: [1, 2, 4] }), {
+      a: { from: [1, 2, 3], to: [1, 2, 4] },
+    })
+  })
+
+  it('quotes a key that contains a dot, so a path is never ambiguous', () => {
+    // Records carry free text from upstream connectors, so a dotted key is real.
+    // Bracketed, it cannot be read as a descent into two keys.
+    assert.deepEqual(changedFields({ 'a.b': 1 }, { 'a.b': 2 }), {
+      '["a.b"]': { from: 1, to: 2 },
+    })
+    assert.deepEqual(changedFields({ a: { b: 1 } }, { a: { b: 2 } }), {
+      'a.b': { from: 1, to: 2 },
+    })
+    // Both at once, which is the case a naive `key.includes('.')` check breaks.
+    assert.deepEqual(changedFields({ 'a.b': 1, a: { b: 1 } }, { 'a.b': 2, a: { b: 2 } }), {
+      '["a.b"]': { from: 1, to: 2 },
+      'a.b': { from: 1, to: 2 },
+    })
+  })
+
+  it('reports a whole subtree added or removed, not one leaf of it', () => {
+    assert.deepEqual(changedFields({ m: { x: 1 } }, {}), {
+      m: { from: { x: 1 }, to: null, presence: 'removed' },
+    })
+    assert.deepEqual(changedFields({}, { m: { x: 1 } }), {
+      m: { from: null, to: { x: 1 }, presence: 'added' },
+    })
+  })
+
+  it('sees a null replaced by an object as a change', () => {
+    assert.deepEqual(changedFields({ m: null }, { m: { x: 1 } }), {
+      m: { from: null, to: { x: 1 } },
+    })
+  })
+
+  it('stops descending rather than recursing without bound', () => {
+    // A self-referential structure would otherwise never terminate.
+    const deep = (n) => (n === 0 ? { leaf: 1 } : { down: deep(n - 1) })
+    const before = deep(12)
+    const after = deep(12)
+    after.down.down.down.down.down.down.down.down.down.down.down.leaf = 2
+    const diff = changedFields(before, after)
+    assert.ok(diff && Object.keys(diff).length, 'a change below the depth cap is still a change')
+  })
+
   it('keeps a legitimate zero', () => {
     // Zero deaths and zero millimetres of rain are values. A falsy-zero check
     // here would report the record as unchanged when a 3 became a 0.
