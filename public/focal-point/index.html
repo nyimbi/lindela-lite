@@ -368,8 +368,9 @@
       @media (max-width: 640px) {
         main { padding: 1rem; }
         header { flex-direction: column; gap: 1rem; }
-        .header-controls { width: 100%; }
+        .header-controls { width: 100%; flex-wrap: wrap; }
         select { width: 100%; }
+        .identity-input { flex: 1 1 8rem; }
       }
 
       /* --- Approval card -----------------------------------------
@@ -425,14 +426,68 @@
       .btn-approve:hover { background: color-mix(in oklch, var(--ok) 85%, white); }
       .btn-reject { background: transparent; color: var(--danger); border-color: color-mix(in oklch, var(--danger) 45%, transparent); font-weight: 600; }
       .btn-reject:hover { background: color-mix(in oklch, var(--danger) 12%, transparent); }
-      .header-role {
-        padding-inline-start: var(--sp-2);
-        margin-inline-start: var(--sp-2);
-        border-inline-start: 1px solid var(--stroke-strong);
+      /* --- HX-12: the header ----------------------------------------
+         The role chip rendered as three stacked lines ("focal-", "point",
+         "(en)") and "Sign out" broke to "Sign"/"out" inside a 64x50 box,
+         because the label was a machine handle that could not fit and nothing
+         forbade it wrapping. The role moved to the navbar, which already
+         carries it; what is left is short, and is not allowed to break. */
+      .identity-label {
         color: var(--ink-muted);
-        font-size: 0.875rem;
-        font-weight: 400;
+        font-size: 0.8125rem;
+        white-space: nowrap;
       }
+      .identity-input {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid var(--stroke);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--ink);
+        font: inherit;
+        font-size: 0.875rem;
+        min-width: 0;
+      }
+      .signout-btn { white-space: nowrap; }
+
+      /* --- CW-13: the queue -----------------------------------------
+         The card carried "1 of 3" and nothing else, so a focal point who
+         noted the position had to remember it. The district is in the header
+         now; position is a convenience, not the identifier. */
+      .card-district {
+        font-weight: 600;
+        margin-inline-end: auto;
+        padding-inline-start: var(--sp-2);
+      }
+
+      /* CW-02: a threshold no protocol states is not a threshold. Said
+         plainly on the card, because the reader's other option is to assume
+         it was checked. */
+      .ungoverned { color: var(--ink-muted); font-weight: 400; }
+
+      /* CW-07: the confirmation the operator is asked to check against. */
+      .dialog-summary {
+        padding: var(--sp-3);
+        margin-bottom: var(--sp-3);
+        border-inline-start: 3px solid var(--brand);
+        background: var(--surface);
+        border-radius: 0 var(--r) var(--r) 0;
+        font-size: 0.9375rem;
+      }
+      .summary-line + .summary-line { margin-top: var(--sp-2); }
+      .dialog-summary strong { font-weight: 600; }
+
+      /* Visible as well as announced: the outcome of an approval was
+         previously confined to a visually-hidden region, so the focal point
+         who pressed the button saw nothing happen. */
+      .decision-outcome {
+        padding: var(--sp-3);
+        margin-bottom: var(--sp-3);
+        border-inline-start: 3px solid var(--ok);
+        background: var(--surface);
+        border-radius: 0 var(--r) var(--r) 0;
+        font-size: 0.9375rem;
+      }
+      .decision-outcome:empty { display: none; }
     </style>
   </head>
   <body>
@@ -451,7 +506,10 @@
           <circle cx="12" cy="12" r="11" stroke="currentColor" stroke-width="1" fill="none" opacity="0.25"/>
         </svg>
         <span data-i18n="app.title">Lindela Lite</span>
-        <span class="header-role">Focal Point</span>
+        <!-- The role is dropped from the title: the shared navbar already carries
+             "Focal Point" as the active nav item, and the H1 repeated it a
+             third time. Three statements of one identity on a 640px page is a
+             page that is mostly telling you where you are. -->
       </h1>
       <div class="header-controls">
         <select id="locale-select" aria-label="Language">
@@ -463,7 +521,14 @@
           <option value="km">Karimojong</option>
           <option value="nk">Ngakarimojong</option>
         </select>
-        <span id="fp-identity" style="padding: 0 1rem; color: var(--ink-muted); font-size: 0.875rem;"></span>
+        <!-- The header used to print `focal-point (en)`: a machine handle read as
+             a person's name, with the locale code appended as though it were a
+             role. Decisions were logged "by anonymous" because nothing on this
+             surface ever set an identity. The name is now asked for, kept, and
+             sent with the transition. -->
+        <label class="identity-label" for="fpName">Signed in as</label>
+        <input id="fpName" class="identity-input" type="text" autocomplete="name"
+               placeholder="Your name" size="14">
         <button class="signout-btn" id="signoutBtn">Sign out</button>
       </div>
     </header>
@@ -472,8 +537,10 @@
       <div class="pending-queue" id="pendingQueue" tabindex="-1">
         <h2 data-i18n="focal-point.pending">Pending review</h2>
         <!-- Approving a trigger is the highest-consequence action in this
-             product and its outcome reached no assistive technology. -->
-        <p class="visually-hidden" id="decisionOutcome" role="status" aria-live="polite"></p>
+             product, and its outcome reached nothing: the confirmation lived in
+             a visually-hidden region, so a sighted focal point got silence and
+             a screen-reader user got the only account of what their click did. -->
+        <p class="decision-outcome" id="decisionOutcome" role="status" aria-live="polite" hidden></p>
         <div id="pendingList"></div>
       </div>
 
@@ -494,12 +561,17 @@
     </footer>
 
     <!-- Approval/Rejection Dialog -->
-    <dialog id="decisionDialog" aria-labelledby="decisionTitle" aria-describedby="decisionReasonLabel">
+    <dialog id="decisionDialog" aria-labelledby="decisionTitle" aria-describedby="decisionSummary decisionReasonLabel">
       <div class="dialog-header">
         <h2 id="decisionTitle">Confirm decision</h2>
         <button class="dialog-close" type="button" aria-label="Close">×</button>
       </div>
       <div class="dialog-body">
+        <!-- What is being approved, before the field the operator supplies.
+             This modal used to name nothing at all, so the last check before
+             pre-agreed finance moved carried three identical-looking buttons
+             and no district, rule, reading or amount. -->
+        <div id="decisionSummary" class="dialog-summary"></div>
         <div class="form-group">
           <label for="reasonSelect" id="decisionReasonLabel" data-i18n="focal-point.reason">Reason</label>
           <select id="reasonSelect" required></select>
