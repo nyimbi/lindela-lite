@@ -4057,7 +4057,7 @@ async function renderExplainInto(record) {
   if (!host || !record) return
   try {
     const { renderExplain } = await lazy('/workflow/wire-explain.js')
-    renderExplain(host, record)
+    await renderExplain(host, record, { load: fetchJson })
   } catch {
     host.innerHTML = ''
   }

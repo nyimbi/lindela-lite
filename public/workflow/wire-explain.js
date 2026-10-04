@@ -8,15 +8,24 @@
 // missing, and whether the arithmetic the console can recompute agrees with the
 // number it published.
 //
-// **There is no `/api/v1/explain` route.** `src/` is not this change's to touch,
-// and adding a server endpoint would have bought nothing: the record the
-// operator clicked is already in the console's hands, and
-// `public/shared/viz-explain.js` recomputes from that record alone. So this calls
-// `explainRecord(record)` directly on the object the click carried. The optional
-// `lookup` it accepts — used to list the source records behind a count — is left
-// out on purpose: those records are not in the console's store by the same key,
-// and a list of ids that resolve to nothing is worse than saying the term is a
-// sum over records we are not holding.
+// **Two sources, and the split between them matters.** `GET /api/v1/explain/:id`
+// exists (`src/server.js`) and serves records out of the store collections by
+// `?kind=`, returning the record plus its provenance — the source run that
+// produced it and the lineage rows behind that run. That provenance cannot be
+// computed in the browser: it is other rows in the store, joined by id. So for a
+// record the route serves, this fetches it and renders the provenance it returns.
+//
+// Everything else — the arithmetic — comes from `explainRecord` in
+// `public/shared/viz-explain.js`, run on the record the click already carried.
+// One implementation of the derivation, in the module the tests guard, rather
+// than a server copy that drifts. The optional `lookup` that module accepts is
+// left out on purpose: those source records are not in the console's store under
+// the same key, and a list of ids that resolve to nothing is worse than saying
+// the term is a sum over records we are not holding.
+//
+// A record the route does not serve — an alert event, a hazard event, a service
+// asset — gets the derivation and a line saying its origin could not be traced,
+// rather than a 404 and an empty dialog.
 
 import { explainRecord } from '/shared/viz-explain.js'
 import { sensitivityRange } from '/shared/viz-uncertainty.js'
@@ -108,12 +117,57 @@ function bandBlock(record, explanation) {
 }
 
 /**
+ * The store collection a record type lives in, or null.
+ *
+ * The route serves `risk_scores` and `impact_assessments` by name; it does not
+ * serve alerts, hazards or assets, and asking it for a collection it does not
+ * hold is a 404 that would blank the derivation on records that have one.
+ */
+const KIND_BY_TYPE = Object.freeze({
+  flood_risk: 'risk_scores',
+  climate_conflict_risk: 'risk_scores',
+})
+
+/** The provenance block, from whatever `/api/v1/explain` returned. */
+function provenanceBlock(provenance, served) {
+  if (!served) {
+    return `<p class="chart-panel-refused">This record type is not served by /api/v1/explain, so the run that produced it and the lineage behind that run cannot be traced from here. `
+      + 'What follows is the arithmetic the record carries, not its provenance.</p>'
+  }
+  const run = provenance?.source_run
+  const lineage = Array.isArray(provenance?.lineage) ? provenance.lineage : []
+  if (!run && !lineage.length) {
+    return `<p class="chart-panel-note">Provenance: ${esc(provenance?.note || 'no source run is named by this record, so its origin cannot be traced from the store.')}</p>`
+  }
+  const bits = [
+    run?.id ? `source run ${esc(String(run.id))}` : null,
+    run?.source_id ? `from ${esc(String(run.source_id))}` : null,
+    run?.started_at || run?.created_at ? `at ${esc(String(run.started_at || run.created_at))}` : null,
+    `${lineage.length} lineage row${lineage.length === 1 ? '' : 's'}`,
+  ].filter(Boolean)
+  const rows = lineage.slice(0, 10).map((l) => `<tr><th scope="row">${esc(String(l.field ?? l.column ?? l.source_id ?? 'lineage'))}</th>`
+    + `<td>${esc(String(l.source ?? l.origin ?? '—'))}</td>`
+    + `<td>${esc(String(l.recorded_at ?? l.at ?? '—'))}</td></tr>`).join('')
+  return `<p class="chart-panel-title">Provenance</p>`
+    + `<p class="chart-panel-note">${bits.join(' · ')}</p>`
+    + (rows
+      ? `<div class="chart-table"><table class="data-alt"><caption>Lineage behind this record</caption>`
+        + `<thead><tr><th scope="col">Field</th><th scope="col">Source</th><th scope="col">Recorded</th></tr></thead>`
+        + `<tbody>${rows}</tbody></table></div>`
+      : '')
+}
+
+/**
  * Render the derivation of one record into `host`.
+ *
+ * `load` is the console's own authenticated `fetchJson`. It is a parameter
+ * rather than an import so this module has no idea how the console authenticates,
+ * and so a caller without one still gets the full derivation.
  *
  * Returns the explanation object so a caller that wants to keep it — for a test,
  * or for the console palette — does not have to recompute it.
  */
-export function renderExplain(host, record) {
+export async function renderExplain(host, record, { load, kind } = {}) {
   if (!host || !record) return null
   let explanation
   try {
@@ -121,6 +175,20 @@ export function renderExplain(host, record) {
   } catch (err) {
     host.innerHTML = `<p class="chart-panel-refused">${esc(err.message)}</p>`
     return null
+  }
+
+  const collection = kind || KIND_BY_TYPE[record?.type] || null
+  let served = null
+  if (collection && typeof load === 'function' && record?.id) {
+    try {
+      const body = await load(`/api/v1/explain/${encodeURIComponent(record.id)}?kind=${encodeURIComponent(collection)}`)
+      served = body?.success === false ? null : body
+    } catch {
+      // A record the store cannot serve, or a console running without a
+      // network. Neither invalidates the arithmetic, so the derivation still
+      // renders and the provenance line says why it is thin.
+      served = null
+    }
   }
 
   const verdict = explanation.consistent === null
@@ -146,6 +214,7 @@ export function renderExplain(host, record) {
     ${bandBlock(record, explanation)}
     ${explanation.missing.length ? `<p class="chart-panel-title">Absent inputs</p>${paragraphs('chart-panel-refused', explanation.missing.map((m) => `${esc(m.key)} — ${esc(m.reason || 'contributed nothing')}`))}` : ''}
     ${explanation.limits.length ? `<p class="chart-panel-title">What this score does not model</p>${paragraphs('chart-panel-note', explanation.limits.map((l) => esc(l)))}` : ''}
+    ${provenanceBlock(served?.provenance, collection)}
     ${provenanceBits ? `<p class="chart-panel-note">${provenanceBits}${provenance.methodology ? ` · ${esc(provenance.methodology)}` : ''}</p>` : ''}`
   return explanation
 }
