@@ -1,6 +1,25 @@
-/* Lindela Lite — Design Tokens (OKLCH system) */
+/* Lindela Lite — Design Tokens (OKLCH system)
 
-:root {
+   THEMES (ENH-23). Dark is still the default and still the product; light and
+   high-contrast sit beside it. A theme is one block here and nothing below this
+   file knows which is active, which is the entire reason the token layer
+   exists: --ink is consumed, `oklch(...)` is not.
+
+   An explicit [data-theme] wins over the platform. The two @media blocks below
+   carry the platform's preference because they are the only path that is right
+   at first paint — this file is imported at the top of a render-blocking
+   stylesheet, so the preference is resolved before anything is drawn and with no
+   JavaScript in the way. shared/theme.js only adds the explicit override on
+   top; the reasoning for that order is in its header.
+
+   Contrast is measured, not asserted: test/theme-tokens.test.js re-runs the
+   gate's arithmetic over every pair these palettes can paint, and
+   scripts/check-a11y.mjs walks all eight surfaces in all three themes.
+*/
+
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
   --bg:              oklch(15% 0.02 260);
   --bg-elevated:     oklch(19% 0.02 260);
   --surface:         oklch(22% 0.02 260);
@@ -34,6 +53,28 @@
      3:1 against both the surface and the control it is drawn on, and --brand
      does not clear 3:1 against --surface at this lightness. */
   --focus-ring:      oklch(85% 0.14 205);
+  /* The one part of a focus ring high-contrast has to change, and a bare `2px`
+     in six rules is a bare `2px` six rules cannot all change. Outline, so a
+     thicker ring moves nothing. */
+  --focus-ring-width: 2px;
+
+  /* Severity's two non-colour channels. The four hues sit at 25°/45°/85°/190°:
+     a red-orange-yellow band that collapses under deuteranopia and protanopia.
+     So a chip paints the severity word, then a glyph whose SHAPE encodes the
+     class, then a texture whose DENSITY encodes it again — colour is the one
+     channel allowed to fail. The glyphs ladder ▲▲ > ▲ > ■ > ● because more ink
+     is a severity signal nobody has to learn. */
+  --sev-marker-critical: '▲▲';
+  --sev-marker-high:     '▲';
+  --sev-marker-medium:   '■';
+  --sev-marker-low:      '●';
+  --sev-marker-unknown:  '—';
+  /* Densest hatch is the worst class. Density survives greyscale printing and
+     a projector with no colour left to project. */
+  --sev-hatch-critical: 5px;
+  --sev-hatch-high:     7px;
+  --sev-hatch-medium:   9px;
+  --sev-hatch-low:     0px;
 
   --sev-critical:    oklch(65% 0.22 25);
   --sev-high:        oklch(72% 0.18 45);
@@ -45,6 +86,11 @@
      out; --brand alone gives one, and reusing --ok would say "good" about a
      cold anomaly, which is a value judgement the data does not support. */
   --cold:            oklch(68% 0.13 265);
+
+  --warm:            oklch(72% 0.13 38);
+
+  --phase-bg:         oklch(35% 0.02 220);
+  --phase-bg-unknown: oklch(30% 0.02 220);
 
   --ok:              oklch(72% 0.16 155);
   --warn:            oklch(78% 0.15 75);
@@ -117,4 +163,248 @@
   --border: var(--stroke);
   --border-strong: var(--stroke-strong);
   --bg-hover: var(--surface-hover);
+}
+
+/* --- Light ----------------------------------------------------
+   Measured, not chosen: test/theme-tokens.test.js runs the gate's own
+   OKLCH→sRGB arithmetic over every text/surface pair these tokens can paint.
+   --ink-muted had to come down to 34% and --ink-faint to 40% — faint sits
+   LIGHTER than muted, so it binds first — before the set cleared. --ink-faint
+   carries "not ingested" and "never run", the states an operator most needs to
+   read and the first a light treatment erases. */
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg:              oklch(98.5% 0.003 260);
+  --bg-elevated:     oklch(100%  0     0);
+  --surface:         oklch(96%   0.005 260);
+  --surface-hover:   oklch(92.5% 0.008 260);
+
+  --ink:             oklch(24% 0.015 260);
+  --ink-muted:       oklch(34% 0.018 260);
+  --ink-faint:       oklch(40% 0.020 260);
+
+  --brand:           oklch(42% 0.10 210);
+  --brand-hover:     oklch(36% 0.10 210);
+  --accent:          oklch(42% 0.10 90);
+
+  /* Ink on a fill stays white because every fill here is dark: white on
+     --danger is 8.03:1, white on --brand 7.81:1. A fill-and-ink pair that is
+     valid in one theme and not the next is why these are tokens. */
+  --on-brand:        oklch(100% 0    0);
+  --on-accent:       oklch(100% 0    0);
+  --on-warn:         oklch(100% 0    0);
+  --on-danger:       oklch(100% 0    0);
+  --on-ok:           oklch(100% 0    0);
+  /* Dark ink, because of where yellow sits: the light ramp puts medium at 62%
+     L, where white measures 3.62:1 and black 5.20:1. This token inverts
+     between themes, which is why every theme is measured. */
+  --on-sev-medium:   oklch(18% 0.02 100);
+
+  --focus-ring:      oklch(42% 0.14 210);
+  --focus-ring-width: 2px;
+
+  /* Severity by lightness as well as hue. The first draft spanned 45–52% L,
+     which looks like a ramp and is not one: under deuteranopia its worst pair
+     collapsed to ΔE 3.3 — four classes that are the same colour. Widening to
+     42–62% lifts that to ΔE 7.4 with every text pair still over 4.5:1. */
+  --sev-critical:    oklch(42% 0.20 25);
+  --sev-high:        oklch(52% 0.14 65);
+  --sev-medium:      oklch(62% 0.13 100);
+  --sev-low:         oklch(44% 0.12 170);
+
+  --cold:            oklch(40% 0.13 265);
+    --warm:            oklch(44% 0.14 40);
+    --phase-bg:         oklch(92% 0.02 220);
+    --phase-bg-unknown: oklch(89% 0.02 220);
+
+  --ok:              oklch(44% 0.12 155);
+  --warn:            oklch(46% 0.12 70);
+  --danger:          oklch(45% 0.19 25);
+
+  --stroke:          oklch(87% 0.008 260);
+  --stroke-strong:   oklch(68% 0.012 260);
+
+  /* A black wash is only legible against near-black. On paper white it reads
+     as dirt, so the same scale at a quarter of the opacity. */
+  --shadow-sm: 0 1px 2px oklch(20% 0.02 260 / 0.10);
+  --shadow-md: 0 4px 8px oklch(20% 0.02 260 / 0.12);
+  --shadow-lg: 0 16px 48px oklch(20% 0.02 260 / 0.16);
+}
+
+/* --- High contrast -------------------------------------------
+   Dark, because the product is dark by decision and this extends that. Body
+   copy at 21:1 against the dark theme's 15:1, a thicker focus ring, and
+   hairlines at 5.6:1 where the dark theme's are 1.9:1.
+
+   The severity ramp is deliberately NOT the dark theme's ramp: at the dark
+   theme's lightnesses all four classes sit within 15 points of each other,
+   which is the range that collapses under a colour vision deficiency. Spread
+   80→66→52→45% so the ordering survives with colour removed entirely. */
+
+:root[data-theme='contrast'] {
+  color-scheme: dark;
+
+  --bg:              oklch(0%  0 0);
+  --bg-elevated:     oklch(6%  0 0);
+  --surface:         oklch(12% 0 0);
+  --surface-hover:   oklch(22% 0 0);
+
+  --ink:             oklch(100% 0 0);
+  --ink-muted:       oklch(94%  0 0);
+  --ink-faint:       oklch(90%  0 0);
+
+  --brand:           oklch(85% 0.14 210);
+  --brand-hover:     oklch(92% 0.14 210);
+  --accent:          oklch(90% 0.15 90);
+
+  --on-brand:        oklch(0%  0 0);
+  --on-accent:       oklch(0%  0 0);
+  --on-warn:         oklch(0%  0 0);
+  --on-danger:       oklch(0%  0 0);
+  --on-ok:           oklch(0%  0 0);
+  /* The one exception, and measured: yellow at 52% L gives black 3.84:1 and
+     white 5.46:1. Every other fill here is bright enough to want black. */
+  --on-sev-medium:   oklch(100% 0 0);
+
+  --focus-ring:      oklch(100% 0 0);
+  --focus-ring-width: 3px;
+
+  --sev-critical:    oklch(80% 0.20 25);
+  --sev-high:        oklch(66% 0.18 55);
+  --sev-medium:      oklch(52% 0.14 95);
+  --sev-low:         oklch(45% 0.12 200);
+
+  --cold:            oklch(80% 0.10 265);
+    --warm:            oklch(80% 0.15 45);
+    --phase-bg:         oklch(15% 0 0);
+    --phase-bg-unknown: oklch(8% 0 0);
+
+  --ok:              oklch(80% 0.16 155);
+  --warn:            oklch(88% 0.15 75);
+  --danger:          oklch(80% 0.20 25);
+
+  /* 50%, not 55% and not the dark theme's 30%. A hairline is a border until a
+     surface paints text on it — co's .chip-data-gap fills with --stroke — and
+     at 55% this theme's own 94% muted ink on that fill measured 4.07:1. At 50%
+     it is 5.03:1, and 3.50:1 against black for the boundary itself. */
+  --stroke:          oklch(50%  0 0);
+  --stroke-strong:   oklch(80%  0 0);
+
+  --shadow-sm: 0 0 0 1px oklch(50% 0 0);
+  --shadow-md: 0 0 0 1px oklch(50% 0 0);
+  --shadow-lg: 0 0 0 2px oklch(80% 0 0);
+}
+
+/* --- Platform preference --------------------------------------
+   Declared twice on purpose: these mirror the explicit blocks for a user who
+   has expressed no choice, and they must work with no JavaScript, which is the
+   only way the platform preference is honoured before first paint. The
+   duplication rots silently, so test/theme-tokens.test.js asserts each mirror
+   matches its explicit block token for token and value for value.
+
+   prefers-contrast comes last so that a user who asks for both gets the
+   contrast theme: "more contrast" is the more specific statement. */
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+
+    --bg:              oklch(98.5% 0.003 260);
+    --bg-elevated:     oklch(100%  0     0);
+    --surface:         oklch(96%   0.005 260);
+    --surface-hover:   oklch(92.5% 0.008 260);
+
+    --ink:             oklch(24% 0.015 260);
+    --ink-muted:       oklch(34% 0.018 260);
+    --ink-faint:       oklch(40% 0.020 260);
+
+    --brand:           oklch(42% 0.10 210);
+    --brand-hover:     oklch(36% 0.10 210);
+    --accent:          oklch(42% 0.10 90);
+
+    --on-brand:        oklch(100% 0    0);
+    --on-accent:       oklch(100% 0    0);
+    --on-warn:         oklch(100% 0    0);
+    --on-danger:       oklch(100% 0    0);
+    --on-ok:           oklch(100% 0    0);
+    --on-sev-medium:   oklch(18% 0.02 100);
+
+    --focus-ring:      oklch(42% 0.14 210);
+    --focus-ring-width: 2px;
+
+    --sev-critical:    oklch(42% 0.20 25);
+    --sev-high:        oklch(52% 0.14 65);
+    --sev-medium:      oklch(62% 0.13 100);
+    --sev-low:         oklch(44% 0.12 170);
+
+    --cold:            oklch(40% 0.13 265);
+    --warm:            oklch(44% 0.14 40);
+    --phase-bg:         oklch(92% 0.02 220);
+    --phase-bg-unknown: oklch(89% 0.02 220);
+
+    --ok:              oklch(44% 0.12 155);
+    --warn:            oklch(46% 0.12 70);
+    --danger:          oklch(45% 0.19 25);
+
+    --stroke:          oklch(87% 0.008 260);
+    --stroke-strong:   oklch(68% 0.012 260);
+
+    --shadow-sm: 0 1px 2px oklch(20% 0.02 260 / 0.10);
+    --shadow-md: 0 4px 8px oklch(20% 0.02 260 / 0.12);
+    --shadow-lg: 0 16px 48px oklch(20% 0.02 260 / 0.16);
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+
+    --bg:              oklch(0%  0 0);
+    --bg-elevated:     oklch(6%  0 0);
+    --surface:         oklch(12% 0 0);
+    --surface-hover:   oklch(22% 0 0);
+
+    --ink:             oklch(100% 0 0);
+    --ink-muted:       oklch(94%  0 0);
+    --ink-faint:       oklch(90%  0 0);
+
+    --brand:           oklch(85% 0.14 210);
+    --brand-hover:     oklch(92% 0.14 210);
+    --accent:          oklch(90% 0.15 90);
+
+    --on-brand:        oklch(0%  0 0);
+    --on-accent:       oklch(0%  0 0);
+    --on-warn:         oklch(0%  0 0);
+    --on-danger:       oklch(0%  0 0);
+    --on-ok:           oklch(0%  0 0);
+    /* White, and this is the same measured exception as in the explicit block:
+       yellow at 52% L gives 3.84:1 to black ink and 5.46:1 to white. */
+    --on-sev-medium:   oklch(100% 0 0);
+
+    --focus-ring:      oklch(100% 0 0);
+    --focus-ring-width: 3px;
+
+    --sev-critical:    oklch(80% 0.20 25);
+    --sev-high:        oklch(66% 0.18 55);
+    --sev-medium:      oklch(52% 0.14 95);
+    --sev-low:         oklch(45% 0.12 200);
+
+    --cold:            oklch(80% 0.10 265);
+    --warm:            oklch(80% 0.15 45);
+    --phase-bg:         oklch(15% 0 0);
+    --phase-bg-unknown: oklch(8% 0 0);
+
+    --ok:              oklch(80% 0.16 155);
+    --warn:            oklch(88% 0.15 75);
+    --danger:          oklch(80% 0.20 25);
+
+    --stroke:          oklch(50%  0 0);
+    --stroke-strong:   oklch(80%  0 0);
+
+    --shadow-sm: 0 0 0 1px oklch(50% 0 0);
+    --shadow-md: 0 0 0 1px oklch(50% 0 0);
+    --shadow-lg: 0 0 0 2px oklch(80% 0 0);
+  }
 }

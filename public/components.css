@@ -37,6 +37,68 @@
   color: var(--ink);
 }
 
+/* --- Severity: shape and texture ---------------------------
+   The word beside the tint already existed. These two are the redundancy the
+   plan asked for, and they live here rather than in styles.css because three
+   surfaces spell the severity class three ways — `.sev-`, `.severity-`,
+   `.chip-` — and covering only the console's spelling would leave two of the
+   three reading hue alone.
+
+   Two channels because they fail independently: the glyph is a shape (survives
+   any deficiency and greyscale printing), the hatch is a texture (survives a
+   projector with no colour). */
+
+.sev-critical::before,
+.severity-critical::before,
+.chip-critical::before { content: var(--sev-marker-critical) ' '; }
+.sev-high::before,
+.severity-high::before,
+.chip-high::before { content: var(--sev-marker-high) ' '; }
+.sev-medium::before,
+.severity-medium::before,
+.chip-medium::before { content: var(--sev-marker-medium) ' '; }
+.sev-low::before,
+.severity-low::before,
+.chip-low::before { content: var(--sev-marker-low) ' '; }
+.sev-unknown::before,
+.severity-unknown::before,
+.chip-unknown::before,
+.chip-neutral::before { content: var(--sev-marker-unknown) ' '; }
+
+/* 0.85em, so a 12px chip widens by two characters rather than four.
+   `.sev-chip` is flex-shrink:0 in a nowrap row: every character here is one the
+   row cannot give up at 320px, and check-a11y.mjs's reflow probe measures it. */
+.sev-chip::before,
+.severity-chip::before,
+.chip::before { font-size: 0.85em; line-height: 1; }
+
+/* Densest hatch is the worst class; `low` gets none at all, because a texture
+   meaning "slightly less bad" is worse than one meaning "nothing here". */
+.sev-critical,
+.severity-critical,
+.chip-critical {
+  background-image: repeating-linear-gradient(
+    45deg,
+    color-mix(in oklch, var(--sev-critical) 28%, transparent) 0 2px,
+    transparent 2px var(--sev-hatch-critical));
+}
+.sev-high,
+.severity-high,
+.chip-high {
+  background-image: repeating-linear-gradient(
+    45deg,
+    color-mix(in oklch, var(--sev-high) 28%, transparent) 0 2px,
+    transparent 2px var(--sev-hatch-high));
+}
+.sev-medium,
+.severity-medium,
+.chip-medium {
+  background-image: repeating-linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--sev-medium) 28%, transparent) 0 2px,
+    transparent 2px var(--sev-hatch-medium));
+}
+
 /* --- Text --------------------------------------------------- */
 .empty-note,
 .empty-cell {
@@ -636,7 +698,7 @@ input[type="range"]:focus-visible::-moz-range-thumb     { box-shadow: 0 0 0 3px 
 }
 
 .pagination-link:hover { background: var(--surface); }
-.pagination-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.pagination-link:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 2px; }
 
 .pagination-link[aria-current="page"] {
   background: var(--brand);

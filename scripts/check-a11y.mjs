@@ -36,6 +36,17 @@ import { setTimeout as sleep } from 'node:timers/promises'
 const CDP = process.env.LINDELA_LITE_CDP || 'http://127.0.0.1:9222'
 const BASE = process.env.LINDELA_LITE_BASE || 'http://127.0.0.1:4177'
 
+/**
+ * The themes the contrast check is run against, after the structural pass.
+ *
+ * A theme that is only ever measured in the dark palette is a theme that has
+ * not been measured. light and contrast exist only to satisfy WCAG 1.4.3 and
+ * 1.4.6, so those are exactly the two palettes where an unmeasured token goes
+ * unnoticed — and they are reachable by any user with an OS light-mode setting,
+ * without asking this product for permission.
+ */
+const THEMES = (process.env.LINDELA_LITE_A11Y_THEMES || 'dark,light,contrast').split(',').filter(Boolean)
+
 /** Every surface. A surface never asserted is a surface never checked. */
 const PAGES = [
   ['dashboard', '/'],
@@ -532,6 +543,17 @@ async function main() {
   // debugging cycles to exactly this. Verified by the negative control.
   await session.send('Network.clearBrowserCache')
   await session.send('Network.setCacheDisabled', { cacheDisabled: true })
+
+  // The baseline pass is pinned to the dark theme rather than left to the
+  // runner's OS. With ENH-23 in place, `prefers-color-scheme: light` is a real
+  // setting a real operator has, so an unpinned run measures the whole gate
+  // against whatever the machine that happens to run CI prefers — and the
+  // structural checks then silently stop being about the product. The three
+  // themes are measured explicitly in the sweep below, one at a time.
+  const baseline = await session.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: "try { localStorage.setItem('lindela-lite-theme', 'dark') } catch (e) {}",
+  })
+
   await session.send('Page.navigate', { url: BASE + '/' })
   await sleep(600)
   await call(session, async function () {
@@ -539,6 +561,11 @@ async function main() {
       for (const reg of await navigator.serviceWorker.getRegistrations()) await reg.unregister()
     }
     if (window.caches) for (const key of await caches.keys()) await caches.delete(key)
+    // The theme is persisted in localStorage by shared/theme.js. Left over from
+    // an earlier run on the same origin it would silently decide which palette
+    // the whole gate measured, and a gate whose subject depends on what ran
+    // before it is not a gate.
+    try { localStorage.removeItem('lindela-lite-theme') } catch {}
     return true
   })
 
@@ -657,6 +684,59 @@ async function main() {
     await session.send('Emulation.clearDeviceMetricsOverride')
   }
 
+  /* --- contrast, in every theme -------------------------------- */
+  //
+  // The theme is applied the way a user's choice actually reaches the page —
+  // written to localStorage before any page script runs, so the pass exercises
+  // the persisted-override path and the media-query fallback together, rather
+  // than by assigning data-theme after the fact and measuring something no user
+  // would ever see.
+  const themeResults = []
+  const injected = []
+  for (const theme of THEMES) {
+    const added = await session.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `try { localStorage.setItem('lindela-lite-theme', ${JSON.stringify(theme)}) } catch (e) {}`,
+    })
+    injected.push(added.identifier)
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      ...DESKTOP_VIEWPORT, deviceScaleFactor: 1, mobile: false,
+    })
+    for (const [name, path] of PAGES) {
+      await session.send('Page.navigate', { url: BASE + path })
+      await sleep(1600)
+      const applied = await call(session, function () {
+        return {
+          theme: document.documentElement.getAttribute('data-theme'),
+          bg: getComputedStyle(document.body).backgroundColor,
+        }
+      })
+      const t = await call(session, probeContrast)
+      themeResults.push({
+        theme,
+        surface: name,
+        applied: applied.theme || '(none)',
+        pass: t.count === 0,
+        detail: t.count === 0
+          ? `${t.checked} text nodes, min ratio ≥ 4.5:1 on ${applied.bg}`
+          : `${t.count}/${t.checked} below floor — ` +
+            top(t.failures, (f) => `${f.sel} ${f.ratio}:1 (needs ${f.floor}:1, ${f.font}, ${f.fg} on ${f.bg}) "${f.text}"`),
+      })
+    }
+  }
+  // The injection has to be removed, not merely stopped. A script registered on
+  // the target outlives this WebSocket and re-runs on every document the tab
+  // ever loads again — so leaving it there turns the NEXT invocation of this
+  // gate into a light-theme run that reports itself as a dark-theme one, and
+  // fails four contrast assertions against a palette nobody selected.
+  injected.push(baseline.identifier)
+  for (const identifier of injected) {
+    await session.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => {})
+  }
+  await call(session, async function () {
+    try { localStorage.removeItem('lindela-lite-theme') } catch {}
+    return true
+  })
+
   session.close()
 
   /* --- table ---------------------------------------------------- */
@@ -680,6 +760,39 @@ async function main() {
   }
 
   console.log(`\n${pass} passed, ${fail} failed, ${pass + fail} assertions across ${PAGES.length} surfaces.`)
+
+  /* --- theme table ----------------------------------------------- */
+  if (themeResults.length) {
+    const themes = [...new Set(themeResults.map((r) => r.theme))]
+    console.log(`\nContrast by theme — ${THEMES.join(', ')}\n`)
+    console.log(`${'surface'.padEnd(12)} ${themes.map((t) => t.padEnd(9)).join('')}`)
+    console.log('─'.repeat(12 + 9 * themes.length))
+    let themePass = 0
+    let themeFail = 0
+    for (const [name] of PAGES) {
+      let line = name.padEnd(12)
+      for (const theme of themes) {
+        const r = themeResults.find((x) => x.surface === name && x.theme === theme)
+        if (!r) { line += '—'.padEnd(9); continue }
+        if (r.pass) { themePass++; line += `${'PASS'.padEnd(9)}` } else { themeFail++; line += `${'FAIL'.padEnd(9)}` }
+      }
+      console.log(line)
+    }
+    console.log(`\n${themePass} passed, ${themeFail} failed, ${themePass + themeFail} theme-contrast assertions.`)
+    const bad = themeResults.filter((r) => !r.pass)
+    if (bad.length) {
+      failures.push(...bad.map((r) => ({ surface: `${r.surface} [${r.theme}]`, key: 'contrast', detail: r.detail })))
+      // A theme that failed to apply is a worse finding than a failed ratio:
+      // the number below it would be measured against the wrong palette.
+      const misapplied = themeResults.filter((r) => r.theme !== 'system' && r.applied !== r.theme)
+      if (misapplied.length) {
+        failures.push(...misapplied.map((r) => ({
+          surface: `${r.surface} [${r.theme}]`, key: 'theme',
+          detail: `asked for data-theme="${r.theme}", document has ${r.applied} — the contrast numbers above are for the wrong palette`,
+        })))
+      }
+    }
+  }
 
   if (failures.length) {
     console.error('\nFailures:\n' + failures.map((f) => `  - [${f.surface}] ${f.key}: ${f.detail}`).join('\n'))

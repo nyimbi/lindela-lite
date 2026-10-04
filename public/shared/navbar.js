@@ -1,5 +1,165 @@
 // Lindela Lite — shared cross-surface navbar
 
+/* Lindela Lite — theme selection (ENH-23), part of the shared navbar rather
+   than a module of its own.
+
+   Three themes, one attribute on <html>, and tokens.css does the rest: setting
+   data-theme is the whole mechanism, which is why a theme costs a block in the
+   token file rather than a pass over eight HTML files.
+
+   FIRST PAINT. The platform preference is resolved by two @media blocks in
+   tokens.css with no JavaScript at all; this code only adds the explicit
+   override on top. Resolving everything here instead would be a deferred module
+   resolving it a frame after the paint — and this file is imported by every
+   one of the eight surfaces, which is also why it is here: a ninth request on
+   a field connection to carry sixty lines is a worse trade than the bytes.
+
+   SURVIVES lang/dir: initI18n rewrites lang and dir and nothing else, so a
+   locale switch cannot clear the theme — a property of the source that
+   test/theme-choice.test.js greps every file in public/ to keep true. */
+
+export const THEMES = ['dark', 'light', 'contrast']
+export const CHOICES = ['system', 'dark', 'light', 'contrast']
+export const STORAGE_KEY = 'lindela-lite-theme'
+
+/** The bar above a standalone window: a literal in eight <head>s, and the one
+ *  piece of chrome the token layer cannot repaint. */
+export const THEME_COLOR = {
+  dark: '#0e1520',
+  light: '#f7f8fa',
+  contrast: '#000000',
+}
+
+/**
+ * Which theme a state resolves to. Pure, and the only place precedence lives:
+ * a stored choice beats the platform, and "more contrast" beats "light" because
+ * it is the more specific thing the user asked for.
+ */
+export function resolveTheme({ stored, prefersLight = false, prefersContrast = false } = {}) {
+  if (stored && stored !== 'system' && THEMES.includes(stored)) return stored
+  if (prefersContrast) return 'contrast'
+  if (prefersLight) return 'light'
+  return 'dark'
+}
+
+export function normalizeChoice(value) {
+  return CHOICES.includes(value) ? value : 'system'
+}
+
+/** localStorage throws rather than returning null in Safari private mode and in
+ *  a quota-exhausted origin. A theme switch is a preference; it must never be
+ *  what stops a console booting. */
+export function readStoredChoice(storage) {
+  try {
+    return normalizeChoice(storage && storage.getItem(STORAGE_KEY))
+  } catch {
+    return 'system'
+  }
+}
+
+export function writeStoredChoice(storage, choice) {
+  const value = normalizeChoice(choice)
+  try {
+    if (!storage) return value
+    if (value === 'system') storage.removeItem(STORAGE_KEY)
+    else storage.setItem(STORAGE_KEY, value)
+  } catch {
+    // The theme still applies for this page view.
+  }
+  return value
+}
+
+export function platformPreferences(win) {
+  if (!win || typeof win.matchMedia !== 'function') return { prefersLight: false, prefersContrast: false }
+  return {
+    prefersLight: !!win.matchMedia('(prefers-color-scheme: light)').matches,
+    prefersContrast: !!win.matchMedia('(prefers-contrast: more)').matches,
+  }
+}
+
+/** Apply a choice. `null` means "system", i.e. no attribute: a real state, not a
+ *  no-op, because it hands the decision back to the media queries. */
+export function applyChoice(doc, choice, win) {
+  const normalised = normalizeChoice(choice)
+  const root = doc && doc.documentElement
+  if (!root) return null
+
+  if (normalised === 'system') root.removeAttribute('data-theme')
+  else root.setAttribute('data-theme', normalised)
+
+  const meta = doc.querySelector('meta[name="theme-color"]')
+  if (meta) {
+    const theme = resolveTheme({ stored: normalised, ...platformPreferences(win) })
+    meta.setAttribute('content', THEME_COLOR[theme] || THEME_COLOR.dark)
+  }
+  return normalised === 'system' ? null : normalised
+}
+
+/**
+ * The preference control, mounted twice — in the bar and in the hamburger
+ * dialog — with a media query so exactly one is laid out. In the bar it is
+ * hidden below 720px because the bar already holds the brand, the language
+ * picker and the hamburger within about ten pixels of a 320px viewport, and a
+ * third select is a guaranteed scrollbar on the display this product is used
+ * on.
+ */
+export function mountThemeControl(container, { doc = globalThis.document, win = globalThis } = {}) {
+  if (!container || !doc || container.querySelector('.l-theme-select')) return null
+
+  const select = doc.createElement('select')
+  select.className = 'l-theme-select'
+  // Named rather than labelled-by-a-<label>: the bar has no room for one, and
+  // check-a11y.mjs fails an unnamed control on all eight surfaces.
+  select.setAttribute('aria-label', 'Colour theme')
+
+  for (const [value, text] of [
+    ['system', 'Theme: system'],
+    ['dark', 'Theme: dark'],
+    ['light', 'Theme: light'],
+    ['contrast', 'Theme: high contrast'],
+  ]) {
+    const option = doc.createElement('option')
+    option.value = value
+    option.textContent = text
+    select.appendChild(option)
+  }
+
+  select.value = readStoredChoice(win.localStorage)
+  select.addEventListener('change', () => {
+    writeStoredChoice(win.localStorage, select.value)
+    applyChoice(doc, select.value, win)
+  })
+
+  container.appendChild(select)
+  return select
+}
+
+/** Resolve, persist and follow. Exported so a test can drive it against a stub. */
+export function initTheme({ doc = globalThis.document, win = globalThis } = {}) {
+  const stored = readStoredChoice(win.localStorage)
+  applyChoice(doc, stored, win)
+
+  // While no choice has been made, keep following the platform — and do so by
+  // leaving the attribute absent rather than by pinning a resolved theme, since
+  // an explicit attribute outranks the media queries in tokens.css and would
+  // strand the user in the theme they were on at sunset.
+  if (typeof win.matchMedia === 'function') {
+    for (const query of ['(prefers-color-scheme: light)', '(prefers-contrast: more)']) {
+      const list = win.matchMedia(query)
+      if (typeof list.addEventListener !== 'function') continue
+      list.addEventListener('change', () => {
+        if (normalizeChoice(readStoredChoice(win.localStorage)) === 'system') applyChoice(doc, 'system', win)
+      })
+    }
+  }
+  return stored
+}
+
+// Guarded so the module can be imported under Node, which is how the tests read
+// it. Importing this file is the whole registration: shared/navbar.js imports
+// it and every surface imports the navbar, so no surface opts in and none can
+// forget to.
+if (typeof document !== 'undefined' && typeof window !== 'undefined') initTheme()
 const SURFACES = [
   { path: '/', key: 'nav.ops', label: 'Ops' },
   { path: '/focal-point', key: 'nav.focal_point', label: 'Focal Point' },
@@ -95,6 +255,25 @@ const NAVBAR_CSS = `
   cursor: pointer;
 }
 .l-navbar-locale:hover { color: var(--ink); }
+/* Styled exactly as the language control: a bespoke size would need its own
+   target-size measurement. Hidden in the bar below 720px, where the hamburger
+   dialog carries it — at 320px the bar has ten pixels of slack and this select
+   is 130 of them. */
+.l-theme-select {
+  font-size: var(--text-xs);
+  background: transparent;
+  color: var(--ink-muted);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-sm);
+  padding: 2px var(--sp-2);
+  min-width: 0;
+  max-width: 8.5rem;
+  cursor: pointer;
+}
+.l-theme-select:hover { color: var(--ink); }
+.l-navbar .l-theme-select { display: none; }
+@media (min-width: 721px) { .l-navbar .l-theme-select { display: block; } }
+.l-navbar-dialog .l-theme-select { display: block; width: 100%; margin-block-end: var(--sp-2); }
 .l-conn-dot {
   width: 8px;
   height: 8px;
@@ -249,6 +428,7 @@ export function renderNavbar({ activePath = '/', locales, currentLocale, onLocal
   window.addEventListener('online', () => dot.classList.remove('offline'))
   window.addEventListener('offline', () => dot.classList.add('offline'))
   end.appendChild(dot)
+  mountThemeControl(end)
   nav.appendChild(end)
 
   // Hamburger (mobile only, visible via CSS)
@@ -282,6 +462,9 @@ export function renderNavbar({ activePath = '/', locales, currentLocale, onLocal
   dHeader.appendChild(dTitle)
   dHeader.appendChild(closeBtn)
   dialog.appendChild(dHeader)
+
+  // The dialog is the only place the theme control is laid out below 720px.
+  mountThemeControl(dialog)
 
   for (const s of SURFACES) {
     const a = document.createElement('a')

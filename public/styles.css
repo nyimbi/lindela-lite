@@ -88,7 +88,7 @@ a:hover { text-decoration: underline; }
    click — the exact behaviour :focus-visible exists to avoid — and covered no
    interactive component at all: not .btn, .chip, .rail-tab, a, or summary. */
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--focus-ring-width) solid var(--focus-ring);
   outline-offset: 2px;
   border-radius: var(--r-sm);
 }
@@ -97,7 +97,7 @@ a:hover { text-decoration: underline; }
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--focus-ring-width) solid var(--focus-ring);
   outline-offset: -1px;
   border-color: var(--brand);
 }
@@ -1389,7 +1389,7 @@ dialog { margin: auto; }
 /* The ring lives on the header rather than the input, so it frames the whole
    search affordance instead of drawing a box inside a box. */
 .palette-header:has(input[type="search"]:focus-visible) {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--focus-ring-width) solid var(--focus-ring);
   outline-offset: 1px;
   border-radius: var(--r-sm);
 }
@@ -1925,7 +1925,13 @@ label:has(> input[type="radio"]) {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
-  background: oklch(35% 0.02 220);
+  /* Tokenised because the text on this chip is a token. `background:
+     oklch(35% …)` beside `color: var(--ink-muted)` is a dark-theme pairing
+     wearing the appearance of a themed one: in the light theme the muted ink is
+     34% L and this chip is still 30%, which measured 1.47:1 on the console's own
+     "not ingested" badge — the badge whose whole job is to say the data is not
+     there. */
+  background: var(--phase-bg);
   color: var(--ink-muted);
 }
 
@@ -1939,8 +1945,10 @@ label:has(> input[type="radio"]) {
   color: oklch(92% 0.04 230);
 }
 
-.seasonal-phase-neutral { background: oklch(35% 0.02 220); }
-.seasonal-phase-unknown { background: oklch(30% 0.02 220); color: var(--ink-faint); }
+.seasonal-phase-neutral { background: var(--phase-bg); }
+/* A border, because "we have never ingested this" is the one badge that has to
+   be findable in a dark room and is the one that carries no colour of its own. */
+.seasonal-phase-unknown { background: var(--phase-bg-unknown); color: var(--ink-faint); box-shadow: inset 0 0 0 1px var(--stroke-strong); }
 
 .seasonal-value {
   display: flex;
@@ -1955,7 +1963,7 @@ label:has(> input[type="radio"]) {
   color: var(--ink);
 }
 
-.seasonal-anomaly.is-warm { color: oklch(72% 0.13 38); }
+.seasonal-anomaly.is-warm { color: var(--warm); }
 .seasonal-anomaly.is-cold { color: oklch(70% 0.11 230); }
 
 .seasonal-period {
@@ -2175,7 +2183,11 @@ label:has(> input[type="radio"]) {
    filter controls all come out, and the alert list comes out on whatever paper
    happens to be in the tray. */
 @media print {
-  :root {
+  /* The theme blocks are attribute selectors and this one is a pseudo-class,
+     so `:root` alone loses to `[data-theme='light']` no matter where it sits —
+     the print palette has to out-specify the theme, not merely precede it. */
+  :root,
+  :root[data-theme] {
     /* Force light. The token layer is dark-only, so every surface is inverted
        at the token level rather than by overriding hundreds of rules. */
     --bg: #fff;
@@ -2299,6 +2311,6 @@ label:has(> input[type="radio"]) {
 .map-record-list tbody tr:hover { background: var(--surface); }
 
 .situation-map:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--focus-ring-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
