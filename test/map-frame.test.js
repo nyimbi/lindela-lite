@@ -81,7 +81,7 @@ describe('map framing', () => {
     // squeezed the five pilot districts into an unreadable smudge at the
     // centre. Found by screenshotting the running dashboard.
     const { frame, nearCount, outOfRegionCount, framedBy } = mapFrame(WORLDWIDE)
-    assert.equal(framedBy, 'region_of_interest_plus_nearby_data')
+    assert.equal(framedBy, 'pilot_districts_plus_nearby_data')
     assert.ok(outOfRegionCount > 0, 'the fixture must include far-flung points')
 
     const spanBefore = { lat: 130.9, lon: 322.4 }
@@ -162,7 +162,19 @@ describe('map framing with an active simulation', () => {
 
   it('ignores a null focus and frames normally', () => {
     const { framedBy, frame } = mapFrame(PILOT, R, null)
-    assert.equal(framedBy, 'region_of_interest_plus_nearby_data')
-    assert.ok(frame.maxLat >= R.maxLat)
+    assert.equal(framedBy, 'pilot_districts_plus_nearby_data')
+    // A null focus must fall through to ordinary framing. That framing is the
+    // pilot districts plus nearby data — not the whole region box, which is the
+    // behaviour this deliberately stopped doing: the region is 21 degrees tall
+    // and the districts occupy 6.2 of that, so the rest was ocean.
+    const districtTop = Math.max(...PILOT.map((p) => p.latitude))
+    assert.ok(
+      frame.maxLat >= districtTop,
+      `every pilot district stays in frame (top ${districtTop}, frame ${frame.maxLat.toFixed(2)})`,
+    )
+    assert.ok(
+      frame.maxLat < R.maxLat,
+      `and the frame does not climb back to the region ceiling (${frame.maxLat.toFixed(2)} vs ${R.maxLat})`,
+    )
   })
 })

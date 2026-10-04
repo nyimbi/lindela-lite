@@ -7,6 +7,8 @@
  */
 
 /** The pilot region the map is about: Turkana, Bor, Aweil, Moroto, Mandera. */
+import { PILOT_DISTRICTS } from './basemap.js'
+
 export const REGION_OF_INTEREST = Object.freeze({
   minLat: -6,
   maxLat: 15,
@@ -71,26 +73,71 @@ export function mapFrame(records, regionOfInterest = REGION_OF_INTEREST, focus =
   // something rather than collapsing to a zero-area box.
   const driver = near.length ? near : geo
   const dataBbox = computeBbox(driver)
-  // A focus REPLACES the region-of-interest anchor rather than unioning with
-  // it. Unioning is what makes framing work when the anchor is derived from
-  // data, but an explicit focus is the operator saying "zoom here" — unioning
-  // it with a 25-degree region would leave the focus a no-op and the shaded
-  // district still a few pixels wide.
-  const frame = focus ? { ...focus } : (dataBbox
-    ? {
-      minLat: Math.min(dataBbox.minLat, regionOfInterest.minLat),
-      maxLat: Math.max(dataBbox.maxLat, regionOfInterest.maxLat),
-      minLon: Math.min(dataBbox.minLon, regionOfInterest.minLon),
-      maxLon: Math.max(dataBbox.maxLon, regionOfInterest.maxLon),
-    }
-    : { ...regionOfInterest })
+
+  // The anchor is the PILOT DISTRICTS, not the whole region of interest.
+  //
+  // The region box is 21 degrees tall and 25 wide; the five districts an operator
+  // actually works are inside 6.2 by 14.5 of that. Unioning the data with the
+  // region box therefore spent most of the canvas on ocean north of Kenya and
+  // west of Sudan — roughly 890x1290px of map in which the data occupied the
+  // lower-left quarter. Framing on the districts keeps every one of them in
+  // view, which is the constraint the region union was serving, and lets the
+  // plotted records fill the frame.
+  const frame = focus ? { ...focus } : buildFrame(driver, dataBbox, pilotBbox())
 
   return {
     frame,
     dataExtent: frame,
     nearCount: near.length,
     outOfRegionCount: geo.length - near.length,
-    framedBy: focus ? 'focus' : near.length ? 'region_of_interest_plus_nearby_data' : 'all_data',
+    framedBy: focus ? 'focus' : near.length ? 'pilot_districts_plus_nearby_data' : 'all_data',
+  }
+}
+
+/** Bounding box of the five pilot districts. */
+function pilotBbox() {
+  const lats = PILOT_DISTRICTS.map((d) => d.center[1])
+  const lons = PILOT_DISTRICTS.map((d) => d.center[0])
+  return {
+    minLat: Math.min(...lats),
+    maxLat: Math.max(...lats),
+    minLon: Math.min(...lons),
+    maxLon: Math.max(...lons),
+  }
+}
+
+/**
+ * A frame around the anchor, padded so records are not flush to the edge.
+ *
+ * The padding is a fraction of the anchor's own span rather than a constant, so
+ * a tight cluster is not padded into the same emptiness the region union caused
+ * — and a degenerate anchor (every record at one point) still yields a box with
+ * some area, which is what stops the projection dividing by zero.
+ */
+function buildFrame(driver, dataBbox, anchor) {
+  // Nothing plotted: there is no data to fit, so the region of interest is the
+  // honest answer rather than a box around the districts alone.
+  if (!dataBbox) return { ...REGION_OF_INTEREST }
+  const base = dataBbox && anchor
+    ? {
+      minLat: Math.min(dataBbox.minLat, anchor.minLat),
+      maxLat: Math.max(dataBbox.maxLat, anchor.maxLat),
+      minLon: Math.min(dataBbox.minLon, anchor.minLon),
+      maxLon: Math.max(dataBbox.maxLon, anchor.maxLon),
+    }
+    : dataBbox || anchor
+
+  // Below this many distinct records, anchoring on them would frame a single
+  // point, so the region box is the honest answer: there is nothing to fit.
+  if (!driver || driver.length < 3) return base
+
+  const padLat = Math.max(0.25, (base.maxLat - base.minLat) * 0.06)
+  const padLon = Math.max(0.25, (base.maxLon - base.minLon) * 0.06)
+  return {
+    minLat: base.minLat - padLat,
+    maxLat: base.maxLat + padLat,
+    minLon: base.minLon - padLon,
+    maxLon: base.maxLon + padLon,
   }
 }
 
