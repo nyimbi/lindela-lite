@@ -12,6 +12,9 @@
 
 import { apiFetch, initI18n } from '/shared/runtime.js'
 import { esc, formatTimestamp, formatRelative, num, pct, sevClass } from '/shared/fmt.js'
+import {
+  districtsShareUrl, encodeDistrictsView, isDistrictsViewCustom, resolveDistrictsView,
+} from '/shared/districts-view.js'
 
 /**
  * A string in the language the reader selected, or in English.
@@ -336,6 +339,131 @@ export function buildSvgMap(district, records) {
  */
 const filters = { query: '', attentionOnly: false, cards: [] }
 
+/**
+ * The state a districts link carries.
+ *
+ * Read from the controls, not from the address bar, for the reason the console
+ * gives: a second copy of the view is a second thing that can be wrong, and a
+ * link that disagrees with the screen beside it is worse than no link. Reading
+ * the URL instead would be circular here — the URL is written *from* this view,
+ * so a filter typed but not yet stamped would be lost the moment it was encoded.
+ * The one field not held in a control is the district, and that one is read from
+ * the hash because the hash is the route: a card's `href` already worked and it
+ * has to keep working.
+ */
+function currentView() {
+  const { selected } = resolveDistrictsView({ hash: location.hash })
+  return { query: filters.query, attentionOnly: filters.attentionOnly, selected }
+}
+
+/**
+ * The `/districts/` query string for the current filters, or '' for none.
+ *
+ * `selected` is excluded deliberately: the district rides in the fragment, and
+ * a link back to the list must not leave one selected. The version parameter
+ * alone is not a view either, so a cleared filter yields '' rather than a
+ * `?v=v1` that says only "this URL was written by a build that understood it".
+ */
+function filtersQuery() {
+  const view = { ...currentView(), selected: '' }
+  return isDistrictsViewCustom(view) ? encodeDistrictsView(view) : ''
+}
+
+/** The href for a district card, filters included. */
+function districtHref(slug) {
+  const query = filtersQuery()
+  return `/districts${query ? `?${query}` : ''}#/${encodeURIComponent(slug || '')}`
+}
+
+/** The list href, filters included — the back link's target. */
+function listHref() {
+  const query = filtersQuery()
+  return `/districts${query ? `?${query}` : ''}`
+}
+
+/**
+ * Write the current view back to the URL, and every href that is a claim about
+ * it.
+ *
+ * The cards are re-stamped here as well as in the address bar, because a card
+ * `href` computed once at render is a claim about a view that no longer exists:
+ * the operator filters to three districts, opens one, and finds "back" — and
+ * every card — offering the list they no longer had.
+ *
+ * replaceState, not pushState, for the reason the console uses: a keystroke in
+ * the filter should not bury the back button under forty identical list states,
+ * and the card counts landing asynchronously must never add one either.
+ */
+function syncViewToUrl() {
+  const query = filtersQuery()
+  history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`)
+  for (const card of filters.cards) {
+    if (card.dataset.slug) card.href = districtHref(card.dataset.slug)
+  }
+  const back = document.querySelector('.back-link')
+  if (back) back.href = listHref()
+  updateShareControl()
+}
+
+/**
+ * The copy control, shown only when the view differs from the default.
+ *
+ * Matches the console: a share button on an untouched list invites someone to
+ * send a link that says nothing they had not already sent. Its presence answers
+ * "is there anything here worth passing on".
+ */
+function updateShareControl() {
+  const btn = document.getElementById('copyLinkBtn')
+  if (btn) btn.hidden = !isDistrictsViewCustom(currentView())
+}
+
+/**
+ * Copy the current view's link.
+ *
+ * The three strings here are bare English rather than `t()` lookups, which is
+ * what the console's own share control does — and here it is not a lapse but the
+ * only honest option. `test/i18n-districts.test.js` fails any `districts.*` key
+ * the page asks for that `en.json` does not define, and this surface's catalogue
+ * is not a file this change may edit. A key with no catalogue entry is a string
+ * no language can ever translate; the gate is right to refuse it, and adding it
+ * is a one-line follow-up for whoever owns `public/i18n/`.
+ *
+ * The clipboard needs a secure origin; on a plain-HTTP deployment it is simply
+ * unavailable, so the fallback prints the URL rather than swallowing the click
+ * and leaving the operator with no link and no idea anything happened.
+ */
+async function copyViewLink() {
+  const status = document.getElementById('copyLinkStatus')
+  const url = districtsShareUrl(currentView(), { origin: location.origin, pathname: '/districts/' })
+  try {
+    await navigator.clipboard.writeText(url)
+    if (status) status.textContent = 'Link copied. It opens this exact view.'
+  } catch {
+    if (status) {
+      status.textContent = `Copying is blocked in this browser. This link opens this view: ${url}`
+    }
+  }
+}
+
+/**
+ * The share control and its status line.
+ *
+ * Built here rather than in the markup because `clearApp()` empties `#app` on
+ * every route — a control written into the HTML would survive exactly until the
+ * first district rendered and then take itself out of the page.
+ */
+function shareControl() {
+  // The button label is bare English for the reason `copyViewLink` gives.
+  const bar = document.createElement('div')
+  bar.className = 'share-bar'
+  bar.innerHTML = `
+    <button type="button" class="btn btn-secondary" id="copyLinkBtn" hidden>Copy link to this view</button>
+    <span class="field-note" id="copyLinkStatus" role="status"></span>
+  `
+  bar.querySelector('#copyLinkBtn').addEventListener('click', copyViewLink)
+  return bar
+}
+
 function applyFilters(total) {
   let shown = 0
   for (const card of filters.cards) {
@@ -364,13 +492,23 @@ function applyFilters(total) {
  *
  * Client-side because `/api/v1/districts` returns nothing but identity — no
  * counts, no hazards — so a server round trip per keystroke would buy nothing
- * the cards do not already hold. Both filters are restored to their defaults on
- * every route, so a stale filter cannot silently hide a district after a
- * navigation.
+ * the cards do not already hold.
+ *
+ * The starting values come from the URL rather than from constants. They used to
+ * be reset to empty on every route, which was correct while a filter could not
+ * be shared and a link could not carry one; now that a link can, resetting would
+ * silently drop the filter the reader was sent, and a link that opens showing
+ * the whole list is worse than the screenshot it replaced. Navigating back to
+ * the list re-reads the URL, so the filter survives the round trip rather than
+ * being remembered in a module variable that the next route resets anyway.
  */
 function filterBar(total) {
-  filters.query = ''
-  filters.attentionOnly = false
+  // Straight from the URL, not from `currentView()`: this is the one direction
+  // the URL is the source, since a link the reader followed carries the filter
+  // and the controls do not exist yet.
+  const restored = resolveDistrictsView({ search: location.search, hash: location.hash })
+  filters.query = String(restored.query || '').trim().toLowerCase()
+  filters.attentionOnly = restored.attentionOnly === true
   filters.cards = []
 
   const bar = document.createElement('div')
@@ -388,15 +526,21 @@ function filterBar(total) {
   `
 
   const search = bar.querySelector('#district-filter')
+  // The box is stamped, not left empty under a filter already hiding half the
+  // list: a reader who cannot see why the list is short cannot clear it.
+  search.value = filters.query
   search.addEventListener('input', () => {
     filters.query = search.value.trim().toLowerCase()
     applyFilters(total)
+    syncViewToUrl()
   })
 
   const attention = bar.querySelector('#district-attention')
+  attention.checked = filters.attentionOnly
   attention.addEventListener('change', () => {
     filters.attentionOnly = attention.checked
     applyFilters(total)
+    syncViewToUrl()
   })
 
   return bar
@@ -423,6 +567,8 @@ function renderList(districts) {
   app.appendChild(lede)
 
   app.appendChild(filterBar(districts.length))
+  app.appendChild(shareControl())
+  updateShareControl()
 
   const grid = document.createElement('div')
   grid.className = 'district-grid'
@@ -433,7 +579,21 @@ function renderList(districts) {
     // A real href, so middle-click, "open in new tab" and "copy link address"
     // work. The click handler used to preventDefault unconditionally, which
     // defeated all three on a page whose entire purpose is linking onward.
-    card.href = `/districts#/${encodeURIComponent(d.slug)}`
+    // The link carries the current filters as well as the district. It used to
+    // be a bare `/districts#/slug`, which dropped a query the reader had typed
+    // on the way in — so the operator who filtered to three districts, opened
+    // one, and pressed back arrived at all forty with the filter gone and no
+    // explanation. The filter is part of the view; a link that drops it is a
+    // link that lies about where the reader was.
+    // The href carries the current filters as well as the district. It used to be
+    // a bare `/districts#/slug`, which dropped a query the reader had typed on
+    // the way in — so the operator who filtered to three districts, opened one
+    // and pressed back arrived at all forty, with the filter gone and no
+    // explanation. Re-stamped on every filter change by `syncViewToUrl`, which
+    // is the only way it stays true; a computed-once href is a claim about a
+    // view that no longer exists.
+    card.dataset.slug = String(d.slug || '')
+    card.href = districtHref(d.slug)
     card.dataset.name = String(d.name || '')
     card.dataset.country = String(d.country || '')
     card.dataset.attention = 'unknown'
@@ -511,6 +671,17 @@ function renderOverview(overview) {
   const app = appEl()
   clearApp()
 
+  // Seeded first, before anything reads the view. `filterBar` runs only on the
+  // list route, so without this the module holds no filters on a district
+  // opened directly — and the back link and the share control, both built below
+  // from the current view, would silently drop the query and the toggle the
+  // sender had applied. A share link that quietly removes half of what it was
+  // sharing is the worst of the three outcomes: the recipient has no way to
+  // tell.
+  const restored = resolveDistrictsView({ search: location.search, hash: location.hash })
+  filters.query = String(restored.query || '').trim().toLowerCase()
+  filters.attentionOnly = restored.attentionOnly === true
+
   const d = overview.district
   const c = overview.counts
   const alerts = overview.alert_events || []
@@ -520,7 +691,10 @@ function renderOverview(overview) {
 
   const back = document.createElement('a')
   back.className = 'back-link'
-  back.href = '/districts'
+  // Carries the filters back to the list, for the same reason the card links
+  // carry them forward: "back" that lands on a different view than the one
+  // left is not back.
+  back.href = listHref()
   back.textContent = t('districts.all_districts', '← All districts')
   app.appendChild(back)
 
@@ -543,6 +717,13 @@ function renderOverview(overview) {
     </div>
   `
   app.appendChild(ribbon)
+
+  // A district is itself a non-default view, so this route offers the link too:
+  // it is the route an operator is most often describing to someone else. Placed
+  // under the ribbon, beside the district's name, because that is what the link
+  // is a claim about.
+  app.appendChild(shareControl())
+  updateShareControl()
 
   // --- At a glance ----------------------------------------------
   // The ribbon answers "how much of everything"; this answers "what needs me

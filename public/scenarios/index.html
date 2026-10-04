@@ -20,6 +20,41 @@
       align-items: start;
     }
 
+    /* The run bar, and why it is not `position: sticky`.
+
+       A sticky footer was the first attempt and it does not work on this page:
+       `main.page-main` carries `overflow-y: auto` while the window is what
+       actually scrolls, so a sticky box resolves against a scrollport that never
+       moves and never sticks. Measured, not assumed — the bar sat at a constant
+       y:990 through the whole scroll range.
+
+       So the bar takes the directive's other branch: it sits at the top of the
+       results rail, above the empty state and above the results, which is where
+       the audit asked for it — next to what it produces. On the two-column
+       layout that is the first thing in the right-hand column and above the fold
+       at any width the audit measured; below 900px the layout is one column and
+       it follows the form, which is still the only place it ever was. */
+    .run-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--sp-3);
+      margin-bottom: var(--sp-4);
+      padding: var(--sp-3);
+      background: var(--bg-elevated);
+      border: 1px solid var(--stroke-strong);
+      border-radius: var(--r);
+    }
+    /* The error travels with the control that produced it, so a failure cannot
+       land somewhere the operator has to go looking for it. */
+    .run-bar .form-error { flex: 1 1 12rem; margin: 0; }
+
+    /* `.builder-run` is `width: 100%` for a full-width button at the foot of a
+       form column. In a flex row that would stretch the run control the full
+       width of the results rail and push the error off the bar, so the bar's own
+       rule wins. */
+    .run-bar .builder-run { width: auto; flex: 0 1 auto; margin-top: 0; }
+
     /* The language picker sits below the navbar rather than inside it: the
        shared navbar only renders a switcher when a surface passes it one, and
        scripts/check-i18n.mjs reads the locales a page offers straight out of
@@ -317,11 +352,27 @@
         </details>
 
         <p class="field-note" id="perturbationSummary"></p>
-        <button type="button" class="btn btn-primary builder-run" data-run data-i18n="scenarios.run_scenario">Run scenario</button>
-        <p class="form-error" id="scenarioError" role="alert" hidden></p>
       </section>
 
-      <section id="resultsPanel" aria-labelledby="resultsTitle">
+      <!-- `aria-labelledby` pointed at `#resultsTitle`, which lives inside the empty
+         state — so the moment a run replaced the empty state the section had no
+         accessible name at all, and the panel carrying the page's primary action
+         announced as an unlabelled region. A visually-hidden heading is the
+         name that survives both states. -->
+      <section id="resultsPanel" aria-labelledby="resultsPanelTitle">
+        <h2 id="resultsPanelTitle" class="visually-hidden" data-i18n="scenarios.results_title">Results</h2>
+        <!-- The page's only primary action, above both states of the results
+             panel rather than inside either. It used to be the last element of
+             an 850px builder form — y:879 on a 960px viewport, below a 20-item
+             checkbox list — so an operator had to scroll past forty rows of an
+             unrelated list to find the thing the page exists to do. Here it is
+             the first thing in the right-hand column, beside what it produces
+             and above the empty state that claims no run has happened. -->
+        <div class="run-bar">
+          <button type="button" class="btn btn-primary builder-run" data-run data-i18n="scenarios.run_scenario">Run scenario</button>
+          <p class="form-error" id="scenarioError" role="alert" hidden></p>
+        </div>
+
         <div id="noResults" class="empty-state-large">
           <h2 id="resultsTitle" data-i18n="scenarios.no_run_title">No scenario run yet</h2>
           <p data-i18n="scenarios.no_run_body">
@@ -336,9 +387,13 @@
         <div id="results" hidden>
           <div class="results-head">
             <h2 class="section-title" id="resultsTitleUsed" data-i18n="scenarios.results_title">Results</h2>
-            <!-- The primary action moved here from the foot of an 850px form:
-                 it belongs with the thing it produces. -->
-            <button type="button" class="btn btn-primary" data-run data-i18n="scenarios.run_again">Run again</button>
+            <!-- No run control here. There was one — "Run again", added when
+                 the primary action was moved off the foot of an 850px form —
+                 and once the run bar above this heading became always-visible it
+                 was a second identical button two hundred pixels below the first.
+                 Two primary actions on one page is a choice the reader has to
+                 make for no gain; the one above is the one the audit asked to be
+                 findable. -->
           </div>
 
           <!--

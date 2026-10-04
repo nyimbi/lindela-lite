@@ -147,6 +147,21 @@
       }
       .list-toolbar-note { margin-inline-start: auto; padding-block-end: 0.3rem; }
 
+      /* The share control sits under the toolbar, not inside it: the toolbar is
+         the filter, and a filter row that also offers to send the filter invites
+         people to treat a link as a way of clearing it. The control appears
+         only when the view is non-default, so an untouched list has no bar at
+         all rather than an empty one. */
+      .share-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--sp-2) var(--sp-3);
+        margin-block-start: var(--sp-3);
+      }
+      .share-bar:empty { display: none; }
+      .share-bar .field-note { margin: 0; }
+
       /* The language picker. `end` rather than `right`, so an RTL locale puts
          it where the reader's hand already is instead of mirroring nothing.
          Below the shared navbar's 44px, not over it. */

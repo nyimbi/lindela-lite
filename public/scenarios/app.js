@@ -390,9 +390,13 @@ function updateSummary() {
 }
 
 // --- Run --------------------------------------------------------------------
-// Both the builder panel and the results header carry a run control; one is
-// labelled "Run scenario" and the other "Run again", and both are disabled
-// together while a run is in flight.
+// One run control, `[data-run]`, in the bar at the top of the results rail. It
+// used to be the last element of an 850px builder form — y:879 on a 960px
+// viewport, below a 20-item checkbox list — and briefly there were two of it, a
+// second "Run again" in the results header, two hundred pixels below the first.
+// One primary action per page: the one at the top of the rail is the one the
+// audit asked to be findable. The query still asks for every `[data-run]`, so
+// restoring a second button needs no change here.
 const runButtons = () => Array.from(document.querySelectorAll('[data-run]'))
 
 async function runScenario() {
