@@ -3045,20 +3045,30 @@ async function loadSignalToAction() {
     const lastDispatch = dispatches.data?.sort((a, b) =>
       new Date(b.sent_at || 0) - new Date(a.sent_at || 0))[0]
 
-    // A metric with no value used to render an em dash and stay there, so the
-    // status bar carried two permanently-empty readouts that looked broken. Each
-    // one now appears only once it has something to say.
-    const lastSignalEl = $('lastSignalTime')
-    if (lastSignalEl && lastEvent?.observed_at) {
-      lastSignalEl.textContent = formatRelative(lastEvent.observed_at)
-      $('lastSignalMetric')?.removeAttribute('hidden')
+    // Set on every pass, in both directions.
+    //
+    // This only ever removed `hidden`. Once a refresh had a dispatch, the metric
+    // stayed on screen for the life of the page — and if a later refresh failed
+    // or the store emptied, it stayed on screen with the value from minutes ago
+    // and no indication that it was stale. Freshness is the one thing a status
+    // bar exists to report, so an unread one is worse than an absent one.
+    const setMetric = (metricId, valueId, value) => {
+      const metric = $(metricId)
+      const slot = $(valueId)
+      if (!metric) return
+      if (value === null || value === undefined || value === '') {
+        metric.setAttribute('hidden', '')
+        if (slot) slot.textContent = ''
+        return
+      }
+      if (slot) slot.textContent = value
+      metric.removeAttribute('hidden')
     }
 
-    const lastActionEl = $('lastActionTime')
-    if (lastActionEl && lastDispatch?.sent_at) {
-      lastActionEl.textContent = formatRelative(lastDispatch.sent_at)
-      $('lastActionMetric')?.removeAttribute('hidden')
-    }
+    setMetric('lastSignalMetric', 'lastSignalTime',
+      lastEvent?.observed_at ? formatRelative(lastEvent.observed_at) : null)
+    setMetric('lastActionMetric', 'lastActionTime',
+      lastDispatch?.sent_at ? formatRelative(lastDispatch.sent_at) : null)
 
     // Median lag
     if (dispatches.data && dispatches.data.length > 0) {
@@ -3068,20 +3078,28 @@ async function loadSignalToAction() {
         .sort((a, b) => a - b)
       if (lags.length > 0) {
         const median = lags[Math.floor(lags.length / 2)]
-        const medianEl = $('medianLag')
         const dotEl = $('lagDot')
-        if (medianEl) medianEl.textContent = formatDuration(median)
-        $('medianLagMetric')?.removeAttribute('hidden')
+        setMetric('medianLagMetric', 'medianLag', formatDuration(median))
         if (dotEl) {
           dotEl.className = 'dot '
           if (median < 1440) dotEl.classList.add('dot-ok')
           else if (median < 2880) dotEl.classList.add('dot-warn')
           else dotEl.classList.add('dot-danger')
         }
+      } else {
+        // Dispatches exist, none carries both timestamps, so the interval is not
+        // measurable. Say so rather than leaving the metric off and letting the
+        // absence read as "not yet" rather than "cannot be".
+        setMetric('medianLagMetric', 'medianLag', t('statusbar.lag_unmeasurable', 'not measurable'))
       }
+    } else {
+      setMetric('medianLagMetric', 'medianLag', null)
     }
   } catch (err) {
+    // The status bar is the one panel that must not keep claiming freshness
+    // after it has failed to check. Hide all three.
     console.error('Failed to load signal-to-action metrics:', err)
+    for (const id of ['lastSignalMetric', 'lastActionMetric', 'medianLagMetric']) $(id)?.setAttribute('hidden', '')
   }
 }
 

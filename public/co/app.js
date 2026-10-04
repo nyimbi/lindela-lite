@@ -551,8 +551,20 @@ function renderQoQ(series) {
 }
 
 function updateExportBtn(quarter, year) {
-  const btn = document.getElementById('export-btn')
-  if (btn) btn.href = `/api/v1/kpi/quarterly.pdf?quarter=${quarter}&year=${year}`
+  const pdf = document.getElementById('export-btn')
+  if (pdf) {
+    pdf.href = `/api/v1/kpi/quarterly.pdf?quarter=${quarter}&year=${year}`
+    pdf.setAttribute('download', `lindela-kpi-${year}-${quarter}.pdf`)
+  }
+  // Markdown as well as PDF. The PDF is typeset for a reader; the Markdown is
+  // for someone who wants the numbers in a spreadsheet, a wiki or a diff, and
+  // the server already builds one from the same report and the same narrative.
+  // Same filename convention, same period, same link.
+  const md = document.getElementById('export-md-btn')
+  if (md) {
+    md.href = `/api/v1/kpi/quarterly.md?quarter=${quarter}&year=${year}`
+    md.setAttribute('download', `lindela-kpi-${year}-${quarter}.md`)
+  }
 }
 
 /**

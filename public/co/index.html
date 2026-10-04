@@ -274,7 +274,15 @@
           <option value="en">English</option>
           <option value="sw">Swahili</option>
         </select>
-        <a id="export-btn" href="#" class="btn btn-primary" data-i18n="co.download_pdf">Download quarterly PDF</a>
+        <!-- `download` is not decoration. Without it the filename rests entirely
+             on the server's `content-disposition`, which a browser honours only
+             for same-origin requests: proxied through anything, or served with a
+             different origin policy, the file arrives as `quarterly.pdf?quarter=Q3&year=2026`
+             or opens in a tab instead of saving. The filename is already known
+             here, so it is stated here. -->
+        <a id="export-btn" href="#" class="download" data-i18n="co.download_pdf">Download quarterly PDF</a>
+        <a id="export-md-btn" href="#" class="btn btn-secondary download"
+           data-i18n="co.download_md">Download as Markdown</a>
       </div>
       <!-- What the download contains, before it is downloaded. -->
       <p id="export-preview" class="export-preview" role="status"></p>

@@ -641,14 +641,21 @@ body.app-shell {
   overflow: hidden;
 }
 
+/* Scrollable, so a rail with more tabs than the width can hold scrolls to them
+   instead of hanging off the edge. `flex: 1` below distributes the free space
+   between tabs; `flex-shrink: 0` here keeps the labels from being squeezed to
+   nothing first, which is what put the overflow outside the viewport. */
 .rail-tabs {
   display: flex;
   border-bottom: 1px solid var(--stroke);
   flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .rail-tab {
-  flex: 1;
+  flex: 1 0 auto;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1674,11 +1681,20 @@ dialog { margin: auto; }
    status bar read "Last signal : —" with a space on each side of every colon.
    These are label/value pairs, not toolbars: they flow inline, and the only
    gap is the one that belongs between metrics. */
+/* The `hidden` attribute is set on all three of these in the markup, and it did
+   nothing: this rule sets `display: inline`, which beats the user agent's
+   `[hidden] { display: none }` on specificity. So the status bar rendered three
+   labels with an empty span after each colon — "Last signal:", "Median lag:" —
+   and the audit read them as a panel reporting nothing. An author rule naming a
+   display value silently cancels `hidden` for that element; the only way back
+   is to name the hidden state explicitly. */
 .statusbar-metric {
   display: inline;
   color: var(--ink-muted);
   white-space: nowrap;
 }
+
+.statusbar-metric[hidden] { display: none; }
 
 .statusbar-metric + .statusbar-metric { margin-inline-start: var(--sp-4); }
 
@@ -1782,7 +1798,6 @@ label:has(> input[type="radio"]) {
 [dir="rtl"] .topbar             { flex-direction: row-reverse; }
 [dir="rtl"] .topbar-brand       { flex-direction: row-reverse; }
 [dir="rtl"] .topbar-controls    { flex-direction: row-reverse; }
-[dir="rtl"] .console-layout     { grid-template-columns: 360px 1fr; }
 [dir="rtl"] .map-section        { border-right: none; border-left: 1px solid var(--stroke); }
 [dir="rtl"] .alert-item-row     { flex-direction: row-reverse; }
 [dir="rtl"] .alert-timestamp    { margin-left: 0; margin-right: auto; }
@@ -1806,6 +1821,20 @@ label:has(> input[type="radio"]) {
 .land-layer path  { fill: var(--map-land); stroke: var(--map-land-edge); stroke-width: 0.8; pointer-events: none; }
 .districts-layer circle { fill: none; stroke: var(--brand); stroke-width: 1.2; stroke-dasharray: 4 3; opacity: 0.75; }
 .districts-layer text { fill: var(--ink-muted); font-size: 10px; font-family: var(--font-sans); pointer-events: none; }
+
+/* The RTL column swap belongs to the two-column layout and nowhere else.
+
+   It was declared unconditionally, so `[dir="rtl"] .console-layout` (0,2,0) beat
+   `.console-layout` inside the 800px breakpoint (0,1,0) — media queries add no
+   specificity of their own. An Arabic phone therefore kept the desktop grid: a
+   360px rail beside a map that got the remaining 15px, inside a container with
+   `overflow: hidden`. 66 controls — every tab, every chip — sat past the left
+   edge, clipped and unscrollable, and `documentElement.scrollWidth` stayed equal
+   to `clientWidth` so no overflow check could see it. Same reason the toolbar
+   fix was invisible. */
+@media (min-width: 801px) {
+  [dir="rtl"] .console-layout { grid-template-columns: 360px 1fr; }
+}
 
 /* --- Mobile -------------------------------------------------- */
 @media (max-width: 800px) {

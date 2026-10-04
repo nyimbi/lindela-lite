@@ -288,112 +288,131 @@ async function main() {
   const failures = []
   let checks = 0
 
-  for (const [name, path] of PAGES) {
-    for (const vp of VIEWPORTS) {
-      await session.send('Emulation.setDeviceMetricsOverride', {
-        width: vp.width,
-        height: vp.height,
-        deviceScaleFactor: 1,
-        mobile: vp.width < 700,
-      })
-      await session.send('Page.navigate', { url: BASE + path })
+  // Every surface, every viewport, in both directions.
+    //
+    // RTL was not measured at all, and it could not have been caught by adding it
+    // to VIEWPORTS: the console declares `[dir="rtl"] .console-layout` outside any
+    // media query, which outranks a class inside the 800px breakpoint, so an
+    // Arabic phone kept the desktop two-column grid and 66 controls sat past the
+    // left edge. `scrollWidth` equalled `clientWidth` throughout, so the overflow
+    // assertion was satisfied by a layout that was entirely wrong. Direction is a
+    // dimension of this gate for the same reason width is: a mirrored layout is a
+    // different layout, and it is not derived from the LTR one by the browser.
+    for (const [name, path] of PAGES) {
+      for (const dir of ['ltr', 'rtl']) {
+      for (const vp of VIEWPORTS) {
+        await session.send('Emulation.setDeviceMetricsOverride', {
+          width: vp.width,
+          height: vp.height,
+          deviceScaleFactor: 1,
+          mobile: vp.width < 700,
+        })
+        await session.send('Page.navigate', { url: BASE + path })
+        // Set after navigation: the surfaces apply `dir` themselves from the
+        // locale, so setting it before the page loads is overwritten. This is
+        // applied as the document settles, in `measure`.
 
-      // Wait for the surface to settle rather than sleeping a fixed 2500ms.
-      //
-      // A fixed sleep made the whole gate timing-dependent, and it failed
-      // silently in the direction that hides defects: a surface whose content
-      // had not arrived yet reported *zero* controls, which reads exactly like
-      // a surface where every control clears the floor. focal-point's rule form
-      // (21px inputs, below the 24px floor) passed on one run and failed on the
-      // next with no code change between them.
-      //
-      // Settling is: poll the same probe, and stop when the count of measured
-      // controls has stopped changing. The cap is generous because a surface
-      // that never settles must be reported, not waited on forever.
-      let settled = 0
-      let previous = -1
-      for (let attempt = 0; attempt < 40 && settled < 3; attempt += 1) {
-        await sleep(250)
-        const probe = await session.send('Runtime.evaluate', {
-          expression: `(${countControls.toString()})()`,
+
+        // Wait for the surface to settle rather than sleeping a fixed 2500ms.
+        //
+        // A fixed sleep made the whole gate timing-dependent, and it failed
+        // silently in the direction that hides defects: a surface whose content
+        // had not arrived yet reported *zero* controls, which reads exactly like
+        // a surface where every control clears the floor. focal-point's rule form
+        // (21px inputs, below the 24px floor) passed on one run and failed on the
+        // next with no code change between them.
+        //
+        // Settling is: poll the same probe, and stop when the count of measured
+        // controls has stopped changing. The cap is generous because a surface
+        // that never settles must be reported, not waited on forever.
+        let settled = 0
+        let previous = -1
+        for (let attempt = 0; attempt < 40 && settled < 3; attempt += 1) {
+          await sleep(250)
+          const probe = await session.send('Runtime.evaluate', {
+            // Force the direction on every poll, after the page has run: the
+            // surfaces set `dir` themselves from the selected locale, so anything
+            // set before navigation is overwritten by the first render.
+            expression: `(() => { document.documentElement.setAttribute('dir', ${JSON.stringify(dir)}); return (${countControls.toString()})(); })()`,
+            returnByValue: true,
+            awaitPromise: false,
+          })
+          const count = probe.result?.value ?? 0
+          settled = count === previous && count > 0 ? settled + 1 : 0
+          previous = count
+        }
+
+        // MIN_TAP is injected rather than re-declared inside collect(): the first
+        // version of this probe hardcoded 44 in the page copy and 24 here, and
+        // the gate kept reporting 24px controls as failures. One source of truth.
+        const { result, exceptionDetails } = await session.send('Runtime.evaluate', {
+          expression: `(() => { document.documentElement.setAttribute('dir', ${JSON.stringify(dir)}); return (${collect.toString()})(${JSON.stringify(MIN_TAP)}); })()`,
           returnByValue: true,
           awaitPromise: false,
         })
-        const count = probe.result?.value ?? 0
-        settled = count === previous && count > 0 ? settled + 1 : 0
-        previous = count
-      }
 
-      // MIN_TAP is injected rather than re-declared inside collect(): the first
-      // version of this probe hardcoded 44 in the page copy and 24 here, and
-      // the gate kept reporting 24px controls as failures. One source of truth.
-      const { result, exceptionDetails } = await session.send('Runtime.evaluate', {
-        expression: `(${collect.toString()})(${JSON.stringify(MIN_TAP)})`,
-        returnByValue: true,
-        awaitPromise: false,
-      })
+        checks += 1
+        if (exceptionDetails || !result.value) {
+          failures.push(`${name} @ ${vp.name}: probe failed — ${exceptionDetails?.text || 'no result'}`)
+          continue
+        }
 
-      checks += 1
-      if (exceptionDetails || !result.value) {
-        failures.push(`${name} @ ${vp.name}: probe failed — ${exceptionDetails?.text || 'no result'}`)
-        continue
-      }
+        const r = result.value
+        const label = `${name} @ ${vp.name} (${vp.width}px) ${dir}`
 
-      const r = result.value
-      const label = `${name} @ ${vp.name} (${vp.width}px)`
-
-      if (r.overflow > 1) {
-        const worst = r.overflowing.map((o) => `${o.tag}.${o.cls}→${o.right}px`).join(', ') || 'unknown'
-        failures.push(`${label}: horizontal overflow ${r.overflow}px — ${worst}`)
-      }
-      if (r.clippedStartCount > 0) {
-        const worst = r.clippedStart.map((o) => `${o.tag}#${o.id}.${o.cls} at ${o.left}px`).join(', ') || 'unknown'
-        failures.push(
-          `${label}: ${r.clippedStartCount} control(s) off the start edge — ${worst}. `
-          + 'A browser will not scroll to overflow from the start, so scrollWidth cannot see this.',
-        )
-      }
-      if (r.clippedCount > 0) {
-        failures.push(
-          `${label}: ${r.clippedCount} element(s) clipped — ` +
-          r.clipped.map((c) => `${c.tag}.${c.cls} "${c.text}"`).join('; ')
-        )
-      }
-      if (REQUIRE_MEASURED_TARGETS.has(name) && r.measuredTargetCount === 0) {
-        // The dashboard is the only surface with SVG controls the gate is
-        // asserting on, so it is the only one where "found nothing" is a defect
-        // rather than an honest report.
-        failures.push(
-          `${label}: no controls were measured — the tap-target check passed on nothing. `
-          + 'Either the surface rendered empty or its controls lost data-tap-target.',
-        )
-      }
-      if (r.smallTargetCount > 0) {
-        failures.push(
-          `${label}: ${r.smallTargetCount} control(s) below ${MIN_TAP}px — ` +
-          r.smallTargets.map((t) => `${t.tag}#${t.id}.${t.cls} ${t.width}x${t.height}px`).join(', ')
-        )
-      }
-
-      const ok = r.overflow <= 1 && r.clippedStartCount === 0 && r.clippedCount === 0 && r.smallTargetCount === 0
-      process.stdout.write(`${ok ? 'PASS' : 'FAIL'}  ${label}\n`)
-
-      // Capture through CDP rather than `chrome --headless --screenshot`.
-      // That flag sizes the *window*, not the layout viewport, so the capture is
-      // cropped to the requested width while the page laid out wider — which
-      // renders a correct page as one with content running off the edge. The
-      // audit doc records the same class of mistake: headless Chrome's default
-      // is 756x469, which is a tablet width, so every mobile assertion ran
-      // against a layout no field device sees.
-      if (process.env.LINDELA_LITE_SHOTS) {
-        const shot = await session.send('Page.captureScreenshot', { format: 'png' })
-        if (shot?.data) {
-          const { writeFile, mkdir } = await import('node:fs/promises')
-          await mkdir(process.env.LINDELA_LITE_SHOTS, { recursive: true })
-          await writeFile(
-            `${process.env.LINDELA_LITE_SHOTS}/${name}-${vp.name}.png`,
-            Buffer.from(shot.data, 'base64')
+        if (r.overflow > 1) {
+          const worst = r.overflowing.map((o) => `${o.tag}.${o.cls}→${o.right}px`).join(', ') || 'unknown'
+          failures.push(`${label}: horizontal overflow ${r.overflow}px — ${worst}`)
+        }
+        if (r.clippedStartCount > 0) {
+          const worst = r.clippedStart.map((o) => `${o.tag}#${o.id}.${o.cls} at ${o.left}px`).join(', ') || 'unknown'
+          failures.push(
+            `${label}: ${r.clippedStartCount} control(s) off the start edge — ${worst}. `
+            + 'A browser will not scroll to overflow from the start, so scrollWidth cannot see this.',
           )
+        }
+        if (r.clippedCount > 0) {
+          failures.push(
+            `${label}: ${r.clippedCount} element(s) clipped — ` +
+            r.clipped.map((c) => `${c.tag}.${c.cls} "${c.text}"`).join('; ')
+          )
+        }
+        if (REQUIRE_MEASURED_TARGETS.has(name) && r.measuredTargetCount === 0) {
+          // The dashboard is the only surface with SVG controls the gate is
+          // asserting on, so it is the only one where "found nothing" is a defect
+          // rather than an honest report.
+          failures.push(
+            `${label}: no controls were measured — the tap-target check passed on nothing. `
+            + 'Either the surface rendered empty or its controls lost data-tap-target.',
+          )
+        }
+        if (r.smallTargetCount > 0) {
+          failures.push(
+            `${label}: ${r.smallTargetCount} control(s) below ${MIN_TAP}px — ` +
+            r.smallTargets.map((t) => `${t.tag}#${t.id}.${t.cls} ${t.width}x${t.height}px`).join(', ')
+          )
+        }
+
+        const ok = r.overflow <= 1 && r.clippedStartCount === 0 && r.clippedCount === 0 && r.smallTargetCount === 0
+        process.stdout.write(`${ok ? 'PASS' : 'FAIL'}  ${label}\n`)
+
+        // Capture through CDP rather than `chrome --headless --screenshot`.
+        // That flag sizes the *window*, not the layout viewport, so the capture is
+        // cropped to the requested width while the page laid out wider — which
+        // renders a correct page as one with content running off the edge. The
+        // audit doc records the same class of mistake: headless Chrome's default
+        // is 756x469, which is a tablet width, so every mobile assertion ran
+        // against a layout no field device sees.
+        if (process.env.LINDELA_LITE_SHOTS) {
+          const shot = await session.send('Page.captureScreenshot', { format: 'png' })
+          if (shot?.data) {
+            const { writeFile, mkdir } = await import('node:fs/promises')
+            await mkdir(process.env.LINDELA_LITE_SHOTS, { recursive: true })
+            await writeFile(
+              `${process.env.LINDELA_LITE_SHOTS}/${name}-${vp.name}.png`,
+              Buffer.from(shot.data, 'base64')
+            )
+          }
         }
       }
     }
