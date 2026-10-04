@@ -11,7 +11,7 @@
 // discipline existed, in one file.
 
 import { apiFetch, autoMarkScrollableRegions, initI18n } from '/shared/runtime.js'
-import { esc, formatTimestamp, formatRelative, num, pct, sevClass } from '/shared/fmt.js'
+import { esc, formatTimestamp, formatRelative, num, pct, sevClass, sevChipHtml } from '/shared/fmt.js'
 import {
   districtsShareUrl, encodeDistrictsView, isDistrictsViewCustom, resolveDistrictsView,
 } from '/shared/districts-view.js'
@@ -133,10 +133,19 @@ function mostRecentHazard(hazards) {
   return best ? { hazard: best, at: new Date(bestTs) } : null
 }
 
-function sevChip(sev) {
-  const s = sevClass(sev)
-  return `<span class="chip chip-${s}">${esc(s)}</span>`
-}
+/**
+ * Severity, as the one chip every surface uses.
+ *
+ * This was a fourth spelling: `.chip chip-<level>`, a class pair no other
+ * surface emitted and no shared stylesheet declared until `components.css`
+ * happened to add it. The word shown was the *class*, so a severity the server
+ * sent as anything unexpected rendered as the fallback level's label — a
+ * record's actual severity replaced by the level the fallback happens to be.
+ *
+ * `sevChipHtml` shows the word the record carries and puts it in a `title`, so
+ * a chip that is ever shortened stays readable.
+ */
+const sevChip = (sev) => sevChipHtml(sev)
 
 function stateChip(state) {
   return `<span class="chip chip-neutral">${esc(state || '—')}</span>`

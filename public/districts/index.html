@@ -251,31 +251,19 @@
         text-transform: uppercase;
         letter-spacing: 0.02em;
       }
-      /* These put white text on the raw severity hue at 0.68rem: measured at
-         ~3.2:1 for critical, ~2.5:1 for high and ~2.2:1 for low — three of four
-         below the 4.5:1 WCAG AA floor, on the single most operationally urgent
-         attribute in the product. The #c0392b-style fallbacks in the old rule
-         were accessible, but tokens.css shadows every one of them with a light
-         OKLCH value, so the fallbacks could never fire and the accessible
-         colours were dead code.
+      /* Severity used to be styled here, in a fourth spelling: `.chip-<level>`
+         at a 20% tint against components.css's 22%, uppercase here and not
+         there, 3px radius here and 12px on the focal point. `components.css`
+         is now the one declaration and these selectors are dead — they were
+         only outranked by `body`-prefixed rules, which is a way of making a
+         duplicate load-bearing. `districts/app.js` emits the canonical
+         `sev-chip sev-<level>` pair instead.
 
-         Severity is now a tint of the hue with the body ink on top: the hue
-         still reads at a glance, the text clears the floor, and every surface
-         resolves severity the same way. The text label is always present, so
-         meaning never depends on colour alone. */
-      .chip-critical,
-      .chip-high,
-      .chip-medium,
-      .chip-low,
-      .chip-ok {
-        color: var(--ink);
-        font-size: var(--text-xs);
-      }
-      .chip-critical { background: color-mix(in oklch, var(--sev-critical) 20%, transparent); box-shadow: inset 0 0 0 1px var(--sev-critical); }
-      .chip-high     { background: color-mix(in oklch, var(--sev-high) 20%, transparent);     box-shadow: inset 0 0 0 1px var(--sev-high); }
-      .chip-medium   { background: color-mix(in oklch, var(--sev-medium) 20%, transparent);   box-shadow: inset 0 0 0 1px var(--sev-medium); }
-      .chip-low      { background: color-mix(in oklch, var(--sev-low) 20%, transparent);      box-shadow: inset 0 0 0 1px var(--sev-low); }
-      .chip-ok       { background: color-mix(in oklch, var(--ok) 20%, transparent);          box-shadow: inset 0 0 0 1px var(--ok); }
+         `.chip` itself stays: this surface also uses it for workflow state and
+         sentiment, which are not severity and must not inherit the severity
+         palette. Those carry no severity meaning, so they keep the neutral
+         treatment below. */
+      .chip-ok,
       .chip-unknown,
       .chip-neutral { background: var(--surface); color: var(--ink-muted); }
 
