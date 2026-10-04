@@ -3,12 +3,171 @@
 // who has the app open, because the old app.js is served from cache forever.
 const CACHE_NAME = 'lindela-lite-v4'
 const API_CACHE_NAME = 'lindela-lite-api-v1'
+const DETAIL_CACHE_NAME = 'lindela-lite-detail-v1'
+const MAP_CACHE_NAME = 'lindela-lite-map-v1'
 
 // API responses are cached in their own bucket so they can be expired by age
 // without throwing away the app shell, and so the shell stays small enough to
 // version cheaply.
 const API_TTL_MS = 24 * 60 * 60 * 1000
 const API_MAX_ENTRIES = 200
+
+/**
+ * Three read buckets, not one (ENH-22).
+ *
+ * The single API bucket was sized for the console's twelve-endpoint poll, which
+ * is the wrong shape for the two things a drill-down actually needs.
+ *
+ * `detail` is a record a user opened by name — a district, an alert event, an
+ * incident. It is what an offline user goes looking for and it is the smallest
+ * payload class here, so it gets the longest TTL (a week: a district's facts do
+ * not move in a day, and a health worker who visited a district on Tuesday must
+ * still be able to read it on Saturday) and a cap low enough that nothing else
+ * can evict it. Under one shared bucket with a 200-entry cap driven by a
+ * thirty-second poll, the poll fills the cache and every drill-down anyone ever
+ * opens is among the first evicted — the offline drill-down was available in
+ * principle and not in practice.
+ *
+ * `map` is what the map actually fetches. `shared/basemap.js` is inline polygon
+ * data and requests nothing at all: there are no raster tiles in this product,
+ * and a tile cache for tiles that are never requested is a cache of nothing.
+ * The real payload behind the map is the hazard, flood, food-security and
+ * road-access layers drawn inside those polygons — the largest responses here
+ * and among the least volatile, so the smallest cap.
+ *
+ * `api` is everything else: KPI series, summaries, watermarks, ingest status.
+ * Short-lived and high-churn, exactly as before.
+ */
+export const CACHE_POLICIES = {
+	detail: { name: DETAIL_CACHE_NAME, maxEntries: 60, ttlMs: 7 * 24 * 60 * 60 * 1000 },
+	map:    { name: MAP_CACHE_NAME,   maxEntries: 48, ttlMs: 2 * 24 * 60 * 60 * 1000 },
+	api:    { name: API_CACHE_NAME,   maxEntries: API_MAX_ENTRIES, ttlMs: API_TTL_MS },
+}
+
+/**
+ * Collections whose sub-resources are a single record — a drill-down target.
+ *
+ * Derived from the request shapes the surfaces actually issue, not from the
+ * route table: `/api/v1/districts/turkana` is a district, `/api/v1/districts`
+ * is the list the map draws and belongs in `map`. Splitting on segment count as
+ * well as on collection name is what keeps those two apart, and getting it
+ * wrong is quiet in both directions — a list in the detail bucket evicts
+ * records, a record in the list bucket is evicted by the poll.
+ */
+const DETAIL_COLLECTIONS = new Set([
+	'alert-events',
+	'community-feedback',
+	'disease-observations',
+	'districts',
+	'events',
+	'incidents',
+	'interventions',
+	'reports',
+	'service-assets',
+	'tasks',
+	'workflows',
+])
+
+/** Bare collections the map draws from. No sub-resource. */
+const MAP_LAYER_COLLECTIONS = new Set([
+	'climate',
+	'conflict-risk',
+	'districts',
+	'equity',
+	'flood-depth',
+	'flood-risk',
+	'food-security',
+	'road-access',
+])
+
+/**
+ * Which bucket a request belongs in, or null if it is not a cached read.
+ *
+ * null for anything that is not a GET under /api/v1/: a write must never be
+ * served from a cache, and the offline queue in replayQueue depends on that —
+ * a cached 200 for a POST would make a submission that never reached the server
+ * look filed, which is the exact failure the queue exists to prevent.
+ */
+export function classifyApiRequest(pathname, method = 'GET') {
+	if (String(method).toUpperCase() !== 'GET') return null
+	if (!pathname.startsWith('/api/v1/')) return null
+	const segments = pathname.slice('/api/v1/'.length).split('/').filter(Boolean)
+	if (!segments.length) return null
+	const [collection, id] = segments
+	if (id) return DETAIL_COLLECTIONS.has(collection) ? 'detail' : 'api'
+	return MAP_LAYER_COLLECTIONS.has(collection) ? 'map' : 'api'
+}
+
+/**
+ * The body a drill-down gets when the record is genuinely not available.
+ *
+ * The worker used to answer an offline miss with `{"error":"Offline"}` and a
+ * 503. Two things were wrong with that. The shape is indistinguishable from a
+ * server error, so a page cannot tell "the network is gone and I never had this
+ * record" from "the server refused this request"; and an empty panel that looks
+ * like an empty result set reads to a health worker as "there is nothing here"
+ * — a claim about the district, and a false one.
+ *
+ * So the miss names what is missing and says plainly that nothing was ever
+ * cached. `cached: false` is the field that carries the meaning: it is the
+ * difference between "I have no data" and "I have no data because I never
+ * fetched any", two different sentences to a user and identical pixels.
+ */
+export function offlineMissBody({ kind, pathname } = {}) {
+	return {
+		error: 'unavailable-offline',
+		code: 'offline-no-record',
+		offline: true,
+		cached: false,
+		kind: kind || null,
+		resource: pathname || null,
+		message:
+			'This record is not available offline: it has never been downloaded to this ' +
+			'device, so there is nothing to show for it until the device is back online.',
+	}
+}
+
+/**
+ * Representation and hop-by-hop headers that must not be copied onto a body
+ * that has already been decoded.
+ *
+ * A cached body is a decoded stream. Re-wrapping it under the stored response's
+ * own `content-encoding: gzip` and `content-length` describes a body that is
+ * not the body being sent — headers that lie about their payload. The previous
+ * worker copied them wholesale and nothing caught it, because the only way to
+ * reach that code is to be offline with a warm cache, which no test could
+ * arrange.
+ */
+const DROPPED_HEADERS = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'keep-alive'])
+
+export function sanitizeHeaders(headers = {}) {
+	const out = {}
+	for (const [key, value] of new Headers(headers).entries()) {
+		if (!DROPPED_HEADERS.has(key.toLowerCase())) out[key] = value
+	}
+	return out
+}
+
+/**
+ * Headers for a cache hit, so the page can say how stale it is rather than
+ * presenting a week-old district as current.
+ *
+ * The age is computed here because the page cannot: the server's `Date` header
+ * is the response time, and a response pulled from a cache days later still
+ * carries the day it was fetched.
+ */
+export function staleHeaders({ headers = {}, storedAtMs = 0, now = 0 } = {}) {
+	const out = {
+		...sanitizeHeaders(headers),
+		'x-lindela-offline': '1',
+		'x-lindela-cache': 'hit',
+	}
+	if (storedAtMs) {
+		out['x-lindela-stored-at'] = new Date(storedAtMs).toISOString()
+		out['x-lindela-stale-seconds'] = String(Math.max(0, Math.round((now - storedAtMs) / 1000)))
+	}
+	return out
+}
 
 /**
  * The surfaces whose HTML is the root of the precache graph.
@@ -183,11 +342,11 @@ SW?.addEventListener('activate', (event) => {
 			.then((cacheNames) =>
 				Promise.all(
 					cacheNames
-						.filter((name) => name !== CACHE_NAME && name !== API_CACHE_NAME)
+						.filter((name) => name !== CACHE_NAME && !DATA_CACHE_NAMES.has(name))
 						.map((name) => caches.delete(name))
 				)
 			)
-			.then(pruneApiCache)
+			.then(pruneDataCaches)
 			.then(() => self.clients.claim())
 			// Tell open pages a new build is live so they can offer a reload,
 			// rather than swapping under a user mid-dispatch.
@@ -201,43 +360,15 @@ SW?.addEventListener('activate', (event) => {
 
 SW?.addEventListener('fetch', (event) => {
 	const url = new URL(event.request.url)
+	const kind = classifyApiRequest(url.pathname, event.request.method)
 
 	// Network-first for API calls, falling back to the last good response and
-	// then to an explicit 503 so the page can tell "offline" from "empty".
-	if (url.pathname.startsWith('/api/v1/') && event.request.method === 'GET') {
-		event.respondWith(
-			fetch(event.request)
-				.then((response) => {
-					if (response.ok) {
-						const copy = response.clone()
-						event.waitUntil(
-							caches.open(API_CACHE_NAME).then((cache) =>
-								cache.put(event.request, copy)
-							)
-						)
-					}
-					return response
-				})
-				.catch(() =>
-					caches.match(event.request, { cacheName: API_CACHE_NAME }).then((cached) => {
-						if (cached) {
-							// Mark it so the page can say "this is stale" rather than
-							// presenting a cached value as current.
-							const headers = new Headers(cached.headers)
-							headers.set('x-lindela-offline', '1')
-							return new Response(cached.body, {
-								status: cached.status,
-								statusText: cached.statusText,
-								headers,
-							})
-						}
-						return new Response(JSON.stringify({ error: 'Offline' }), {
-							status: 503,
-							headers: { 'content-type': 'application/json' },
-						})
-					})
-				)
-		)
+	// then to an explicit, self-describing miss so the page can tell "offline",
+	// "stale" and "never fetched" apart — three states that look identical as
+	// an empty panel and mean completely different things to a user in a
+	// district with no signal.
+	if (kind) {
+		event.respondWith(networkFirst(event.request, kind, event))
 		return
 	}
 
@@ -259,6 +390,111 @@ SW?.addEventListener('fetch', (event) => {
 		)
 	)
 })
+
+/**
+ * Network-first read with an honest fallback chain.
+ *
+ * The chain is three distinct answers and each one is a different thing the
+ * page has to be able to say out loud:
+ *
+ *   live    the response, and a copy stored with the timestamp of the moment it
+ *           was stored (not the server's Date, which is the response time and is
+ *           what a stale-looking age would otherwise be computed from);
+ *   stale   the cached body, marked with x-lindela-offline and its age, so the
+ *           panel can say "as of Tuesday" instead of implying now;
+ *   missing a 503 whose body says, in a field, that nothing was ever cached.
+ *
+ * A non-OK response is passed straight through and never cached. Serving a
+ * cached district because the server returned 500 would be the offline failure
+ * this work exists to avoid, in the other direction.
+ */
+async function networkFirst(request, kind, event) {
+	const policy = CACHE_POLICIES[kind]
+	const url = new URL(request.url)
+	let response
+	try {
+		response = await fetch(request)
+	} catch {
+		return cachedOrMiss(request, kind, url)
+	}
+
+	// A non-OK response is passed through and never cached. Serving a cached
+	// district because the server returned 500 is the same class of lie as
+	// serving an empty panel, only quieter.
+	if (!response.ok) return response
+
+	const storedAtMs = Date.now()
+	const body = await response.clone().blob()
+	const stored = new Response(body, {
+		status: response.status,
+		statusText: response.statusText,
+		// The stored copy carries no offline marker: only a copy served *because*
+		// the network failed is offline, and leaving the marker on would have
+		// every later hit announce itself as stale before the network was tried.
+		headers: {
+			...sanitizeHeaders(response.headers),
+			'x-lindela-stored-at': new Date(storedAtMs).toISOString(),
+		},
+	})
+	// waitUntil, not fire-and-forget: a cache write the worker is killed before
+	// it finishes is a write that does not happen, and the miss it would have
+	// prevented is the offline case this is all for.
+	const put = storeAndTrim(request, stored, policy)
+	if (event && typeof event.waitUntil === 'function') event.waitUntil(put)
+	return response
+}
+
+/** The offline half of the chain: the cached record, or an explicit miss. */
+async function cachedOrMiss(request, kind, url) {
+	const policy = CACHE_POLICIES[kind]
+	const cache = await caches.open(policy.name)
+	const cached = await cache.match(request)
+	if (cached) {
+		const storedAtMs = Number(cached.headers.get('x-lindela-stored-at')) || 0
+		return new Response(await cached.blob(), {
+			status: cached.status,
+			statusText: cached.statusText,
+			headers: staleHeaders({ headers: cached.headers, storedAtMs, now: Date.now() }),
+		})
+	}
+	return new Response(JSON.stringify(offlineMissBody({ kind, pathname: url.pathname })), {
+		status: 503,
+		statusText: 'Service Unavailable',
+		headers: {
+			'content-type': 'application/json',
+			'x-lindela-offline': '1',
+			'x-lindela-cache': 'miss',
+		},
+	})
+}
+
+/**
+ * Store, then trim to the bucket's cap.
+ *
+ * Trimming on write rather than only on activate is the point: the console
+ * polls twelve endpoints every thirty seconds, so the bucket overflows while
+ * the tab is open, and an activate-time-only trim would leave it over its own
+ * limit for the entire session. The keys() check is the cheap guard that keeps
+ * a poll from paying for a full key enumeration on every response.
+ */
+function storeAndTrim(request, response, policy) {
+	return caches
+		.open(policy.name)
+		.then(async (cache) => {
+			await cache.put(request, response)
+			const keys = await cache.keys()
+			if (keys.length <= policy.maxEntries) return 0
+			const entries = []
+			for (const entry of keys) {
+				const stored = await cache.match(entry)
+				entries.push({ id: entry.url, storedAtMs: Number(stored?.headers.get('x-lindela-stored-at')) || 0 })
+			}
+			const doomed = evictionPlan(entries, { now: Date.now(), ttlMs: policy.ttlMs, maxEntries: policy.maxEntries })
+			for (const url of doomed) await cache.delete(url)
+			return doomed.length
+		})
+		.catch(() => {})
+}
 
 /**
  * Which cache entries to delete, oldest first. Pure, and therefore testable.
@@ -323,21 +559,41 @@ export function evictionPlan(entries, { now, ttlMs, maxEntries }) {
 	return [...doomed]
 }
 
-async function pruneApiCache() {
-	const cache = await caches.open(API_CACHE_NAME)
-	const keys = await cache.keys()
-	if (keys.length <= API_MAX_ENTRIES) return
+/**
+ * Every bucket activate must not delete, derived from the policies rather than
+ * re-listed. It was `name !== CACHE_NAME && name !== API_CACHE_NAME`, so the
+ * day the detail and map buckets were added this deletion started wiping the
+ * offline drill-down on every worker version bump — the cache the whole feature
+ * depends on, removed by the code that was supposed to clear stale caches.
+ */
+const DATA_CACHE_NAMES = new Set(Object.values(CACHE_POLICIES).map((policy) => policy.name))
 
+/**
+ * Trim every data bucket to its own cap.
+ *
+ * Age comes from `x-lindela-stored-at`, which the worker wrote when it stored
+ * the entry, and not from the server's `date` header: that is the moment the
+ * server answered, which for a long-lived offline device is months ago for
+ * every entry at once and would make the whole bucket look expired on the first
+ * prune after a long gap.
+ */
+async function pruneDataCaches() {
 	const now = Date.now()
-	const entries = []
-	for (const request of keys) {
-		const response = await cache.match(request)
-		const parsed = Date.parse(response?.headers.get('date') || '')
-		entries.push({ id: request.url, storedAtMs: Number.isNaN(parsed) ? 0 : parsed })
-	}
+	for (const policy of Object.values(CACHE_POLICIES)) {
+		const cache = await caches.open(policy.name)
+		const keys = await cache.keys()
+		if (keys.length <= policy.maxEntries) continue
 
-	for (const url of evictionPlan(entries, { now, ttlMs: API_TTL_MS, maxEntries: API_MAX_ENTRIES })) {
-		await cache.delete(url)
+		const entries = []
+		for (const request of keys) {
+			const response = await cache.match(request)
+			const storedAtMs = Date.parse(response?.headers.get('x-lindela-stored-at') || '')
+			entries.push({ id: request.url, storedAtMs: Number.isNaN(storedAtMs) ? 0 : storedAtMs })
+		}
+
+		for (const url of evictionPlan(entries, { now, ttlMs: policy.ttlMs, maxEntries: policy.maxEntries })) {
+			await cache.delete(url)
+		}
 	}
 }
 
