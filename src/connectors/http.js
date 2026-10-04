@@ -186,9 +186,11 @@ export async function fetchWithRetry(url, {
   jitterMs = 0,
   now,
   sleep,
+  ratePerWindow,
+  windowMs,
 } = {}) {
   const target = String(url instanceof URL ? url.href : url)
-  const limiter = rateLimiterFor(target, { source, rateLimit, concurrency, jitterMs, now, sleep })
+  const limiter = limiterFor(target, { source, rateLimit, concurrency, jitterMs, now, sleep, ratePerWindow, windowMs })
   let lastError
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     let release = null
@@ -220,9 +222,16 @@ export async function fetchWithRetry(url, {
  * refusal is visible here instead — no limiter, and the fetch is not slowed by
  * one that was configured from a number nobody vouched for.
  */
-function limiterFor(target, { source, rateLimit, concurrency, jitterMs, now, sleep }) {
+function limiterFor(target, { source, rateLimit, concurrency, jitterMs, now, sleep, ratePerWindow, windowMs }) {
   const declared = rateLimit === null || rateLimit === undefined ? policyFor(source) : coerceLimit(rateLimit)
   if (!declared) return null
+
+  // An explicit window overrides the declared one. Without this a caller cannot
+  // ask for a shorter window than the policy states, which is what makes the
+  // limiter testable — asserting a 60-second refill takes a minute of wall
+  // clock, so every such test either runs slowly or asserts nothing.
+  if (Number.isFinite(ratePerWindow) && ratePerWindow > 0) declared.ratePerWindow = ratePerWindow
+  if (Number.isFinite(windowMs) && windowMs > 0) declared.windowMs = windowMs
 
   const key = `${source ?? '*'}@${hostOf(target) ?? target}`
   let limiter = limitersByKey.get(key)
