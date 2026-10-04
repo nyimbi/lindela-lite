@@ -759,12 +759,22 @@ window.addEventListener('hashchange', route)
  * in the reader's language.
  */
 async function init() {
-  await initI18n(currentLocale)
+  // The call, not the reference. `currentLocale` is a hoisted function
+  // declaration, so passing it bare handed `initI18n` the function itself; it
+  // was then interpolated into a URL, and the server answered
+  // `/i18n/%20Shared%20with%20every%20other%20surface…json` — a 200 for the
+  // SPA fallback page. `res.json()` threw, the throw was swallowed, and the
+  // catalogue stayed empty. Every string on this surface then resolved to its
+  // own key, permanently: the navbar read `nav.ops`, `nav.chw`, … and the
+  // skip link read `districts.skip_link`. Firing a locale `change` fixed it,
+  // because `set()` re-reads English by literal path and re-stamps the DOM —
+  // which is why the bug survived every click-through test.
+  await initI18n(currentLocale())
   document.title = t('districts.title', 'Lindela Districts')
 
   const localeSel = document.getElementById('locale-select')
   if (localeSel) {
-  	localeSel.value = currentLocale
+  	localeSel.value = currentLocale()
   	localeSel.addEventListener('change', async (e) => {
   		localStorage.setItem('lindela_lite_locale', e.target.value)
   		await window.__i18n.set(e.target.value)
@@ -788,8 +798,17 @@ function currentLocale() {
   return OFFERED_LOCALES.includes(stored) ? stored : 'en'
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init)
-} else {
-  init()
-}
+/**
+ * Settles once the catalogue is in place and the first route has rendered.
+ *
+ * The shared navbar is eight translated labels, and it mounts itself from a
+ * module that evaluates before this file's `await initI18n(...)` resolves. Left
+ * to race it, the nav is stamped from an empty catalogue — and an empty
+ * catalogue resolves every key to the key, so the page opens reading
+ * `nav.ops nav.chw nav.portal …`. Exporting the boot promise lets the page
+ * await it and mount the nav against a catalogue that exists, instead of
+ * rendering the keys and hoping a later pass repairs them.
+ */
+export const ready = document.readyState === 'loading'
+  ? new Promise((resolve) => document.addEventListener('DOMContentLoaded', () => init().then(resolve)))
+  : init()

@@ -358,9 +358,24 @@ body.has-navbar { padding-top: 44px; }
 [dir='rtl'] .l-navbar-end { margin-inline-start: unset; margin-inline-end: auto; }
 `
 
+/**
+ * A label in the reader's language, or in English — never the key.
+ *
+ * `window.__i18n.t()` returns its argument when the catalogue does not carry
+ * it, and an empty catalogue carries nothing. So a nav mounted before
+ * `initI18n` resolved rendered `nav.ops`, `nav.focal_point`, `nav.chw` in the
+ * bar across every surface that raced it, and stayed that way: `applyI18n()`
+ * had already run, so nothing came back to repair it. The bar is the one piece
+ * of chrome a translator is guaranteed to be handed verbatim, so a key leaking
+ * into it is not a cosmetic defect.
+ *
+ * The surface still has to await its catalogue — see `mountNavbar` — because a
+ * fallback renders English, and English is the wrong answer to a reader who
+ * asked for Swahili. This only guarantees the failure mode is legible.
+ */
 function i18nText(key, fallback) {
-  if (window.__i18n) return window.__i18n.t(key)
-  return fallback
+  const catalog = window.__i18n && window.__i18n.catalog
+  return (catalog && catalog[key]) || fallback
 }
 
 function isActive(activePath, surfacePath) {

@@ -412,6 +412,15 @@
 
     <script type="module">
       import { mountNavbar } from '/shared/navbar.js'
+      // Awaited, not raced. `mountNavbar` stamps eight labels through the
+      // catalogue, and this module evaluates before app.js has finished
+      // fetching it — so mounting here read an empty catalogue and the bar
+      // opened as `nav.ops nav.focal_point nav.chw …`. Nothing repaired it:
+      // only a locale `change` re-stamped the DOM. After mount the labels carry
+      // `data-i18n`, so a locale switch re-renders the bar through
+      // `i18n.set() -> applyI18n()` without a re-mount.
+      import { ready } from '/districts/app.js'
+      await ready
       mountNavbar({ activePath: '/districts' })
     </script>
     <script type="module" src="/districts/app.js"></script>
