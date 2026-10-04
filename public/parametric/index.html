@@ -34,6 +34,21 @@
       gap: var(--sp-2);
       margin-block-end: var(--sp-3);
     }
+
+    /* A per-field verdict, next to the control that produced it. The form-level
+       `.form-error` under the submit button said "the form is wrong" and left
+       the reader to work out which box. */
+    .field-error {
+      margin: 0;
+      color: var(--danger);
+      font-size: var(--text-sm);
+    }
+
+    /* A 500-character rule name rendered as a 4301px element and pushed the
+       whole page sideways. The schema states no length for a name, so none is
+       invented here; the card is made to hold whatever it is given instead. */
+    .rule-card .rule-head strong { overflow-wrap: anywhere; }
+    .rule-card .rule-meta span { overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
@@ -45,6 +60,28 @@
        no longer duplicates it. -->
 
   <main id="main" tabindex="-1" class="page-main">
+    <!-- The delete gate. Same shape as focal-point's decision dialog: a native
+         <dialog> so Esc and focus containment come from the platform, focus
+         returned to whatever opened it, and the rule named in the prompt so the
+         operator confirms the rule they meant rather than the one they clicked. -->
+    <dialog id="deleteRuleDialog" aria-labelledby="deleteRuleTitle" aria-describedby="deleteRuleBody">
+      <div class="dialog-header">
+        <h2 id="deleteRuleTitle">Remove rule?</h2>
+        <button class="dialog-close" type="button" id="deleteRuleClose" aria-label="Close">×</button>
+      </div>
+      <div class="dialog-body">
+        <p id="deleteRuleBody">This removes the rule from the simulator. Simulated disbursements already recorded against it are kept.</p>
+        <p class="field-note" id="deleteRuleName"></p>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn btn-secondary" id="deleteRuleCancel" type="button" data-i18n="action.cancel">Cancel</button>
+        <button id="deleteRuleConfirm" type="button" class="btn btn-reject">Remove rule</button>
+      </div>
+    </dialog>
+    <!-- Announced, not just painted. Removing a rule is the only destructive
+         action on this surface and the list it leaves is the only evidence. -->
+    <p id="ruleActionStatus" role="status" class="field-note"></p>
+
     <div class="page-controls">
       <label for="locale-select" class="visually-hidden" data-i18n="parametric.locale">Locale</label>
       <select id="locale-select" aria-label="Language">
@@ -70,7 +107,9 @@
         <div class="form-grid">
           <div>
             <label for="ruleName" data-i18n="parametric.field_name">Name</label>
-            <input id="ruleName" type="text" placeholder="e.g. Flood trigger — Turkana" required>
+            <input id="ruleName" type="text" placeholder="e.g. Flood trigger — Turkana" required
+                   aria-describedby="ruleNameError">
+            <p class="field-error" id="ruleNameError" hidden></p>
           </div>
           <div>
             <label for="ruleChain" data-i18n="parametric.field_chain">Chain</label>
@@ -85,16 +124,30 @@
             <input id="ruleTriggerMetric" type="text" placeholder="e.g. Rainfall (mm)">
           </div>
           <div>
+            <!-- No `min`. The threshold is compared against a live metric, and
+                 the platform's metrics are not all bounded below — a
+                 temperature threshold of −5 °C is a real condition. The server
+                 refuses a threshold that is not a number at all. -->
             <label for="ruleTriggerThreshold" data-i18n="parametric.field_trigger_threshold">Trigger threshold</label>
-            <input id="ruleTriggerThreshold" type="number" placeholder="e.g. 50">
+            <input id="ruleTriggerThreshold" type="number" step="any" placeholder="e.g. 50"
+                   aria-describedby="ruleTriggerThresholdError">
+            <p class="field-error" id="ruleTriggerThresholdError" hidden></p>
           </div>
           <div>
+            <!-- `min="0"`: this field records money released. A negative value
+                 is money arriving, which is a recovery and not something this
+                 record can say it meant. -->
             <label for="ruleAmount" data-i18n="parametric.field_amount">Disbursement amount (local currency)</label>
-            <input id="ruleAmount" type="number" placeholder="e.g. 10000">
+            <input id="ruleAmount" type="number" step="any" min="0" placeholder="e.g. 10000"
+                   aria-describedby="ruleAmountError">
+            <p class="field-error" id="ruleAmountError" hidden></p>
           </div>
           <div>
             <label for="ruleCurrency" data-i18n="parametric.field_currency">Currency</label>
-            <input id="ruleCurrency" type="text" placeholder="USD" value="USD">
+            <input id="ruleCurrency" type="text" placeholder="USD" value="USD"
+                   pattern="[A-Za-z]{3}" aria-describedby="ruleCurrencyError ruleCurrencyNote">
+            <p class="field-error" id="ruleCurrencyError" hidden></p>
+            <p class="field-note" id="ruleCurrencyNote">Three-letter ISO 4217 code, e.g. USD or KES.</p>
           </div>
           <div>
             <label for="ruleRecipientGroup" data-i18n="parametric.field_recipient_group">Recipient group ID</label>

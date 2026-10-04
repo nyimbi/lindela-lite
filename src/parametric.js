@@ -14,8 +14,37 @@ function isMainnet(chain) {
   return false
 }
 
+/**
+ * ISO 4217 alphabetic codes are three uppercase letters. The schema names the
+ * field `currency` and the platform never converts between currencies, so a
+ * twelve-character string is not a currency anyone could read back as one.
+ */
+const ISO_4217 = /^[A-Z]{3}$/
+
+function badRequest(message) {
+  return Object.assign(new Error(message), { statusCode: 400 })
+}
+
+/**
+ * A threshold or an amount, as a number or as nothing.
+ *
+ * `Number` is what `compare` and `evaluateTrigger` do with the stored value, so
+ * applying it here means a record is never persisted in a form the trigger
+ * cannot be evaluated from. `"50"` stored as a string compares as 50 and works
+ * by accident; `"abc"` compares as NaN and pays on every run.
+ */
+function numberOrNull(value, field) {
+  if (value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  if (!Number.isFinite(n)) throw badRequest(`${field} must be a number, got ${JSON.stringify(value)}`)
+  return n
+}
+
 export function normalizeParametricRule(input, existing = null) {
   const now = nowIso()
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw badRequest('a parametric rule must be a JSON object')
+  }
   const chain = input.chain || existing?.chain
   if (!chain) throw Object.assign(new Error('chain is required'), { statusCode: 400 })
 
@@ -44,6 +73,28 @@ export function normalizeParametricRule(input, existing = null) {
     throw Object.assign(new Error(`status must be one of: ${VALID_STATUSES.join(', ')}`), { statusCode: 400 })
   }
 
+  const currency = String(input.currency || existing?.currency || 'USD').trim().toUpperCase()
+  if (!ISO_4217.test(currency)) {
+    throw badRequest(`currency must be a three-letter ISO 4217 code, got "${input.currency}"`)
+  }
+
+  // A disbursement is money leaving the programme. A negative one is money
+  // arriving, which is a recovery, not a payout, and nothing in this record can
+  // say which one was meant — so it is refused rather than guessed at. Zero is
+  // allowed: a rule can legitimately release nothing.
+  const amount = numberOrNull(
+    input.disbursement_amount_local_currency ?? existing?.disbursement_amount_local_currency,
+    'disbursement_amount_local_currency'
+  )
+  if (amount !== null && amount < 0) {
+    throw badRequest('disbursement_amount_local_currency cannot be negative: this field records money released, not recovered')
+  }
+
+  // The threshold's sign is left alone. It is compared against a metric resolved
+  // from the live context, and the platform's metrics are not all bounded below
+  // — a temperature threshold below zero is a real condition. Rejecting every
+  // negative threshold would be inventing a rule the schema does not state.
+
   return {
     id: input.id || existing?.id || stableId('parametric_rule', [input.name, chain, now]),
     name: input.name || existing?.name || 'Unnamed rule',
@@ -54,9 +105,12 @@ export function normalizeParametricRule(input, existing = null) {
     // threshold is a condition nobody can evaluate, and storing it as if it
     // were a rule is how a payout becomes a request.
     trigger_operator: input.trigger_operator ?? existing?.trigger_operator ?? '>=',
-    trigger_threshold: input.trigger_threshold ?? existing?.trigger_threshold ?? null,
-    disbursement_amount_local_currency: input.disbursement_amount_local_currency ?? existing?.disbursement_amount_local_currency ?? null,
-    currency: input.currency || existing?.currency || 'USD',
+    trigger_threshold: numberOrNull(
+      input.trigger_threshold ?? existing?.trigger_threshold,
+      'trigger_threshold'
+    ),
+    disbursement_amount_local_currency: amount,
+    currency,
     recipient_group_id: input.recipient_group_id ?? existing?.recipient_group_id ?? null,
     requires_focal_point_approval: Boolean(input.requires_focal_point_approval ?? existing?.requires_focal_point_approval ?? false),
     status,

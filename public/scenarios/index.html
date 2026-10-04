@@ -87,6 +87,20 @@
     .empty-state-large h2 { color: var(--ink); }
     .empty-state-large p { max-width: 42ch; line-height: 1.6; }
 
+    /* `hidden` is `display: none` from the user-agent sheet, and any author
+       `display` outranks it. `.empty-state-large` above sets `display: flex`,
+       so `noResults.hidden = true` left the empty state on screen, at full
+       size, directly above a complete result set — the page telling an analyst
+       who had just run the model that they had not run one. */
+    .empty-state-large[hidden] { display: none; }
+
+    /* A per-field verdict, next to the control that produced it. */
+    .field-error {
+      margin: 0;
+      color: var(--danger);
+      font-size: var(--text-sm);
+    }
+
     .delta-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -157,14 +171,18 @@
     equal, because a picker and the catalogue can otherwise disagree in
     opposite directions.
   -->
-  <div class="locale-bar">
-    <label for="locale-select" class="visually-hidden" data-i18n="scenarios.locale_label">Language</label>
-    <select id="locale-select">
-      <option value="en">English</option>
-    </select>
-  </div>
-
   <main id="main" tabindex="-1" class="page-main">
+    <!-- Inside <main> because a control that changes how the page reads is page
+         content: outside every landmark, axe reports it as content a screen
+         reader can reach with no landmark context ("region"). `/parametric/`
+         already places its picker this way. -->
+    <div class="locale-bar">
+      <label for="locale-select" class="visually-hidden" data-i18n="scenarios.locale_label">Language</label>
+      <select id="locale-select">
+        <option value="en">English</option>
+      </select>
+    </div>
+
     <h1 class="page-title" data-i18n="scenarios.title">Scenario Workbench</h1>
     <p class="page-lede" data-i18n="scenarios.lede">
       Ask what would change if the forecast did. Pick a starting point, adjust it,
@@ -242,12 +260,16 @@
               </div>
               <div>
                 <label for="hazardLat" data-i18n="scenarios.latitude">Latitude</label>
-                <input type="number" id="hazardLat" step="0.0001" placeholder="3.12">
+                <input type="number" id="hazardLat" step="0.0001" min="-90" max="90" placeholder="3.12"
+                       aria-describedby="hazardLatError">
+                <p class="field-error" id="hazardLatError" hidden></p>
                 <p class="field-note" data-i18n="scenarios.decimal_degrees">Decimal degrees, WGS84</p>
               </div>
               <div>
                 <label for="hazardLon" data-i18n="scenarios.longitude">Longitude</label>
-                <input type="number" id="hazardLon" step="0.0001" placeholder="35.6">
+                <input type="number" id="hazardLon" step="0.0001" min="-180" max="180" placeholder="35.6"
+                       aria-describedby="hazardLonError">
+                <p class="field-error" id="hazardLonError" hidden></p>
               </div>
               <div>
                 <label for="hazardAt" data-i18n="scenarios.occurred_at">Occurred at</label>
@@ -275,11 +297,15 @@
               </div>
               <div>
                 <label for="conflictLat" data-i18n="scenarios.latitude">Latitude</label>
-                <input type="number" id="conflictLat" step="0.0001" placeholder="3.12">
+                <input type="number" id="conflictLat" step="0.0001" min="-90" max="90" placeholder="3.12"
+                       aria-describedby="conflictLatError">
+                <p class="field-error" id="conflictLatError" hidden></p>
               </div>
               <div>
                 <label for="conflictLon" data-i18n="scenarios.longitude">Longitude</label>
-                <input type="number" id="conflictLon" step="0.0001" placeholder="35.6">
+                <input type="number" id="conflictLon" step="0.0001" min="-180" max="180" placeholder="35.6"
+                       aria-describedby="conflictLonError">
+                <p class="field-error" id="conflictLonError" hidden></p>
               </div>
               <div>
                 <label for="conflictAt" data-i18n="scenarios.occurred_at">Occurred at</label>

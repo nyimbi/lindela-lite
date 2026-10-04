@@ -73,6 +73,18 @@ let shareUrl = ''
 let shareUnavailable = false
 
 /**
+ * Whether this session has a result on screen.
+ *
+ * One flag for both halves of the results panel. The empty state used to be
+ * hidden by a `hidden` attribute that the page's own `.empty-state-large`
+ * `display: flex` outranked, so it stayed on screen at full size directly above
+ * a complete set of numbers — the workbench telling an analyst who had just
+ * run the model that they had not run one. Two independent toggles are what let
+ * that happen; one flag read in one place cannot.
+ */
+let hasRun = false
+
+/**
  * Named starting points.
  *
  * Each one is a complete perturbation a planner can run without touching a
@@ -216,18 +228,60 @@ function applyPreset(key, preset) {
 }
 
 // --- Add events -------------------------------------------------------------
-function readEvent(typeId, severityId, latId, lonId, atId, fallbackType) {
-  const at = $(atId)?.value
-  const rawLat = $(latId)?.value
-  const rawLon = $(lonId)?.value
-  if (rawLat === '' || rawLon === '') {
-    setError(t('scenarios.err_coords_required', 'Scenario events need both a latitude and a longitude.'))
+/**
+ * The verdict on one coordinate, written beside the box that produced it.
+ *
+ * `aria-invalid` rather than colour alone: the message is a `p` the input points
+ * at through `aria-describedby`, so it is announced with the field rather than
+ * only painted under it.
+ */
+function setFieldError(inputId, errorId, message) {
+  const input = $(inputId)
+  const el = $(errorId)
+  if (el) {
+    el.textContent = message || ''
+    el.hidden = !message
+  }
+  if (input) {
+    if (message) input.setAttribute('aria-invalid', 'true')
+    else input.removeAttribute('aria-invalid')
+  }
+}
+
+const COORD_LIMITS = { lat: 90, lon: 180 }
+
+/**
+ * Read one coordinate, or say which of the two rules it broke.
+ *
+ * Both rules are the same on the server: a missing coordinate and one outside
+ * WGS84's range. They are checked here as well because a form that reports a
+ * problem only after a round trip is a form the operator has already learned to
+ * distrust.
+ */
+function readCoordinate(inputId, errorId, which) {
+  const limit = COORD_LIMITS[which]
+  const raw = ($(inputId)?.value ?? '').trim()
+  if (raw === '') {
+    setFieldError(inputId, errorId,
+      t('scenarios.err_coords_required', 'Scenario events need both a latitude and a longitude.'))
     return null
   }
-  const lat = Number(rawLat)
-  const lon = Number(rawLon)
-  if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-    setError(t('scenarios.err_coords_range', 'Latitude must be between −90 and 90, longitude between −180 and 180.'))
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < -limit || n > limit) {
+    setFieldError(inputId, errorId,
+      t('scenarios.err_coords_range', 'Latitude must be between −90 and 90, longitude between −180 and 180.'))
+    return null
+  }
+  setFieldError(inputId, errorId, '')
+  return n
+}
+
+function readEvent(typeId, severityId, latId, lonId, atId, fallbackType) {
+  const at = $(atId)?.value
+  const lat = readCoordinate(latId, `${latId}Error`, 'lat')
+  const lon = readCoordinate(lonId, `${lonId}Error`, 'lon')
+  if (lat === null || lon === null) {
+    setError(t('scenarios.err_coords_required', 'Scenario events need both a latitude and a longitude.'))
     return null
   }
   setError('')
@@ -238,6 +292,37 @@ function readEvent(typeId, severityId, latId, lonId, atId, fallbackType) {
     longitude: lon,
     occurred_at: at ? new Date(at).toISOString() : new Date().toISOString(),
     source: 'scenario_synthetic',
+  }
+}
+
+// Live verdicts. `input` rather than `change` so the answer arrives while the
+// operator is still typing the number, not when they leave the field; the
+// message is only raised once something has been typed, so an untouched box is
+// never scolded for being empty.
+for (const [latId, lonId] of [['hazardLat', 'hazardLon'], ['conflictLat', 'conflictLon']]) {
+  for (const [id, which, pairId] of [[latId, 'lat', lonId], [lonId, 'lon', latId]]) {
+    $(id)?.addEventListener('input', () => {
+      const raw = ($(id)?.value ?? '').trim()
+      if (raw === '') {
+        setFieldError(id, `${id}Error`, '')
+        return
+      }
+      readCoordinate(id, `${id}Error`, which)
+    })
+    // On leaving the field, an empty box is only a problem when its partner has
+    // been filled in — one coordinate without the other is what the model drops.
+    // Two empty boxes are an untouched form, not a mistake.
+    $(id)?.addEventListener('change', () => {
+      const raw = ($(id)?.value ?? '').trim()
+      if (raw !== '') {
+        readCoordinate(id, `${id}Error`, which)
+        return
+      }
+      const pair = ($(pairId)?.value ?? '').trim()
+      setFieldError(id, `${id}Error`, pair === ''
+        ? ''
+        : t('scenarios.err_coords_required', 'Scenario events need both a latitude and a longitude.'))
+    })
   }
 }
 
@@ -422,8 +507,12 @@ function paintResults(data) {
 }
 
 function showResults(data, perturbation) {
-  $('noResults').hidden = true
-  $('results').hidden = false
+  // The empty state and the results are one panel with two states, not two
+  // blocks. Toggling them from two places is what let the empty state survive a
+  // run; they are toggled together here and nowhere else.
+  hasRun = true
+  $('noResults').hidden = hasRun
+  $('results').hidden = !hasRun
   lastResult = data
   paintResults(data)
 

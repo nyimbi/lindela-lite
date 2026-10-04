@@ -435,6 +435,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/ListResponse'
   /api/v1/parametric-rules/{id}:
+    delete:
+      summary: Remove a parametric disbursement rule
+      description: >-
+        Removes the rule. The removed rule is written whole to the action log,
+        so the audit chain records what was in force rather than that something
+        was. Simulated disbursements already recorded against the rule are kept.
+      operationId: deleteparametric-rules_id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: >-
+              Identifier of the parametric-rules record.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+        '404':
+          description: No such rule
     patch:
       summary: Update a parametric disbursement rule
       operationId: patchparametric-rules_id
@@ -1805,6 +1829,20 @@ paths:
   /api/v1/kpi/quarterly.pdf:
     get:
       summary: Quarterly KPI report as PDF
+      description: >-
+        Carries every dashboard section, plus a cover sheet listing what the file
+        contains and the narrative page of measured claims, refusals and limits.
+        A figure that could not be measured is printed with the reason, never as
+        a zero. The lag section measures queued_at to sent_at and the KPI tile
+        measures matched_signal_at to sent_at; the export prints which interval
+        produced which figure.
+      parameters:
+        - in: query
+          name: quarter
+          schema: { type: string, enum: [Q1, Q2, Q3, Q4] }
+        - in: query
+          name: year
+          schema: { type: integer }
       responses:
         '200':
           description: PDF
@@ -1813,6 +1851,27 @@ paths:
               schema:
                 type: string
                 format: binary
+  /api/v1/kpi/quarterly/coverage:
+    get:
+      summary: Which dashboard sections the quarterly PDF carries
+      description: >-
+        The dashboard renders seven sections. This states how many the export
+        carries and names any that are omitted, so a reader can be told before
+        the download rather than discovering the omission afterwards. Generated
+        from the same declaration the PDF renderer uses.
+      responses:
+        '200':
+          description: Section coverage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  carried: { type: integer }
+                  titles: { type: array, items: { type: string } }
+                  missing: { type: array, items: { type: string } }
+                  summary: { type: string }
   /api/v1/kpi/refresh-snapshots:
     post:
       summary: Recompute and store KPI snapshots

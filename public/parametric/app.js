@@ -68,6 +68,33 @@ function setError(id, message) {
   el.hidden = !message
 }
 
+/**
+ * A verdict on one field, written beside the control that produced it.
+ *
+ * `aria-invalid` as well as the message: the paragraph is pointed at from the
+ * input with `aria-describedby`, so it is announced with the field rather than
+ * only painted under it.
+ */
+function setFieldError(inputId, errorId, message) {
+  const el = document.getElementById(errorId)
+  if (el) {
+    el.textContent = message || ''
+    el.hidden = !message
+  }
+  const input = document.getElementById(inputId)
+  if (input) {
+    if (message) input.setAttribute('aria-invalid', 'true')
+    else input.removeAttribute('aria-invalid')
+  }
+  // Returned so a submit handler can collect the complaints it raised without
+  // re-deriving them.
+  return message || null
+}
+
+function clearFieldErrors(...ids) {
+  for (const id of ids) setFieldError(id, `${id}Error`, '')
+}
+
 async function loadRules() {
   try {
     const json = await apiFetch(BASE + '/parametric-rules')
@@ -97,11 +124,13 @@ function renderRules() {
     return
   }
   list.innerHTML = rules.map((r) => `
-    <div class="rule-card">
+    <div class="rule-card" data-rule-id="${esc(r.id)}">
       <div class="rule-head">
         <strong>${esc(r.name)}</strong>
         <span class="chain-badge">${esc(r.chain)}</span>
         <span class="muted-sm">${esc(r.status)}</span>
+        <button type="button" class="btn btn-secondary rule-remove" data-remove-rule="${esc(r.id)}"
+                aria-label="${esc(removeLabel(r))}">Remove</button>
       </div>
       <div class="rule-meta">
         <span><span class="meta-key">${esc(t('parametric.meta_triggers_when', 'Triggers when'))}</span> ${esc(metricLabel(r.trigger_metric))} ${r.trigger_threshold === null || r.trigger_threshold === undefined ? '' : `≥ ${esc(r.trigger_threshold)}`}</span>
@@ -110,6 +139,17 @@ function renderRules() {
       </div>
     </div>
   `).join('')
+}
+
+/**
+ * The remove button's accessible name.
+ *
+ * "Remove" repeated down a column of rule cards names nothing to a screen
+ * reader user tabbing through them, and the rule name is the only thing that
+ * distinguishes one from the next.
+ */
+function removeLabel(rule) {
+  return `Remove rule: ${rule.name || rule.id}`
 }
 
 /**
@@ -224,10 +264,59 @@ function screeningLabel(d) {
     : t('parametric.not_screened', 'not screened')
 }
 
+/**
+ * Ask the same four questions the server asks, beside the boxes.
+ *
+ * Returns the number of fields it complained about, so a submit can stop and a
+ * live re-check can simply clear them. Runs on every keystroke as well as on
+ * submit: a verdict that only appears when the form is submitted leaves the
+ * reader staring at a red box they have already corrected.
+ *
+ * The threshold is checked for being a number and for nothing else. It is
+ * compared against a live metric, and the platform's metrics are not all
+ * bounded below — refusing every negative threshold would be inventing a rule
+ * the schema does not state.
+ *
+ * These sentences are not `t()` keys. The catalogue lives in
+ * `public/i18n/en.json`, shared by every surface and outside this file's
+ * ownership, and a key with no entry there is precisely what
+ * `scripts/check-i18n.mjs` reports as a string no language can translate.
+ */
+function validateRuleFields() {
+  const read = (id) => document.getElementById(id)?.value?.trim() || null
+  const threshold = read('ruleTriggerThreshold')
+  const amount = read('ruleAmount')
+  const currency = read('ruleCurrency') || 'USD'
+
+  const complaints = [
+    setFieldError('ruleName', 'ruleNameError',
+      read('ruleName') ? '' : t('parametric.error_name_required', 'Give the rule a name.')),
+    setFieldError('ruleTriggerThreshold', 'ruleTriggerThresholdError',
+      threshold !== null && !Number.isFinite(Number(threshold)) ? 'The trigger threshold must be a number.' : ''),
+    setFieldError('ruleAmount', 'ruleAmountError',
+      amount !== null && !Number.isFinite(Number(amount)) ? 'The disbursement amount must be a number.'
+        : amount !== null && Number(amount) < 0
+          ? 'This field records money released. A negative amount is money arriving, which is a recovery rather than a disbursement.'
+          : ''),
+    setFieldError('ruleCurrency', 'ruleCurrencyError',
+      /^[A-Za-z]{3}$/.test(currency) ? '' : 'Currency must be a three-letter ISO 4217 code, such as USD or KES.'),
+  ].filter(Boolean)
+
+  return complaints.length
+}
+
+// Re-asked on every keystroke, not only on submit: a verdict that appears when
+// the form is sent leaves the reader looking at a red box they have already
+// corrected, and the only way to find out what is wrong is to send it again.
+for (const id of ['ruleName', 'ruleTriggerThreshold', 'ruleAmount', 'ruleCurrency']) {
+  document.getElementById(id)?.addEventListener('input', validateRuleFields)
+}
+
 // Add rule form
 document.getElementById('addRuleForm')?.addEventListener('submit', async (e) => {
   e.preventDefault()
   setError('addRuleError', '')
+  clearFieldErrors('ruleName', 'ruleTriggerThreshold', 'ruleAmount', 'ruleCurrency')
   const value = (id) => document.getElementById(id)?.value?.trim() || null
   const body = {
     name: value('ruleName'),
@@ -239,7 +328,11 @@ document.getElementById('addRuleForm')?.addEventListener('submit', async (e) => 
     recipient_group_id: value('ruleRecipientGroup'),
     requires_focal_point_approval: document.getElementById('ruleFocalPoint')?.checked ?? false,
   }
-  if (!body.name) { setError('addRuleError', t('parametric.error_name_required', 'Give the rule a name.')); return }
+
+  // The same rules the server enforces, asked here so the answer arrives
+  // beside the box instead of after a round trip.
+  if (validateRuleFields()) return
+
   try {
     await apiFetch(BASE + '/parametric-rules', {
       method: 'POST',
@@ -272,6 +365,82 @@ document.getElementById('simForm')?.addEventListener('submit', async (e) => {
     await loadDisbursements()
   } catch (err) {
     setError('simError', err.message)
+  }
+})
+
+// --- Remove a rule ----------------------------------------------------------
+// The confirmation gate, shaped like focal-point's decision dialog: a native
+// <dialog>, so Esc and focus containment come from the platform rather than from
+// a hand-rolled overlay; the prompt names the rule, so the operator confirms the
+// rule they meant and not the one their mouse happened to be over; and focus
+// returns to the control that opened it.
+const deleteDialog = document.getElementById('deleteRuleDialog')
+const deleteConfirmBtn = document.getElementById('deleteRuleConfirm')
+const deleteCancelBtn = document.getElementById('deleteRuleCancel')
+const deleteCloseBtn = document.getElementById('deleteRuleClose')
+const deleteNameEl = document.getElementById('deleteRuleName')
+const actionStatus = document.getElementById('ruleActionStatus')
+
+let pendingDeleteId = null
+let deleteReturnFocus = null
+
+function announce(message) {
+  if (actionStatus) actionStatus.textContent = message || ''
+}
+
+function openDeleteDialog(id, trigger) {
+  const rule = rules.find((r) => String(r.id) === String(id))
+  if (!rule) return
+  pendingDeleteId = rule.id
+  deleteReturnFocus = trigger || null
+  if (deleteNameEl) deleteNameEl.textContent = rule.name || rule.id
+  deleteDialog?.showModal()
+}
+
+// Esc and a backdrop click close a native <dialog> without running the cancel
+// button's handler, so a stale pending id survived a dismissal and the next
+// confirm removed a rule the operator had already walked away from.
+deleteDialog?.addEventListener('close', () => {
+  pendingDeleteId = null
+  const back = deleteReturnFocus
+  deleteReturnFocus = null
+  if (back && document.contains(back)) back.focus({ preventScroll: true })
+})
+
+deleteCancelBtn?.addEventListener('click', () => deleteDialog?.close())
+deleteCloseBtn?.addEventListener('click', () => deleteDialog?.close())
+
+// Delegated, because the list is re-rendered on every load and a listener bound
+// to the button it was found on would die with the first reload.
+document.getElementById('rulesList')?.addEventListener('click', (e) => {
+  const btn = e.target.closest?.('[data-remove-rule]')
+  if (!btn) return
+  openDeleteDialog(btn.dataset.removeRule, btn)
+})
+
+deleteConfirmBtn?.addEventListener('click', async () => {
+  if (!pendingDeleteId) return
+  const id = pendingDeleteId
+  const rule = rules.find((r) => String(r.id) === String(id))
+  // Disabled while the request is in flight, so a double activation cannot
+  // dispatch the same removal twice.
+  deleteConfirmBtn.disabled = true
+  try {
+    await apiFetch(`${BASE}/parametric-rules/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ actor: 'ui_operator' }),
+    })
+    deleteDialog.close()
+    await loadRules()
+    // Said out loud as well as painted. A rule that silently vanishes from a
+    // list is indistinguishable from a list that failed to reload.
+    announce(`Removed "${rule?.name || id}".`)
+  } catch (err) {
+    deleteDialog.close()
+    announce(`Could not remove the rule: ${err.message}. Nothing was changed.`)
+  } finally {
+    deleteConfirmBtn.disabled = false
   }
 })
 
