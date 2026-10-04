@@ -1942,7 +1942,14 @@ function renderMap(records) {
   let undeterminedSource = 0
   // Reported areas too big to place on this map. Counted, never dropped
   // silently: they stay in the record list and open the same detail dialog.
+  // Two different reasons a record cannot be drawn, kept apart because they
+  // are two different sentences to the operator. "Too large to place" is a
+  // hazard whose extent covers the frame; "outside this map" is a point that
+  // projects beyond the frame — a different problem with a different fix, and
+  // counting them as one would report a claim about extent that is not true of
+  // the off-frame ones.
   let tooLargeToLocate = 0
+  let outsideFrame = 0
   const visible = geo.filter((r) => {
     const verdict = evaluateMapFilters(r, {
       severity: sevFilter, source: srcFilter, since, coldChainOnly: coldOnly,
@@ -2090,6 +2097,26 @@ function renderMap(records) {
     const label = r.title || r.event_type || 'Hazard'
     const sev = r.severity || 'ungraded'
 
+    // A point that projects outside the frame cannot be drawn here.
+    //
+    // It was drawn anyway, and it is a `tabindex="0"` button carrying an
+    // accessible name — so a keyboard user tabbed to "Flood Watch — high" at
+    // x = -5745, five thousand pixels off-screen, with nothing on the page to
+    // explain where it was. `documentElement.scrollWidth` never grew, because
+    // the map is an SVG that does not scroll; the browser will not scroll to it
+    // and cannot scroll that far anyway. A control that is focusable, named and
+    // invisible is worse than an absent one: it costs the operator a tab stop
+    // and returns nothing.
+    //
+    // The oversized footprint above makes the same argument for the same
+    // reason, and is treated the same way: not drawn, counted, named in the
+    // count line, still reachable in the record list and the detail dialog.
+    const margin = hitR + sevRadius(r.severity) + 2
+    if (x < -margin || y < -margin || x > SVG_W + margin || y > SVG_H + margin) {
+      outsideFrame += 1
+      return
+    }
+
     // The invisible target goes first so the visible mark paints over it. The
     // mark itself keeps its severity radius: a marker sized to a fingertip
     // would hide the district it sits in, which is the information the
@@ -2170,12 +2197,13 @@ function renderMap(records) {
     const undetermined = []
     if (undeterminedSeverity) undetermined.push(`${undeterminedSeverity} with no severity`)
     if (undeterminedSource) undetermined.push(`${undeterminedSource} with no source`)
-    // Reported areas too large to place on this map are counted rather than
-    // drawn, so they are named here instead of vanishing. They remain in the
-    // record list and open the same detail dialog.
-    const placed = visible.length - tooLargeToLocate
+    // Anything not drawn is counted rather than dropped, so it is named here
+    // instead of vanishing. It remains in the record list and opens the same
+    // detail dialog — losing it from the map is not losing it from the product.
+    const placed = visible.length - tooLargeToLocate - outsideFrame
     const parts = [`${placed} on map`]
     if (tooLargeToLocate) parts.push(`${tooLargeToLocate} reported area${tooLargeToLocate === 1 ? '' : 's'} too large to place`)
+    if (outsideFrame) parts.push(`${outsideFrame} outside the area this map covers`)
     if (undetermined.length) parts.push(undetermined.join(', '))
     countEl.textContent = parts.join(' · ')
       + (undetermined.length ? ` — hidden by the filter: ${undetermined.join(', ')}` : '')
