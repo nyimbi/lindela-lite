@@ -19,7 +19,8 @@ import {
 } from './ingestion.js'
 import { actionLog, buildCreate, buildSoftDelete, buildUpdate, counts, isDeleted, operationalSummary } from './operations.js'
 import { parseRapidProFieldReport, rapidProStatus, responseMetrics, sendRapidProAlert, sendRapidProReportSummary, verifyRapidProWebhook, parseRapidProReply, reconcileInbound, deliveryReport, dueEscalations, formatDeliveryReport } from './rapidpro.js'
-import { chainEntries, verifyChain, renderAuditProof, resolveChainHead, actorFor } from './audit-chain.js'
+import { chainEntries, verifyChain, renderAuditProof } from './audit-chain.js'
+import { renderExportMarkdown } from './reports.js'
 import {
   approveReport,
   computeNextRunAt,
@@ -1214,6 +1215,45 @@ async function handleApiRequest(store, req, res, url) {
     return
   }
 
+  // The export that carries the reasoning. `renderExportMarkdown` composes with
+  // the report renderer rather than reimplementing it, so the two cannot drift,
+  // and every withheld figure prints as "not measured" rather than a dash in a
+  // column of numbers.
+  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly.md') {
+    const quarter = url.searchParams.get('quarter') || undefined
+    const year = url.searchParams.get('year') || undefined
+    let kpi
+    try {
+      kpi = computeQuarterlyKpi(data, { quarter, year })
+    } catch (err) {
+      jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
+      return
+    }
+    // renderExportMarkdown takes a REPORT, not a KPI snapshot. Handing it the
+    // snapshot produced an export headed "# undefined" that said "no generated
+    // sections" — refusals rendered correctly while the document described
+    // nothing, which is the worst of both.
+    let report
+    try {
+      const templates = data.report_templates || []
+      const template = templates[0] || normalizeReportTemplate({ id: 'quarterly-export', name: 'Quarterly export' }, data)
+      report = generateReportSections(
+        normalizeReport({ template_id: template.id, period: { quarter, year } }, data),
+        data,
+      )
+    } catch (err) {
+      jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
+      return
+    }
+    const markdown = renderExportMarkdown(report, data)
+    res.writeHead(200, {
+      'content-type': 'text/markdown; charset=utf-8',
+      'content-disposition': `attachment; filename="lindela-kpi-${kpi.period.year}-${kpi.period.quarter}.md"`,
+    })
+    res.end(markdown)
+    return
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly.pdf') {
     const quarter = url.searchParams.get('quarter') || undefined
     const year = url.searchParams.get('year') || undefined
@@ -1224,7 +1264,9 @@ async function handleApiRequest(store, req, res, url) {
       jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
       return
     }
-    const buf = renderQuarterlyReportPdf(kpi)
+    // The narrative page rides in the same PDF, so the refusals travel with the
+    // numbers a donor reads rather than living only in a Markdown export.
+    const buf = renderQuarterlyReportPdf(kpi, { narrative: true })
     const filename = `lindela-kpi-${kpi.period.year}-${kpi.period.quarter}.pdf`
     res.writeHead(200, {
       'content-type': 'application/pdf',

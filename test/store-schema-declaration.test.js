@@ -238,13 +238,12 @@ describe('both adapters enforce it, and neither is wedged by the refusal', () =>
     try {
       await store.write({})
       await store.merge({ hazard_events: [{ id: 'hz-keep' }] })
+      // Built from the declaration rather than spelled out. Spelling it is how
+      // this fixture and the assertion above it drifted the moment a derived
+      // collection was added: the assertion walked eight, the fixture supplied
+      // six, and the missing two failed a test about something else entirely.
       await store.replaceAnalytics({
-        risk_scores: [{ id: 'rs-1' }],
-        impact_assessments: [{ id: 'ia-1' }],
-        data_quality: [{ id: 'dq-1' }],
-        population_at_risk: [{ id: 'par-1' }],
-        facilities_at_risk: [{ id: 'far-1' }],
-        road_access: [{ id: 'ra-1' }],
+        ...Object.fromEntries(DERIVED_COLLECTIONS.map((c, i) => [c, [{ id: `${c}-${i}` }]])),
         hazard_events: [{ id: 'hz-should-not-be-here' }],
       })
       const data = await store.read()
@@ -391,12 +390,7 @@ describe('against a real PostgreSQL', () => {
     await store.write({})
     await store.merge({ hazard_events: [{ id: 'hz-keep', observed_at: '2026-01-01T00:00:00.000Z' }] })
     await store.replaceAnalytics({
-      risk_scores: [{ id: 'rs-1' }],
-      impact_assessments: [{ id: 'ia-1' }],
-      data_quality: [{ id: 'dq-1' }],
-      population_at_risk: [{ id: 'par-1' }],
-      facilities_at_risk: [{ id: 'far-1' }],
-      road_access: [{ id: 'ra-1' }],
+      ...Object.fromEntries(DERIVED_COLLECTIONS.map((c, i) => [c, [{ id: `${c}-${i}`, observed_at: '2026-01-01T00:00:00.000Z' }]])),
       hazard_events: [{ id: 'hz-should-not-be-here' }],
     })
     const data = await store.read()

@@ -9,6 +9,34 @@ security:
   - bearerAuth: []
 paths:
 
+  /api/v1/kpi/quarterly.md:
+    get:
+      summary: Quarterly export carrying its own narrative
+      description: |
+        What was measured and with how many source references, what was refused
+        and the reason each module gave, and what the export does not support —
+        above the body, because a reader who stops after the first screen should
+        already have met the refusals.
+
+        A withheld figure prints as "not measured", never as a dash in a column
+        of numbers. The refusal vocabulary is imported from `MODEL_BASIS` rather
+        than retyped, so a quoted refusal cannot drift from the code.
+      tags: [kpi]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: quarter
+          in: query
+          schema: { type: string, example: Q4 }
+        - name: year
+          in: query
+          schema: { type: integer, example: 2026 }
+      responses:
+        '200':
+          description: Markdown export
+          content:
+            text/markdown:
+              schema: { type: string }
+
   /api/v1/rapidpro/reply:
     post:
       summary: Record a reply to an alert sent over SMS

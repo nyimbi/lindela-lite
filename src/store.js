@@ -22,6 +22,11 @@ export const DERIVED_COLLECTIONS = Object.freeze([
   'population_at_risk',
   'facilities_at_risk',
   'road_access',
+  // Calibration and drift are recomputed from scratch on every refresh, so
+  // accumulating them would leave a region's stale trust score in place after
+  // the evidence moved under it. Both replace, like the six above.
+  'region_trust',
+  'model_drift',
 ])
 
 /**
@@ -102,6 +107,11 @@ export const SCHEMA = Object.freeze([
   { key: 'population_at_risk', derived: true },
   { key: 'facilities_at_risk', derived: true },
   { key: 'data_lineage' },
+  // Per-region calibration and drift, both computed rather than ingested.
+  // `derived` puts them under `replaceAnalytics`, which is what makes them
+  // replace rather than accumulate.
+  { key: 'region_trust', derived: true },
+  { key: 'model_drift', derived: true },
   { key: 'incidents' },
   { key: 'interventions' },
   { key: 'intervention_tasks' },

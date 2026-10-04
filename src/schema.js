@@ -251,6 +251,8 @@ export function emptyStore() {
     food_security_records: [],
     disease_observations: [],
     flood_probability_models: [],
+    region_trust: [],
+    model_drift: [],
     // ENH-13. Must match COLLECTIONS in store.js: an emptyStore key that
     // JsonStore.merge never writes is harmless, but a COLLECTIONS entry with
     // no emptyStore key means read() spreads a missing key over the default
