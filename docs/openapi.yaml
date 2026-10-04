@@ -8,6 +8,119 @@ servers:
 security:
   - bearerAuth: []
 paths:
+
+  /api/v1/rapidpro/reply:
+    post:
+      summary: Record a reply to an alert sent over SMS
+      description: |
+        The acknowledgement half of two-way SMS. Behind the same webhook
+        verification as a field report: a reply that can close an SLA is
+        attacker-controlled input, so the dispatch is correlated by sender
+        address within a bounded window and never by a payload-supplied
+        alert_event_id.
+
+        An uncorrelated reply is still stored, and answered 202 rather than
+        200. Dropping it would make a wrong sender number invisible.
+      tags: [rapidpro]
+      security: [{ rapidproWebhook: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, text]
+              properties:
+                from: { type: string, description: Sender URN or phone number }
+                text: { type: string }
+                alert_event_id: { type: string, description: Used only when the sender is known }
+      responses:
+        '200':
+          description: Correlated to a dispatch and reconciled
+          content:
+            application/json:
+              schema: { type: object }
+        '202':
+          description: Recorded but not correlated to any dispatch in the window
+        '401': { description: Invalid webhook signature }
+
+  /api/v1/rapidpro/delivery:
+    get:
+      summary: Delivery and acknowledgement state per recipient
+      description: |
+        What is known about each recipient, and — as important — what is not.
+        The RapidPro v2 API gives no per-recipient receipt, so status stops at
+        `accepted_by_gateway`. Anything beyond that would be a claim the system
+        cannot support.
+      tags: [rapidpro]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: alert_event_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Delivery report
+          content:
+            application/json:
+              schema: { type: object }
+
+  /api/v1/rapidpro/escalations:
+    get:
+      summary: Alert dispatches whose acknowledgement window has closed
+      description: |
+        Only for dispatches the gateway accepted, so our own outage cannot
+        escalate. The clock runs from the first page for an alert rather than
+        the last, and any reply counts as a response whether or not its verb
+        was recognised.
+      tags: [rapidpro]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: within_minutes
+          in: query
+          schema: { type: integer, description: Widen or narrow the window }
+      responses:
+        '200':
+          description: Escalations due now
+          content:
+            application/json:
+              schema: { type: object }
+
+  /api/v1/audit/verify:
+    get:
+      summary: Verify the hash-chained action log
+      description: |
+        Recomputes the chain from the entries themselves rather than comparing
+        stored linkage fields, which a consistently re-chained file would pass.
+
+        Supply `head` — a value published out of band — to anchor the check. A
+        chain verified without one reports `unanchored` rather than claiming to
+        have been verified: internal consistency is not proof.
+      tags: [audit]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: head
+          in: query
+          schema: { type: string }
+          description: Published head hash to anchor the chain against
+      responses:
+        '200':
+          description: Verification result, with defects and advisories
+          content:
+            application/json:
+              schema: { type: object }
+
+  /api/v1/audit/head:
+    get:
+      summary: Current chain head, to publish out of band
+      tags: [audit]
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Head hash of the action log
+          content:
+            application/json:
+              schema: { type: object }
   /api/v1/analytics/bias-correct:
     post:
       summary: Re-run the bias correction over stored climate observations

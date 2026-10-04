@@ -18,7 +18,8 @@ import {
   runIngestion,
 } from './ingestion.js'
 import { actionLog, buildCreate, buildSoftDelete, buildUpdate, counts, isDeleted, operationalSummary } from './operations.js'
-import { parseRapidProFieldReport, rapidProStatus, responseMetrics, sendRapidProAlert, sendRapidProReportSummary, verifyRapidProWebhook } from './rapidpro.js'
+import { parseRapidProFieldReport, rapidProStatus, responseMetrics, sendRapidProAlert, sendRapidProReportSummary, verifyRapidProWebhook, parseRapidProReply, reconcileInbound, deliveryReport, dueEscalations, formatDeliveryReport } from './rapidpro.js'
+import { chainEntries, verifyChain, renderAuditProof, resolveChainHead, actorFor } from './audit-chain.js'
 import {
   approveReport,
   computeNextRunAt,
@@ -1109,6 +1110,35 @@ async function handleApiRequest(store, req, res, url) {
     return
   }
 
+  const auditRoute = matchAuditRoute(url.pathname)
+  if (auditRoute && req.method === 'GET') {
+    // The published head travels OUT OF BAND. Verifying a chain against a head
+    // stored inside the chain it protects proves nothing: a file re-chained
+    // end to end is internally consistent and completely rewritten.
+    // chainEntries returns the entries AND the head it computed; it is not itself
+    // the list, and passing the object where an array was wanted is what made
+    // this route 500 on its first call.
+    const { entries } = chainEntries(data.action_logs || [])
+    const publishedHead = url.searchParams.get('head') || null
+    const proof = verifyChain(entries, { expectedHead: publishedHead })
+    jsonResponse(res, 200, {
+      success: true,
+      entries: entries.length,
+      head: entries.length ? entries[entries.length - 1].entry_hash : null,
+      verified: proof.ok,
+      // Present so a reader is not left to infer it from a missing field: a chain
+      // nobody anchored is internally consistent and still not proof.
+      unanchored: !publishedHead,
+      defects: proof.defects || [],
+      advisories: proof.advisories || [],
+      // renderAuditProof re-verifies from the entries itself and renders the
+      // human-readable document a non-engineer reads. Passing it the proof
+      // object instead is what made this route 500 on its third attempt.
+      proof: renderAuditProof(entries, { expectedHead: publishedHead }),
+    })
+    return
+  }
+
   const reportingRoute = matchReportingRoute(url.pathname)
   if (reportingRoute) {
     await handleReportingRoute(store, data, req, res, url, reportingRoute)
@@ -2065,6 +2095,70 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
     return
   }
 
+  // A reply is the acknowledgement half of two-way SMS. It sits behind the same
+  // webhook verification as a field report: a reply that can close an SLA is
+  // attacker-controlled input, so correlation is by sender address within a
+  // bounded window, never by a payload-supplied alert_event_id.
+  if (req.method === 'POST' && route.kind === 'rapidpro-reply') {
+    if (!verifyRapidProWebhook(req, url)) {
+      jsonResponse(res, 401, { success: false, error: 'Invalid webhook signature' })
+      return
+    }
+    const body = await readRequestJson(req)
+    const parsed = parseRapidProReply(body, data, {
+      correlationWindowMinutes: Number(env.RAPIDPRO_REPLY_WINDOW_MINUTES || 1440),
+    })
+    if (!parsed.correlated) {
+      // Recorded anyway. An unrecognised sender is information — it is what a
+      // wrong number looks like — and dropping it makes the gap invisible.
+      const orphan = redactPii({
+        id: stableId('inbound', ['orphan', body.from, body.text, Date.now()]),
+        text: body.text || '',
+        contact_urn: body.from || '',
+        event_type: 'reply_unmatched',
+        created_at: new Date().toISOString(),
+      }, policy)
+      await store.merge({
+        rapidpro_inbound_messages: [orphan],
+        action_logs: [actionLog('rapidpro_inbound_messages', 'created', orphan, 'rapidpro', req.__auth?.subject)],
+      })
+      jsonResponse(res, 202, {
+        success: true,
+        correlated: false,
+        recorded: orphan.id,
+        reason: parsed.reason || 'no dispatch from this sender in the correlation window',
+      })
+      return
+    }
+    const writes = reconcileInbound(data, parsed)
+    await store.merge(writes)
+    jsonResponse(res, 200, { success: true, correlated: true, ...parsed })
+    return
+  }
+
+  if (req.method === 'GET' && route.kind === 'delivery') {
+    const report = deliveryReport(data, {
+      alertEventId: url.searchParams.get('alert_event_id') || undefined,
+    })
+    jsonResponse(res, 200, { success: true, ...report, summary: formatDeliveryReport(report) })
+    return
+  }
+
+  if (req.method === 'GET' && route.kind === 'escalations') {
+    const due = dueEscalations(data, {
+      now: Date.now(),
+      minutes: url.searchParams.get('within_minutes') ? Number(url.searchParams.get('within_minutes')) : undefined,
+    })
+    jsonResponse(res, 200, {
+      success: true,
+      due: due.length,
+      // What is not computed is as much of the answer as what is.
+      escalatable: due.length ? 'escalations whose acknowledgement window has closed' : 'none due',
+      data: due,
+    })
+    return
+  }
+
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
@@ -2861,8 +2955,25 @@ function matchRapidProRoute(pathname) {
   if (pathname === '/api/v1/rapidpro/dispatches') return { kind: 'dispatches' }
   if (pathname === '/api/v1/rapidpro/inbound') return { kind: 'inbound' }
   if (pathname === '/api/v1/rapidpro/field-report') return { kind: 'field-report' }
+  // A reply to an alert is the other half of two-way SMS: without it a
+  // dispatch is fire-and-forget and nobody knows whether the message landed
+  // or was acted on.
+  if (pathname === '/api/v1/rapidpro/reply') return { kind: 'rapidpro-reply' }
+  if (pathname === '/api/v1/rapidpro/delivery') return { kind: 'delivery' }
+  if (pathname === '/api/v1/rapidpro/escalations') return { kind: 'escalations' }
   const sendAlert = pathname.match(/^\/api\/v1\/rapidpro\/alert-events\/([^/]+)\/send$/)
   if (sendAlert) return { kind: 'send-alert', id: decodeURIComponent(sendAlert[1]) }
+  return null
+}
+
+/**
+ * The audit proof is a verification, not a mutation, so it verifies by reading
+ * the chain rather than by extending it.
+ */
+function matchAuditRoute(pathname) {
+  if (pathname === '/api/v1/audit/verify') return { action: 'verify' }
+  const head = pathname.match(/^\/api\/v1\/audit\/head$/)
+  if (head) return { action: 'head' }
   return null
 }
 
