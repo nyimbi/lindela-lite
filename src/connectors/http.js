@@ -202,7 +202,7 @@ export async function fetchWithRetry(url, {
       return decode(bytes, response, parse)
     } catch (error) {
       lastError = error
-      if (attempt < retries) await delay(retryDelayMs(error, attempt), sleep)
+      if (attempt < retries) await delay(retryDelayMs(error, attempt, limiter), sleep)
     } finally {
       // Per attempt, not per call: a retry is another request and takes another
       // token. A slot held across the backoff would let a rate-limited source
@@ -271,16 +271,43 @@ function httpError(response) {
 }
 
 /**
- * Backoff, or the provider's own `Retry-After` when it asked for longer.
+ * Backoff, the provider's own `Retry-After`, or the limiter's own clock —
+ * whichever is longest.
  *
- * `max`, not a sum: the two are answers to the same question and the honest
- * one is the longer. `parseRetryAfter` returns null when the header is absent,
- * so the default here is exactly the 150ms backoff this function always used.
+ * Three answers to "how long before trying again", taken with `max` because
+ * they are answers to the same question and the honest one is the longest
+ * delay. They were two before this, and the two were not the same question:
+ *
+ *   - `150 * 2 ** attempt` is our own guess at a retry schedule. It knows
+ *     nothing about the provider and nothing about the bucket.
+ *   - `Retry-After` is the provider telling us its budget is spent. Absent on
+ *     most 429s, because most providers assume their clients read the rate
+ *     limit they published rather than the one they sent.
+ *   - the limiter's `nextTokenMs()` is this bucket's own state: how long until
+ *     the next request would be permitted locally. This is the one that was
+ *     missing, and it is the one that matters for a *sustained* 429 — a source
+ *     answering 429 three times in a row is not having a bad 150ms, it is
+ *     being run above its declared budget, and a backoff that grows 150 → 300
+ *     → 600ms while the bucket sits empty keeps hammering a source the
+ *     limiter had already decided to slow down.
+ *
+ * A 429 is the only status that consults the bucket. A 500 or a timeout says
+ * nothing about anyone's rate budget, and widening those delays to the refill
+ * interval would make an outage slower to clear for no reason: a provider that
+ * is failing is usually not also rate-limiting, and the bucket is already
+ * pacing us correctly for whatever does come back.
+ *
+ * With no limiter the third term is absent and the result is exactly what it
+ * always was — `max(150 * 2 ** attempt, Retry-After)`. All sixteen existing
+ * call sites declare nothing, so none of their behaviour changes.
  */
-function retryDelayMs(error, attempt) {
+function retryDelayMs(error, attempt, limiter) {
   const backoff = 150 * (2 ** attempt)
   const retryAfter = typeof error?.retryAfterMs === 'number' ? error.retryAfterMs : 0
-  return Math.max(backoff, retryAfter)
+  // `parseRetryAfter` returns null for a header that says nothing, which keeps
+  // a malformed `Retry-After: 0` from becoming a hot loop.
+  const limiterWait = error?.status === 429 && limiter?.nextTokenMs ? limiter.nextTokenMs() : 0
+  return Math.max(backoff, retryAfter, limiterWait)
 }
 
 async function performFetch(target, { timeoutMs, headers }) {

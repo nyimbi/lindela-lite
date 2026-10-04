@@ -86,6 +86,30 @@ function verdictFor(verdict, reason, counts_found) {
 }
 
 /**
+ * The verdict as a name rather than as two mutually-exclusive booleans.
+ *
+ * Exported because three call sites had this exact function written out in
+ * each of them, and because the inverse of `verdictFor` belongs beside it. Two
+ * connectors and the ingestion run loop all needed it, and one of the three
+ * wrote its own slightly different version — so the question "is this complete
+ * or possibly incomplete?" had three answers rather than one.
+ *
+ * Read as the booleans describe, not as a string, for the same reason
+ * `mergeCompleteness` does it: `complete: true` is complete even if a
+ * `possibly_incomplete` flag is also set, and a verdict with neither flag set
+ * is `incomplete`, because an unassessable walk is not evidence of a whole one.
+ *
+ * `null` in, `incomplete` out. A missing verdict is not a good one, and a
+ * caller that passes nothing should be told it has no evidence rather than
+ * handed a pass.
+ */
+export function completenessVerdictName(verdict) {
+  if (!verdict || typeof verdict !== 'object') return 'incomplete'
+  if (verdict.complete === true) return 'complete'
+  return verdict.possibly_incomplete === true ? 'possibly_incomplete' : 'incomplete'
+}
+
+/**
  * A total that is actually a number. `null`, `undefined`, `NaN` and a
  * non-numeric string are all "the provider told us nothing", and 0 is a real
  * total of zero — the falsy-zero case that loses records at exactly the

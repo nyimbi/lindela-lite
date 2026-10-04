@@ -15,7 +15,8 @@ import { openMeteoArchiveConnector } from './connectors/open-meteo-archive.js'
 import { openMeteoFloodConnector } from './connectors/open-meteo-flood.js'
 import { acledCsvConnector, conflictCsvConnector, serviceAssetsConnector } from './connectors/uploads.js'
 import { dhis2Connector } from './connectors/dhis2.js'
-import { allowRequest, createCircuitState, recordOutcome } from './circuit.js'
+import { allowRequest, createCircuitState, outcomesFromRuns, recordOutcome, scoreConnector } from './circuit.js'
+import { COMPLETENESS_VERDICTS, completenessVerdictName } from './completeness.js'
 import { runAssertions, quarantineRecords, quarantineCollectionName } from './assertions.js'
 import { buildProvenance, recordLineageRow } from './provenance.js'
 import { explainVerdict } from './freshness.js'
@@ -192,6 +193,15 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
       attempts = error.attempts || 1
     }
 
+    // ENH-14, captured before the assertions below can replace `output`. A
+    // quarantined batch is rebuilt from `OUTPUT_COLLECTIONS` alone, so
+    // `output = assertionReport.published` drops every non-collection key the
+    // connector returned — `completeness` among them. Reading it after that
+    // point reports null for exactly the runs worth reporting: the ones whose
+    // records were held back, which is when an operator most needs to know the
+    // walk was also truncated.
+    const connectorsCompleteness = output?.completeness
+
     // ENH-10. The outcome feeds the breaker whether the fetch succeeded or not,
     // and `recordOutcome` releases the half-open probe. Recorded after the
     // attempt rather than inside the try so a thrown connector still counts —
@@ -269,6 +279,22 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     const durationMs = Date.now() - Date.parse(startedAt)
     const recordsProcessed = countRecords(output)
 
+    // ENH-14. The completeness verdict used to exist only on the connector's
+    // return value, which is where a direct caller in a test reads it and
+    // where nobody else ever looks. The connector put it in `errors` as prose
+    // and this loop counted errors into a `degraded` flag, so a walk that
+    // fetched 30 of 730 files and a walk that fetched 730 with a parser warning
+    // both arrived as `degraded` — the one signal an operator acts on, and it
+    // could not tell them apart.
+    //
+    // Promoted to a field on the run record, as a name from the frozen
+    // vocabulary rather than as a boolean, and `null` when the connector
+    // reported no completeness at all. The null matters: `complete` would be a
+    // claim that a source with no pagination was checked and found whole, and
+    // half the connectors have no completeness block because they never walk a
+    // page. That is "not measurable", not "measured and fine".
+    const completeness = normaliseCompleteness(connectorsCompleteness)
+
     source_runs.push({
       id: runId,
       source,
@@ -279,6 +305,7 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
       completed_at: completedAt,
       records_processed: recordsProcessed,
       records_by_collection: countRecordsByCollection(output),
+      completeness,
       errors,
       diagnostics: buildDiagnostics(output, errors, {
         attempts,
@@ -287,6 +314,14 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
         interval_minutes: request.interval_minutes ?? policy.interval_minutes ?? null,
         stale_after_minutes: request.stale_after_minutes ?? policy.stale_after_minutes ?? null,
         duration_ms: durationMs,
+        // ENH-14, one level down. `status` is the single field existing
+        // consumers read, and it is the one an operator scans. A truncated walk
+        // must not be reachable only by drilling into a new field, so the
+        // verdict is repeated here as `possible_incomplete` — a distinct
+        // boolean rather than a second `degraded`, because the point is that
+        // `degraded` cannot express it.
+        possible_incomplete: completeness === 'possibly_incomplete' || completeness === 'incomplete',
+        completeness_verdict: completeness,
       }),
     })
 
@@ -444,7 +479,24 @@ export function ingestionStatus(data) {
       }),
       last_run: lastRun,
       last_success: lastSuccess,
+      // ENH-14. The same tripwire on the status route, because the status route
+      // is what an operator actually opens. `null` when the last run walked no
+      // pages and so had nothing to be truncated by — not `complete`, which
+      // would say the walk was checked and found whole.
+      completeness: lastRun?.completeness ?? null,
       failure_streak: failureStreak(sourceRuns),
+      // ENH-10. `scoreConnector` had no production caller: it scored the
+      // breaker's in-memory window, and `runIngestion` builds that window from
+      // scratch every run and discards it. The score was therefore always null
+      // outside a test — the one number this item exists to produce, produced
+      // nowhere. Rebuilt from the stored run history instead, which is the same
+      // evidence and survives the run.
+      //
+      // `score` stays null until there is enough to measure. A source with two
+      // runs has a success rate and no meaningful p95, and reporting the
+      // success rate alone as a 0-100 health score would be a score computed
+      // from one of three signals wearing the other's label.
+      health: scoreConnector({ outcomes: outcomesFromRuns(sourceRuns) }),
       schedule,
       policy,
     }
@@ -565,6 +617,28 @@ function buildDiagnostics(output, errors, metadata = {}) {
     records_by_collection: countRecordsByCollection(output),
     ...metadata,
   }
+}
+
+/**
+ * A connector's completeness block as a name from the frozen vocabulary, or
+ * null when it reported none.
+ *
+ * null is the answer for a connector that walks no pages — a single-request
+ * source has nothing to be truncated by, and reporting `complete` there would
+ * put a source that was never assessed into the same column as one that was
+ * assessed and found whole. Those are different claims and the field has to
+ * carry the difference, because the alternative is a column in which
+ * `complete` means "complete or never asked", which is the falsy-zero conflation
+ * in a new place.
+ *
+ * `output.completeness` is read rather than passed, because the connectors put
+ * it there and the ingestion loop is the only thing that sees every connector's
+ * return value. A connector that forgets it is `null` here, not a pass.
+ */
+function normaliseCompleteness(completeness) {
+  if (!completeness || typeof completeness !== 'object') return null
+  const name = completenessVerdictName(completeness)
+  return COMPLETENESS_VERDICTS.includes(name) ? name : null
 }
 
 function sourceHealth(lastRun, staleAfterMinutes) {

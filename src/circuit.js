@@ -227,6 +227,50 @@ export function outcomesFor(state, source) {
 }
 
 /**
+ * Rebuild outcomes from a source's stored run history.
+ *
+ * The breaker's own `history` lives in memory for the duration of one run, and
+ * `runIngestion` creates a fresh state per run — deliberately, because carrying
+ * it across runs means persisting circuit state, which is a larger claim than
+ * ENH-10 makes. The consequence is that `scoreConnector({ outcomes })` had no
+ * production caller at all: the one place outcomes accumulate is the one place
+ * the state is thrown away at the end.
+ *
+ * But the evidence survives, in `source_runs`, and it is the same evidence: an
+ * ok/failed status, a `duration_ms` and a `records_processed` per run. Scoring
+ * from those gives a health number that survives restarts, which is the number
+ * an operator wants, rather than one that is null every time because the window
+ * it was measured over was thrown away.
+ *
+ * Two fields are read as evidence only when they are present, so a run record
+ * written before this existed contributes its success bit and nothing else
+ * rather than a fake latency.
+ *
+ * `skipped` counts as not-ok, and that is the one place this function departs
+ * from `recordOutcome`, which never sees a skip because it is what caused one.
+ * A skipped run means the breaker declined to call the source, which is not
+ * evidence the source works; counting it as a success would let a source that
+ * was skipped every run for a week report a perfect success rate off zero
+ * requests made — the health score's whole anti-vacuous argument, defeated by
+ * one missing filter.
+ *
+ * Runs are expected newest-first — that is the order `ingestionStatus` reads
+ * them in and the order the store returns — and are reversed here so `history`
+ * is oldest-first the way the window trimmer assumes. `scoreConnector` reads
+ * only the last `CIRCUIT_HISTORY_WINDOW` entries, so a long history costs
+ * nothing beyond the slice.
+ */
+export function outcomesFromRuns(runs = []) {
+  const list = Array.isArray(runs) ? runs.filter((r) => r && typeof r === 'object') : []
+  return list.slice(0, CIRCUIT_HISTORY_WINDOW).reverse().map((run) => ({
+    ok: run.status !== 'failed' && run.status !== 'skipped',
+    latency_ms: finiteOrNull(run.diagnostics?.duration_ms),
+    record_count: finiteOrNull(run.records_processed),
+    at: run.completed_at || run.started_at || null,
+  }))
+}
+
+/**
  * Health score in [0, 100] from success rate, latency and payload drift over the
  * trailing window. Returns `{ score, success_rate, p50_latency_ms,
  * p95_latency_ms, record_drift_ratio, samples, latency_samples, drift_samples,

@@ -214,6 +214,39 @@ export function compareMonth({ period, seriesA, seriesB, thresholds = AGREEMENT_
 }
 
 /**
+ * How well the two products cover the same ground.
+ *
+ * This is a separate axis from agreement, and conflating the two is the whole
+ * defect the vocabulary exists to prevent. `unavailable` says "these two had
+ * too little in common to compare" — and a district where ERA5 covers 2019 and
+ * CHIRPS covers 2024 reaches that verdict for a reason that has nothing to do
+ * with either product being wrong. Without this, a coverage gap and a
+ * disagreement both arrive as "no answer", and the reader cannot tell whether
+ * to go fix the pipeline or to go think about the rainfall.
+ *
+ *   `both`       every month either product has, both products have. Agreement
+ *                is a statement about the overlap alone, and says nothing about
+ *                whether the overlap is the whole district.
+ *   `partial`    some months shared, some one-sided. The one-sided months are
+ *                named, so "CHIRPS stops in March" is legible rather than
+ *                inferred from a smaller paired count.
+ *   `a_only`     A covers months B has never reported, and there is no overlap.
+ *   `b_only`     the mirror.
+ *   `disjoint`   both sides have months, and they share none. This is its own
+ *                answer rather than a flavour of `a_only` or `b_only`: when
+ *                neither product covers the other's ground, naming one of them
+ *                is arbitrary, and the honest report is that there was no
+ *                overlap at all. Two products with twelve months each and no
+ *                month in common differ in size by zero — the arithmetic that
+ *                made this read as perfect coverage before.
+ *   `neither`    neither product reported anything for this district-period.
+ *
+ * None of these are folded into `unavailable`. They answer a question the
+ * verdict does not.
+ */
+export const COVERAGE_VERDICTS = Object.freeze(['both', 'partial', 'a_only', 'b_only', 'disjoint', 'neither'])
+
+/**
  * Pair two products' monthly series for one district and compare them.
  *
  * Pairs on `period`, not on array position. Two sources that arrive out of
@@ -222,6 +255,13 @@ export function compareMonth({ period, seriesA, seriesB, thresholds = AGREEMENT_
  * number describing a relationship between the wrong two things. Only months
  * present in both series are compared, and the count of what was dropped is
  * part of the answer.
+ *
+ * `unmatched_months` counts months exactly one product reported, counted as a
+ * set rather than as a size difference. The difference of the two sizes was
+ * wrong in the case that matters most: two series of equal length covering
+ * disjoint months differ by zero, so the original expression reported "no
+ * unmatched months" for two products that agreed about nothing — a clean bill
+ * of health for a comparison that never happened.
  */
 export function compareSeries({ district, period, recordsA, recordsB, productA, productB, thresholds }) {
   const indexA = indexByPeriod(recordsA)
@@ -233,16 +273,50 @@ export function compareSeries({ district, period, recordsA, recordsB, productA, 
 
   const comparison = compareMonth({ period, seriesA, seriesB, thresholds })
 
+  // The union of what each side reported, which is the actual ground under
+  // comparison. Named rather than counted, because "CHIRPS has no 2020-07" and
+  // "ERA5 has no 2020-07" are different findings that a single total erases.
+  const union = [...new Set([...indexA.keys(), ...indexB.keys()])].sort()
+  const onlyA = union.filter((key) => indexA.has(key) && !indexB.has(key))
+  const onlyB = union.filter((key) => indexB.has(key) && !indexA.has(key))
+  const coverage = classifyCoverage({ sizeA: indexA.size, sizeB: indexB.size, paired: common.length, onlyA: onlyA.length, onlyB: onlyB.length })
+
   return {
     ...comparison,
     district,
     period,
     product_a: productA,
     product_b: productB,
-    series_a_length: seriesA.length,
-    series_b_length: indexA.size,
-    unmatched_months: Math.abs(indexA.size - indexB.size),
+    series_a_length: indexA.size,
+    series_b_length: indexB.size,
+    paired_months: common.length,
+    unmatched_months: onlyA.length + onlyB.length,
+    coverage,
+    // Named, not just counted. A count of three is unreadable; the three months
+    // are the finding.
+    only_in_a: onlyA,
+    only_in_b: onlyB,
   }
+}
+
+/**
+ * Coverage from the two sizes and the overlap. Split out so the classification
+ * is one expression rather than five, because the interesting case is the one
+ * where sizes cancel and only the overlap decides.
+ *
+ * `both` requires a non-empty intersection, for the reason named in the
+ * vocabulary: two products that each report nothing have no coverage *in
+ * common*, and calling that `both` would report agreement between two empty
+ * series.
+ */
+function classifyCoverage({ sizeA, sizeB, paired, onlyA, onlyB }) {
+  if (!sizeA && !sizeB) return 'neither'
+  // No overlap at all. Checked before the one-sided cases because two products
+  // covering entirely different months are one-sided *both* ways, and picking
+  // either as the covered one would be arbitrary.
+  if (paired === 0) return sizeA && sizeB ? 'disjoint' : (sizeA ? 'a_only' : 'b_only')
+  if (onlyA || onlyB) return 'partial'
+  return 'both'
 }
 
 function indexByPeriod(records = []) {
@@ -270,6 +344,22 @@ function indexByPeriod(records = []) {
 export function agreementReport(comparisons = [], { district = null } = {}) {
   const usable = comparisons.filter((c) => c.verdict !== 'unavailable')
   const disputed = usable.filter((c) => c.verdict === 'disputed')
+  // Coverage is read off every comparison, NOT off `usable`. A period whose two
+  // products share no month is `unavailable` as a *verdict* — there is no
+  // comparison to have an opinion about — but its coverage is perfectly
+  // well-measured, and it is the most important coverage answer there is.
+  // Filtering by verdict first counted those periods as absent rather than
+  // absent-together, so a district where the two products had never overlapped
+  // reported `fully_covered_rate: null` — "not measured" for the one finding
+  // that was measured. The verdict axis and the coverage axis have different
+  // populations, and conflating them made the weaker of the two disappear.
+  //
+  // A comparison with no `coverage` field is treated as `both`: it came from a
+  // caller holding only a verdict. Defaulting it the other way would let a
+  // caller that knows nothing about coverage drag the rate down.
+  const measurable = Array.isArray(comparisons) ? comparisons.filter((c) => c && typeof c === 'object') : []
+  const covered = measurable.filter((c) => (c.coverage ?? 'both') === 'both')
+  const gaps = measurable.filter((c) => (c.coverage ?? 'both') !== 'both')
   return {
     district,
     computed_at: nowIso(),
@@ -281,6 +371,21 @@ export function agreementReport(comparisons = [], { district = null } = {}) {
     // Null when nothing was comparable. Zero would read as "checked and found
     // no disagreement", which is a claim about data we do not have.
     any_disputed: usable.length ? disputed.length > 0 : null,
+    // The "only one covers this" half, kept beside the disagreement half and
+    // never merged into it. `disputed_rate` is computed over every usable
+    // period including these, because a month only one product reported
+    // genuinely cannot corroborate or contradict the other — but
+    // `fully_covered_periods` is what says how much of the report rests on two
+    // products at all. A reader who only saw `disputed_count: 0` would conclude
+    // the products agreed, which is false of every period in `gaps`.
+    coverage: {
+      fully_covered_periods: covered.length,
+      partial_or_one_sided_periods: gaps.length,
+      // Null rather than 0 for the same reason `any_disputed` is: with nothing
+      // measurable there was no coverage to measure.
+      fully_covered_rate: measurable.length ? covered.length / measurable.length : null,
+      gaps: gaps.map((c) => ({ period: c.period, coverage: c.coverage ?? 'both', unmatched_months: c.unmatched_months ?? null })),
+    },
     comparisons: usable,
   }
 }

@@ -2,7 +2,7 @@ import { fetchWithRetry } from './http.js'
 import { stableId } from '../utils.js'
 import { defineConnector } from './spec.js'
 import { DEFAULT_COUNTRIES } from './ipc-hdx.js'
-import { assessPagination, mergeCompleteness } from '../completeness.js'
+import { assessPagination, completenessVerdictName, mergeCompleteness } from '../completeness.js'
 
 /**
  * GDACS historical flood events, from the event-search archive API.
@@ -53,17 +53,6 @@ const ARCHIVE_ROOT = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEA
 /** GDACS' own per-query result cap. The verdict depends on knowing its value. */
 const WINDOW_CAP = 100
 
-/**
- * The verdict as a name rather than as two booleans. The same three lines as in
- * chirps.js, deliberately: `completeness.js` exports the vocabulary but no
- * reader for its own output, and a connector importing a helper from another
- * connector is a worse coupling than six duplicated lines.
- */
-function completenessVerdictName(verdict) {
-  if (!verdict) return 'incomplete'
-  if (verdict.complete === true) return 'complete'
-  return verdict.possibly_incomplete === true ? 'possibly_incomplete' : 'incomplete'
-}
 
 async function connectorIngest(options = {}) {
   const hazard_events = []

@@ -1,6 +1,6 @@
 import { fetchWithRetry } from './http.js'
 import { stableId } from '../utils.js'
-import { assessPagination, recordCap } from '../completeness.js'
+import { assessPagination, completenessVerdictName, recordCap } from '../completeness.js'
 
 const INDEX_URL = 'https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/'
 const FILE_PATTERN = /chirps-v2\.0\.(\d{4}\.\d{2}\.\d{2})\.tif(?:\.gz)?/g
@@ -41,19 +41,6 @@ const YEAR_DIR_PATTERN = />(\d{4})\/</g
  * record already says out loud.
  */
 
-/**
- * The verdict as a name rather than as two booleans.
- *
- * `completeness.js` exports the vocabulary but not a function that reads its
- * own booleans back into it, so this is the three-line inverse of
- * `verdictFor`. Duplicated here and in gdacs-archive rather than exported from
- * one place because both connectors need it and neither owns the module.
- */
-function completenessVerdictName(verdict) {
-  if (!verdict) return 'incomplete'
-  if (verdict.complete === true) return 'complete'
-  return verdict.possibly_incomplete === true ? 'possibly_incomplete' : 'incomplete'
-}
 
 /**
  * What the walk found, what it kept, and whether the gap between them is

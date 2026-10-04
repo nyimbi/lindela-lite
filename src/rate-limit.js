@@ -16,6 +16,9 @@
  *                       now, sleep, jitter, name })
  *       .acquire()            -> Promise<release: () => void>  FIFO, never drops
  *       .tryAcquire()         -> { allowed, release?, retryAfterMs }  never queues
+ *       .nextTokenMs()        -> ms until the next grant would be allowed,
+ *                                 read-only and non-consuming; what the 429
+ *                                 path in `connectors/http.js` consults
  *       .inFlight() .queued() -> observability for metrics and for tests
  *   enforce(limiter, fn)     -> runs fn under the limiter, releases in `finally`
  *   parseRetryAfter(value)   -> ms, or null when absent/unparseable (never 0)
@@ -235,6 +238,33 @@ export function createRateLimiter({
     queued: () => queue.length,
     /** Tokens on hand, for a log line or a test. Not a stable public contract. */
     tokens: () => tokens,
+
+    /**
+     * How long until this limiter would grant the next request, in ms. Zero
+     * when one is available now.
+     *
+     * Read-only and non-consuming, which is the whole reason it exists and the
+     * reason `tryAcquire` cannot answer the question. `tryAcquire` *takes* a
+     * token to find out, so asking "how long would I wait?" that way spends the
+     * answer: a caller probing before deciding whether to sleep would empty its
+     * own bucket one probe at a time, and a bucket that leaks under observation
+     * is not a budget.
+     *
+     * A held concurrency slot contributes nothing here. No clock time releases
+     * a slot — a `release()` does — so folding it in would produce a deadline
+     * that never arrives, and a caller sleeping to it would stall on a number
+     * that is not waiting for anything.
+     *
+     * This is what makes the 429 path in `connectors/http.js` consult the
+     * limiter's own state: a provider refusing a request has told us the bucket
+     * is ahead of the provider's idea of the budget, and the honest delay is
+     * whichever is longer — the provider's `Retry-After` or the time until this
+     * bucket has a token — rather than a fixed backoff that ignores both.
+     */
+    nextTokenMs() {
+      refill()
+      return tokenWaitMs()
+    },
   }
 }
 
