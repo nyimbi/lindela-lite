@@ -324,6 +324,43 @@
         display: block;
       }
 
+      /* Queued is neither the error styling nor the empty styling. It borrows
+         the warning ground so it reads as "held, still to go" rather than
+         "something broke" or "nothing here". */
+      .queue-status {
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        border-radius: 8px;
+        font-size: 0.875rem;
+        background: var(--warn-wash);
+        color: var(--warn-ink);
+        border-left: 4px solid var(--warn);
+      }
+
+      .queue-status strong {
+        display: block;
+        margin-bottom: 0.25rem;
+      }
+
+      .retry-btn {
+        margin-top: 0.75rem;
+        padding: 0.5rem 1rem;
+        font: inherit;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--ink-muted);
+        border-radius: 6px;
+        cursor: pointer;
+        min-height: 44px;
+      }
+
+      .retry-btn:hover { background: var(--surface-hover); }
+
+      #alertText[data-state='error'] {
+        color: var(--ink);
+        display: block;
+      }
+
       footer {
         padding: 1rem;
         border-top: 1px solid var(--stroke);
@@ -385,6 +422,12 @@
       <!-- Home screen -->
       <div id="homeScreen" class="screen active home-screen">
         <h1 class="screen-title" data-i18n="chw.home">Health Report</h1>
+        <!-- The queue's own status. It exists because a queued report used to
+             announce itself in a toast that vanished after five seconds, and
+             then the app said nothing at all — indistinguishable from a device
+             that had filed nothing and was owed nothing. "Not sent yet" is a
+             third thing, and the worker is entitled to see it at rest. -->
+        <div id="queueStatus" class="queue-status" data-state="none" role="status" hidden></div>
         <div class="button-group">
           <button class="btn-primary" id="reportSymptomBtn" data-i18n="chw.report_symptom">Report symptom</button>
           <button class="btn-secondary" id="reportIncidentBtn" data-i18n="chw.report_incident">Report incident</button>

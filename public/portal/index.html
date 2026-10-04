@@ -229,6 +229,37 @@
         display: none;
       }
 
+      /* A failed load must not look like an empty one. The left rule does that
+         work before a word is read; `data-state` keeps the two selectors apart
+         so an empty state can never inherit the error styling by cascade. */
+      .state-panel,
+      .empty-cell[data-state='error'] {
+        border-left: 4px solid var(--sev-high);
+        background: var(--surface);
+        border-radius: 6px;
+        padding: 1rem 1.25rem;
+      }
+
+      .state-panel p {
+        margin: 0.5rem 0 0;
+        max-width: 60ch;
+        color: var(--ink-muted);
+      }
+
+      .retry-btn {
+        margin-top: 1rem;
+        padding: 0.5rem 1rem;
+        font: inherit;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--ink-muted);
+        border-radius: 6px;
+        cursor: pointer;
+        min-height: 44px;
+      }
+
+      .retry-btn:hover { background: var(--surface-hover); }
+
       .offline-banner.show {
         display: block;
       }

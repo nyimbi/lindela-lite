@@ -1,8 +1,14 @@
 import { initI18n, t, apiFetch, initOfflineBanner } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
+import { ERROR, EMPTY, describeState, distinguishFailure } from '/shared/states.js'
 import { esc as escapeHtml, formatTimestamp, num, pct, sevClass, truncate } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 mountNavbar({ activePath: '/portal' })
+
+/** The four collections this portal shows. One list: the loader, the per-table
+ *  verdict and the failure summary all derive from it, so adding a table cannot
+ *  leave one of the three behind. */
+const COLLECTIONS = ['risk', 'hazards', 'assets', 'alerts']
 
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
@@ -11,12 +17,11 @@ const state = {
   // previous session on a shared machine.
   partnerOrg: null,
   currentTab: 'risk',
-  data: {
-    risk: [],
-    hazards: [],
-    assets: [],
-    alerts: [],
-  },
+  data: Object.fromEntries(COLLECTIONS.map((k) => [k, []])),
+  // Per-collection verdict from /shared/states.js. The table renders on this,
+  // never on row count: a failed request has no rows, and rows are what the
+  // empty state used to read.
+  loaded: Object.fromEntries(COLLECTIONS.map((k) => [k, null])),
 }
 
 const $ = (id) => document.getElementById(id)
@@ -51,15 +56,36 @@ async function init() {
   // which token was presented. This used to be read from localStorage, so the
   // header displayed whatever a previous session on a shared machine had
   // typed — an isolation indicator with nothing behind it.
-  const identity = await apiFetch('/api/v1/auth-info', { token: apiKey() })
-    .then((r) => r?.data || null)
-    .catch(() => null)
+  //
+  // The catch used to swallow the failure and fall through to "Authentication
+  // is not configured", which is an assertion about the server's configuration
+  // that a dead socket knows nothing about. A partner reading that would go
+  // re-key their token, when the real problem was the network.
+  let identity = null
+  let identityError = null
+  try {
+    identity = (await apiFetch('/api/v1/auth-info', { token: apiKey() }))?.data || null
+  } catch (error) {
+    identityError = error
+  }
+
+  if (identityError) {
+    renderIdentityFailure(identityError)
+    return
+  }
 
   state.partnerOrg = identity?.data?.partner_org || null
 
   if (!state.partnerOrg) {
     // No partner scope on this token. Say so rather than showing the whole
     // platform's data under a heading that implies it is this partner's.
+    //
+    // Restored here because `renderIdentityFailure` suppresses them: the auth
+    // claims are withdrawn only while the cause is a dead socket, and a retry
+    // that succeeds must put them back or a genuine auth problem would render
+    // as a network one.
+    for (const el of authPanel.querySelectorAll('h2, p[data-i18n]')) el.hidden = false
+    $('portalIdentityError')?.remove()
     partnerOrgDisplay.textContent = identity?.data?.auth_configured
       ? 'No partner scope on this token'
       : 'Authentication is not configured'
@@ -98,14 +124,20 @@ function setupTabs() {
 async function loadData() {
   const load = async (key, path) => {
     try {
-      return { [key]: (await apiFetch(path, { token: apiKey() })).data || [], failed: null }
+      const data = (await apiFetch(path, { token: apiKey() })).data || []
+      return { [key]: { ok: true, data, error: null } }
     } catch (error) {
       // Settle rather than reject: this is a read-only partner view of four
       // independent collections, and one dead endpoint should not blank the
       // other three. Previously the first failure rejected the whole Promise.all
       // and the portal rendered an empty page with no explanation anywhere on
       // screen — `console.error` is not something a partner reads.
-      return { [key]: [], failed: key }
+      //
+      // The failure is now carried as a failure rather than as an empty array.
+      // The array is what `renderTable` used to read as "the server answered
+      // and there is nothing", which is how a dead endpoint produced four
+      // confidently empty tables.
+      return { [key]: { ok: false, data: [], error } }
     }
   }
 
@@ -119,37 +151,95 @@ async function loadData() {
     load('alerts', '/api/v1/rapidpro/dispatches'),
   ])
 
-  for (const result of results) {
-    for (const key of ['risk', 'hazards', 'assets', 'alerts']) {
-      if (result[key] !== undefined) state.data[key] = result[key]
-    }
+  const loaded = Object.assign({}, ...results)
+  for (const key of COLLECTIONS) {
+    state.data[key] = loaded[key].data
+    // Per-table verdict. `renderTable` branches on this rather than on length,
+    // so a failed table says so in the cell a reader was about to read as data.
+    state.loaded[key] = distinguishFailure({
+      ok: loaded[key].ok,
+      error: loaded[key].error,
+      isEmpty: !loaded[key].data.length,
+    })
   }
-
-  const failed = results.filter((r) => r.failed).map((r) => r.failed)
 
   renderRiskTable()
   renderHazardsTable()
   renderAssetsTable()
   renderAlertsTable()
 
-  if (failed.length) showPortalError(
-    failed.length === results.length
-      ? 'Could not reach the server. Showing nothing rather than stale data.'
-      : `Could not load: ${failed.join(', ')}.`
-  )
+  const failed = COLLECTIONS.filter((k) => state.loaded[k] === ERROR)
+  $('portalError')?.remove()
+  if (failed.length) {
+    const copy = describeState(ERROR, {
+      subject: failed.length === COLLECTIONS.length
+        ? 'These tables'
+        : `${failed.length} of these tables`,
+    })
+    // A child of contentArea, not contentArea itself: the summary is added to
+    // the page, and the tabs it sits above must survive the retry that replaces it.
+    let host = $('portalError')
+    if (!host) {
+      host = document.createElement('div')
+      host.id = 'portalError'
+      host.style.margin = '1rem'
+      contentArea.prepend(host)
+    }
+    renderStatePanel(host, { ...copy, state: ERROR }, { retry: () => loadData() })
+  }
 }
 
-function showPortalError(message) {
-  let el = document.getElementById('portalError')
-  if (!el) {
-    el = document.createElement('div')
-    el.id = 'portalError'
-    el.setAttribute('role', 'alert')
-    el.className = 'error-panel'
-    el.style.margin = '1rem'
-    document.getElementById('contentArea')?.prepend(el)
+/**
+ * One panel of shared vocabulary, rendered.
+ *
+ * Every surface needs the same three things from a failure: the words, the fact
+ * that a retry exists, and a control that actually performs it. The vocabulary
+ * is in /shared/states.js; only the mounting is here.
+ */
+function renderStatePanel(container, copy, { retry } = {}) {
+  container.innerHTML = `<div class="state-panel" data-state="${copy.state}" role="alert">
+    <strong>${escapeHtml(copy.title)}</strong>
+    <p>${escapeHtml(copy.body)}</p>
+  </div>`
+  if (!copy.retryable || !retry) return
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'retry-btn'
+  btn.textContent = copy.action
+  btn.addEventListener('click', retry)
+  container.firstElementChild.appendChild(btn)
+}
+
+/**
+ * The partner-scope lookup failed.
+ *
+ * This is the failure that hides the whole portal, so it needs the strongest
+ * wording available: the partner cannot know whether their token is scoped,
+ * configured, or merely unreachable, and the old text picked one of those for
+ * them.
+ */
+function renderIdentityFailure() {
+  authPanel.style.display = 'block'
+  partnerOrgDisplay.textContent = 'Connection lost'
+
+  // The panel ships with "Authentication required" and "Sign in with your
+  // partner credentials". On a dead socket both are false — the partner is not
+  // unauthenticated, the client cannot tell — and a partner who believes them
+  // will re-issue credentials that were never the problem. So the claim is
+  // withdrawn rather than qualified.
+  //
+  // The sign-in button stays: it is the way out for a partner whose token
+  // really is the problem, and a network blip must not take that exit away.
+  for (const el of authPanel.querySelectorAll('h2, p[data-i18n]')) el.hidden = true
+
+  const copy = describeState(ERROR, { subject: 'Your partner records' })
+  let panel = $('portalIdentityError')
+  if (!panel) {
+    panel = document.createElement('div')
+    panel.id = 'portalIdentityError'
+    authPanel.appendChild(panel)
   }
-  el.innerHTML = `<strong>Some data is unavailable</strong><p>${escapeHtml(message)}</p>`
+  renderStatePanel(panel, { ...copy, state: ERROR }, { retry: () => init() })
 }
 
 /**
@@ -161,16 +251,30 @@ function showPortalError(message) {
  * answer is that nothing was measured. Severity was bare text rather than the
  * same chip every other surface uses.
  */
-function renderTable(bodyId, { rows, columns, sortKey, limit = 100 }) {
+function renderTable(bodyId, { rows, columns, sortKey, limit = 100, collection }) {
   const tbody = $(bodyId)
   if (!tbody) return
+
+  const verdict = collection ? state.loaded[collection] : null
+
+  // Checked before the row count, always. This is the whole fix: a failure
+  // produces zero rows, and zero rows used to reach the branch below.
+  if (verdict === ERROR) {
+    const copy = describeState(ERROR, { subject: 'The rows in this table' })
+    tbody.innerHTML = `<tr><td colspan="${columns.length}" class="empty-cell" data-state="error" role="alert">
+      <strong>${escapeHtml(copy.title)}</strong> ${escapeHtml(copy.body)}</td></tr>`
+    return
+  }
 
   const body = sortKey
     ? [...rows].sort((a, b) => new Date(b[sortKey] || 0) - new Date(a[sortKey] || 0)).slice(0, limit)
     : rows.slice(0, limit)
 
   if (!body.length) {
-    tbody.innerHTML = `<tr><td colspan="${columns.length}" class="empty-cell" data-i18n="portal.no_data">No data available</td></tr>`
+    // Reached only by a request that answered. Saying so is what separates this
+    // cell from the one above it.
+    const copy = describeState(EMPTY, { noun: 'these rows' })
+    tbody.innerHTML = `<tr><td colspan="${columns.length}" class="empty-cell" data-state="empty">${escapeHtml(copy.body)}</td></tr>`
     return
   }
 
@@ -192,6 +296,7 @@ const severityCell = (value) =>
 
 function renderRiskTable() {
   renderTable('riskTableBody', {
+    collection: 'risk',
     rows: state.data.risk || [],
     columns: [
       { render: (r) => escapeHtml(r.district || '—') },
@@ -204,6 +309,7 @@ function renderRiskTable() {
 
 function renderHazardsTable() {
   renderTable('hazardsTableBody', {
+    collection: 'hazards',
     rows: state.data.hazards || [],
     sortKey: 'created_at',
     columns: [
@@ -217,6 +323,7 @@ function renderHazardsTable() {
 
 function renderAssetsTable() {
   renderTable('assetsTableBody', {
+    collection: 'assets',
     rows: state.data.assets || [],
     columns: [
       { render: (a) => escapeHtml(a.name || '—') },
@@ -228,6 +335,7 @@ function renderAssetsTable() {
 
 function renderAlertsTable() {
   renderTable('alertsTableBody', {
+    collection: 'alerts',
     rows: state.data.alerts || [],
     sortKey: 'created_at',
     columns: [

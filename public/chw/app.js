@@ -1,5 +1,7 @@
 import { initI18n, t, apiFetch, initOfflineBanner, initOfflineQueue } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
+import { esc as escapeHtml } from '/shared/fmt.js'
+import { ERROR, QUEUED, describeState, distinguishFailure } from '/shared/states.js'
 mountNavbar({ activePath: '/chw' })
 
 const state = {
@@ -57,6 +59,7 @@ async function init() {
   setupIncidentScreen()
   setupReplyScreen()
 
+  refreshQueueStatus()
   requestUserLocation()
 }
 
@@ -148,6 +151,36 @@ async function queueReport(path, options, what) {
 }
 
 let toastTimer = null
+
+/**
+ * Say what the offline queue is holding, at rest, on the screen the worker
+ * returns to.
+ *
+ * The toast already existed, and it is the wrong instrument for this: it is
+ * gone in five seconds and it appears over whatever screen happened to be open.
+ * A worker who finishes one report and files the next has no way to know the
+ * first one is still unsent — and an app that looks identical whether it is
+ * holding two reports or none is indistinguishable from one that has thrown
+ * them away.
+ */
+async function refreshQueueStatus() {
+  const el = $('queueStatus')
+  if (!el) return
+  const count = await window.lindelaQueue?.pendingCount?.() ?? 0
+  if (!count) {
+    el.hidden = true
+    el.dataset.state = 'none'
+    el.textContent = ''
+    return
+  }
+  const copy = describeState(QUEUED, { queuedCount: count, what: 'They' })
+  el.hidden = false
+  el.dataset.state = 'queued'
+  el.innerHTML = `<strong>${escapeHtml(copy.title)}</strong>${escapeHtml(copy.body)}`
+}
+
+window.addEventListener('lindela-queue-changed', () => { refreshQueueStatus() })
+window.addEventListener('lindela-queue-flushed', () => { refreshQueueStatus() })
 
 function showToast(message, kind = 'info') {
   toast.textContent = message
@@ -271,6 +304,7 @@ async function submitSymptomReport() {
     }
     state.symptom = { who: null, type: null, duration: null, location: null }
     showScreen('home')
+    refreshQueueStatus()
   } catch (error) {
     showToast(t('chw.save_failed', { reason: error.message }), 'error')
   }
@@ -315,6 +349,7 @@ function setupIncidentScreen() {
       $('incidentPhoto').value = ''
       state.incident = { category: null, description: null, location: null }
       showScreen('home')
+    refreshQueueStatus()
     } catch (error) {
       showToast(t('chw.save_failed', { reason: error.message }), 'error')
     }
@@ -323,20 +358,66 @@ function setupIncidentScreen() {
   $('incidentBackBtn').addEventListener('click', () => showScreen('home'))
 }
 
+/**
+ * The alert card, in whichever state it earned.
+ *
+ * Offline is not a fault here. On a health worker's phone it is the ordinary
+ * condition, and the only thing this card can legitimately show is "here is an
+ * alert" / "the server has no alerts" / "the server could not be reached".
+ * Anything held locally is a fourth state again — not an error, and certainly
+ * not an empty list.
+ */
 async function loadLastAlert() {
+  const card = $('alertCard')
+  const text = $('alertText')
+
+  // No alert id may survive a failed load: a reply composed against the previous
+  // alert would be filed against the wrong event, and the server would accept it.
+  delete text.dataset.alertId
+
+  let res = null
+  let error = null
   try {
-    const res = await apiFetch('/api/v1/rapidpro/inbound?limit=5')
-    const messages = res.data || []
-    if (messages.length > 0) {
-      const msg = messages[0]
-      $('alertText').textContent = msg.text || 'No recent alerts'
-      $('alertText').dataset.alertId = msg.event_id || ''
-    } else {
-      $('alertText').textContent = 'No recent alerts'
-    }
-  } catch (error) {
-    $('alertText').textContent = 'Could not load alert'
+    res = await apiFetch('/api/v1/rapidpro/inbound?limit=5')
+  } catch (err) {
+    error = err
   }
+
+  const stateName = distinguishFailure({
+    ok: !error,
+    error,
+    isEmpty: !res?.data?.length,
+  })
+
+  if (stateName === ERROR) {
+    const queued = await window.lindelaQueue?.pendingCount?.() ?? 0
+    const copy = queued > 0
+      // Queued work changes what the sentence owes: the worker has reports
+      // this device still holds, so silence about them would be the real lie.
+      ? describeState(QUEUED, { queuedCount: queued, what: 'They' })
+      : describeState(ERROR, { subject: 'Alerts', holdsWork: true })
+    text.dataset.state = stateName
+    text.innerHTML = `<strong>${escapeHtml(copy.title)}</strong> ${escapeHtml(copy.body)}`
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'retry-btn'
+    btn.textContent = copy.retryable ? copy.action : 'Check again'
+    btn.addEventListener('click', () => loadLastAlert())
+    text.appendChild(btn)
+    return
+  }
+
+  if (stateName === 'empty') {
+    const copy = describeState('empty', { noun: 'alerts' })
+    text.dataset.state = 'empty'
+    text.textContent = copy.body
+    return
+  }
+
+  const msg = res.data[0]
+  text.dataset.state = 'ok'
+  text.textContent = msg.text || 'The alert carried no text.'
+  text.dataset.alertId = msg.event_id || ''
 }
 
 function setupReplyScreen() {
@@ -361,6 +442,7 @@ function setupReplyScreen() {
       }
       $('replyMessage').value = ''
       showScreen('home')
+    refreshQueueStatus()
     } catch (error) {
       showToast(t('chw.save_failed', { reason: error.message }), 'error')
     }

@@ -2,6 +2,7 @@ import { initI18n, t, apiFetch, initOfflineBanner, initServiceWorker } from '/sh
 import { esc as escapeHtml, formatTimestamp, sevClass } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { mountNavbar } from '/shared/navbar.js'
+import { ERROR, describeState, distinguishFailure } from '/shared/states.js'
 mountNavbar({ activePath: '/focal-point' })
 
 // Registration used to be hand-rolled here *and* performed by initServiceWorker
@@ -50,33 +51,94 @@ signoutBtn.addEventListener('click', () => {
   window.location.href = '/'
 })
 
+/**
+ * Render one queue's honest state into its container.
+ *
+ * Every list on this surface used to branch only on `length === 0`, so a failed
+ * load and a genuinely empty queue produced the same DOM. "No pending
+ * workflows." told a focal point that every trigger had been dealt with when
+ * nothing had been checked at all — the single worst sentence this screen can
+ * be wrong about, because acting on it means stopping the search.
+ */
+function renderQueueState(container, stateName, { subject, retry }) {
+  const copy = describeState(stateName, { subject })
+  container.innerHTML = `<div class="queue-empty" data-state="${stateName}" role="alert">
+    <strong>${escapeHtml(copy.title)}</strong>
+    <p>${escapeHtml(copy.body)}</p>
+  </div>`
+  if (!copy.retryable || !retry) return
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'retry-btn'
+  btn.textContent = copy.action
+  btn.addEventListener('click', retry)
+  container.firstElementChild.appendChild(btn)
+}
+
 async function loadData() {
-  try {
-    connectionStatus.textContent = '●'
-    connectionStatus.style.color = 'var(--ok)'
-    statusText.textContent = 'Loading...'
+  connectionStatus.textContent = '●'
+  connectionStatus.style.color = 'var(--ok)'
+  statusText.textContent = 'Loading...'
 
-    const [workflows, protocols, alertsResp] = await Promise.all([
-      apiFetch(`/api/v1/workflows?type=anticipatory_alert&state=focal_point_review`),
-      apiFetch(`/api/v1/trigger-protocols`),
-      apiFetch(`/api/v1/alert-events`),
-    ])
+  // Settled, not all-or-nothing: a dead protocol endpoint must not blank the
+  // approval queue, and a dead queue must not blank the protocol list. Each is
+  // rendered in the state its own request earned.
+  const load = async (path) => {
+    try {
+      return { data: await apiFetch(path), error: null }
+    } catch (error) {
+      return { data: null, error }
+    }
+  }
 
-    // Kept on state so a decision can name the district it released finance
-    // for without re-reading the card it is about to be removed from.
-    state.workflows = workflows.data || []
+  const [workflows, protocols, alertsResp] = await Promise.all([
+    load(`/api/v1/workflows?type=anticipatory_alert&state=focal_point_review`),
+    load(`/api/v1/trigger-protocols`),
+    load(`/api/v1/alert-events`),
+  ])
 
-    // Index alert events by id for O(1) card hydration
-    const alertIndex = new Map((alertsResp.data || []).map((a) => [a.id, a]))
+  const states = {
+    pending: distinguishFailure({ ok: !workflows.error, error: workflows.error, isEmpty: !workflows.data?.data?.length }),
+    protocols: distinguishFailure({ ok: !protocols.error, error: protocols.error, isEmpty: !protocols.data?.data?.length }),
+    alerts: distinguishFailure({ ok: !alertsResp.error, error: alertsResp.error }),
+  }
 
-    fpIdentity.textContent = `${state.identity} (${state.locale})`
-    await renderPending(workflows.data || [], alertIndex)
-    await renderProtocols(protocols.data || [])
-    await renderAuditTrail(workflows.data || [])
-    statusText.textContent = 'Ready'
-  } catch (error) {
+  // Kept on state so a decision can name the district it released finance
+  // for without re-reading the card it is about to be removed from.
+  state.workflows = workflows.data?.data || []
+
+  // Index alert events by id for O(1) card hydration
+  const alertIndex = new Map((alertsResp.data?.data || []).map((a) => [a.id, a]))
+
+  fpIdentity.textContent = `${state.identity} (${state.locale})`
+
+  if (states.pending === ERROR) {
+    renderQueueState(pendingList, ERROR, { subject: 'The pending approvals', retry: () => loadData() })
+  } else {
+    await renderPending(workflows.data.data || [], alertIndex)
+  }
+
+  if (states.protocols === ERROR) {
+    renderQueueState(protocolsList, ERROR, { subject: 'The listed protocols', retry: () => loadData() })
+  } else {
+    await renderProtocols(protocols.data.data || [])
+  }
+
+  // The audit trail is derived from the same workflow response, so it inherits
+  // that response's verdict. Showing "No recent decisions." off a failed fetch
+  // would repeat the original lie in a second place.
+  if (states.pending === ERROR) {
+    renderQueueState(auditList, ERROR, { subject: 'The recorded decisions', retry: () => loadData() })
+  } else {
+    await renderAuditTrail(workflows.data.data || [])
+  }
+
+  const anyFailed = Object.values(states).includes(ERROR)
+  if (anyFailed) {
     connectionStatus.style.color = 'var(--sev-high)'
-    statusText.textContent = `Error: ${error.message}`
+    statusText.textContent = 'Could not reach the server'
+  } else {
+    statusText.textContent = 'Ready'
   }
 }
 

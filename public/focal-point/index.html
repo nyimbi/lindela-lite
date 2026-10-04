@@ -99,6 +99,34 @@
         color: var(--ink-muted);
       }
 
+      /* An error state must not look like the empty state it replaced. The
+         left rule and the warm ground separate them at a glance, before any
+         text is read — the reader who skims is the one who needed stopping. */
+      .queue-empty[data-state='error'] {
+        text-align: start;
+        border-left: 4px solid var(--sev-high);
+        background: var(--surface);
+      }
+
+      .queue-empty[data-state='error'] p {
+        margin: 0.5rem 0 0;
+        max-width: 60ch;
+      }
+
+      .retry-btn {
+        margin-top: 1rem;
+        padding: 0.5rem 1rem;
+        font: inherit;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--ink-muted);
+        border-radius: 6px;
+        cursor: pointer;
+        min-height: 44px;
+      }
+
+      .retry-btn:hover { background: var(--surface-hover); }
+
       .workflow-card {
         background: var(--surface);
         border: 1px solid var(--stroke);
