@@ -53,7 +53,7 @@ signoutBtn.addEventListener('click', () => {
 async function loadData() {
   try {
     connectionStatus.textContent = '●'
-    connectionStatus.style.color = '#10b981'
+    connectionStatus.style.color = 'var(--ok)'
     statusText.textContent = 'Loading...'
 
     const [workflows, protocols, alertsResp] = await Promise.all([
@@ -71,7 +71,7 @@ async function loadData() {
     await renderAuditTrail(workflows.data || [])
     statusText.textContent = 'Ready'
   } catch (error) {
-    connectionStatus.style.color = '#ef4444'
+    connectionStatus.style.color = 'var(--sev-high)'
     statusText.textContent = `Error: ${error.message}`
   }
 }
@@ -243,7 +243,7 @@ function openDecisionDialog(mode) {
   const titleKey = mode === 'approve' ? 'focal-point.confirm_approve' : 'focal-point.confirm_reject'
   decisionTitle.textContent = t(titleKey) || (mode === 'approve' ? 'Approve workflow?' : 'Reject workflow?')
   dialogConfirmBtn.textContent = mode === 'approve' ? 'Approve' : 'Reject'
-  dialogConfirmBtn.style.background = mode === 'approve' ? 'var(--focal-point-approve-bg, #10b981)' : 'var(--focal-point-reject-bg, #ef4444)'
+  dialogConfirmBtn.style.background = mode === 'approve' ? 'var(--ok)' : 'var(--danger)'
 
   // The trigger is re-rendered when the list reloads, so focus is captured here
   // and restored on close only if it is still in the document.
@@ -338,12 +338,12 @@ function announceDecision(message) {
 // same function; this one used `||`, which dropped a legitimate 0 or false.
 
 window.addEventListener('online', () => {
-  connectionStatus.style.color = '#10b981'
+  connectionStatus.style.color = 'var(--ok)'
   loadData()
 })
 
 window.addEventListener('offline', () => {
-  connectionStatus.style.color = '#ef4444'
+  connectionStatus.style.color = 'var(--sev-high)'
 })
 
 await initI18n(state.locale)

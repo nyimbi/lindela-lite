@@ -14,7 +14,9 @@
     <!-- Styles for the subject panel, the escalation view and the operations
          controls. Linked rather than injected by app.js: a dialog that renders
          before its stylesheet arrives is a dialog an operator reads wrong. -->
-    <link rel="stylesheet" href="/workflow/panel.css">
+    <!-- Loaded by panel.js on first open. It was a blocking stylesheet for a
+         panel that appears only when an operator asks for it — 2 KB on every
+         field first load, for markup that is usually not there. -->
   </head>
   <body class="app-shell">
     <a class="skip-link" href="#railPanel">Skip to alerts and panels</a>

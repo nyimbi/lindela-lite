@@ -76,6 +76,13 @@
   --sev-hatch-medium:   9px;
   --sev-hatch-low:     0px;
 
+
+  /* Warning surface: a tinted wash plus ink chosen to clear AA on it, so the
+     offline banner reads in every theme instead of only the one it was picked
+     for. */
+  --warn-wash:      color-mix(in oklch, var(--warn) 16%, var(--surface));
+  --warn-ink:       var(--ink);
+
   --sev-critical:    oklch(65% 0.22 25);
   --sev-high:        oklch(72% 0.18 45);
   --sev-medium:      oklch(80% 0.15 85);

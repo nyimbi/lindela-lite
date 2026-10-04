@@ -1,4 +1,22 @@
 /**
+ * Pull in the panel's stylesheet the first time the panel opens.
+ *
+ * It was a blocking <link> in index.html, so every operator downloaded 2 KB of
+ * CSS for a panel that appears only when someone asks for it. The navbar sets
+ * the precedent — it injects its own styles rather than being linked.
+ */
+let panelStylesInjected = false
+export function ensurePanelStyles() {
+  if (panelStylesInjected || document.getElementById('workflow-panel-styles')) return
+  panelStylesInjected = true
+  const link = document.createElement('link')
+  link.id = 'workflow-panel-styles'
+  link.rel = 'stylesheet'
+  link.href = '/workflow/panel.css'
+  document.head.appendChild(link)
+}
+
+/**
  * The six-attribute subject panel.
  *
  * The JTBD catalogue's Definition of Done item 11 asks for current state,
@@ -231,6 +249,7 @@ function renderSubject({ kind, record, workflow, logs, workflowFailed }) {
  * instance's own fields in two places.
  */
 export async function openSubjectPanel(ref) {
+  ensurePanelStyles()
   const dlg = dialog()
   if (!dlg) return
   mountDialog(dlg)

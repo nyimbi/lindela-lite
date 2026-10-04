@@ -47,11 +47,11 @@
         width: 12px;
         height: 12px;
         border-radius: 50%;
-        background: #10b981;
+        background: var(--ok);
       }
 
       .status-dot.offline {
-        background: #ef4444;
+        background: var(--danger);
       }
 
       select {
@@ -176,7 +176,7 @@
       }
 
       .btn-danger {
-        background: #ef4444;
+        background: var(--danger);
         color: white;
         border: none;
       }
@@ -258,8 +258,8 @@
       }
 
       .icon-button.selected {
-        background: #10b981;
-        border-color: #10b981;
+        background: var(--ok);
+        border-color: var(--ok);
         color: white;
       }
 
@@ -287,7 +287,7 @@
         max-width: 420px;
         margin: 0 auto;
         padding: 1rem;
-        background: #10b981;
+        background: var(--ok);
         color: white;
         border-radius: 8px;
         display: none;
@@ -312,8 +312,8 @@
       }
 
       .offline-banner {
-        background: #fef3c7;
-        color: #b45309;
+        background: var(--warn-wash);
+        color: var(--warn-ink);
         padding: 0.75rem 1rem;
         text-align: center;
         font-size: 0.875rem;
@@ -494,7 +494,7 @@
           <div class="dot active"></div>
         </div>
         <h2 class="screen-title" data-i18n="chw.about_who">About who</h2>
-        <p style="font-size:0.8rem;color:#6b7280;margin-bottom:0.75rem" data-i18n="chw.demographics_note">
+        <p style="font-size:0.8rem;color:var(--ink-muted);margin-bottom:0.75rem" data-i18n="chw.demographics_note">
           Aggregate-only. Used for equity reporting, not individual tracking.
         </p>
         <div class="form-group">
