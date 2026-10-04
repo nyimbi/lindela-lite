@@ -5,6 +5,7 @@ import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS }
 import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage, surveyedAreaKm2 } from '/shared/flood-bands.js'
 import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets, withinBbox, NEAR_REGION_MARGIN_DEG, REGION_OF_INTEREST } from '/shared/map-frame.js'
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState, seasonalCalendar, seasonalCalendarNote } from '/shared/seasonal.js'
+import { decodeView, encodeView, isCustom, resolveView, shareUrl } from '/shared/view-state.js'
 import { fillAppVersion } from '/shared/app-version.js'
 import { apiFetch, apiSettled, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
 import { applyLocaleToDocument, esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
@@ -2909,19 +2910,63 @@ const FILTER_READERS = {
   workflow: () => state.workflowTypeFilter || '',
 }
 
-function syncFiltersToUrl() {
-  const params = new URLSearchParams(window.location.search)
-  for (const [key, read] of Object.entries(FILTER_READERS)) {
-    const value = read()
-    if (value && value !== FILTER_DEFAULTS[key]) params.set(key, value)
-    else params.delete(key)
+/**
+ * The console's current view, in the shape `shared/view-state.js` encodes.
+ *
+ * Read from the controls rather than tracked separately: a second copy of the
+ * state is a second thing that can be wrong, and a link that disagrees with the
+ * screen beside it is worse than no link.
+ */
+function currentView() {
+  return {
+    tab: state.activeTab,
+    window: $('mapTimeRange')?.value || '',
+    severity: $('mapSeverity')?.value || '',
+    source: $('mapSource')?.value || '',
+    selected: state.selectedRecordId || '',
+    assetType: $('coldChainToggle')?.checked ? 'cold_chain' : '',
+    focus: state.workflowTypeFilter || '',
+    map: { ...state.mapTransform },
   }
-  const query = params.toString()
+}
+
+function syncFiltersToUrl() {
+  const query = encodeView(currentView(), { role: 'operator' })
   // replaceState, not pushState: a filter change should not bury the operator's
   // back button under a stack of identical console states, and the 30-second
   // refresh rewriting the URL must never add one.
   history.replaceState(null, '', query ? `${location.pathname}?${query}` : location.pathname)
+  updateShareControl()
 }
+
+/**
+ * The share control, shown only when the view differs from the role default.
+ *
+ * A share button on an untouched default view invites people to send a link
+ * that says nothing they had not already sent. It appears the moment a filter
+ * moves, so its presence answers "is there anything here worth passing on".
+ */
+function updateShareControl() {
+  const btn = $('shareViewBtn')
+  if (!btn) return
+  btn.hidden = !isCustom(currentView(), { role: 'operator' })
+}
+
+$('shareViewBtn')?.addEventListener('click', async () => {
+  const btn = $('shareViewBtn')
+  const status = $('shareViewStatus')
+  const url = shareUrl(currentView(), { role: 'operator', pathname: location.pathname })
+  try {
+    await navigator.clipboard.writeText(url)
+    if (status) status.textContent = 'Link copied. It opens this exact view.'
+  } catch {
+    // Clipboard needs a secure origin. On a plain-HTTP district deployment it is
+    // simply unavailable, and the operator still needs the link.
+    if (status) {
+      status.textContent = `Copying is blocked in this browser. This link opens this view: ${url}`
+    }
+  }
+})
 
 /** Apply a restored value only if the control still offers it. */
 function applyFilterValue(id, value) {
@@ -2939,21 +2984,28 @@ function syncAlertFilterChips() {
 }
 
 function restoreFiltersFromUrl() {
-  const params = new URLSearchParams(window.location.search)
-  applyFilterValue('mapSeverity', params.get('sev'))
-  applyFilterValue('mapTimeRange', params.get('range'))
+  // One decoder for the whole view rather than a parameter read per control, so
+  // a link written by another surface lands here unchanged.
+  const view = decodeView(window.location.search)
+  applyFilterValue('mapSeverity', view.severity)
+  applyFilterValue('mapTimeRange', view.window)
+  if (view.map) {
+    state.mapTransform = { ...state.mapTransform, ...view.map }
+    applyMapTransform()
+  }
+  if (view.selected) state.selectedRecordId = view.selected
   // The source list arrives from /api/v1/sources and is empty until it does, so
   // a restored source has nowhere to land yet. Hand it forward rather than
   // dropping it, and let populateMapSourceFilter discard it if the feed is gone.
-  const source = params.get('source')
-  if (source) state._restoredSource = source
+  if (view.source) state._restoredSource = view.source
 
-  if (params.get('cold') === '1' && $('coldChainToggle')) $('coldChainToggle').checked = true
+  if (view.assetType === 'cold_chain' && $('coldChainToggle')) $('coldChainToggle').checked = true
   state.filters.coldChain = Boolean($('coldChainToggle')?.checked)
 
-  state.alertFilter = params.get('alerts') || 'all'
-  state.workflowTypeFilter = params.get('workflow') || null
+  state.alertFilter = view.window === 'open' ? 'open' : view.window === 'approved' ? 'approved' : 'all'
+  state.workflowTypeFilter = view.focus || null
   syncAlertFilterChips()
+  updateShareControl()
 }
 
 // =============================================================
