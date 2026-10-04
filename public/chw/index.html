@@ -191,8 +191,66 @@
         display: flex;
         justify-content: center;
         gap: 0.5rem;
+        margin-bottom: 0.5rem;
+      }
+
+      /* The dots say how many steps there are; they do not say which one you are
+         on. On a five-step wizard a dot row is a progress bar you have to count,
+         and the four symptom screens used to carry a title identical to each
+         other's — "Report symptom" four times — so arrival at a screen was
+         confirmed by nothing at all. The counter says it in words, and the
+         heading says what this screen is for. */
+      .step-counter {
+        text-align: center;
+        font-size: 0.875rem;
+        color: var(--ink-muted);
         margin-bottom: 1rem;
       }
+
+      /* Why a control is refusing to move. A disabled Next with no sentence
+         beside it reads as a frozen app: the health worker taps twice and
+         concludes the phone has hung. */
+      .step-hint {
+        font-size: 0.875rem;
+        color: var(--ink-muted);
+        text-align: center;
+        min-height: 1.25rem;
+      }
+
+      .step-hint[data-tone='warn'] { color: var(--warn-ink); }
+      .step-hint[data-tone='error'] { color: var(--danger); }
+
+      /* What the app knows about where this report is. Never a green tick over
+         an unknown location: the source and its limits are the whole content. */
+      .location-status {
+        font-size: 0.875rem;
+        line-height: 1.5;
+        padding: 0.75rem;
+        border-radius: var(--r);
+        background: var(--surface);
+        border: 1px solid var(--stroke);
+      }
+
+      .location-status[data-state='ok'] {
+        background: var(--warn-wash);
+        border-color: var(--warn);
+        color: var(--warn-ink);
+      }
+
+      .location-status[data-state='error'] {
+        border-color: var(--danger);
+        color: var(--danger);
+      }
+
+      .location-status[hidden] { display: none; }
+
+      .coord-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.75rem;
+      }
+
+      .coord-grid .form-group { margin-bottom: 0.5rem; }
 
       .dot {
         width: 12px;
@@ -213,6 +271,13 @@
       }
 
       .form-group label {
+        font-weight: 600;
+        font-size: 1rem;
+      }
+
+      /* Same voice as a label, but not one: a caption naming a group of two
+         fields cannot point at either of them with `for`. */
+      .field-caption {
         font-weight: 600;
         font-size: 1rem;
       }
@@ -437,21 +502,17 @@
 
       <!-- Symptom report screen -->
       <div id="symptomScreen" class="screen">
-        <div class="progress-dots">
-          <div class="dot active"></div>
-          <div class="dot"></div>
-          <div class="dot"></div>
-          <div class="dot"></div>
-        </div>
-        <h2 class="screen-title" data-i18n="chw.report_symptom">Report symptom</h2>
+        <div class="progress-dots" data-step="1"></div>
+        <p class="step-counter" data-step-counter></p>
+        <h2 class="screen-title" data-i18n="chw.symptom_who">Who has this symptom?</h2>
         <div class="form-group">
-          <label data-i18n="chw.symptom_who">Who has this symptom?</label>
           <div class="icon-button-group">
             <button class="icon-button" data-symptom-who="self" data-i18n="chw.who_self">Self</button>
             <button class="icon-button" data-symptom-who="child" data-i18n="chw.who_child">Child</button>
             <button class="icon-button" data-symptom-who="other" data-i18n="chw.who_other">Other</button>
           </div>
         </div>
+        <p class="step-hint" id="symptomWhoHint" role="status" aria-live="polite"></p>
         <div class="action-buttons">
           <button class="btn-primary" id="symptomNextBtn" data-i18n="chw.next">Next</button>
           <button id="symptomBackBtn" data-i18n="chw.back">Back</button>
@@ -460,15 +521,10 @@
 
       <!-- Symptom type screen -->
       <div id="symptomTypeScreen" class="screen">
-        <div class="progress-dots">
-          <div class="dot active"></div>
-          <div class="dot active"></div>
-          <div class="dot"></div>
-          <div class="dot"></div>
-        </div>
-        <h2 class="screen-title" data-i18n="chw.report_symptom">Report symptom</h2>
+        <div class="progress-dots" data-step="2"></div>
+        <p class="step-counter" data-step-counter></p>
+        <h2 class="screen-title" data-i18n="chw.symptom_type">Which symptom?</h2>
         <div class="form-group">
-          <label data-i18n="chw.symptom_type">Which symptom?</label>
           <div class="icon-button-group">
             <button class="icon-button" data-symptom-type="fever" data-i18n="chw.symptom_fever">Fever</button>
             <button class="icon-button" data-symptom-type="cough" data-i18n="chw.symptom_cough">Cough</button>
@@ -477,28 +533,40 @@
             <button class="icon-button" data-symptom-type="other" data-i18n="chw.symptom_other">Other</button>
           </div>
         </div>
+        <p class="step-hint" id="symptomTypeHint" role="status" aria-live="polite"></p>
         <div class="action-buttons">
           <button class="btn-primary" id="symptomTypeNextBtn" data-i18n="chw.next">Next</button>
           <button id="symptomTypeBackBtn" data-i18n="chw.back">Back</button>
         </div>
       </div>
 
-      <!-- Symptom duration screen -->
+      <!-- Symptom duration screen.
+           A unit with no number is a unit. The queued payload used to read
+           "self with fever for days", which is indistinguishable between a
+           two-day and a twenty-day fever — and outbreak triage thresholds are
+           duration-sensitive. The number is a field now, not prose. -->
       <div id="symptomDurationScreen" class="screen">
-        <div class="progress-dots">
-          <div class="dot active"></div>
-          <div class="dot active"></div>
-          <div class="dot active"></div>
-          <div class="dot"></div>
-        </div>
-        <h2 class="screen-title" data-i18n="chw.report_symptom">Report symptom</h2>
+        <div class="progress-dots" data-step="3"></div>
+        <p class="step-counter" data-step-counter></p>
+        <h2 class="screen-title" data-i18n="chw.symptom_duration">How long has it been?</h2>
         <div class="form-group">
-          <label data-i18n="chw.symptom_duration">How long has it been?</label>
+          <label for="durationValue">How many</label>
+          <!-- No default value. It used to pre-fill 1, which is a guess about
+               somebody's fever that then travels downstream as a fact — the same
+               class of defect as a `Here` that asserts a location it never
+               recorded. The field starts empty and Next says why it will not
+               move. -->
+          <input type="number" id="durationValue" inputmode="numeric" min="1" max="365" step="1"
+                 autocomplete="off" placeholder="1">
+        </div>
+        <div class="form-group">
+          <label>Measured in</label>
           <div class="icon-button-group">
             <button class="icon-button" data-symptom-duration="hours" data-i18n="chw.duration_hours">Hours</button>
-            <button class="icon-button" data-symptom-duration="days" data-i18n="chw.duration_days">Days</button>
+            <button class="icon-button selected" data-symptom-duration="days" data-i18n="chw.duration_days">Days</button>
           </div>
         </div>
+        <p class="step-hint" id="symptomDurationHint" role="status" aria-live="polite"></p>
         <div class="action-buttons">
           <button class="btn-primary" id="symptomDurationNextBtn" data-i18n="chw.next">Next</button>
           <button id="symptomDurationBackBtn" data-i18n="chw.back">Back</button>
@@ -507,20 +575,38 @@
 
       <!-- Symptom location screen -->
       <div id="symptomLocationScreen" class="screen">
-        <div class="progress-dots">
-          <div class="dot active"></div>
-          <div class="dot active"></div>
-          <div class="dot active"></div>
-          <div class="dot active"></div>
-        </div>
-        <h2 class="screen-title" data-i18n="chw.report_symptom">Report symptom</h2>
+        <div class="progress-dots" data-step="4"></div>
+        <p class="step-counter" data-step-counter></p>
+        <h2 class="screen-title" data-i18n="chw.symptom_location">Where is the person?</h2>
         <div class="form-group">
-          <label data-i18n="chw.symptom_location">Where is the person?</label>
           <div class="icon-button-group">
             <button class="icon-button" id="autoLocationBtn" data-symptom-location="auto" data-i18n="chw.location_auto">Auto-detect</button>
             <button class="icon-button" id="hereLocationBtn" data-symptom-location="here" data-i18n="chw.location_here">Here</button>
           </div>
         </div>
+        <p class="location-status" id="locationStatus" role="status" aria-live="polite" data-state="none" hidden></p>
+        <!-- The manual picker. Outbreak triage needs a coordinate, and a phone
+             with no fix cannot supply one. Before this there was no way to
+             supply one: the only other control wrote null while claiming the
+             location was known. -->
+        <div class="form-group" id="manualLocationGroup">
+          <p class="field-caption">Or type the location</p>
+          <div class="coord-grid">
+            <div class="form-group">
+              <label for="manualLat">Latitude</label>
+              <input type="number" id="manualLat" inputmode="decimal" step="any" min="-90" max="90"
+                     placeholder="-1.2864" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label for="manualLon">Longitude</label>
+              <input type="number" id="manualLon" inputmode="decimal" step="any" min="-180" max="180"
+                     placeholder="36.8172" autocomplete="off">
+            </div>
+          </div>
+          <p class="step-hint" id="manualLocationHint" role="status" aria-live="polite"></p>
+          <button id="useManualLocationBtn" class="btn-secondary">Use this location</button>
+        </div>
+        <p class="step-hint" id="symptomLocationHint" role="status" aria-live="polite"></p>
         <div class="action-buttons">
           <button class="btn-primary" id="symptomLocationNextBtn" data-i18n="chw.next">Next</button>
           <button id="symptomLocationBackBtn" data-i18n="chw.back">Back</button>
@@ -529,14 +615,9 @@
 
       <!-- Symptom about-who screen (demographics — step 5) -->
       <div id="symptomAboutWhoScreen" class="screen">
-        <div class="progress-dots">
-          <div class="dot active"></div>
-          <div class="dot active"></div>
-          <div class="dot active"></div>
-          <div class="dot active"></div>
-          <div class="dot active"></div>
-        </div>
-        <h2 class="screen-title" data-i18n="chw.about_who">About who</h2>
+        <div class="progress-dots" data-step="5"></div>
+        <p class="step-counter" data-step-counter></p>
+        <h2 class="screen-title" data-i18n="chw.about_who">About the patient</h2>
         <p style="font-size:0.8rem;color:var(--ink-muted);margin-bottom:0.75rem" data-i18n="chw.demographics_note">
           Aggregate-only. Used for equity reporting, not individual tracking.
         </p>
@@ -593,6 +674,27 @@
             <button class="icon-button" id="incidentAutoLocationBtn" data-incident-location="auto" data-i18n="chw.location_auto">Auto-detect</button>
             <button class="icon-button" id="incidentHereLocationBtn" data-incident-location="here" data-i18n="chw.location_here">Here</button>
           </div>
+        </div>
+        <!-- Same defect as the symptom step, on the other report path: `Here`
+             asserted a location and stored none. A flood report with no
+             coordinate is the one this product most needs located. -->
+        <p class="location-status" id="incidentLocationStatus" role="status" aria-live="polite" data-state="none" hidden></p>
+        <div class="form-group" id="incidentManualLocationGroup">
+          <p class="field-caption">Or type the location</p>
+          <div class="coord-grid">
+            <div class="form-group">
+              <label for="incidentManualLat">Latitude</label>
+              <input type="number" id="incidentManualLat" inputmode="decimal" step="any" min="-90" max="90"
+                     placeholder="-1.2864" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label for="incidentManualLon">Longitude</label>
+              <input type="number" id="incidentManualLon" inputmode="decimal" step="any" min="-180" max="180"
+                     placeholder="36.8172" autocomplete="off">
+            </div>
+          </div>
+          <p class="step-hint" id="incidentManualLocationHint" role="status" aria-live="polite"></p>
+          <button id="useIncidentManualLocationBtn" class="btn-secondary">Use this location</button>
         </div>
         <div class="action-buttons">
           <button class="btn-primary" id="incidentSubmitBtn" data-i18n="chw.submit">Submit</button>

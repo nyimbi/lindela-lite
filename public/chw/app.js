@@ -7,9 +7,39 @@ mountNavbar({ activePath: '/chw' })
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
   currentScreen: 'home',
-  symptom: { who: null, type: null, duration: null, location: null },
+  symptom: { who: null, type: null, duration: null, durationUnit: 'days', durationValue: null, location: null },
   incident: { category: null, description: null, location: null },
   anonymous: true,
+}
+
+/**
+ * The symptom wizard is five screens, and it used to say so four times over.
+ *
+ * Every step carried the same `<h2>Report symptom</h2>`, so arriving anywhere
+ * in the wizard looked identical to arriving at the first step, and the only
+ * progress signal was a row of dots the health worker had to count — against
+ * four dots on a wizard that has five screens. A dot row answers "how many";
+ * the screen a person has just arrived at needs to say "which one".
+ *
+ * So each step names itself, and the counter is rendered from this one list so
+ * the dots and the count cannot drift apart again.
+ */
+const SYMPTOM_STEPS = [
+  { screen: 'symptom', label: 'Who has this symptom?' },
+  { screen: 'symptomType', label: 'Which symptom?' },
+  { screen: 'symptomDuration', label: 'How long has it been?' },
+  { screen: 'symptomLocation', label: 'Where is the person?' },
+  { screen: 'symptomAboutWho', label: 'About the patient' },
+]
+const TOTAL_STEPS = SYMPTOM_STEPS.length
+
+/** What each refusal says. A control that will not move owes a sentence. */
+const HINTS = {
+  symptom: 'Choose who has this symptom to continue.',
+  symptomType: 'Choose a symptom to continue.',
+  symptomDuration: 'Enter how many days or hours it has been.',
+  symptomLocation: 'Choose a location, or continue without one.',
+  manualLocation: 'Enter both a latitude and a longitude.',
 }
 
 const $ = (id) => document.getElementById(id)
@@ -27,6 +57,48 @@ const toast = $('toast')
  */
 let userLocation = null
 let userLocationError = null
+
+/** A geolocation attempt in flight, so a second tap cannot start a second one. */
+let geoRequest = null
+
+/** Why there is no fix, in the words of the person holding the phone. */
+const GEO_FAILURES = {
+  permission_denied: 'Location permission was refused, so this phone will not give a fix. Type the location below instead.',
+  timeout: 'The phone could not get a fix in time — often indoors or under tree cover. Type the location below instead.',
+  unavailable: 'This phone cannot get a location fix right now. Type the location below instead.',
+  geolocation_not_supported: 'This phone has no location service. Type the location below instead.',
+  null_island: 'This phone reported 0°, 0° — open ocean, not a household. Type the location below instead.',
+  not_answered: 'No location is recorded with this report. It will be filed as unlocated.',
+}
+
+/** "Step 2 of 5", plus a dot row the counter and the dots cannot disagree about. */
+function renderStepProgress() {
+  for (const step of SYMPTOM_STEPS) {
+    const index = SYMPTOM_STEPS.indexOf(step) + 1
+    const screen = $(`${step.screen}Screen`)
+    if (!screen) continue
+    const dots = screen.querySelector('[data-step]')
+    if (dots) {
+      dots.textContent = ''
+      for (let i = 1; i <= TOTAL_STEPS; i += 1) {
+        const dot = document.createElement('span')
+        dot.className = i <= index ? 'dot active' : 'dot'
+        dots.appendChild(dot)
+      }
+    }
+    const counter = screen.querySelector('[data-step-counter]')
+    if (counter) counter.textContent = `Step ${index} of ${TOTAL_STEPS}`
+  }
+}
+
+/** Say why a control is refusing to move, in a place a person will see it. */
+function setHint(id, message = '', tone = '') {
+  const el = $(id)
+  if (!el) return
+  el.textContent = message
+  if (tone) el.dataset.tone = tone
+  else delete el.dataset.tone
+}
 
 async function init() {
   await initI18n(state.locale)
@@ -60,7 +132,11 @@ async function init() {
   setupReplyScreen()
 
   refreshQueueStatus()
-  requestUserLocation()
+  // No location request here. `init` used to call `requestUserLocation()`, which
+  // popped a browser permission dialog the moment the app opened — before the
+  // health worker had tapped anything, and on a screen that might not even be
+  // the location step. The phone is asked when someone asks for it.
+  renderStepProgress()
 }
 
 function updateStatus() {
@@ -73,29 +149,126 @@ function updateStatus() {
   }
 }
 
-async function requestUserLocation() {
+/**
+ * Ask the phone where it is, and report what came back either way.
+ *
+ * `Auto-detect` used to call this and store nothing. No coordinates, no
+ * spinner, no permission prompt, no error — a button press that produced no
+ * observable effect at all, so a first-time health worker could not tell whether
+ * the browser was asking, working, or refusing (CW-16). It also ran on page load
+ * with no UI attached, which is a permission request nobody asked for.
+ *
+ * Now every attempt reports into a status line, says which of the four possible
+ * failures it hit, and leaves `userLocation` null when it failed. It is not
+ * called on load: the phone is asked when someone asks.
+ *
+ * @param {(state: 'pending'|'ok'|'error', detail?: object) => void} [onState]
+ * @returns {Promise<object|null>} the fix, or null if there is none.
+ */
+function requestUserLocation(onState = () => {}) {
   if (!navigator.geolocation) {
     // Absence of the API is a different fact from a refused permission, and a
     // caller may want to tell them apart.
     userLocationError = 'geolocation_not_supported'
+    userLocation = null
+    onState('error', { reason: userLocationError })
+    return Promise.resolve(null)
+  }
+
+  if (geoRequest) return geoRequest
+
+  onState('pending')
+  geoRequest = new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = position.coords.latitude
+        const lon = position.coords.longitude
+        // A device can report (0, 0) as a successful fix. It is in the Gulf of
+        // Guinea, not at the household, and a report carrying it joins to every
+        // spatial index as though it were real.
+        if (lat === 0 && lon === 0) {
+          userLocation = null
+          userLocationError = 'null_island'
+          onState('error', { reason: userLocationError })
+          resolve(null)
+          return
+        }
+        userLocation = {
+          latitude: lat,
+          longitude: lon,
+          source: 'gps',
+          accuracy_m: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
+        }
+        userLocationError = null
+        onState('ok', { location: userLocation })
+        resolve(userLocation)
+      },
+      (error) => {
+        userLocation = null
+        userLocationError = error?.code === 1
+          ? 'permission_denied'
+          : (error?.code === 3 ? 'timeout' : 'unavailable')
+        onState('error', { reason: userLocationError })
+        resolve(null)
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+    )
+  }).finally(() => { geoRequest = null })
+
+  return geoRequest
+}
+
+/** "1.2864° S, 36.8172° E", to four decimals — about 11 m, finer than the fix. */
+function formatCoordinate(value, positive, negative) {
+  const hemisphere = value < 0 ? negative : positive
+  return `${Math.abs(value).toFixed(4)}° ${hemisphere}`
+}
+
+/**
+ * Everything the app knows about where this report is, said plainly.
+ *
+ * The old `Here` button wrote `{latitude: null, longitude: null, source:
+ * 'reported_here'}`: a location field that named a location. Outbreak triage
+ * and any "facilities near this report" join cannot distinguish that from a
+ * coordinate, so a CHW with a dead GPS who tapped `Here` filed a report that
+ * looked located and was not — and the interface gave them no way to say so.
+ *
+ * `Here` now means exactly what it can mean: this phone's own fix, if it has
+ * one. If it does not, `Here` says the phone has no fix and offers the manual
+ * picker, which is the only control here that produces a real coordinate.
+ */
+function describeLocation(location) {
+  if (!location) return 'No location is recorded with this report.'
+  if (location.source === 'manual') {
+    return `Location typed in: ${formatCoordinate(location.latitude, 'N', 'S')}, ${formatCoordinate(location.longitude, 'E', 'W')}.`
+  }
+  const accuracy = Number.isFinite(location.accuracy_m)
+    ? ` (accurate to about ${Math.round(location.accuracy_m)} m)`
+    : ''
+  return `This phone's location: ${formatCoordinate(location.latitude, 'N', 'S')}, ${formatCoordinate(location.longitude, 'E', 'W')}${accuracy}.`
+}
+
+function renderLocationStatus(statusId, locationState, detail = {}) {
+  const el = $(statusId)
+  if (!el) return
+  el.hidden = false
+
+  if (locationState === 'pending') {
+    el.dataset.state = 'pending'
+    el.textContent = 'Asking this phone for a location fix…'
     return
   }
-  navigator.geolocation.getCurrentPosition(
-    (position) => {
-      userLocation = {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        source: 'gps',
-        accuracy_m: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
-      }
-      userLocationError = null
-    },
-    (error) => {
-      userLocation = null
-      userLocationError = error?.code === 1 ? 'permission_denied' : (error?.code === 3 ? 'timeout' : 'unavailable')
-    },
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
-  )
+
+  if (locationState === 'ok') {
+    el.dataset.state = 'ok'
+    el.textContent = describeLocation(detail.location)
+    return
+  }
+
+  const reason = GEO_FAILURES[detail.reason]
+    || 'This phone could not get a location fix.'
+  el.dataset.state = 'error'
+  el.textContent = reason
 }
 
 /**
@@ -106,6 +279,11 @@ async function requestUserLocation() {
  * next thing they reached was the top of the document rather than the new
  * screen. Focus now moves to the new screen's heading and the change is
  * announced.
+ *
+ * The announcement carries the step number as well as the heading. "Which
+ * symptom?" confirms arrival; "Step 2 of 5. Which symptom?" confirms arrival
+ * *and* position, which is the whole of HX-09 — the wizard previously announced
+ * the same four-word title four times and never said how far in it was.
  */
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'))
@@ -122,11 +300,14 @@ function showScreen(name) {
     screen.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
 
+  const stepIndex = SYMPTOM_STEPS.findIndex((s) => s.screen === name) + 1
+  const prefix = stepIndex > 0 ? `Step ${stepIndex} of ${TOTAL_STEPS}. ` : ''
+
   const announcer = $('screenAnnouncer')
   if (announcer && heading) {
     // Re-set to the same text does not re-announce; clear first.
     announcer.textContent = ''
-    requestAnimationFrame(() => { announcer.textContent = heading.textContent.trim() })
+    requestAnimationFrame(() => { announcer.textContent = prefix + heading.textContent.trim() })
   }
 }
 
@@ -206,11 +387,18 @@ function setupSymptomScreen() {
       document.querySelectorAll('[data-symptom-who]').forEach((b) => b.classList.remove('selected'))
       e.target.classList.add('selected')
       state.symptom.who = e.target.dataset.symptomWho
+      setHint('symptomWhoHint')
     })
   })
 
   $('symptomNextBtn').addEventListener('click', () => {
-    if (!state.symptom.who) return
+    // Blocked, and it says why. The button used to return silently, so the only
+    // feedback a health worker got for tapping Next twice was a progress dot
+    // that did not move — indistinguishable from a frozen app (CW-14).
+    if (!state.symptom.who) {
+      setHint('symptomWhoHint', HINTS.symptom, 'warn')
+      return
+    }
     showScreen('symptomType')
   })
   $('symptomBackBtn').addEventListener('click', () => showScreen('home'))
@@ -222,50 +410,146 @@ function setupSymptomTypeScreen() {
       document.querySelectorAll('[data-symptom-type]').forEach((b) => b.classList.remove('selected'))
       e.target.classList.add('selected')
       state.symptom.type = e.target.dataset.symptomType
+      setHint('symptomTypeHint')
     })
   })
 
   $('symptomTypeNextBtn').addEventListener('click', () => {
-    if (!state.symptom.type) return
+    if (!state.symptom.type) {
+      setHint('symptomTypeHint', HINTS.symptomType, 'warn')
+      return
+    }
     showScreen('symptomDuration')
   })
   $('symptomTypeBackBtn').addEventListener('click', () => showScreen('symptom'))
 }
 
+/**
+ * Duration as a number and a unit, rather than a unit alone.
+ *
+ * The step used to offer `Hours` / `Days` and store whichever was tapped, so
+ * the queued payload read `"self with fever for days"` — a value that carries
+ * no information at all. A two-day fever and a twenty-day fever produced the
+ * same record, and outbreak triage thresholds are duration-sensitive (CW-12).
+ *
+ * The count is now `state.symptom.durationValue` and the unit is
+ * `state.symptom.durationUnit`; both are submitted as fields.
+ */
 function setupSymptomDurationScreen() {
+  const valueInput = $('durationValue')
+
+  const readValue = () => {
+    const raw = valueInput.value.trim()
+    const value = Number(raw)
+    if (raw === '' || !Number.isFinite(value) || value <= 0) return null
+    return Math.round(value)
+  }
+
   document.querySelectorAll('[data-symptom-duration]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       document.querySelectorAll('[data-symptom-duration]').forEach((b) => b.classList.remove('selected'))
       e.target.classList.add('selected')
-      state.symptom.duration = e.target.dataset.symptomDuration
+      state.symptom.durationUnit = e.target.dataset.symptomDuration
+      setHint('symptomDurationHint')
     })
   })
 
+  valueInput.addEventListener('input', () => { setHint('symptomDurationHint') })
+
   $('symptomDurationNextBtn').addEventListener('click', () => {
-    if (!state.symptom.duration) return
+    const value = readValue()
+    if (value === null) {
+      setHint('symptomDurationHint', HINTS.symptomDuration, 'warn')
+      valueInput.focus()
+      return
+    }
+    state.symptom.durationValue = value
     showScreen('symptomLocation')
   })
   $('symptomDurationBackBtn').addEventListener('click', () => showScreen('symptomType'))
 }
 
+/**
+ * Read the manual picker, refusing what would be a lie.
+ *
+ * ±90 / ±180 is the hard bound on the planet. (0, 0) is not rejected for being
+ * out of bounds — it is in bounds, in the Gulf of Guinea — but a field report
+ * carrying it looks located to every downstream join while pointing at open
+ * water, which is the specific failure the server already guards against and
+ * which a typed-in coordinate would walk straight back into.
+ */
+function readManualLocation(latId, lonId, hintId) {
+  const lat = Number($(latId).value.trim())
+  const lon = Number($(lonId).value.trim())
+  const empty = $(latId).value.trim() === '' || $(lonId).value.trim() === ''
+
+  if (empty || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+    setHint(hintId, HINTS.manualLocation, 'warn')
+    return null
+  }
+  if (lat < -90 || lat > 90) {
+    setHint(hintId, 'Latitude must be between -90 and 90.', 'error')
+    return null
+  }
+  if (lon < -180 || lon > 180) {
+    setHint(hintId, 'Longitude must be between -180 and 180.', 'error')
+    return null
+  }
+  if (lat === 0 && lon === 0) {
+    setHint(hintId, '0°, 0° is open ocean, not a household. Check the two numbers.', 'error')
+    return null
+  }
+  setHint(hintId)
+  return { latitude: lat, longitude: lon, source: 'manual' }
+}
+
 function setupSymptomLocationScreen() {
-  $('autoLocationBtn').addEventListener('click', () => {
-    // A refused or timed-out fix must not be reported as a fix. The report goes
-    // out with no coordinates and a stated reason, which is recoverable; a
-    // report at (0, 0) is not.
-    state.symptom.location = userLocation
-      ? { ...userLocation }
-      : { latitude: null, longitude: null, source: 'auto_failed', auto_error: userLocationError || 'unavailable' }
+  $('autoLocationBtn').addEventListener('click', async () => {
+    // Now says what it is doing, and what came back. A button that produces no
+    // observable effect cannot be told apart from one that failed (CW-05, CW-16).
+    const fix = await requestUserLocation((status, detail) => {
+      renderLocationStatus('locationStatus', status, detail)
+      if (status === 'error') setHint('symptomLocationHint', 'Enter the location below, or continue without one.', 'warn')
+    })
+    state.symptom.location = fix ? { ...fix } : null
   })
-  $('hereLocationBtn').addEventListener('click', () => {
-    // "Here" is the CHW telling us where the problem is. It carries no
-    // coordinates — a phone with no fix cannot supply one — so it is recorded as
-    // a self-reported location rather than given a made-up point.
-    state.symptom.location = { latitude: null, longitude: null, source: 'reported_here' }
+
+  $('hereLocationBtn').addEventListener('click', async () => {
+    // "Here" used to write `{latitude: null, longitude: null, source:
+    // 'reported_here'}` — a location that named a location. It cannot mean
+    // anything else without a fix, so when this phone has one it is used, and
+    // when it does not the app says so and offers the picker rather than
+    // asserting a place it never recorded.
+    const fix = userLocation ?? await requestUserLocation((status, detail) => {
+      renderLocationStatus('locationStatus', status, detail)
+    })
+    if (fix) {
+      state.symptom.location = { ...fix }
+      renderLocationStatus('locationStatus', 'ok', { location: fix })
+      setHint('symptomLocationHint')
+      return
+    }
+    renderLocationStatus('locationStatus', 'error', { reason: userLocationError })
+    state.symptom.location = null
+    setHint('symptomLocationHint', 'No fix on this phone. Enter the location below, or continue without one.', 'warn')
+    $('manualLat')?.focus()
   })
+
+  $('useManualLocationBtn').addEventListener('click', () => {
+    const location = readManualLocation('manualLat', 'manualLon', 'manualLocationHint')
+    if (!location) return
+    state.symptom.location = location
+    renderLocationStatus('locationStatus', 'ok', { location })
+    setHint('symptomLocationHint')
+  })
+
   $('symptomLocationNextBtn').addEventListener('click', () => {
     if (!state.symptom.location) {
+      // Still allowed to continue — an unlocated outbreak report is worth more
+      // than no report — but the record now says so in a way a reader can act
+      // on, rather than claiming the health worker said "here".
       state.symptom.location = { latitude: null, longitude: null, source: 'not_answered' }
+      renderLocationStatus('locationStatus', 'error', { reason: 'not_answered' })
     }
     showScreen('symptomAboutWho')
   })
@@ -286,10 +570,20 @@ function setupSymptomAboutWhoScreen() {
 }
 
 async function submitSymptomReport() {
+  const unit = state.symptom.durationUnit || 'days'
+  const count = state.symptom.durationValue
   const body = {
     kind: 'symptom',
     category: state.symptom.type,
-    description: `${state.symptom.who} with ${state.symptom.type} for ${state.symptom.duration}`,
+    description: `${state.symptom.who} with ${state.symptom.type} for ${count} ${unit}`,
+    // Duration as fields, not only as a sentence. `duration_days` and
+    // `duration_hours` are what a triage query can filter on; the description
+    // is what a person reads. A 2-day fever and a 20-day fever have to be
+    // separable, and prose alone does not separate them.
+    duration_days: unit === 'days' ? count : undefined,
+    duration_hours: unit === 'hours' ? count : undefined,
+    duration_unit: unit,
+    duration_value: count,
     location: state.symptom.location,
     anonymous: state.anonymous,
     demographics: state.symptom.demographics || undefined,
@@ -302,7 +596,7 @@ async function submitSymptomReport() {
       const res = await apiFetch('/api/v1/chw/report', { method: 'POST', body })
       showToast(t('chw.report_sent', { what: 'symptom report' }), 'ok')
     }
-    state.symptom = { who: null, type: null, duration: null, location: null }
+    resetSymptomWizard()
     showScreen('home')
     refreshQueueStatus()
   } catch (error) {
@@ -310,22 +604,87 @@ async function submitSymptomReport() {
   }
 }
 
+/**
+ * Return the wizard to a state a second report can start from.
+ *
+ * This used to be an inline object literal that cleared four fields and left
+ * the rest — the duration count, the unit, the manual coordinates, the status
+ * line — holding the previous report's values. The next report then inherited
+ * them, and the location screen opened showing coordinates that belonged to
+ * someone else.
+ */
+function resetSymptomWizard() {
+  state.symptom = {
+    who: null,
+    type: null,
+    duration: null,
+    durationUnit: 'days',
+    durationValue: null,
+    location: null,
+  }
+  document.querySelectorAll('[data-symptom-who].selected, [data-symptom-type].selected').forEach((el) => {
+    el.classList.remove('selected')
+  })
+  document.querySelectorAll('[data-symptom-duration]').forEach((el) => {
+    el.classList.toggle('selected', el.dataset.symptomDuration === 'days')
+  })
+  const valueInput = $('durationValue')
+  if (valueInput) valueInput.value = ''
+  for (const id of ['manualLat', 'manualLon']) {
+    if ($(id)) $(id).value = ''
+  }
+  for (const id of ['symptomWhoHint', 'symptomTypeHint', 'symptomDurationHint', 'symptomLocationHint', 'manualLocationHint']) {
+    setHint(id)
+  }
+  const status = $('locationStatus')
+  if (status) {
+    status.hidden = true
+    status.textContent = ''
+    status.dataset.state = 'none'
+  }
+}
+
 function setupIncidentScreen() {
   const categorySelect = $('incidentCategory')
   const locationBtns = document.querySelectorAll('[data-incident-location]')
 
+  // Same two controls, same defect, on the other report path. `Here` here wrote
+  // the same `{latitude: null, longitude: null, source: 'reported_here'}`, and
+  // a flood report is the case this product most needs placed on a map.
+  //
+  // `Auto-detect` and `Here` are now the same action with a different first
+  // question: `Auto-detect` always asks the phone, `Here` reuses a fix it
+  // already has before asking again. Both end at the same honest place — a
+  // coordinate, or a stated reason there is none.
   locationBtns.forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      state.incident.location = e.target.dataset.incidentLocation === 'auto'
-        ? (userLocation
-            ? { ...userLocation }
-            : { latitude: null, longitude: null, source: 'auto_failed', auto_error: userLocationError || 'unavailable' })
-        : { latitude: null, longitude: null, source: 'reported_here' }
+    btn.addEventListener('click', async () => {
+      const alreadyKnown = btn.dataset.incidentLocation !== 'auto' && userLocation
+      const fix = alreadyKnown ?? await requestUserLocation((status, detail) => {
+        renderLocationStatus('incidentLocationStatus', status, detail)
+      })
+
+      if (fix) {
+        state.incident.location = { ...fix }
+        renderLocationStatus('incidentLocationStatus', 'ok', { location: fix })
+        return
+      }
+      state.incident.location = null
+      renderLocationStatus('incidentLocationStatus', 'error', { reason: userLocationError })
     })
   })
 
+  $('useIncidentManualLocationBtn').addEventListener('click', () => {
+    const location = readManualLocation('incidentManualLat', 'incidentManualLon', 'incidentManualLocationHint')
+    if (!location) return
+    state.incident.location = location
+    renderLocationStatus('incidentLocationStatus', 'ok', { location })
+  })
+
   $('incidentSubmitBtn').addEventListener('click', async () => {
-    if (!categorySelect.value) return
+    if (!categorySelect.value) {
+      showToast('Choose a category before submitting.', 'error')
+      return
+    }
     const desc = $('incidentDescription').value
     const photo = $('incidentPhoto').files[0]
 
@@ -333,7 +692,10 @@ function setupIncidentScreen() {
       kind: 'incident',
       category: categorySelect.value,
       description: desc,
-      location: state.incident.location,
+      // Null coordinates with a stated source, or nothing at all. Never a
+      // `reported_here` that names a place the report does not have.
+      location: state.incident.location
+        ?? { latitude: null, longitude: null, source: 'not_answered' },
       anonymous: state.anonymous,
     }
 
@@ -347,9 +709,18 @@ function setupIncidentScreen() {
       categorySelect.value = ''
       $('incidentDescription').value = ''
       $('incidentPhoto').value = ''
+      for (const id of ['incidentManualLat', 'incidentManualLon']) {
+        if ($(id)) $(id).value = ''
+      }
+      setHint('incidentManualLocationHint')
+      const status = $('incidentLocationStatus')
+      if (status) {
+        status.hidden = true
+        status.dataset.state = 'none'
+      }
       state.incident = { category: null, description: null, location: null }
       showScreen('home')
-    refreshQueueStatus()
+      refreshQueueStatus()
     } catch (error) {
       showToast(t('chw.save_failed', { reason: error.message }), 'error')
     }
@@ -442,7 +813,7 @@ function setupReplyScreen() {
       }
       $('replyMessage').value = ''
       showScreen('home')
-    refreshQueueStatus()
+      refreshQueueStatus()
     } catch (error) {
       showToast(t('chw.save_failed', { reason: error.message }), 'error')
     }
