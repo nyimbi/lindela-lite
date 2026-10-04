@@ -4,7 +4,7 @@
 import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS } from '/shared/basemap.js'
 import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage, surveyedAreaKm2 } from '/shared/flood-bands.js'
 import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets, withinBbox, NEAR_REGION_MARGIN_DEG, REGION_OF_INTEREST } from '/shared/map-frame.js'
-import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState } from '/shared/seasonal.js'
+import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState, seasonalCalendar, seasonalCalendarNote } from '/shared/seasonal.js'
 import { fillAppVersion } from '/shared/app-version.js'
 import { apiFetch, apiSettled, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
 import { applyLocaleToDocument, esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
@@ -652,6 +652,57 @@ function renderSeasonalStrip(observations) {
   if (seasonalIndexEl && state?.indexUsed) {
     seasonalIndexEl.textContent = `Niño 3.4 SST anomaly (${state.indexUsed})`
   }
+  renderSeasonalCalendar(observations)
+}
+
+/**
+ * The month × year calendar under the strip.
+ *
+ * The strip reports one anomaly. This shows the annual shape — an ENSO warm
+ * phase peaks around Nov–Dec and decays through the following spring, and that
+ * is invisible in a single number. Twelve cells per year make it legible, and
+ * they make the months that were never ingested legible as gaps rather than as
+ * neutral conditions.
+ *
+ * Hidden when nothing is ingested: an empty grid reads as "nothing happened
+ * this year", which is a claim about the climate rather than about our
+ * coverage.
+ *
+ * The charting library is loaded the same lazy way the flood-probability strip
+ * loads it — a calendar is not worth a tenth of the first load for an operator
+ * who only wanted the map.
+ */
+async function renderSeasonalCalendar(observations) {
+  if (!seasonalCalendarFigEl) return
+  const calendar = seasonalCalendar(observations)
+  if (!calendar) {
+    seasonalCalendarFigEl.hidden = true
+    if (seasonalCalendarEl) seasonalCalendarEl.innerHTML = ''
+    return
+  }
+  seasonalCalendarFigEl.hidden = false
+  if (seasonalCalendarNoteEl) seasonalCalendarNoteEl.textContent = seasonalCalendarNote(calendar)
+  if (!seasonalCalendarEl) return
+  let heatmap
+  try {
+    ({ heatmap } = await lazy('/shared/charts.js'))
+  } catch {
+    // The strip above it carries the same number, so a charting library that
+    // fails to load costs the calendar and nothing else. Hiding the figure is
+    // better than leaving a caption with no chart under it.
+    seasonalCalendarFigEl.hidden = true
+    return
+  }
+  if (!seasonalCalendarEl) return
+  // `diverging` because the anomaly is signed: a sequential ramp would put the
+  // boundary between "cold" and "warm" in the middle of the observed range
+  // instead of at zero, and a −0.1 °C cell would read as strongly cold next to
+  // a −1.4 °C one.
+  seasonalCalendarEl.innerHTML = heatmap(calendar, {
+    height: Math.max(120, calendar.rows.length * 18 + 34),
+    diverging: true,
+    format: (v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}°C`,
+  }).svg
 }
 
 /**
@@ -1171,6 +1222,9 @@ const seasonalPipsEl     = $('seasonalPips')
 const seasonalSeasonsEl  = $('seasonalSeasonsText')
 const seasonalNoteEl     = $('seasonalNote')
 const seasonalSummaryEl  = $('seasonalSummary')
+const seasonalCalendarFigEl = $('seasonalCalendarFig')
+const seasonalCalendarEl = $('seasonalCalendar')
+const seasonalCalendarNoteEl = $('seasonalCalendarNote')
 const contextStripsEl    = $('contextStrips')
 const contextStateEl     = $('contextState')
 const contextMissingEl   = $('contextMissing')

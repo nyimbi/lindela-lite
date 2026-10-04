@@ -11,6 +11,112 @@
 export const OCEANIC_NINO_THRESHOLD_C = 0.5
 export const EPISODE_MIN_SEASONS = 5
 
+export const MONTH_LABELS = Object.freeze([
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+])
+
+/**
+ * A month × year calendar of the Niño 3.4 anomaly.
+ *
+ * The point of a calendar rather than a line is that the interesting structure
+ * is *seasonal*: an El Niño does not peak in December, it peaks around
+ * November–December and decays through the following spring, and that shape is
+ * invisible in a single anomaly number and hard to read in a monthly line.
+ * Reading a year as a column of twelve cells makes the annual cycle legible at
+ * a glance, and makes the months that are missing legible too.
+ *
+ * Two properties this deliberately does not have:
+ *
+ * It does not compute a departure from the median of the same calendar month
+ * across years. The anomaly NOAA publishes is *already* a departure from a
+ * 30-year climatological base, so subtracting an in-record median would
+ * difference it twice and report the local spread of a series whose absolute
+ * position is the thing under study.
+ *
+ * It does not fill a missing month. A cell that was never ingested is `null`,
+ * which renders as a gap. Interpolating across it would produce a number that
+ * no connector measured.
+ *
+ * Returns null when nothing has been ingested, so the caller renders "not
+ * ingested" rather than an empty grid that reads as "nothing happened".
+ */
+export function seasonalCalendar(observations, { years = null } = {}) {
+  const cells = new Map()
+  for (const o of observations || []) {
+    if (o?.source !== 'noaa_enso') continue
+    const period = String(o.source_id || '')
+    const match = /^(\d{4})-(\d{2})$/.exec(period)
+    if (!match) continue
+    // Number(null) and Number('') are both 0, which would render a confident
+    // "0.00 °C neutral" from a value nobody measured.
+    if (o.value === null || o.value === undefined || o.value === '') continue
+    const value = Number(o.value)
+    if (!Number.isFinite(value)) continue
+    const year = Number(match[1])
+    const month = Number(match[2])
+    if (month < 1 || month > 12) continue
+    cells.set(period, { year, month, value })
+  }
+  if (!cells.size) return null
+
+  const allYears = [...new Set([...cells.values()].map((c) => c.year))].sort((a, b) => a - b)
+  // Newest on the right, so time reads the way it is read everywhere else.
+  const chosen = years ? [...years].sort((a, b) => a - b) : allYears
+  if (!chosen.length) return null
+
+  const rows = chosen.map((year) => ({
+    label: String(year),
+    values: MONTH_LABELS.map((_, i) => {
+      const hit = cells.get(`${year}-${String(i + 1).padStart(2, '0')}`)
+      return hit ? hit.value : null
+    }),
+  }))
+
+  const values = rows.flatMap((r) => r.values).filter((v) => v !== null)
+  const span = Math.max(...values.map((v) => Math.abs(v)), 0.1)
+
+  return {
+    columns: [...MONTH_LABELS],
+    rows,
+    rowLabel: 'Year',
+    title: 'Niño 3.4 SST anomaly by month',
+    caption: 'Niño 3.4 SST anomaly (°C) against the CPC climatological base. A gap is a month that has not been ingested, not a neutral one.',
+    span,
+    // Reported rather than assumed: a calendar that silently showed the last
+    // twelve months as a complete history would misrepresent a series with one
+    // observation in it.
+    ingestedMonths: values.length,
+    requestedMonths: chosen.length * 12,
+    firstPeriod: cells.has(`${allYears[0]}-01`) ? `${allYears[0]}-01` : allYears[0],
+    yearsAvailable: allYears,
+    yearsShown: chosen,
+    thresholdC: OCEANIC_NINO_THRESHOLD_C,
+  }
+}
+
+/**
+ * One line saying what the calendar is and is not.
+ *
+ * The months above and below ±0.5 °C are the ones CPC's advisory criterion
+ * looks at, so the calendar is annotated against that threshold rather than
+ * against its own extremes: a colour scale fitted to the data would make a
+ * quiet year look dramatic.
+ */
+export function seasonalCalendarNote(calendar) {
+  if (!calendar) return 'Niño 3.4 has not been ingested, so there is no calendar to draw.'
+  const values = calendar.rows.flatMap((r) => r.values).filter((v) => v !== null)
+  const warm = values.filter((v) => v >= OCEANIC_NINO_THRESHOLD_C).length
+  const cold = values.filter((v) => v <= -OCEANIC_NINO_THRESHOLD_C).length
+  const missing = calendar.requestedMonths - calendar.ingestedMonths
+  const parts = [
+    `${calendar.ingestedMonths} of ${calendar.requestedMonths} months shown`,
+    `${warm} at or above the +${OCEANIC_NINO_THRESHOLD_C} °C advisory threshold`,
+    `${cold} at or below −${OCEANIC_NINO_THRESHOLD_C} °C`,
+  ]
+  if (missing > 0) parts.push(`${missing} not ingested`)
+  return parts.join(' · ') + '. Each cell is a departure from the CPC base, not from the median of this record.'
+}
+
 /**
  * Reads the advisory state out of stored climate observations.
  *

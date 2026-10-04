@@ -172,6 +172,20 @@
                 Monthly SST anomaly index. Not a rainfall forecast and not a flood probability.
               </p>
             </details>
+            <!-- The calendar, not another number.
+                 A single anomaly value cannot show that an ENSO warm phase
+                 peaks in Nov-Dec and decays through the following spring — that
+                 annual shape is the thing an operator is actually looking for
+                 and it is invisible in one figure. Twelve cells per year make it
+                 legible, and make the months that were never ingested legible as
+                 gaps rather than as neutral. Hidden until something is, because
+                 an empty grid reads as "nothing happened" rather than "nothing
+                 has been measured". -->
+            <figure id="seasonalCalendarFig" class="seasonal-calendar" hidden>
+              <figcaption class="seasonal-calendar-caption">Seasonal calendar</figcaption>
+              <div id="seasonalCalendar"></div>
+              <p id="seasonalCalendarNote" class="seasonal-note"></p>
+            </figure>
           </div>
 
           <!-- IPC and WHO GHO share a strip because they are the same kind of

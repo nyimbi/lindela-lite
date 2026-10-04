@@ -482,7 +482,22 @@ export function heatmap(data, options = {}) {
 
   const cells = rows.flatMap((row) => (row.values || []).map(numeric)).filter((n) => n !== null)
   if (!cells.length) return emptyChart(opts, data?.empty || 'No values recorded')
-  const { min, max } = extentOf(cells, { zero: false })
+
+  // A signed quantity gets a diverging ramp pinned to its zero.
+  //
+  // The sequential ramp maps min..max onto light..dark, which for a signed
+  // series puts the interesting boundary somewhere in the middle of the
+  // observed range rather than at zero: a calendar of SST anomalies rendered
+  // that way shows -2 °C and +0.1 °C as almost the same cell, and the eye reads
+  // "both cold" off a field that is actually warm and cold. `diverging` fixes
+  // the pivot and takes the larger magnitude as the span, so equal distances
+  // from zero are equal colours and the sign is never inferred from brightness.
+  //
+  // Default off, so every existing call renders byte-identically.
+  const pivot = opts.diverging === true ? 0 : (opts.diverging === false || opts.diverging === undefined ? null : numeric(opts.diverging))
+  const { min, max } = pivot === null
+    ? extentOf(cells, { zero: false })
+    : { min: pivot - spanFor(cells, pivot), max: pivot + spanFor(cells, pivot) }
 
   const left = Math.max(...rows.map((r) => String(r.label ?? '').length)) * 7 + 8
   const cell = Math.max(6, Math.floor((opts.width - left - opts.pad.right) / columns.length))
@@ -511,7 +526,7 @@ export function heatmap(data, options = {}) {
       }
       inner += svg('rect', {
         class: 'chart-cell', x, y: yPos, width: cell - 1, height: cellH - 1,
-        fill: heatColor(ratio(n)), rx: 2,
+        fill: pivot === null ? heatColor(ratio(n)) : divergingHeatColor(n, pivot, spanFor(cells, pivot)), rx: 2,
       })
     }
   }
@@ -542,6 +557,30 @@ export function heatmap(data, options = {}) {
  * ramp — light means low, dark means high — so colourblind readers keep the
  * ordering, and every cell's number is in the table regardless.
  */
+/** The half-span either side of `pivot` that the observed values reach. */
+function spanFor(cells, pivot) {
+  return Math.max(...cells.map((n) => Math.abs(n - pivot)), Number.EPSILON)
+}
+
+/**
+ * Warm above the pivot, cool below it, neutral exactly at it.
+ *
+ * Two ramps out of tokens rather than one: mixing toward `--brand` for warm and
+ * toward `--cold` for cool, and leaving the pivot as plain surface so "no
+ * departure" is a cell you can see is empty of signal rather than the palest
+ * shade of a colour that means something. The two directions use the same
+ * strength scale, so a -1.4 and a +1.4 read as equally far out — which is the
+ * only honest reading, and is not what a single sequential ramp gives.
+ */
+export function divergingHeatColor(value, pivot = 0, span = 1) {
+  const n = numeric(value)
+  if (n === null) return 'none'
+  const magnitude = Math.min(1, Math.abs(n - pivot) / (span || 1))
+  const pct = Math.round(magnitude * 100)
+  const token = n - pivot >= 0 ? 'var(--brand)' : 'var(--cold)'
+  return `color-mix(in oklab, ${token} ${pct}%, var(--surface))`
+}
+
 export function heatColor(t) {
   const n = numeric(t)
   const clamped = Math.max(0, Math.min(1, n === null ? 0 : n))

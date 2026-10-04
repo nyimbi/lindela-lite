@@ -40,6 +40,12 @@
   --sev-medium:      oklch(80% 0.15 85);
   --sev-low:         oklch(75% 0.10 190);
 
+  /* The cool half of a diverging ramp. A diverging heatmap needs two hues at
+     matched lightness so equal distances from the pivot read as equally far
+     out; --brand alone gives one, and reusing --ok would say "good" about a
+     cold anomaly, which is a value judgement the data does not support. */
+  --cold:            oklch(68% 0.13 265);
+
   --ok:              oklch(72% 0.16 155);
   --warn:            oklch(78% 0.15 75);
   --danger:          oklch(65% 0.22 25);

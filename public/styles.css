@@ -2002,6 +2002,34 @@ label:has(> input[type="radio"]) {
   color: var(--ink-faint);
 }
 
+/* The calendar is the one chart in the strip, and it is allowed to be wider
+   than the strip's text column: twelve months cannot be read at 10px in a
+   240px box. It scrolls rather than shrinking, because twelve columns of 4px
+   is a texture, not a chart. */
+.seasonal-calendar {
+  margin: 8px 0 0;
+}
+
+.seasonal-calendar-caption {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 4px;
+}
+
+.seasonal-calendar #seasonalCalendar {
+  overflow-x: auto;
+}
+
+.seasonal-calendar .chart-cell-missing {
+  /* A gap needs to read as absent even against a dense field of colour, and a
+     2px dashed hairline disappears entirely at the bottom of a diverging ramp.
+     The surface fill is what separates it: the cell is the background showing
+     through, not a colour. */
+  fill: var(--surface);
+}
+
 /* An unavailable source is not a broken one. Dimmed card plus the reason, so
    "never_run" never reads as an unexplained failure. */
 .source-card.is-unavailable { opacity: 0.72; }
