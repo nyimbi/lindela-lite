@@ -74,7 +74,8 @@
         "src/connectors/ipc-hdx.js:265",
         "src/server.js:1814"
       ],
-      "guarded_by": "test/rate-limit.test.js, test/rapidpro-webhook-auth.test.js"
+      "guarded_by": "test/rate-limit.test.js, test/rate-limit-wiring.test.js, test/rapidpro-webhook-auth.test.js",
+      "note": "The declared limits are enforced now: `fetchWithRetry` acquires from a per-source, per-host token bucket before every request (`src/connectors/http.js:193,198`), so the `rateLimit` blocks in the connector specs and `connectors.registry.json` stop being documentation. `ratePerWindow`/`windowMs` can be overridden per call, which is what makes the refill assertable without waiting out a 60-second window. `test/rate-limit-wiring.test.js` (11 tests) covers bursting, per-host budgets, holding a budget across calls, releasing the slot when a request fails, and refusing an unreadable declaration rather than inventing a limit. Still not shipped: no circuit breaker (that is ENH-10), and no backoff that consults the limiter's own state when a source returns 429."
     },
     {
       "id": "ENH-12",

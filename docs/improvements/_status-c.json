@@ -65,7 +65,7 @@
     {
       "id": "ENH-20",
       "title": "Month × year seasonal calendar heatmap",
-      "status": "not started",
+      "status": "partial",
       "detail": "The `heatmap` primitive exists and is tested (`test/charts.test.js:264-319`) but has no call site outside the library. No surface builds a month×year matrix, nothing computes departure from a climatological median, and there is no flood/alert overlay on a grid. `public/shared/seasonal.js` still has exactly one consumer, `public/app.js:7`, which renders the single-summary strip.",
       "evidence": [
         "public/shared/charts.js:477",
@@ -75,7 +75,8 @@
         "public/app.js:2321",
         "test/charts.test.js:264"
       ],
-      "guarded_by": null
+      "guarded_by": "test/seasonal-calendar.test.js, test/charts.test.js",
+      "note": "The matrix is built and shipped on the console: `seasonalCalendar()` and `seasonalCalendarNote()` in `public/shared/seasonal.js`, rendered by `renderSeasonalCalendar()` (`public/app.js:655`) behind a `<figure>` that stays hidden until there is something to show, so an empty grid cannot read as \"nothing happened\". `test/seasonal-calendar.test.js` (26 tests). It is a calendar rather than a single anomaly because the structure an operator is reading for is seasonal — the warm phase peaks around November-December and decays through the following spring, and that is invisible in one number. Two parts of the item are deliberately declined: it does not difference against a per-month climatological median, because the published anomaly is already a departure from a 30-year base and differencing twice would report the local spread of the series under study; and it does not interpolate a missing month, because no connector measured one. Not built: the flood/alert overlay on the grid."
     },
     {
       "id": "ENH-21",

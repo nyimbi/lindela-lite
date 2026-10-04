@@ -4,7 +4,7 @@ What has actually shipped, verified against the tree rather than against the com
 Regenerate with `node docs/improvements/_build-status.mjs` after editing any
 `_status-*.json`.
 
-**7 shipped, 15 partial, 8 not started,** of 30.
+**7 shipped, 16 partial, 7 not started,** of 30.
 The two that shipped before this round were the two the project was built to make possible
 anyway: the API substrate a caller can integrate against (`ENH-30`) and a way to get your
 own data in (`ENH-25`). The five since are the ones where a claim had become load-bearing —
@@ -37,7 +37,7 @@ nothing in the product.
 | ENH-08 | Watermarks, incremental fetch, resumable backfill | partial | `test/watermarks.test.js` |
 | ENH-09 | Source-agreement cross-validation | partial | `test/source-agreement.test.js` |
 | ENH-10 | Connector health scoring and circuit breaking | partial | `test/circuit.test.js`, `test/ingestion-wiring.test.js` |
-| ENH-11 | Enforce the rate limits that are already declared | partial | `test/rate-limit.test.js`, `test/rapidpro-webhook-auth.test.js` |
+| ENH-11 | Enforce the rate limits that are already declared | partial | `test/rate-limit.test.js`, `test/rate-limit-wiring.test.js`, `test/rapidpro-webhook-auth.test.js` |
 | ENH-12 | Raw payload retention, replay, and fixture seeding | partial | `test/capture.test.js` |
 | ENH-13 | Bitemporal records | shipped | `test/bitemporal-history.test.js` |
 | ENH-14 | Completeness tripwires for capped pagination | partial | `test/completeness.test.js` |
@@ -51,7 +51,7 @@ nothing in the product.
 | ENH-17 | Render uncertainty as geometry, not as a footnote | partial | `test/charts.test.js` |
 | ENH-18 | Time-slider playback of hazard history | **not started** | — |
 | ENH-19 | Map → chart → record drill-down, with a `/explain` endpoint | **not started** | — |
-| ENH-20 | Month × year seasonal calendar heatmap | **not started** | — |
+| ENH-20 | Month × year seasonal calendar heatmap | partial | `test/seasonal-calendar.test.js`, `test/charts.test.js` |
 | ENH-21 | Forecast-versus-observed verification charts | **not started** | — |
 | ENH-22 | Offline-first drill-down and cached map tiles | partial | `test/web-chw-offline.test.js`, `test/sw-cache-eviction.test.js` |
 | ENH-23 | Colourblind-safe and high-contrast themes | partial | `test/web-console.test.js` |
@@ -245,7 +245,7 @@ Evidence:
 
 ### ENH-20 — Month × year seasonal calendar heatmap
 
-**not started.** The `heatmap` primitive exists and is tested (`test/charts.test.js:264-319`) but has no call site outside the library. No surface builds a month×year matrix, nothing computes departure from a climatological median, and there is no flood/alert overlay on a grid. `public/shared/seasonal.js` still has exactly one consumer, `public/app.js:7`, which renders the single-summary strip.
+**partial.** The `heatmap` primitive exists and is tested (`test/charts.test.js:264-319`) but has no call site outside the library. No surface builds a month×year matrix, nothing computes departure from a climatological median, and there is no flood/alert overlay on a grid. `public/shared/seasonal.js` still has exactly one consumer, `public/app.js:7`, which renders the single-summary strip.
 
 Evidence:
 
