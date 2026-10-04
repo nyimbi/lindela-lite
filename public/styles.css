@@ -2123,7 +2123,15 @@ label:has(> input[type="radio"]) {
 .console-toolbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  /* Not `flex-end`. A flex container aligns its overflow from the START edge,
+     so right-aligning a child that cannot fit hung the overflow off the *left*
+     — where nothing can scroll to it, and where `documentElement.scrollWidth`
+     does not grow, so no overflow check of any kind can see it. At 375px the
+     controls sat at x = -69 inside a 375px row: Language, Copy link, Severity,
+     Source and Cold-chain, all present, all focusable, all invisible.
+     `.console-toolbar-controls` right-aligns itself with `margin-inline-start`
+     below, which is what the `flex-end` was imitating badly. */
+  justify-content: flex-start;
   gap: var(--sp-2);
   flex-wrap: wrap;
   padding: var(--sp-1) var(--sp-4);
@@ -2137,6 +2145,32 @@ label:has(> input[type="radio"]) {
   gap: var(--sp-2);
   flex-wrap: wrap;
   margin-inline-start: auto;
+  /* A flex item's automatic minimum is its min-content width, which for the
+     controls group is 428px. Without this it cannot shrink into a 375px row at
+     all, and the row overflows in whichever direction the alignment chose. */
+  min-width: 0;
+}
+
+/* The three declarations below are load-bearing, not tidying. Without them,
+   dropping `flex-end` converts a silent left overflow into a *detectable* right
+   overflow — 444px at a 360px viewport — because the nowrap labels and the
+   nowrap record count hold the group's min-content width open. */
+@media (max-width: 480px) {
+  .console-toolbar-controls .filter-label {
+    white-space: normal;
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+  .console-toolbar-controls .filter-label select {
+    min-width: 0;
+    max-width: 100%;
+    flex: 1 1 8rem;
+  }
+  /* Physical, to match the `margin-left` it overrides, so RTL stays correct. */
+  .console-toolbar-controls .map-record-count {
+    white-space: normal;
+    margin-left: 0;
+  }
 }
 
 /* `select { width: 100% }` is right in a form column and wrong in a toolbar,

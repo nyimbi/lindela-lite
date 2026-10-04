@@ -197,10 +197,40 @@ function collect(minTap) {
     }
   }
 
+  // Controls cut off at the START edge.
+  //
+  // Overflow from the start is the one direction a browser will not scroll to:
+  // `documentElement.scrollWidth` does not grow, so the overflow figure above
+  // reads zero and passes. The console toolbar was doing exactly this — twelve
+  // controls at x = -84 inside a 360px viewport, present, focusable, invisible,
+  // and reported clean by this gate for as long as it existed. WCAG 2.2 §1.4.10.
+  const clippedStart = []
+  for (const el of doc.querySelectorAll(
+    'button, input:not([type=hidden]), select, textarea, a[href], [data-tap-target], .filter-label',
+  )) {
+    if (!shown(el)) continue
+    // `.visually-hidden` sits at margin:-1px by design and `.skip-link` at
+    // top:-100%. Neither is a clipped control; both would fail on every surface
+    // forever if they were counted.
+    if (el.classList.contains('visually-hidden') || el.closest('[aria-hidden="true"]')) continue
+    const rect = el.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) continue
+    if (rect.left < -1) {
+      clippedStart.push({
+        tag: el.tagName.toLowerCase(),
+        id: el.id || '',
+        cls: clsOf(el),
+        left: Math.round(rect.left),
+      })
+    }
+  }
+
   return {
     viewWidth,
     scrollWidth,
     overflow: scrollWidth - viewWidth,
+    clippedStart: clippedStart.slice(0, 6),
+    clippedStartCount: clippedStart.length,
     overflowing: overflowing.slice(0, 6),
     smallTargets: smallTargets.slice(0, 6),
     smallTargetCount: smallTargets.length,
@@ -316,6 +346,13 @@ async function main() {
         const worst = r.overflowing.map((o) => `${o.tag}.${o.cls}→${o.right}px`).join(', ') || 'unknown'
         failures.push(`${label}: horizontal overflow ${r.overflow}px — ${worst}`)
       }
+      if (r.clippedStartCount > 0) {
+        const worst = r.clippedStart.map((o) => `${o.tag}#${o.id}.${o.cls} at ${o.left}px`).join(', ') || 'unknown'
+        failures.push(
+          `${label}: ${r.clippedStartCount} control(s) off the start edge — ${worst}. `
+          + 'A browser will not scroll to overflow from the start, so scrollWidth cannot see this.',
+        )
+      }
       if (r.clippedCount > 0) {
         failures.push(
           `${label}: ${r.clippedCount} element(s) clipped — ` +
@@ -338,7 +375,7 @@ async function main() {
         )
       }
 
-      const ok = r.overflow <= 1 && r.clippedCount === 0 && r.smallTargetCount === 0
+      const ok = r.overflow <= 1 && r.clippedStartCount === 0 && r.clippedCount === 0 && r.smallTargetCount === 0
       process.stdout.write(`${ok ? 'PASS' : 'FAIL'}  ${label}\n`)
 
       // Capture through CDP rather than `chrome --headless --screenshot`.
