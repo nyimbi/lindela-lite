@@ -222,9 +222,14 @@
               <figcaption class="seasonal-calendar-caption">Seasonal calendar</figcaption>
               <div id="seasonalCalendar"></div>
               <!-- ENH-20: the flood/alert row, on the same month columns as the
-                   calendar above it. Drawn by /workflow/wire-seasonal.js with the
-                   same width the heatmap was given, so the columns line up at
-                   every viewport rather than by a CSS accident. -->
+                   calendar above it, with its own caption because the heatmap's
+                   "−2.2°C – +2.2°C" scale line sits between the two rows and an
+                   operator reading it as this row's scale would be reading the
+                   temperature scale off a row of flood counts. Drawn by
+                   /workflow/wire-seasonal.js with the same width the heatmap was
+                   given, so the columns line up at every viewport rather than by
+                   a CSS accident. -->
+              <p id="seasonalCalendarOverlayCaption" class="seasonal-calendar-caption" hidden>Hazard and alert records by month</p>
               <div id="seasonalCalendarOverlay" class="seasonal-calendar" role="group"
                    aria-label="Hazard and alert records by month" hidden></div>
               <p id="seasonalCalendarOverlayNote" class="seasonal-note" hidden></p>

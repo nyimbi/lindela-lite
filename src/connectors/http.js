@@ -92,7 +92,11 @@ export function beginCapture({ store = new CaptureStore(), source = null, replay
     store,
     source,
     replay: Boolean(replay),
-    replayFetch: replay ? createReplayStore(store.list()) : null,
+    // With the tombstones, so a replay can say "we captured that and the
+    // retention policy took it" rather than returning an empty provider response.
+    // Without them a pruned capture and a capture that never existed are the same
+    // absence, which is the exact confusion the tombstone exists to prevent.
+    replayFetch: replay ? createReplayStore(store.list(), { tombstones: store.tombstones?.() || [] }) : null,
   }
   return activeCapture
 }

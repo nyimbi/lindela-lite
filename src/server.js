@@ -1144,6 +1144,50 @@ async function handleApiRequest(store, req, res, url) {
     return
   }
 
+  // "Where did this number come from."
+  //
+  // The server's half: resolve the record and hand back everything the store
+  // knows about how it arrived — the source run, the lineage row, the record's
+  // own declared limits. The chain of reasoning itself is rendered by
+  // `explainRecord` in the browser module, so there is one implementation of it
+  // rather than a server copy that drifts.
+  const explainRoute = matchExplainRoute(url.pathname)
+  if (explainRoute && req.method === 'GET') {
+    const kind = url.searchParams.get('kind') || 'risk_scores'
+    const id = explainRoute.id
+    const rows = data[kind] || []
+    const record = rows.find((r) => String(r.id) === id)
+    if (!record) {
+      jsonResponse(res, 404, { success: false, error: `No ${kind} record with id ${id}` })
+      return
+    }
+    const run = record._source_run_id
+      ? (data.source_runs || []).find((r) => r.id === record._source_run_id) || null
+      : null
+    const lineage = (data.data_lineage || []).filter((l) => l.source_run_id === record._source_run_id)
+    jsonResponse(res, 200, {
+      success: true,
+      kind,
+      record,
+      // A record with no source run still gets a 200: it exists, and saying so
+      // is the answer. Absence of provenance is a fact about the record, not a
+      // reason to withhold it.
+      provenance: {
+        source_run: run,
+        lineage,
+        // Stated rather than left as null, because null here reads as "we did
+        // not look" rather than "there was nothing to find".
+        known: Boolean(run || lineage.length),
+        note: run || lineage.length
+          ? null
+          : 'This record names no source run, so its origin cannot be traced from the store.',
+      },
+      limits: record.limits || null,
+      calibrated_uncertainty: record.calibrated_uncertainty ?? null,
+    })
+    return
+  }
+
   const auditRoute = matchAuditRoute(url.pathname)
   if (auditRoute && req.method === 'GET') {
     // The published head travels OUT OF BAND. Verifying a chain against a head
@@ -3045,6 +3089,18 @@ function matchRapidProRoute(pathname) {
  * The audit proof is a verification, not a mutation, so it verifies by reading
  * the chain rather than by extending it.
  */
+/**
+ * `GET /api/v1/explain/{id}?kind=`
+ *
+ * Named rather than an inline regex so the route-coverage check can parse it
+ * and so it sits with every other matcher here rather than inside a handler.
+ */
+function matchExplainRoute(pathname) {
+  const match = pathname.match(/^\/api\/v1\/explain\/([^/]+)$/)
+  if (!match) return null
+  return { id: decodeURIComponent(match[1]) }
+}
+
 function matchAuditRoute(pathname) {
   if (pathname === '/api/v1/audit/verify') return { action: 'verify' }
   const head = pathname.match(/^\/api\/v1\/audit\/head$/)

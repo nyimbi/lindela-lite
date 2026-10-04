@@ -81,6 +81,40 @@ paths:
             application/json:
               schema: { type: object }
 
+  /api/v1/explain/{id}:
+    get:
+      summary: Where a computed number came from
+      description: |
+        The record, everything the store knows about how it arrived — the source
+        run, the lineage row — and the limits it declares about itself.
+
+        A record that names no source run still returns 200 with `provenance.known
+        false` and a sentence saying so. Absence of provenance is a fact about
+        the record, not a reason to withhold it, and a bare null would read as
+        "we did not look".
+
+        The chain of reasoning is rendered in the browser by `explainRecord`, so
+        there is one implementation of it rather than a server copy that drifts.
+      tags: [analytics]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: kind
+          in: query
+          schema: { type: string, default: risk_scores }
+          description: Which collection the id belongs to
+      responses:
+        '200':
+          description: The record, its provenance and its declared limits
+          content:
+            application/json:
+              schema: { type: object }
+        '404':
+          description: No such record in that collection
+
   /api/v1/rapidpro/reply:
     post:
       summary: Record a reply to an alert sent over SMS

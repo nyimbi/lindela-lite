@@ -704,12 +704,16 @@ async function renderSeasonalCalendar(observations) {
  */
 async function renderSeasonalOverlay(calendar, width) {
   if (!seasonalOverlayEl) return
+  const hide = () => {
+    seasonalOverlayEl.hidden = true
+    if (seasonalOverlayCaptionEl) seasonalOverlayCaptionEl.hidden = true
+    if (seasonalOverlayNoteEl) seasonalOverlayNoteEl.hidden = true
+  }
   let overlay
   try {
     overlay = await lazy('/workflow/wire-seasonal.js')
   } catch {
-    if (seasonalOverlayEl) seasonalOverlayEl.hidden = true
-    if (seasonalOverlayNoteEl) seasonalOverlayNoteEl.hidden = true
+    hide()
     return
   }
   const counts = overlay.monthlyCounts(calendar, {
@@ -719,6 +723,7 @@ async function renderSeasonalOverlay(calendar, width) {
   const height = Math.max(46, calendar.yearsShown.length * 21 + 10)
   seasonalOverlayEl.innerHTML = overlay.seasonalOverlay(calendar, { width, counts, height })
   seasonalOverlayEl.hidden = false
+  if (seasonalOverlayCaptionEl) seasonalOverlayCaptionEl.hidden = false
   if (seasonalOverlayNoteEl) {
     seasonalOverlayNoteEl.textContent = overlay.seasonalOverlayNote(counts)
     seasonalOverlayNoteEl.hidden = false
@@ -1383,6 +1388,7 @@ const playbackChartEl    = $('playbackChart')
 const verifyPanelEl      = $('verifyPanel')
 const verifyBodyEl       = $('verifyBody')
 const seasonalOverlayEl  = $('seasonalCalendarOverlay')
+const seasonalOverlayCaptionEl = $('seasonalCalendarOverlayCaption')
 const seasonalOverlayNoteEl = $('seasonalCalendarOverlayNote')
 
 function svgEl(tag, attrs = {}) {

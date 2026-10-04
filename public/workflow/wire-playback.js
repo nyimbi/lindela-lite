@@ -154,8 +154,23 @@ export function createPlayback({ step, summary, chart, peak }, records, options 
     const MAX_BARS = 48
     const from = Math.max(0, timeline.frames.length - MAX_BARS)
     const shown = timeline.frames.slice(from)
+    const labelStride = Math.max(1, Math.ceil(shown.length / 4))
+    // Most hazard feeds report no end date, and `buildFrames` deliberately keeps
+    // such a record active for the rest of the timeline rather than dropping it
+    // after the minute it was filed. So the series rises as the archive
+    // accumulates instead of rising and falling like a weather record. Saying so
+    // is the difference between a reader seeing "the archive got busier" and one
+    // seeing "floods are getting worse".
+    const openEnded = list.filter((r) => r?.end === null || r?.end === undefined).length
+    const openEndedNote = openEnded
+      ? `${openEnded} of ${list.length} records carry no end date and stay active for the rest of the timeline, so a rising count is the archive accumulating, not a worsening situation.`
+      : `${list.length} records carry an end date, so each frame's count is the situation at that moment.`
     const drawn = barChart({
-      labels: shown.map((f) => f.label),
+      // `barChart` draws a tick label for every category, and 36 date labels at
+      // 480 units wide overlap into a single unreadable stripe. Blanking all but
+      // every Nth label — and never the last — thins the axis without touching
+      // the library or dropping a bar.
+      labels: shown.map((f, i) => (i % labelStride === 0 || i === shown.length - 1 ? f.label : '')),
       series: [{ name: 'Active records', values: shown.map((f) => f.counts.total), color: 'var(--brand)' }],
       title: 'Records active per frame across the hazard archive',
       xLabel: 'Frame',
@@ -168,8 +183,10 @@ export function createPlayback({ step, summary, chart, peak }, records, options 
       'Records active per frame across the hazard archive',
       `Active hazard and alert records per ${timeline.bucket}, for the ${shown.length} most recent of `
       + `${timeline.frames.length} frames, from ${shown[0].label} to ${shown[shown.length - 1].label}. `
-      + `The busiest frame holds ${Math.max(0, ...shown.map((f) => f.counts.total))} active records. `
-      + 'The stepper below reaches every frame, including the ones this chart leaves out.')
+      + `The busiest frame holds ${Math.max(0, ...shown.map((f) => f.counts.total))} active records.`
+      + ` ${openEndedNote}`
+      + ' The stepper below reaches every frame, including the ones this chart leaves out.')
+      + `<p class="chart-panel-note">${esc(openEndedNote)}</p>`
       + (from > 0
       ? `<p class="chart-panel-note">The chart shows the ${shown.length} most recent of ${timeline.frames.length} frames; the stepper reaches all of them.</p>`
       : '')
