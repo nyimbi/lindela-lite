@@ -205,34 +205,14 @@ function applyI18n() {
  * whatever GDACS is doing that week. Twenty-five is the figure the plan set and
  * is enough to scan a screen without scrolling.
  */
-export const LIST_PAGE_SIZE = 25
+// The arithmetic lives in shared/paging.js because app.js imports
+// browser-absolute specifiers and therefore cannot be required by a Node test
+// runner. While it lived here the pager rendered on no list in any test run,
+// because no demo list ever exceeded a page — untested logic that had never
+// executed. `test/paging.test.js` now covers it directly.
+import { LIST_PAGE_SIZE, pageWindow, setPage, pagerSummary } from '/shared/paging.js'
+export { LIST_PAGE_SIZE, pageWindow, setPage, pagerSummary }
 
-/** Page index per paged surface. Held in state so a re-render does not reset it. */
-const listPages = { alerts: 1, reports: 1, equity: 1 }
-
-/**
- * Clamp and return the window of `items` for `key`'s current page.
- *
- * Clamping rather than trusting the stored page is what keeps a filter change
- * from stranding an operator on page 4 of a list that now has one page: the
- * stored index survives, the window never runs off the end.
- */
-export function pageWindow(key, total, size = LIST_PAGE_SIZE) {
-  const pages = Math.max(1, Math.ceil(total / size))
-  const page = Math.min(Math.max(1, listPages[key] || 1), pages)
-  listPages[key] = page
-  const start = (page - 1) * size
-  return { page, pages, start, end: Math.min(start + size, total) }
-}
-
-/**
- * Paints a pager and wires its buttons. `components.css` owns the visual; this
- * only decides what the page numbers are.
- *
- * The count is rendered as text rather than left to the operator to infer from
- * how many rows there are, because "25 rows" and "25 rows because that is all
- * there are" are different facts and the rail is the only place either appears.
- */
 function renderPager(host, key, total, onGo) {
   if (!host) return
   const { page, pages, start, end } = pageWindow(key, total)
@@ -266,14 +246,14 @@ function renderPager(host, key, total, onGo) {
     btn.addEventListener('click', () => {
       const n = Number(btn.dataset.page)
       if (n < 1 || n > pages || n === page) return
-      listPages[key] = n
+      setPage(key, n, total)
       onGo()
     })
   })
 }
 
 /** Jump back to page 1 when the filter that produced the list changes. */
-function resetListPage(key) { listPages[key] = 1 }
+function resetListPage(key) { setPage(key, 1, 0) }
 
 // =============================================================
 // Flood depth overlay
