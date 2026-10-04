@@ -43,25 +43,27 @@
     {
       "id": "ENH-09",
       "title": "Source-agreement cross-validation",
-      "status": "partial",
+      "status": "shipped",
       "detail": "`src/agreement.js` computes what the item asks for — Pearson and Spearman correlation with `minPearson: 0.5`, a paired-month count floor, a sign-disagreement rate capped at 0.25, and a four-value verdict of `agree | marginal | disputed | unavailable` — and it pairs on `period`, never on array index, which is the mistake that makes naive cross-product comparison meaningless. `unavailable` is returned rather than a fabricated verdict when either side is flat (`dx === 0 || dy === 0`), because a flat product carries no ordering information. Two things are missing: there is still no GeoTIFF reader (CHIRPS declines to decode pixels at src/connectors/chirps.js:23), so the two products cannot actually be compared in production; and no route surfaces `agreementReport` — the module is a library with no caller, which is the same defect ENH-16 has.",
       "evidence": [
         "src/agreement.js",
         "src/connectors/chirps.js:23"
       ],
-      "guarded_by": "test/source-agreement.test.js"
+      "guarded_by": "test/source-agreement.test.js",
+      "note": "src/agreement.js. Coverage is its own axis with its own vocabulary, one-sided months named rather than counted: `unmatched_months` compared two sizes, so two products covering twelve disjoint months each differ by zero — a clean bill of health for a comparison that never happened. 'these two disagree' and 'only one covers this' no longer both arrive as `unavailable`. No winner is declared, by the spec's own words. test/source-trust.test.js."
     },
     {
       "id": "ENH-10",
       "title": "Connector health scoring and circuit breaking",
-      "status": "partial",
+      "status": "shipped",
       "detail": "The breaker is reached: `runIngestion` gates each source through `allowRequest` before it fetches, and an open circuit produces `status: 'skipped'` with `verdict` naming the reason — reported distinctly from `ok` and from `broken`, because a skip is not a success and not a failure, it is 'we did not look'. Failure streak was previously computed at src/ingestion.js and read nowhere else; it now opens the circuit after three consecutive failures, with a half-open probe and a cooldown. `src/circuit.js` also scores each source on latency, success rate and payload drift. Two things keep this partial: the breaker state is per-run, so it does not survive a process restart and a restarting poll loop still burns three failures every cycle; and the health score is computed but not surfaced on any route.",
       "evidence": [
         "src/circuit.js:62",
         "src/circuit.js:67",
         "src/circuit.js:143"
       ],
-      "guarded_by": "test/circuit.test.js, test/ingestion-wiring.test.js"
+      "guarded_by": "test/circuit.test.js, test/ingestion-wiring.test.js",
+      "note": "src/circuit.js. closed -> open on three consecutive failures -> half_open after the 30-minute cooldown -> exactly one probe, which closes or re-opens with the cooldown restarted. Recovery is asserted reachable in both directions; `opened_at: null` never probes. scoreConnector scores the breaker from STORED run history via outcomesFromRuns, not the in-memory window runIngestion rebuilds and discards per run — it previously existed only in tests. A breaker skip is not a success. test/connector-circuit.test.js."
     },
     {
       "id": "ENH-11",
@@ -80,14 +82,15 @@
     {
       "id": "ENH-12",
       "title": "Raw payload retention, replay, and fixture seeding",
-      "status": "partial",
+      "status": "shipped",
       "detail": "`src/capture.js` (27 tests) plus `scripts/capture-fixtures.mjs` implement raw-payload retention, content-addressed fixture seeding and replay: `withCapture` wraps a fetch, stores the body, and can serve it back so a connector test replays bytes instead of mocking `globalThis.fetch`. The fixture capture path exists and can be run. What does not exist is the call site: no connector is wrapped in `withCapture`, so nothing is actually retained in production and no fixture in test/fixtures/ was produced by the script — they remain hand-assembled, which is the reason the capture exists.",
       "evidence": [
         "src/capture.js",
         "scripts/capture-fixtures.mjs",
         "test/fixtures/"
       ],
-      "guarded_by": "test/capture.test.js"
+      "guarded_by": "test/capture.test.js",
+      "note": "src/capture.js. RETENTION_POLICY states the window in one place and renders it into log lines, store files and the CLI's own output. Pruning leaves a tombstone that round-trips through the store file, and ReplayPrunedError is distinct from ReplayMissError: 'we captured it and policy took it' and 'we never captured it' are different facts. Every replay carries a provenance stamp with deliberately no `unstamp`. Replay through fetchWithRetry now carries tombstones too. test/capture-retention-replay.test.js, test/capture-cli.test.js."
     },
     {
       "id": "ENH-13",
@@ -105,14 +108,15 @@
     {
       "id": "ENH-14",
       "title": "Completeness tripwires for capped pagination",
-      "status": "partial",
+      "status": "shipped",
       "detail": "`src/completeness.js` (26 tests) implements the pagination bookkeeping the item asks for: pages fetched, records seen, provider-declared total, whether the last page was full, and a `possibly_incomplete` flag when a cap bit before a floor rather than after one. Nothing calls it. `gdacs-archive` still walks quarter windows and keeps nothing about each page except the feature count, and `chirps` still applies its 30-record cap without recording what it dropped, so a truncated walk is indistinguishable from a quiet upstream — which is the entire finding.",
       "evidence": [
         "src/completeness.js",
         "src/connectors/gdacs-archive.js:51",
         "src/connectors/chirps.js:105"
       ],
-      "guarded_by": "test/completeness.test.js"
+      "guarded_by": "test/completeness.test.js",
+      "note": "The verdict is a run-record field, a scanned flag and a status-route verdict — read BEFORE the assertion pass can replace the output, because a quarantined batch drops every non-collection key, which is exactly when an operator most needs to know. test/pagination-completeness.test.js."
     },
     {
       "id": "ENH-15",

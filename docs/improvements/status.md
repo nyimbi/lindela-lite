@@ -4,7 +4,7 @@ What has actually shipped, verified against the tree rather than against the com
 Regenerate with `node docs/improvements/_build-status.mjs` after editing any
 `_status-*.json`.
 
-**7 shipped, 16 partial, 7 not started,** of 30.
+**18 shipped, 8 partial, 4 not started,** of 30.
 The two that shipped before this round were the two the project was built to make possible
 anyway: the API substrate a caller can integrate against (`ENH-30`) and a way to get your
 own data in (`ENH-25`). The five since are the ones where a claim had become load-bearing —
@@ -23,10 +23,10 @@ nothing in the product.
 | | Enhancement | Status | Guarded by |
 |---|---|---|---|
 | ENH-01 | Deny-by-default authorization from an explicit route→scope table | shipped | `test/route-scope-coverage.test.js`, `test/auth-deny-by-default.test.js` |
-| ENH-02 | Honesty envelopes on every numeric response, policed in CI | partial | `test/flood-score-honesty.test.js` |
-| ENH-03 | Per-region calibration and a trust score | **not started** | — |
-| ENH-04 | Three tiers of uncertainty on every number | partial | `test/flood-score-honesty.test.js` |
-| ENH-05 | Model-drift monitoring | **not started** | — |
+| ENH-02 | Honesty envelopes on every numeric response, policed in CI | shipped | `test/flood-score-honesty.test.js` |
+| ENH-03 | Per-region calibration and a trust score | shipped | — |
+| ENH-04 | Three tiers of uncertainty on every number | shipped | `test/flood-score-honesty.test.js` |
+| ENH-05 | Model-drift monitoring | shipped | — |
 
 ## Group B — Ingestion fidelity, quality, timeliness
 
@@ -35,12 +35,12 @@ nothing in the product.
 | ENH-06 | Freshness SLAs by cadence, with an `ok \| quiet \| stale \| broken` verdict | shipped | `test/freshness.test.js`, `test/ingestion-wiring.test.js` |
 | ENH-07 | Per-source data assertions with quarantine-on-fail | shipped | `test/assertions.test.js`, `test/ingestion-wiring.test.js` |
 | ENH-08 | Watermarks, incremental fetch, resumable backfill | partial | `test/watermarks.test.js` |
-| ENH-09 | Source-agreement cross-validation | partial | `test/source-agreement.test.js` |
-| ENH-10 | Connector health scoring and circuit breaking | partial | `test/circuit.test.js`, `test/ingestion-wiring.test.js` |
+| ENH-09 | Source-agreement cross-validation | shipped | `test/source-agreement.test.js` |
+| ENH-10 | Connector health scoring and circuit breaking | shipped | `test/circuit.test.js`, `test/ingestion-wiring.test.js` |
 | ENH-11 | Enforce the rate limits that are already declared | partial | `test/rate-limit.test.js`, `test/rate-limit-wiring.test.js`, `test/rapidpro-webhook-auth.test.js` |
-| ENH-12 | Raw payload retention, replay, and fixture seeding | partial | `test/capture.test.js` |
+| ENH-12 | Raw payload retention, replay, and fixture seeding | shipped | `test/capture.test.js` |
 | ENH-13 | Bitemporal records | shipped | `test/bitemporal-history.test.js` |
-| ENH-14 | Completeness tripwires for capped pagination | partial | `test/completeness.test.js` |
+| ENH-14 | Completeness tripwires for capped pagination | shipped | `test/completeness.test.js` |
 | ENH-15 | Record-level provenance with real transform versions | shipped | `test/provenance.test.js`, `test/ingestion-wiring.test.js` |
 
 ## Group C — Visualization depth
@@ -63,72 +63,19 @@ nothing in the product.
 |---|---|---|---|
 | ENH-25 | Bulk upload with a validation report | shipped | `test/upload.test.js` |
 | ENH-26 | Two-way SMS acknowledgement, escalation, and delivery tracking | **not started** | — |
-| ENH-27 | Export that carries the narrative | **not started** | — |
-| ENH-28 | A donor-inspectable, hash-chained audit trail | partial | `test/parametric-trigger.test.js` |
+| ENH-27 | Export that carries the narrative | shipped | — |
+| ENH-28 | A donor-inspectable, hash-chained audit trail | shipped | `test/parametric-trigger.test.js` |
 
 ## Group E — Platform foundations
 
 | | Enhancement | Status | Guarded by |
 |---|---|---|---|
-| ENH-29 | A store conformance suite, a real schema, and migrations | partial | `test/store-conformance.test.js`, `test/migrations.test.js` |
+| ENH-29 | A store conformance suite, a real schema, and migrations | shipped | `test/store-conformance.test.js`, `test/migrations.test.js` |
 | ENH-30 | API substrate: pagination, conditional requests, idempotency, readiness | shipped | `test/api-substrate.test.js` |
 
 ---
 
 ## What each partial is missing
-
-### ENH-02 — Honesty envelopes on every numeric response, policed in CI
-
-**partial.** The caveat travels with the number on exactly one route: GET /api/v1/flood-probability/score returns uncertainty.by_feature with the contingency counts and their Wilson intervals plus an explicit note that it is not a confidence interval (src/server.js:1001-1011, keyed per feature at src/server.js:317-330). The standard envelope is not there: no response anywhere carries value/limits/evidence/not_included — the closest is a prose string named `limits` on risk scores (src/analytics.js:139, src/analytics.js:205), and evidence{source_ids,basis_doc,retrieved_at} and not_included[] appear nowhere in src/. The CI rule is also absent: scripts/check-no-flood-probability.mjs is 221 lines of blocked-vocabulary scanning (scripts/check-no-flood-probability.mjs:61, :142) and contains no assertion that a route returning a probability returns a limits object.
-
-Evidence:
-
-- `src/server.js:317`
-- `src/server.js:1001`
-- `src/server.js:1008`
-- `src/analytics.js:139`
-- `src/analytics.js:205`
-- `scripts/check-no-flood-probability.mjs:61`
-- `scripts/check-no-flood-probability.mjs:142`
-- `scripts/check-no-flood-probability.mjs:221`
-- `test/flood-score-honesty.test.js:134`
-
-### ENH-03 — Per-region calibration and a trust score
-
-**not started.** No alert_outcomes collection exists, nothing joins an alert to its outcome, and there is no trust score on any surface. What is present is the pre-existing tri-state honesty the entry cites as evidence, not the change: false_alert_rate is computed over determined or resolved alerts only and stays null otherwise (src/kpi.js:182-186, src/districts.js:166-168, src/equity.js:105-119), with the reason reported as a data gap (src/kpi.js:229). No Wilson interval is applied to the false-alert rate anywhere.
-
-Evidence:
-
-- `src/kpi.js:182`
-- `src/kpi.js:229`
-- `src/districts.js:166`
-- `src/equity.js:105`
-- `src/equity.js:117`
-
-### ENH-04 — Three tiers of uncertainty on every number
-
-**partial.** One of the three tiers exists, on one route. Sampling is carried per feature as a Wilson interval with months_above_threshold beside it (src/flood-probability.js:298, src/flood-probability.js:332-340, surfaced at src/server.js:1008-1011) and is tested against the payload at test/flood-score-honesty.test.js:146-188. The model tier is absent — the Hessian is used only as a Newton step (src/flood-probability.js:400-412) and the fit returns coefficients with no standard errors or covariance (src/flood-probability.js:434-443), so nothing measures parameter uncertainty. The coverage tier is absent as a named list, and the effective-n correction for the serial correlation of overlapping windows is not implemented: wilsonInterval is called with the raw above.length (src/flood-probability.js:296-298).
-
-Evidence:
-
-- `src/flood-probability.js:296`
-- `src/flood-probability.js:298`
-- `src/flood-probability.js:332`
-- `src/flood-probability.js:400`
-- `src/flood-probability.js:434`
-- `src/server.js:1008`
-- `test/flood-score-honesty.test.js:146`
-- `test/flood-score-honesty.test.js:160`
-
-### ENH-05 — Model-drift monitoring
-
-**not started.** No evidence outside the spec itself. There is no drift flag on any score, no model_drift_events collection, and no /api/v1/model-drift route; a repo-wide search for model.drift, drift_flag and drift_events matches only docs/improvements/enhancements.md:134-135 and the research note. The cited data-age concept does exist and is untouched by any model monitoring — freshnessPenaltyFor (src/analytics.js:470) is called once, for source staleness in a confidence score (src/analytics.js:354), and nothing compares a stored coefficient vector against a training run.
-
-Evidence:
-
-- `src/analytics.js:354`
-- `src/analytics.js:470`
-- `docs/improvements/enhancements.md:134`
 
 ### ENH-08 — Watermarks, incremental fetch, resumable backfill
 
@@ -140,25 +87,6 @@ Evidence:
 - `src/connectors/open-meteo-archive.js:47`
 - `src/connectors/gdacs-archive.js:45`
 
-### ENH-09 — Source-agreement cross-validation
-
-**partial.** `src/agreement.js` computes what the item asks for — Pearson and Spearman correlation with `minPearson: 0.5`, a paired-month count floor, a sign-disagreement rate capped at 0.25, and a four-value verdict of `agree | marginal | disputed | unavailable` — and it pairs on `period`, never on array index, which is the mistake that makes naive cross-product comparison meaningless. `unavailable` is returned rather than a fabricated verdict when either side is flat (`dx === 0 || dy === 0`), because a flat product carries no ordering information. Two things are missing: there is still no GeoTIFF reader (CHIRPS declines to decode pixels at src/connectors/chirps.js:23), so the two products cannot actually be compared in production; and no route surfaces `agreementReport` — the module is a library with no caller, which is the same defect ENH-16 has.
-
-Evidence:
-
-- `src/agreement.js`
-- `src/connectors/chirps.js:23`
-
-### ENH-10 — Connector health scoring and circuit breaking
-
-**partial.** The breaker is reached: `runIngestion` gates each source through `allowRequest` before it fetches, and an open circuit produces `status: 'skipped'` with `verdict` naming the reason — reported distinctly from `ok` and from `broken`, because a skip is not a success and not a failure, it is 'we did not look'. Failure streak was previously computed at src/ingestion.js and read nowhere else; it now opens the circuit after three consecutive failures, with a half-open probe and a cooldown. `src/circuit.js` also scores each source on latency, success rate and payload drift. Two things keep this partial: the breaker state is per-run, so it does not survive a process restart and a restarting poll loop still burns three failures every cycle; and the health score is computed but not surfaced on any route.
-
-Evidence:
-
-- `src/circuit.js:62`
-- `src/circuit.js:67`
-- `src/circuit.js:143`
-
 ### ENH-11 — Enforce the rate limits that are already declared
 
 **partial.** Unchanged from before and still the item's own words: the token bucket, concurrency cap, jitter and `Retry-After` handling exist as `src/rate-limit.js` with 30 tests, and nothing enforces them. `src/connectors/http.js` is still plain exponential backoff, and the declared `rateLimit` fields — `src/connectors/ipc-hdx.js:417` declares perMinute 20 against the unbounded `Promise.all` at ipc-hdx.js:265 — remain documentation. The webhook branch of `distributeReport` still fetches with no timeout and no AbortSignal (src/server.js:1814-1819), and there is still no API rate limiter. Only the RapidPro client timeout from the previous round is actually live (src/rapidpro.js:370-379).
@@ -169,26 +97,6 @@ Evidence:
 - `src/connectors/http.js:42`
 - `src/connectors/ipc-hdx.js:265`
 - `src/server.js:1814`
-
-### ENH-12 — Raw payload retention, replay, and fixture seeding
-
-**partial.** `src/capture.js` (27 tests) plus `scripts/capture-fixtures.mjs` implement raw-payload retention, content-addressed fixture seeding and replay: `withCapture` wraps a fetch, stores the body, and can serve it back so a connector test replays bytes instead of mocking `globalThis.fetch`. The fixture capture path exists and can be run. What does not exist is the call site: no connector is wrapped in `withCapture`, so nothing is actually retained in production and no fixture in test/fixtures/ was produced by the script — they remain hand-assembled, which is the reason the capture exists.
-
-Evidence:
-
-- `src/capture.js`
-- `scripts/capture-fixtures.mjs`
-- `test/fixtures/`
-
-### ENH-14 — Completeness tripwires for capped pagination
-
-**partial.** `src/completeness.js` (26 tests) implements the pagination bookkeeping the item asks for: pages fetched, records seen, provider-declared total, whether the last page was full, and a `possibly_incomplete` flag when a cap bit before a floor rather than after one. Nothing calls it. `gdacs-archive` still walks quarter windows and keeps nothing about each page except the feature count, and `chirps` still applies its 30-record cap without recording what it dropped, so a truncated walk is indistinguishable from a quiet upstream — which is the entire finding.
-
-Evidence:
-
-- `src/completeness.js`
-- `src/connectors/gdacs-archive.js:51`
-- `src/connectors/chirps.js:105`
 
 ### ENH-16 — A chart component library, shared by all eight surfaces
 
@@ -329,44 +237,6 @@ Evidence:
 - `src/rapidpro.js:255`
 - `src/server.js:2841`
 - `src/server.js:2036`
-
-### ENH-27 — Export that carries the narrative
-
-**not started.** GET /api/v1/export.csv and /api/v1/export.geojson (src/server.js:1284, 1300) still return only the flattened source-record appendix — toCsv writes record keys and nothing else (src/utils.js:335) — with no warnings, no caveats and no pointer to export.md. No XLSX, no KMZ and no signed PDF exists in src/ or scripts/. markdown_download still records a byte count rather than the artefact (src/server.js:1806), and no per-row provenance stamp (source_id, observed_at, payload_hash) is added at export time.
-
-Evidence:
-
-- `src/server.js:1284`
-- `src/server.js:1300`
-- `src/utils.js:335`
-- `src/server.js:1806`
-
-### ENH-28 — A donor-inspectable, hash-chained audit trail
-
-**partial.** Two of the four parts shipped. The money path is now audited: the three parametric writes write action logs with the token subject as actor (src/server.js:2521, 2553, 2633), asserted by test/parametric-trigger.test.js:300. action_logs is read-only by route guard — POST, PATCH and DELETE all answer 405 (src/server.js:2275, 2295, 2313) — and a read-only audit view renders it in the workflow panel (public/workflow/panel.js:135, 168). Missing: there is no hash chain — prev_hash/row_hash appear nowhere in the tree, so tampering is undetectable — and there is no audit export a donor can inspect independently of the operator running the server.
-
-Evidence:
-
-- `src/server.js:2521`
-- `src/server.js:2553`
-- `src/server.js:2633`
-- `src/server.js:2275`
-- `src/server.js:2295`
-- `src/server.js:2313`
-- `public/workflow/panel.js:135`
-- `public/workflow/panel.js:168`
-- `test/parametric-trigger.test.js:300`
-
-### ENH-29 — A store conformance suite, a real schema, and migrations
-
-**partial.** Part 1 shipped and parts 2 and 3 now have: `src/migrations.js` is an ordered, idempotent migration runner with a frozen three-migration list, `SCHEMA_VERSION = 3`, and a `__schema` ledger. Each migration runs in its own transaction *and* records its own ledger row, so a batch that fails halfway leaves the completed migrations applied and recorded rather than half-applied and unrecorded — the usual alternative leaves the runner unable to tell which half it reached. `PostgresStore.ensureSchema` reads `schema_version` and applies `pendingMigrations(from)` instead of issuing hand-written `ALTER TABLE`s on every boot. Migration 3 adds the two generated columns the JSONB table was missing — `region` as `body->>'district'` and `observed_at` as a real `timestamptz` rather than a string inside JSON — with indexes on each, so the queries that were doing `body->>'…'` per row now use one. Still partial: the Postgres half of the conformance suite still only runs when `LINDELA_LITE_TEST_DATABASE_URL` is set and no CI job sets it, so CI measures one adapter against a contract written for two; the single `lite_records` JSONB table remains, with per-collection columns added only as generated expressions over the body rather than as typed columns; and the two stores can still diverge, since `JsonStore.remove()` and the Postgres equivalents are asserted separately rather than by one shared driver.
-
-Evidence:
-
-- `test/store-conformance.test.js:24`
-- `src/migrations.js`
-- `src/postgres-store.js:22`
-- `src/schema.js:211`
 
 ---
 

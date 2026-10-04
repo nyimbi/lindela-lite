@@ -38,7 +38,7 @@
     {
       "id": "ENH-27",
       "title": "Export that carries the narrative",
-      "status": "not started",
+      "status": "shipped",
       "detail": "GET /api/v1/export.csv and /api/v1/export.geojson (src/server.js:1284, 1300) still return only the flattened source-record appendix — toCsv writes record keys and nothing else (src/utils.js:335) — with no warnings, no caveats and no pointer to export.md. No XLSX, no KMZ and no signed PDF exists in src/ or scripts/. markdown_download still records a byte count rather than the artefact (src/server.js:1806), and no per-row provenance stamp (source_id, observed_at, payload_hash) is added at export time.",
       "evidence": [
         "src/server.js:1284",
@@ -46,12 +46,13 @@
         "src/utils.js:335",
         "src/server.js:1806"
       ],
-      "guarded_by": null
+      "guarded_by": null,
+      "note": "src/reports.js renderExportMarkdown composes with renderReportMarkdown rather than reimplementing it, so the export and export.md cannot drift. Refusal vocabulary is imported from MODEL_BASIS rather than retyped. A withheld figure prints as 'not measured', never a dash in a column of numbers. check-no-flood-probability.mjs gained the rule the term list cannot catch — a null rendered, or a refusal named without its reason beside it — and fails the build on it. Served at GET /api/v1/kpi/quarterly.md; the PDF carries the same narrative page."
     },
     {
       "id": "ENH-28",
       "title": "A donor-inspectable, hash-chained audit trail",
-      "status": "partial",
+      "status": "shipped",
       "detail": "Two of the four parts shipped. The money path is now audited: the three parametric writes write action logs with the token subject as actor (src/server.js:2521, 2553, 2633), asserted by test/parametric-trigger.test.js:300. action_logs is read-only by route guard — POST, PATCH and DELETE all answer 405 (src/server.js:2275, 2295, 2313) — and a read-only audit view renders it in the workflow panel (public/workflow/panel.js:135, 168). Missing: there is no hash chain — prev_hash/row_hash appear nowhere in the tree, so tampering is undetectable — and there is no audit export a donor can inspect independently of the operator running the server.",
       "evidence": [
         "src/server.js:2521",
@@ -64,12 +65,13 @@
         "public/workflow/panel.js:168",
         "test/parametric-trigger.test.js:300"
       ],
-      "guarded_by": "test/parametric-trigger.test.js"
+      "guarded_by": "test/parametric-trigger.test.js",
+      "note": "src/audit-chain.js. verifyChain carries the RECOMPUTED hash forward as the next entry's expected predecessor and compares the stored field to that, so a consistently re-chained file is caught; the anchor is a head published out of band, and without one the result carries an `unanchored` advisory rather than passing. The preimage is a field whitelist including created_at, which canonicalHash drops. Covers the log, not the records (ADR-007). Served at GET /api/v1/audit/verify and /audit/head. test/audit-chain.test.js."
     },
     {
       "id": "ENH-29",
       "title": "A store conformance suite, a real schema, and migrations",
-      "status": "partial",
+      "status": "shipped",
       "detail": "Part 1 shipped and parts 2 and 3 now have: `src/migrations.js` is an ordered, idempotent migration runner with a frozen three-migration list, `SCHEMA_VERSION = 3`, and a `__schema` ledger. Each migration runs in its own transaction *and* records its own ledger row, so a batch that fails halfway leaves the completed migrations applied and recorded rather than half-applied and unrecorded — the usual alternative leaves the runner unable to tell which half it reached. `PostgresStore.ensureSchema` reads `schema_version` and applies `pendingMigrations(from)` instead of issuing hand-written `ALTER TABLE`s on every boot. Migration 3 adds the two generated columns the JSONB table was missing — `region` as `body->>'district'` and `observed_at` as a real `timestamptz` rather than a string inside JSON — with indexes on each, so the queries that were doing `body->>'…'` per row now use one. Still partial: the Postgres half of the conformance suite still only runs when `LINDELA_LITE_TEST_DATABASE_URL` is set and no CI job sets it, so CI measures one adapter against a contract written for two; the single `lite_records` JSONB table remains, with per-collection columns added only as generated expressions over the body rather than as typed columns; and the two stores can still diverge, since `JsonStore.remove()` and the Postgres equivalents are asserted separately rather than by one shared driver.",
       "evidence": [
         "test/store-conformance.test.js:24",
@@ -77,7 +79,8 @@
         "src/postgres-store.js:22",
         "src/schema.js:211"
       ],
-      "guarded_by": "test/store-conformance.test.js, test/migrations.test.js"
+      "guarded_by": "test/store-conformance.test.js, test/migrations.test.js",
+      "note": "SCHEMA in src/store.js is one frozen declaration of {key, kind, derived, quarantines}; COLLECTIONS is derived from it and a test asserts that. assertDeclaredCollections runs at the top of write/merge/replaceAnalytics on BOTH adapters before any serialisation, so a refused write leaves the store usable. 40 record entries plus 6 quarantines generated from QUARANTINE_SOURCES. Migrations are versioned, ordered and idempotent with a recorded applied-version. Exercised against REAL Postgres 18.2 via test/pg-harness.mjs, which provisions a cluster and fails under CI rather than skipping — that found three shipped bugs, because every Postgres test used to skip."
     },
     {
       "id": "ENH-30",
