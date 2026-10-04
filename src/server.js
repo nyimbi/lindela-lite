@@ -2838,16 +2838,18 @@ async function handleParametricRoute(store, data, req, res, url, route) {
       }
       return
     }
-    // A hard delete, with the whole removed rule written to the action log
+    // A hard delete, with the removed rule carried whole in the action log
     // rather than a summary of it. The rule defined what gets paid, to whom and
     // on what condition; a delete that left only "a rule was deleted" behind
     // would break the audit chain at exactly the point someone needed to know
     // what had been in force. CE-10 preferred archiving over deleting so the
-    // chain survives; the copy in the log is that archive, and an archived rule
-    // would stay in the simulator picker as something still selectable.
+    // chain survives; this copy is that archive, and an archived rule would stay
+    // in the simulator picker as something still selectable.
     if (req.method === 'DELETE') {
       const rules = (data.parametric_rules || []).filter((r) => r.id !== route.id)
-      const log = actionLog('parametric_rules', 'deleted', existing, null, req.__auth?.subject)
+      const log = actionLog('parametric_rules', 'deleted', existing, null, req.__auth?.subject, {
+        removed_rule: existing,
+      })
       await store.write({ ...data, parametric_rules: rules, action_logs: [...(data.action_logs || []), log] })
       jsonResponse(res, 200, { success: true, data: { id: route.id, deleted: true }, action_log: log })
       return
