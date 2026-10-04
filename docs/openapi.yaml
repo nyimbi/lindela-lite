@@ -37,6 +37,50 @@ paths:
             text/markdown:
               schema: { type: string }
 
+  /api/v1/calibration/by-region:
+    get:
+      summary: Per-region trust, or the reason it was not computed
+      summary_note_removed: true
+      description: |
+        How far this system's predictions have sat from what was subsequently
+        observed, per region.
+
+        A region with too few resolved alerts returns `trust: null` and a
+        reason. Below thirty resolved alerts a score would read as a
+        measurement rather than as an absence of one, so none is given.
+      tags: [analytics]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: region
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Trust per region, with the refusal count
+          content:
+            application/json:
+              schema: { type: object }
+
+  /api/v1/model-drift:
+    get:
+      summary: Whether the relationships the model relies on still hold
+      description: |
+        Population-stability drift on the inputs, plus predicted-versus-observed
+        divergence, per region.
+
+        Four verdicts, and `not_measurable` is a first-class answer rather than a
+        zero. Drift is never reported from a single observation, and divergence
+        is only reported when the observed rate's Wilson interval excludes the
+        predicted mean — eight events cannot support a claim about drift.
+      tags: [analytics]
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Per-region drift verdicts
+          content:
+            application/json:
+              schema: { type: object }
+
   /api/v1/rapidpro/reply:
     post:
       summary: Record a reply to an alert sent over SMS

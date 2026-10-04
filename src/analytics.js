@@ -4,6 +4,8 @@ import { riskLevel, severityWeight } from './schema.js'
 import { clamp, haversineKm, stableId } from './utils.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
 import { computeRoadAccess } from './road-access.js'
+import { calibrationByRegion } from './calibration.js'
+import { driftReport } from './drift.js'
 
 /**
  * Honesty envelopes (ENH-02).
@@ -154,6 +156,71 @@ export function effectiveSampleSize(labels) {
   return Math.max(3, Math.min(n, Math.round(corrected * 100) / 100))
 }
 
+/**
+ * Build the per-region drift inputs `driftReport` expects.
+ *
+ * It takes an explicit list of regions, each with a reference window and a
+ * current window. The split is chronological — the earlier half against the
+ * later — because comparing a source against itself calls every input stable,
+ * and a monitor that can never fire is a monitor that looks like good news.
+ *
+ * A region with fewer than four samples produces no windows at all and is left
+ * out rather than half-filled: half a window is not a window.
+ */
+function driftFromStore(data) {
+  const MIN_SAMPLES = 4
+  const byRegion = new Map()
+
+  for (const row of data.climate_observations || []) {
+    // `precipitation_mm`, not `value` — reading a field nothing writes filters
+    // every record out and the monitor reports no regions, which reads as
+    // "nothing is drifting" rather than "nothing was measured".
+    //
+    // `Number.isFinite` and not truthiness, because 0 mm is a real measurement
+    // and `if (!row.precipitation_mm)` drops every dry month. CHIRPS stores null
+    // explicitly when it does not decode a raster, so null and 0 are different
+    // facts and only one of them is absent.
+    const measured = Number.isFinite(row?.precipitation_mm)
+      ? row.precipitation_mm
+      : Number.isFinite(row?.temperature_max_c) ? row.temperature_max_c : NaN
+    if (!Number.isFinite(measured)) continue
+    const region = row.region_name || row.country
+    if (!region) continue
+    if (!byRegion.has(region)) byRegion.set(region, [])
+    byRegion.get(region).push({
+      value: measured,
+      at: row.observed_at || row.created_at || null,
+    })
+  }
+
+  const regions = []
+  for (const [region, samples] of byRegion) {
+    if (samples.length < MIN_SAMPLES) continue
+    // Undated samples keep their arrival order; a sort on a null date would
+    // scatter them rather than order them.
+    const ordered = [...samples].sort((a, b) => {
+      const ta = a.at ? Date.parse(a.at) : NaN
+      const tb = b.at ? Date.parse(b.at) : NaN
+      if (Number.isNaN(ta) && Number.isNaN(tb)) return 0
+      if (Number.isNaN(ta)) return -1
+      if (Number.isNaN(tb)) return 1
+      return ta - tb
+    })
+    const half = Math.floor(ordered.length / 2)
+    regions.push({
+      region,
+      referenceSamples: ordered.slice(0, half),
+      currentSamples: ordered.slice(ordered.length - half),
+    })
+  }
+
+  const report = driftReport({ regions })
+  // The summary counts belong beside the records, not instead of them: a
+  // consumer asking "is Turkana drifting" needs the row, and one asking "is
+  // anything drifting" needs the count.
+  return report.records.map((record) => ({ ...record, id: `drift_${record.region_name}`, type: 'model_drift', generated_at: report.generated_at }))
+}
+
 export async function refreshAnalytics(store) {
   const data = await store.read()
   const risk_scores = [
@@ -165,7 +232,16 @@ export async function refreshAnalytics(store) {
   const population_at_risk = computePopulationAtRisk(data)
   const facilities_at_risk = computeFacilitiesAtRisk(data)
   const road_access = computeRoadAccess(data)
-  await store.replaceAnalytics({ risk_scores, impact_assessments, data_quality, population_at_risk, facilities_at_risk, road_access })
+  // Calibration and drift are computed on every refresh and stored like the rest
+  // of the derived set, so a region's stale trust score is replaced rather than
+  // accumulating under evidence that has since moved.
+  const region_trust = calibrationByRegion({ ...data, risk_scores })
+  const model_drift = driftFromStore(data)
+  await store.replaceAnalytics({
+    risk_scores, impact_assessments, data_quality,
+    population_at_risk, facilities_at_risk, road_access,
+    region_trust, model_drift,
+  })
 
   // Persist calibration snapshot (best-effort, don't fail refresh)
   if (process.env.LINDELA_LITE_CALIBRATION_DIR !== 'off' && process.env.NODE_ENV !== 'test') {

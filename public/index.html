@@ -221,6 +221,13 @@
             <figure id="seasonalCalendarFig" class="seasonal-calendar" hidden>
               <figcaption class="seasonal-calendar-caption">Seasonal calendar</figcaption>
               <div id="seasonalCalendar"></div>
+              <!-- ENH-20: the flood/alert row, on the same month columns as the
+                   calendar above it. Drawn by /workflow/wire-seasonal.js with the
+                   same width the heatmap was given, so the columns line up at
+                   every viewport rather than by a CSS accident. -->
+              <div id="seasonalCalendarOverlay" class="seasonal-calendar" role="group"
+                   aria-label="Hazard and alert records by month" hidden></div>
+              <p id="seasonalCalendarOverlayNote" class="seasonal-note" hidden></p>
               <p id="seasonalCalendarNote" class="seasonal-note"></p>
             </figure>
           </div>
@@ -328,6 +335,46 @@
               the probability is a flood entering the archive, not water at a
               given elevation.
             </p>
+          </div>
+
+          <!-- Three things a score on a map cannot say about itself: how far it
+               moves when input coverage changes (ENH-17), what the situation
+               looked like at a chosen moment in the archive (ENH-18), and
+               whether any forecast issued here has been checked against an
+               outcome (ENH-21). Each is a lazy module — an operator who scrolls
+               past this block never downloads one of them; see `lazy` in
+               app.js and the reason in scripts/check-budget.mjs. Panels are
+               hidden until their module reports something, so an empty group is
+               never announced. -->
+          <div class="map-sim" id="evidenceSurfaces" role="group" aria-label="Uncertainty, playback and forecast verification">
+            <div class="chart-panel" id="uncertaintyPanel" hidden>
+              <p class="chart-panel-title" id="uncertaintyTitle">Risk score by district, with its sensitivity band</p>
+              <div id="uncertaintyChart"></div>
+              <p id="uncertaintyNote" class="chart-panel-note" role="status" aria-live="polite"></p>
+            </div>
+
+            <div class="chart-panel" id="playbackPanel" hidden>
+              <p class="chart-panel-title">Hazard history playback</p>
+              <div class="map-sim-row">
+                <label class="filter-label" for="playbackStep">
+                  <span>Frame</span>
+                  <!-- Inline min-block-size: the UA's range input is under the
+                       24px SC 2.5.8 floor, and a control the field gate has
+                       already ruled out is not one to reintroduce. styles.css is
+                       not this change's to edit, so the height is set here. -->
+                  <input type="range" id="playbackStep" min="0" max="0" value="0" step="1"
+                         style="min-inline-size: 160px; min-block-size: 32px;" disabled>
+                </label>
+                <button type="button" id="playbackPeak" class="btn" disabled>Jump to peak</button>
+              </div>
+              <p id="playbackSummary" class="chart-panel-note" role="status" aria-live="polite"></p>
+              <div id="playbackChart"></div>
+            </div>
+
+            <div class="chart-panel" id="verifyPanel" hidden>
+              <p class="chart-panel-title">Forecast verification</p>
+              <div id="verifyBody"></div>
+            </div>
           </div>
 
           <div class="map-sim" role="group" aria-label="Route planning">

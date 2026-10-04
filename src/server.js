@@ -1111,6 +1111,39 @@ async function handleApiRequest(store, req, res, url) {
     return
   }
 
+  // Calibration and drift are stored on every refresh, so they are read like
+  // any other derived collection. Both refuse on thin evidence and say why;
+  // the refusal travels with the row rather than becoming an empty list.
+  if (req.method === 'GET' && url.pathname === '/api/v1/calibration/by-region') {
+    const rows = data.region_trust || []
+    const region = url.searchParams.get('region')
+    const selected = region ? rows.filter((r) => r.region_name === region) : rows
+    jsonResponse(res, 200, {
+      success: true,
+      regions: rows.length,
+      returned: selected.length,
+      // A region with too little evidence has `trust` null and a reason. The
+      // count of refusals is as much of the answer as the scores.
+      refused: selected.filter((r) => r.trust === null || r.trust === undefined).length,
+      data: selected,
+    })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/model-drift') {
+    const rows = data.model_drift || []
+    jsonResponse(res, 200, {
+      success: true,
+      regions: rows.length,
+      verdicts: rows.reduce((acc, r) => {
+        acc[r.verdict] = (acc[r.verdict] || 0) + 1
+        return acc
+      }, {}),
+      data: rows,
+    })
+    return
+  }
+
   const auditRoute = matchAuditRoute(url.pathname)
   if (auditRoute && req.method === 'GET') {
     // The published head travels OUT OF BAND. Verifying a chain against a head

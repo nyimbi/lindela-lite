@@ -679,11 +679,50 @@ async function renderSeasonalCalendar(observations) {
   // boundary between "cold" and "warm" in the middle of the observed range
   // instead of at zero, and a −0.1 °C cell would read as strongly cold next to
   // a −1.4 °C one.
+  //
+  // `width` is stated here rather than left to the library's default because the
+  // overlay below is drawn on the same month columns and reproduces this
+  // geometry from it. Two independently-defaulted widths would put the flood row
+  // half a cell out of register with the calendar, which is the sort of wrong
+  // that still looks like a chart.
+  const calendarWidth = 480
   seasonalCalendarEl.innerHTML = heatmap(calendar, {
+    width: calendarWidth,
     height: Math.max(120, calendar.rows.length * 18 + 34),
     diverging: true,
     format: (v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}°C`,
   }).svg
+  await renderSeasonalOverlay(calendar, calendarWidth)
+}
+
+/**
+ * ENH-20: the hazard and alert row, on the calendar's own month columns.
+ *
+ * Drawn from the same `state.data` the map is drawn from, so it cannot disagree
+ * with the map about what happened. A failure here hides the overlay and leaves
+ * the calendar, which is the older and more-used of the two, untouched.
+ */
+async function renderSeasonalOverlay(calendar, width) {
+  if (!seasonalOverlayEl) return
+  let overlay
+  try {
+    overlay = await lazy('/workflow/wire-seasonal.js')
+  } catch {
+    if (seasonalOverlayEl) seasonalOverlayEl.hidden = true
+    if (seasonalOverlayNoteEl) seasonalOverlayNoteEl.hidden = true
+    return
+  }
+  const counts = overlay.monthlyCounts(calendar, {
+    hazards: state.data.events?.data ?? [],
+    alerts: state.data.alerts?.data ?? [],
+  })
+  const height = Math.max(46, calendar.yearsShown.length * 21 + 10)
+  seasonalOverlayEl.innerHTML = overlay.seasonalOverlay(calendar, { width, counts, height })
+  seasonalOverlayEl.hidden = false
+  if (seasonalOverlayNoteEl) {
+    seasonalOverlayNoteEl.textContent = overlay.seasonalOverlayNote(counts)
+    seasonalOverlayNoteEl.hidden = false
+  }
 }
 
 /**
@@ -1106,6 +1145,98 @@ function renderFloodProbabilityPanels(models, { barChart, smallMultiples }) {
 }
 
 // =============================================================
+// Evidence surfaces — the band, the playback, the verification
+// =============================================================
+// Three visualisation primitives that had call sites in their tests and none in
+// the product: `sensitivityBandChart`, `buildFrames`/`frameSummary`/`peakFrame`,
+// and `pairForecasts`/`reliabilityDiagram`. Each is loaded through `lazy()` into
+// `public/workflow/wire-*.js`, so the code that assembles them is not part of the
+// first load either. The data all comes out of `state.data`, which `refresh()`
+// has already merged by the time this runs.
+//
+// The three are independent. One failing must not blank the other two, so each
+// is awaited on its own and each hides its own panel if it cannot draw: a group
+// of three empty cards reads as "nothing happened" rather than "this feature
+// failed".
+//
+// `_evidenceInView` is what keeps the download off the field connection's first
+// paint. These three modules are the largest thing added to the console and most
+// operators open the console to read the map; none of them arrives until the
+// block below the map is scrolled into view.
+let _evidenceInView = false
+let _playbackIndex = 0
+
+async function renderEvidenceSurfaces() {
+  const risks = [
+    ...(state.data.flood?.data ?? []),
+    ...(state.data.conflict?.data ?? []),
+  ]
+  const hazards = state.data.events?.data ?? []
+  const alerts = state.data.alerts?.data ?? []
+  const climate = state.data.climate?.data ?? []
+  if (!_evidenceInView) return
+
+  if (risks.length && uncertaintyPanelEl) {
+    try {
+      const { renderUncertainty } = await lazy('/workflow/wire-uncertainty.js')
+      renderUncertainty({ host: uncertaintyChartEl, note: uncertaintyNoteEl }, risks)
+      uncertaintyPanelEl.hidden = false
+    } catch {
+      uncertaintyPanelEl.hidden = true
+    }
+  }
+
+  if ((hazards.length || alerts.length) && playbackPanelEl) {
+    try {
+      const { createPlayback, playbackRecords } = await lazy('/workflow/wire-playback.js')
+      const handle = createPlayback(
+        { step: playbackStepEl, summary: playbackSummaryEl, chart: playbackChartEl, peak: playbackPeakEl },
+        playbackRecords({ hazards, alerts }),
+        { startIndex: _playbackIndex },
+      )
+      _playbackIndex = handle.timeline.lastFrameIndex
+      playbackPanelEl.hidden = false
+    } catch {
+      playbackPanelEl.hidden = true
+    }
+  }
+
+  if (climate.length && verifyPanelEl) {
+    try {
+      const { renderVerification } = await lazy('/workflow/wire-verify.js')
+      renderVerification(verifyBodyEl, { observations: climate })
+      verifyPanelEl.hidden = false
+    } catch {
+      verifyPanelEl.hidden = true
+    }
+  }
+}
+
+/**
+ * Draw the evidence surfaces the first time the block is scrolled to.
+ *
+ * One-way: once the reader has been there, every later repaint redraws. A gate
+ * that closed again on scroll would blank the panels out from under someone who
+ * scrolled back up to read a number.
+ */
+function watchEvidenceSurfaces() {
+  const host = $('evidenceSurfaces')
+  if (!host || typeof IntersectionObserver !== 'function') {
+    // No observer: draw on the next repaint rather than never. An operator on a
+    // browser without one loses the lazy first load and nothing else.
+    _evidenceInView = true
+    return
+  }
+  const observer = new IntersectionObserver((entries) => {
+    if (!entries.some((e) => e.isIntersecting)) return
+    _evidenceInView = true
+    observer.disconnect()
+    renderEvidenceSurfaces().catch(() => {})
+  }, { rootMargin: '200px' })
+  observer.observe(host)
+}
+
+// =============================================================
 // Fetch helpers
 // =============================================================
 // Both of these used to check only that the response parsed, never that it
@@ -1241,6 +1372,18 @@ const floodProbRegionsEl = $('floodProbRegions')
 const floodProbBestEl    = $('floodProbBest')
 const floodProbBestMetaEl = $('floodProbBestMeta')
 const floodProbNoteEl    = $('floodProbNote')
+const uncertaintyPanelEl = $('uncertaintyPanel')
+const uncertaintyChartEl = $('uncertaintyChart')
+const uncertaintyNoteEl  = $('uncertaintyNote')
+const playbackPanelEl    = $('playbackPanel')
+const playbackStepEl     = $('playbackStep')
+const playbackPeakEl     = $('playbackPeak')
+const playbackSummaryEl  = $('playbackSummary')
+const playbackChartEl    = $('playbackChart')
+const verifyPanelEl      = $('verifyPanel')
+const verifyBodyEl       = $('verifyBody')
+const seasonalOverlayEl  = $('seasonalCalendarOverlay')
+const seasonalOverlayNoteEl = $('seasonalCalendarOverlayNote')
 
 function svgEl(tag, attrs = {}) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', tag)
@@ -2425,6 +2568,12 @@ async function refresh({ first = false, force = false } = {}) {
     loadFoodSecuritySummary().catch(() => {})
     loadDiseaseSummary().catch(() => {})
     loadFloodProbabilityModels().catch(() => {})
+
+    // The evidence surfaces — the sensitivity band, the hazard playback and the
+    // forecast verification — read the records already merged above. Nothing here
+    // fetches: a panel that re-queried the API per panel would be four more
+    // requests every thirty seconds for figures the console is already holding.
+    renderEvidenceSurfaces().catch(() => {})
 
     // Reuse whatever state already holds for the panels this tick skipped.
     // Without the fallback the map emptied itself every time a tab whose
@@ -3876,11 +4025,36 @@ function openDetailDialog(record) {
   const label = record.title || record.name || record.event_type || record.id || 'Detail'
   detailTitleEl.textContent = label
   const entries = Object.entries(record).filter(([k]) => k !== 'metadata')
-  detailBodyEl.innerHTML = `<dl>${entries.map(([k, v]) =>
-    `<dt>${escapeHtml(k.replaceAll('_', ' '))}</dt><dd>${escapeHtml(String(v ?? ''))}</dd>`
-  ).join('')}</dl>`
+  // ENH-19. The derivation goes above the field list, not instead of it: the
+  // field list is still what the record literally says, and the derivation is
+  // the part a reader cannot get anywhere else.
+  detailBodyEl.innerHTML = `<div id="explainHost" class="chart-panel"></div>`
+    + `<dl>${entries.map(([k, v]) =>
+      `<dt>${escapeHtml(k.replaceAll('_', ' '))}</dt><dd>${escapeHtml(String(v ?? ''))}</dd>`
+    ).join('')}</dl>`
   rememberDialogOpener(detailDialog)
   detailDialog.showModal()
+  renderExplainInto(record)
+}
+
+/**
+ * Fill the dialog's explanation block.
+ *
+ * Filled after the dialog opens, because the module is behind `lazy()` and a
+ * dialog that waits for a network fetch before it can be read is a dialog that
+ * does not open on a slow link. An empty host on failure is the right outcome:
+ * the field list below it is complete without this, and a stub saying "could
+ * not load" would be a worse read than the absence.
+ */
+async function renderExplainInto(record) {
+  const host = detailBodyEl?.querySelector('#explainHost')
+  if (!host || !record) return
+  try {
+    const { renderExplain } = await lazy('/workflow/wire-explain.js')
+    renderExplain(host, record)
+  } catch {
+    host.innerHTML = ''
+  }
 }
 
 detailDialog?.addEventListener('click', (e) => {
@@ -4283,6 +4457,9 @@ restoreFiltersFromUrl()
 // the markup ships with `active` on it. Mount its escalation section here, or
 // it waits for a tab switch the operator never makes.
 ensureEscalation()
+// Armed before the first refresh so the observer's callback, if it fires during
+// the boot fetch, finds a store already holding this tick's records.
+watchEvidenceSurfaces()
 await refresh({ first: true })
 // The build version shown in the Settings panel comes from the health
 // endpoint, which reads package.json, rather than from a literal in the markup
