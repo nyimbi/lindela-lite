@@ -967,12 +967,12 @@ and the corrections are recorded here rather than quietly edited away
 | 0 — correctness | done | offline boot fixed at the root: the precache is a derived breadth-first closure over the import graph (`shellGraph` in `public/sw.js`), not a hand-kept list, so an added import cannot be forgotten and a missing module is asserted in `test/web-chw-offline.test.js`; `skipWaiting`/`claim`; offline queue routed through `shared/runtime.js`; `refresh()` settles per-panel and names failures; `res.ok` checked via shared `apiFetch`; XSS closed in `co` and `districts`; `escapeHtml` preserves `0`/`false`; four undefined classes defined; checkbox class; `:focus-visible` replaces two `outline: none` |
 | 1 — serving | done | 238 KB → 65 KB over the wire (3.7×), measured on the response path; the console's full first load is 103 KB over 16 assets and is now budgeted; ETag revalidation, per-type `cache-control`, `sw.js` `no-cache`; fifteen static branches collapsed into one `sendFile`; CSP + `nosniff` + `frame-ancestors` + `referrer-policy` + `permissions-policy`; SW API cache bounded and TTL-pruned |
 | 2 — one design system | done | all 8 surfaces link `tokens.css` + `styles.css` + `components.css`; `shared/fmt.js`, `shared/labels.js` created; `apiFetch`/`apiSettled`/`submitOrQueue` adopted by every surface; duplicated `escapeHtml`, date, number and severity helpers removed (178 LOC); responsive gate enforces the 24px AA target floor |
-| 3 — content design | in progress | `labels.js` names every metric; focal-point card states the comparison and the consequence; scenario workbench opens on five named presets; workflow ribbon leads with a total; CO counts are integers; blockchain IDs truncated; `shared/fmt.js` gives one time format with a zone and one duration format. An unmapped status now falls back to a legible default rather than inheriting whatever colour it sat on — four workflow states had been rendering as no text at 1.21:1 |
+| 3 — content design | done | map framed on the pilot districts rather than the 21x25° region box, which was ~890x1290px of map with the data in the lower-left quarter; seasonal advisory is a month-by-year calendar with the qualification visible and the full text behind a disclosure, replacing 8px prose; the two empty context panels are one 101px strip that names what is missing without making it read as zero; alerts, reports and equity page at 25 with a stated count, via `shared/paging.js` which is finally testable (it was exported from app.js, so no runner could require it and the pager had rendered zero times in the suite); console had two navbars both reading "Lindela Lite", now one navbar plus a slim control toolbar |
 | 4 — accessibility | done | one `<h1>`, `<main>` and skip link on all 8; 38 `<th>` scoped; 0 unlabelled inputs; 0 missing `alt`; severity contrast fixed on two surfaces (was 2.2–4.3:1); `--ink-faint` raised above AA; CHW live regions and focus management; map focusable with keyboard pan/zoom and a textual record list; print stylesheet; focal-point dialog focus + stale-state fix |
 | 5 — i18n and RTL | done | per-surface locale reconciliation enforced by `scripts/check-i18n-offers.mjs`; three surfaces were offering languages at 0% coverage; `lang`/`dir` now driven from one locale table |
 | 6 — JTBD contract | done | Verified against `src/`: three of the six attributes in `jtbd:598` do not exist in the schema — `deadline`, `blockers`, `next_action` are nowhere — so the panel shows state, owner and history for real and names the other three as unrecorded rather than rendering a dash that reads as "none due". All six API-only routes now have controls; shadow run distinguishes would fire / would not fire / **could not be tested**, because a non-numeric `computed_value` with `would_fire: false` is silence, not a negative finding. Escalation view ranks still-open alerts by age and says on its face that no deadline exists, so nothing is "past" one. Confirm gates start disabled, take focus themselves, and do not close on backdrop. Palette searches records. Not built: an exact retention preview — `retentionDays` is readable only from `data/pii-policy.json`, so the view shows counts and says the window is not exposed rather than guessing 365 |
 | 8 — component library | done | spinner, toast, tooltip, pagination, shared `.card`/`.data-table` |
-| 9 — automated gate | done | `check-responsive`, `check-a11y`, `check-i18n-offers` |
+| 9 — automated gate | done | `check-responsive`, `check-a11y`, `check-i18n-offers`, `check-budget` — 24 viewport combinations, 96 accessibility assertions across 8 surfaces, and a first-load budget |
 | 10 — copy pass | done | catalogue audited (227 keys, one terse status); static HTML placeholders and hidden captions audited; status messages now name what changed and what it means — "Alert rejected. No finance is released." rather than "Alert rejected." |
 | 7 — performance | done | `renderMap` memoises the static layers and reuses risk gradients. `scripts/check-budget.mjs` walks the console's real reference graph — `src=`, `href=`, `from '…'`, `@import` — and fails above 124 KB; currently 116 KB over 16 assets. Raised once, on purpose, with the reason in the script: the 11 KB is the workflow surfaces, which load dynamically |
 | 11 — requirements track reality | done | Items 14–20 added to the JTBD Definition of Done: operability without a mouse, a contrast floor, named surfaces, reflow at 400%, announced async state, honoured reduced motion, numbers that state what they measure. Each bound to a gate rather than to review. Three stale claims in the traceability matrix corrected (a licence drift and a missing CHANGELOG that no longer existed, §5.11 printed before §5.10), and a UI evidence section added — every evidence cell previously named a file, an endpoint or a PDF, and none named a screen |
@@ -1002,3 +1002,25 @@ not incidental: several hours of this work went into debugging assertions that
 were passing or failing against a cached build rather than the source, and
 `chrome --headless --screenshot` sizes the window rather than the layout
 viewport, which renders a correct page as one with content running off the edge.
+
+
+---
+
+## Known outstanding
+
+**Three failures in `test/completeness-wiring.test.js`, in another session's work.**
+`gdacs-archive` reports `complete: true` for a walk where a quarter came back at
+the source cap. Its `flagged_windows` comes back empty and the reason reads
+"last page came back partial", so the exactly-full case is either not detected
+or is lost when the per-window verdicts merge. That is a logic bug in the
+completeness feature, not a rename, and fixing it properly needs the design
+intent for how a capped quarter should read. Left alone deliberately and
+reported rather than papered over.
+
+**`src/ingestion.js` and `src/connectors/http.js` were repaired, not designed.**
+The server did not boot for roughly thirteen hours: `beginFetchRecording` was
+imported and never exported, and `rateLimiterFor` was called while declared as
+`limiterFor`. Both are now in place and the suite runs. They were recovered from
+the call sites' expectations, not from a stated design, so the shape of the
+per-run recording — whether it should also carry response metadata, and what
+happens on a nested begin — is still undecided.
