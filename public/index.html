@@ -24,53 +24,83 @@
       <span id="queuedBadge" class="queued-badge" hidden></span>
     </div>
 
-    <header class="topbar" role="banner">
-      <div class="topbar-brand">
-        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle cx="12" cy="12" r="3" fill="currentColor"/>
-          <circle cx="12" cy="12" r="7" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.5"/>
-          <circle cx="12" cy="12" r="11" stroke="currentColor" stroke-width="1" fill="none" opacity="0.25"/>
-          <line x1="12" y1="1" x2="12" y2="4" stroke="currentColor" stroke-width="1.5"/>
-          <line x1="12" y1="20" x2="12" y2="23" stroke="currentColor" stroke-width="1.5"/>
-          <line x1="1" y1="12" x2="4" y2="12" stroke="currentColor" stroke-width="1.5"/>
-          <line x1="20" y1="12" x2="23" y2="12" stroke="currentColor" stroke-width="1.5"/>
-        </svg>
-        <h1 class="brand-name" data-i18n="app.title">Lindela Lite</h1>
-      </div>
-      <div class="topbar-controls">
-        <select id="locale-select" aria-label="Language">
-          <option value="en">English</option>
-          <option value="sw">Swahili</option>
-          <option value="ar">العربية</option>
-          <option value="so">Somali</option>
-          <option value="din">Dinka</option>
-          <option value="km">Karimojong</option>
-          <option value="nk">Ngakarimojong</option>
-          <option value="fr">Français</option>
-          <option value="pt">Português</option>
-          <option value="am">አማርኛ</option>
-        </select>
-        <span id="storageMode" class="badge badge-storage">json</span>
-        <span id="connectionStatus" class="badge badge-connection">online</span>
-        <button id="refreshButton" class="btn btn-icon" type="button" aria-label="Refresh" data-i18n-title="action.refresh" title="Refresh">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            <polyline points="12,2 12.9,4.7 10.2,4.7" fill="currentColor"/>
-          </svg>
-        </button>
-        <button id="cmdPaletteButton" class="btn btn-icon" type="button" aria-label="Command palette" title="Cmd+K">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M3 8h10M8 3v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-        </button>
-      </div>
-    </header>
 
     <!-- The ribbon used to be eight tiles labelled with alert-rule names
          ("Anticipatory Alert", "Cold Chain Protection") carrying an open count
          and "closed: N". They read as eight KPIs when they are one number split
          eight ways, and the actual totals — 9 open, 4 closed — appeared
          nowhere. The summary leads; the breakdown is labelled as one. -->
+
+    <!-- The console's own controls. The navbar injected by shared/navbar.js sits
+         directly above this and already carries the brand, so repeating it here
+         is what produced two stacked bars with the same name on them. This row is
+         console-only: storage mode, connection, refresh, command palette. -->
+    <div class="console-toolbar">
+      <div class="console-toolbar-controls">
+      <select id="locale-select" aria-label="Language">
+        <option value="en">English</option>
+        <option value="sw">Swahili</option>
+        <option value="ar">العربية</option>
+        <option value="so">Somali</option>
+        <option value="din">Dinka</option>
+        <option value="km">Karimojong</option>
+        <option value="nk">Ngakarimojong</option>
+        <option value="fr">Français</option>
+        <option value="pt">Português</option>
+        <option value="am">አማርኛ</option>
+      </select>
+      <span id="storageMode" class="badge badge-storage">json</span>
+      <span id="connectionStatus" class="badge badge-connection">online</span>
+      <button id="refreshButton" class="btn btn-icon" type="button" aria-label="Refresh" data-i18n-title="action.refresh" title="Refresh">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <polyline points="12,2 12.9,4.7 10.2,4.7" fill="currentColor"/>
+        </svg>
+      </button>
+      <button id="cmdPaletteButton" class="btn btn-icon" type="button" aria-label="Command palette" title="Cmd+K">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3 8h10M8 3v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
+          <label class="filter-label">
+            <span>Time</span>
+            <select id="mapTimeRange">
+              <option value="24h">24 h</option>
+              <option value="7d" selected>7 d</option>
+              <option value="30d">30 d</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+          <label class="filter-label">
+            <span data-i18n="label.severity">Severity</span>
+            <select id="mapSeverity">
+              <option value="" data-i18n="filter.all">All</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label class="filter-label">
+            <span>Source</span>
+            <select id="mapSource">
+              <option value="">All</option>
+            </select>
+          </label>
+          <label class="filter-label">
+            <input type="checkbox" id="coldChainToggle">
+            <span data-i18n="filter.cold_chain">Cold-chain nodes</span>
+          </label>
+          <span id="mapRecordCount" class="map-record-count"></span>
+          <!-- The map's text alternative. Nothing in the product listed hazards,
+               assets, flood extents or road state as text, so on both
+               officer-facing surfaces the primary decision surface was a
+               picture with no non-visual form. -->
+          <button type="button" class="btn btn-xs map-list-toggle" id="mapListToggle"
+                  aria-expanded="false" aria-controls="mapRecordList">Show as list</button>
+        </div>
+      </div>
+    </div>
     <section id="workflowOverview" class="workflow-ribbon" aria-label="Workflow overview">
       <div class="workflow-summary">
         <span class="workflow-summary-count" id="workflowOpen">—</span>
@@ -92,6 +122,9 @@
     </section>
 
     <main class="console-layout" id="main" tabindex="-1">
+      <!-- The brand in the navbar is shared by all eight surfaces, so it cannot
+           be any one page's h1. This one names the page an operator is on. -->
+      <h1 class="visually-hidden">Operations console</h1>
 
       <section class="map-section" aria-label="Situational map">
         <p class="visually-hidden" id="mapKeyboardHelp">
@@ -221,43 +254,6 @@
           </div>
 
           <div class="map-filters">
-            <label class="filter-label">
-              <span>Time</span>
-              <select id="mapTimeRange">
-                <option value="24h">24 h</option>
-                <option value="7d" selected>7 d</option>
-                <option value="30d">30 d</option>
-                <option value="all">All</option>
-              </select>
-            </label>
-            <label class="filter-label">
-              <span data-i18n="label.severity">Severity</span>
-              <select id="mapSeverity">
-                <option value="" data-i18n="filter.all">All</option>
-                <option value="critical">Critical</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </select>
-            </label>
-            <label class="filter-label">
-              <span>Source</span>
-              <select id="mapSource">
-                <option value="">All</option>
-              </select>
-            </label>
-            <label class="filter-label">
-              <input type="checkbox" id="coldChainToggle">
-              <span data-i18n="filter.cold_chain">Cold-chain nodes</span>
-            </label>
-            <span id="mapRecordCount" class="map-record-count"></span>
-            <!-- The map's text alternative. Nothing in the product listed hazards,
-                 assets, flood extents or road state as text, so on both
-                 officer-facing surfaces the primary decision surface was a
-                 picture with no non-visual form. -->
-            <button type="button" class="btn btn-xs map-list-toggle" id="mapListToggle"
-                    aria-expanded="false" aria-controls="mapRecordList">Show as list</button>
-          </div>
 
           <p class="visually-hidden" id="mapViewAnnouncer" role="status" aria-live="polite"></p>
           <div id="mapRecordList" class="map-record-list" hidden>
