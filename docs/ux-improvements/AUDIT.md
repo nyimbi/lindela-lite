@@ -231,6 +231,63 @@ contributor needs to know what to protect.
 
 ---
 
+## What the fixes found that the audit did not
+
+Fixing the findings turned up three instances of one bug class, in three files,
+written by three different people, none of them caught by the test suite or by
+any gate.
+
+**An author `display` rule silently cancels the `hidden` attribute.**
+
+```css
+.statusbar-metric { display: inline; }   /* beats [hidden] { display: none } */
+```
+
+The user agent's `[hidden]` rule is a plain type-free selector. Any author rule
+naming a display value on the same element outranks it, and `hidden` becomes
+inert. Three surfaces shipped this:
+
+| Element | Rule | What rendered |
+|---|---|---|
+| `.statusbar-metric` (console) | `display: inline` | "Last signal:", "Median lag:" — labels with nothing after the colon, permanently |
+| `.empty-state-large` (scenarios) | `display: flex` | the empty state stayed permanently *above* a completed run |
+| `.district-card` (districts) | — already had `[hidden] { display: none }` | correct, which is how it was found: one author had already worked it out |
+
+Each read as a data problem. None was one. The fix is always the same and
+always has to be written out: `.thing[hidden] { display: none }`. The failure is
+silent because `hidden` still reports as present in the DOM, still serialises,
+and still passes any assertion that checks the attribute rather than the
+geometry.
+
+Two related specificity traps from the same pass:
+
+- `[dir="rtl"] .console-layout` declared *outside* any media query outranks
+  `.console-layout` *inside* the 800px breakpoint. Media queries add no
+  specificity of their own, so an Arabic phone kept the desktop grid: 66
+  controls past the left edge, in a container with `overflow: hidden`, with
+  `documentElement.scrollWidth === clientWidth` throughout.
+- `justify-content: flex-end` aligns a flex container's overflow from the
+  **start** edge. Right-aligning a child that cannot fit hangs the overflow off
+  the left, where nothing can scroll to it and no overflow check can see it.
+
+None of these is visible to `documentElement.scrollWidth`, which is why the gate
+now measures the start edge directly and runs in both directions: 48 assertions,
+8 surfaces × 3 viewports × LTR and RTL.
+
+---
+
+## Status
+
+Closed: CW-01, CW-03, CW-04, CW-06, CW-09, CW-10, CW-15, HX-01, HX-02, HX-03,
+HX-04, HX-08, HX-11, plus the four axe rules. `check-responsive` 48/48,
+`check-a11y` clean, `npm test` green.
+
+Open and assigned: CW-02, CW-05, CW-07, CW-12, CW-13, CW-14 (the blockers and
+the focal-point and field-app friction), CW-11 (scenarios CTA position), HX-09,
+HX-12, HX-13, and the cross-surface link extension.
+
+---
+
 ## Unresolved
 
 - **`/districts/` renders raw i18n keys** — a live defect the audit confirmed; the fix is in
