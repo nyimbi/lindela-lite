@@ -251,6 +251,7 @@ export function emptyStore() {
     food_security_records: [],
     disease_observations: [],
     flood_probability_models: [],
+    watermark_state: [],
     region_trust: [],
     model_drift: [],
     // ENH-13. Must match COLLECTIONS in store.js: an emptyStore key that

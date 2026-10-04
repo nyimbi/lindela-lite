@@ -1790,8 +1790,10 @@ label:has(> input[type="radio"]) {
 }
 
 /* --- Basemap layers ------------------------------------------ */
-.ocean-layer path { fill: oklch(30% 0.03 220 / 0.3); stroke: oklch(35% 0.03 220 / 0.5); stroke-width: 0.5; }
-.land-layer path  { fill: oklch(20% 0.01 260 / 0.6); stroke: var(--stroke-strong); stroke-width: 0.8; pointer-events: none; }
+/* Themed, so the landmass reads as land in every theme rather than as one dark
+   grey block over a white page. */
+.ocean-layer path { fill: var(--map-ocean); stroke: var(--map-ocean-edge); stroke-width: 0.5; }
+.land-layer path  { fill: var(--map-land); stroke: var(--map-land-edge); stroke-width: 0.8; pointer-events: none; }
 .districts-layer circle { fill: none; stroke: var(--brand); stroke-width: 1.2; stroke-dasharray: 4 3; opacity: 0.75; }
 .districts-layer text { fill: var(--ink-muted); font-size: 10px; font-family: var(--font-sans); pointer-events: none; }
 

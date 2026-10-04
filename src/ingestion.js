@@ -114,6 +114,21 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
 
   const source_runs = []
   const merged = Object.fromEntries(OUTPUT_COLLECTIONS.map((key) => [key, []]))
+
+  // Per-source fetch position, read once at the start of the run. A second read
+  // mid-run would see a different snapshot from the one the sources were seeded
+  // against, and the run would resume from a position it never started at.
+  // A store without `read` has no watermarks, which is true rather than a
+  // failure: the in-process tests pass a merge-only stub, and a connector run
+  // against one simply starts from the beginning of its series.
+  const existingWatermarks = typeof store.read === 'function'
+    ? (await store.read()).watermark_state || []
+    : []
+  const watermarkBySource = new Map(existingWatermarks.map((row) => [row.source, row.state || {}]))
+  // What each source returns this run, written back after every source has
+  // finished — a partial write mid-run would leave the store claiming a position
+  // the run never reached.
+  const nextWatermarks = []
   const quarantined = Object.fromEntries(OUTPUT_COLLECTIONS.map((key) => [quarantineCollectionName(key), []]))
   const provenance_by_run = new Map()
   // ENH-10. Per-run, not per-process: the breaker exists to stop one dead
@@ -129,6 +144,11 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     const sourceRequest = {
       ...request,
       source,
+      // What this source last fetched, so it fetches only what is new.
+      // The connector contract already accepted and returned this; nothing
+      // supplied it, so every run started from the beginning of the series and
+      // re-downloaded forty years of ERA5 to discover nothing was new.
+      watermark_state: watermarkBySource.get(source) || {},
       timeout_ms: toNumber(request.timeout_ms ?? request.timeoutMs ?? policy.timeout_ms, policy.timeout_ms || 20000),
       retries: toNumber(request.retries ?? policy.retries, policy.retries || 0),
     }
@@ -180,6 +200,18 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
       // the URLs it builds internally.
       beginFetchRecording(`${source}:${startedAt}`)
       output = await runConnectorWithRetries(connector, sourceRequest)
+      // A connector that returns no state keeps the state it was given. Treating
+      // the absence as a reset would lose the position on any connector that
+      // has not been wired up yet.
+      if (output && output.watermark_state) {
+        nextWatermarks.push({
+          id: `watermark_${source}`,
+          type: 'watermark_state',
+          source,
+          state: output.watermark_state,
+          updated_at: new Date().toISOString(),
+        })
+      }
       attempts = output.__attempts || 1
       errors = output.errors || []
       const records = countRecords(output)
@@ -362,6 +394,11 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     ...quarantined,
     source_runs,
     data_lineage,
+    // Only the sources that actually reported a position. A source that was not
+    // run, or that returned nothing, keeps the state it had rather than having
+    // it cleared — losing a cursor because a run was interrupted is exactly how
+    // a resumable backfill stops being resumable.
+    ...(nextWatermarks.length ? { watermark_state: nextWatermarks } : {}),
   })
   return {
     source_runs,

@@ -107,6 +107,10 @@ export const SCHEMA = Object.freeze([
   { key: 'population_at_risk', derived: true },
   { key: 'facilities_at_risk', derived: true },
   { key: 'data_lineage' },
+  // One row per source's fetch position. The watermark module is pure —
+  // state in, state out, nothing stored — so without a home for it here a
+  // 40-year archive walks the whole series on every run forever.
+  { key: 'watermark_state' },
   // Per-region calibration and drift, both computed rather than ingested.
   // `derived` puts them under `replaceAnalytics`, which is what makes them
   // replace rather than accumulate.
