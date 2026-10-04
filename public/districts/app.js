@@ -863,9 +863,24 @@ function renderOverview(overview) {
   app.appendChild(sigSection)
 }
 
+/**
+ * Paint a terminal failure, in both places the reader can look.
+ *
+ * This cleared the app, set `aria-busy="false"` and drew the panel — and left
+ * the status line reading "Loading." indefinitely. `#app-status` is the one
+ * element on the page designed to be the source of truth about what is
+ * happening, and it was the element lying: a reader who checks it first is told
+ * the load is still running, and `/co/` by contrast resolves its status line to
+ * a terminal sentence. Same product, two different answers to "did it finish?".
+ *
+ * So every failure resolves the status line too, from the same message. The
+ * status is not a second string to keep in step; it is the message, which is
+ * the only way it cannot drift.
+ */
 function showError(app, message) {
   clearApp()
   app.setAttribute('aria-busy', 'false')
+  setStatus(message)
   const panel = document.createElement('div')
   panel.className = 'error-panel'
   // role="alert": this replaces a page the reader was waiting on, and an
@@ -874,6 +889,8 @@ function showError(app, message) {
   panel.setAttribute('role', 'alert')
   panel.innerHTML = `<strong>${esc(message)}</strong>
     <p>${esc(t('districts.error_body', 'The district data could not be loaded. Check the connection and try again.'))}</p>`
+  // The panel announces; the status line records. A screen reader that lands
+  // here by tab rather than by alert still gets a terminal state to read.
   app.appendChild(panel)
 }
 
