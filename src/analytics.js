@@ -5,6 +5,155 @@ import { clamp, haversineKm, stableId } from './utils.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
 import { computeRoadAccess } from './road-access.js'
 
+/**
+ * Honesty envelopes (ENH-02).
+ *
+ * Every number this module returns used to travel with either nothing or one
+ * prose `limits` string, and prose is the one form a machine cannot check: an
+ * integrator reading the payload never sees the sentence, and a dashboard can
+ * drop it silently. The envelope makes the caveat part of the value — what the
+ * number is, what it is not, what it was computed from, and what it refuses to
+ * say — so the caveat survives the trip through a consumer that knows nothing
+ * about this repository.
+ *
+ * The prose `limits` strings stay. The envelope is structure, not a replacement
+ * for the sentence, and each envelope restates the sentence's claim in a field
+ * a test can assert on.
+ */
+
+/**
+ * The kinds this module emits, with the claim each one is not entitled to make.
+ *
+ * A kind with no entry here is refused rather than described: an envelope whose
+ * `not` is missing states what a number is without stating what it is not,
+ * which is the failure the envelope exists to prevent.
+ */
+export const ENVELOPE_KINDS = Object.freeze({
+  flood_risk_score: 'a weighted severity index over forecast rainfall, rain probability and nearby hazard reports — not a probability of flooding',
+  climate_conflict_risk_score: 'a weighted sum of input counts and severities — not a probability of conflict or of any climate-driven outcome',
+  service_impact_score: 'a blend of the two nearest region risk scores — not a forecast of service interruption and not an estimate of people affected',
+  data_quality_confidence: 'a completeness heuristic over geocoding, record count, run status and record age — not an accuracy measurement of the underlying data',
+  calibration_summary: 'an average over stored risk-score records — not a validation of the model behind them',
+  trust_score: 'a weighted composite of measured alert outcome agreement, outcome sample size and outcome recording coverage — not a statement that alerts will be correct',
+  drift_verdict: 'a comparison of two windows of the same series — not a diagnosis of the cause of a change',
+})
+
+const BASIS_DOC = 'docs/flood-probability-model-basis.md'
+const ENVELOPE_RETRIEVED_AT = () => new Date().toISOString()
+
+/**
+ * Build the envelope for one number.
+ *
+ * `basis` is the evidence the number was computed from; `refused` is what this
+ * call declined to say and why. Both are structural, never prose: a refusal
+ * that cannot be asserted on is a comment.
+ *
+ * Refuses — returns `value: null` and a reason rather than a number — when the
+ * kind is unknown or the value is not finite. A NaN in an envelope is the same
+ * defect as a NaN in the score, and JSON turns it into `null` on the way out
+ * with nothing to mark it as a refusal.
+ */
+export function honestyEnvelope(kind, { value, basis = {}, refused = [], notIncluded = [], evidence = {} } = {}) {
+  const claim = ENVELOPE_KINDS[kind]
+  const reasons = [...refused]
+  if (!claim) reasons.push(`unknown envelope kind "${kind}"; the envelope cannot state what a number of this kind is not`)
+  if (value !== null && value !== undefined && !Number.isFinite(value)) reasons.push('value is not finite, so it is withheld rather than published as null')
+
+  // Withheld unless the envelope can say both what the number is and what it is
+  // not. A value travelling without the second half is the bare number this
+  // envelope was added to stop.
+  const publishable = Number.isFinite(value) && Boolean(claim)
+  return {
+    value: publishable ? value : null,
+    limits: {
+      kind: kind ?? null,
+      not: claim ?? null,
+      // Uniform on every record, and false: nothing in this module is
+      // calibrated against observed outcomes except through src/calibration.js,
+      // which says so on its own records.
+      calibrated_uncertainty: false,
+      sample: basis.sample ?? null,
+    },
+    evidence: {
+      basis_doc: BASIS_DOC,
+      basis: basis.description ?? null,
+      source_ids: basis.source_ids ?? [],
+      retrieved_at: evidence.retrieved_at ?? ENVELOPE_RETRIEVED_AT(),
+    },
+    not_included: notIncluded,
+    refused: reasons,
+  }
+}
+
+/**
+ * Three tiers of uncertainty on one number (ENH-04), each named by what it
+ * measures.
+ *
+ * The names are load-bearing. `confidence interval` is forbidden here because
+ * it means something specific — a range over the posterior of the outcome — and
+ * none of these three is that. A tier is either a measured spread with its
+ * sample attached, or a refusal stating which tier is absent and why.
+ *
+ * - `model_parameter`: spread of the fitted coefficients across refits. Absent
+ *   for any score that was never fitted, which is most of them.
+ * - `sampling`: a Wilson interval on the contingency counts, reported with an
+ *   effective n. The months are not independent — the trailing 90-day windows
+ *   overlap, so consecutive months share most of their rainfall — and a Wilson
+ *   interval computed on the raw count is narrower than the evidence supports.
+ * - `coverage`: what the number does not represent, which is always present and
+ *   never empty.
+ */
+export function uncertaintyTiers({ modelParameter = null, sampling = null, coverage = [] } = {}) {
+  const tier = (measures, value, refusal) => (refusal
+    ? { measures, refused: refusal }
+    : { measures, ...value })
+  return {
+    model_parameter: tier(
+      'dispersion of the fitted coefficients across refits of this model; absent for a score that is not a fitted model',
+      modelParameter,
+      modelParameter ? null : 'no fit underlies this number, so there is no parameter to be uncertain about',
+    ),
+    sampling: tier(
+      'spread of the observed rate around its point estimate on the contingency counts, with an effective n corrected for serial correlation between months',
+      sampling,
+      sampling ? null : 'no contingency counts underlie this number, so there is no sample to put an interval around',
+    ),
+    coverage: {
+      measures: 'the populations and effects this number does not represent',
+      not_represented: Array.isArray(coverage) ? [...coverage] : [],
+    },
+  }
+}
+
+/**
+ * Effective sample size for a monthly binary series.
+ *
+ * `n_eff = n * (1 - r1) / (1 + r1)` for lag-1 autocorrelation `r1`, the
+ * standard correction for an AR(1) sample. The trailing 90-day rainfall
+ * window makes consecutive months strongly positively correlated, so the raw
+ * count is an overcount of independent evidence and an uncorrected interval
+ * reads as tighter than the record is.
+ *
+ * Clamped at 3: below that the correction produces an interval too wide to be
+ * read, which is a refusal wearing a number. Returns `null` for a series too
+ * short or too constant to estimate `r1` from — a constant series has zero
+ * variance and an undefined correlation, not a correlation of zero.
+ */
+export function effectiveSampleSize(labels) {
+  const values = (labels || []).filter((v) => v === 0 || v === 1)
+  const n = values.length
+  if (n < 4) return null
+  const mean = values.reduce((a, b) => a + b, 0) / n
+  const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / n
+  if (!(variance > 0)) return null
+  let cov = 0
+  for (let i = 1; i < n; i += 1) cov += (values[i] - mean) * (values[i - 1] - mean)
+  const r1 = cov / ((n - 1) * variance)
+  const corrected = n * (1 - r1) / (1 + r1)
+  if (!Number.isFinite(corrected)) return null
+  return Math.max(3, Math.min(n, Math.round(corrected * 100) / 100))
+}
+
 export async function refreshAnalytics(store) {
   const data = await store.read()
   const risk_scores = [
@@ -99,6 +248,11 @@ export function computeFloodRisk(data, options = {}) {
     const score_p90 = clamp(score + halfWidth, 0, 100)
     const interval_width = score_p90 - score_p10
 
+    // One timestamp for the record and its envelope. Two `new Date()` calls a
+    // microsecond apart would let a consumer diff the two and conclude the
+    // evidence was gathered after the score it explains.
+    const generated_at = new Date().toISOString()
+
     const drivers = {
       precipitation_mm: Math.round(precipitation * 10) / 10,
       precipitation_probability_pct: maxProbability,
@@ -133,9 +287,39 @@ export function computeFloodRisk(data, options = {}) {
       calibrated_uncertainty: false,
       risk_level: riskLevel(score),
       confidence,
-      generated_at: new Date().toISOString(),
+      generated_at,
       drivers,
       methodology: 'Transparent baseline: precipitation forecast + flood/storm/disaster alerts near exposed locations.',
+      // The band travels beside the tiers rather than inside them. It is a
+      // function of input coverage (see ADR-004) and calling it a sampling tier
+      // would say it measures the outcome rate when it measures neither.
+      uncertainty: uncertaintyTiers({
+        coverage: [
+          'any hydrological transformation of rainfall to flood extent or depth — none is modelled here',
+          'gauge observation error, and the ERA5 tail-dryness bias documented in the basis document',
+          'reporting bias: a hazard that occurred and was never reported contributes nothing to the hazard pressure term',
+          'the sensitivity band above, which is drawn from input coverage and is not a predictive interval',
+        ],
+      }),
+      honesty: honestyEnvelope('flood_risk_score', {
+        value: score,
+        basis: {
+          description: `precipitation total x 1.5 + max rain probability x 0.35 + sum of severity-weighted flood/storm/disaster alerts within 250 km, over ${climate.length} climate observation(s) and ${hazards.length} hazard event(s)`,
+          sample: {
+            climate_observations_in_scope: climate.length,
+            missing_precipitation_records: missingPrecip,
+            flood_hazard_events: hazards.length,
+          },
+        },
+        notIncluded: [
+          'any hydrological model: rainfall-to-flood extent, depth and duration are not modelled',
+          'the sensitivity band, which reflects input coverage rather than a calibrated outcome distribution',
+        ],
+        evidence: { retrieved_at: generated_at },
+        refused: missingPrecip || missingProbability
+          ? [`${missingPrecip} of ${climate.length} in-scope climate observations and ${missingProbability} probability forecasts contributed nothing to this score, so a low score here may mean missing data rather than low risk`]
+          : [],
+      }),
       limits: [
         'Point score from input data, with a sensitivity band driven by input coverage, not a calibrated predictive distribution.',
         'A zero band means inputs were sufficient, not that the outcome is certain.',
@@ -185,6 +369,7 @@ export function computeClimateConflictRisk(data, options = {}) {
     const score_p10 = clamp(score - halfWidth, 0, 100)
     const score_p90 = clamp(score + halfWidth, 0, 100)
     const interval_width = score_p90 - score_p10
+    const generated_at = new Date().toISOString()
 
     return {
       id: stableId('risk', ['climate_conflict', region.key]),
@@ -205,7 +390,7 @@ export function computeClimateConflictRisk(data, options = {}) {
       calibrated_uncertainty: false,
       risk_level: riskLevel(score),
       confidence,
-      generated_at: new Date().toISOString(),
+      generated_at,
       drivers: {
         climate_observations: climate.length,
         hazard_events: hazards.length,
@@ -214,6 +399,35 @@ export function computeClimateConflictRisk(data, options = {}) {
       },
       methodology: 'Transparent baseline: climate stress + hazard pressure + user-supplied or licensed conflict events + exposed service assets.',
       limits: 'Weighted sum of input counts and severities, with a sensitivity band driven by input coverage rather than a calibrated predictive distribution. A zero band means inputs were sufficient, not that the outcome is certain.',
+      uncertainty: uncertaintyTiers({
+        coverage: [
+          'the causal direction between climate stress and conflict: both are counted, neither is claimed to cause the other',
+          'conflict-event coverage, which follows reporting access and is not uniform across the region set',
+          'the sensitivity band above, which is drawn from input coverage and is not a predictive interval',
+        ],
+      }),
+      honesty: honestyEnvelope('climate_conflict_risk_score', {
+        value: score,
+        basis: {
+          description: `climate stress (max 35) + hazard pressure (max 25) + conflict pressure (max 30) + exposed service assets (max 10), from ${climateWithRainfall} of ${climate.length} climate observation(s) carrying rainfall, ${hazards.length} hazard event(s), ${conflicts.length} conflict event(s), ${serviceAssets.length} nearby asset(s)`,
+          sample: {
+            climate_observations_with_rainfall: climateWithRainfall,
+            climate_observations_in_scope: climate.length,
+            hazard_events: hazards.length,
+            conflict_events: conflicts.length,
+            nearby_service_assets: serviceAssets.length,
+          },
+        },
+        notIncluded: [
+          'a causal claim linking climate stress to conflict; both terms are counted side by side and no mechanism is modelled',
+          'demographic attribution: the score says nothing about which population is exposed',
+          'the sensitivity band, which reflects input coverage rather than a calibrated outcome distribution',
+        ],
+        evidence: { retrieved_at: generated_at },
+        refused: climate.length > climateWithRainfall
+          ? [`${climate.length - climateWithRainfall} of ${climate.length} in-scope climate observations carry no rainfall figure and contributed nothing to the climate term`]
+          : [],
+      }),
     }
   })
 }
@@ -230,6 +444,7 @@ export function computeServiceImpacts(data, riskScores) {
     const conflictScore = nearestConflict && nearestConflict.distance_km <= 150 ? nearestConflict.item.score : 0
     const score = clamp(Math.round(floodScore * 0.55 + conflictScore * 0.45), 0, 100)
     const confidence = Math.round(((nearestFlood?.item?.confidence || 0) * 0.55) + ((nearestConflict?.item?.confidence || 0) * 0.45))
+    const generated_at = new Date().toISOString()
     assessments.push({
       id: stableId('impact', [asset.id, score]),
       asset_id: asset.id,
@@ -241,12 +456,54 @@ export function computeServiceImpacts(data, riskScores) {
       impact_score: score,
       impact_level: riskLevel(score),
       confidence,
-      generated_at: new Date().toISOString(),
+      generated_at,
       drivers: {
         nearest_flood_risk: nearestFlood?.item?.region_name || null,
         nearest_climate_conflict_risk: nearestConflict?.item?.region_name || null,
+        // Distance to the region the score was borrowed from, and whether that
+        // region was inside the 150 km borrowing radius. A zero contribution
+        // from a hazard score is either "no nearby risk" or "the nearest region
+        // is too far to borrow from", and those read identically above.
+        nearest_flood_risk_km: nearestFlood ? Math.round(nearestFlood.distance_km * 10) / 10 : null,
+        nearest_conflict_risk_km: nearestConflict ? Math.round(nearestConflict.distance_km * 10) / 10 : null,
+        flood_risk_in_radius: Boolean(nearestFlood && nearestFlood.distance_km <= 150),
+        conflict_risk_in_radius: Boolean(nearestConflict && nearestConflict.distance_km <= 150),
       },
       recommended_actions: recommendedActions(asset.service_type, score),
+      uncertainty: uncertaintyTiers({
+        coverage: [
+          'service continuity itself: nothing here observes roads, staffing, stock or whether a service is actually running',
+          'the number of people affected — the asset carries no served population on this record',
+          'timing: a score is a snapshot, and the hazard it points at has no duration attached',
+        ],
+      }),
+      honesty: honestyEnvelope('service_impact_score', {
+        value: score,
+        basis: {
+          description: `nearest flood_risk score x 0.55 + nearest climate_conflict_risk score x 0.45, each borrowed only from a region within 150 km of the asset`,
+          sample: {
+            flood_risk_region: nearestFlood?.item?.region_name || null,
+            flood_risk_km: nearestFlood ? Math.round(nearestFlood.distance_km * 10) / 10 : null,
+            conflict_risk_region: nearestConflict?.item?.region_name || null,
+            conflict_risk_km: nearestConflict ? Math.round(nearestConflict.distance_km * 10) / 10 : null,
+          },
+        },
+        notIncluded: [
+          'any observation of the service: no asset condition, no road passability, no stock level',
+          'population served, which lives on the asset record and is not folded into this score',
+          'the sensitivity bands of the borrowed region scores, which are not propagated here',
+        ],
+        evidence: { retrieved_at: generated_at },
+        refused: [
+          ...(nearestFlood && nearestFlood.distance_km > 150
+            ? [`the nearest flood risk region is ${Math.round(nearestFlood.distance_km)} km away, beyond the 150 km borrowing radius, so its score contributed 0 rather than a small amount`]
+            : []),
+          ...(nearestConflict && nearestConflict.distance_km > 150
+            ? [`the nearest climate-conflict region is ${Math.round(nearestConflict.distance_km)} km away, beyond the 150 km borrowing radius, so its score contributed 0 rather than a small amount`]
+            : []),
+          ...(nearestFlood || nearestConflict ? [] : ['no scored region lies within 150 km of this asset, so the score is 0 for lack of nearby evidence rather than for lack of risk']),
+        ],
+      }),
     })
   }
   return assessments
@@ -296,6 +553,27 @@ export function calibrationReport(data) {
     mean_confidence_pct: asPct(mean2dp(item.total_confidence, item.count)),
     mean_interval_width: mean2dp(item.total_interval_width, item.count),
     brier_score: null,
+    uncertainty: uncertaintyTiers({
+      coverage: [
+        'skill of the underlying model: these are averages of stored records, not a validation',
+        'the variance between regions — two regions with the same mean can differ entirely',
+        'the districts that were not scored at all, because the risk surface is bounded to the operational area',
+      ],
+    }),
+    honesty: honestyEnvelope('calibration_summary', {
+      value: item.count > 0 ? Math.round(item.total_score / item.count) : 0,
+      basis: {
+        description: `arithmetic mean over ${item.count} stored ${item.type} record(s)`,
+        sample: { records_averaged: item.count, record_type: item.type },
+      },
+      notIncluded: [
+        'any comparison against observed outcomes; brier_score stays null because nothing joins these records to what happened',
+        'the spread across regions behind the mean',
+      ],
+      refused: [
+        'brier_score is withheld: this summary reads stored scores and has no outcome labels to score them against, and a null is not a poor score, it is an absent measurement',
+      ],
+    }),
   }))
 }
 
@@ -364,6 +642,7 @@ export function computeDataQuality(data) {
     const runPenalty = quality.last_run_status === 'failed' ? 35 : quality.last_run_status === 'degraded' ? 15 : 0
     const freshnessPenalty = freshnessPenaltyFor(quality.latest_record_at || quality.last_run_at)
     const confidence = clamp(Math.round(geocodeCoverage * 55 + Math.min(quality.total_records, 25) * 1.8 - runPenalty - freshnessPenalty), 0, 100)
+    const updated_at = new Date().toISOString()
     // Null, not zero, when no record carried a confidence. `confidence_sum` was
     // initialised and read here but never incremented anywhere, so this divided
     // zero by the record count and reported 0 for every source — a confident
@@ -379,7 +658,35 @@ export function computeDataQuality(data) {
       freshness: freshnessLabel(quality.latest_record_at || quality.last_run_at),
       confidence,
       mean_confidence,
-      updated_at: new Date().toISOString(),
+      updated_at,
+      uncertainty: uncertaintyTiers({
+        coverage: [
+          'accuracy: nothing here compares a source against ground truth, only against itself',
+          'correctness of the values: a source can be perfectly geocoded, fresh and wrong',
+          'representativeness: a source that reports only severe events scores as complete',
+          'cross-source agreement, which is measured elsewhere rather than here',
+        ],
+      }),
+      honesty: honestyEnvelope('data_quality_confidence', {
+        value: confidence,
+        basis: {
+          description: `geocode coverage x 55 + min(records, 25) x 1.8 - run penalty (${runPenalty}) - freshness penalty (${freshnessPenalty}), clamped 0-100`,
+          sample: {
+            total_records: quality.total_records,
+            geocoded_records: quality.geocoded_records,
+            records_with_a_model_confidence: quality.confidence_count,
+          },
+        },
+        notIncluded: [
+          'any check of whether the reported values are correct — this is a completeness and hygiene score',
+          'agreement with other sources covering the same period',
+          'whether the source\'s own upstream pipeline failed silently and reported no rows at all',
+        ],
+        evidence: { retrieved_at: updated_at },
+        refused: quality.confidence_count === 0
+          ? ['no record from this source carried a model confidence, so mean_confidence is null rather than 0']
+          : [],
+      }),
     }
   }).sort((a, b) => b.confidence - a.confidence)
 }
