@@ -305,10 +305,10 @@ function setupIncidentScreen() {
 
     try {
       if (!navigator.onLine) {
-        await queueReport('/api/v1/chw/report', { method: 'POST', body }, 'symptom report')
+        await queueReport('/api/v1/chw/report', { method: 'POST', body }, 'incident report')
       } else {
         const res = await apiFetch('/api/v1/chw/report', { method: 'POST', body })
-        showToast(t('chw.report_sent', { what: 'symptom report' }), 'ok')
+        showToast(t('chw.report_sent', { what: 'incident report' }), 'ok')
       }
       categorySelect.value = ''
       $('incidentDescription').value = ''
@@ -351,13 +351,13 @@ function setupReplyScreen() {
         await queueReport('/api/v1/chw/reply', {
           method: 'POST',
           body: { alert_event_id: alertId, message },
-        }, 'symptom report')
+        }, 'reply')
       } else {
         const res = await apiFetch('/api/v1/chw/reply', {
           method: 'POST',
           body: { alert_event_id: alertId, message },
         })
-        showToast(t('chw.report_sent', { what: 'symptom report' }), 'ok')
+        showToast(t('chw.reply_sent'), 'ok')
       }
       $('replyMessage').value = ''
       showScreen('home')

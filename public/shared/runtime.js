@@ -99,12 +99,25 @@ export async function initOfflineQueue() {
       // tab is closed before connectivity returns — and a health worker closing
       // the app is normal, not an edge case. Best effort: unsupported in some
       // browsers and non-secure contexts, where the in-page flush still applies.
-      try {
-        const reg = await navigator.serviceWorker?.ready
-        if (reg?.sync) await reg.sync.register('lindela-queue')
-      } catch {
-        // No Background Sync here; the periodic in-page flush covers it.
-      }
+      // Best effort, and bounded.
+      //
+      // This used to `await navigator.serviceWorker.ready` with no timeout. On a
+      // device whose worker is not yet controlling the page — which is every
+      // device, offline, before the first claim — `ready` does not settle, so
+      // `enqueue` never returned. A health worker filing a report with no
+      // signal got no save, no toast and no screen change: the press did
+      // nothing at all.
+      //
+      // The IndexedDB write above is what matters and has already committed.
+      // Registering a background sync is an optimisation on top of it, so it
+      // gets a bounded wait and its failure is ignored.
+      await Promise.race([
+        (async () => {
+          const reg = await navigator.serviceWorker?.ready
+          if (reg?.sync) await reg.sync.register('lindela-queue')
+        })().catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 1000)),
+      ])
       return { queued: true, id }
     },
     /** How many reports are waiting to send. Surfaced so the promise is visible. */
@@ -339,4 +352,39 @@ export async function initI18n(defaultLocale = 'en') {
 export function t(key, params = {}) {
   if (!window.__i18n) return key
   return window.__i18n.t(key, params)
+}
+
+/**
+ * Make every horizontally scrollable region reachable by keyboard.
+ *
+ * `overflow-x: auto` gives a mouse wheel and a scrollbar and nothing else: with
+ * no focusable descendant the region is unreachable from the keyboard, so a wide
+ * table can be seen but not read. WCAG 2.1.1, and axe reports it as
+ * `scrollable-region-focusable` on every surface with a wide table.
+ *
+ * Done as a sweep rather than at each construction site because the wrappers are
+ * created in eight places and this is a property of the rendered result.
+ *
+ * Skips a region that already holds something focusable — an interactive table
+ * does not need a tab stop of its own, and adding one is noise in the tab ring.
+ */
+export function markScrollableRegions(root = document) {
+  const candidates = root.querySelectorAll('.table-wrap, .chart-table, [data-scrollable]')
+  for (const el of candidates) {
+    if (el.hasAttribute('tabindex')) continue
+    if (el.querySelector('a[href], button, input, select, textarea, [tabindex]')) continue
+
+    const style = el.ownerDocument.defaultView.getComputedStyle(el)
+    if (!/(auto|scroll)/.test(style.overflowX)) continue
+
+    el.setAttribute('tabindex', '0')
+    el.setAttribute('role', 'region')
+    if (!el.hasAttribute('aria-label')) {
+      const heading = el.querySelector('caption, h2, h3')
+      const label = heading?.textContent?.trim()
+      el.setAttribute('aria-label', label
+        ? `${label} — scrollable table`
+        : 'Scrollable table')
+    }
+  }
 }

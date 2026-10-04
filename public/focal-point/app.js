@@ -62,6 +62,10 @@ async function loadData() {
       apiFetch(`/api/v1/alert-events`),
     ])
 
+    // Kept on state so a decision can name the district it released finance
+    // for without re-reading the card it is about to be removed from.
+    state.workflows = workflows.data || []
+
     // Index alert events by id for O(1) card hydration
     const alertIndex = new Map((alertsResp.data || []).map((a) => [a.id, a]))
 
@@ -293,8 +297,12 @@ dialogConfirmBtn.addEventListener('click', async () => {
   // cannot dispatch the same decision twice. Approving releases finance.
   dialogConfirmBtn.disabled = true
   const mode = state.currentDialogMode
-  const district = pendingList?.querySelector(`[data-workflow-id="${CSS.escape(state.currentWorkflowId)}"]`)
-    ?.closest('.workflow-card')?.querySelector('.detail-row .detail-value')?.textContent?.trim()
+  // From the workflow record, not scraped from the DOM. Scraping took the first
+  // `.detail-value` on the card, which is the rule name — so the confirmation
+  // read "finance is released for Flood Watch: High Precipitation", naming a
+  // rule where the operator needed a place.
+  const workflow = (state.workflows || []).find((w) => String(w.id) === String(state.currentWorkflowId))
+  const district = workflow?.district || null
 
   try {
     const nextState = mode === 'approve' ? 'approved' : 'rejected'

@@ -45,6 +45,7 @@
   "chw.queued": "Queued (will send when connected)",
   "chw.reply_alert": "Reply to alert",
   "chw.reply_message": "Your reply",
+  "chw.reply_sent": "Reply sent and confirmed by the server.",
   "chw.report_incident": "Report incident",
   "chw.report_queued": "{what} saved on this phone. It will send when you have signal.",
   "chw.report_sent": "{what} sent and confirmed by the server.",

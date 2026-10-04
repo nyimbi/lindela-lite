@@ -157,6 +157,16 @@ export function filterRecords(records, query, context = {}, { unlimited = false 
   const interventionId = query.get('intervention_id')
   const serviceType = query.get('service_type')
   const owner = query.get('owner')
+  // `state` is read by nothing here either, so `?state=focal_point_review`
+  // returned every workflow in the collection. The focal-point approval screen
+  // asks for exactly that and was handed three instances in `approved`,
+  // `dispatched` and `closed` — none of which can be transitioned, so two of
+  // every three approvals a focal point was offered returned HTTP 409 with the
+  // interface showing no reason why.
+  //
+  // This is the same silent-ignore as `district` and `region` above: a parameter
+  // that looks like a filter must be the filter.
+  const workflowState = query.get('state')
   const templateId = query.get('template_id')
   const scheduleId = query.get('schedule_id')
   // `district` and `region` used to be read by nothing here. filterRecords
@@ -177,6 +187,7 @@ export function filterRecords(records, query, context = {}, { unlimited = false 
     .filter((item) => !reportType || item.report_type === reportType || item.type === reportType)
     .filter((item) => !severity || item.severity === severity || item.risk_level === severity)
     .filter((item) => !status || item.status === status)
+    .filter((item) => !workflowState || item.state === workflowState)
     .filter((item) => !priority || item.priority === priority)
     .filter((item) => !incidentId || item.incident_id === incidentId || item.scope?.incident_id === incidentId || item.id === incidentId)
     .filter((item) => !interventionId || item.intervention_id === interventionId || item.scope?.intervention_id === interventionId || item.id === interventionId)

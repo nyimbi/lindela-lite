@@ -129,9 +129,19 @@ kbd {
 .offline-banner {
   position: fixed;
   inset: 0 0 auto;
-  z-index: var(--z-toast);
+  /* Above the shared navbar, not below it.
+     The navbar is fixed at z-index 999 and sits in the same 46px band, so the
+     offline banner rendered underneath it and was invisible on every page that
+     carries both. Proved by hiding the navbar: the banner appeared immediately.
+     The field team was told nothing at exactly the moment they most needed
+     telling. */
+  z-index: 1000;
   background: var(--warn);
-  color: oklch(14% 0.02 90);
+  /* --on-warn, not a literal. --warn is a light amber in the dark theme and a
+     dark brown in the light one, so ink that reads on the first is invisible on
+     the second — axe measured 2.73:1 here in light, which is the offline
+     warning the field team most needs to read. The token already flips. */
+  color: var(--on-warn);
   font-size: var(--text-xs);
   font-weight: 600;
   text-align: center;
