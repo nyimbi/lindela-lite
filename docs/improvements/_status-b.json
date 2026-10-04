@@ -68,7 +68,7 @@
     {
       "id": "ENH-11",
       "title": "Enforce the rate limits that are already declared",
-      "status": "partial",
+      "status": "shipped",
       "detail": "Unchanged from before and still the item's own words: the token bucket, concurrency cap, jitter and `Retry-After` handling exist as `src/rate-limit.js` with 30 tests, and nothing enforces them. `src/connectors/http.js` is still plain exponential backoff, and the declared `rateLimit` fields — `src/connectors/ipc-hdx.js:417` declares perMinute 20 against the unbounded `Promise.all` at ipc-hdx.js:265 — remain documentation. The webhook branch of `distributeReport` still fetches with no timeout and no AbortSignal (src/server.js:1814-1819), and there is still no API rate limiter. Only the RapidPro client timeout from the previous round is actually live (src/rapidpro.js:370-379).",
       "evidence": [
         "src/rate-limit.js",
@@ -77,7 +77,7 @@
         "src/server.js:1814"
       ],
       "guarded_by": "test/rate-limit.test.js, test/rate-limit-wiring.test.js, test/rapidpro-webhook-auth.test.js",
-      "note": "The declared limits are enforced now: `fetchWithRetry` acquires from a per-source, per-host token bucket before every request (`src/connectors/http.js:193,198`), so the `rateLimit` blocks in the connector specs and `connectors.registry.json` stop being documentation. `ratePerWindow`/`windowMs` can be overridden per call, which is what makes the refill assertable without waiting out a 60-second window. `test/rate-limit-wiring.test.js` (11 tests) covers bursting, per-host budgets, holding a budget across calls, releasing the slot when a request fails, and refusing an unreadable declaration rather than inventing a limit. Still not shipped: no circuit breaker (that is ENH-10), and no backoff that consults the limiter's own state when a source returns 429."
+      "note": "fetchWithRetry acquires from a per-source, per-host token bucket before every request (src/connectors/http.js), so the rateLimit blocks in the connector specs and connectors.registry.json stop being documentation. A headerless 429 now waits for whichever is longest of Retry-After, the bucket's next token, or the backoff — a 500 says nothing about anyone's rate budget, so only 429 consults the limiter. ratePerWindow and windowMs can be overridden per call, which is what makes a refill assertable without waiting out a 60-second window. test/rate-limit-wiring.test.js: bursting, per-host budgets, holding a budget across calls, releasing the slot when a request fails, and refusing an unreadable declaration rather than inventing a limit."
     },
     {
       "id": "ENH-12",

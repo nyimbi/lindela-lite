@@ -25,7 +25,7 @@
     {
       "id": "ENH-26",
       "title": "Two-way SMS acknowledgement, escalation, and delivery tracking",
-      "status": "not started",
+      "status": "shipped",
       "detail": "No structured reply verbs anywhere: src/rapidpro.js parses inbound field reports and free text only, and no ACK/ESCALATE/RESOLVED verb or reason code exists in src/ or public/. There is no per-recipient delivery state, no delivery-report endpoint (the four rapidpro routes are status, response-metrics, dispatches, inbound, field-report — src/server.js:2841-2845), and no escalation tree or acknowledgement SLA. The response_rate_pct rework at src/rapidpro.js:255 is the ALERT-05 fix, not this enhancement, and inbound webhooks are still written unconditionally with no idempotency guard (src/server.js:2036-2050).",
       "evidence": [
         "src/rapidpro.js:185",
@@ -33,7 +33,8 @@
         "src/server.js:2841",
         "src/server.js:2036"
       ],
-      "guarded_by": null
+      "guarded_by": "test/rapidpro-two-way.test.js",
+      "note": "src/rapidpro.js. An anchored verb grammar (ACK/ESCALATE/RESOLVED/NAK) over a CLOSED set of reason codes; an unrecognised code is kept as reason_raw with reason_code null rather than invented. Correlation prefers an explicit id and otherwise matches the sender inside a bounded window — a reply that can close an SLA is attacker-controlled input, so it is never correlated by a payload-supplied alert_event_id, and the route sits behind the same webhook verification as a field report. reconcileInbound dedupes ALERT-06 against the same id shape the field-report route uses. Escalation fires only for dispatches the GATEWAY accepted, so our own outage cannot escalate; the clock runs from the first page for an alert; any reply counts as a response; a recipient already escalated is not escalated again, and the boundary is asserted exactly. Delivery stops at accepted_by_gateway because RapidPro v2 gives no per-recipient receipt — 'delivered' would be a claim the system cannot support. Uncorrelated replies are recorded and answered 202, because a wrong sender number is information. Served at /api/v1/rapidpro/reply, /delivery and /escalations. test/rapidpro-two-way.test.js."
     },
     {
       "id": "ENH-27",

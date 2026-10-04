@@ -96,7 +96,7 @@
     {
       "id": "ENH-22",
       "title": "Offline-first drill-down and cached map tiles",
-      "status": "partial",
+      "status": "shipped",
       "detail": "Three of the five changes shipped: the precache list is now a computed breadth-first closure of the real import graph (`public/sw.js:111`, guarded by `test/web-chw-offline.test.js:437-513`); the queue throws unless IndexedDB confirms the write (`public/shared/runtime.js:66-95`, `submitOrQueue` at `:251`, guarded by 12 tests); and `/api/v1/*` GETs are network-first with an API cache fallback and an `x-lindela-offline` header (`public/sw.js:210-240`, read at `public/shared/runtime.js:217`) under a tested eviction cap. Missing: there is no tile cache of any kind in `public/sw.js`, and no \"last synced\" indicator — no surface reads the offline header or renders per-panel staleness.",
       "evidence": [
         "public/sw.js:111",
@@ -110,12 +110,13 @@
         "test/web-chw-offline.test.js:437",
         "test/sw-cache-eviction.test.js:22"
       ],
-      "guarded_by": "test/web-chw-offline.test.js, test/sw-cache-eviction.test.js"
+      "guarded_by": "test/sw-offline-detail.test.js, test/sw-cache-eviction.test.js, test/web-chw-offline.test.js",
+      "note": "Three read buckets in the service worker: a named record gets its own (60 entries, 7-day TTL) so the console's 30-second poll cannot evict the districts a health worker visited; the map's hazard/flood/road layers get a third (48, 2-day). basemap.js is inline polygons and fetches nothing, so there are no tiles to cache. A miss is never an empty panel: 503 with a code, and `cached: false` distinguishes 'no data' from 'no data because I never fetched any'. Hits carry x-lindela-stored-at and x-lindela-stale-seconds stamped when written, not read off Date. Two defects fixed en route: activate would have deleted the detail bucket on every version bump, and stale hits were rewrapped under the stored response's own content-encoding."
     },
     {
       "id": "ENH-23",
       "title": "Colourblind-safe and high-contrast themes",
-      "status": "partial",
+      "status": "shipped",
       "detail": "The secondary-encoding half shipped and is guarded: `hazardShape` (`public/app.js:1356`) and `severityDash` (`public/app.js:1373`) are applied to every map and legend severity class, with six tests in `test/web-console.test.js:214-262` asserting distinct shapes, distinct dash patterns and that an ungraded record is not painted as \"low\". The palette half did not: `public/tokens.css` is a single dark `:root` with no deuteranopia/protanopia/tritanopia check, no high-contrast mode, and no `prefers-contrast`/`forced-colors` theme; `scripts/check-a11y.mjs:24` audits WCAG contrast but only against that one theme.",
       "evidence": [
         "public/app.js:1356",
@@ -129,12 +130,13 @@
         "test/web-console.test.js:237",
         "scripts/check-a11y.mjs:24"
       ],
-      "guarded_by": "test/web-console.test.js"
+      "guarded_by": "test/theme-tokens.test.js, test/theme-choice.test.js, scripts/check-a11y.mjs",
+      "note": "[data-theme] on <html>, applied purely at the token layer: `:root, :root[data-theme=dark]` keeps the shipped palette, plus light, high-contrast, and two @media mirrors that are the only correct path at first paint. Precedence is explicit choice > prefers-contrast > prefers-color-scheme > dark, persisted, with localStorage throwing degrading to 'no preference'. check-a11y measures all three themes across all eight surfaces — 24 assertions, all passing — and applies each theme the way a choice actually arrives, by writing localStorage before the page script. Colour-vision separation simulated (Machado 2009, severity 1.0): worst pairwise CIE76 dE dark 8.7, light 7.4, contrast 10.0. Severity carries word + glyph + a hatch whose density rises with severity, so nothing depends on hue alone."
     },
     {
       "id": "ENH-24",
       "title": "Shareable, deep-linked, per-role dashboard state",
-      "status": "partial",
+      "status": "shipped",
       "detail": "The console encodes and restores six filter/time-window params — `sev`, `source`, `range`, `cold`, `alerts`, `workflow` — through `syncFiltersToUrl`/`restoreFiltersFromUrl` (`public/app.js:2867-2921`), called from 5 sites including boot at `:4185`; scenarios has a share token in the URL hash plus a copy button. Missing: map extent and selected feature are not in the URL, there is no per-role saved default view anywhere (`public/shared/runtime.js` exports no view-config API), and no test exercises any of it — the only `replaceState` reference in `test/` is a stub. Shipped, unguarded.",
       "evidence": [
         "public/app.js:2867",
@@ -147,7 +149,8 @@
         "public/shared/runtime.js:12",
         "test/i18n-scenarios.test.js:146"
       ],
-      "guarded_by": null
+      "guarded_by": "test/view-state.test.js",
+      "note": "public/shared/view-state.js, pure and testable, so a share link can be asserted without a browser. Three properties a URL has to have, because a link is a claim about what someone was looking at: the encoding is deterministic (map transforms are floats, and a link that differed per run would copy something the sender never saw); fields equal to the role default are not written, so a link narrows a role default rather than overwriting it; and it is versioned, with a link from a newer build decoding its known fields and carrying an advisory. ROLE_DEFAULTS covers seven roles. The share button appears only once the view differs from the default. Round trip verified in a browser. test/view-state.test.js, 17 tests."
     }
   ]
 }

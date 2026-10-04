@@ -4,7 +4,7 @@ What has actually shipped, verified against the tree rather than against the com
 Regenerate with `node docs/improvements/_build-status.mjs` after editing any
 `_status-*.json`.
 
-**18 shipped, 8 partial, 4 not started,** of 30.
+**23 shipped, 4 partial, 3 not started,** of 30.
 The two that shipped before this round were the two the project was built to make possible
 anyway: the API substrate a caller can integrate against (`ENH-30`) and a way to get your
 own data in (`ENH-25`). The five since are the ones where a claim had become load-bearing —
@@ -37,7 +37,7 @@ nothing in the product.
 | ENH-08 | Watermarks, incremental fetch, resumable backfill | partial | `test/watermarks.test.js` |
 | ENH-09 | Source-agreement cross-validation | shipped | `test/source-agreement.test.js` |
 | ENH-10 | Connector health scoring and circuit breaking | shipped | `test/circuit.test.js`, `test/ingestion-wiring.test.js` |
-| ENH-11 | Enforce the rate limits that are already declared | partial | `test/rate-limit.test.js`, `test/rate-limit-wiring.test.js`, `test/rapidpro-webhook-auth.test.js` |
+| ENH-11 | Enforce the rate limits that are already declared | shipped | `test/rate-limit.test.js`, `test/rate-limit-wiring.test.js`, `test/rapidpro-webhook-auth.test.js` |
 | ENH-12 | Raw payload retention, replay, and fixture seeding | shipped | `test/capture.test.js` |
 | ENH-13 | Bitemporal records | shipped | `test/bitemporal-history.test.js` |
 | ENH-14 | Completeness tripwires for capped pagination | shipped | `test/completeness.test.js` |
@@ -53,16 +53,16 @@ nothing in the product.
 | ENH-19 | Map → chart → record drill-down, with a `/explain` endpoint | **not started** | — |
 | ENH-20 | Month × year seasonal calendar heatmap | partial | `test/seasonal-calendar.test.js`, `test/charts.test.js` |
 | ENH-21 | Forecast-versus-observed verification charts | **not started** | — |
-| ENH-22 | Offline-first drill-down and cached map tiles | partial | `test/web-chw-offline.test.js`, `test/sw-cache-eviction.test.js` |
-| ENH-23 | Colourblind-safe and high-contrast themes | partial | `test/web-console.test.js` |
-| ENH-24 | Shareable, deep-linked, per-role dashboard state | partial | — |
+| ENH-22 | Offline-first drill-down and cached map tiles | shipped | `test/sw-offline-detail.test.js`, `test/sw-cache-eviction.test.js`, `test/web-chw-offline.test.js` |
+| ENH-23 | Colourblind-safe and high-contrast themes | shipped | `test/theme-tokens.test.js`, `test/theme-choice.test.js`, `scripts/check-a11y.mjs` |
+| ENH-24 | Shareable, deep-linked, per-role dashboard state | shipped | `test/view-state.test.js` |
 
 ## Group D — Response and delivery
 
 | | Enhancement | Status | Guarded by |
 |---|---|---|---|
 | ENH-25 | Bulk upload with a validation report | shipped | `test/upload.test.js` |
-| ENH-26 | Two-way SMS acknowledgement, escalation, and delivery tracking | **not started** | — |
+| ENH-26 | Two-way SMS acknowledgement, escalation, and delivery tracking | shipped | `test/rapidpro-two-way.test.js` |
 | ENH-27 | Export that carries the narrative | shipped | — |
 | ENH-28 | A donor-inspectable, hash-chained audit trail | shipped | `test/parametric-trigger.test.js` |
 
@@ -86,17 +86,6 @@ Evidence:
 - `src/watermarks.js`
 - `src/connectors/open-meteo-archive.js:47`
 - `src/connectors/gdacs-archive.js:45`
-
-### ENH-11 — Enforce the rate limits that are already declared
-
-**partial.** Unchanged from before and still the item's own words: the token bucket, concurrency cap, jitter and `Retry-After` handling exist as `src/rate-limit.js` with 30 tests, and nothing enforces them. `src/connectors/http.js` is still plain exponential backoff, and the declared `rateLimit` fields — `src/connectors/ipc-hdx.js:417` declares perMinute 20 against the unbounded `Promise.all` at ipc-hdx.js:265 — remain documentation. The webhook branch of `distributeReport` still fetches with no timeout and no AbortSignal (src/server.js:1814-1819), and there is still no API rate limiter. Only the RapidPro client timeout from the previous round is actually live (src/rapidpro.js:370-379).
-
-Evidence:
-
-- `src/rate-limit.js`
-- `src/connectors/http.js:42`
-- `src/connectors/ipc-hdx.js:265`
-- `src/server.js:1814`
 
 ### ENH-16 — A chart component library, shared by all eight surfaces
 
@@ -176,67 +165,6 @@ Evidence:
 - `src/connectors/glofas.js:56`
 - `test/lite.test.js:924`
 - `public/workflow/ops.js:43`
-
-### ENH-22 — Offline-first drill-down and cached map tiles
-
-**partial.** Three of the five changes shipped: the precache list is now a computed breadth-first closure of the real import graph (`public/sw.js:111`, guarded by `test/web-chw-offline.test.js:437-513`); the queue throws unless IndexedDB confirms the write (`public/shared/runtime.js:66-95`, `submitOrQueue` at `:251`, guarded by 12 tests); and `/api/v1/*` GETs are network-first with an API cache fallback and an `x-lindela-offline` header (`public/sw.js:210-240`, read at `public/shared/runtime.js:217`) under a tested eviction cap. Missing: there is no tile cache of any kind in `public/sw.js`, and no "last synced" indicator — no surface reads the offline header or renders per-panel staleness.
-
-Evidence:
-
-- `public/sw.js:111`
-- `public/sw.js:167`
-- `public/sw.js:210`
-- `public/sw.js:227`
-- `public/shared/runtime.js:66`
-- `public/shared/runtime.js:217`
-- `public/shared/runtime.js:251`
-- `test/web-chw-offline.test.js:256`
-- `test/web-chw-offline.test.js:437`
-- `test/sw-cache-eviction.test.js:22`
-
-### ENH-23 — Colourblind-safe and high-contrast themes
-
-**partial.** The secondary-encoding half shipped and is guarded: `hazardShape` (`public/app.js:1356`) and `severityDash` (`public/app.js:1373`) are applied to every map and legend severity class, with six tests in `test/web-console.test.js:214-262` asserting distinct shapes, distinct dash patterns and that an ungraded record is not painted as "low". The palette half did not: `public/tokens.css` is a single dark `:root` with no deuteranopia/protanopia/tritanopia check, no high-contrast mode, and no `prefers-contrast`/`forced-colors` theme; `scripts/check-a11y.mjs:24` audits WCAG contrast but only against that one theme.
-
-Evidence:
-
-- `public/app.js:1356`
-- `public/app.js:1373`
-- `public/app.js:1770`
-- `public/app.js:1807`
-- `public/app.js:1989`
-- `public/tokens.css:3`
-- `public/tokens.css:35`
-- `test/web-console.test.js:214`
-- `test/web-console.test.js:237`
-- `scripts/check-a11y.mjs:24`
-
-### ENH-24 — Shareable, deep-linked, per-role dashboard state
-
-**partial.** The console encodes and restores six filter/time-window params — `sev`, `source`, `range`, `cold`, `alerts`, `workflow` — through `syncFiltersToUrl`/`restoreFiltersFromUrl` (`public/app.js:2867-2921`), called from 5 sites including boot at `:4185`; scenarios has a share token in the URL hash plus a copy button. Missing: map extent and selected feature are not in the URL, there is no per-role saved default view anywhere (`public/shared/runtime.js` exports no view-config API), and no test exercises any of it — the only `replaceState` reference in `test/` is a stub. Shipped, unguarded.
-
-Evidence:
-
-- `public/app.js:2867`
-- `public/app.js:2878`
-- `public/app.js:2907`
-- `public/app.js:2132`
-- `public/app.js:4185`
-- `public/scenarios/app.js:434`
-- `public/scenarios/index.html:366`
-- `public/shared/runtime.js:12`
-- `test/i18n-scenarios.test.js:146`
-
-### ENH-26 — Two-way SMS acknowledgement, escalation, and delivery tracking
-
-**not started.** No structured reply verbs anywhere: src/rapidpro.js parses inbound field reports and free text only, and no ACK/ESCALATE/RESOLVED verb or reason code exists in src/ or public/. There is no per-recipient delivery state, no delivery-report endpoint (the four rapidpro routes are status, response-metrics, dispatches, inbound, field-report — src/server.js:2841-2845), and no escalation tree or acknowledgement SLA. The response_rate_pct rework at src/rapidpro.js:255 is the ALERT-05 fix, not this enhancement, and inbound webhooks are still written unconditionally with no idempotency guard (src/server.js:2036-2050).
-
-Evidence:
-
-- `src/rapidpro.js:185`
-- `src/rapidpro.js:255`
-- `src/server.js:2841`
-- `src/server.js:2036`
 
 ---
 
