@@ -1,5 +1,11 @@
 import crypto from 'node:crypto'
 import { computeShortTermSuccessRate } from './observability.js'
+// Neither of these imports back from kpi.js, so the quarterly export can compute the
+// dashboard's equity and feedback sections from the same helpers the page uses —
+// which is the point: a figure cannot be one thing on screen and another in the file.
+import { equityByDistrict } from './equity.js'
+import { feedbackSummaryByAlert } from './community.js'
+
 
 // In-memory KPI cache: key -> {value, expires}
 const _cache = new Map()
@@ -375,4 +381,127 @@ export async function refreshKpiSnapshots(store) {
   }))
   await store.merge({ kpi_snapshots: snapshots })
   return snapshots
+}
+
+/** The last day-of-quarter month index, 1-12. `Q3` -> 9. */
+function _quarterEndMonth(quarter) {
+  const m = /^Q([1-4])$/.exec(String(quarter ?? ''))
+  return m ? Number(m[1]) * 3 : null
+}
+
+/**
+ * The four dashboard sections the quarterly PDF used to omit, computed from the
+ * same collections and the same helpers the page renders from.
+ *
+ * The export carried two of seven sections and said nothing about the other
+ * five. `Equity by District` is the one a funder asks for by name, so its
+ * absence was not a formatting detail — it was a claim, delivered by omission,
+ * that the file was the dashboard.
+ *
+ * Every figure here is `null` where it could not be measured, and the page
+ * prints the reason. Nothing is defaulted to zero to make a table look
+ * complete.
+ */
+export function quarterlyPdfSections(data, { quarter, year } = {}) {
+  const q = quarter || _currentQuarter()
+  const y = Number(year || _currentYear())
+  const endMonth = _quarterEndMonth(q)
+  const { from, to } = _quarterDateRange(q, y)
+
+  // --- Trend: the twelve months ending in the reported quarter ------------
+  //
+  // `computeMonthlyKpiSeries` ends at the current month, so on any past quarter
+  // the export would carry a trend that runs past its own period — the exact
+  // defect the dashboard's trend window already fixed. Re-derived here from the
+  // monthly helper's own interval so the window ends where the report does.
+  //
+  // `computeMonthlyKpiSeries` always ends at the current month, so calling it
+  // would carry a trend that runs past the period this file is about — the same
+  // defect the dashboard's trend window fixes client-side. The window is
+  // therefore computed here, ending on the report's own quarter.
+  const monthsForQuarter = []
+  for (let back = 11; back >= 0; back -= 1) {
+    const idx = (y * 12 + (endMonth || 12)) - back
+    monthsForQuarter.push({ year: Math.floor(idx / 12), month: (idx % 12) + 1 })
+  }
+  const trend = monthsForQuarter
+    .map(({ year: my, month }) => {
+      const r = _monthDateRange(my, month)
+      const disp = kpiSnapshotForPeriod(data.rapidpro_dispatches || [], r.from, r.to, 'sent_at')
+      const reps = kpiSnapshotForPeriod(data.field_reports || [], r.from, r.to, 'created_at')
+      const ivs = kpiSnapshotForPeriod(data.interventions || [], r.from, r.to, 'created_at')
+      const feeding = ivs.filter((i) => i.type === 'feeding')
+      const done = feeding.filter((i) => ['completed', 'verified'].includes(i.status))
+      return {
+        month: `${my}-${String(month).padStart(2, '0')}`,
+        people_reached: disp.reduce((t, d) => t + (d.recipients_count || d.metadata?.recipients_count || 0), 0),
+        community_reporters_count: new Set(
+          reps.map((x) => x.reported_by || x.reporter_urn_hash || x.reporter_id).filter(Boolean),
+        ).size,
+        warning_to_action_median_hours: signalToDispatchHours(disp),
+        feeding_repositioning_rate: feeding.length ? (100 * done.length) / feeding.length : null,
+      }
+    })
+    .map((m) => ({
+      ...m,
+    }))
+
+  // --- Quarter-over-quarter: this quarter and the two before it -----------
+  const qoq = []
+  for (let back = 2; back >= 0; back -= 1) {
+    let qq = endMonth - back * 3
+    let qy = y
+    while (qq < 1) { qq += 12; qy -= 1 }
+    if (endMonth === null) break
+    qoq.push({ quarter: `Q${Math.ceil(qq / 3)} ${qy}`, ...computeQuarterlyKpi(data, { quarter: `Q${Math.ceil(qq / 3)}`, year: qy }) })
+  }
+
+  // --- Equity by district -------------------------------------------------
+  // Imported lazily to keep this module free of a cycle through equity.js,
+  // which imports the KPI helpers back.
+  const equity = equityByDistrict(data).filter((d) => d.alerts > 0)
+
+  // --- Signal-to-dispatch lag --------------------------------------------
+  //
+  // The dashboard's histogram measures `queued_at -> sent_at` and the KPI tile
+  // measures `matched_signal_at -> sent_at`. Two intervals, one label. The
+  // dashboard heading says "Signal-to-Action Lag" and the export is what a donor
+  // keeps, so the interval travels with the numbers on both sides rather than
+  // being reconciled here — the disagreement is the finding, and papering over
+  // it in one artefact would leave the other lying.
+  const dispatches = kpiSnapshotForPeriod(data.rapidpro_dispatches || [], from, to, 'sent_at')
+  const LAG_BUCKETS = [
+    { label: '0-6h', max: 6 }, { label: '6-12h', max: 12 }, { label: '12-24h', max: 24 },
+    { label: '24-48h', max: 48 }, { label: '48h+', max: Infinity },
+  ]
+  const counts = LAG_BUCKETS.map(() => 0)
+  for (const d of dispatches) {
+    if (!d.sent_at || !d.queued_at) continue
+    const lagH = (new Date(d.sent_at).getTime() - new Date(d.queued_at).getTime()) / 3600000
+    if (lagH < 0) continue
+    const idx = LAG_BUCKETS.findIndex((b) => lagH <= b.max)
+    if (idx >= 0) counts[idx] += 1
+  }
+
+  // --- Community feedback -------------------------------------------------
+  const feedback = feedbackSummaryByAlert(data)
+
+  return {
+    period: { quarter: q, year: y },
+    trend,
+    qoq: qoq.map(({ quarter: label, people_reached, community_reporters_count, warning_to_action_median_hours }) => ({
+      quarter: label,
+      people_reached,
+      community_reporters_count,
+      warning_to_action_median_hours,
+    })),
+    equity,
+    lag: LAG_BUCKETS.map((b, i) => ({ label: b.label, count: counts[i] })),
+    lag_measure: 'Dispatches sent in this period, bucketed by hours from queued_at to sent_at.',
+    lag_note: 'This is platform send latency from the moment a message entered the queue. It is NOT the same interval as the '
+      + '"Signal-to-dispatch median" on the KPI page, which runs from matched_signal_at to sent_at. The dashboard heading '
+      + 'calls this section "Signal-to-Action Lag", which is a third thing again: no field action is measured anywhere in '
+      + 'this report. See the narrative page.',
+    feedback,
+  }
 }

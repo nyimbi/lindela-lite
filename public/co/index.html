@@ -44,6 +44,35 @@
         flex-wrap: wrap;
       }
 
+      /* The quarter and year selects were labelled for screen readers only, so
+         a sighted donor saw two unlabelled dropdowns reading "Q1" and "2026"
+         and had to guess which was which — the same control in two states, one
+         for each kind of user. Visible labels; the `for`/`id` pair is unchanged
+         and still names each control to a screen reader. */
+      .control-label {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        margin-inline-end: -0.5rem;
+      }
+
+      /* What the download contains, stated before it is downloaded. The export
+         used to carry two of the seven sections this page renders, with nothing
+         on either side of the transfer saying so. */
+      .export-preview {
+        margin: 0;
+        padding: 0.4rem 1.25rem 0.6rem;
+        font-size: 0.72rem;
+        line-height: 1.5;
+        color: var(--text-muted);
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--stroke);
+      }
+      .export-preview-summary { display: block; color: var(--text); }
+      .export-preview-list { display: block; margin-top: 0.15rem; }
+      .export-preview-label { font-weight: 600; }
+      .export-preview-item::after { content: ", "; }
+      .export-preview-item:last-child::after { content: ""; }
+
       /* styles.css already gives every select its box; only the pointer cue is
          missing, and a donor using a mouse should not have to guess. */
       select { cursor: pointer; }
@@ -228,25 +257,27 @@
         <h1 data-i18n="co.title">Lindela CO Dashboard</h1>
       </div>
       <div class="header-controls">
-        <label for="quarter-select" class="visually-hidden" data-i18n="co.select_quarter">Quarter</label>
-        <select id="quarter-select" class="quarter-select" aria-label="Quarter">
+        <label for="quarter-select" class="control-label" data-i18n="co.select_quarter">Quarter</label>
+        <select id="quarter-select" class="quarter-select">
           <option value="Q1">Q1</option>
           <option value="Q2">Q2</option>
           <option value="Q3">Q3</option>
           <option value="Q4">Q4</option>
         </select>
-        <label for="year-select" class="visually-hidden" data-i18n="co.select_year">Year</label>
-        <select id="year-select" class="year-select" aria-label="Year">
+        <label for="year-select" class="control-label" data-i18n="co.select_year">Year</label>
+        <select id="year-select" class="year-select">
           <option value="2026">2026</option>
           <option value="2027">2027</option>
         </select>
-        <label for="locale-select" class="visually-hidden">Locale</label>
-        <select id="locale-select" aria-label="Language">
+        <label for="locale-select" class="control-label">Language</label>
+        <select id="locale-select">
           <option value="en">English</option>
           <option value="sw">Swahili</option>
         </select>
         <a id="export-btn" href="#" class="btn btn-primary" data-i18n="co.download_pdf">Download quarterly PDF</a>
       </div>
+      <!-- What the download contains, before it is downloaded. -->
+      <p id="export-preview" class="export-preview" role="status"></p>
     </header>
 
     <main id="main" tabindex="-1">

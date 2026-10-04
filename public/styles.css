@@ -2326,3 +2326,41 @@ label:has(> input[type="radio"]) {
   outline: var(--focus-ring-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
+
+/* Two notes the alert rail started carrying in the UX audit pass.
+
+   `.filter-scope-note` says what the filter bar did to *this list*, which it
+   previously did not do at all — the bar looked map-only because the map was
+   under it, so `Severity: High` silently left `critical` in the list beside it.
+
+   `.alert-blocked-note` says why a greyed-out Send is greyed out. A disabled
+   button announces nothing to a screen reader and hovers nothing in most
+   browsers, so the reason has to exist as text. */
+.filter-scope-note,
+.alert-blocked-note {
+	margin: 0 0 0.5rem;
+	font-size: 0.78rem;
+	line-height: 1.45;
+	color: var(--text-muted);
+}
+.alert-blocked-note { margin: 0.35rem 0 0; }
+.filter-scope-note strong { color: var(--text); font-weight: 600; }
+
+/* The breakdown lives behind a summary now: eight tiles were a decomposition of
+   the number printed directly above them, and they put eight tab stops on the
+   screen before the operator had seen a record. */
+.workflow-breakdown {
+	border-top: 1px solid var(--stroke);
+	padding: var(--sp-1) var(--sp-3) 0;
+}
+.workflow-breakdown > summary {
+	cursor: pointer;
+	font-size: 0.78rem;
+	color: var(--text-muted);
+	min-height: 32px;
+	display: flex;
+	align-items: center;
+	gap: var(--sp-1);
+}
+.workflow-breakdown > summary:hover { color: var(--text); }
+.workflow-breakdown[open] > summary { margin-bottom: var(--sp-1); }

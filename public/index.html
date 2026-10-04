@@ -116,9 +116,15 @@
           <span class="workflow-summary-sep" aria-hidden="true">·</span>
           <span id="workflowRejected">0</span> rejected
         </span>
-        <span class="workflow-summary-breakdown">by type</span>
       </div>
-      <div id="workflowMetricsGrid" class="workflow-tray" role="list"></div>
+      <!-- The eight tiles were a breakdown of the number printed two lines
+           above them, and they put eight focusable controls on the screen
+           before the operator had seen a single record. The count stays; the
+           breakdown is now one keystroke away. -->
+      <details class="workflow-breakdown">
+        <summary>Breakdown by type <span class="workflow-summary-breakdown" id="workflowTypeCount"></span></summary>
+        <div id="workflowMetricsGrid" class="workflow-tray" role="list"></div>
+      </details>
       <details class="workflow-instances" id="workflowInstances">
         <summary>Open instances <span class="workflow-summary-breakdown" id="workflowInstanceCount"></span></summary>
         <div id="workflowInstanceList" class="list-container"></div>

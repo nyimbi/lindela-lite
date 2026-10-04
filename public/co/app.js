@@ -9,6 +9,7 @@
 import { esc, formatTimestamp, num, pct, truncate } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { barChart, sparkline } from '/shared/charts.js'
+import { apiFetch } from '/shared/runtime.js'
 
 let currentLocale = 'en'
 let i18n = {}
@@ -554,6 +555,42 @@ function updateExportBtn(quarter, year) {
   if (btn) btn.href = `/api/v1/kpi/quarterly.pdf?quarter=${quarter}&year=${year}`
 }
 
+/**
+ * What the download contains, stated before it is downloaded.
+ *
+ * The dashboard rendered seven sections and the export carried two, with nothing
+ * on either side saying so. The button said "Download quarterly PDF" and a
+ * funder receiving the file had no way to know that Equity by District — the
+ * section they most often ask for by name — was not in it. The list comes from
+ * the same declaration the renderer reads, so the preview cannot drift from the
+ * file, and it names what is missing rather than rounding up to "the dashboard".
+ */
+export async function renderExportPreview() {
+  const el = document.getElementById('export-preview')
+  if (!el) return
+  el.textContent = t('co.export_preview_loading', 'Checking what the export contains...')
+  try {
+    const { data } = await apiFetch('/api/v1/kpi/quarterly/coverage')
+    el.innerHTML = `<span class="export-preview-summary">${esc(data.summary)}</span>`
+    el.appendChild(barList(data.titles, 'co.export_carries', 'In the file'))
+    if (data.missing.length) el.appendChild(barList(data.missing, 'co.export_omits', 'Not in the file'))
+  } catch {
+    // A preview that cannot load must not stand between the user and the
+    // download. Say so and leave the link live.
+    el.textContent = t('co.export_preview_failed',
+      'Could not confirm what the export contains. The download will still work; the list below is what this page renders.')
+  }
+}
+
+/** A labelled list, so the two halves of the preview cannot be confused. */
+function barList(titles, key, fallback) {
+  const wrap = document.createElement('span')
+  wrap.className = 'export-preview-list'
+  wrap.innerHTML = `<span class="export-preview-label">${esc(t(key, fallback))}:</span> `
+    + titles.map((t2) => `<span class="export-preview-item">${esc(t2)}</span>`).join('')
+  return wrap
+}
+
 export async function load() {
   const quarterSel = document.getElementById('quarter-select')
   const yearSel = document.getElementById('year-select')
@@ -678,7 +715,7 @@ function init() {
   quarterSel?.addEventListener('change', load)
   yearSel?.addEventListener('change', load)
 
-  loadLocale('en').then(load)
+  loadLocale('en').then(() => { load(); renderExportPreview() })
 }
 
 if (document.readyState === 'loading') {

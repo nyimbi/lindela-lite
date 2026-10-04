@@ -13,7 +13,7 @@ Findings live beside this document:
 | [findings/consistency-and-errors.md](findings/consistency-and-errors.md) | cross-surface consistency, error handling, empty and failure states |
 | [findings/a11y.json](findings/a11y.json) | axe-core 4.13, every surface × 5 conditions |
 | [findings/a11y-rollup.json](findings/a11y-rollup.json) | the same, rolled up by rule |
-| [scripts/audit-a11y.mjs](../scripts/audit-a11y.mjs) | regenerate both |
+| [scripts/audit-a11y.mjs](../../scripts/audit-a11y.mjs) | regenerate both |
 
 **45 findings. 10 blockers, 15 major, 9 minor, 4 axe rules across 42 instances.**
 

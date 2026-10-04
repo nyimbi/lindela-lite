@@ -23,6 +23,7 @@ import { chainEntries, verifyChain, renderAuditProof } from './audit-chain.js'
 import { renderExportMarkdown } from './reports.js'
 import {
   approveReport,
+  buildExportNarrative,
   computeNextRunAt,
   formatReportSmsSummary,
   generateReportSections,
@@ -52,11 +53,11 @@ import { planDelivery } from './routing.js'
 import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { trainDistrictModels, predict } from './flood-probability.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
-import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots } from './kpi.js'
+import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots, quarterlyPdfSections } from './kpi.js'
 import { KNOWN_DISTRICTS, districtOverview } from './districts.js'
 import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from './equity.js'
 import { normalizeCommunityFeedback, feedbackSummaryByAlert } from './community.js'
-import { renderQuarterlyReportPdf } from './pdf.js'
+import { renderQuarterlyReportPdf, quarterlyReportCoverage, DASHBOARD_SECTIONS } from './pdf.js'
 import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.js'
 import { normalizeParametricRule, simulateDisbursement } from './parametric.js'
 import { screenNames } from './sanctions.js'
@@ -1331,6 +1332,18 @@ async function handleApiRequest(store, req, res, url) {
     return
   }
 
+  // What the PDF carries, before anyone downloads it.
+  //
+  // The dashboard exported a two-section file from a seven-section page with no
+  // note on either side, so a funder receiving the PDF had no way to know that
+  // Equity by District — the section they most often ask for by name — was not
+  // in it. The list is generated from the same declaration the renderer uses, so
+  // the preview cannot drift from the file.
+  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly/coverage') {
+    jsonResponse(res, 200, { success: true, data: { sections: DASHBOARD_SECTIONS, ...quarterlyReportCoverage() } })
+    return
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly.pdf') {
     const quarter = url.searchParams.get('quarter') || undefined
     const year = url.searchParams.get('year') || undefined
@@ -1343,7 +1356,48 @@ async function handleApiRequest(store, req, res, url) {
     }
     // The narrative page rides in the same PDF, so the refusals travel with the
     // numbers a donor reads rather than living only in a Markdown export.
-    const buf = renderQuarterlyReportPdf(kpi, { narrative: true })
+    //
+    // The dashboard's other four sections ride with it too. They are computed
+    // from the same collections and the same helpers the page renders from, so a
+    // figure cannot be one thing on screen and another in the file.
+    const sections = quarterlyPdfSections(data, { quarter: kpi.period.quarter, year: kpi.period.year })
+
+    // The narrative, built from the report the Markdown export builds, not a
+    // literal `true`.
+    //
+    // It was passed as `narrative: true` behind a comment saying the refusals
+    // travelled with the numbers. The renderer tests `narrative.measured?.length`,
+    // a boolean has no `measured`, so the page was never emitted and the export
+    // went out with every refusal stripped off it. The comment asserted the
+    // exact opposite of what the file did.
+    let narrative
+    try {
+      const templates = data.report_templates || []
+      const template = templates[0] || normalizeReportTemplate({ id: 'quarterly-export', name: 'Quarterly export' }, data)
+      const report = generateReportSections(
+        normalizeReport({ template_id: template.id, period: { quarter: kpi.period.quarter, year: kpi.period.year } }, data),
+        data,
+      )
+      narrative = buildExportNarrative({ report, data })
+    } catch (err) {
+      // A report that cannot be built still yields a PDF. It yields one that
+      // says the narrative could not be produced, because a missing page reads
+      // as "there was nothing to refuse".
+      narrative = {
+        measured: [],
+        refused: [{
+          subject: 'Narrative',
+          reason: `the report could not be generated for this period: ${err.message}`,
+        }],
+        limits: ['This file carries the figures only. Nothing below the KPI page is a claim about what was measured.'],
+      }
+    }
+
+    const buf = renderQuarterlyReportPdf(kpi, {
+      narrative,
+      sections,
+      coverage: quarterlyReportCoverage,
+    })
     const filename = `lindela-kpi-${kpi.period.year}-${kpi.period.quarter}.pdf`
     res.writeHead(200, {
       'content-type': 'application/pdf',
@@ -2782,6 +2836,20 @@ async function handleParametricRoute(store, data, req, res, url, route) {
       } catch (err) {
         jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
       }
+      return
+    }
+    // A hard delete, with the whole removed rule written to the action log
+    // rather than a summary of it. The rule defined what gets paid, to whom and
+    // on what condition; a delete that left only "a rule was deleted" behind
+    // would break the audit chain at exactly the point someone needed to know
+    // what had been in force. CE-10 preferred archiving over deleting so the
+    // chain survives; the copy in the log is that archive, and an archived rule
+    // would stay in the simulator picker as something still selectable.
+    if (req.method === 'DELETE') {
+      const rules = (data.parametric_rules || []).filter((r) => r.id !== route.id)
+      const log = actionLog('parametric_rules', 'deleted', existing, null, req.__auth?.subject)
+      await store.write({ ...data, parametric_rules: rules, action_logs: [...(data.action_logs || []), log] })
+      jsonResponse(res, 200, { success: true, data: { id: route.id, deleted: true }, action_log: log })
       return
     }
     jsonResponse(res, 405, { success: false, error: 'Method not allowed' })

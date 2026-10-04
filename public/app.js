@@ -1723,6 +1723,56 @@ export function evaluateMapFilters(record, filters = {}) {
   return { shown: true, undetermined: null }
 }
 
+/**
+ * Why a Send button is greyed out.
+ *
+ * Ten of them were, with nothing anywhere on the card saying why — so the
+ * operator's model of the queue ("these are sent on approval") was wrong, and
+ * the fastest way to find out was to click one and get nothing.
+ *
+ * A disabled control carries no hover in most browsers and no announcement in
+ * most screen readers, so the reason is a `title` on the button *and* the
+ * per-card line below the actions, which is always present and always visible.
+ */
+const SEND_BLOCKED_REASON = 'Only an approved alert can be sent. This one is still '
+
+function barScopeNote(bar, undetermined = 0) {
+  const parts = []
+  if (bar.severity) parts.push(`severity ${bar.severity}`)
+  if (bar.source) parts.push(`source ${bar.source}`)
+  if (bar.since) parts.push(`since ${bar.since}`)
+  if (bar.coldChainOnly) parts.push('cold-chain assets only')
+  const note = parts.length ? `Filtered by ${parts.join(', ')}.` : 'Filtered.'
+  if (!undetermined) return `${note} Applies to the map and this list.`
+  return `${note} Applies to the map and this list. ${undetermined} ${
+    undetermined === 1 ? 'alert carries' : 'alerts carry'
+  } no severity and ${undetermined === 1 ? 'is' : 'are'} not counted as a match — this count is a floor, not the whole picture.`
+}
+
+/**
+ * The filter bar, read once.
+ *
+ * The bar sat directly above the map, so every field on it read as a map
+ * control — and `Severity: High` was one: it narrowed the map and left the
+ * alert rail showing `critical` and `medium` beside it, unmarked. An operator
+ * reading the list and an operator reading the map were looking at two
+ * different answer sets on one screen, and the UI asserted neither was
+ * filtered.
+ *
+ * One read, consulted by every panel. Changing this to make the map-only
+ * behaviour explicit again means labelling it "map only" in the markup, not
+ * reintroducing a second filter that disagrees.
+ */
+export function currentFilters(root = document) {
+  const pick = (id) => root.getElementById?.(id)?.value || ''
+  return {
+    severity: pick('mapSeverity'),
+    source: pick('mapSource'),
+    since: rangeStart(pick('mapTimeRange')),
+    coldChainOnly: Boolean(root.getElementById?.('coldChainToggle')?.checked),
+  }
+}
+
 // The basemap and the graticule are functions of the frame alone — they never
 // look at a record — yet renderMap rebuilt both on every 30-second refresh,
 // reallocating a few hundred SVG nodes twice a minute to reproduce the picture
@@ -1878,10 +1928,7 @@ function renderMap(records) {
   // consulted. Each looked like a control and did nothing, which is worse than
   // not offering it: an operator narrows the map, sees no change, and concludes
   // the data is wrong.
-  const sevFilter = $('mapSeverity')?.value || ''
-  const srcFilter = $('mapSource')?.value || ''
-  const since = rangeStart($('mapTimeRange')?.value)
-  const coldOnly = $('coldChainToggle')?.checked ? true : state.filters.coldChain
+  const { severity: sevFilter, source: srcFilter, since, coldChainOnly: coldOnly } = currentFilters()
 
   // The decision itself lives in `evaluateMapFilters`, which is pure and
   // exported. What is added here is the tally: how many records the filter bar
@@ -2446,6 +2493,10 @@ function reRenderMapFromState() {
     ...(d.events?.data || []),
     ...(d.assets?.data || []),
   ])
+  // The bar is no longer map-only, so a bar change has to repaint the rail too.
+  // Skipped while the alerts tab is not showing — `renderAlertsPanel` defers
+  // around a focused field, and there is no field to protect on a hidden tab.
+  if (state.activeTab === 'alerts') renderAlertsPanel()
 }
 
 // =============================================================
@@ -2819,7 +2870,12 @@ function renderWorkflowsTab(byType, totals = {}) {
   const rejectedWrap = $('workflowRejectedWrap')
   if (rejectedWrap) rejectedWrap.hidden = !rejected
 
-  grid.innerHTML = WORKFLOW_TYPES.filter((type) => (byType[type]?.open || byType[type]?.closed || byType[type]?.rejected)).map((type) => {
+  // The breakdown summary has to say what it holds, or the operator opens it to
+  // find out whether there is anything in it.
+  const shown = WORKFLOW_TYPES.filter((type) => (byType[type]?.open || byType[type]?.closed || byType[type]?.rejected))
+  set('workflowTypeCount', shown.length ? `${shown.length} types` : '')
+
+  grid.innerHTML = shown.map((type) => {
     const m = byType[type] || { open: 0, closed: 0, rejected: 0 }
     const i18nKey = `workflow.${type}`
     return `<div class="workflow-metric" data-type="${escapeHtml(type)}" role="listitem" tabindex="0">
@@ -3427,6 +3483,22 @@ function _renderAlertsPanel() {
     filtered = linked ? filtered.filter((a) => linked.has(a.id)) : []
   }
 
+  // The filter bar sits above the map but its labels claim nothing about
+  // scope, so `Severity: High` narrowing only the map was read as narrowing the
+  // console. The rail is now held to the same bar as the map, and is told what
+  // the bar cost it — including the alerts it dropped for carrying no severity
+  // at all, which is the count an operator most needs and had none of.
+  const bar = currentFilters()
+  const barActive = Boolean(bar.severity || bar.source || bar.since || bar.coldChainOnly)
+  let barUndetermined = 0
+  if (barActive) {
+    filtered = filtered.filter((a) => {
+      const verdict = evaluateMapFilters(a, bar)
+      if (verdict.undetermined) barUndetermined += 1
+      return verdict.shown
+    })
+  }
+
   const container = $('alertsList')
   if (!container) return
 
@@ -3437,7 +3509,9 @@ function _renderAlertsPanel() {
   container.setAttribute('data-live-region', 'alerts')
 
   if (!filtered.length) {
-    container.innerHTML = `<div class="empty-state"><p>${escapeHtml(t('state.empty_alerts'))}</p></div>`
+    container.innerHTML = `<div class="empty-state"><p>${escapeHtml(t('state.empty_alerts'))}</p>${
+      barActive ? `<p class="filter-scope-note">${escapeHtml(barScopeNote(bar, barUndetermined))}</p>` : ''
+    }</div>`
     renderPager($('alertsPager'), 'alerts', 0, () => _renderAlertsPanel())
     return
   }
@@ -3445,14 +3519,16 @@ function _renderAlertsPanel() {
   // Re-animating 30 cards twice a minute is motion nobody asked for, and for a
   // screen reader it is the whole list being re-announced. Animate on the
   // frames where the contents actually changed, and not otherwise.
-  const signature = filtered.map((a) => `${a.id}:${a.status}`).join('|')
+  const signature = `${barActive ? JSON.stringify(bar) : ''}|${filtered.map((a) => `${a.id}:${a.status}`).join('|')}`
   const animate = signature !== _alertsSignature
   _alertsSignature = signature
 
   const slice = pageWindow('alerts', filtered.length)
   const page = filtered.slice(slice.start, slice.end)
 
-  container.innerHTML = page.map((alert, i) => {
+  container.innerHTML = (barActive
+    ? `<p class="filter-scope-note">${escapeHtml(barScopeNote(bar, barUndetermined))}</p>`
+    : '') + page.map((alert, i) => {
     const delay = animate ? Math.min(i * 40, 320) : 0
     const canSend = alert.status === 'approved' || alert.status === 'auto_approved' || alert.status === 'auto-approved'
     // The metric was rendered straight from the API — `precipitation_mm`,
@@ -3486,11 +3562,14 @@ function _renderAlertsPanel() {
                 ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:reject"
                 data-i18n="action.reject">Reject</button>
         <button class="btn btn-xs btn-send" data-id="${escapeHtml(alert.id)}" data-action="send"
-                ${canSend ? '' : 'disabled'} ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:send"
+                ${canSend ? '' : `disabled title="${escapeHtml(SEND_BLOCKED_REASON)}"`} ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:send"
                 data-i18n="action.send">Send</button>
         <button class="btn btn-xs" data-id="${escapeHtml(alert.id)}" data-action="details"
                 ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:details">Details</button>
       </div>
+      ${canSend ? '' : `<p class="alert-blocked-note">${escapeHtml(
+        `Send is off — ${SEND_BLOCKED_REASON}${statusText}.`
+      )}</p>`}
     </div>`
   }).join('')
 
