@@ -207,11 +207,28 @@ describe('the breaker survives the run (R-41)', () => {
     // (assertDeclaredCollections throws), and it must not be papered over
     // either. `circuit_persisted: false` and `circuit.state: 'closed'` together
     // are the honest pair: nothing tripped, and nothing would have remembered.
+    // A store that genuinely cannot hold it.
+    //
+    // `connector_circuit` is declared in `SCHEMA` now, so an ordinary store
+    // persists it and the premise of this test is gone. The degradation path
+    // still matters — a deployment on an older schema, or a store that names a
+    // narrower set — so the store narrows its own declaration explicitly
+    // rather than relying on the default happening to be missing. That also
+    // exercises the rule the write path now follows: a store naming its own
+    // collections is believed over the module default.
     const store = await freshStore()
+    store.declaredCollections = COLLECTIONS.filter((c) => c !== CIRCUIT_COLLECTION)
     const result = await runIngestion(store, { sources: ['gdacs'] }, { connectors: connectors(gdacs(5)) })
     assert.equal(result.circuit_persisted, false)
     const [status] = ingestionStatus(await store.read()).filter((s) => s.source === 'gdacs')
-    assert.equal(status.circuit.persisted, false)
+    // `status.circuit.persisted` is deliberately not asserted here.
+    //
+    // `ingestionStatus(data)` takes a snapshot, not a store: a snapshot with no
+    // `connector_circuit` rows cannot distinguish "this deployment cannot hold
+    // the collection" from "nothing has tripped yet", and guessing either way
+    // would be the same error the write path was fixed for. The run's own
+    // `circuit_persisted` above is the verdict that is actually knowable,
+    // because that is where the store is in hand.
     assert.equal(status.circuit.state, 'closed')
     assert.equal(status.circuit.consecutive_failures, 0)
   })

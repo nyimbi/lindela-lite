@@ -285,12 +285,20 @@ describe('ENH-50 — a second definition is unwritable, not merely discouraged',
 
   it('the registry is frozen — a surface cannot extend it at runtime', () => {
     assert.throws(() => { METRICS.alert_quality_index = { compute: () => 1 } }, TypeError)
+    // The exact set, not a count — so adding a metric is a deliberate act
+    // someone has to come back and read this for.
     assert.deepEqual(declaredMetrics(), [
       'cold_chain_protection_rate',
       'dispatch_precision_pct',
       'false_alert_rate',
       'feeding_repositioning_rate',
       'people_reached',
+      // Was written, computed and exported, but never added to the registry —
+      // so `computeMetric` refused it and the one caller wanting the asset
+      // union was pushed toward substituting a differently-named metric, which
+      // is the same-name-different-meaning defect this registry exists to
+      // prevent. It belongs here.
+      'population_at_risk',
     ])
   })
 

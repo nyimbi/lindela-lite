@@ -667,9 +667,24 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
     // truncated `action_logs` table was detected when somebody asked for the
     // proof or not at all — which is not evidence. `outboxRollup` says how many
     // deliveries are dead-lettered, and nothing surfaced it.
-    const audit = auditRollup((await store.read()).action_logs || [])
-    const outbox = outboxRollup(await store.read())
-    const degraded = audit.valid === false || outbox.degraded === true
+    //
+    // Guarded, and reading once. A probe that hangs is worse than one that
+    // answers "unready": this endpoint exists to be polled, and a probe that
+    // never returns holds the caller open — which is how a readiness check stops
+    // being a signal and becomes an outage. The store has already been probed
+    // above inside a timeout; if that succeeded, this read is the one place it
+    // can still fail, so it is bounded the same way.
+    let audit = null
+    let outbox = null
+    try {
+      const snapshot = await withTimeout(store.read(), timeoutMs)
+      audit = auditRollup(snapshot.action_logs || [])
+      outbox = outboxRollup(snapshot)
+    } catch (rollupError) {
+      audit = { valid: null, error: String(rollupError?.message || rollupError) }
+      outbox = { degraded: null, error: String(rollupError?.message || rollupError) }
+    }
+    const degraded = audit?.valid === false || outbox?.degraded === true
 
     const ready = probe.ok && !degraded
     jsonResponse(res, ready ? 200 : 503, {

@@ -520,6 +520,32 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
   // every ingestion run down. `circuit_persisted: false` says so out loud
   // rather than letting the breaker quietly revert to per-run.
   const circuitRows = circuitStateRows(circuitState)
+  // Store-aware, so a store that names a narrower set of collections than the
+
+  // the module default is believed. `isCircuitCollectionDeclared` existed for this
+
+  // and had no callers: the write path read the module declaration directly, so a
+
+  // store that could not hold the collection was told the breaker was persisted.
+
+  // `snapshot`, not `data`: `data` is read further down, so naming it here
+  // is a ReferenceError. It was masked while the left operand was always true
+  // and short-circuited the right — which is exactly the undeclared-collection
+  // path this test exercises, so the landmine sat under the one case that could
+  // detonate it.
+  // The declaration check alone.
+  //
+  // It used to be OR'd with "the snapshot holds connector_circuit rows", which
+  // was a statement about the data rather than the schema. Now that the key is
+  // in `emptyStore()` that disjunct is always true — every snapshot has the key
+  // and most have it empty — so it made the verdict constant and the
+  // undeclared-collection case unreachable. Whether a store *can* hold the
+  // collection is the question; how many rows it happens to hold is not.
+  //
+  // (`data` would also have been a ReferenceError here: it is read further
+  // down, and the old expression only survived because the left operand
+  // short-circuited the right — putting the landmine under the one case that
+  // could detonate it.)
   const circuitPersisted = isCircuitCollectionDeclared(store)
   if (circuitPersisted && circuitRows.length) {
     await store.merge({ connector_circuit: circuitRows })
@@ -705,14 +731,18 @@ function isCircuitCollectionDeclared(store = null) {
   // list, so the moment `connector_circuit` is added to `SCHEMA` this starts
   // persisting with no edit here. `isDeclared` is a pure read of the exported
   // declaration; importing it does not edit `src/store.js`.
-  if (isDeclared(CIRCUIT_COLLECTION)) return true
   // A store may name its own collections — `PostgresStore` reads a table per
   // key rather than off `SCHEMA` — so a store that declares the collection
-  // itself is believed over the module default. This is also the seam a test
-  // uses to prove the whole persist-and-reload path works before the
-  // declaration lands in `src/store.js`, which this change does not own.
+  // itself is believed over the module default.
+  //
+  // **Checked before the module default**, which is what its own comment said
+  // and what the code did not do: `isDeclared` short-circuited, so a store that
+  // explicitly narrowed its declaration was overruled by the module the moment
+  // `connector_circuit` landed in `SCHEMA` — and the honest-degradation path
+  // below became unreachable exactly when it stopped being a test-only state.
   const declared = store?.declaredCollections
-  return Array.isArray(declared) && declared.includes(CIRCUIT_COLLECTION)
+  if (Array.isArray(declared)) return declared.includes(CIRCUIT_COLLECTION)
+  return isDeclared(CIRCUIT_COLLECTION)
 }
 
 export function normalizeIngestionSchedule(input = {}, existing = null) {

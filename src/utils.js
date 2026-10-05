@@ -356,8 +356,23 @@ export function createIdempotencyStore({ ttlMs = 24 * 60 * 60 * 1000, maxEntries
           if (fingerprint && hit.fingerprint && fingerprint !== hit.fingerprint) {
             return { conflict: true, status: 409, body: { success: false, error: 'Idempotency-Key is in flight with a different request body' } }
           }
+          // Refresh insertion order so eviction below is least-recently-used.
+          entries.delete(key)
+          entries.set(key, hit)
           return { inFlight: true, promise: hit.pending }
         }
+        // A completed entry, same key, **different body**. The key names a
+        // request; replaying here would answer with a receipt for work that was
+        // never sent — an import count describing a batch the caller did not
+        // send. This check used to live in `lookup` and was lost when the server
+        // moved to `claim`, which is the kind of gap that only shows up as a
+        // 409 going missing.
+        if (fingerprint && hit.fingerprint && fingerprint !== hit.fingerprint) {
+          return { conflict: true, status: 409, body: { success: false, error: 'Idempotency-Key was already used with a different request body' } }
+        }
+        // Refresh insertion order so the eviction below is least-recently-used.
+        entries.delete(key)
+        entries.set(key, hit)
         return { proceed: false, status: hit.status, body: hit.body }
       }
       if (entries.size >= maxEntries) entries.delete(entries.keys().next().value)
@@ -370,13 +385,24 @@ export function createIdempotencyStore({ ttlMs = 24 * 60 * 60 * 1000, maxEntries
       return { proceed: true, claim: true }
     },
 
-    /** Settle a claim with the outcome, so a concurrent caller can answer. */
+    /**
+     * Settle a claim with the outcome, so a concurrent caller can answer.
+     *
+     * Records the outcome whether or not a claim preceded it. `run()` without a
+     * `claim()` is a legitimate path — it is how a caller that knows the work is
+     * already serialized records its result — and requiring the claim made that
+     * path a silent no-op, so the store ended up empty and every entry
+     * immediately "forgotten".
+     */
     settle(key, status, body, fingerprint) {
       if (!key) return
       const hit = entries.get(key)
-      if (!hit) return
-      entries.delete(key)
-      if (hit.settle) hit.settle({ status, body })
+      if (hit?.pending) {
+        entries.delete(key)
+        if (hit.settle) hit.settle({ status, body })
+      } else if (hit) {
+        entries.delete(key)
+      }
       if (entries.size >= maxEntries) entries.delete(entries.keys().next().value)
       entries.set(key, { status, body, fingerprint, expiresAt: Date.now() + ttlMs })
     },
