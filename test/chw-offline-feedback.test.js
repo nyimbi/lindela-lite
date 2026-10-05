@@ -51,20 +51,26 @@ describe('an offline report is saved and says so', () => {
 
     assert.ok(en['chw.reply_sent'],
       'a reply needs its own confirmation; borrowing the report one calls it a symptom')
-    // The three symptom-path sentences pass the noun differently — one
-    // positionally to queueReport, one as `what:`, one to the shared failure
-    // template — so all three forms are counted. A fourth would be a copy-paste
-    // from another path.
+    // The invariant is "one sentence per noun per outcome" — queued, sent and
+    // failed each name what was actually filed, and nothing else does.
+    //
+    // This used to assert the exact number of `what: 'symptom report'`
+    // literals, which pinned the *call-site style* rather than the property:
+    // routing all three submissions through `submitOrQueue(path, body, {what})`
+    // is correct and changed the count. The count that means something is the
+    // per-noun total.
     assert.equal(source.match(/'symptom report'/g)?.length, 3,
       'only the three symptom-path sentences may describe a symptom report')
-    assert.equal(source.match(/what: 'symptom report'/g)?.length, 1,
-      'and only one of them names it through the toast template')
+    assert.equal(source.match(/'incident report'/g)?.length, 3,
+      'all three incident sentences name an incident — queued, sent, failed')
+    assert.equal(source.match(/submitOrQueue\('\/api\/v1\/chw\/report', body, \{ what: 'symptom report' \}\)/g)?.length, 1,
+      'the symptom submission names itself when it queues')
+    assert.equal(source.match(/submitOrQueue\('\/api\/v1\/chw\/report', body, \{ what: 'incident report' \}\)/g)?.length, 1,
+      'and so does the incident submission')
     assert.equal(source.match(/reportSendFailure\(error, 'incident report'\)/g)?.length, 1,
       'the incident failure sentence must name an incident')
     assert.equal(source.match(/reportSendFailure\(error, 'reply'\)/g)?.length, 1,
       'and the reply failure sentence must not borrow either noun')
-    assert.equal(source.match(/'incident report'/g)?.length, 3,
-      'all three incident sentences name an incident — queued, sent, failed')
     assert.ok(!/chw\.report_sent[^\n]*symptom report/.test(source.slice(source.indexOf('incidentSubmitBtn'))),
       'no confirmation after the incident button may describe a symptom')
   })

@@ -1,4 +1,4 @@
-import { initI18n, t, apiFetch, initOfflineBanner, initOfflineQueue, autoMarkScrollableRegions } from '/shared/runtime.js'
+import { initI18n, t, apiFetch, initOfflineBanner, initOfflineQueue, initServiceWorker, submitOrQueue, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
 import { esc as escapeHtml } from '/shared/fmt.js'
 import { ERROR, LOADING, QUEUED, createLoadSequence, describeActionFailure, describeState, distinguishFailure } from '/shared/states.js'
@@ -107,6 +107,16 @@ async function init() {
   await initI18n(state.locale)
   await initOfflineQueue()
   initOfflineBanner()
+  // The field app is the one surface that must work with no connectivity, and
+  // it was the one surface that never registered the worker. The console and
+  // focal-point both called this; the app whose entire purpose is filing
+  // reports from a village with no signal did not — so even once the
+  // registration bug was fixed, this surface would have had an offline queue
+  // with nothing to drain it and no shell cached to open.
+  //
+  // Awaited: the first paint must not race precaching, or a worker that is
+  // still installing serves a partial shell on the very first offline visit.
+  await initServiceWorker()
 
   localeSelect.value = state.locale
   localeSelect.addEventListener('change', async (e) => {
@@ -329,9 +339,16 @@ function showScreen(name) {
  * thing to do.
  */
 async function queueReport(path, options, what) {
-  const result = await window.lindelaQueue.enqueue(path, options)
+  // `what` travels with the record so the queue list can name it. A row reading
+  // only "POST /api/v1/chw/report, queued 4 days ago" tells a health worker
+  // nothing about which of their reports it is.
+  const result = await window.lindelaQueue.enqueue(path, options, { what })
   if (!result?.queued) throw new Error('the offline queue did not confirm the report')
+  // "Saved on this phone. It will send when you have signal." — now literally
+  // true, because the record is written before this line is reached. It was
+  // shown on a path where nothing had been written.
   showToast(t('chw.report_queued', { what }), 'info')
+  return result
 }
 
 let toastTimer = null
@@ -384,9 +401,18 @@ function reportSendFailure(error, what) {
   // The shared template always produces a sentence; the catalogue supplies a
   // translated one where this locale has it. `t` echoes the key back when it
   // does not, and a health worker must never be shown `chw.save_failed`.
+  // The next step has to match what actually happened, and reaching here means
+  // it did NOT get queued.
+  //
+  // `submitOrQueue` queues on failure, so this catch fires only when there was
+  // no queue to write to — private browsing, storage exhausted, a blocked
+  // upgrade. The previous sentence here promised the report "will wait on this
+  // phone until there is one", which in exactly this case was false: nothing had
+  // been written anywhere.
   const fallback = describeActionFailure({
     action: `send the ${what}`,
-    nextStep: 'Nothing was saved and nothing was lost — if there is no connection, it will wait on this phone until there is one.',
+    nextStep: 'It was NOT saved on this phone, so you will need to enter it again. '
+      + 'The details are still on screen — copy them somewhere safe before leaving this screen.',
   })
   const sentence = `${fallback.title}. ${fallback.body}`
   const translated = t('chw.save_failed', { what })
@@ -624,12 +650,8 @@ async function submitSymptomReport() {
   }
 
   try {
-    if (!navigator.onLine) {
-      await queueReport('/api/v1/chw/report', { method: 'POST', body }, 'symptom report')
-    } else {
-      const res = await apiFetch('/api/v1/chw/report', { method: 'POST', body })
-      showToast(t('chw.report_sent', { what: 'symptom report' }), 'ok')
-    }
+    const sent = await submitOrQueue('/api/v1/chw/report', body, { what: 'symptom report' })
+    if (!sent?.queued) showToast('chw.report_sent', { what: 'symptom report' }, 'ok')
     resetSymptomWizard()
     showScreen('home')
     refreshQueueStatus()
@@ -734,12 +756,8 @@ function setupIncidentScreen() {
     }
 
     try {
-      if (!navigator.onLine) {
-        await queueReport('/api/v1/chw/report', { method: 'POST', body }, 'incident report')
-      } else {
-        const res = await apiFetch('/api/v1/chw/report', { method: 'POST', body })
-        showToast(t('chw.report_sent', { what: 'incident report' }), 'ok')
-      }
+      const sent = await submitOrQueue('/api/v1/chw/report', body, { what: 'incident report' })
+      if (!sent?.queued) showToast(t('chw.report_sent', { what: 'incident report' }), 'ok')
       categorySelect.value = ''
       $('incidentDescription').value = ''
       $('incidentPhoto').value = ''
@@ -857,18 +875,12 @@ function setupReplyScreen() {
     const replyBtn = $('replySubmitBtn')
     replyBtn.disabled = true
     try {
-      if (!navigator.onLine) {
-        await queueReport('/api/v1/chw/reply', {
-          method: 'POST',
-          body: { alert_event_id: alertId, message },
-        }, 'reply')
-      } else {
-        const res = await apiFetch('/api/v1/chw/reply', {
-          method: 'POST',
-          body: { alert_event_id: alertId, message },
-        })
-        showToast(t('chw.reply_sent'), 'ok')
-      }
+      const sent = await submitOrQueue(
+        '/api/v1/chw/reply',
+        { alert_event_id: alertId, message },
+        { what: 'reply' },
+      )
+      if (!sent?.queued) showToast(t('chw.reply_sent'), 'ok')
       $('replyMessage').value = ''
       showScreen('home')
       refreshQueueStatus()

@@ -597,73 +597,42 @@ async function pruneDataCaches() {
 	}
 }
 
-SW?.addEventListener('sync', (event) => {
-	if (event.tag === 'lindela-queue') {
-		event.waitUntil(replayQueue())
-	}
-})
-
-SW?.addEventListener('message', (event) => {
-	if (event.data.type === 'flushQueue') {
-		event.waitUntil(replayQueue())
-	}
-})
-
 /**
- * Replay the offline queue.
+ * Replay: DELETED, and this comment is the reason.
  *
- * There was a second queue here under a different database name
- * (`lindela-queue`) that nothing ever wrote to and nothing ever registered a
- * sync tag for, alongside the page's own queue (`lindela_queue`). Two
- * implementations, one of them dead, and neither replaying anything: a report
- * queued offline sat in IndexedDB until the tab was closed.
+ * This worker read the *same* IndexedDB store the page does — `lindela_queue` —
+ * with `getAll()` and an unconditional `delete` on success. The page's `flush()`
+ * does the same. Two drains, no claim, no lease, no compare-and-delete: both can
+ * hold the same record id at the same moment, both POST it, and both delete it.
+ * **Two field reports for one health worker's observation.**
  *
- * This now reads the page's queue, so there is exactly one set of pending
- * requests and the service worker and the page cannot disagree about what is
- * outstanding. The page also flushes on `online`, on an interval and on load;
- * this path covers the case the tab was closed, which no in-page event can.
+ * It was unreachable — no service worker could install (the registration said
+ * `register('/sw.js')` without `{type:'module'}` against a file with eleven
+ * top-level exports, so every browser refused it). So the duplicate-report race
+ * had never fired, and fixing the registration would have activated it on the
+ * first field device to go offline.
+ *
+ * Two things made it safe to remove rather than fix:
+ *
+ *  1. Every queued write now carries an `idempotency-key` equal to its queue
+ *     record id (`public/shared/runtime.js`, `enqueue`). Even if two drains did
+ *     race, the server's idempotency store answers the second with the first's
+ *     receipt rather than creating a second record.
+ *  2. The page already drains on `online`, on a 30-second tick and on load, and
+ *     now records attempts and moves permanently-rejected records aside rather
+ *     than retrying them forever.
+ *
+ * What the worker loses is the closed-tab case, which is real: a health worker
+ * who closes the app before signal returns waits for the next visit. That is the
+ * right trade against silently duplicating a report, and the honest way to close
+ * it is a claim-based queue with a single drainer — not two drainers and a hope.
+ * When that lands it belongs here again, with a lease.
  */
-async function replayQueue() {
-	const db = await openQueueDb()
-	const tx = db.transaction('requests', 'readonly')
-	const records = await new Promise((resolve, reject) => {
-		const req = tx.objectStore('requests').getAll()
-		req.onsuccess = () => resolve(req.result || [])
-		req.onerror = () => reject(req.error)
-	})
-
-	const succeeded = []
-	for (const item of records) {
-		try {
-			const response = await fetch(item.path, item.options)
-			if (response.ok) succeeded.push(item.id)
-		} catch {
-			// Still failing: keep it queued and try again on the next sync.
-		}
+SW?.addEventListener('message', (event) => {
+	// The page owns replay. A message asking the worker to flush is answered
+	// with an acknowledgement rather than acted on, so a caller cannot start a
+	// second drain by asking.
+	if (event.data?.type === 'flushQueue') {
+		event.waitUntil(Promise.resolve({ replayed: 0, owner: 'page' }))
 	}
-
-	if (succeeded.length) {
-		const deleteTx = db.transaction('requests', 'readwrite')
-		const deleteStore = deleteTx.objectStore('requests')
-		for (const id of succeeded) deleteStore.delete(id)
-		await new Promise((resolve, reject) => {
-			deleteTx.oncomplete = () => resolve()
-			deleteTx.onerror = () => reject(deleteTx.error)
-		})
-	}
-	return succeeded.length
-}
-
-function openQueueDb() {
-	return new Promise((resolve, reject) => {
-		const req = indexedDB.open('lindela_queue', 1)
-		req.onupgradeneeded = (event) => {
-			const db = event.target.result
-			if (!db.objectStoreNames.contains('requests')) {
-				db.createObjectStore('requests', { keyPath: 'id', autoIncrement: true })
-			}
-		}
-		req.onsuccess = () => resolve(req.result)
-		req.onerror = () => reject(req.error)
-	})
-}
+})

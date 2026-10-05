@@ -12,7 +12,47 @@ let _swRegistration = null
 export function initServiceWorker() {
   if (!('serviceWorker' in navigator)) return
   if (_swRegistration) return _swRegistration
-  _swRegistration = navigator.serviceWorker.register('/sw.js').catch(() => null)
+  // `type: 'module'` is load-bearing, not decoration.
+  //
+  // `sw.js` carries eleven top-level `export` statements (CACHE_POLICIES,
+  // classifyApiRequest, shellGraph, evictionPlan, …). Registered as a classic
+  // script the browser rejects it at evaluation time, so **no service worker was
+  // ever installed**: `precache()` never ran, the three read buckets never
+  // existed, Background Sync never registered and `replayQueue()` was
+  // unreachable code. Verified in a browser at a secure origin:
+  //
+  //     register('/sw.js')                  → ServiceWorker script evaluation failed
+  //     getRegistrations()                  → 0
+  //     register('/sw.js',{type:'module'})  → registered
+  //
+  // Three later offline commits hardened that worker, one of them shipped
+  // ENH-22. Nothing caught it because `.catch(() => null)` made the failure
+  // indistinguishable from "this browser has no service workers", and because
+  // the test suite imports `sw.js` as a Node ESM module — which works, since
+  // Node honours the module syntax the browser rejects.
+  //
+  // Floor: module workers need Chrome 91 / Safari 15.4 / Firefox 111. Every
+  // module in this codebase is ESM and `sw.js` is already written to be
+  // importable from Node, so this is the aligned choice — but the floor is
+  // real, so the failure is now reported rather than swallowed.
+  _swRegistration = navigator.serviceWorker
+    .register('/sw.js', { type: 'module' })
+    .then((registration) => {
+      window.__lindelaSW = { state: 'registered', scope: registration.scope }
+      return registration
+    })
+    .catch((error) => {
+      // Recorded, not swallowed. A device with no offline support must be able
+      // to say so, or an operator has no way to explain to a health worker why
+      // their reports are not waiting for signal.
+      window.__lindelaSW = {
+        state: 'failed',
+        error: error?.message || String(error),
+        moduleWorkersUnsupported: /module|import|export/i.test(error?.message || ''),
+      }
+      console.error('Service worker registration failed; offline support is unavailable.', error)
+      return null
+    })
   return _swRegistration
 }
 
@@ -67,27 +107,47 @@ export async function initOfflineQueue() {
      * still has to send, and the only way to say so honestly is for the store
      * to confirm it before anyone is told anything.
      */
-    async enqueue(path, options) {
+    async enqueue(path, options, meta = {}) {
       if (!this.db) {
         throw new Error('This device has no offline storage, so the report was not saved')
       }
-      let id
+      // Minted here, before the write, and carried into the request headers.
+      //
+      // The queue used to rely on IndexedDB's autoIncrement key, which is only
+      // known after the write completes — so the id could not be sent with the
+      // request. It is now the idempotency key, which is what makes replay
+      // safe: two drains that both hold this record send the same key, and the
+      // server answers the second with the first's receipt instead of creating
+      // a second field report for one health worker's observation.
+      //
+      // `randomUUID` rather than a counter: the key leaves the device and is
+      // compared by a server that has never seen this client, so it has to be
+      // unique rather than merely locally sequential.
+      const id = (globalThis.crypto?.randomUUID
+        ? crypto.randomUUID()
+        : `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`)
+      const headers = { ...(options?.headers || {}), 'idempotency-key': id }
+      const record = {
+        id,
+        path,
+        options: { ...options, headers },
+        timestamp: Date.now(),
+        what: meta.what || null,
+        attempts: 0,
+        lastError: null,
+      }
       try {
         const tx = this.db.transaction(['requests'], 'readwrite')
         const store = tx.objectStore('requests')
-        id = await new Promise((resolve, reject) => {
-          let key
+        await new Promise((resolve, reject) => {
           // Transaction completion, not the request's own success: a quota
           // error or a constraint violation aborts the transaction after the
           // request has already reported success, and a record the store then
           // drops must not read as saved.
-          tx.oncomplete = () => resolve(key)
+          tx.oncomplete = () => resolve()
           tx.onabort = () => reject(tx.error || new Error('The offline queue write was aborted'))
           tx.onerror = () => reject(tx.error || new Error('The offline queue write failed'))
-          const req = store.add({ path, options, timestamp: Date.now() })
-          req.onsuccess = () => {
-            key = req.result
-          }
+          const req = store.add(record)
           req.onerror = () => reject(req.error || new Error('The offline queue write failed'))
         })
       } catch (error) {
@@ -120,6 +180,62 @@ export async function initOfflineQueue() {
       ])
       return { queued: true, id }
     },
+
+    /**
+     * What is waiting, and what has given up.
+     *
+     * The count was the entire surface: a health worker whose reports had not
+     * sent had a number and no way to learn what it referred to, when it was
+     * filed, or why it was stuck. Returns the records themselves so the surface
+     * can list them, oldest first — a week offline produces a week of rows and
+     * the oldest is the one most likely to have been forgotten.
+     */
+    async list({ failed = false } = {}) {
+      if (!this.db) return []
+      try {
+        const tx = this.db.transaction(['requests'], 'readonly')
+        const records = await new Promise((resolve, reject) => {
+          const req = tx.objectStore('requests').getAll()
+          req.onsuccess = () => resolve(req.result || [])
+          req.onerror = () => reject(req.error || new Error('The offline queue could not be read'))
+        })
+        return records
+          .filter((r) => Boolean(r?.failed) === Boolean(failed))
+          .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+      } catch {
+        return []
+      }
+    },
+
+    /** Put a failed record back in the queue for another attempt. */
+    async retry(id) {
+      if (!this.db) return false
+      const tx = this.db.transaction(['requests'], 'readwrite')
+      const store = tx.objectStore('requests')
+      await new Promise((resolve, reject) => {
+        const get = store.get(id)
+        get.onsuccess = () => {
+          if (!get.result) { resolve(); return }
+          store.put({ ...get.result, failed: false, attempts: 0, lastError: null })
+        }
+        get.onerror = () => reject(get.error)
+      })
+      window.dispatchEvent(new CustomEvent('lindela-queue-changed'))
+      return true
+    },
+
+    /** Discard a record. The worker asked for this; it is not a quiet removal. */
+    async discard(id) {
+      if (!this.db) return false
+      const tx = this.db.transaction(['requests'], 'readwrite')
+      tx.objectStore('requests').delete(id)
+      await new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+      window.dispatchEvent(new CustomEvent('lindela-queue-changed'))
+      return true
+    },
     /** How many reports are waiting to send. Surfaced so the promise is visible. */
     async pendingCount() {
       if (!this.db) return 0
@@ -147,7 +263,19 @@ export async function initOfflineQueue() {
      * request must stay queued for the next cycle rather than break the cycle.
      */
     async flush() {
-      if (!this.db || !navigator.onLine) return 0
+      // `navigator.onLine` is a link-layer flag, not reachability. A captive
+      // portal, an uplink that answers TCP but not HTTP, or a blackholed
+      // resolver all report `onLine === true`, and gating the drain on it
+      // meant the queue sat full while the browser insisted it was online.
+      // Kept as a cheap early-out only — never as the condition for *saving*,
+      // which is `submitOrQueue`'s job and no longer reads this flag.
+      if (!this.db || navigator.onLine === false) return 0
+      // One drain at a time. The service worker's own replay path was removed
+      // precisely because two drains could hold the same record, both POST it,
+      // and both delete it — two field reports for one observation. A second
+      // guard here costs nothing and closes the same hole from this side.
+      if (this._draining) return 0
+      this._draining = true
       let records
       try {
         const tx = this.db.transaction(['requests'], 'readonly')
@@ -157,20 +285,48 @@ export async function initOfflineQueue() {
           req.onerror = () => resolve([])
         })
       } catch {
+        this._draining = false
         return 0
       }
       let sent = 0
+      let gaveUp = 0
       for (const record of records) {
+        if (record?.failed) continue
+        const attempts = (record.attempts || 0) + 1
         try {
           await apiFetch(record.path, record.options)
           const delTx = this.db.transaction(['requests'], 'readwrite')
           delTx.objectStore('requests').delete(record.id)
           sent += 1
-        } catch {
-          // Still failing: keep it queued and try again next cycle.
+        } catch (error) {
+          // Still failing: keep it, count the attempt, and — after enough of
+          // them, or on a rejection that will never succeed — move it aside
+          // rather than retrying forever.
+          //
+          // A record the server permanently rejects (a 400 on a bad district
+          // slug, a 422 on a stale schema) used to be retried on every 30s tick
+          // for the life of the install, was never surfaced, and could not be
+          // discarded — so `pendingCount` stayed inflated permanently and the
+          // banner kept promising delivery of something that would never go.
+          const permanent = Number(error?.status) >= 400 && Number(error?.status) < 500
+          if (permanent || attempts >= MAX_QUEUE_ATTEMPTS) {
+            const failTx = this.db.transaction(['requests'], 'readwrite')
+            failTx.objectStore('requests').put({
+              ...record,
+              attempts,
+              failed: true,
+              lastError: error?.message || String(error),
+              failedAt: new Date().toISOString(),
+            })
+            gaveUp += 1
+            continue
+          }
+          const retryTx = this.db.transaction(['requests'], 'readwrite')
+          retryTx.objectStore('requests').put({ ...record, attempts, lastError: error?.message || null })
         }
       }
-      this.lastFlush = { at: new Date().toISOString(), attempted: records.length, sent }
+      this._draining = false
+      this.lastFlush = { at: new Date().toISOString(), attempted: records.length, sent, gaveUp }
       window.dispatchEvent(new CustomEvent('lindela-queue-flushed', { detail: this.lastFlush }))
       return records.length
     },
@@ -185,6 +341,23 @@ export async function initOfflineQueue() {
   setInterval(() => { queue.flush() }, 30_000)
   queue.flush()
 }
+
+/**
+ * Attempts before a queued record is moved aside.
+ *
+ * Not infinite, and not few: a health worker's report failing eight times over
+ * days is usually a link that has been down, and a record that gave up after
+ * three would lose a week's work to one bad afternoon.
+ */
+export const MAX_QUEUE_ATTEMPTS = 8
+
+/**
+ * How long to try before assuming the link is down.
+ *
+ * Short, because the record is going into a durable queue either way and the
+ * health worker is waiting on a tap. Long enough to cover a slow cell handover.
+ */
+export const QUEUE_TRY_TIMEOUT_MS = 8_000
 
 /** Default request timeout. Long enough for a satellite hop, short enough
  *  that a dead link surfaces as an error rather than a spinner that never ends. */
@@ -261,12 +434,29 @@ export async function apiSettled(path, options) {
  * committed the record; a queue that could not take it throws, because the
  * caller has a report in hand that has not been filed and must be told so.
  */
-export async function submitOrQueue(path, body, { headers } = {}) {
-  if (navigator.onLine) return apiFetch(path, { method: 'POST', body, headers })
-  if (window.lindelaQueue) {
-    return window.lindelaQueue.enqueue(path, { method: 'POST', body, headers })
+export async function submitOrQueue(path, body, { headers, what = null } = {}) {
+  // Try first; queue on failure.
+  //
+  // This was `if (navigator.onLine) return apiFetch(...)` else queue. That reads
+  // the browser's opinion of the link, and on a captive portal, an uplink that
+  // completes the TCP handshake but returns nothing for HTTP, or a field handset
+  // with a blackholed resolver, `onLine` is `true` and the request throws —
+  // after which the caller told the health worker the report "will wait on this
+  // phone". Nothing had been written. The worker was told a promise the code
+  // had not made.
+  try {
+    return await apiFetch(path, { method: 'POST', body, headers, timeout: QUEUE_TRY_TIMEOUT_MS })
+  } catch (error) {
+    if (window.lindelaQueue) {
+      const queued = await window.lindelaQueue.enqueue(
+        path, { method: 'POST', body, headers }, { what },
+      )
+      return { ...queued, queuedBecause: error?.message || 'the request did not get through' }
+    }
+    throw new Error(
+      `The report could not be sent (${error?.message || 'no response'}) and this device has no offline queue, so it was not saved.`,
+    )
   }
-  throw new Error('Offline and no queue is available')
 }
 
 export async function initI18n(defaultLocale = 'en') {
