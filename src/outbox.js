@@ -61,6 +61,16 @@ export async function emit(store, event, payload) {
     return existing
   }
 
+  if (existing && existing.status === 'failed') {
+    // Dead-lettered. Re-emitting is what killed the retry budget in the first
+    // place: the platform's own retry path re-emits the event it is retrying,
+    // so a row that reached `failed` would be resurrected on the very next tick
+    // and never stay dead. Recovery is a deliberate act — `redriveOutbox` —
+    // because an operator clearing a dead letter is a decision, and a silent
+    // reset is not one.
+    return existing
+  }
+
   const record = {
     ...(existing || {}),
     id,
@@ -75,7 +85,12 @@ export async function emit(store, event, payload) {
     status: 'pending',
     last_attempt_at: existing?.last_attempt_at ?? null,
     last_error: existing?.last_error ?? null,
-    next_attempt_at: null,
+    // Preserved, not cleared. A row waiting out a backoff is still waiting out
+    // that backoff, and re-emitting it — which every retry path in the platform
+    // does — must not hand a permanently failing endpoint a free request per
+    // cycle. That was the other half of R-20: the counter was reset on re-emit,
+    // and the cooldown would have been reset with it.
+    next_attempt_at: existing?.next_attempt_at ?? null,
     ...(existing?.failed_at ? { failed_at: existing.failed_at } : {}),
   }
   await store.merge({ events_outbox: [record] })
@@ -224,6 +239,43 @@ export async function dispatchPending(store, options = {}) {
   }
 
   return { dispatched, failed, undeliverable, deferred }
+}
+
+/**
+ * Clear a dead letter deliberately.
+ *
+ * `emit` will not do it — it returns the failed row untouched, because every
+ * retry path in this platform re-emits the event it is retrying, and a row
+ * that could be resurrected by a re-emit never stays dead. So recovery is a
+ * separate, explicit call: an operator has decided the endpoint is fixed and
+ * wants these replayed, and that decision is visible in the code that makes it
+ * rather than implied by a retry tick.
+ *
+ * Returns the rows it requeued, so a caller can report what it revived.
+ */
+export async function redriveOutbox(store, { ids = null, event = null } = {}) {
+  const data = await store.read()
+  const wanted = Array.isArray(ids) && ids.length ? new Set(ids) : null
+  const revived = (data.events_outbox || []).filter((row) => {
+    if (row.status !== 'failed') return false
+    if (wanted) return wanted.has(row.id)
+    if (event) return row.event === event
+    return true
+  })
+  if (!revived.length) return []
+
+  const updates = revived.map((row) => ({
+    ...row,
+    status: 'pending',
+    // The counter goes back to zero because this is a fresh attempt at a fresh
+    // situation, and a redrive that started at 5 would have one try left.
+    attempts: 0,
+    next_attempt_at: null,
+    failed_at: null,
+    redriven_at: nowIso(),
+  }))
+  await store.merge({ events_outbox: updates })
+  return updates
 }
 
 /**
