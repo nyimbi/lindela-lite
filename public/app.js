@@ -1351,7 +1351,6 @@ async function queueRequest(url, body) {
 // =============================================================
 const SVG_W = 800
 const SVG_H = 500
-const DEFAULT_BBOX = { minLat: -2, maxLat: 12, minLon: 29, maxLon: 46 }
 
 const mapEl           = $('situationMap')
 const mapTransformEl  = $('mapTransform')
@@ -3560,17 +3559,6 @@ railTablist?.addEventListener('keydown', (e) => {
  * operator chose and nothing else, and an absent parameter always means the
  * default the markup ships with.
  */
-const FILTER_DEFAULTS = { sev: '', source: '', range: '7d', cold: '', alerts: 'all', workflow: '' }
-
-const FILTER_READERS = {
-  sev:      () => $('mapSeverity')?.value || '',
-  source:   () => $('mapSource')?.value || '',
-  range:    () => $('mapTimeRange')?.value || '',
-  cold:     () => ($('coldChainToggle')?.checked ? '1' : ''),
-  alerts:   () => state.alertFilter,
-  workflow: () => state.workflowTypeFilter || '',
-}
-
 /**
  * The console's current view, in the shape `shared/view-state.js` encodes.
  *
