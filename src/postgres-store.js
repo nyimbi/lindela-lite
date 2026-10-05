@@ -4,6 +4,43 @@ import { BITEMPORAL_COLLECTIONS, VERSIONS_PER_RECORD } from './bitemporal.js'
 import { nowIso } from './utils.js'
 import { pendingMigrations, targetVersion } from './migrations.js'
 
+/**
+ * The declared collections, as a Set.
+ *
+ * The membership test runs once per returned row on the read path that
+ * `server.js` enters before the first route test, so `COLLECTIONS.includes()` —
+ * a linear scan of a 46-element array, measured at 53 ms over 39,715 rows — is
+ * the wrong shape for it.
+ */
+const DECLARED_COLLECTIONS = new Set(COLLECTIONS)
+
+/**
+ * `record_versions`: 60% of this store by bytes, and no reader in this
+ * repository. Named rather than spelled, because the string appears in the
+ * read path, the prune and the write of the rows themselves.
+ */
+const HISTORY_COLLECTION = 'record_versions'
+
+/**
+ * Accepts `read()`, `read({ collections, includeHistory })` and
+ * `read(['incidents'])` alike.
+ *
+ * The array form exists because a collection manifest is a list and reading one
+ * is what a caller means by naming it. The object form is where the options go
+ * once there is more than one. `null` for "no manifest" is distinct from `[]`
+ * for "an empty manifest", because the first is a whole-store read and the
+ * second is a read that returns nothing — and conflating them would make
+ * `read([])` a way to accidentally read everything.
+ */
+function normaliseReadOptions(options) {
+  if (Array.isArray(options)) return { collections: options, includeHistory: false }
+  const { collections = null, includeHistory = false } = options || {}
+  return {
+    collections: collections === null || collections === undefined ? null : [...collections],
+    includeHistory: Boolean(includeHistory),
+  }
+}
+
 export class PostgresStore {
   constructor({ databaseUrl, pool } = {}) {
     if (!databaseUrl && !pool) throw new Error('PostgresStore requires a databaseUrl or pool')
@@ -144,25 +181,117 @@ export class PostgresStore {
     }
   }
 
-  async read() {
+  /**
+   * The whole store, or only the collections the caller named.
+   *
+   * Backward-compatible by construction: `read()`, `read({ ... })` and
+   * `read(['incidents'])` are all valid, and the first returns what it always
+   * did minus the history. Every existing call site keeps working, which is
+   * deliberate — the routes that should pass a manifest live in `server.js`
+   * and are being changed for an unrelated reason, so the signature has to
+   * accept what they pass today while making the manifest available tomorrow.
+   *
+   * `includeHistory` is off by default. See the SQL below for why that does not
+   * weaken the auditability claim.
+   */
+  async read(options = {}) {
     await this.ensureSchema()
+    const { collections, includeHistory } = normaliseReadOptions(options)
+
+    const clauses = ["collection <> '__schema'"]
+    const params = []
+    if (collections !== null) {
+      params.push(collections)
+      clauses.push(`collection = ANY($${params.length}::text[])`)
+    }
+    if (!includeHistory) clauses.push(`collection <> '${HISTORY_COLLECTION}'`)
+
+    // ENH-07 / ENH-08. This used to be
+    //
+    //     SELECT collection, body, updated_at FROM lite_records
+    //      ORDER BY updated_at DESC, collection, id
+    //
+    // — no WHERE, no LIMIT, and called at the top of every request in
+    // `server.js` before the first route test, so a 404 paid for a full
+    // materialisation of 39,715 rows / 143 MB, and so did every write. The
+    // ORDER BY could not use `lite_records_collection_updated_idx` at all,
+    // because the sort leads with `updated_at` globally rather than within a
+    // collection: an explicit sort on top of a scan that returned everything
+    // anyway.
+    //
+    // Three things changed:
+    //
+    // - `collection = ANY($1)` when the caller names a manifest, so the
+    //   transfer becomes proportional to what was asked for rather than to
+    //   everything the system has ever stored.
+    // - `record_versions` is excluded by default. It is 60% of this store by
+    //   bytes — 85 MB of 143 MB, 31,549 rows — and nothing in this repository
+    //   reads it: `valueAsOf` and `versionsFor` have zero non-test callers. The
+    //   collection stays writable and queryable; `includeHistory` brings it
+    //   back. ADR-013's claim is that the history exists, not that every
+    //   request pays to transfer it.
+    // - `__schema` is excluded in SQL rather than by a linear scan below.
+    //
+    // The ORDER BY is gone entirely. It was never the return order — that is
+    // `sortRecords`, the same comparator `JsonStore` uses, because `updated_at`
+    // is stamped `now()` at write time and so sorts by insertion rather than by
+    // when the record describes. All the ordering bought was `rows[0]`, which
+    // `#newestWrite()` answers without touching the bodies.
     const { rows } = await this.pool.query(
-      'SELECT collection, body, updated_at FROM lite_records ORDER BY updated_at DESC, collection, id',
+      `SELECT collection, body FROM lite_records WHERE ${clauses.join(' AND ')}`,
+      params,
     )
+
     const store = emptyStore()
-    for (const row of rows) {
-      if (COLLECTIONS.includes(row.collection)) store[row.collection].push(row.body)
-    }
-    // The same comparator JsonStore uses. The ORDER BY above is kept only so
-    // rows[0] is the most recently written row for the store's own updated_at;
-    // ordering the collections themselves in SQL used to disagree with the JSON
-    // backend, because this column is stamped with now() at write time and so
-    // sorts by insertion rather than by when the record describes.
+    // A Set, not `COLLECTIONS.includes()`. The array form ran a linear scan per
+    // returned row — measured at 53 ms across 39,715 of them — and every row it
+    // rejected is a row the WHERE above has already removed.
+    const wanted = collections === null
+      ? DECLARED_COLLECTIONS
+      : new Set(collections.filter((collection) => DECLARED_COLLECTIONS.has(collection)))
+    // A declared collection with no `emptyStore()` key is a skew between the two
+    // declarations, and the loop below is where it would otherwise throw — a
+    // read failing on a collection the caller never asked about. Seeding the
+    // keys first costs 46 assignments and makes the skew an empty list rather
+    // than an exception; `test/store-schema-declaration.test.js` is what keeps
+    // the two declarations from drifting in the first place.
     for (const collection of COLLECTIONS) {
-      store[collection] = sortRecords(store[collection])
+      if (!Array.isArray(store[collection])) store[collection] = []
     }
-    store.updated_at = rows[0]?.updated_at ? new Date(rows[0].updated_at).toISOString() : nowIso()
+    for (const row of rows) {
+      if (wanted.has(row.collection)) store[row.collection].push(row.body)
+    }
+    // R-35. Sorting here, on every read, is what makes the two adapters agree.
+    // `JsonStore` now does the same on its parse; previously it sorted at write
+    // time via `mergeById`, which `write()` bypassed, so the same records came
+    // back in different orders depending on how they got in.
+    for (const collection of COLLECTIONS) {
+      if (store[collection].length) store[collection] = sortRecords(store[collection])
+    }
+    store.updated_at = (await this.#newestWrite()) || nowIso()
     return store
+  }
+
+  /**
+   * When the store was last written, without ordering the whole table to find it.
+   *
+   * `max(updated_at)` per collection, grouped, then maxed again. The existing
+   * `(collection, updated_at DESC)` index holds exactly the two columns this
+   * groups and orders by, so the planner can answer it from the index rather
+   * than reading 143 MB of bodies; the outer aggregate then reduces ~46 group
+   * rows to one. The flat `SELECT max(updated_at) FROM lite_records` this
+   * replaces — as the tail of a 39,715-row sort — had no index to use at all.
+   */
+  async #newestWrite() {
+    const { rows } = await this.pool.query(
+      `SELECT max(per_collection.newest) AS newest FROM (
+         SELECT max(updated_at) AS newest
+           FROM lite_records
+          WHERE collection <> '__schema'
+          GROUP BY collection
+       ) per_collection`,
+    )
+    return rows[0]?.newest ? new Date(rows[0].newest).toISOString() : null
   }
 
   async write(data) {
@@ -179,9 +308,15 @@ export class PostgresStore {
       // is a cost worth not paying, and the ledger is the one thing in this
       // table that write() is not the owner of.
       await client.query("DELETE FROM lite_records WHERE collection <> '__schema'")
+      // One statement, not one per collection. 46 sequential round-trips on a
+      // path whose whole cost is already `O(N + B)` — the statement count was a
+      // constant the audit measured as part of write latency and it was free to
+      // remove.
+      const flat = []
       for (const collection of COLLECTIONS) {
-        await this.insertRecords(client, collection, next[collection] || [])
+        for (const item of next[collection] || []) flat.push({ collection, item })
       }
+      if (flat.length) await this.#insert(client, flat)
       await client.query('COMMIT')
       return next
     } catch (error) {
@@ -202,6 +337,22 @@ export class PostgresStore {
    */
   async insertRecords(client, collection, items) {
     if (!items.length) return
+    await this.#insert(client, items.map((item) => ({ collection, item })))
+  }
+
+  /**
+   * The one INSERT both write paths share, for records from any mix of
+   * collections.
+   *
+   * Split out from `insertRecords` so `write()` can put the whole store through
+   * a single statement instead of one per collection. The parameter shape is
+   * UNNEST rather than a loop of single-row inserts because the primary key is
+   * `(collection, id)`: a batch whose members share a collection would collide
+   * inside one statement unless `ON CONFLICT` saw them together, and one
+   * statement also means one plan and one network round-trip.
+   */
+  async #insert(client, flat) {
+    if (!flat.length) return
     await client.query(
       `INSERT INTO lite_records (collection, id, body, payload_hash, updated_at)
        SELECT u.collection, u.id, u.body, u.payload_hash, now()
@@ -212,12 +363,47 @@ export class PostgresStore {
              payload_hash = EXCLUDED.payload_hash,
              updated_at = now()`,
       [
-        items.map(() => collection),
-        items.map((item) => item.id),
-        items.map((item) => JSON.stringify(item)),
-        items.map((item) => item.payload_hash ?? null),
+        flat.map((row) => row.collection),
+        flat.map((row) => row.item.id),
+        flat.map((row) => JSON.stringify(row.item)),
+        flat.map((row) => row.item.payload_hash ?? null),
       ],
     )
+  }
+
+  /**
+   * Replaces one collection wholesale, leaving every other collection alone.
+   *
+   * R-25. Four routes in `server.js` (`:2807`, `:2834`, `:2853`, `:2931`) add
+   * one parametric rule or one disbursement by reading the whole store,
+   * splicing one array, and calling `write()` — which is `O(N + B)`: every row
+   * in the table deleted and every row put back, to change one. On a 39,715-row
+   * / 143 MB store that is a full rewrite to append a record.
+   *
+   * This is the primitive those routes want: one DELETE scoped by collection,
+   * one INSERT. It is a *replace* rather than a merge because the callers
+   * compute the new contents of the collection from what they just read —
+   * `merge()` would shallow-merge per record and leave anything they dropped
+   * behind, which for a rule that has just been withdrawn is exactly wrong.
+   *
+   * The four call sites have to change to use it; they are in `server.js` and
+   * are not edited here.
+   */
+  async replaceCollection(collection, records = []) {
+    assertDeclaredCollection(collection)
+    await this.ensureSchema()
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('DELETE FROM lite_records WHERE collection = $1', [collection])
+      await this.insertRecords(client, collection, records.filter((item) => item?.id))
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
   }
 
   async merge(partial) {
@@ -228,7 +414,10 @@ export class PostgresStore {
       const incoming = (partial[collection] || []).filter((item) => item?.id)
       if (incoming.length) writes.push({ collection, items: incoming })
     }
-    if (!writes.length) return this.read()
+    // ENH-11 / R-24. Nothing below reads the store back, and every one of the
+    // 44 call sites discards what it used to return. Return early, not
+    // expensively.
+    if (!writes.length) return
 
     const client = await this.pool.connect()
     try {
@@ -261,8 +450,11 @@ export class PostgresStore {
             // A collection that is already at the cap contributes no new
             // versions until something prunes it — which would silently stop
             // recording history, so the prune runs first.
-            await this.pruneVersions(client)
-            await this.insertRecords(client, 'record_versions', superseded)
+            //
+            // R-26: for the records this batch actually revised, and no
+            // others. See `pruneVersions`.
+            await this.pruneVersions(client, superseded.map((row) => row.record_id))
+            await this.insertRecords(client, HISTORY_COLLECTION, superseded)
           }
         }
         await this.upsertCollection(client, collection, items)
@@ -274,7 +466,12 @@ export class PostgresStore {
     } finally {
       client.release()
     }
-    return this.read()
+    // ENH-11 / R-24. No read-back. Every call site in this repository discards
+    // the return value, and the read it used to end on was a full materialisation
+    // of every row in the table — so every write cost twice what it wrote.
+    // `src/ingestion.js:392` still destructures the result into `data` and hands
+    // it on; nothing reads it there either, and it is the one call site that
+    // has to be edited before this can be described as having no consumers.
   }
 
   /**
@@ -298,31 +495,59 @@ export class PostgresStore {
    * window returns "no version covering that time", which is the honest answer
    * and is better than the alternative this replaces: a table that grows until
    * the process cannot read it twice.
+   *
+   * R-26. `recordIds` is the set of records this merge produced history for,
+   * and the window scan is restricted to exactly those. It used to partition
+   * and order the *entire* version table — 31,549 rows / 85 MB — on two
+   * unindexed JSONB extractions, on every bitemporal merge, to enforce a cap
+   * of five rows on the handful of records that had just changed. Nothing else
+   * in the table could have crossed the cap from this merge, because a merge
+   * only adds history for the records it revised.
+   *
+   * Migration 5 indexes `(collection, body->>'record_id')`, so the restriction
+   * is an index range rather than a filter over the heap. `O(V)` became
+   * `O(k log V)` for the k records in the batch.
    */
-  async pruneVersions(client) {
+  async pruneVersions(client, recordIds = []) {
+    const ids = [...new Set((recordIds || []).filter(Boolean))]
+    if (!ids.length) return
     await client.query(
       `DELETE FROM lite_records v
-        WHERE v.collection = 'record_versions'
+        WHERE v.collection = '${HISTORY_COLLECTION}'
           AND v.id IN (
             SELECT id FROM (
               SELECT id, row_number() OVER (
                 PARTITION BY body->>'record_id'
                 ORDER BY body->>'valid_to' DESC NULLS LAST
               ) AS rank
-              FROM lite_records WHERE collection = 'record_versions'
-            ) ranked WHERE ranked.rank > $1
+              FROM lite_records
+               WHERE collection = '${HISTORY_COLLECTION}'
+                 AND body->>'record_id' = ANY($1::text[])
+            ) ranked WHERE ranked.rank > $2
           )`,
-      [VERSIONS_PER_RECORD],
+      [ids, VERSIONS_PER_RECORD],
     )
   }
 
   async upsertCollection(client, collection, items) {
-    const { rows: existingHashes } = await client.query(
-      `SELECT payload_hash FROM lite_records
-       WHERE collection = $1 AND payload_hash IS NOT NULL`,
-      [collection],
-    )
-    const seen = new Set(existingHashes.map((row) => row.payload_hash))
+    // R-32. Ask only about the hashes in this batch.
+    //
+    // This used to ship every `payload_hash` in the collection to Node to build
+    // a Set — 4,517 rows for `food_security_records`, and more for every
+    // collection with a real archive behind it. `lite_records_collection_hash_idx`
+    // already exists and already has exactly the shape this needs: a lookup of
+    // a handful of values, answered from the index, returning at most `k` rows
+    // instead of `C`.
+    const hashes = items.map((item) => item.payload_hash).filter(Boolean)
+    const seen = new Set()
+    if (hashes.length) {
+      const { rows: existingHashes } = await client.query(
+        `SELECT payload_hash FROM lite_records
+         WHERE collection = $1 AND payload_hash = ANY($2::text[])`,
+        [collection, hashes],
+      )
+      for (const row of existingHashes) seen.add(row.payload_hash)
+    }
     const fresh = []
     for (const item of items) {
       if (item.payload_hash && seen.has(item.payload_hash)) continue
@@ -373,7 +598,7 @@ export class PostgresStore {
     } finally {
       client.release()
     }
-    return this.read()
+    // ENH-11 / R-24. See `merge()` — no consumer, so no read-back.
   }
 
   /**
@@ -409,7 +634,7 @@ export class PostgresStore {
     } finally {
       client.release()
     }
-    return this.read()
+    // ENH-11 / R-24. See `merge()` — no consumer, so no read-back.
   }
 
   async close() {
