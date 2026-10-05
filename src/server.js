@@ -47,6 +47,7 @@ import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { normalizeAlertOutcome, determinationFor, projectDetermination, outcomeTally, outcomeReasons } from './outcomes.js'
 import { observationSeries, recordHistory, projectableCollections } from './series.js'
 import { collectionsForRequest } from './route-manifests.js'
+import { describeWatermarkState } from './watermarks.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
@@ -1620,6 +1621,12 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
     return
   }
 
+  const watermarkRoute = matchWatermarkRoute(url.pathname)
+  if (watermarkRoute) {
+    await handleWatermarkRoute(store, data, req, res, url, watermarkRoute)
+    return
+  }
+
   const historyRoute = matchHistoryRoute(url.pathname)
   if (historyRoute) {
     await handleHistoryRoute(store, data, req, res, url, historyRoute)
@@ -2829,6 +2836,15 @@ async function handleAlertEvaluation(store, data, req, res) {
  * district's count disagree with the report" was a question the repository held
  * the answer to and had no way to ask. This is that question as a query.
  */
+async function handleWatermarkRoute(store, data, req, res, url, route) {
+  jsonResponse(res, 200, {
+    success: true,
+    data: describeWatermarkState(
+      Object.fromEntries((data.watermark_state || []).map((row) => [row.source, row.state || {}])),
+    ),
+  })
+}
+
 async function handleHistoryRoute(store, data, req, res, url, route) {
   if (req.method !== 'GET') {
     jsonResponse(res, 405, { success: false, error: 'History is read-only: a value the platform believed is written by an ingestion run or a correction, not by an API caller' })
@@ -3671,6 +3687,11 @@ function matchReportingRoute(pathname) {
   const match = pathname.match(/^\/api\/v1\/([^/]+)(?:\/([^/]+))?$/)
   if (!match || !routes[match[1]]) return null
   return { kind: routes[match[1]], id: match[2] ? decodeURIComponent(match[2]) : null }
+}
+
+/** R-52. The watermark state, which had no route at all. */
+function matchWatermarkRoute(pathname) {
+  return pathname === '/api/v1/watermarks' ? { kind: 'watermarks' } : null
 }
 
 /** ENH-49. A named matcher rather than an inline prefix test, so the spec gate can see it. */

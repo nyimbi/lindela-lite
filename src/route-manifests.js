@@ -105,6 +105,7 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/tasks/:id': Object.freeze(["intervention_tasks"]),
   'GET /api/v1/trigger-protocols': Object.freeze(["trigger_protocols"]),
   'GET /api/v1/trigger-protocols/:id': Object.freeze(["trigger_protocols"]),
+  'GET /api/v1/watermarks': Object.freeze(["watermark_state"]),
   'GET /api/v1/webhooks': Object.freeze(["webhook_subscriptions"]),
   'GET /api/v1/workflows': Object.freeze(["workflow_instances"]),
   'GET /api/v1/workflows/metrics': Object.freeze(["workflow_instances"]),
@@ -222,10 +223,8 @@ export const WIDE_ROUTES = Object.freeze([
   'POST /api/v1/workflows/metrics',
   'POST /api/v1/workflows/:id/transition',
 ])
-
 /** How much of the API is still on the whole-store read, as one number. */
 export const UNMAPPED_COUNT = WIDE_ROUTES.length
-
 
 /**
  * The manifest for one request, or `null` for "read everything".

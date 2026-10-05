@@ -140,6 +140,89 @@ export function createWatermarkState() {
  * point: null means "no idea, fetch the series", a zeroed entry means "we wrote
  * a cursor that means nothing", which is a different repair.
  */
+/**
+ * R-52 — the watermark state is recoverable and invisible.
+ *
+ * Every source's high-water mark is written on every successful run, and a
+ * backfill that died three weeks ago is fully recoverable from it: the store
+ * knows exactly how far each source got. There was no route, no page and no
+ * export for it, so the only way to find out where a backfill stopped was to
+ * read the JSON file.
+ *
+ * This is the projection. It answers the question an operator actually has —
+ * "how far did each source get, and when did it last move" — and it answers it
+ * in the terms ingestion uses, so the numbers can be compared against a run's own
+ * report rather than reinterpreted.
+ */
+/**
+ * How many intervals of lateness count as a stopped pipeline, rather than a
+ * late run. Two, because one missed run is ordinary — a provider hiccup, a
+ * deploy — and three would mean a nightly job survives a weekend of trouble
+ * without being called.
+ */
+const STALE_FACTOR = 2
+
+/** Sources with a declared cadence, as minutes between runs. */
+const SOURCE_CADENCE = Object.freeze({
+  open_meteo: { interval_minutes: 180 },
+  gdacs: { interval_minutes: 60 },
+  glofas: { interval_minutes: 180 },
+  chirps: { interval_minutes: 720 },
+  nasa_firms: { interval_minutes: 360 },
+  usgs_earthquake: { interval_minutes: 60 },
+  noaa_enso: { interval_minutes: 360 },
+  ipc_hdx: { interval_minutes: 1440 },
+  who_gho: { interval_minutes: 1440 },
+  open_meteo_archive: { interval_minutes: 1440 },
+  open_meteo_flood: { interval_minutes: 1440 },
+  gdacs_archive: { interval_minutes: 1440 },
+})
+
+export function describeWatermarkState(state, { now = new Date() } = {}) {
+  const sources = state && typeof state === 'object' ? Object.keys(state).sort() : []
+  const rows = sources.map((source) => {
+    const entry = readWatermark(state, source) || {}
+    const covered = newestCoveredDay(entry)
+    const policy = SOURCE_CADENCE[source] || null
+    const cadenceDays = policy?.interval_minutes ? policy.interval_minutes / 1440 : null
+    const ageDays = covered === null ? null : Math.max(0, Math.floor((now.getTime() / DAY_MS) - covered))
+    return {
+      source,
+      // ISO day, or null. `null` is not zero and not today: a source that has
+      // never completed a run has covered nothing, and reporting a day for it
+      // would read as "it is up to date as of…" on the one source it is not.
+      covered_through: covered === null ? null : fromDayNumber(covered),
+      cursor: entry.last_cursor ?? null,
+      last_success_at: entry.last_success_at ?? null,
+      in_progress: entry.in_progress ?? null,
+      // Age is the point. A watermark three weeks old on a source with a daily
+      // schedule is a dead pipeline, and the date alone makes an operator do the
+      // arithmetic against a schedule they have to remember.
+      age_days: ageDays,
+      // Whether that age is a problem is the source's own cadence, not a global
+      // threshold: `gdacs` runs hourly and `chirps` daily, and a watermark four
+      // hours old means something different for each.
+      //
+      // Measured against the source's declared interval with a factor of two, so
+      // a single missed run is a late run and two are a stopped pipeline. A
+      // source with no declared cadence is only ever "never completed" — a
+      // threshold invented here would be a number nobody chose.
+      stale: covered === null
+        || (cadenceDays !== null && ageDays > cadenceDays * STALE_FACTOR),
+      // The cadence it was judged against, or null when the source declares none.
+      // Rounded to two places, because a cadence is a schedule and 0.041666666 is
+      // not one anybody reads.
+      cadence_days: cadenceDays === null ? null : Math.round(cadenceDays * 100) / 100,
+      interval_minutes: policy?.interval_minutes ?? null,
+    }
+  })
+  return {
+    sources: rows,
+    with_watermark: rows.filter((r) => r.covered_through !== null).length,
+    never_completed: rows.filter((r) => r.covered_through === null).map((r) => r.source),
+  }
+}
+
 export function readWatermark(state, source) {
   if (!state || typeof state !== 'object') return null
   const entry = state[source]

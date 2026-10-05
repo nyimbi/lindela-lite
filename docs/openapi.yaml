@@ -1923,6 +1923,20 @@ paths:
       responses:
         '200':
           description: Seeded
+  /api/v1/watermarks:
+    get:
+      summary: Every source's high-water mark
+      description: >-
+        R-52. The watermark is written on every successful run and was readable
+        from nowhere, so a backfill that died three weeks ago was fully
+        recoverable from the store and completely invisible. `covered_through` is
+        null — not today, not zero — for a source that has never completed a run,
+        and `stale` is judged against that source's own cadence at two intervals,
+        so an hourly source and a weekly one are not held to the same number.
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: One row per source with a recorded watermark
   /api/v1/history/{id}:
     get:
       summary: What the platform believed about a collection, over time

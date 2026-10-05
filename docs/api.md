@@ -218,6 +218,24 @@ none. Each row is keyed on collection + score type + place, so a flood score and
 a climate-conflict score for the same grid cell are never compared with each
 other.
 
+## Watermarks
+
+`GET /api/v1/watermarks` — every source's high-water mark, which was written on
+every successful run and readable from nowhere until now. A backfill that died
+three weeks ago is fully recoverable from the store; this is the route that says
+so.
+
+```json
+{ "source": "gdacs", "covered_through": "2026-10-04", "cursor": "2026-10-04",
+  "last_success_at": "2026-10-04T06:00:00Z", "age_days": 1,
+  "interval_minutes": 60, "cadence_days": 0.04, "stale": true, "in_progress": null }
+```
+
+`stale` is judged against that source's own cadence at two intervals, so an
+hourly source and a weekly one are not held to the same number. A source that has
+never completed a run reports `covered_through: null` — not today, and not zero,
+which would read as "caught up to the epoch" on the one source it is not.
+
 ## Alert Outcomes
 
 An alert says whether it was justified, as a **reason from a closed set** rather
