@@ -4,6 +4,7 @@ import { riskLevel, severityWeight } from './schema.js'
 import { clamp, haversineKm, stableId } from './utils.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
 import { computeRoadAccess } from './road-access.js'
+import { logger } from './observability.js'
 import { calibrationByRegion } from './calibration.js'
 import { driftReport } from './drift.js'
 
@@ -237,11 +238,22 @@ export async function refreshAnalytics(store) {
   // accumulating under evidence that has since moved.
   const region_trust = calibrationByRegion({ ...data, risk_scores })
   const model_drift = driftFromStore(data)
+  // ENH-23. The counts a value was computed from travel *with the value*, so
+  // the next refresh has two real sides to compare: the number that was stored
+  // and the counts it was stored from. Without them the only available
+  // comparison is a number against itself, which is a check that cannot fail.
+  //
+  // Stamped before the swap, so what the store held is what the comparison reads.
+  for (const record of risk_scores) record.input_counts = inputDigestFor(placeOf(record), data)
+  for (const record of impact_assessments) record.input_counts = inputDigestFor(placeOf(record), data)
+
+  const previous = await readDerived(store, ['risk_scores', 'impact_assessments'])
   await store.replaceAnalytics({
     risk_scores, impact_assessments, data_quality,
     population_at_risk, facilities_at_risk, road_access,
     region_trust, model_drift,
   })
+  const reconciliation = await reconcileDerivedNumbers(store, data, { previous, now: new Date().toISOString() })
 
   // Persist calibration snapshot (best-effort, don't fail refresh)
   if (process.env.LINDELA_LITE_CALIBRATION_DIR !== 'off' && process.env.NODE_ENV !== 'test') {
@@ -254,7 +266,161 @@ export async function refreshAnalytics(store) {
     }
   }
 
-  return { risk_scores, impact_assessments, data_quality, population_at_risk, facilities_at_risk }
+  return {
+    risk_scores, impact_assessments, data_quality, population_at_risk, facilities_at_risk,
+    unexpected_changes: reconciliation.rows.length,
+  }
+}
+
+/**
+ * The outgoing derived values, keyed for comparison.
+ *
+ * A store that has never computed them has no previous values, which is not a
+ * change — it is a first run. Returning an empty map is what makes the
+ * reconciliation say "nothing moved", rather than reporting every district as an
+ * unexplained change on a fresh deployment.
+ */
+async function readDerived(store, collections) {
+  if (typeof store.read !== 'function') return new Map()
+  const snapshot = await store.read()
+  const out = new Map()
+  for (const collection of collections) {
+    for (const record of snapshot[collection] || []) {
+      // The whole outgoing record, not just its value: the input counts it was
+      // computed from are on it, and they are the other side of the comparison.
+      out.set(derivedKey(collection, record), { collection, record, value: comparableValue(record) })
+    }
+  }
+  return out
+}
+
+/** The number a reconciliation compares: the score, or null when there is none. */
+function comparableValue(record) {
+  for (const field of ['score', 'risk_score', 'value', 'level', 'impact_level']) {
+    if (record[field] !== undefined && record[field] !== null) return record[field]
+  }
+  return null
+}
+
+/**
+ * ENH-23 — "this number changed and nobody knows why" has to be answerable.
+ *
+ * `replaceAnalytics` swaps eight collections wholesale, so a change in the
+ * engine, or a source that quietly stops contributing, moves every district's
+ * numbers at once and leaves no trace. The repository already has
+ * `payload_hash`, `data_lineage` and per-record provenance — every primitive
+ * except the cross-check, which is the one that would notice.
+ *
+ * So: for every district whose value moved while its *input counts* did not,
+ * write a row naming the region, both values, and the inputs that did not
+ * change. A moved value over moved inputs is ordinary; a moved value over
+ * unmoved inputs is the engine, and this is the only place that says so.
+ *
+ * The band is deliberately wide. A reconciliation that fires on rounding
+ * trains operators to ignore it, and an ignored signal is worse than none: a
+ * narrow band here would produce a row on nearly every refresh and the row would
+ * be read as noise by the third week.
+ */
+export const UNEXPECTED_CHANGE_BAND = 0.05
+
+/** The input counts a district's derived value is a function of. */
+const INPUT_COUNTS = [
+  'hazard_events', 'conflict_events', 'climate_observations', 'field_reports',
+  'service_assets', 'road_access', 'flood_probability_models', 'data_quality',
+  'incident_records', 'food_security_records', 'disease_observations',
+  'impact_assessments', 'response_resources',
+]
+
+/**
+ * What a derived record is *about*.
+ *
+ * The derived rows are keyed on a grid cell (`region_name: "3,36"`) rather than
+ * a district name, and the two risk families — flood and climate-conflict —
+ * produce one row each for the same cell. So identity is the cell *and* the
+ * kind: a flood score moving while a conflict score does not is one district's
+ * number, and collapsing them into a single key would compare two different
+ * quantities and call the difference an anomaly.
+ */
+function placeOf(record) {
+  return record.region || record.district || record.region_name || record.id || null
+}
+
+export function derivedKey(collection, record) {
+  return `${collection}:${record.type || 'score'}:${placeOf(record)}`
+}
+
+export function inputDigestFor(district, data) {
+  const counts = {}
+  for (const name of INPUT_COUNTS) {
+    const records = data[name] || []
+    counts[name] = Array.isArray(records)
+      ? records.filter((record) => inDistrict(record, district)).length
+      : 0
+  }
+  return counts
+}
+
+function inDistrict(record, district) {
+  if (!district) return true
+  if (record.district) return record.district === district
+  if (record.country && district.includes(record.country)) return true
+  return false
+}
+
+export async function reconcileDerivedNumbers(store, data, { previous, now = new Date().toISOString(), band = UNEXPECTED_CHANGE_BAND } = {}) {
+  const before = previous || new Map()
+  const rows = []
+  for (const [collection, records] of Object.entries({
+    risk_scores: data.risk_scores || [],
+    impact_assessments: data.impact_assessments || [],
+  })) {
+    for (const record of records) {
+      const key = derivedKey(collection, record)
+      const was = before.get(key)
+      if (!was) continue
+      const nowValue = comparableValue(record)
+      const wasValue = was.value
+      if (nowValue === null || wasValue === null) continue
+      const delta = typeof nowValue === 'number' && typeof wasValue === 'number'
+        ? Math.abs(nowValue - wasValue)
+        : (nowValue === wasValue ? 0 : Infinity)
+      const relative = typeof nowValue === 'number' && nowValue !== 0
+        ? delta / Math.abs(nowValue)
+        : delta
+      if (!(relative > band)) continue
+
+      const district = placeOf(record)
+      const after = record.input_counts || null
+      const beforeCounts = was.record.input_counts || null
+      if (after && beforeCounts && JSON.stringify(beforeCounts) === JSON.stringify(after)) {
+        rows.push({
+          id: `unexpected_${collection}_${String(district).replace(/[^a-z0-9]+/gi, '-')}`,
+          type: 'unexpected_change',
+          collection,
+          district,
+          value_before: wasValue,
+          value_after: nowValue,
+          relative_change: Number(relative.toFixed(6)),
+          // The inputs, stated as counts, and the fact that they did not move.
+          // "Inputs unchanged" is the whole claim; the reader's first question is
+          // always "what changed then?", and this is the answer.
+          input_counts: after,
+          inputs_unchanged: true,
+          observed_at: now,
+        })
+      }
+    }
+  }
+  if (rows.length) {
+    await store.merge({ unexpected_changes: rows })
+    for (const row of rows) {
+      logger.error(
+        { collection: row.collection, district: row.district, before: row.value_before, after: row.value_after },
+        'derived value moved with unchanged inputs',
+      )
+    }
+  }
+  return { rows }
 }
 
 export function computeFloodRisk(data, options = {}) {

@@ -231,6 +231,9 @@ export function emptyStore() {
     action_logs: [],
     alert_rules: [],
     alert_events: [],
+    // ENH-19. Must match COLLECTIONS in store.js — see the note on
+    // record_versions above for why the two lists agreeing is not optional.
+    alert_outcomes: [],
     trigger_protocols: [],
     rapidpro_dispatches: [],
     rapidpro_inbound_messages: [],
@@ -254,6 +257,8 @@ export function emptyStore() {
     watermark_state: [],
     region_trust: [],
     model_drift: [],
+    // ENH-23. Must match COLLECTIONS in store.js — see record_versions above.
+    unexpected_changes: [],
     // ENH-13. Must match COLLECTIONS in store.js: an emptyStore key that
     // JsonStore.merge never writes is harmless, but a COLLECTIONS entry with
     // no emptyStore key means read() spreads a missing key over the default

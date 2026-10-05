@@ -150,6 +150,62 @@ caller's cached body to the next, and a cache between here and the browser, the
 service worker's Cache API included, keys on those headers only when the response
 says so.
 
+## Derived-Value Reconciliation
+
+Every refresh stamps each derived score with **the input counts it was computed
+from** — `input_counts` on the record. On the next refresh, a district whose value
+moved more than 5% while those counts stood still is written to
+`unexpected_changes` with both values and the counts that did not move.
+
+A moved value over moved inputs is the product working. A moved value over
+unmoved inputs is the engine, an unstated default, or a source that stopped
+contributing — and before this existed the only symptom was that every district's
+numbers were quietly different one refresh and the next.
+
+The band is deliberately wide. A reconciliation that fires on rounding teaches
+operators to ignore it by the third week, and an ignored signal is worse than
+none. Each row is keyed on collection + score type + place, so a flood score and
+a climate-conflict score for the same grid cell are never compared with each
+other.
+
+## Alert Outcomes
+
+An alert says whether it was justified, as a **reason from a closed set** rather
+than a note. This is what makes calibration estimable at all: every calibration
+surface reports "not estimable" until somebody records a determination, and a
+free-text note cannot be a denominator — it cannot be counted, grouped by
+district, or acted on.
+
+```bash
+curl -X POST localhost:4177/api/v1/alert-events/<id>/outcome \
+  -H "content-type: application/json" \
+  -d '{"determination":"false","reason":"sensor_fault","determined_by":"focal_point_mbeya",
+       "note":"Reading traced to a faulty sensor"}'
+```
+
+| Endpoint | |
+| --- | --- |
+| `POST /api/v1/alert-events/:id/outcome` | Record a determination. `determination` is `justified` or `false`; `reason` must be one of that determination's reasons; `determined_by` is required. |
+| `GET /api/v1/alert-outcomes` | Every outcome, including superseded ones. |
+| `GET /api/v1/alert-outcomes/reasons` | The closed set, served so a client does not carry its own copy. |
+| `GET /api/v1/alert-outcomes/tally` | Determined, justified, false, **undetermined**, and coverage. |
+
+`false` reasons: `sensor_fault`, `threshold_mistuned`, `duplicate_of_open_alert`,
+`no_hazard_observed`, `data_stale_or_missing`. `justified` reasons:
+`hazard_occurred_as_warned`, `action_taken_in_time`,
+`confirmed_by_ground_report`, `confirmed_by_partner`.
+
+A later determination **supersedes** rather than overwrites — the first one stays
+in the record, because "we were wrong and then we found we were wrong again" is a
+different signal from "we never got it right". A retry of the *same* judgement is
+the same record, so a mobile client that resends after a dropped response does not
+file two determinations.
+
+`false` reasons are the point: a region whose false alerts are all sensor faults
+needs a maintenance visit and one whose false alerts are mistuned thresholds needs
+its rules changed, and a single rate cannot tell an operator which. The reason
+breakdown rides on each calibration region row, next to the rate.
+
 ## Delivery Reconciliation
 
 An alert whose SMS never left raises an alert about itself. This is not a

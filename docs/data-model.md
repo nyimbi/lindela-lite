@@ -167,6 +167,10 @@ Important fields:
 - `methodology`
 - `limits`
 - `generated_at`
+- `input_counts`: the counts of every input collection this score was computed
+  from, stamped at refresh time. Not provenance for one record — it is the other
+  side of a comparison: a score that moves more than 5% while these counts do
+  not is the engine, and it is written to `unexpected_changes` with both values.
 
 Risk scores are decision-support signals. They are not automated determinations.
 
@@ -189,6 +193,25 @@ prefix reads as a calibrated quantile and is not one.
 Calibrated uncertainty bands require quantile outputs with a Brier or CRPS
 calibration report. That is not implemented, and no calibration artefact ships
 with this release.
+
+### `unexpected_changes`
+
+Written by the refresh, not by a person. One row per district per refresh whose
+derived value moved beyond 5% while its `input_counts` did not.
+
+Important fields:
+
+- `collection`, `district`: what moved and where
+- `value_before`, `value_after`, `relative_change`
+- `input_counts`: the counts that did *not* move, recorded so the reader's first
+  question — "then what changed?" — is answered in the row
+- `inputs_unchanged`: always `true` on a row here. It is stated because the
+  absence of a false one is the signal: a value that moved with its inputs is
+  never written, and an empty table is the ordinary case.
+
+Not swept by `replaceAnalytics`. This is not a derived product of the engine; it
+is the engine being watched, and replacing it every refresh would replace the
+anomaly with the anomaly.
 
 ### `impact_assessments`
 
@@ -357,8 +380,43 @@ Important fields:
 - `threshold`
 - `operator`
 - `actions`
+- `derivation` (ENH-24): why it fired, recorded at the moment of the decision.
+  `rule_version` because a rule is versioned and an edit is a new version, so
+  `rule_id` alone cannot say which threshold applied; `context_snapshot` for the
+  reading as it was rather than as it can be re-derived from a store that has
+  moved on; `input_record_ids` for the records behind the count, capped at 50,
+  and `null` for a metric that resolves to an aggregate — an empty array would
+  read as "no records were involved".
+- `false_alert`, `outcome_id`, `outcome_reason`, `determined_at` (ENH-19): a
+  **projection** of the matching `alert_outcomes` record, written by the same code
+  that writes the outcome. Kept because every published surface already reads this
+  field and replacing those with a join would be three re-implementations of a
+  definition that has caused this class of defect twice. Absent, not `false`, when
+  nobody has determined it — folding an unknown into "not false" is how a district
+  with a confirmed miss reported 0%.
 
 Alert events can be sent through RapidPro.
+
+### `alert_outcomes`
+
+Whether an alert was justified, recorded as a reason from a closed set.
+
+Important fields:
+
+- `alert_event_id`, `determination`: `justified` or `false`
+- `reason`: from that determination's list. `false` because of a
+  `sensor_fault` is a repair ticket; `false` because of a `threshold_mistuned` is
+  a rule change, and a rate that lumps them tells an operator only that the number
+  is high
+- `determined_by`, `determined_at`
+- `note`: free text, kept, and deliberately not load-bearing — a note cannot be a
+  denominator
+- `supersedes`, `revision`: a correction is a new record; a retry of the same
+  judgement is the same record
+
+An alert with no outcome has no determination, and that is `null` rather than
+`false`. Every calibration surface reports "not estimable" until somebody records
+one — that is the whole reason this collection exists.
 
 ### `rapidpro_dispatches`
 

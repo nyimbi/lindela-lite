@@ -117,6 +117,15 @@ export const SCHEMA = Object.freeze([
   // replace rather than accumulate.
   { key: 'region_trust', derived: true },
   { key: 'model_drift', derived: true },
+  // ENH-23. A derived number that moved while its inputs did not. The
+  // repository has payload_hash, data_lineage and per-record provenance — every
+  // primitive for tracing one record's origin, and none for noticing that eight
+  // collections were swapped at once under a moving engine.
+  //
+  // Not `derived: true`: this is not produced by `replaceAnalytics` and must not
+  // be swept when it is, or the row recording the anomaly would replace the
+  // anomaly.
+  { key: 'unexpected_changes' },
   { key: 'incidents' },
   { key: 'interventions' },
   { key: 'intervention_tasks' },
@@ -125,6 +134,13 @@ export const SCHEMA = Object.freeze([
   { key: 'action_logs' },
   { key: 'alert_rules' },
   { key: 'alert_events' },
+  // ENH-19. The outcome channel. Calibration is unmeasurable without it: every
+  // surface reports "not estimable" because nothing records whether a warning
+  // was justified. The record is separate from the alert because one alert can
+  // be determined more than once (a first determination, later corrected), and
+  // because a determination is evidence somebody gathered, not a field a rule
+  // evaluation can fill in.
+  { key: 'alert_outcomes' },
   { key: 'trigger_protocols' },
   { key: 'rapidpro_dispatches' },
   { key: 'rapidpro_inbound_messages' },

@@ -1923,6 +1923,63 @@ paths:
       responses:
         '200':
           description: Seeded
+  /api/v1/alert-outcomes:
+    get:
+      summary: Alert outcome determinations
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Every determination, including superseded ones
+  /api/v1/alert-outcomes/reasons:
+    get:
+      summary: The closed set of determinations and their reasons
+      description: >-
+        Served rather than duplicated in a client: a determination UI carrying
+        its own copy of these lists is a fourth definition of what a false alert
+        is, and the two would drift.
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Determinations and the reasons valid for each
+  /api/v1/alert-outcomes/tally:
+    get:
+      summary: How much of the alert history anyone has determined
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Determined, justified, false, undetermined, coverage
+  /api/v1/alert-events/{id}/outcome:
+    post:
+      summary: Record whether an alert was justified
+      description: >-
+        The determination is a reason from a closed set, not a note: a note
+        cannot be counted or grouped by district, which is the reason every
+        calibration surface reported "not estimable" before this existed. A later
+        determination supersedes rather than overwrites; a retry of the same
+        judgement is the same record.
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [determination, reason, determined_by]
+              properties:
+                determination: { type: string, enum: [justified, false] }
+                reason: { type: string }
+                determined_by: { type: string }
+                note: { type: string }
+                evidence_record_ids:
+                  type: array
+                  items: { type: string }
+      responses:
+        '201':
+          description: Recorded
+        '400':
+          description: The determination or its reason is not in the closed set
+        '404':
+          description: No such alert event
   /stac/catalog.json:
     get:
       summary: STAC catalogue of published items

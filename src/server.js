@@ -44,6 +44,7 @@ import { collectionPage, createIdempotencyStore, filterRecords, jsonResponse, re
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
+import { normalizeAlertOutcome, determinationFor, projectDetermination, outcomeTally, outcomeReasons } from './outcomes.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
@@ -2805,6 +2806,25 @@ async function handleAlertEvaluation(store, data, req, res) {
 }
 
 async function handleAlertRoute(store, data, req, res, url, route) {
+  // The generic collection branches below read `data[route.collection]`, and a
+  // route that is a *view* rather than a collection has no such key — so these
+  // are answered before they are reached.
+  if (req.method === 'GET' && route.kind === 'outcome-reasons') {
+    // The closed set, served rather than duplicated in a client. A determination
+    // UI with its own copy of these lists is a fourth definition of what a false
+    // alert is, and the two would drift.
+    jsonResponse(res, 200, { success: true, data: outcomeReasons() })
+    return
+  }
+
+  if (req.method === 'GET' && route.kind === 'outcome-tally') {
+    // "How much do we actually know" is a number an operator needs before any
+    // rate: 400 alerts with 12 determinations is unmeasured, and a false-alert
+    // rate computed from those twelve describes a sample nobody chose.
+    jsonResponse(res, 200, { success: true, data: outcomeTally(data.alert_events, data.alert_outcomes) })
+    return
+  }
+
   if (req.method === 'GET' && route.format === 'cap') {
     const record = data[route.collection].find((item) => item.id === route.id)
     if (!record) {
@@ -2873,6 +2893,29 @@ async function handleAlertRoute(store, data, req, res, url, route) {
     const log = actionLog(route.collection, 'updated', record, body.actor, req.__auth?.subject)
     await store.merge({ [route.collection]: [record], action_logs: [log] })
     jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return
+  }
+
+  if (req.method === 'POST' && route.action === 'outcome') {
+    const body = await readRequestJson(req)
+    const alert = data.alert_events.find((item) => item.id === route.id)
+    if (!alert) {
+      jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
+      return
+    }
+    const prior = determinationFor(route.id, data.alert_outcomes)
+    const outcome = normalizeAlertOutcome(
+      { ...body, alert_event_id: route.id, supersedes: prior?.id ?? null },
+      { existing: prior },
+    )
+    // The alert carries the determination as a projection, so every existing
+    // consumer keeps reading one field while the outcome stays the record. A
+    // later determination supersedes rather than overwrites, so the sequence is
+    // still readable.
+    const projected = projectDetermination(alert, outcome)
+    const log = actionLog('alert_outcomes', 'created', outcome, body.actor, req.__auth?.subject)
+    await store.merge({ alert_outcomes: [outcome], alert_events: [projected], action_logs: [log] })
+    jsonResponse(res, 201, { success: true, data: outcome, alert: projected, action_log: log })
     return
   }
 
@@ -3581,6 +3624,14 @@ function matchAlertRoute(pathname) {
   if (capMatch) return { collection: 'alert_events', id: decodeURIComponent(capMatch[1]), format: 'cap' }
   const actionMatch = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\/(approve|reject)$/)
   if (actionMatch) return { collection: 'alert_events', id: decodeURIComponent(actionMatch[1]), action: actionMatch[2] }
+  // ENH-19. The outcome channel, addressed through the alert it is about: a
+  // determination filed against an id is about that alert, and a body carrying a
+  // different id is a mistake worth making impossible.
+  const outcomeMatch = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\/outcome$/)
+  if (outcomeMatch) return { collection: 'alert_events', id: decodeURIComponent(outcomeMatch[1]), action: 'outcome' }
+  if (pathname === '/api/v1/alert-outcomes/reasons') return { kind: 'outcome-reasons' }
+  if (pathname === '/api/v1/alert-outcomes/tally') return { kind: 'outcome-tally' }
+  if (pathname === '/api/v1/alert-outcomes') return { collection: 'alert_outcomes', id: null }
   const routes = {
     'alert-rules': 'alert_rules',
     'alert-events': 'alert_events',

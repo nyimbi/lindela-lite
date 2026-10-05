@@ -187,7 +187,7 @@ export function evaluateAlertRules(data, context) {
           superseded_at: now,
           updated_at: now,
         })
-        raised.push(buildAlert(rule, value, { bucket, now, supersedes: current.id, prior_value: current.value }))
+        raised.push(buildAlert(rule, value, { bucket, now, supersedes: current.id, prior_value: current.value, context, inputs: inputIdsFor(rule, data) }))
       } else {
         updated.push({
           ...current,
@@ -201,13 +201,28 @@ export function evaluateAlertRules(data, context) {
     }
 
     if (isSuppressed(data, rule, now)) continue
-    raised.push(buildAlert(rule, value, { bucket, now }))
+    raised.push(buildAlert(rule, value, { bucket, now, context, inputs: inputIdsFor(rule, data) }))
   }
 
   return { raised, updated }
 }
 
-function buildAlert(rule, value, { bucket, now, supersedes = null, prior_value = null }) {
+/**
+ * ENH-24 — why did this fire?
+ *
+ * The alert carried the metric, the operator, the threshold and the value, and
+ * none of the four is enough: the rule has been editable since it fired, the
+ * counts it read have moved, and "why did this fire?" was answerable only by
+ * re-running the engine by hand against data that may since have changed — so
+ * the honest answer to the question is never the answer that existed at the
+ * time.
+ *
+ * So the alert carries its own derivation: the rule *version* that fired (rules
+ * are versioned and an edit is a new version, so `rule_id` alone cannot say
+ * which threshold applied), the exact values the context held, and the ids of
+ * the records the value was computed from where the context can name them.
+ */
+function buildAlert(rule, value, { bucket, now, supersedes = null, prior_value = null, context = null, inputs = null }) {
   const approvalState = rule.severity === 'low' ? 'auto_approved' : 'proposed'
   return {
     id: stableId('alert', [rule.id, bucket, value]),
@@ -227,6 +242,29 @@ function buildAlert(rule, value, { bucket, now, supersedes = null, prior_value =
     suppression_bucket: bucket,
     approval: { state: approvalState },
     ...(supersedes ? { supersedes, prior_value } : {}),
+    // ENH-24. Read at the moment of the decision, not re-derived later.
+    derivation: {
+      rule_id: rule.id,
+      rule_version: rule.version ?? null,
+      rule_name_at_fire: rule.name,
+      metric: rule.metric,
+      operator: rule.operator,
+      threshold: rule.threshold,
+      observed_value: value,
+      observed_at: now,
+      // The context values the rule read, so a later reader can see the reading
+      // rather than reconstruct it from a store that has moved on.
+      context_snapshot: context ?? null,
+      // Ids of the records behind the value, where the metric resolves to a
+      // collection. Null when it does not — a count over an aggregate has no
+      // per-record identity to name, and an empty array would read as "no
+      // records were involved".
+      input_record_ids: inputs,
+      engine: {
+        module: 'src/alerts.js',
+        rule_schema: '1',
+      },
+    },
     metadata: {},
   }
 }
@@ -411,6 +449,29 @@ export function evaluateInShadowMode(protocol, context) {
     computed_value: value,
     shadow: true,
   }
+}
+
+/**
+ * The record ids behind a rule's value, when the metric resolves to a list.
+ *
+ * Capped, because a rule over a hundred thousand records would otherwise carry
+ * a hundred thousand ids into every alert event. The cap is reported in the
+ * derivation rather than applied silently: `input_record_ids_truncated` says the
+ * list is a sample, so nobody reads it as the complete set.
+ */
+const MAX_INPUT_IDS = 50
+
+function inputIdsFor(rule, data) {
+  if (!data) return null
+  // A rule names a metric, and the metric is usually a *count* — so the
+  // collection it counts is named by the last segment of its path, and the
+  // records behind it are the store's collection of that name. Resolving
+  // against `data` rather than against the context is what makes this possible:
+  // the context holds the number, and the number is not the input.
+  const collection = String(rule.metric || '').split('.').pop()
+  const records = collection ? data[collection] : null
+  if (!Array.isArray(records)) return null
+  return records.slice(0, MAX_INPUT_IDS).map((record) => record?.id).filter(Boolean)
 }
 
 export function resolveMetric(context, path) {

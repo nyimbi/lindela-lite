@@ -141,6 +141,16 @@ export function alertOutcomeCalibration(alerts = []) {
       // Wilson on the resolved count only. Widening it over `raised` would
       // pretend the unresolved alerts were resolved and not-wrong.
       false_alert_rate_wilson: refusal ? null : wilsonInterval(row.false_alerts, row.resolved),
+      // ENH-19. Why the alerts were false, not how many. A region's rate is an
+      // input to a decision; the reasons are the decision — a region whose false
+      // alerts are all sensor faults needs a maintenance visit, and one whose
+      // false alerts are mistuned thresholds needs its rules changed. The same
+      // rate, and the two fixes have nothing in common.
+      determination_reasons: reasonBreakdown(row.alerts),
+      // The share of this region's alerts anyone has determined. A rate computed
+      // from 3 of 40 alerts is publishable under a sample floor and still
+      // describes a sample nobody chose, so the coverage travels with the rate.
+      outcome_coverage: row.raised ? Number((row.resolved / row.raised).toFixed(4)) : null,
       outcome_coverage: row.raised > 0 ? Math.round((row.resolved / row.raised) * 10000) / 10000 : null,
       refusal: refusal?.reason ?? null,
     })
@@ -160,6 +170,22 @@ export function alertOutcomeCalibration(alerts = []) {
  * The first gate is the registry's, not this module's — it returns the same
  * reason string for the same reason, so the two cannot drift.
  */
+/**
+ * Determinations grouped by reason, from the projection the outcome channel
+ * writes onto the alert.
+ *
+ * Read off the alerts rather than from a second lookup, so the reasons on this
+ * row and the rate on this row cannot describe different sets of alerts.
+ */
+function reasonBreakdown(alerts = []) {
+  const byReason = {}
+  for (const alert of alerts) {
+    if (alert.outcome_reason === undefined || alert.outcome_reason === null) continue
+    byReason[alert.outcome_reason] = (byReason[alert.outcome_reason] || 0) + 1
+  }
+  return byReason
+}
+
 function alertOutcomeRefusal(row, declared) {
   if (declared.value === null) {
     return { reason: declared.refusal }
