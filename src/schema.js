@@ -282,6 +282,13 @@ export function emptyStore() {
     // that is up, serving 200s, and whose pipeline has been dead for a week is
     // currently indistinguishable from a healthy one.
     system_heartbeat: [],
+    // Per-source circuit-breaker state, so it survives a run boundary.
+    //
+    // It was created per `runIngestion` call and each source is visited once per
+    // run, so `consecutive_failures` could never reach a threshold of three and
+    // the breaker could not open. `/ingest/status` reported a health score for a
+    // breaker that did not exist.
+    connector_circuit: [],
   }
 }
 

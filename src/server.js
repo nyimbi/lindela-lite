@@ -45,7 +45,7 @@ import { redactPii, applyRetention, loadPolicy, retentionWindowDays } from './pi
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
-import { emit, dispatchPending } from './outbox.js'
+import { emit, dispatchPending, outboxRollup } from './outbox.js'
 import { summarizeRoadAccess } from './road-access.js'
 import { summarizeFoodSecurity } from './connectors/ipc-hdx.js'
 import { summarizeDiseaseObservations } from './connectors/who-gho.js'
@@ -63,6 +63,7 @@ import { normalizeParametricRule, simulateDisbursement } from './parametric.js'
 import { screenNames } from './sanctions.js'
 import { normalizeWorkflowInstance, transitionWorkflow, workflowMetrics } from './workflows.js'
 import { recordRequestOutcome } from './observability.js'
+import { auditRollup } from './audit-chain.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
@@ -290,8 +291,20 @@ export function createServer(options = {}) {
     } finally {
       const elapsed = t.end()
       const statusCode = res.statusCode || 500
-      metrics.counter('http_requests_total', { method: req.method, route, status: String(statusCode) })
-      metrics.histogram('http_request_duration_ms', elapsed, { method: req.method, route, status: String(statusCode) })
+      // `normalizeRoute` collapses id-shaped segments and leaves everything
+      // else alone, so any path that matches no route — a scanner, a buggy
+      // client with a random segment per request — became a permanent metric
+      // series. Measured: 2,000 distinct unknown paths produced 2,000 series and
+      // a `/metrics` body that grew to 16 MB over 17k requests.
+      //
+      // `observability.js` now bounds the label set; it cannot know which paths
+      // are real, so the decision is made here where the routing lives. A path
+      // that matched nothing collapses to one bucket instead of one series each.
+      const metricRoute = res.locals?.matchedRoute === null
+        ? '/unmatched'
+        : (res.locals?.matchedRoute || route)
+      metrics.counter('http_requests_total', { method: req.method, route: metricRoute, status: String(statusCode) })
+      metrics.histogram('http_request_duration_ms', elapsed, { method: req.method, route: metricRoute, status: String(statusCode) })
       recordRequestOutcome(statusCode < 500)
       logger.info('http_request', { method: req.method, route, status: statusCode, elapsed_ms: elapsed })
     }
@@ -569,6 +582,11 @@ async function handleApiRequest(store, req, res, url) {
 }
 
 async function handleApiRequestInContext(store, req, res, url, auth) {
+  // An `/api/v1/` path reached dispatch. Cleared again if it matches nothing, so
+  // the metric label distinguishes "a route we served" from "a path we did not
+  // recognise" — the second is what a scanner produces, one per request.
+  res.locals = res.locals || {}
+  res.locals.matchedRoute = normalizeRoute(url.pathname)
   if (isAuthConfigured()) {
     if (url.pathname === '/api/v1/rapidpro/field-report' && req.method === 'POST') {
       // Buffer first. A signature covers the exact bytes sent, and the body
@@ -616,13 +634,29 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
       probe = { ok: false, error: error?.name === 'TimeoutError' ? `store did not respond within ${timeoutMs}ms` : String(error?.message || error) }
     }
     const latency = Date.now() - started
-    const ready = probe.ok
+
+    // Two rollups that were computed and never read.
+    //
+    // `verifyChain` was called from exactly one route, so a tampered or
+    // truncated `action_logs` table was detected when somebody asked for the
+    // proof or not at all — which is not evidence. `outboxRollup` says how many
+    // deliveries are dead-lettered, and nothing surfaced it.
+    const audit = auditRollup((await store.read()).action_logs || [])
+    const outbox = outboxRollup(await store.read())
+    const degraded = audit.valid === false || outbox.degraded === true
+
+    const ready = probe.ok && !degraded
     jsonResponse(res, ready ? 200 : 503, {
       success: ready,
       ready,
       store: { mode: store.mode || 'custom', reachable: probe.ok, latency_ms: latency, error: probe.error },
       // Reported, not implied: the whole bound on the idempotency guarantee.
       idempotency: { in_process: true, ttl_hours: 24 },
+      // Two rollups that were computed and never read. A tampered action log
+      // and a dead-lettered webhook were both invisible on the one endpoint a
+      // load balancer and an operator already poll.
+      audit,
+      outbox,
       checked_at: new Date().toISOString(),
     })
     return
@@ -1706,6 +1740,10 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
     return
   }
 
+  // Nothing matched. The label becomes one bucket rather than one series
+  // per path, which is the whole point: a scanner sending 2,000 unique
+  // junk paths used to create 2,000 permanent series.
+  res.locals.matchedRoute = null
   jsonResponse(res, 404, { success: false, error: 'Not found' })
 }
 

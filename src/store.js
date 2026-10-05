@@ -168,6 +168,9 @@ export const SCHEMA = Object.freeze([
   // One row, rewritten each tick. Not a derived collection: it is the record of
   // whether the work happened, which is the one thing nothing else can assert.
   { key: 'system_heartbeat' },
+  // Circuit state that outlives the run that observed it — see the note in
+  // `schema.js` for why a per-run object could never trip.
+  { key: 'connector_circuit' },
   // ENH-07. Quarantine homes are declared, not hand-named: one per
   // QUARANTINE_SOURCES entry, appended below.
 ].map((entry) => Object.freeze({ kind: 'records', ...entry })).concat(
