@@ -210,7 +210,33 @@ export const BOOTSTRAP_ASSETS = [
 	'/sw.js',
 	'/icon.svg',
 	'/manifest.webmanifest',
+	// Fetched by string construction — `/i18n/${locale}.json` — so no pattern can
+	// see it, and a locale switch while offline has to work. Every shipped
+	// catalogue is listed; `test/sw-bootstrap-assets.test.js` fails if one is
+	// added and not registered here.
+	'/i18n/am.json',
+	'/i18n/ar.json',
+	'/i18n/din.json',
 	'/i18n/en.json',
+	'/i18n/fr.json',
+	'/i18n/km.json',
+	'/i18n/nk.json',
+	'/i18n/pt.json',
+	'/i18n/so.json',
+	'/i18n/sw.json',
+	// The stylesheet a script injects at runtime (`link.href = …` in
+	// workflow/panel.js:15). A stylesheet added by script is invisible to any
+	// scan of source text, and the panel renders unstyled rather than not at
+	// all, which is the harder failure to report.
+	'/workflow/panel.css',
+	// The four deferred rail panels, fetched by `mountPanel`. They were moved
+	// out of the shell to keep them out of the first load; a deferred panel
+	// that is not precached is a tab that fails exactly when it is opened
+	// offline.
+	'/panels/equity.html',
+	'/panels/ingestion.html',
+	'/panels/reports.html',
+	'/panels/settings.html',
 ]
 
 // Text we can walk for further references. Anything else (svg, json, the
@@ -227,6 +253,27 @@ const REFERENCE_PATTERNS = [
 	/@import\s+(?:url\(\s*)?["']?([^"')\s]+)["']?/gi,
 	/(?:^|[\s;}])(?:import|export)\b[^'"]*?\bfrom\s*["']([^"']+)["']/g,
 	/(?:^|[\s;}])(?:import|assert)\s*["']([^"']+)["']/g,
+	// Everything above is a *static* reference, so the closure stopped exactly
+	// where the code stopped being static. The console defers eleven modules
+	// through `lazy()` and `import()` — including workflow/panel.js, the offline
+	// drill-down, which was therefore unreachable offline: the one module a
+	// field user is most likely to want when there is no connection.
+	//
+	// The comment-tolerant form matters: `import(/* chunk */ '/x.js')` is
+	// ordinary bundler output, and a pattern without it fixes the reported case
+	// and leaves the next one. The comment body is `([^*]|\*(?!/))*` and not
+	// `[\s\S]*?` because a lazy any-char match happily spans from an `import(`
+	// inside a *prose comment* to the next `*/` and a quote — this file's own
+	// comment about `import()` produced a path through the middle of a sentence,
+	// and the worker then tried to precache a URL that 404s. A precache entry
+	// that 404s fails the install, so a parser that guesses is worse than a
+	// parser that misses.
+	/(?:import|require)\s*\(\s*(?:\/\*(?:[^*]|\*(?!\/))*\*\/\s*)?[`'"]([^`'"]+)[`'"]\s*\)/g,
+	// This repo's own deferred-module helper, `lazy()` in public/app.js. Named
+	// separately because it is a local convention, not a language feature: a
+	// reader looking for why workflow/panel.js is missing will not find it
+	// under `import`.
+	/\blazy\s*\(\s*[`'"]([^`'" ]+)[`'"]\s*\)/g,
 ]
 
 /**
@@ -270,20 +317,35 @@ export function parseReferences(text, baseUrl) {
 export async function shellGraph(load, origin) {
 	const paths = new Set()
 	const visited = new Set()
-	const queue = [...ENTRY_PATHS, ...BOOTSTRAP_ASSETS]
+	// Roots and references are not the same kind of claim, and conflating them is
+	// a denial of service against the offline capability: a reference that 404s
+	// in the precache list fails the whole install, taking the worker with it.
+	//
+	// The pattern scanner is a scanner, not a parser, and it will occasionally
+	// read a path out of a string literal — `ingest-gates.js` has a confirmation
+	// label ending "…and import", and the import-from pattern reads the rest of
+	// the sentence as a module path. So a reference is admitted only once it has
+	// actually loaded. Roots are kept either way: a hand-listed bootstrap entry
+	// that does not exist is a bug in the list, and `test/sw-bootstrap-assets.test.js`
+	// says so by name rather than by silently vanishing from the graph.
+	const queue = [...ENTRY_PATHS, ...BOOTSTRAP_ASSETS].map((path) => ({ path, root: true }))
 	for (let i = 0; i < queue.length; i += 1) {
-		const path = queue[i]
+		const { path, root } = queue[i]
 		if (visited.has(path)) continue
 		visited.add(path)
-		paths.add(path)
 		const url = new URL(path, origin)
 		let response = null
 		try {
 			response = await load(url)
 		} catch {
+			response = null
+		}
+		if (!response || !response.ok) {
+			if (root) paths.add(path)
 			continue
 		}
-		if (!response || !response.ok || !TRAVERSABLE.test(path)) continue
+		paths.add(path)
+		if (!TRAVERSABLE.test(path)) continue
 		let text = ''
 		try {
 			text = await response.clone().text()
@@ -292,7 +354,7 @@ export async function shellGraph(load, origin) {
 		}
 		for (const ref of parseReferences(text, url)) {
 			if (visited.has(ref)) continue
-			queue.push(ref)
+			queue.push({ path: ref, root: false })
 		}
 	}
 	return [...paths].sort()
