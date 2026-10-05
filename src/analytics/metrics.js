@@ -116,7 +116,7 @@ export const METRICS = Object.freeze({
     unit: 'percent',
     basis: 'alerts with false_alert === true, over alerts with a recorded determination (true or false); alerts nobody reviewed are excluded, not counted as sound',
     sample_floor: MIN_DETERMINED_ALERTS,
-    compute(alerts = []) {
+    compute({ alerts = [] } = {}) {
       let numerator = 0
       let denominator = 0
       for (const alert of alerts) {
@@ -198,7 +198,7 @@ export const METRICS = Object.freeze({
     unit: 'count',
     basis: 'sum of recipients_count over dispatches that were actually sent; recipients are not de-duplicated because the payload carries no stable person identifier',
     sample_floor: 0,
-    compute(dispatches = []) {
+    compute({ dispatches = [] } = {}) {
       let recipients = 0
       let sends = 0
       let failed = 0
@@ -235,7 +235,7 @@ export const METRICS = Object.freeze({
     unit: 'percent',
     basis: 'feeding interventions completed or verified, over feeding interventions raised',
     sample_floor: MIN_OPERATIONAL_SAMPLES,
-    compute(interventions = []) {
+    compute({ interventions = [] } = {}) {
       const feeding = interventions.filter((i) => i?.type === 'feeding')
       const done = feeding.filter((i) => ['completed', 'verified'].includes(i?.status))
       return rate({
@@ -254,7 +254,7 @@ export const METRICS = Object.freeze({
     unit: 'percent',
     basis: 'cold-chain protection workflows closed or verified, over cold-chain protection workflows raised',
     sample_floor: MIN_OPERATIONAL_SAMPLES,
-    compute(workflows = []) {
+    compute({ workflows = [] } = {}) {
       const chain = workflows.filter((w) => w?.type === 'cold_chain_protection')
       const terminal = chain.filter((w) => ['closed', 'verified'].includes(w?.state))
       return rate({
