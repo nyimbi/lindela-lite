@@ -125,7 +125,17 @@ kbd {
   padding: 0.1em 0.4em;
 }
 
-/* --- Offline banner ------------------------------------------ */
+/* --- Offline banner ------------------------------------------
+   `display: flex` below is what shipped the bug this rule exists to prevent: at
+   (0,1,0) it outranked the user agent's `[hidden] { display: none }` at the same
+   specificity, so the amber bar — the loudest thing on any page, fixed at
+   z-index 1000 above the navbar — rendered on every load, online or not. It was
+   not a rare edge case and it was not obvious: the markup carries `hidden`, and
+   every element inspector agrees `hidden` is set. components.css now closes the
+   whole class with one `!important`; this rule stays because the layout is
+   still wanted, and the guard below keeps it honest if that rule is ever
+   dropped. Unhiding is done by removing the attribute, never by writing
+   `style.display` — see components.css. */
 .offline-banner {
   position: fixed;
   inset: 0 0 auto;
@@ -151,6 +161,8 @@ kbd {
   justify-content: center;
   gap: var(--sp-3);
 }
+
+.offline-banner[hidden] { display: none; }
 
 .queued-badge {
   background: oklch(14% 0.02 90 / 0.2);
@@ -710,6 +722,22 @@ body.app-shell {
   position: relative;
 }
 
+/* Rail panels.
+   Two visibility mechanisms used to fight each other and both lost. `hidden`
+   (set by `selectTab`) is defeated by the `display: flex` below; `.active` is
+   the opacity gate, which is (0,2,0) and wins on specificity. So an inactive
+   panel computed `display: flex` at `opacity: 0` — laid out, scrollable,
+   `position: absolute; inset: 0` on top of the live panel, holding 58
+   keyboard-focusable controls at coordinates identical to the visible panel's.
+   Tab walked into them and nothing was on screen to indicate it. 58 of the
+   console's 99 boot-time controls were in that state.
+
+   `hidden` is now the sole mechanism and the `opacity` pair is decorative: the
+   cross-fade still runs on the active panel, but nothing is focusable in a
+   panel that is not the selected one. The guard below is redundant with
+   components.css's `[hidden] { display: none !important }` and deliberately so
+   — this is the second site of the class, and a reader arriving here should not
+   have to go looking for the reason `display` is safe. */
 .rail-panel {
   position: absolute;
   inset: 0;
@@ -721,6 +749,8 @@ body.app-shell {
   pointer-events: none;
   transition: opacity var(--dur-normal) var(--ease);
 }
+
+.rail-panel[hidden] { display: none; }
 
 .rail-panel.active {
   opacity: 1;
@@ -1229,6 +1259,31 @@ details[open] summary { border-bottom: 1px solid var(--stroke); color: var(--ink
 }
 
 .empty-state p { max-width: 45ch; margin: 0 auto; line-height: 1.6; }
+
+/* An empty state that is reporting a failure, not an absence.
+   The base rule above is `color: var(--ink-muted)` — quiet grey, centred, no
+   title. That is right for "there is nothing here" and wrong for "this was not
+   checked": the failed variant has to be visibly *not* the reassuring one, or
+   an operator scanning the rail reads both as the same reassurance at different
+   greys. The wash and the title are what separate them. */
+.empty-state-error {
+  color: var(--ink);
+  border-inline-start: 3px solid var(--danger);
+  text-align: start;
+}
+
+.empty-state-error .empty-state-title {
+  font-weight: 650;
+  color: var(--danger);
+  margin-bottom: var(--sp-1);
+}
+
+/* The title is a heading in the a11y tree even though it is a `<p>`: the rail
+   is a `role="tabpanel"` and the empty state is its entire content, so without
+   it a screen-reader user arriving on this tab has no level to attach to. */
+.empty-state-error p { max-width: 60ch; margin-inline: 0; }
+
+.empty-state-error .filter-scope-note { color: var(--ink-muted); font-size: var(--text-xs); }
 
 /* --- Dialogs ------------------------------------------------- */
 dialog {
@@ -2296,8 +2351,17 @@ label:has(> input[type="radio"]) {
   }
 
   /* Print every rail panel, not just the selected tab: the tab strip is gone,
-     so leaving the others hidden would silently drop two thirds of the page. */
-  .rail-panel { display: block !important; page-break-inside: avoid; }
+     so leaving the others hidden would silently drop two thirds of the page.
+     Written `.rail-panel[hidden]`, not `.rail-panel`, and that attribute
+     selector is load-bearing rather than decorative: components.css closes the
+     `[hidden]` defect class with `[hidden] { display: none !important }`, and
+     an `!important` declaration only loses to another `!important` one of
+     equal-or-higher specificity. Plain `.rail-panel` is also (0,1,0), so
+     source order decides — and components.css loads after this file, so print
+     would have silently stopped printing three of the five tabs. The attribute
+     raises this to (0,2,0) and states the intent instead of depending on load
+     order. */
+  .rail-panel[hidden] { display: block !important; page-break-inside: avoid; }
   .rail-panel + .rail-panel { page-break-before: always; }
 
   a[href]::after { content: " (" attr(href) ")"; font-size: 8pt; color: #555; }

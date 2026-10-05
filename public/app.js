@@ -11,6 +11,7 @@ import { apiFetch, apiSettled, autoMarkScrollableRegions, initOfflineQueue, init
 import { applyLocaleToDocument, esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { formatRelative } from '/shared/fmt.js'
+import { describeState, ERROR } from '/shared/states.js'
 
 /**
  * Load a console module the first time something needs it.
@@ -3531,11 +3532,31 @@ export function preserveUiAroundRebuild(rebuild) {
   return true
 }
 
-function renderAlertsBadge(alerts) {
+/**
+ * The tab badge, which is a claim about how many alerts are open.
+ *
+ * It took `alerts` as an array and nothing else, so every failure upstream
+ * arrived here as `[]` and the badge hid itself — indistinguishable from a
+ * genuinely quiet queue. That is the R-64 defect in its most compressed form:
+ * a number that can only ever be zero or absent, where the third honest answer
+ * is "unknown". An operator scanning the tab strip saw no badge on a dead
+ * console and read it as nothing to do.
+ *
+ * `checked` is whether the alert feed has actually answered. Unchecked gets an
+ * em dash, not a zero and not nothing.
+ */
+function renderAlertsBadge(alerts, { checked = true } = {}) {
   const badge = $('alertsBadge')
   if (!badge) return
+  if (!checked) {
+    badge.textContent = '—'
+    badge.hidden = false
+    badge.setAttribute('title', 'Alert count not checked — the last refresh did not get an answer')
+    return
+  }
+  badge.removeAttribute('title')
   const open = alerts.filter((a) => a.status === 'open').length
-  if (open > 0) { badge.textContent = open; badge.hidden = false }
+  if (open > 0) { badge.textContent = String(open); badge.hidden = false }
   else { badge.hidden = true }
 }
 
@@ -3576,6 +3597,55 @@ document.addEventListener('focusout', () => {
     _renderMapRecordList(_lastMapEntries)
   }, 0)
 })
+
+/**
+ * What the alert rail is allowed to claim, given what is actually known.
+ *
+ * The branch this replaces was `if (!filtered.length)`, and `filtered` cannot
+ * distinguish "the server says there are none" from "the server never
+ * answered". On a cold start with `/api/v1/alert-events` down,
+ * `state.data.alerts` is undefined, `|| []` converts an unchecked request into
+ * an empty array, and the rail printed **"No alerts. All rules quiet."** while
+ * the status bar on the same screen said nothing had been checked. Two
+ * screens, opposite claims, no way for the operator to tell which is a lie.
+ *
+ * This is the panel that answers "what needs my attention right now", and it
+ * was the one making an unearned negative claim. A reassuring string is the
+ * most expensive thing a product can get wrong: an operator who reads "all
+ * rules quiet" stops reading.
+ *
+ * Three outcomes, and the third is the one that did not exist:
+ *
+ *   error       the refresh ran and `alerts` failed — the request did not
+ *               answer. The only record of this is `state.failedSources`,
+ *               written on every refresh; the alerts branch simply never read
+ *               it, while `renderWorkflowInstanceList` does exactly this.
+ *   unchecked   no refresh has populated `state.data.alerts` at all. No
+ *               failure to report and no rows to show, and "all rules quiet"
+ *               is still a claim about the world. This is the cold-start case
+ *               a failed-branch alone does not cover.
+ *   empty       the server answered, and there is genuinely nothing.
+ *
+ * `unchecked` is not a rare path. It is the state of the page for every
+ * operator between first paint and the first refresh completing, and it is the
+ * state the console sits in permanently if `/health` answers and
+ * `/alert-events` does not.
+ *
+ * Pure and exported: the decision is the whole fix, and asserting on rendered
+ * HTML would prove only that `innerHTML` was called.
+ *
+ * @param {{ data: Record<string, unknown>, failedSources?: Set<string> }} state
+ * @returns {{ state: 'error'|'unchecked'|'empty'|'ok', neverChecked: boolean }}
+ */
+export function alertListOutcome(state) {
+  const failed = state?.failedSources instanceof Set
+    ? state.failedSources
+    : new Set(state?.failedSources || [])
+  if (failed.has('alerts')) return { state: 'error', neverChecked: false }
+  if (state?.data?.alerts === undefined) return { state: 'unchecked', neverChecked: true }
+  if (!(state?.data?.alerts?.data || []).length) return { state: 'empty', neverChecked: false }
+  return { state: 'ok', neverChecked: false }
+}
 
 function _renderAlertsPanel() {
   const alerts = state.data.alerts?.data || []
@@ -3621,6 +3691,28 @@ function _renderAlertsPanel() {
   // and every control carries a stable key so focus and caret survive the
   // rebuilds that do happen.
   container.setAttribute('data-live-region', 'alerts')
+
+  // Three outcomes, not two. Extracted so the decision can be tested directly
+  // rather than inferred from rendered HTML: it is the difference between a
+  // console that lies on a dead link and one that admits it.
+  const outcome = alertListOutcome(state)
+  if (outcome.state !== 'ok' && outcome.state !== 'empty') {
+    const desc = describeState(ERROR, { subject: 'Alerts', noun: 'the alert feed' })
+    container.innerHTML = '<div class="empty-state empty-state-error" role="status">'
+      + `<p class="empty-state-title">${escapeHtml(desc.title)}</p>`
+      + `<p>${escapeHtml(desc.body)}</p>`
+      + (outcome.neverChecked
+        // "Never checked" is a different fact from "the check failed", and an
+        // operator debugging a dead link needs to tell them apart.
+        ? '<p class="filter-scope-note">No refresh has completed on this page yet.</p>'
+        : '<p class="filter-scope-note">Failed source: alerts</p>')
+      + '</div>'
+    // The count is a claim too. Leaving the previous number on screen while the
+    // body says "not checked" is how a stale figure becomes a trusted one.
+    renderAlertsBadge([], { checked: false })
+    renderPager($('alertsPager'), 'alerts', 0, () => _renderAlertsPanel())
+    return
+  }
 
   if (!filtered.length) {
     container.innerHTML = `<div class="empty-state"><p>${escapeHtml(t('state.empty_alerts'))}</p>${
@@ -4704,7 +4796,10 @@ $('triggerEquityAuditButton')?.addEventListener('click', async () => {
     if (resultEl) {
       resultEl.textContent = 'Settings saved to localStorage.'
       resultEl.style.color = 'var(--color-success, #16a34a)'
-      resultEl.style.display = ''
+      // Reveal by removing the attribute, never by clearing `style.display`.
+      // components.css closes the `[hidden]` class with `!important`, so an
+      // inline-display un-hide there would be a no-op that reads as working.
+      resultEl.hidden = false
     }
   })
 
@@ -4712,7 +4807,7 @@ $('triggerEquityAuditButton')?.addEventListener('click', async () => {
     if (resultEl) {
       resultEl.textContent = 'Testing...'
       resultEl.style.color = 'inherit'
-      resultEl.style.display = ''
+      resultEl.hidden = false
     }
     try {
       const saved = JSON.parse(localStorage.getItem(LS_KEY) || '{}')

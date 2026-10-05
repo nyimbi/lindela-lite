@@ -13,6 +13,36 @@
 
 @import url('/tokens.css');
 
+/* --- The one rule that outlives every surface -------------------
+   `[hidden]` is a UA-stylesheet declaration at specificity (0,1,0) — a single
+   attribute selector. Any author rule naming a `display` value on the same
+   element outranks it on specificity alone, silently, with no error anywhere.
+   That is not hypothetical: this class shipped three times before this rule
+   existed. `.offline-banner { display: flex }` rendered the amber offline bar on
+   every load, online or not. `.rail-panel { display: flex }` did the same to
+   four inactive tab panels, leaving 58 keyboard-focusable controls in
+   `opacity: 0` at coordinates identical to the live panel's — reachable by Tab,
+   invisible on screen, no focus ring. `.statusbar-metric { display: inline }`
+   made the status bar print three labels with nothing after each colon, and the
+   audit read it as a panel reporting nothing.
+
+   The defect is invisible in review because the markup is correct: `hidden` is
+   present, `display: none` is in the UA sheet, and nothing is wrong *except*
+   that a competing author rule won. So it is closed here rather than at each
+   site. `!important` is the right escalation for this one property: it is the
+   only declaration in the codebase whose entire job is to lose to nothing, and
+   it is scoped to the exact attribute whose meaning is being protected.
+
+   Two consequences, both load-bearing:
+     - Code must unhide by *removing* the attribute, never by writing
+       `style.display`. An author cannot win against this rule, so a
+       `.style.display = 'block'` un-hide silently does nothing. `el.hidden =
+       false` is the only working un-hide.
+     - `@media print` must therefore re-assert on a *more specific* selector
+       than `[hidden]` alone, not on `.rail-panel`. See styles.css's print
+       block, which is why it reads `.rail-panel[hidden]`. */
+[hidden] { display: none !important; }
+
 /* --- Page frame --------------------------------------------- */
 .page-main {
   width: 100%;
