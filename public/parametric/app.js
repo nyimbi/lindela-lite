@@ -7,7 +7,7 @@
 // column off the right edge of the viewport with no way to scroll to it.
 
 import { initI18n, t as lookup, apiFetch, autoMarkScrollableRegions } from '/shared/runtime.js'
-import { esc, formatTimestamp, num, truncateId } from '/shared/fmt.js'
+import { esc, formatTimestamp, num, truncateId, applyLocaleToDocument } from '/shared/fmt.js'
 
 const BASE = '/api/v1'
 
@@ -457,6 +457,7 @@ async function init() {
   locale = OFFERED.includes(stored) ? stored : 'en'
 
   await initI18n(locale)
+  applyLocaleToDocument(locale)
   if (sel) {
     sel.value = locale
     sel.addEventListener('change', async (e) => {
