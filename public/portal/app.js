@@ -1,7 +1,7 @@
 import { initI18n, t, apiFetch, initOfflineBanner, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
 import { ERROR, EMPTY, LOADING, OK, createLoadSequence, describeState, distinguishFailure } from '/shared/states.js'
-import { esc as escapeHtml, formatTimestamp, num, pct, sevChipHtml, truncate } from '/shared/fmt.js'
+import { esc as escapeHtml, formatTimestamp, num, pct, sevChipHtml, truncate, applyLocaleToDocument } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 mountNavbar({ activePath: '/portal' })
 
@@ -59,6 +59,7 @@ const partnerOrgDisplay = $('partnerOrg')
 
 async function init() {
   await initI18n(state.locale)
+  applyLocaleToDocument(state.locale)
   initOfflineBanner()
 
   // Set here rather than only in the HTML: a retry re-enters `init`, and the
@@ -71,8 +72,8 @@ async function init() {
     state.locale = e.target.value
     localStorage.setItem('lindela_lite_locale', state.locale)
     await window.__i18n.set(state.locale)
-    document.documentElement.lang = state.locale
-    document.documentElement.dir = state.locale === 'ar' ? 'rtl' : 'ltr'
+    // `set()` already applied lang and dir; this pair was a second RTL list.
+    // See the boot call below for why it is being removed rather than kept.
   })
 
   signoutBtn.addEventListener('click', () => {

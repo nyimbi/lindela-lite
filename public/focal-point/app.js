@@ -1,5 +1,5 @@
 import { initI18n, t, apiFetch, initOfflineBanner, initServiceWorker, autoMarkScrollableRegions } from '/shared/runtime.js'
-import { esc as escapeHtml, formatTimestamp, sevChipHtml } from '/shared/fmt.js'
+import { esc as escapeHtml, formatTimestamp, sevChipHtml, applyLocaleToDocument } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { mountNavbar } from '/shared/navbar.js'
 import { ERROR, LOADING, OK, createLoadSequence, describeActionFailure, describeState, distinguishFailure } from '/shared/states.js'
@@ -68,8 +68,8 @@ localeSelect.addEventListener('change', async (e) => {
   state.locale = e.target.value
   localStorage.setItem('lindela_lite_locale', state.locale)
   await window.__i18n.set(state.locale)
-  document.documentElement.lang = state.locale
-  document.documentElement.dir = state.locale === 'ar' ? 'rtl' : 'ltr'
+  // lang/dir come from applyLocaleToDocument, which reads the shared
+  // locale table. This was a hand-copied second RTL list.
 })
 
 signoutBtn.addEventListener('click', () => {
@@ -723,7 +723,8 @@ window.addEventListener('offline', () => {
 })
 
 await initI18n(state.locale)
+applyLocaleToDocument(state.locale)
 autoMarkScrollableRegions()
-document.documentElement.lang = state.locale
-document.documentElement.dir = state.locale === 'ar' ? 'rtl' : 'ltr'
+// lang/dir come from applyLocaleToDocument, which reads the shared
+// locale table. This was a hand-copied second RTL list.
 loadData()

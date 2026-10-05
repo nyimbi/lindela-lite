@@ -11,7 +11,7 @@
 // discipline existed, in one file.
 
 import { apiFetch, autoMarkScrollableRegions, initI18n } from '/shared/runtime.js'
-import { esc, formatTimestamp, formatRelative, num, pct, sevClass, sevChipHtml } from '/shared/fmt.js'
+import { esc, formatTimestamp, formatRelative, num, pct, sevClass, sevChipHtml, applyLocaleToDocument } from '/shared/fmt.js'
 import {
   districtsShareUrl, encodeDistrictsView, isDistrictsViewCustom, resolveDistrictsView,
 } from '/shared/districts-view.js'
@@ -977,6 +977,7 @@ async function init() {
   // because `set()` re-reads English by literal path and re-stamps the DOM —
   // which is why the bug survived every click-through test.
   await initI18n(currentLocale())
+  applyLocaleToDocument(currentLocale())
 autoMarkScrollableRegions()
   document.title = t('districts.title', 'Lindela Districts')
 

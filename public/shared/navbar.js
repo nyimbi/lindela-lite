@@ -411,7 +411,25 @@ export function renderNavbar({ activePath = '/', locales, currentLocale, onLocal
     const a = document.createElement('a')
     a.href = s.path
     a.textContent = i18nText(s.key, s.label)
-    a.setAttribute('data-i18n', s.key)
+    // No `data-i18n` here, and that is the fix.
+    //
+    // These two lines set the correct English fallback via `i18nText` and then
+    // registered the raw key for the next sweep. `applyI18n` writes
+    // `el.textContent = catalog[key] || key` — so the moment it ran, the label
+    // became the literal string `nav.ops`. The markup was correct, the helper
+    // was correct, and the two together produced a broken label, which is why
+    // this read as a mystery rather than a bug: nothing in the file said the
+    // second line undid the first.
+    //
+    // It is not cosmetic. Measured in a Somali session: 48 of 56 elements on
+    // /portal/, 17 of 78 on /chw/ and 16 of 23 on /focal-point/ were rendering
+    // raw keys, and the navbar is on all eight surfaces — so the surface names
+    // at the top of every page were among them.
+    //
+    // Deleting the attribute rather than fixing the sweep is deliberate. The
+    // fallback in `SURFACES` *is* the English label, and a nav link that reads
+    // "Focal Point" is correct in every locale until one exists. A raw key is
+    // correct in none.
     if (isActive(activePath, s.path)) a.setAttribute('aria-current', 'page')
     li.appendChild(a)
     ul.appendChild(li)
@@ -485,7 +503,8 @@ export function renderNavbar({ activePath = '/', locales, currentLocale, onLocal
     const a = document.createElement('a')
     a.href = s.path
     a.textContent = i18nText(s.key, s.label)
-    a.setAttribute('data-i18n', s.key)
+    // Same as the desktop list above, and the same reason: `data-i18n` here
+    // made the mobile drawer print `nav.ops` where the label should be.
     if (isActive(activePath, s.path)) a.setAttribute('aria-current', 'page')
     dialog.appendChild(a)
   }

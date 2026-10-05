@@ -7,7 +7,7 @@
 // scenarios and Run sits with the results it produces.
 
 import { apiFetch, initI18n, autoMarkScrollableRegions } from '/shared/runtime.js'
-import { esc, formatRelative, num, signed } from '/shared/fmt.js'
+import { esc, formatRelative, num, signed, applyLocaleToDocument } from '/shared/fmt.js'
 
 const BASE = '/api/v1'
 
@@ -643,6 +643,7 @@ export function setDeltaCard(prefix, value, extent) {
 // --- Init -------------------------------------------------------------------
 async function init() {
   await initI18n(state.locale)
+  applyLocaleToDocument(state.locale)
   // The tab title is not a `data-i18n` target — the shared runtime rewrites
   // attributes and text nodes inside the document, and this is neither — so it
   // is set from the catalogue like any other string a reader meets.

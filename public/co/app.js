@@ -6,7 +6,7 @@
 // one. District names, alert event ids and quarter labels were interpolated
 // into innerHTML raw. The helpers now come from the shared module.
 
-import { esc, formatTimestamp, num, pct, truncate } from '/shared/fmt.js'
+import { esc, formatTimestamp, num, pct, truncate, applyLocaleToDocument } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { barChart, sparkline } from '/shared/charts.js'
 import { apiFetch, autoMarkScrollableRegions } from '/shared/runtime.js'
@@ -26,14 +26,36 @@ const loadSequence = createLoadSequence()
 let currentLocale = 'en'
 let i18n = {}
 
+/**
+ * Load a locale, always layering it over English.
+ *
+ * The single-locale load was R-62 on this surface: a Somali session got a
+ * catalogue that is 23% covered, so every key the Somali file omits fell
+ * through to `t(key, fallback)` and rendered either the key or nothing.
+ * `set()` in `shared/runtime.js` re-reads English as the base for exactly this
+ * reason; this private copy of the loader never did, which is what having a
+ * private copy costs.
+ */
 async function loadLocale(locale) {
+  const base = {}
   try {
-    const res = await fetch(`/i18n/${locale}.json`)
-    if (res.ok) i18n = await res.json()
+    const res = await fetch('/i18n/en.json')
+    if (res.ok) Object.assign(base, await res.json())
   } catch {
-    i18n = {}
+    // Keep whatever we have.
+  }
+  i18n = base
+  if (locale !== 'en') {
+    try {
+      const res = await fetch(`/i18n/${locale}.json`)
+      if (res.ok) Object.assign(i18n, await res.json())
+    } catch {
+      // Keep the English layer. A missing translation must fall back to
+      // English, never to a raw key.
+    }
   }
   currentLocale = locale
+  applyLocaleToDocument(locale)
   applyI18n()
 }
 
