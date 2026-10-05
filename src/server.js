@@ -3869,6 +3869,10 @@ async function handleStatic(req, res, pathname) {
   const surface = surfaces.find((s) => pathname === s || pathname === `${s}/`)
 
   if (surface !== undefined) {
+    // Re-set with the surface known, so `/chw` is offered geolocation and the
+    // other surfaces are not. `securityHeaders` ran for every response before
+    // the path was matched; this is the narrow version of the same call.
+    securityHeaders(res, { surface })
     const indexFile = path.join(publicDir, surface ? `${surface.replace(/^\//, '')}/index.html` : 'index.html')
     if (await sendFile(req, res, indexFile)) return
   }
@@ -3958,6 +3962,20 @@ function etagFor(buffer) {
  * Cache-Control, so a deploy was not cacheable at all and every asset was
  * refetched on every load.
  */
+/**
+ * Replace the version placeholder in served markup.
+ *
+ * The marker is the attribute, not the literal: `<span data-app-version>` with
+ * any content inside it. A regex over the literal version would have to be
+ * rewritten on every release, and the one that was missed is the one an operator
+ * sees.
+ */
+const VERSION_MARKER = /(<span[^>]*\bdata-app-version\b[^>]*>)([\s\S]*?)(<\/span>)/g
+
+export function fillAppVersionMarker(html, version = APP_VERSION) {
+  return html.replace(VERSION_MARKER, (_m, open, _body, close) => `${open}v${version}${close}`)
+}
+
 async function sendFile(req, res, filePath, { immutable = false } = {}) {
   let content
   try {
@@ -3966,6 +3984,19 @@ async function sendFile(req, res, filePath, { immutable = false } = {}) {
     return false
   }
 
+  // ENH: the build version, filled in on the way out.
+  //
+  // Every surface carried a hand-written fallback — `v0.1.0` in three files while
+  // the package was at 0.2.0 — and `/shared/app-version.js` only replaced it
+  // once `/api/v1/health` answered. So an offline operator, which is the case
+  // this product is built for, was told the build they were running was a release
+  // behind. The browser gate caught it: "shown v0.1.0, released v0.2.0".
+  //
+  // Injected rather than rewritten in the source files, because a literal in
+  // three HTML files drifts at the next release — which is the drift the shared
+  // module was written to end, reintroduced one layer down. The ETag is computed
+  // from the injected bytes, so a revalidated client gets the new ETag too.
+  if (/\.html$/.test(filePath)) content = Buffer.from(fillAppVersionMarker(content.toString('utf8')))
   const type = contentType(filePath)
   const etag = etagFor(content)
   const headers = {
@@ -4016,11 +4047,26 @@ async function sendFile(req, res, filePath, { immutable = false } = {}) {
  * failure. `unsafe-inline` is still needed for the per-page <style> blocks that
  * remain, and drops out as those are consolidated.
  */
-function securityHeaders(res) {
+function securityHeaders(res, { surface = null } = {}) {
   res.setHeader('x-content-type-options', 'nosniff')
   res.setHeader('x-frame-options', 'DENY')
   res.setHeader('referrer-policy', 'no-referrer')
-  res.setHeader('permissions-policy', 'geolocation=(), camera=(self), microphone=()')
+  // Geolocation is offered on the one surface that ships a feature needing it,
+  // and denied everywhere else.
+  //
+  // The browser gate found this by reporting a console error on every CHW page
+  // load — "Geolocation access has been blocked because of a permissions policy"
+  // — and the cause was this header. `public/chw/app.js` calls
+  // `getCurrentPosition` to place a symptom report, and `geolocation=()` meant
+  // the call could never succeed: every field report fell back to typing a
+  // location, on the surface whose whole purpose is reporting from the field.
+  // Denying it on the other seven surfaces is unchanged and deliberate — none of
+  // them asks, and the policy is what keeps an embedded frame from asking.
+  //
+  // `(self)` still requires the browser's own permission prompt, so this
+  // enables a feature rather than granting a capability.
+  const geolocation = surface === '/chw' ? '(self)' : '()'
+  res.setHeader('permissions-policy', `geolocation=${geolocation}, camera=(self), microphone=()`)
   res.setHeader(
     'content-security-policy',
     [

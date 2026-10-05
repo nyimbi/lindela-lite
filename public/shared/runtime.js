@@ -394,13 +394,32 @@ export async function apiFetch(path, { method = 'GET', body, headers = {}, token
   }
 
   const res = await fetch(path, opts)
+  // Read the staleness before the ok check. The service worker marks a response
+  // it served from its offline cache, and that marker is the only difference
+  // between "the server said this" and "this is what the server last said" —
+  // so a caller that cannot see it makes confident claims from old data.
+  //
+  // It was read on the error path and dropped on the success path, which is
+  // backwards: the failure was already visible (the request threw) and the cached
+  // success was not. Found by the dead-server gate, where the partner portal
+  // answered "Authentication is not configured" — a claim about the server's
+  // configuration — while the server was dead and the service worker was
+  // cheerfully answering from its API bucket.
+  // `?.get?.` rather than `.get`: a caller may pass a response-shaped object
+  // rather than a Response — the test suite's router does, and any caller of
+  // `apiFetch` behind a service worker may. `sanitizeHeaders` and
+  // `parseRetryAfter` in this codebase read headers the same way for the same
+  // reason, and reading them strictly broke three CO dashboard tests the moment
+  // this was added.
+  const servedFromCache = res.headers?.get?.('x-lindela-offline') === '1'
+    || res.headers?.get?.('x-lindela-cache') === 'hit'
+  const storedAt = res.headers?.get?.('x-lindela-stored-at') || null
+
   if (!res.ok) {
     const err = new Error(`HTTP ${res.status}`)
     err.status = res.status
-    // The service worker marks a response it served from its offline cache.
-    // Callers need to say "this is the last known state" rather than "this is
-    // current", so the flag is carried through rather than discarded.
-    err.offline = res.headers.get('x-lindela-offline') === '1'
+    err.offline = servedFromCache
+    err.storedAt = storedAt
     try {
       err.json = await res.json()
     } catch {
@@ -408,7 +427,41 @@ export async function apiFetch(path, { method = 'GET', body, headers = {}, token
     }
     throw err
   }
-  return res.json()
+  const payload = await res.json()
+  return markReadProvenance(payload, { servedFromCache, storedAt })
+}
+
+/**
+ * Say where a payload came from, without changing its shape for callers that
+ * ignore it.
+ *
+ * Non-enumerable, because these payloads are spread, serialised and compared all
+ * over the front end: an enumerable `_fromCache` would turn up in `JSON.stringify`
+ * of a rendered record and in every deep-equality assertion downstream. A caller
+ * that wants to know asks.
+ */
+export function markReadProvenance(body, { servedFromCache = false, storedAt = null } = {}) {
+  if (!body || typeof body !== 'object') return body
+  try {
+    Object.defineProperty(body, '__provenance', {
+      value: { servedFromCache, storedAt },
+      enumerable: false,
+      configurable: true,
+    })
+  } catch {
+    // A frozen payload from a worker is not worth failing a read over.
+  }
+  return body
+}
+
+/** What a caller can say about a payload's origin, if it asks. */
+export function readProvenance(body) {
+  const provenance = body?.__provenance
+  return {
+    servedFromCache: Boolean(provenance?.servedFromCache),
+    storedAt: provenance?.storedAt || null,
+    live: !provenance?.servedFromCache,
+  }
 }
 
 /**

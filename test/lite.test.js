@@ -1157,7 +1157,13 @@ describe('Lindela Lite API', () => {
     const fmt = await fs.readFile(path.join(process.cwd(), 'public/shared/fmt.js'), 'utf8')
     assert.match(fmt, /export function esc\(/)
     assert.match(app, /esc as escapeHtml/)
-    assert.match(app, /title="\$\{escapeHtml\(source\.name\)\}"/)
+    // The source picker moved to /panels/ingestion.js with the rest of the
+    // ingestion panel's behaviour, so the escaped-markup assertion reads that
+    // file too. The property is unchanged — dynamic values still go through
+    // `escapeHtml` — only the file it lives in.
+    const ingestion = await fs.readFile(path.join(process.cwd(), 'public/panels/ingestion.js'), 'utf8')
+    assert.match(ingestion, /title="\$\{escapeHtml\(source\.name\)\}"/)
+    assert.doesNotMatch(ingestion, /<td>\$\{record\.(title|message|text|name|source|status|id|owner)/)
     assert.doesNotMatch(app, /<td>\$\{record\.(title|message|text|name|source|status|id|owner)/)
   })
 

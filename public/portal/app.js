@@ -1,6 +1,6 @@
 import { initI18n, t, apiFetch, initOfflineBanner, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
-import { ERROR, EMPTY, LOADING, OK, createLoadSequence, describeState, distinguishFailure } from '/shared/states.js'
+import { ERROR, EMPTY, LOADING, OK, createLoadSequence, describeState, distinguishFailure, staleReadNote } from '/shared/states.js'
 import { esc as escapeHtml, formatTimestamp, num, pct, sevChipHtml, truncate, applyLocaleToDocument } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 mountNavbar({ activePath: '/portal' })
@@ -104,6 +104,17 @@ async function init() {
   }
 
   state.partnerOrg = identity?.data?.partner_org || null
+
+  // Answered from the service worker's cache means the server did not answer, and
+  // every claim below is a claim about a server we could not reach. The dead
+  // server gate is what found this: with the server gone the portal said
+  // "Authentication is not configured", and a partner would go re-key a token
+  // that was never the problem.
+  const stale = staleReadNote(identity)
+  if (stale) {
+    renderIdentityFailure(null, { stale })
+    return
+  }
 
   if (!state.partnerOrg) {
     // No partner scope on this token. Say so rather than showing the whole
@@ -266,9 +277,9 @@ function renderStatePanel(container, copy, { retry } = {}) {
  * configured, or merely unreachable, and the old text picked one of those for
  * them.
  */
-function renderIdentityFailure() {
+function renderIdentityFailure(error, { stale = null } = {}) {
   authPanel.style.display = 'block'
-  partnerOrgDisplay.textContent = 'Connection lost'
+  partnerOrgDisplay.textContent = stale ? 'Last known state' : 'Connection lost'
   setLoadState(ERROR, { subject: 'This partner portal' })
 
   // The panel ships with "Authentication required" and "Sign in with your
@@ -281,14 +292,20 @@ function renderIdentityFailure() {
   // really is the problem, and a network blip must not take that exit away.
   for (const el of authPanel.querySelectorAll('h2, p[data-i18n]')) el.hidden = true
 
-  const copy = describeState(ERROR, { subject: 'Your partner records' })
+  // A cached read is not a failure — the payload is usable, just not current — so
+  // it gets the warning wording and the same retry. Calling it an error would
+  // tell a partner their records are missing when they are merely stale.
+  // `state: 'stale'` rather than `error`: the panel renderer keys its styling and
+  // its role off this, and a cached read is a warning about currency, not a
+  // failure of the request.
+  const copy = stale ? { ...stale, state: 'stale' } : describeState(ERROR, { subject: 'Your partner records' })
   let panel = $('portalIdentityError')
   if (!panel) {
     panel = document.createElement('div')
     panel.id = 'portalIdentityError'
     authPanel.appendChild(panel)
   }
-  renderStatePanel(panel, { ...copy, state: ERROR }, { retry: () => init() })
+  renderStatePanel(panel, copy, { retry: () => init() })
 }
 
 /**

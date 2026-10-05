@@ -20,19 +20,39 @@ import { createRateLimiter } from './rate-limit.js'
 
 /** Requests per window for one client, by request class. */
 export const INBOUND_POLICIES = Object.freeze({
-  // A console polls a dozen endpoints every thirty seconds. Two a second is
-  // generous for one operator and still refuses a loop.
-  read: { ratePerWindow: 120, windowMs: 60_000, concurrency: 8 },
+  // A console polls a dozen endpoints every thirty seconds, and a *cold page
+  // load* asks for twenty-odd assets in parallel. Concurrency is 24 for that
+  // reason: at 8 the ninth simultaneous asset request was refused while it was
+  // in flight, so a field worker's first page load after a deploy came up
+  // partly unstyled — and the browser gate caught it, 69 refusals across seven
+  // surfaces. The per-minute rate still refuses a loop; the cap exists to bound
+  // simultaneous work, not to ration a page load.
+  //
+  // The rate moved from 120 to 300 for a measured reason: it was set when a
+  // read materialised the whole store — 110 ms and 143 MB for one endpoint,
+  // measured at 39,696 records. ENH-07 gave `read()` a collection manifest, and a
+  // single-collection read is now 14 ms. The budget is a claim about what a read
+  // costs, so it has to follow the cost: at 300/min a supervisor can keep four
+  // consoles polling (12 endpoints every 30 s each) and still navigate, while a
+  // loop that hammers one endpoint is refused inside a second.
+  read: { ratePerWindow: 300, windowMs: 60_000, concurrency: 24 },
   // Writes are the expensive ones: each is a store merge. A field worker's
   // offline queue drains in a burst when signal returns, so the burst is real
   // and the budget has to admit it.
   write: { ratePerWindow: 60, windowMs: 60_000, concurrency: 6 },
   // Ingestion and other fan-outs: one at a time per client. Two concurrent runs
   // from one caller is a bug, and it costs ~92 upstream requests.
+  //
+  // Unchanged by the read fix above, because a browser never issues two of these.
   heavy: { ratePerWindow: 6, windowMs: 60_000, concurrency: 1 },
 })
 
-/** Paths that must never be limited, because a limit is an outage. */
+/**
+ * Paths that must never be limited, because a limit is an outage.
+ *
+ * `/ready` is here so a load balancer can reach it, and `/metrics` because a
+ * scrape is a monitoring system, not a client.
+ */
 export const UNLIMITED = Object.freeze([
   '/api/v1/health',
   '/api/v1/ready',
@@ -40,6 +60,26 @@ export const UNLIMITED = Object.freeze([
   '/metrics',
   '/api/v1/metrics',
 ])
+
+/**
+ * Static assets are not a read.
+ *
+ * The limiter exists to bound the two things that can be expensive: work against
+ * the store, and requests against upstream providers. A stylesheet is neither —
+ * it is a file served from disk, and it happens once per page load because the
+ * browser cannot cache it across a cold start.
+ *
+ * Charging it to the read budget is a defect, and the browser gate is what
+ * found it: seven surfaces × ~25 assets is ~175 GETs in a couple of minutes
+ * from one address, which is over any sane per-minute budget, so every surface
+ * after the first came up partly unstyled. R-09's harm — one upload saturating
+ * the store — is not reachable through a CSS file, so the budget was refusing
+ * pages to protect against something it cannot protect against.
+ *
+ * The API keeps its budget; `/api/v1/*` is a read no matter what it asks for.
+ */
+const STATIC_ASSET = /\.(?:js|mjs|css|json|svg|png|jpe?g|gif|webp|ico|woff2?|ttf|map|webmanifest|txt|md)(\?|$)/i
+const STATIC_PREFIX = /^\/(?:shared|workflow|panels|assets|img|images|fonts)\//
 
 /** The fan-out endpoints, which get the `heavy` budget. */
 const HEAVY = [
@@ -61,6 +101,18 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
  */
 export function inboundClassFor(method, pathname) {
   if (UNLIMITED.some((path) => pathname === path || pathname.startsWith(`${path}/`))) return null
+  // A write is a write whatever it fetches: a POST that downloads a file is
+  // still spending the caller's budget against us.
+  const isWrite = WRITE_METHODS.has(String(method || 'GET').toUpperCase())
+  // Not an API path, and not a spatial catalogue over the store, so this is a
+  // document or an asset: a file read from disk.
+  //
+  // `/stac/` and `/ogc/` are the exception, and deliberately — they look like
+  // static routes and are not. Both read the store and render collections, so
+  // they carry a read budget like any other read of the data.
+  const readsStore = pathname.startsWith('/api/v1') || pathname === '/metrics'
+    || pathname.startsWith('/stac/') || pathname.startsWith('/ogc/')
+  if (!isWrite && !readsStore) return null
   if (HEAVY.some((re) => re.test(pathname))) return 'heavy'
   return WRITE_METHODS.has(String(method || 'GET').toUpperCase()) ? 'write' : 'read'
 }

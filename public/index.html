@@ -456,6 +456,10 @@
                 <button class="chip" data-filter="auto_approved" data-i18n="filter.auto_approved">Auto-approved</button>
               </div>
             </div>
+            <!-- ENH-19. The coverage line, above the list. Empty until the tally
+                 answers, and empty is not "zero determined": an unanswerable
+                 request must leave the line blank rather than claim a fact. -->
+            <p id="alertsOutcomeCoverage" class="filter-scope-note" role="status" hidden></p>
             <div id="alertsList" class="list-container" role="list"></div>
             <nav id="alertsPager" class="pagination" aria-label="Alert pages" hidden></nav>
             <div id="escalationHost"></div>
@@ -686,6 +690,8 @@
         <button class="btn" type="button" data-close>Close</button>
       </div>
     </dialog>
+
+
 
     <dialog id="confirmDialog" class="detail-dialog" aria-labelledby="confirmTitle">
       <div class="dialog-header">

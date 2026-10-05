@@ -1,7 +1,7 @@
 import { initI18n, t, apiFetch, initOfflineBanner, initOfflineQueue, initServiceWorker, submitOrQueue, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
 import { esc as escapeHtml } from '/shared/fmt.js'
-import { ERROR, LOADING, QUEUED, createLoadSequence, describeActionFailure, describeState, distinguishFailure } from '/shared/states.js'
+import { ERROR, LOADING, QUEUED, createLoadSequence, describeActionFailure, describeState, distinguishFailure, staleReadNote } from '/shared/states.js'
 mountNavbar({ activePath: '/chw' })
 
 const state = {
@@ -91,6 +91,29 @@ function renderStepProgress() {
     }
     const counter = screen.querySelector('[data-step-counter]')
     if (counter) counter.textContent = `Step ${index} of ${TOTAL_STEPS}`
+  }
+}
+
+/**
+ * The staleness banner for the CHW alert list.
+ *
+ * Prepended to the screen rather than drawn over it, and the retry re-reads:
+ * yesterday's alerts are worth reading on a phone with no signal, they are just
+ * not worth acting on blind. The banner is removed when a read comes back live.
+ */
+function renderStaleBanner(note, retry) {
+  const host = $('chwStaleBanner')
+  if (!host) return
+  host.hidden = false
+  host.dataset.state = 'stale'
+  host.innerHTML = `<strong>${escapeHtml(note.title)}</strong> <p>${escapeHtml(note.body)}</p>`
+  if (retry && !host.querySelector('.retry-btn')) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'retry-btn'
+    btn.textContent = note.action || 'Try again'
+    btn.addEventListener('click', retry)
+    host.appendChild(btn)
   }
 }
 
@@ -836,6 +859,10 @@ async function loadLastAlert() {
   // Settled on both paths. The working state above has a single exit.
   alertLoads.settle(token)
 
+  // A cached answer is not a live one. The worker arrives here with the alerts
+  // the service worker still holds, `distinguishFailure` calls that a success,
+  // and a health worker reads a day-old list as this morning's. The banner says
+  // so above the list rather than blanking it.
   if (stateName === ERROR) {
     const queued = await window.lindelaQueue?.pendingCount?.() ?? 0
     const copy = queued > 0
@@ -854,10 +881,32 @@ async function loadLastAlert() {
     return
   }
 
+  // A response the service worker answered from its cache is not a live answer,
+  // and `distinguishFailure` cannot see the difference — a successful response
+  // looks like a successful response. So a cached read renders the alert *and*
+  // says it may be out of date, above it, with the same retry the error path
+  // offers. The alert is still worth reading on a phone with no signal; it is
+  // not worth acting on blind.
+  const stale = staleReadNote(res)
+  if (stale) {
+    text.dataset.state = 'stale'
+    text.dataset.alertStale = '1'
+    text.innerHTML = `<p class="stale-note"><strong>${escapeHtml(stale.title)}</strong> ${escapeHtml(stale.body)}</p>`
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'retry-btn'
+    btn.textContent = stale.action || 'Try again'
+    btn.addEventListener('click', () => loadLastAlert())
+    text.appendChild(btn)
+  } else {
+    delete text.dataset.alertStale
+  }
+
   if (stateName === 'empty') {
     const copy = describeState('empty', { noun: 'alerts' })
     text.dataset.state = 'empty'
-    text.textContent = copy.body
+    if (!stale) text.textContent = copy.body
+    else text.appendChild(document.createTextNode(` ${copy.body}`))
     return
   }
 

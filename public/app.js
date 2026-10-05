@@ -12,6 +12,7 @@ import { applyLocaleToDocument, esc as escapeHtml, formatTimestamp, metres, num,
 import { metricLabel } from '/shared/labels.js'
 import { formatRelative } from '/shared/fmt.js'
 import { describeState, ERROR } from '/shared/states.js'
+import { determinationFor, submitOutcome, fetchCoverage, fetchReasons, coverageNote, reasonOptions, humanReason } from '/shared/outcomes.js'
 
 /**
  * Load a console module the first time something needs it.
@@ -3280,6 +3281,193 @@ $('dispatchGateDialog')?.addEventListener('close', () => {
   restoreDialogFocus($('dispatchGateDialog'))
 })
 
+// ENH-19. The determination dialog's markup is deferred (public/panels/
+// outcome.html) because eight controls at boot is eight controls a console on a
+// field connection pays for, to open a dialog an operator opens about once a
+// week. So its wiring cannot be a module-level element listener on an id —
+// the element does not exist yet, and a listener attached to nothing is a
+// control that silently does not work. Wired once the template is in the DOM.
+let _outcomeTemplate = null
+
+async function loadOutcomeTemplate() {
+  if (_outcomeTemplate) return true
+  try {
+    // The same loader the rail panels use, so there is one place that knows how
+    // to fetch a deferred template and one guard that can see it.
+    _outcomeTemplate = await loadTemplate('/panels/outcome.html')
+  } catch (err) {
+    // Said rather than swallowed: a determination dialog that will not open is
+    // the difference between a recorded judgement and an unmeasured deployment,
+    // and the operator deserves to know which one they are looking at.
+    setStatus('The determination dialog could not be loaded, so a determination cannot be recorded here.')
+    console.error('outcome template failed to load', err)
+    return false
+  }
+  document.body.insertAdjacentHTML('beforeend', _outcomeTemplate)
+  $('outcomeDialog')?.addEventListener('close', () => {
+    // The held alert is cleared on close, not on cancel: dismissing with Esc left
+    // a high-severity alert in state and the next open dispatched what the
+    // operator had abandoned.
+    state._outcomeAlert = null
+    restoreDialogFocus($('outcomeDialog'))
+  })
+  $('outcomeSubmit')?.addEventListener('click', () => { submitOutcomeFromDialog() })
+  return true
+}
+
+/**
+ * The determination dialog. ENH-19's way in.
+ *
+ * Three decisions worth stating, because each is a place this could have claimed
+ * something it does not know:
+ *
+ * 1. **The reason list follows the determination.** "Justified" and "false" have
+ *    disjoint reasons, and showing the union in one dropdown lets somebody file
+ *    "hazard_occurred_as_warned" against a false alert — which is not a
+ *    judgement, it is a contradiction, and it would poison the rollup.
+ * 2. **A recorded determination opens as a correction,** pre-filled with what was
+ *    recorded. Re-recording replaces nothing: the server supersedes, and the
+ *    first determination stays in the record.
+ * 3. **Nothing is claimed about coverage when the tally cannot be fetched.** An
+ *    unanswerable request leaves the line blank, because "0 of 400 determined"
+ *    and "we could not ask" are different facts and only one of them is true.
+ */
+async function openOutcomeDialog(alert) {
+  if (!(await loadOutcomeTemplate())) return
+  const dialog = $('outcomeDialog')
+  if (!dialog) return
+  const determination = determinationFor(alert)
+  if (determination.kind === 'unavailable') {
+    setStatus(determination.reason)
+    return
+  }
+  state._outcomeAlert = alert
+
+  const reasons = await fetchReasons()
+  $('outcomeSeverity').textContent = alert.severity || '—'
+  $('outcomeRule').textContent = alert.rule_name || alert.metric || '—'
+
+  const prior = $('outcomePrior')
+  if (determination.kind === 'recorded') {
+    prior.hidden = false
+    prior.textContent = `Recorded as ${determination.reason ? humanReason(determination.reason) : determination.determination}`
+      + (determination.determined_at ? ` on ${displayDate(determination.determined_at)}` : '')
+      + '. Saving below records a correction; the original stays in the record.'
+  } else {
+    prior.hidden = true
+    prior.textContent = ''
+  }
+
+  const select = $('outcomeReason')
+  select.innerHTML = ''
+  const setReasons = (which) => {
+    select.innerHTML = reasonOptions(determination.reasons[which])
+  }
+  setReasons(determination.kind === 'recorded' ? determination.determination : 'justified')
+
+  document.querySelectorAll('input[name="outcomeDetermination"]').forEach((radio) => {
+    radio.checked = determination.kind === 'recorded' && radio.value === determination.determination
+    radio.addEventListener('change', () => setReasons(radio.value))
+  })
+  // With nothing recorded, `justified` is preselected so the dialog is one click
+  // from complete — and the radio reflects that rather than starting on nothing,
+  // which would read as "nobody has decided" when in fact the operator has.
+  if (determination.kind !== 'recorded') {
+    const first = document.querySelector('input[name="outcomeDetermination"]')
+    if (first) first.checked = true
+  }
+
+  $('outcomeDeterminedBy').value = determination.determined_by || ''
+  $('outcomeNote').value = ''
+  const error = $('outcomeError')
+  error.hidden = true
+  error.textContent = ''
+
+  rememberDialogOpener(dialog)
+  dialog.showModal()
+}
+
+async function submitOutcomeFromDialog() {
+  const alert = state._outcomeAlert
+  const chosen = document.querySelector('input[name="outcomeDetermination"]:checked')
+  const error = $('outcomeError')
+  const say = (message) => {
+    error.hidden = false
+    error.textContent = message
+  }
+  if (!alert) return say('No alert is selected. Close this and open the determination from an alert row.')
+  if (!chosen) return say('Choose whether the alert was justified.')
+
+  const result = await submitOutcome({
+    alertId: alert.id,
+    determination: chosen.value,
+    reason: $('outcomeReason').value,
+    determinedBy: $('outcomeDeterminedBy').value.trim(),
+    note: $('outcomeNote').value.trim(),
+  }, { post: postJson })
+
+  if (!result.ok) return say(result.error)
+  $('outcomeDialog')?.close()
+  // The tally has moved, so the next paint must ask again rather than trust the
+  // figure it cached before this determination existed.
+  state._outcomeCoverageAsked = false
+  setStatus(result.data?.determination === 'false'
+    ? 'Recorded: the alert was not justified. This is what the false-alert rate is computed from.'
+    : 'Recorded: the alert was justified.')
+  await refresh({ force: true })
+  await refreshOutcomeCoverage()
+}
+
+/**
+ * The coverage line above the list.
+ *
+ * Deliberately last in the rail rather than on every row: "12 of 400 alerts have
+ * been judged" is a fact about the deployment, and repeating it four hundred times
+ * is how a number becomes furniture. It is also the number an operator needs
+ * before believing any rate the console shows — the registry will publish a
+ * false-alert rate from twelve determinations if they clear its floor, and the
+ * floor is a floor on the sample, not on how the sample was chosen.
+ */
+async function refreshOutcomeCoverage() {
+  const host = $('alertsOutcomeCoverage')
+  if (!host) return
+  const tally = await fetchCoverage()
+  if (!tally) {
+    // Not "0 of 0": the request did not answer, and a line claiming zero
+    // determined is a claim about the deployment nobody made.
+    host.hidden = true
+    host.textContent = ''
+    return
+  }
+  const note = coverageNote(tally, { t: (key, vars) => formatOutcomeCoverage(key, vars) })
+  host.hidden = !note
+  host.textContent = note
+}
+
+/**
+ * The two coverage sentences, from the catalogue.
+ *
+ * Built in JavaScript rather than markup, so it was the one string on this panel
+ * that no locale could reach — and the gate that catches a missing `data-i18n`
+ * key cannot see a template literal either. Hence `test/outcome-surface.test.js`
+ * asserts both keys exist, and the fallback below is English rather than a key:
+ * a coverage line reading `outcome.coverage_some: 12 of 400` is worse than no
+ * line at all.
+ */
+function formatOutcomeCoverage(key, vars) {
+  const text = t(key, vars)
+  if (text === key) return formatOutcomeCoverageFallback(vars)
+  return text
+}
+
+function formatOutcomeCoverageFallback(vars) {
+  if (vars.determined === 0) {
+    return `None of the ${vars.alerts} alerts has been judged yet — every rate on this screen is unmeasured.`
+  }
+  return `${vars.determined} of ${vars.alerts} alerts judged (${vars.pct}%): `
+    + `${vars.false_alerts} not justified, ${vars.justified} justified.`
+}
+
 // =============================================================
 // Tabs
 // =============================================================
@@ -3395,12 +3583,17 @@ const DEFERRED_PANEL_BINDINGS = {
     }],
   ],
   ingestion: [
-    ['runButton', 'click', () => runIngestion()],
-    ['createIngestionSchedulesButton', 'click', () => createPublicIngestionSchedules()],
-    ['runDueIngestionButton', 'click', () => runDueIngestion()],
-    ['importAcledButton', 'click', () => importAcledConflictCsv()],
-    ['importCsvButton', 'click', () => importServiceAssets('csv')],
-    ['importGeoJsonButton', 'click', () => importServiceAssets('geojson')],
+    // Through `ingestionAction`, because the panel's behaviour is loaded with its
+    // markup: these buttons are inside that markup, so the module is loaded by
+    // the time anyone can press one, and `runOrExplain` covers the case where it
+    // is not — with a sentence, because a button that does nothing and says
+    // nothing is the failure mode this whole change is arranged to avoid.
+    ['runButton', 'click', () => runOrExplain('runIngestion')],
+    ['createIngestionSchedulesButton', 'click', () => runOrExplain('createPublicIngestionSchedules')],
+    ['runDueIngestionButton', 'click', () => runOrExplain('runDueIngestion')],
+    ['importAcledButton', 'click', () => runOrExplain('importAcledConflictCsv')],
+    ['importCsvButton', 'click', () => runOrExplain('importServiceAssets', 'csv')],
+    ['importGeoJsonButton', 'click', () => runOrExplain('importServiceAssets', 'geojson')],
     ['exportGeoJsonButton', 'click', () => window.open('/api/v1/export.geojson', '_blank')],
     ['exportCsvButton', 'click', () => window.open('/api/v1/export.csv', '_blank')],
   ],
@@ -3434,6 +3627,56 @@ const DEFERRED_PANEL_BINDINGS = {
  *
  * @returns {Promise<boolean>} whether the panel's contents are now in the DOM
  */
+/**
+ * Fetch a deferred template once and return its markup.
+ *
+ * Extracted from `mountPanel` rather than duplicated for the determination
+ * dialog, because a second copy is a second set of error handling and the
+ * front-end's fetch guard is built to notice exactly that: the one exemption it
+ * allows is a named function, so a second implementation reads as a second
+ * exemption. `cache: 'no-cache'` deliberately — the service worker owns the
+ * caching, and a browser HTTP cache here would serve a stale template to an
+ * offline-first console with no way to tell.
+ */
+const _templateCache = new Map()
+
+async function loadTemplate(url) {
+  if (_templateCache.has(url)) return _templateCache.get(url)
+  const pending = (async () => {
+    const res = await fetch(url, { cache: 'no-cache' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.text()
+  })()
+  _templateCache.set(url, pending)
+  try {
+    const html = await pending
+    _templateCache.set(url, html)
+    return html
+  } catch (err) {
+    // A failed template must not be cached as a failure: the next open, on a
+    // connection that has come back, would replay the rejection forever.
+    _templateCache.delete(url)
+    throw err
+  }
+}
+
+/**
+ * A panel template's contents, without the wrapper it was cut from.
+ *
+ * Parsed rather than string-sliced: the cut has to find the first element's
+ * matching close, and a regex that guesses at nesting depth produces a panel
+ * missing its last form on a template that gains one.
+ */
+function innerMarkupOf(html) {
+  const parsed = new DOMParser().parseFromString(html, 'text/html')
+  const wrapper = parsed.body.firstElementChild
+  // No wrapper, or a wrapper that is not the panel itself: insert it as it is
+  // rather than dropping content on the floor.
+  if (!wrapper) return html
+  if (wrapper.children.length === 0 && !wrapper.textContent.trim()) return ''
+  return wrapper.innerHTML
+}
+
 async function mountPanel(name) {
   const url = DEFERRED_PANELS[name]
   if (!url) return true
@@ -3443,9 +3686,7 @@ async function mountPanel(name) {
 
   let html
   try {
-    const res = await fetch(url, { cache: 'no-cache' })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    html = await res.text()
+    html = await loadTemplate(url)
   } catch (err) {
     // Say what happened rather than showing an empty tab. "No data" here would
     // be the console's unearned-negative defect all over again, on the panel
@@ -3460,11 +3701,16 @@ async function mountPanel(name) {
   }
 
   // The template carries the panel's own outer <div>, and the shell in
-  // index.html is that same element — so the contents are inserted here and the
-  // shell's own attributes (id, role, aria-labelledby, hidden) are kept. Two
-  // elements with one id would be a duplicate-id bug and a broken `for`/`id`
-  // relationship for every control inside.
-  shell.innerHTML = html
+  // index.html is that same element — so the *contents* go in here and the
+  // shell keeps its id, role, aria-labelledby and hidden.
+  //
+  // Which means the wrapper has to come off. Inserting the template whole put a
+  // second `id="panel-reports"` inside the first, and `getElementById` then
+  // answered with the outer, empty, still-hidden one — so every deferred tab
+  // mounted, fetched its data, rendered into the nested copy, and displayed
+  // nothing. The browser gate reported it as "rail tab renders visible content —
+  // 0 chars", which was a precise description of a duplicate id.
+  shell.innerHTML = innerMarkupOf(html)
   // Bind before the panel is unhidden, so a control is never focusable and
   // clickable before it does anything.
   bindDeferredPanel(name)
@@ -3493,6 +3739,18 @@ function switchTab(name) {
   // Mount before rendering: for a deferred panel the ids do not exist yet, so
   // rendering first would paint an empty panel and never fill it.
   if (DEFERRED_PANELS[name]) {
+    // And say so while it loads. The tab was unhidden two lines above, so
+    // without this the operator gets an empty box for the length of a fetch —
+    // which on a field connection is seconds of a control that looks broken. The
+    // browser gate caught this as "rail tab renders visible content — 0 chars",
+    // and it was right: the panel is not empty, it has not arrived yet.
+    const shell = $(`panel-${name}`)
+    if (shell && !_mountedPanels.get(name)) {
+      shell.innerHTML = '<div class="empty-state" role="status">'
+        + '<p class="empty-state-title">Loading…</p>'
+        + `<p>The ${name} panel is fetched when you first open it, so the first `
+        + 'visit takes a moment on a slow connection.</p></div>'
+    }
     mountPanel(name).then((mounted) => {
       if (!mounted) return
       if (name === 'reports')   renderReportsPanel()
@@ -3937,6 +4195,14 @@ function _renderAlertsPanel() {
   // rebuilds that do happen.
   container.setAttribute('data-live-region', 'alerts')
 
+  // Once per paint, not once per row: the line is one fact about the deployment.
+  // Deliberately not awaited — the panel paints from the alerts it already has,
+  // and a slow tally must not hold the list hostage.
+  if (state._outcomeCoverageAsked !== true) {
+    state._outcomeCoverageAsked = true
+    refreshOutcomeCoverage()
+  }
+
   // Three outcomes, not two. Extracted so the decision can be tested directly
   // rather than inferred from rendered HTML: it is the difference between a
   // console that lies on a dead link and one that admits it.
@@ -4017,7 +4283,11 @@ function _renderAlertsPanel() {
                 data-i18n="action.send">Send</button>
         <button class="btn btn-xs" data-id="${escapeHtml(alert.id)}" data-action="details"
                 ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:details">Details</button>
+        <button class="btn btn-xs" data-id="${escapeHtml(alert.id)}" data-action="outcome"
+                ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:outcome"
+                title="${escapeHtml(outcomeButtonTitle(alert))}">${escapeHtml(outcomeButtonLabel(alert))}</button>
       </div>
+      ${outcomeBadge(alert)}
       ${canSend ? '' : `<p class="alert-blocked-note">${escapeHtml(
         `Send is off — ${SEND_BLOCKED_REASON}${statusText}.`
       )}</p>`}
@@ -4032,6 +4302,11 @@ function _renderAlertsPanel() {
       if (action === 'details') {
         const alert = (state.data.alerts?.data || []).find((a) => a.id === id)
         if (alert) openDetailDialog(alert)
+        return
+      }
+      if (action === 'outcome') {
+        const alert = (state.data.alerts?.data || []).find((a) => a.id === id)
+        if (alert) openOutcomeDialog(alert)
         return
       }
       handleAlertAction(id, action)
@@ -4086,6 +4361,54 @@ $('alertFilterChips')?.addEventListener('click', (e) => {
   syncFiltersToUrl()
   renderAlertsPanel()
 })
+
+/**
+ * ENH-19 — the alert rail's part of the outcome channel.
+ *
+ * Three small functions, and each answers a question an operator has while
+ * looking at a row rather than a question about the data model: what does the
+ * button say, does this alert already have a determination, and what does the
+ * rail claim about coverage.
+ */
+function outcomeButtonLabel(alert) {
+  const determination = determinationFor(alert)
+  return determination.kind === 'recorded' ? 'Change determination' : 'Was this justified?'
+}
+
+/**
+ * The button's title says *what will happen*, not what the row is. On a recorded
+ * alert a title reading "justified" reads as a state; the button opens a
+ * correction, and a control whose label describes the wrong action is worse than
+ * no title at all.
+ */
+function outcomeButtonTitle(alert) {
+  const determination = determinationFor(alert)
+  if (determination.kind === 'unavailable') return determination.reason
+  if (determination.kind === 'recorded') {
+    return `Recorded as ${determination.reason ? humanReason(determination.reason) : determination.determination}`
+      + (determination.determined_at ? ` on ${displayDate(determination.determined_at)}` : '')
+      + '. This opens a correction.'
+  }
+  return 'Record whether this warning was justified, and why'
+}
+
+/**
+ * The recorded determination, on the row it belongs to.
+ *
+ * Absent when there is nothing recorded, and that is deliberate: a badge reading
+ * "unknown" on every un-reviewed alert turns a rail into a wall of hedges, and an
+ * operator learns to skip it. The coverage line at the top of the panel is where
+ * the unknown is stated — once, in aggregate, where it is a fact about the
+ * deployment rather than a note on every row.
+ */
+function outcomeBadge(alert) {
+  const determination = determinationFor(alert)
+  if (determination.kind !== 'recorded') return ''
+  const cls = determination.determination === 'false' ? 'status-false' : 'status-justified'
+  const label = determination.determination === 'false' ? 'not justified' : 'justified'
+  return `<p class="filter-scope-note"><span class="status-pill ${cls}">${escapeHtml(label)}</span>`
+    + `${determination.reason ? ` — ${escapeHtml(humanReason(determination.reason))}` : ''}</p>`
+}
 
 async function handleAlertAction(id, action) {
   const safeId = encodeURIComponent(id)
@@ -4267,50 +4590,30 @@ async function distributeLatestReport() {
 // Ingestion panel
 // =============================================================
 /**
- * The ingestion tab's source picker.
+ * The source-status list, rendered from the refresh payload.
  *
- * `await`ed at the top level of the module. With a bare `fetch` and no catch, a
- * dead server rejected here and threw out of module evaluation — so
- * `restoreFiltersFromUrl`, `ensureEscalation`, `watchEvidenceSurfaces` and the
- * first `refresh` never ran. The console did not report an outage; it booted
- * half-built and said nothing, which is the same failure as the empty-state
- * lie one layer down and harder to notice.
- *
- * So: `apiFetch` (which raises a status-bearing error rather than a bare
- * `TypeError`), and a grid that states the failure rather than going blank.
+ * The panel's *behaviour* — running a source, importing a file, creating
+ * schedules — moved to /panels/ingestion.js, which is fetched with the panel's
+ * markup. This renderer stayed because it reads `state.data`, which the refresh
+ * fills for every panel: it costs a few lines and no request, and moving it
+ * would have meant passing the whole console state into the module to save them.
  */
-async function loadSources() {
-  const grid = $('sourceGrid')
-  if (!grid) return
-  let payload
-  try {
-    payload = await apiFetch('/api/v1/sources', { headers: authHeaders() })
-  } catch (err) {
-    // An empty picker reads as "this platform has no sources", which is a claim
-    // about the system rather than about the connection. Say which it is.
-    grid.innerHTML = '<p class="workflow-empty">The source list has not been checked. '
-      + 'The request did not get an answer, so this is not an empty list.</p>'
-    return
-  }
-  if (!Array.isArray(payload?.data)) {
-    grid.innerHTML = '<p class="workflow-empty">The source list has not been checked — '
-      + 'the server answered with something that is not a source list.</p>'
-    return
-  }
-  const defaultSources = ['open_meteo', 'gdacs', 'glofas', 'chirps', 'nasa_firms']
-  grid.innerHTML = payload.data.map((source) => `
-    <label title="${escapeHtml(source.name)}">
-      <input type="checkbox" value="${escapeHtml(source.id)}" ${defaultSources.includes(source.id) ? 'checked' : ''}>
-      <span>${escapeHtml(source.id)}</span>
-    </label>
-  `).join('')
-}
-
 function renderIngestionPanel() {
   const healthData = state.data.ingestionHealth?.data || []
   const sources    = state.data.sources?.data || []
   const container  = $('sourceStatusList')
   if (!container) return
+
+  // The panel's behaviour arrives with its markup. Loaded here rather than in
+  // `switchTab` because this renderer is also reached from the refresh, and the
+  // module must be loaded before the panel's buttons can be bound — not merely
+  // before someone clicks the tab.
+  loadIngestionPanel().then(() => {
+    bindDeferredPanel('ingestion')
+  }).catch((err) => {
+    console.error('Ingestion controls failed to load:', err)
+    setStatus('The ingestion controls did not load. The source list below is still accurate.')
+  })
 
   container.innerHTML = sources.map((source) => {
     const health  = healthData.find((h) => h.source === source.id) || {}
@@ -4356,109 +4659,39 @@ function renderIngestionPanel() {
   })
 }
 
-async function runSingleSource(sourceId) {
-  setStatus(`Running ${sourceId}. This fetches live data from the source; it may take a moment.`)
-  const payload = await postJson('/api/v1/ingest/run', { sources: [sourceId] })
-  setStatus(payload.success ? `Ran ${sourceId}.` : (payload.error || 'Ingestion failed'))
-  await refresh({ force: true })
-}
-
-async function runIngestion() {
-  setStatus('Running ingestion...')
-  const grid = $('sourceGrid')
-  const selectedSources = [...(grid?.querySelectorAll('input:checked') || [])].map((inp) => inp.value)
-  const payload = await postJson('/api/v1/ingest/run', {
-    sources: selectedSources,
-    regions: [{
-      name:    $('regionInput')?.value,
-      country: $('countryInput')?.value,
-      lat:     Number($('latInput')?.value),
-      lon:     Number($('lonInput')?.value),
-    }],
-  })
-  if (!payload.success) { setStatus(payload.error || 'Ingestion failed'); return }
-  setStatus(`Ingestion complete. ${payload.source_runs.length} source runs recorded.`)
-  await refresh({ force: true })
-}
-
 /**
- * Create the default public ingestion schedules — behind a preview (JTBD-002).
+ * Mount the ingestion panel's behaviour, once, on first visit to the tab.
  *
- * This wrote one schedule per built-in public source with nothing showing what
- * would be created, and each schedule then runs on its own interval from an
- * external scheduler. The preview names every source that has no schedule today
- * and every schedule that already exists; the route still chooses the subset
- * it treats as built-in and public, and reports back what it actually created.
+ * The buttons in `DEFERRED_PANEL_BINDINGS` and the two command-palette entries
+ * call through `ingestionAction`, which reads this. Before the panel has been
+ * opened there is nothing to call — and that is not reachable from the UI,
+ * because those buttons are inside the panel's own markup.
  */
-async function createPublicIngestionSchedules() {
-  setStatus('Reading what the default schedules would change...')
-  try {
-    const { askToConfirm } = await lazy('/workflow/confirm.js')
-    await lazy('/workflow/ingest-gates.js').then((m) => m.confirmDefaultSchedules(askToConfirm, async () => {
-      setStatus('Creating default public ingestion schedules...')
-      await refresh({ force: true })
-    }))
-  } catch (err) {
-    setStatus(`Could not prepare the schedule preview: ${err.message}`)
-  }
+let _ingestion = null
+
+async function loadIngestionPanel() {
+  if (_ingestion) return _ingestion
+  const module = await lazy('/panels/ingestion.js')
+  _ingestion = await module.mount({
+    $, escapeHtml, setStatus, authHeaders, postJson, refresh, state, ensureEscalation,
+  })
+  return _ingestion
 }
 
-/** ACLED conflict import — behind the licence assertion it depends on (JTBD-007). */
-async function importAcledConflictCsv() {
-  const csv = $('acledCsvInput')?.value || ''
-  const section = $('acledSection')
-  if (!csv.trim()) {
-    setStatus('Paste the ACLED CSV before importing.')
-    $('acledCsvInput')?.focus()
-    return
-  }
-  try {
-    const { askToConfirm } = await lazy('/workflow/confirm.js')
-    await lazy('/workflow/ingest-gates.js').then((m) => m.confirmAcledImport(askToConfirm, csv, async () => {
-      setStatus('Importing ACLED conflict data...')
-      await refresh({ force: true })
-    }))
-  } catch (err) {
-    const out = section?.querySelector('.ops-result')
-    if (out) out.textContent = String(err.message || err)
-  }
+/** The panel's behaviour, or null when the tab has not been opened. */
+function ingestionAction(name) {
+  return _ingestion ? _ingestion[name] : null
 }
 
-async function runDueIngestion() {
-  setStatus('Running due public ingestion schedules...')
-  const payload = await postJson('/api/v1/ingest/run-due', {})
-  setStatus(payload.success ? `Completed ${payload.data.length} due source runs.` : (payload.error || 'Due ingestion failed'))
-  await refresh({ force: true })
-}
-
-async function importServiceAssets(kind) {
-  setStatus(`Importing service assets as ${kind.toUpperCase()}...`)
-  const key = kind === 'geojson' ? 'service_assets_geojson' : 'service_assets_csv'
-  // `apiFetch`, not raw `fetch`. This one checked neither `res.ok` nor a
-  // timeout, and the consequence was specific: an import that hung left the
-  // status line reading "Importing service assets as GEOJSON…" for the life of
-  // the page, promising work still in progress that had already been abandoned.
-  // A write with no timeout is worse than a read with none — a read going
-  // quiet is annoying, a write going quiet leaves the operator unsure whether to
-  // resubmit, and resubmitting an import is not free.
-  let payload
-  try {
-    payload = await apiFetch('/api/v1/service-assets', {
-      method: 'POST',
-      headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ [key]: $('serviceAssetInput')?.value }),
-    })
-  } catch (err) {
-    // Say what happened. The alternative — an unhandled rejection — leaves the
-    // status line mid-sentence, which is the state `states.js` forbids.
-    setStatus(`Import failed: ${err.message || 'the request did not get an answer'}`)
-    return
+/** Run one of the panel's actions, or say why it could not be run. */
+async function runOrExplain(name, ...args) {
+  const action = ingestionAction(name)
+  if (!action) {
+    setStatus('The ingestion controls have not finished loading. Open the Ingestion tab and try again.')
+    return false
   }
-  setStatus(payload.success ? `Imported ${payload.imported} service assets.` : ((payload.errors || [payload.error]).join(' | ')))
-  await refresh({ force: true })
+  return action(...args)
 }
-
-// =============================================================
 // Settings panel
 // =============================================================
 function renderSettingsPanel() {
@@ -4720,8 +4953,8 @@ const PALETTE_BASE = [
   { icon: '2', label: 'Reports tab',             category: 'Navigation', action: () => switchTab('reports') },
   { icon: '3', label: 'Ingestion tab',           category: 'Navigation', action: () => switchTab('ingestion') },
   { icon: '4', label: 'Settings tab',            category: 'Navigation', action: () => switchTab('settings') },
-  { icon: '>', label: 'Run all due sources',     category: 'Ingestion',  action: runDueIngestion },
-  { icon: '>', label: 'Create default schedules',category: 'Ingestion',  action: createPublicIngestionSchedules },
+  { icon: '>', label: 'Run all due sources',     category: 'Ingestion',  action: () => runOrExplain('runDueIngestion') },
+  { icon: '>', label: 'Create default schedules',category: 'Ingestion',  action: () => runOrExplain('createPublicIngestionSchedules') },
   { icon: '+', label: 'Generate report',         category: 'Reports',   action: generateReport },
   { icon: '+', label: 'Approve latest report',   category: 'Reports',   action: approveLatestReport },
   { icon: '+', label: 'Distribute latest report',category: 'Reports',   action: distributeLatestReport },
@@ -5086,7 +5319,12 @@ await loadLocale(state.locale).catch((err) => {
   console.error('Boot: locale catalogue did not load', err)
   setStatus('The language catalogue did not load. The interface is showing English strings.')
 })
-await loadSources()
+// The source picker used to be fetched here at boot, un-caught, so a dead server
+// rejected and threw out of module evaluation — `restoreFiltersFromUrl` and the
+// first `refresh` never ran, and the console booted half-built saying nothing.
+// It is now fetched by the refresh (which is where the panel renders it from)
+// and, on first visit to the tab, by /panels/ingestion.js — inside its own
+// catch. Two requests for one list became one.
 // Every panel repaints every thirty seconds, so a boot-time sweep would cover
 // only the tables that happened to exist at boot. Observed instead — see
 // `autoMarkScrollableRegions`.

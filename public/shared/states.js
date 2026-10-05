@@ -85,6 +85,47 @@ export function distinguishFailure({ ok = false, error = null, isEmpty = false }
  * @returns {{ title: string, body: string, tone: 'neutral'|'warning'|'critical',
  *             retryable: boolean, action: string|null }}
  */
+/**
+ * What to say about a payload the service worker answered from its cache.
+ *
+ * The case this exists for: the server is dead, the service worker's API bucket
+ * has yesterday's records, and the surface renders them as current. Everything
+ * downstream then reasons about a stale read as a live one — the partner portal
+ * answered "Authentication is not configured", a claim about the server's
+ * configuration, while the server was gone. A cached read is a real answer to a
+ * different question, and the question has to be named.
+ *
+ * Returns `null` for a live read, so a caller can write
+ * `staleNote(payload) ?? ''` and pay nothing for the common case.
+ */
+export function staleReadNote(payload, { storedAt = null, subject = 'These records', t } = {}) {
+  const provenance = payload?.__provenance
+  if (!provenance?.servedFromCache) return null
+  const when = storedAt || provenance.storedAt
+  const rendered = when ? new Date(when).toLocaleString() : null
+  // Built from the ERROR vocabulary rather than a parallel sentence set. The
+  // first clause is the same fact — the server has not answered — and the second
+  // is the one that matters here: what is on screen *is* a list, and it may not
+  // be current. A surface that renders stale data without saying so is the same
+  // defect as one rendering nothing: a reader draws the wrong conclusion.
+  //
+  // `t` is accepted so a translated surface reads the same shape; the English is
+  // the fallback for a key a catalogue has not caught up with.
+  const body = t
+    ? t('state.served_from_cache', { when: rendered || 'an earlier time' })
+    : `The server could not be reached, so this is what it last said${rendered ? ` (${rendered})` : ''}. It may be out of date — do not read this as current.`
+  return {
+    title: t ? t('state.served_from_cache_title') : 'Showing the last known state',
+    body,
+    tone: 'warning',
+    // Deliberately not `critical`: the payload is usable, it is just not current.
+    // Treating a cached answer as an error would blank eleven panels because one
+    // endpoint was answered from cache.
+    retryable: true,
+    action: 'Try again',
+  }
+}
+
 export function describeState(state, { subject = 'These records', noun, queuedCount = 0, what = 'they', holdsWork = false } = {}) {
   switch (state) {
     case LOADING:

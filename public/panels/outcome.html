@@ -1,0 +1,68 @@
+<!--
+  ENH-19 — the determination dialog, as a deferred template.
+
+  Inlined in `index.html` this was eight controls at boot: two radios, a select,
+  an input, a textarea and three buttons, for a control an operator opens maybe
+  once a week, on a console measured for first load on a field connection. The
+  panel deferral already moved four rail tabs out for the same reason and set the
+  ceiling at 50 controls; this markup was the thing that broke it.
+
+  Fetched on the first determination and cached, so the second one costs
+  nothing. Precached by the service worker, so it is available offline — which is
+  the case that matters: the alert a worker is looking at is the one they just
+  received, and they cannot determine it without a connection to the server.
+-->
+    <!-- ENH-19. The determination dialog. Without it the outcome channel has no
+         way in: an operator can read an alert, decide, and have nowhere to say so,
+         and every calibration surface stays at "not estimable" for the reason the
+         rest of this feature exists to fix. -->
+    <dialog id="outcomeDialog" class="detail-dialog" aria-labelledby="outcomeTitle">
+      <div class="dialog-header">
+        <h2 id="outcomeTitle" data-i18n="outcome.title">Was this alert justified?</h2>
+        <button class="btn btn-icon dialog-close" type="button" aria-label="Close">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <p>
+          <span data-i18n="label.severity">Severity</span>: <strong id="outcomeSeverity">—</strong> ·
+          <span data-i18n="label.rule">Rule</span>: <span id="outcomeRule">—</span>
+        </p>
+        <p id="outcomePrior" class="filter-scope-note" hidden></p>
+        <fieldset class="outcome-choice">
+          <legend data-i18n="outcome.determination_label">Determination</legend>
+          <label>
+            <input type="radio" name="outcomeDetermination" value="justified">
+            <span data-i18n="outcome.justified">It was justified</span>
+          </label>
+          <label>
+            <input type="radio" name="outcomeDetermination" value="false">
+            <span data-i18n="outcome.false">It was not</span>
+          </label>
+        </fieldset>
+        <label>
+          <span data-i18n="outcome.reason_label">Why</span>
+          <select id="outcomeReason"></select>
+        </label>
+        <p class="filter-scope-note" data-i18n="outcome.reason_help">
+          The reason is what gets counted. A sensor fault is a maintenance visit; a mistuned threshold
+          is a rule change.
+        </p>
+        <label>
+          <span data-i18n="outcome.determined_by_label">Determined by</span>
+          <input type="text" id="outcomeDeterminedBy" autocomplete="off" spellcheck="false">
+        </label>
+        <label>
+          <span data-i18n="outcome.note_label">Note (optional)</span>
+          <textarea id="outcomeNote" rows="3"></textarea>
+        </label>
+        <p id="outcomeError" class="warning" role="status" hidden></p>
+      </div>
+      <div class="dialog-footer">
+        <button class="btn" type="button" data-close data-i18n="action.cancel">Cancel</button>
+        <button class="btn btn-primary" type="button" id="outcomeSubmit" data-i18n="outcome.submit">Record determination</button>
+      </div>
+    </dialog>

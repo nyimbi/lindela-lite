@@ -129,7 +129,8 @@ describe('R-67 — no front-end module calls the global fetch on an API path', (
     for (const hit of rawApiFetches(src)) {
       // The i18n catalogues are exempt by design; see the header.
       if (/\/i18n\/|\/i18n\$\{|\/i18n['"`]/.test(hit.text)) continue
-      // A deferred panel's own template, fetched inside `mountPanel`. Same
+      // A deferred template — a rail panel's or the determination dialog's —
+      // fetched by the one loader both share. Same
       // category as the catalogues: a static same-origin file with no
       // partial-response semantics and no auth. It checks `res.ok` and renders
       // a named failure, so `apiFetch` would add a bearer token and a JSON
@@ -140,6 +141,10 @@ describe('R-67 — no front-end module calls the global fetch on an API path', (
       // DEFERRED_PANELS. Matching on the string would either miss it or match
       // any call using a variable named `url`, which is not an exemption
       // anyone can reason about.
+      // `loadTemplate` is the shared loader; `mountPanel` is named for the case
+      // where a raw fetch is reintroduced inside it rather than routed through
+      // it. Both are template fetches, and neither is an API call.
+      if (inFunction(src.split('\n'), hit.line, 'loadTemplate')) continue
       if (inFunction(src.split('\n'), hit.line, 'mountPanel')) continue
       offenders.push(`${rel}:${hit.line}: ${hit.text}`)
     }
@@ -182,7 +187,11 @@ describe('R-67 — the sanctioned wrappers are actually used', () => {
     // An import with no timeout and no catch left the status line reading
     // "Importing service assets as GEOJSON…" for the life of the page —
     // promising work still in progress that had already been abandoned.
-    const src = code('public/app.js')
+    //
+    // Read from the ingestion module rather than app.js: the import path moved
+    // there with the rest of that panel's behaviour, and a guard that reads a
+    // file the code no longer lives in reports a pass while checking nothing.
+    const src = code('public/panels/ingestion.js')
     const fn = /async function importServiceAssets[\s\S]*?\n\}/.exec(src)?.[0]
     assert.ok(fn, 'importServiceAssets exists')
     assert.match(fn, /apiFetch\(/, 'the import must go through apiFetch')
@@ -205,7 +214,9 @@ describe('R-67 — the wrapper it routes through is the one that does the work',
       // fetches the scan allows and report the wrapper's exemption as a
       // second one.
       return rawApiFetches(src).some((h) =>
-        !/\/i18n\//.test(h.text) && !inFunction(lines, h.line, 'mountPanel'))
+        !/\/i18n\//.test(h.text)
+        && !inFunction(lines, h.line, 'loadTemplate')
+        && !inFunction(lines, h.line, 'mountPanel'))
     })
     assert.deepEqual(wrappers, [WRAPPER_MODULE],
       'only the module that defines apiFetch may call the global fetch')

@@ -58,6 +58,30 @@ const evaluate = async (expression) => {
   return res.result.value
 }
 
+/**
+ * Click a control, or fail the named check and carry on.
+ *
+ * The reason this exists: an unguarded `getElementById(...).click()` throws on
+ * a page that renamed an id, and the throw ends the run — so one stale
+ * expectation silently suppresses every check after it, and the gate's report
+ * looks like a clean one that stopped early. Every interactive step in this file
+ * goes through here, so a missing control is one failed check with a name.
+ */
+const clickOrFail = async (name, expression, detail = '') => {
+  const res = await send('Runtime.evaluate', {
+    expression,
+    awaitPromise: true,
+    returnByValue: true,
+  })
+  const threw = Boolean(res.exceptionDetails)
+  const said = res.result?.value
+  const missing = said && typeof said === 'object' && said.missing
+  check(name, !threw && !missing, threw
+    ? String(res.exceptionDetails.exception?.description || 'evaluate threw').split('\n')[0]
+    : (missing ? `missing ${missing}` : detail))
+  return !threw && !missing
+}
+
 const checks = []
 function check(name, passed, detail) {
   checks.push({ name, passed, detail })
@@ -502,13 +526,23 @@ async function main() {
   // aborted the render again, taking the affected-assets table with it.
   await send('Page.navigate', { url: `${BASE}/scenarios?cb=${Date.now()}` })
   await new Promise((r) => setTimeout(r, 3200))
+  // `runScenarioBtn` no longer exists: the control is `[data-run]`, renamed when
+  // the builder was restyled. A gate that names an id the page stopped using
+  // does not report a stale expectation — it throws, and the thirty checks after
+  // it never run, which is how a browser gate becomes a gate nobody trusts.
   await evaluate(`(() => {
+    const run = document.querySelector('[data-run]');
+    if (!run) return { missing: '[data-run]' };
     const r = document.getElementById('precipMultiplier');
+    if (!r) return { missing: '#precipMultiplier' };
     r.value = '2';
     r.dispatchEvent(new Event('input', { bubbles: true }));
-    document.getElementById('runScenarioBtn').click();
-    return true;
-  })()`)
+    run.click();
+    return {};
+  })()`).then((outcome) => {
+    check('the scenario builder still has its run control', !outcome?.missing,
+      outcome?.missing ? `missing ${outcome.missing}` : 'clicked')
+  })
   await new Promise((r) => setTimeout(r, 4000))
   const scenario = await evaluate(`(() => {
     const err = document.getElementById('scenarioError');
@@ -724,8 +758,12 @@ async function main() {
   check('the CHW symptom wizard advances through every screen',
     wizardStuck === null, wizardStuck || 'all steps advanced')
 
-  await evaluate(`document.getElementById('symptomSubmitBtn').click(); true`)
+  const submitted = await clickOrFail('the CHW wizard has a submit control',
+    `(() => { const b = document.getElementById('symptomSubmitBtn'); if (!b) return { missing: '#symptomSubmitBtn' }; b.click(); return {}; })()`)
   await new Promise((r) => setTimeout(r, 2000))
+  if (!submitted) {
+    check('a CHW report is actually created', false, 'the wizard never reached its submit control')
+  }
   const reports = await (await fetch(`${BASE}/api/v1/field-reports?limit=5000`)).json().then((b) => b.data)
   const created = reports.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0]
   check('a CHW report is actually created',
@@ -750,11 +788,23 @@ async function main() {
   // District drill-down, reached the way a panel would.
   await send('Page.navigate', { url: `${BASE}/districts?cb=${Date.now()}` })
   await new Promise((r) => setTimeout(r, 3000))
-  const district = await evaluate(`(async () => {
+  // Read the link, navigate to it from *outside* the page, then read again.
+  //
+  // Clicking the card inside one long `evaluate` destroys the execution context
+  // that evaluate is running in, and CDP answers "Inspected target navigated or
+  // closed" — so the read after the click never happens and the check throws
+  // rather than failing. Two round trips through the same URL the click would
+  // have followed, with nothing in between to lose.
+  const href = await evaluate(`(() => {
     const card = document.querySelector('a[href^="/districts#/"]');
-    if (!card) return { noCard: true };
-    card.click();
-    await new Promise(r => setTimeout(r, 2500));
+    return card ? card.getAttribute('href') : null;
+  })()`)
+  check('a district card exists to drill into', Boolean(href), href || 'no card found')
+  if (href) {
+    await send('Page.navigate', { url: `${BASE}${href}` })
+    await new Promise((r) => setTimeout(r, 2500))
+  }
+  const district = await evaluate(`(() => {
     const text = document.body.innerText;
     return {
       hash: location.hash,
@@ -765,8 +815,8 @@ async function main() {
       blankDate: /Hazard[\\s\\S]{0,80}\\n\\s*\\n\\s*\\n/.test(text),
     };
   })()`)
-  check('district drill-down opens from a card', !district.noCard && district.hash.startsWith('#/'),
-    district.hash || 'no card')
+  check('district drill-down opens from a card', district.hash.startsWith('#/'),
+    district.hash || 'no hash after navigating')
   check('district shows non-zero interventions and tasks',
     Number(district.interventions) > 0 && Number(district.tasks) > 0,
     `interventions ${district.interventions}, tasks ${district.tasks}`)

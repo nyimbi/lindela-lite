@@ -92,6 +92,19 @@ class Session {
         else waiter.resolve(msg.result)
       }
     })
+    // The service worker has to be bypassed, or this gate does not test what it
+    // claims to test.
+    //
+    // `Fetch.failRequest` only intercepts the *page's* requests. Every surface
+    // here registers a service worker, and the worker fetches on their behalf —
+    // so the requests this gate fails never happen, the worker reaches the live
+    // server, and the surface gets a truthful answer. Measured before this line
+    // existed: with every page request failing, `/portal` returned
+    // `auth_configured: false` from a server that was answering, and the gate
+    // reported the portal as misreporting a dead server. It was reporting the
+    // opposite: the server was not dead.
+    await s.send('Network.enable')
+    await s.send('Network.setBypassServiceWorker', { bypass: true })
     return s
   }
 

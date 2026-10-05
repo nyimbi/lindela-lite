@@ -141,6 +141,92 @@ describe('R-09 — a request over budget gets 429 and an honest Retry-After', ()
 })
 
 describe('R-09 — the budget follows the shape of the request', () => {
+  it('walking every surface is not a flood', async () => {
+    // The browser gate's own shape, which is also an operator's: open the
+    // console, the CHW app and the donor dashboard, click through the rail tabs,
+    // and do it again after a deploy. Every one of those is a document and a few
+    // assets, and none of them reads the store.
+    const clock = fakeClock()
+    await withServer(async (base) => {
+      const statuses = []
+      for (let round = 0; round < 4; round += 1) {
+        for (const surface of ['/', '/chw/', '/portal/', '/co/', '/districts/', '/focal-point/', '/parametric/', '/scenarios/']) {
+          statuses.push((await fetch(`${base}${surface}`)).status)
+        }
+      }
+      assert.deepEqual(statuses.filter((s) => s === 429), [],
+        'a supervisor opening every screen was refused, which is the shape of use the ' +
+        'budget was supposed to allow')
+    }, { limiterOptions: { now: clock.now, sleep: clock.sleep } })
+  })
+
+  it('a page load of thirty assets is not a flood', async () => {
+    // Found by the browser gate, not by reasoning: seven surfaces × ~25 assets
+    // is ~175 GETs in a couple of minutes from one address, which is over any
+    // sane per-minute read budget. Every surface after the first came up partly
+    // unstyled — a limiter that refuses pages is not protecting the store, it is
+    // breaking the product.
+    const clock = fakeClock()
+    await withServer(async (base) => {
+      const assets = [
+        '/shared/runtime.js', '/shared/fmt.js', '/shared/navbar.js', '/shared/states.js',
+        '/icon.svg', '/favicon.ico', '/i18n/en.json', '/workflow/panel.css',
+        '/panels/equity.html', '/panels/outcome.html',
+      ]
+      const statuses = []
+      for (let round = 0; round < 8; round += 1) {
+        for (const asset of assets) {
+          const res = await fetch(`${base}${asset}`)
+          statuses.push(res.status)
+        }
+      }
+      const refused = statuses.filter((s) => s === 429)
+      assert.equal(refused.length, 0,
+        `${refused.length} of ${statuses.length} asset requests were refused; a browser ` +
+        'cannot cache its way out of this on a cold load, and the store is not what the ' +
+        'budget was protecting')
+    }, { limiterOptions: { now: clock.now, sleep: clock.sleep } })
+  })
+
+  it('four consoles polling at once fit inside the read budget', async () => {
+    // The gate found this twice, and the number moved for a measured reason
+    // rather than a comfortable one: a read was 110 ms when the budget was set
+    // and is 14 ms now that `read()` takes a collection manifest. Four consoles
+    // at 12 endpoints per 30 s is a supervisor, not a flood, and a supervisor
+    // who gets 429s stops using the console.
+    const clock = fakeClock()
+    await withServer(async (base) => {
+      for (let tick = 0; tick < 4; tick += 1) {
+        for (let endpoint = 0; endpoint < 12; endpoint += 1) {
+          const res = await fetch(`${base}/api/v1/incidents?limit=1&e=${endpoint}&t=${tick}`)
+          assert.notEqual(res.status, 429,
+            `endpoint ${endpoint} of tick ${tick} was refused; the console polls twelve ` +
+            'every thirty seconds and four of them is a supervisor')
+        }
+      }
+      // And the loop is still refused: 300 a minute is a budget, not a blanket.
+      let refused = 0
+      for (let i = 0; i < INBOUND_POLICIES.read.ratePerWindow + 20; i += 1) {
+        if ((await fetch(`${base}/api/v1/incidents?limit=1`)).status === 429) refused += 1
+      }
+      assert.ok(refused > 0, 'the read budget no longer refuses anything at all')
+    }, { limiterOptions: { now: clock.now, sleep: clock.sleep } })
+  })
+
+  it('the API keeps its budget even when the assets are free', async () => {
+    // The point of the exemption is the assets, not the API. A caller that polls
+    // the API in a loop is still a caller in a loop.
+    const clock = fakeClock()
+    await withServer(async (base) => {
+      let refused = 0
+      for (let i = 0; i < INBOUND_POLICIES.read.ratePerWindow + 10; i += 1) {
+        const res = await fetch(`${base}/api/v1/incidents?limit=1`)
+        if (res.status === 429) refused += 1
+      }
+      assert.ok(refused > 0, 'the API read budget no longer refuses anything')
+    }, { limiterOptions: { now: clock.now, sleep: clock.sleep } })
+  })
+
   it('classifies by method and by enumerated path, not by prefix', () => {
     assert.equal(inboundClassFor('GET', '/api/v1/incidents'), 'read')
     assert.equal(inboundClassFor('POST', '/api/v1/incidents'), 'write')
@@ -152,6 +238,24 @@ describe('R-09 — the budget follows the shape of the request', () => {
     assert.equal(inboundClassFor('GET', '/api/v1/ingest/sources'), 'read')
     assert.equal(inboundClassFor('GET', '/api/v1/health'), null)
     assert.equal(inboundClassFor('GET', '/metrics'), null)
+    // A document and an asset are both a file read from disk, so neither is a
+    // read of the data. Found by the browser gate the second time: it walks seven
+    // surfaces plus their assets, and the surface documents alone went over the
+    // per-minute budget.
+    assert.equal(inboundClassFor('GET', '/shared/runtime.js'), null)
+    assert.equal(inboundClassFor('GET', '/icon.svg'), null)
+    assert.equal(inboundClassFor('GET', '/panels/outcome.html'), null)
+    assert.equal(inboundClassFor('GET', '/chw/'), null)
+    assert.equal(inboundClassFor('GET', '/'), null)
+    // And the exception that proves the rule is about the store rather than the
+    // path: the spatial catalogues look static and are not — both read the store
+    // and render collections.
+    assert.equal(inboundClassFor('GET', '/stac/catalog.json'), 'read')
+    assert.equal(inboundClassFor('GET', '/ogc/collections/service-assets/items'), 'read')
+    assert.equal(inboundClassFor('POST', '/api/v1/incidents'), 'write')
+    assert.equal(inboundClassFor('POST', '/shared/upload-target.js'), 'write',
+      'a write is a write whatever it fetches — a POST that downloads a file still ' +
+      'spends the caller\'s budget against us')
   })
 
   it('a spoofed forwarding header is ignored unless a proxy is trusted', () => {

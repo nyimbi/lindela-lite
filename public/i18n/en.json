@@ -450,5 +450,16 @@
   "workflow.equity_audit_action": "Equity audit action",
   "workflow.parametric_disbursement": "Parametric disbursement",
   "workflow.school_feeding_continuity": "School feeding continuity",
-  "workflow.school_health_decision": "School health decision"
+  "workflow.school_health_decision": "School health decision",
+  "outcome.title": "Was this alert justified?",
+  "outcome.determination_label": "Determination",
+  "outcome.justified": "It was justified",
+  "outcome.false": "It was not",
+  "outcome.reason_label": "Why",
+  "outcome.reason_help": "The reason is what gets counted. A sensor fault is a maintenance visit; a mistuned threshold is a rule change.",
+  "outcome.determined_by_label": "Determined by",
+  "outcome.note_label": "Note (optional)",
+  "outcome.submit": "Record determination",
+  "outcome.coverage_none": "None of the {alerts} alerts has been judged yet — every rate on this screen is unmeasured.",
+  "outcome.coverage_some": "{determined} of {alerts} alerts judged ({pct}%): {false_alerts} not justified, {justified} justified."
 }

@@ -2,7 +2,7 @@ import { initI18n, t, apiFetch, initOfflineBanner, initServiceWorker, autoMarkSc
 import { esc as escapeHtml, formatTimestamp, sevChipHtml, applyLocaleToDocument } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { mountNavbar } from '/shared/navbar.js'
-import { ERROR, LOADING, OK, createLoadSequence, describeActionFailure, describeState, distinguishFailure } from '/shared/states.js'
+import { ERROR, LOADING, OK, createLoadSequence, describeActionFailure, describeState, distinguishFailure, staleReadNote } from '/shared/states.js'
 mountNavbar({ activePath: '/focal-point' })
 
 // Registration used to be hand-rolled here *and* performed by initServiceWorker
@@ -87,6 +87,35 @@ signoutBtn.addEventListener('click', () => {
  * nothing had been checked at all — the single worst sentence this screen can
  * be wrong about, because acting on it means stopping the search.
  */
+/**
+ * The staleness banner.
+ *
+ * Sits above the queue rather than replacing it, and for the reason the payload
+ * is still rendered: yesterday's pending approvals are useful to read, they are
+ * just not safe to act on blind. A retry re-reads — and the banner only clears
+ * when the server answers for real.
+ */
+function renderStaleBanner(note, retry) {
+  let banner = $('staleBanner')
+  if (!banner) {
+    banner = document.createElement('div')
+    banner.id = 'staleBanner'
+    banner.className = 'state-panel'
+    banner.setAttribute('role', 'status')
+    document.body.prepend(banner)
+  }
+  banner.dataset.state = 'stale'
+  banner.innerHTML = `<strong>${escapeHtml(note.title)}</strong> <p>${escapeHtml(note.body)}</p>`
+  if (retry && !banner.querySelector('.retry-btn')) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'retry-btn'
+    btn.textContent = note.action || 'Try again'
+    btn.addEventListener('click', retry)
+    banner.appendChild(btn)
+  }
+}
+
 function renderQueueState(container, stateName, { subject, retry }) {
   const copy = describeState(stateName, { subject })
   container.innerHTML = `<div class="queue-empty" data-state="${stateName}" role="alert">
@@ -143,6 +172,19 @@ async function loadData() {
     pending: distinguishFailure({ ok: !workflows.error, error: workflows.error, isEmpty: !workflows.data?.data?.length }),
     protocols: distinguishFailure({ ok: !protocols.error, error: protocols.error, isEmpty: !protocols.data?.data?.length }),
     alerts: distinguishFailure({ ok: !alertsResp.error, error: alertsResp.error }),
+  }
+
+  // A response the service worker answered from its cache is not a live answer,
+  // and `distinguishFailure` cannot see the difference: a successful response is
+  // a successful response. So the surfaces below render the records *and* say
+  // they may be out of date — the focal point approves pre-agreed finance
+  // against these numbers, and a stale approval queue presented as current is
+  // the wrong decision made confidently.
+  const stale = staleReadNote(workflows.data) || staleReadNote(protocols.data)
+  if (stale) {
+    renderStaleBanner(stale, () => loadData())
+  } else {
+    $('staleBanner')?.remove()
   }
 
   // Kept on state so a decision can name the district it released finance
