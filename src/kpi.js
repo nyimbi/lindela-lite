@@ -358,7 +358,15 @@ export function computeMonthlyKpiSeries(data, { monthsBack = 12 } = {}) {
 }
 
 export function computeSparklineData(series, field) {
-  return [...series].reverse().map(s => s[field] ?? 0)
+  // `s[field] ?? 0` plotted a refusal as a zero, which draws a line down to
+  // the baseline for a month the metric deliberately declined to measure. The
+  // sample floors added across this module made those nulls common: a monthly
+  // false_alert_rate below 30 determined alerts is null on most real stores, so
+  // the sparkline was mostly fabricated drops to zero.
+  //
+  // Null is carried through so a chart can break the line where the measurement
+  // stops. A gap in a trend line is visible; a drop to zero is a claim.
+  return [...series].reverse().map(s => (s[field] === undefined ? null : s[field]))
 }
 
 export async function refreshKpiSnapshots(store) {

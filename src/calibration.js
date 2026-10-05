@@ -306,7 +306,16 @@ export function calibrationByRegion(data = {}) {
     const sampleAdequacy = row.false_alert_rate !== null
       ? clamp(row.resolved / MIN_DETERMINED_ALERTS, 0, 1)
       : model
-        ? clamp((model.validated_months ?? 0) / MIN_MONTHS, 0, 1)
+        // `model.validated_months ?? 0` gave a model card with no validated
+        // months a sufficiency of exactly 0, which reads as "we validated
+        // nothing" — a measurement. It is an absence, and `trustScore` already
+        // refuses a composite with a missing term rather than scoring it as
+        // zero. Feeding it a fabricated zero was quietly overriding that
+        // refusal for this one term, on exactly the models with the least
+        // evidence behind them.
+        ? (Number.isFinite(model.validated_months)
+            ? clamp(model.validated_months / MIN_MONTHS, 0, 1)
+            : null)
         : null
     const outcomeCoverage = row.outcome_coverage
     const trust = trustScore({ measuredRate, sampleAdequacy, outcomeCoverage })
