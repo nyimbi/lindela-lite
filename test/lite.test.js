@@ -4828,7 +4828,17 @@ describe('Lindela Lite OpenAPI contract', () => {
     }
 
     const spec = await fs.readFile('docs/openapi.yaml', 'utf8')
-    const block = spec.slice(spec.indexOf('HealthResponse:'), spec.indexOf('HealthResponse:') + 1200)
+    // Bounded by the next schema, not by a character count.
+    //
+    // A fixed 1200-character window was a proxy for "the whole block" that only
+    // held while every description stayed short: adding one pushed `storage` and
+    // `auth` out of the window and the test reported them as undocumented. The
+    // fix is not to write shorter descriptions — it is to read the block the
+    // schema actually is, which makes the guard see *more* of it, not less.
+    const start = spec.indexOf('    HealthResponse:')
+    const rest = spec.slice(start + 10)
+    const nextSchema = rest.search(/\n {4}[A-Z]\w*:/)
+    const block = spec.slice(start, nextSchema === -1 ? undefined : start + 10 + nextSchema)
     const documented = new Set([...block.matchAll(/^ {8}(\w+):/gm)].map((m) => m[1]))
 
     const undocumented = Object.keys(payload).filter((k) => !documented.has(k))

@@ -603,10 +603,18 @@ paths:
               Identifier of the webhooks record.
   /api/v1/health:
     get:
-      summary: Service health and storage mode
+      summary: Service health, storage mode, and whether the pipeline is running
       responses:
         '200':
-          description: Health payload
+          description: Health payload. Also returned when the pipeline has never completed a cycle (`status: starting`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: >-
+            The store answered but the periodic pipeline has gone stale. The
+            process is up and serving; the work it exists to do has stopped.
           content:
             application/json:
               schema:
@@ -2104,6 +2112,15 @@ components:
           type: string
           nullable: true
           description: Pass back as ?cursor= to read the next page
+            interval_seconds:
+              type: integer
+              nullable: true
+            last_failure:
+              type: string
+              nullable: true
+            note:
+              type: string
+              nullable: true
     ReadinessResponse:
       type: object
       required: [success, ready, store, idempotency, checked_at]
@@ -2185,12 +2202,18 @@ components:
                 type: object
     HealthResponse:
       type: object
-      required: [success, status, version, counts, sources, exclusions, storage, auth]
+      required: [success, status, version, counts, sources, exclusions, storage, auth, pipeline]
       properties:
         success:
           type: boolean
         status:
           type: string
+          description: >-
+            ok, starting, or degraded. `starting` means no periodic cycle has
+            completed yet — a process four seconds old, not a broken one.
+            `degraded` means one completed and has since gone stale, which is
+            the case that matters: a pipeline that ran and stopped.
+          enum: [ok, starting, degraded]
         version:
           type: string
           description: >-
@@ -2251,6 +2274,21 @@ components:
               items:
                 type: string
               example: ['/api/v1/health', '/api/v1/ready']
+        pipeline:
+          type: object
+          description: >-
+            Whether the work this process exists to do is happening. The health
+            payload previously asserted exactly one thing — that the store
+            answered — and returned a literal `ok`, so a process that was up,
+            serving 200s, and whose pipeline had been dead for a week was
+            indistinguishable from a healthy one. `Dockerfile` polls this
+            endpoint every 30 seconds.
+          properties:
+            healthy:
+              type: boolean
+            last_success_age_seconds:
+              type: integer
+              nullable: true
     ListResponse:
       type: object
       required: [success, data]

@@ -315,6 +315,13 @@ export function createIdempotencyStore({ ttlMs = 24 * 60 * 60 * 1000, maxEntries
         entries.delete(key)
         return undefined
       }
+      // A claim with no outcome yet. `run` records only after the work, so this
+      // state means the attempt is in flight — `claim()` is what resolves it,
+      // and a caller that reaches `lookup` must not read the absent outcome as
+      // an empty replay.
+      if (hit.pending) {
+        return { inFlight: true, promise: hit.pending }
+      }
       // Refresh insertion order so the eviction below is least-recently-used.
       entries.delete(key)
       entries.set(key, hit)
@@ -327,13 +334,66 @@ export function createIdempotencyStore({ ttlMs = 24 * 60 * 60 * 1000, maxEntries
       return { replay: true, status: hit.status, body: hit.body }
     },
 
+    /**
+     * Claim a key before the work runs, not after it finishes.
+     *
+     * The store used to record an outcome only once the handler had returned, so
+     * two concurrent requests with the same key both found `entries` empty and
+     * both executed. The window was the **full duration of the handler**, which
+     * for `POST /api/v1/ingest/run-due` is the slowest thing the service does:
+     * a client that timed out and retried re-ran the entire ingestion.
+     *
+     * The claim is a promise stored under the key. The second request awaits it
+     * and answers with the first's outcome; it does not execute anything. A
+     * failure clears the claim rather than wedging the key for its whole TTL,
+     * so a crashed request is retryable immediately.
+     */
+    claim(key, fingerprint) {
+      if (!key) return { proceed: true }
+      const hit = entries.get(key)
+      if (hit) {
+        if (hit.pending) {
+          if (fingerprint && hit.fingerprint && fingerprint !== hit.fingerprint) {
+            return { conflict: true, status: 409, body: { success: false, error: 'Idempotency-Key is in flight with a different request body' } }
+          }
+          return { inFlight: true, promise: hit.pending }
+        }
+        return { proceed: false, status: hit.status, body: hit.body }
+      }
+      if (entries.size >= maxEntries) entries.delete(entries.keys().next().value)
+      let settle
+      const pending = new Promise((resolve) => { settle = resolve })
+      // Nothing awaits `pending` until a second request arrives, so it must not
+      // surface as an unhandled rejection when the first request finishes.
+      pending.catch(() => {})
+      entries.set(key, { pending, fingerprint, expiresAt: Date.now() + ttlMs, settle })
+      return { proceed: true, claim: true }
+    },
+
+    /** Settle a claim with the outcome, so a concurrent caller can answer. */
+    settle(key, status, body, fingerprint) {
+      if (!key) return
+      const hit = entries.get(key)
+      if (!hit) return
+      entries.delete(key)
+      if (hit.settle) hit.settle({ status, body })
+      if (entries.size >= maxEntries) entries.delete(entries.keys().next().value)
+      entries.set(key, { status, body, fingerprint, expiresAt: Date.now() + ttlMs })
+    },
+
+    /** Release a claim without recording an outcome, so the key is retryable. */
+    release(key) {
+      if (!key) return
+      const hit = entries.get(key)
+      if (!hit || !hit.pending) return
+      entries.delete(key)
+      if (hit.settle) hit.settle({ error: new Error('idempotent attempt failed') })
+    },
+
     async run(key, status, fn, fingerprint) {
       if (!key) return await fn()
       const outcome = await fn()
-      if (entries.size >= maxEntries) {
-        entries.delete(entries.keys().next().value)
-      }
-      entries.set(key, { status, body: outcome, fingerprint, expiresAt: Date.now() + ttlMs })
+      this.settle(key, status, outcome, fingerprint)
       return outcome
     },
 

@@ -538,12 +538,34 @@ async function handleApi(store, req, res, url) {
     return
   }
 
-  const replay = idempotency.lookup(key, fingerprint)
-  if (replay) {
-    if (replay.conflict) {
-      jsonResponse(res, replay.status, replay.body, { 'idempotency-conflict': 'true' })
+  // Claim before the work, not after it.
+  //
+  // The outcome used to be recorded once the handler had *returned*, so two
+  // concurrent requests carrying the same key both found the store empty and
+  // both executed. The window was the whole handler: a client that timed out on
+  // `POST /api/v1/ingest/run-due` and retried re-ran the entire ingestion, and
+  // the duplicate was only prevented downstream by the content hash.
+  const replay = idempotency.claim(key, fingerprint)
+  if (replay.conflict) {
+    jsonResponse(res, replay.status, replay.body, { 'idempotency-conflict': 'true' })
+    return
+  }
+  if (replay.inFlight) {
+    // Someone else is already doing this exact work. Wait for their answer
+    // rather than doing it twice — and answer 409 if they fail, so a caller can
+    // tell "not done" from "not done yet".
+    const settled = await replay.promise
+    if (settled?.error) {
+      jsonResponse(res, 409, {
+        success: false,
+        error: 'A request with this Idempotency-Key is already being processed and has not completed. Retry shortly.',
+      }, { 'idempotency-in-flight': 'true' })
       return
     }
+    jsonResponse(res, settled.status, settled.body, { 'idempotency-replayed': 'true', 'idempotency-window': 'open' })
+    return
+  }
+  if (replay.proceed === false) {
     jsonResponse(res, replay.status, replay.body, { 'idempotency-replayed': 'true', 'idempotency-window': 'open' })
     return
   }
@@ -556,9 +578,13 @@ async function handleApi(store, req, res, url) {
     delete res.__capture
   }
   // Only a success is worth replaying. Caching a 500 would convert a transient
-  // failure into a permanent one for the length of the window.
+  // failure into a permanent one for the length of the window — and a failed
+  // claim is *released* rather than recorded, so the caller can retry at once
+  // instead of waiting out the TTL.
   if (captured && captured.status < 400) {
-    await idempotency.run(key, captured.status, async () => captured.body, fingerprint)
+    idempotency.settle(key, captured.status, captured.body, fingerprint)
+  } else {
+    idempotency.release(key)
   }
 }
 
@@ -696,9 +722,19 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
     // Two intervals before red, so a single slow tick is not an outage.
     const heartbeat = data.system_heartbeat?.[0] || null
     const pipeline = pipelineIsHealthy(heartbeat)
-    jsonResponse(res, pipeline.healthy ? 200 : 503, {
-      success: pipeline.healthy,
-      status: pipeline.healthy ? 'ok' : 'degraded',
+    // Three states, not two.
+    //
+    // A process that has never completed a cycle is `starting`, not broken: it
+    // may have been up for four seconds. Reporting that as red would mean every
+    // fresh deployment, and every restart, starts red — and a monitor that
+    // starts red is a monitor that gets ignored.
+    //
+    // Red is reserved for the case that matters: a heartbeat exists and has gone
+    // stale. That is a pipeline that ran and stopped.
+    const starting = !heartbeat
+    jsonResponse(res, pipeline.healthy || starting ? 200 : 503, {
+      success: pipeline.healthy || starting,
+      status: starting ? 'starting' : pipeline.healthy ? 'ok' : 'degraded',
       pipeline: {
         healthy: pipeline.healthy,
         last_success_age_seconds: pipeline.ageSeconds,
