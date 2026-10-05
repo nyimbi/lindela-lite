@@ -140,7 +140,8 @@ export function computeRoadAccess(data, options = {}) {
         event_type: item.event_type,
         severity: item.severity,
         title: item.title,
-        distance_km: Math.round(item.distance_km * 10) / 10,
+        distance_km: item.distance_km,
+        distance_measured: item.distance_measured,
         matched_by: item.matched_by,
         blocking: item.blocking,
         occurred_at: item.occurred_at,
@@ -192,9 +193,20 @@ function obstructionFor(road, hazard, radiusKm, now, activeWindowDays) {
   // the whole area is under water, so it is not allowed to block on its own.
   if (hazard.bbox && pointInBbox(roadPoint, hazard.bbox)) {
     if (bboxIsHazardScale(hazard.bbox)) {
+      // The distance is null when the hazard carries no coordinate, and it used
+      // to be 0. There are 91 bbox-only hazards in the live store, and for each
+      // of them a `severity: 'green'` advisory closed a trunk road "0 km from
+      // the centre" — a distance the module does not know and did not measure,
+      // reported at `confidence: 90` alongside roads matched to a hazard whose
+      // centre is 200 m away.
+      //
+      // "The bounding box covers this road" is a real statement about the box,
+      // and it is enough to obstruct: the bbox hit still blocks. "This road is
+      // 0 km from the centre" is a statement about nothing at all, and it was
+      // the one that reached the payload.
       const distanceKm = Number.isFinite(hazard.latitude) && Number.isFinite(hazard.longitude)
         ? haversineKm(roadPoint, { latitude: hazard.latitude, longitude: hazard.longitude })
-        : 0
+        : null
       return buildObstruction(hazard, distanceKm, 'bbox', roadPoint, now, activeWindowDays)
     }
     // Inside an oversized box: fall through to the proximity check below, so a
@@ -240,14 +252,31 @@ function buildObstruction(hazard, distanceKm, matchedBy, roadPoint, now, activeW
   // Outside the bbox/proximity threshold the hazard may still warrant caution,
   // so a non-blocking advisory is still recorded with the road's distance.
   const temporal = temporalStatus(hazard, now, activeWindowDays)
-  const blocking = temporal.status !== 'stale' && (hazard.severity_weight >= 2 || distanceKm <= 1)
+  // `distanceKm === null` means the hazard has no coordinate, so the distance
+  // terms below cannot be evaluated and are skipped rather than compared
+  // against a stand-in.
+  //
+  // For a bbox match that means the box alone decides, which is the rule the
+  // module has always stated: containment in a hazard-scale bounding box is
+  // authoritative regardless of distance. It also happens to be what the
+  // `distanceKm = 0` bug was doing by accident — but for the wrong reason. The
+  // accident meant a bbox hazard blocked *because its fabricated distance was
+  // zero*, a proximity threshold that a containment match has no business
+  // passing through. Same verdict, correct grounds, and the payload no longer
+  // carries the fabricated number that produced it.
+  const blocking = temporal.status !== 'stale'
+    && (matchedBy === 'bbox' || hazard.severity_weight >= 2 || (distanceKm !== null && distanceKm <= 1))
   return {
     hazard_id: hazard.hazard_id,
     event_type: hazard.event_type,
     severity: hazard.severity,
     severity_weight: hazard.severity_weight,
     title: hazard.title,
-    distance_km: distanceKm,
+    distance_km: distanceKm === null ? null : Math.round(distanceKm * 10) / 10,
+    // Whether the distance above is a measurement. Absent datum must read as
+    // absent, and a consumer that formats this field has to be able to tell
+    // "0 km" from "no coordinate on the hazard".
+    distance_measured: distanceKm !== null,
     matched_by: matchedBy,
     blocking,
     occurred_at: hazard.occurred_at || null,
@@ -255,7 +284,10 @@ function buildObstruction(hazard, distanceKm, matchedBy, roadPoint, now, activeW
     temporal_status: temporal.status,
     // Distance inside the threshold counts against the road regardless of
     // alert colour; distance beyond it only matters if the alert is serious.
-    impact_rank: (blocking ? 100 : 0) + hazard.severity_weight * 10 - Math.min(distanceKm, 20),
+    // An unmeasured distance contributes nothing to the rank rather than
+    // contributing the maximum it was previously given for free.
+    impact_rank: (blocking ? 100 : 0) + hazard.severity_weight * 10
+      - (distanceKm === null ? 0 : Math.min(distanceKm, 20)),
   }
 }
 
@@ -339,7 +371,14 @@ function accessLevel(score) {
 function confidenceFor(obstructions, worst) {
   if (worst) {
     // Precise match means high confidence; a broad proximity catch is weaker.
-    if (worst.matched_by === 'bbox') return 90
+    //
+    // A bbox hit with no coordinate on the hazard is not a precise match. The
+    // box says the road is inside the affected extent; it says nothing about
+    // where inside, so this is the same "unexamined-clear" reasoning the
+    // temporal-status branch below applies in the other direction. It used to
+    // read 90 — the top of the located range — for a hazard the module could
+    // not place at all.
+    if (worst.matched_by === 'bbox') return worst.distance_measured ? 90 : 65
     return worst.distance_km <= 1 ? 75 : 55
   }
   // Nothing is blocking. If there is also no nearby hazard of any age, that is
@@ -390,7 +429,10 @@ export function summarizeRoadAccess(records) {
     passable: byStatus.passable || 0,
     restricted: byStatus.restricted || 0,
     impassable: byStatus.impassable || 0,
-    cut_off_rate_pct: total ? Math.round(((byStatus.impassable || 0) / total) * 10000) / 100 : 0,
+    // Null with no roads, not 0%. "0% of roads are cut off" is a finding about
+    // the road network; on a store that has never ingested one it is a finding
+    // about a division by zero wearing a percentage sign.
+    cut_off_rate_pct: total ? Math.round(((byStatus.impassable || 0) / total) * 10000) / 100 : null,
     blocked_by_hazard_type: blockedByType,
     // How much of the evidence behind these statuses actually speaks about the
     // present. A dashboard that reports '4 roads cut off' without this invites

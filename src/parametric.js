@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { stableId, nowIso } from './utils.js'
 import { OPERATORS, compare, resolveMetric } from './alerts.js'
+import { numericOrNull } from './analytics/numeric.js'
 
 export const PARAMETRIC_CHAINS = Object.freeze(['ethereum-sepolia', 'polygon-mumbai', 'celo-alfajores'])
 
@@ -173,9 +174,15 @@ export function evaluateTrigger(rule, context = {}, { value: supplied } = {}) {
   }
 
   const observed = supplied !== undefined ? supplied : resolveMetric(context, metric)
-  const value = Number.isFinite(Number(observed)) && observed !== null && observed !== ''
-    ? Number(observed)
-    : null
+  // `Number.isFinite(Number(observed)) && observed !== null && observed !== ''`
+  // tested the same thing twice and in the wrong order. `Number(null)` is 0,
+  // which is finite, so the guard's own null test was the only thing standing
+  // between a missing trigger metric and a confident zero — and it came third,
+  // after a check that had already been satisfied by the coercion. Reading it
+  // as "is this a finite number?" and answering with the coercion is the whole
+  // bug; `numericOrNull` answers the question directly and rejects the array
+  // and boolean spellings this missed.
+  const value = numericOrNull(observed)
   if (value === null) {
     return {
       defined: true,

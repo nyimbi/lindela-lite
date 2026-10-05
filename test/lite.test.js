@@ -2942,10 +2942,15 @@ describe('Lindela Lite Phase 1d - KPI, Equity, Community Feedback, CO Dashboard'
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-equity-'))
     const store = new JsonStore(path.join(dir, 'store.json'))
 
-    // Create enough dispatches and false alerts to trigger breach
+    // Create enough dispatches and false alerts to trigger breach: six
+    // determined, three recorded false, so precision is 50% against a floor of
+    // 5. The determinations are set as fields, not inferred from the note —
+    // the keyword scan this replaced could not see a note like the Mandera
+    // alert's, which is how a breach detector could read a district as clean.
     const alertEvents = Array.from({ length: 6 }, (_, i) => ({
       id: `ae${i}`,
       status: 'resolved',
+      false_alert: i < 3,
       resolution_note: 'false positive',
       scope: { district: 'TestDistrict' },
     }))
@@ -5312,18 +5317,24 @@ describe('Lindela Lite false-alert rate', () => {
 
   it('measures the rate over determined alerts only and states the denominator', async () => {
     const { computeQuarterlyKpi } = await import('../src/kpi.js')
+    // Thirty determined alerts, one of them false, plus three that nobody
+    // determined. The proportion is what the four-alert version of this fixture
+    // measured (1 of 3 determined, 4 raised); the count is raised to clear the
+    // sample floor, because below it the rate is a refusal rather than a
+    // measurement and the question this test asks has no answer yet.
+    const determined = Array.from({ length: 29 }, (_, i) =>
+      alert({ id: `ok${i}`, false_alert: false, resolution_note: 'Flood subsided.' }))
     const data = {
       alert_events: [
         alert({ id: 'a1', false_alert: true, resolution_note: 'Sensor fault.' }),
-        alert({ id: 'a2', false_alert: false, resolution_note: 'Flood subsided.' }),
-        alert({ id: 'a3', false_alert: false, resolution_note: 'Heat event confirmed.' }),
+        ...determined,
         alert({ id: 'a4', false_alert: null, resolution_note: 'Situation stabilised.' }),
       ],
     }
     const kpi = computeQuarterlyKpi(data, { quarter: 'Q3', year: 2026 })
-    assert.equal(kpi.false_alert_determined, 3, 'the undetermined alert must stay out of the denominator')
-    assert.equal(kpi.false_alert_of_total, 4)
-    assert.equal(kpi.false_alert_rate, 100 / 3)
+    assert.equal(kpi.false_alert_determined, 30, 'the undetermined alert must stay out of the denominator')
+    assert.equal(kpi.false_alert_of_total, 31)
+    assert.equal(kpi.false_alert_rate, 3.33, '1 false of 30, to the metric\'s two decimals')
     assert.match(kpi.false_alert_method, /determination/i)
   })
 

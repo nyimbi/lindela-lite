@@ -175,9 +175,24 @@ describe('the summary cannot present history as live obstruction', () => {
 		assert.equal(summary.obstructions_by_temporal_status.stale, 1)
 	})
 
-	it('reports zero roads rather than dividing by nothing', () => {
+	it('reports zero roads and no rate rather than dividing by nothing', () => {
 		const summary = summarizeRoadAccess([])
 		assert.equal(summary.total_roads, 0)
-		assert.equal(summary.cut_off_rate_pct, 0)
+		// This used to assert `0`, on the reasoning that "the count is zero so
+		// the rate is zero". It is the falsy-zero shape: 0% of the road network
+		// is cut off is a finding about a network, and on a store that has never
+		// ingested a road it is a finding about a division by zero wearing a
+		// percentage sign. The count is a real zero — there are no roads — and
+		// the rate is unmeasured, and the payload has to carry both.
+		assert.equal(summary.cut_off_rate_pct, null)
+	})
+
+	it('still reports a real 0% when roads exist and none are cut off', () => {
+		const summary = summarizeRoadAccess(computeRoadAccess({
+			service_assets: [{ id: 'r1', name: 'Trunk', service_type: 'road', road_class: 'trunk', latitude: 6.2, longitude: 31.5 }],
+			hazard_events: [],
+		}, { now: NOW }))
+		assert.equal(summary.total_roads, 1)
+		assert.equal(summary.cut_off_rate_pct, 0, 'one road, none cut off — a measured zero')
 	})
 })

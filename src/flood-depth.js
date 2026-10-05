@@ -510,13 +510,52 @@ export async function terrainContext(lat, lon, options = {}) {
     local_relief_m: round2(max - min),
     local_mean_m: absolute(mean),
     surrounding_higher_pct: comparable ? Math.round((higher / comparable) * 100) / 100 : null,
-    terrain: terrainLabel(higher / Math.max(comparable, 1), max - min),
+    terrain: terrainLabelForSamples({ higher, comparable, relief: max - min, centreFinite: Number.isFinite(centre) }),
+    terrain_refusal: terrainRefusal(comparable, Number.isFinite(centre)),
     radius_deg: options.radiusDeg ?? 0.02,
     vertical_reference: vertical,
     vertical_resolution_m: 15,
     source: 'AWS terrain-tiles-prod (Terrarium/SRTM)',
     generated_at: new Date().toISOString(),
   }
+}
+
+/**
+ * The terrain label, or null when there is nothing to label.
+ *
+ * This took a *fraction* and defended against a zero denominator with
+ * `Math.max(comparable, 1)`, which converts "no information" into a confident
+ * 0 and hands it to the classifier. `terrainLabel(0, relief)` returns `'slope'`,
+ * so a basin with no finite centre sample — and therefore no comparable
+ * samples, and therefore nothing to compare against — was labelled a slope.
+ *
+ * That is the worst shape this defect takes in this codebase, because `'slope'`
+ * is not a neutral placeholder in the vocabulary. It means "gradients run one
+ * way", which is a claim about where water goes. A reader seeing `slope` acts
+ * on it; a reader seeing `null` opens the map. The floor below is 3 comparable
+ * samples, which is the smallest count at which "more of the surroundings are
+ * higher than the centre" means anything about the shape rather than about the
+ * sampling.
+ *
+ * The counts are taken here rather than as a fraction because a fraction has
+ * already lost the information that distinguishes "0 of 40" from "0 of 0".
+ */
+export const MIN_TERRAIN_COMPARABLES = 3
+
+export function terrainLabelForSamples({ higher = 0, comparable = 0, relief = 0, centreFinite = true } = {}) {
+  if (!centreFinite || comparable < MIN_TERRAIN_COMPARABLES) return null
+  return terrainLabel(higher / comparable, relief)
+}
+
+/** Why there is no terrain label, or null when there is one. */
+function terrainRefusal(comparable, centreFinite) {
+  if (!centreFinite) {
+    return 'the centre terrain sample is not finite, so no surrounding sample can be compared against it'
+  }
+  if (comparable < MIN_TERRAIN_COMPARABLES) {
+    return `only ${comparable} comparable surrounding sample(s) of the ${MIN_TERRAIN_COMPARABLES} required; below that the fraction of higher samples cannot describe the shape`
+  }
+  return null
 }
 
 function terrainLabel(higherFraction, relief) {
