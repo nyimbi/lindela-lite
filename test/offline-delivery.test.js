@@ -82,18 +82,36 @@ describe('the service worker can install', () => {
 describe('a report is queued because the request failed, not because the browser says the link is down', () => {
   it('does not read navigator.onLine in submitOrQueue', () => {
     const runtime = read('public/shared/runtime.js')
-    // Bounded by the next top-level export: the body contains braces inside
-    // template literals, so slicing to the first `}` reads the wrong region.
     const fn = between('public/shared/runtime.js',
-      'export async function submitOrQueue', 'export async function initI18n')
-    assert.ok(
-      !/navigator\.onLine/.test(fn),
-      'navigator.onLine is a link-layer flag: a captive portal, or an uplink that '
-      + 'completes TCP but answers no HTTP, both report true. Gating the save on '
-      + 'it means the worker is told a promise the code never made.',
+      'export async function submitOrQueue', 'async function queueTheReport')
+    // `between` runs on comment-stripped source, so the markers have to be code.
+    const q = between('public/shared/runtime.js',
+      'async function queueTheReport', 'export async function initI18n')
+
+    // `onLine === false` may skip the *attempt* — a request that cannot leave
+    // should not spend eight seconds finding out. What it must never do is decide
+    // whether anything is *saved*, because it is a link-layer flag: a captive
+    // portal, or an uplink that completes TCP and answers no HTTP, both report
+    // `true`, and gating the save on that told a health worker her report would
+    // wait when nothing had been written.
+    assert.match(
+      fn,
+      /navigator\.onLine === false/,
+      'a known-dead link should not spend the timeout discovering it',
     )
-    assert.match(fn, /catch \(error\)[\s\S]*lindelaQueue\.enqueue/,
-      'the failure path must queue')
+    assert.ok(
+      !/navigator\.onLine[^\n]*(\?|if|return|else)/.test(fn.replace(/\/\/[^\n]*/g, '')),
+      'no branch may decide the outcome from navigator.onLine',
+    )
+    // Both the known-dead-link path and the thrown-request path reach the same
+    // queueing helper, so there is one place that decides a report is durable.
+    assert.equal(
+      (q.match(/window\.lindelaQueue\.enqueue/g) || []).length, 1,
+      'one place turns an unsent report into a stored record',
+    )
+    assert.match(q, /throw new Error\(/,
+      'and the absence of a queue is fatal rather than silent — a report that '
+      + 'was not saved must not be reported as one that was')
   })
 
   it('uses one offline queue, not two', () => {

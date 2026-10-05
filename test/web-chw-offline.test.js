@@ -236,10 +236,34 @@ async function bootChw({ online = false, indexedDB = null, appJs = null } = {}) 
 	const documentStub = context.document
 	const restore = installGlobals({ window: windowStub, document: documentStub, fetch: fakeFetch })
 
+	// The app routes every submission through `submitOrQueue`, which lives in
+	// `shared/runtime.js`. This harness strips imports because they cannot
+	// resolve in a bare vm context, so that symbol has to be supplied here.
+	//
+	// It mirrors the real contract — try, and queue on failure rather than on
+	// `navigator.onLine` — because a stub with a different contract would let the
+	// queue-on-failure behaviour pass here while being broken in the product.
+	// The real implementation is covered by `test/offline-delivery.test.js` and
+	// driven in a browser by `scripts/check-chw-queue-state.mjs`.
+	const submitOrQueue = async (path_, body, { headers, what = null } = {}) => {
+		if (context.navigator.onLine !== false) {
+			try {
+				const res = await fakeFetch(path_, { method: 'POST', headers, body: JSON.stringify(body) })
+				if (res.ok) return { sent: true, data: await res.json() }
+			} catch { /* fall through to the queue */ }
+		}
+		const queued = await windowStub.lindelaQueue.enqueue(
+			path_, { method: 'POST', body, headers }, { what },
+		)
+		return { ...queued, queuedBecause: 'the request did not get through' }
+	}
+
 	const script = source
 		.split('\n')
 		.filter((line) => !line.startsWith('import '))
+		.map((line) => (line === 'await initOfflineQueue()' ? 'await initOfflineQueue()' : line))
 		.join('\n')
+	context.submitOrQueue = submitOrQueue
 	await vm.runInContext(`(async () => {${script}\nglobalThis.__chw = { state, submitSymptomReport }\n})()`, context)
 	await new Promise((resolve) => setTimeout(resolve, 20))
 
@@ -411,7 +435,18 @@ describe('WEB-05 — the CHW offline queue', () => {
 			await runtimeInit()
 			const result = await submitOrQueue('/api/v1/chw/report', { kind: 'symptom' })
 			assert.equal(result.queued, true)
-			assert.equal(typeof result.id, 'number')
+			// A string, and it must exist before the write.
+			//
+			// This was IndexedDB's autoIncrement key, which is only assigned once
+			// the write completes — so it could not be sent with the request. The
+			// id is now the `idempotency-key`, which is what makes replay safe:
+			// two drains racing the same record send the same key, and the server
+			// answers the second with the first's receipt rather than creating a
+			// second field report for one observation.
+			assert.equal(typeof result.id, 'string')
+			assert.match(result.id, /^[0-9a-f-]{36}$/, 'a UUID minted before the store wrote it')
+			assert.equal(db.records[0].options.headers['idempotency-key'], result.id,
+				'the key travels with the queued request, not only with the record')
 			assert.equal(db.records.length, 1)
 		} finally {
 			browser.restore()

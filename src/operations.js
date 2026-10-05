@@ -423,19 +423,30 @@ export function counts(data) {
     // The row counts are kept under honest names, and the figures an operator
     // actually wants are given their own keys.
     population_at_risk_rows: data.population_at_risk?.length ?? null,
-    // The union of the distinct assets at risk, not the sum of the per-hazard
-    // rows.
+    // A census of what is *stored*, so it sums the rows — and the rows are
+    // per-hazard, so an asset inside two hazards' extents is counted twice.
     //
-    // An asset inside two hazards' extent appears in two rows, so the sum
-    // counted it twice — and flood events cluster, so the more of them there
-    // are the more double-counting. This is `src/analytics/metrics.js`'s
-    // declared metric rather than a second arithmetic performed here, so there
-    // is one definition of "population at risk" instead of one per surface.
-    population_at_risk_total: computeMetric('population_at_risk', {
-      assets: data.service_assets || [],
-      hazards: data.hazard_events || [],
-      haversineKm,
-    }),
+    // This is not the figure a donor should read. It is what the store holds,
+    // which is a different question from how many people are exposed, and the
+    // one a record census answers. The de-duplicated figure is below.
+    population_at_risk_total: sumOf(data.population_at_risk, 'population_at_risk'),
+    // The union: distinct assets within range of at least one hazard, each
+    // counted once. Computed from the assets and hazards the rows were derived
+    // from, because a per-hazard row does not carry the asset ids and so cannot
+    // be de-duplicated after the fact.
+    //
+    // Both are published rather than one replacing the other, because they answer
+    // different questions and the first is what the stored collection literally
+    // contains. Every published *rate* must use the union: flood events cluster,
+    // so the sum inflates in proportion to the hazard count rather than to the
+    // people exposed.
+    population_at_risk_union_total: data.population_at_risk
+      ? (computeMetric('population_at_risk', {
+        assets: data.service_assets || [],
+        hazards: data.hazard_events || [],
+        haversineKm,
+      }).assets_at_risk ?? null)
+      : null,
     facilities_at_risk_types: data.facilities_at_risk?.length ?? null,
     facilities_at_risk_total: sumOf(data.facilities_at_risk, 'at_risk_count'),
     data_lineage: data.data_lineage?.length || 0,

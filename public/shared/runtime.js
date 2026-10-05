@@ -444,19 +444,31 @@ export async function submitOrQueue(path, body, { headers, what = null } = {}) {
   // after which the caller told the health worker the report "will wait on this
   // phone". Nothing had been written. The worker was told a promise the code
   // had not made.
+  // Skip the *attempt* when the browser already says there is no link — to avoid
+  // spending the timeout on a request that cannot leave. `onLine === false` is
+  // reliable in the direction it is used for here, and unreliable in the other,
+  // which is why it never decides anything about whether to save.
+  if (navigator.onLine === false) {
+    return queueTheReport(path, body, headers, what, 'the device reports no connection')
+  }
   try {
     return await apiFetch(path, { method: 'POST', body, headers, timeout: QUEUE_TRY_TIMEOUT_MS })
   } catch (error) {
-    if (window.lindelaQueue) {
-      const queued = await window.lindelaQueue.enqueue(
-        path, { method: 'POST', body, headers }, { what },
-      )
-      return { ...queued, queuedBecause: error?.message || 'the request did not get through' }
-    }
-    throw new Error(
-      `The report could not be sent (${error?.message || 'no response'}) and this device has no offline queue, so it was not saved.`,
-    )
+    return queueTheReport(path, body, headers, what, error?.message || 'the request did not get through')
   }
+}
+
+/** The one place a report that could not be sent becomes a durable record. */
+async function queueTheReport(path, body, headers, what, reason) {
+  if (window.lindelaQueue) {
+    const queued = await window.lindelaQueue.enqueue(
+      path, { method: 'POST', body, headers }, { what },
+    )
+    return { ...queued, queuedBecause: reason }
+  }
+  throw new Error(
+    `The report could not be sent (${reason}) and this device has no offline queue, so it was not saved.`,
+  )
 }
 
 export async function initI18n(defaultLocale = 'en') {

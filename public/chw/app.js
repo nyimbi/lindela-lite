@@ -651,7 +651,10 @@ async function submitSymptomReport() {
 
   try {
     const sent = await submitOrQueue('/api/v1/chw/report', body, { what: 'symptom report' })
-    if (!sent?.queued) showToast('chw.report_sent', { what: 'symptom report' }, 'ok')
+    showToast(
+      sent?.queued ? t('chw.report_queued', { what: 'symptom report' }) : t('chw.report_sent', { what: 'symptom report' }),
+      sent?.queued ? 'info' : 'ok',
+    )
     resetSymptomWizard()
     showScreen('home')
     refreshQueueStatus()
@@ -757,7 +760,10 @@ function setupIncidentScreen() {
 
     try {
       const sent = await submitOrQueue('/api/v1/chw/report', body, { what: 'incident report' })
-      if (!sent?.queued) showToast(t('chw.report_sent', { what: 'incident report' }), 'ok')
+      showToast(
+        sent?.queued ? t('chw.report_queued', { what: 'incident report' }) : t('chw.report_sent', { what: 'incident report' }),
+        sent?.queued ? 'info' : 'ok',
+      )
       categorySelect.value = ''
       $('incidentDescription').value = ''
       $('incidentPhoto').value = ''
@@ -880,7 +886,10 @@ function setupReplyScreen() {
         { alert_event_id: alertId, message },
         { what: 'reply' },
       )
-      if (!sent?.queued) showToast(t('chw.reply_sent'), 'ok')
+      showToast(
+        sent?.queued ? t('chw.report_queued', { what: 'reply' }) : t('chw.reply_sent'),
+        sent?.queued ? 'info' : 'ok',
+      )
       $('replyMessage').value = ''
       showScreen('home')
       refreshQueueStatus()
