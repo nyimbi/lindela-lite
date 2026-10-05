@@ -151,6 +151,20 @@ export const SCHEMA = Object.freeze([
   // Leaving it off this list would drop every history row silently — the exact
   // silent-key-list bug the comment above warns about, one level down.
   { key: 'record_versions' },
+  // R-36. `src/capture.js` documents that captures go "through the JSON store"
+  // under this name, and `assertDeclaredCollections` threw on it — so the
+  // documented path did not exist and the only working store was the
+  // in-memory `CaptureStore`. Same class as every other entry above: a
+  // collection that is not declared here is dropped, or now refused, loudly.
+  //
+  // The name is one string in two files, which is the drift this file exists to
+  // end. `test/capture-collection-declaration.test.js` asserts it against
+  // `CAPTURE_COLLECTION` from capture.js so the two cannot diverge silently.
+  //
+  // NOTE: `emptyStore()` in schema.js needs a `payload_captures: []` key for
+  // `test/store-schema-declaration.test.js` to still agree in both directions,
+  // and for `PostgresStore.read()` to have somewhere to push these rows.
+  { key: 'payload_captures' },
   // ENH-07. Quarantine homes are declared, not hand-named: one per
   // QUARANTINE_SOURCES entry, appended below.
 ].map((entry) => Object.freeze({ kind: 'records', ...entry })).concat(
@@ -261,13 +275,51 @@ export class JsonStore {
 
     try {
       const raw = await fs.readFile(this.filePath, 'utf8')
-      this.#parsed = { ...emptyStore(), ...JSON.parse(raw) }
+      this.#parsed = this.#ordered({ ...emptyStore(), ...JSON.parse(raw) })
       this.#parsedStamp = stamp
       return this.#parsed
     } catch (error) {
       if (error.code === 'ENOENT') return emptyStore()
       throw error
     }
+  }
+
+  /** `mtime:size` for the current file, or null if it cannot be stat'd. */
+  async #stamp() {
+    try {
+      const stat = await fs.stat(this.filePath)
+      return `${stat.mtimeMs}:${stat.size}`
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Every declared collection in the one order both adapters return.
+   *
+   * R-35. This is `sortRecords` applied at read time rather than at write time.
+   * `mergeById` has always sorted, so a merged collection was ordered; but
+   * `write()` copies its payload through untouched, so a caller that appended
+   * left the file in whatever order it handed over — while `PostgresStore`
+   * re-sorted on every read. Two stores holding the same records returned them
+   * in different orders, and nothing errored.
+   *
+   * Sorting here rather than only in `#writeFile` because write time is not the
+   * only thing that decides a file's order: a file written by an older build,
+   * or edited by hand, arrives unsorted too. `#writeFile` runs it as well,
+   * because the write path fills the cache directly and a cached value that
+   * skipped this would be served past it. The cost is one sort per parse, and
+   * the parse is cached — so this is paid once per change to the file rather
+   * than once per request, which is the same bargain the parse cache is.
+   */
+  #ordered(store) {
+    for (const collection of COLLECTIONS) {
+      const records = store[collection]
+      if (Array.isArray(records) && records.length > 1) {
+        store[collection] = sortRecords(records)
+      }
+    }
+    return store
   }
 
   /**
@@ -289,14 +341,28 @@ export class JsonStore {
     const next = { ...emptyStore(), ...data, updated_at: nowIso() }
     const tmp = `${this.filePath}.${process.pid}.tmp`
     await fs.mkdir(path.dirname(this.filePath), { recursive: true })
-    await fs.writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`)
+    // ENH-13 / R-29. Compact, not `null, 2`. Measured at 37.8 MB: 112.6 ms
+    // pretty-printed against 17.6 ms compact — indentation is 84% of merge
+    // cost, for a file whose bytes are machine-read. It also inflates the file
+    // ~40%, and every one of those bytes is re-parsed on a cold read.
+    await fs.writeFile(tmp, `${JSON.stringify(next)}\n`)
     await fs.rename(tmp, this.filePath)
     // The cache is refreshed here rather than left to be invalidated by the next
     // `stat`. Doing it at the write means a read immediately after a write
     // cannot race the filesystem's timestamp granularity and serve the previous
     // snapshot — a mtime that has not visibly advanced yet.
-    this.#parsed = next
-    this.#parsedStamp = null
+    //
+    // ENH-13 / R-28. The stamp is the *post-rename* identity, not null. This
+    // line used to null it, which contradicted the `read()` docstring directly
+    // above and cost a whole-file re-parse on the next read: 24.9 ms cold
+    // against 0.2 ms warm, on the write-then-read sequence every API mutation
+    // produces. The null was deliberate, to catch a write by a *different*
+    // process — so the nulling is gone and the check stays. `read()` still
+    // stats and still reparses when the stamp moves; stamping from the stat we
+    // just took is what makes the two consistent rather than merely
+    // contradictory.
+    this.#parsed = this.#ordered(next)
+    this.#parsedStamp = await this.#stamp()
     return next
   }
 
@@ -368,6 +434,26 @@ export class JsonStore {
    * declaration, and neither adapter can be short one without both being short
    * the same way.
    */
+  /**
+   * Replaces one collection wholesale, leaving every other collection alone.
+   *
+   * R-25, the JSON half. The four routes in `server.js` that add one parametric
+   * rule read the whole store, splice one array, and call `write()` — which
+   * rewrites every collection in the file to change one of them. Here that is
+   * still a full serialisation, because a JSON store has no way to rewrite a
+   * slice of itself; but it stops being a *store-wide replacement*, which is
+   * what made the semantics dangerous: the callers were using `write()`'s
+   * "this is the whole new world" contract for what is really "this one
+   * collection changed".
+   */
+  async replaceCollection(collection, records = []) {
+    assertDeclaredCollection(collection)
+    return this.#serialise(async () => {
+      const current = await this.read()
+      return this.#writeFile({ ...current, [collection]: sortRecords([...records]) })
+    })
+  }
+
   async replaceAnalytics(payload = {}) {
     assertDeclaredCollections(payload)
     const replacement = Object.fromEntries(
