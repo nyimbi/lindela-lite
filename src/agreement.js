@@ -42,6 +42,31 @@ export const AGREEMENT_THRESHOLDS = Object.freeze({
 export const COMPARABLE_PRODUCTS = Object.freeze(['chirps', 'era5', 'gauge'])
 
 /**
+ * Keep only the pairs where *both* sides were measured.
+ *
+ * This is the whole of R-89. The previous code filtered each side separately
+ * and zipped the survivors by index:
+ *
+ *   const xs = pairs.map((p) => p.a).filter(Number.isFinite)
+ *   const ys = pairs.map((p) => p.b).filter(Number.isFinite)
+ *
+ * which drops one `x` and one `y` from *different positions* the moment either
+ * side has a one-sided hole. Every pair after the hole is then compared against
+ * the wrong partner, and the correlation describes a relationship between two
+ * things that were never in the same month. Measured: −0.621 where the aligned
+ * survivors give +1.
+ *
+ * A sign-inverted correlation is the worst failure this module can produce. It
+ * does not merely lose precision — it produces a *confident wrong answer*, and
+ * the verdict vocabulary then hands a downstream score `disputed` as grounds to
+ * distrust a product that in fact agreed perfectly. A module whose output is a
+ * signed number has to be right about the sign.
+ */
+function alignedPairs(pairs) {
+  return (pairs || []).filter((p) => Number.isFinite(p?.a) && Number.isFinite(p?.b))
+}
+
+/**
  * Pearson correlation.
  *
  * Null for fewer than two paired points, and null when either side has no
@@ -54,10 +79,11 @@ export const COMPARABLE_PRODUCTS = Object.freeze(['chirps', 'era5', 'gauge'])
  * uninformative.
  */
 export function pearson(pairs) {
-  const xs = pairs.map((p) => p.a).filter(Number.isFinite)
-  const ys = pairs.map((p) => p.b).filter(Number.isFinite)
-  const n = Math.min(xs.length, ys.length)
+  const aligned = alignedPairs(pairs)
+  const n = aligned.length
   if (n < 2) return null
+  const xs = aligned.map((p) => p.a)
+  const ys = aligned.map((p) => p.b)
   const meanX = xs.reduce((a, b) => a + b, 0) / n
   const meanY = ys.reduce((a, b) => a + b, 0) / n
   let num = 0
@@ -81,14 +107,16 @@ export function pearson(pairs) {
  * and the one that matters here: a rainfall product that reports the same value
  * for three consecutive dry months has ties, and ranking those arbitrarily
  * would manufacture disagreement out of nothing.
+ *
+ * Ranks are computed on the aligned pairs, for the same reason Pearson filters
+ * on them: ranking a filtered series and a differently-filtered one reproduces
+ * exactly the misalignment R-89 describes, one layer up.
  */
 export function spearman(pairs) {
-  const xs = pairs.map((p) => p.a).filter(Number.isFinite)
-  const ys = pairs.map((p) => p.b).filter(Number.isFinite)
-  const n = Math.min(xs.length, ys.length)
-  if (n < 2) return null
-  const rx = averageRanks(xs)
-  const ry = averageRanks(ys)
+  const aligned = alignedPairs(pairs)
+  if (aligned.length < 2) return null
+  const rx = averageRanks(aligned.map((p) => p.a))
+  const ry = averageRanks(aligned.map((p) => p.b))
   return pearson(rx.map((v, i) => ({ a: v, b: ry[i] })))
 }
 
@@ -144,13 +172,23 @@ export function meanAbsoluteDifference(pairs) {
  * inferred from a number.
  */
 export function compareMonth({ period, seriesA, seriesB, thresholds = AGREEMENT_THRESHOLDS }) {
+  // `keyed` counts months both series carry a position for; `pairs` counts the
+  // ones where both actually measured. The two were the same number before, and
+  // that conflation is how three of six months unmeasured published
+  // `paired_months: 6` with a verdict computed on three points.
+  const keyed = Math.min((seriesA || []).length, (seriesB || []).length)
   const pairs = (seriesA || [])
     .map((a, i) => ({ a, b: (seriesB || [])[i] }))
     .filter((p) => Number.isFinite(p.a) && Number.isFinite(p.b))
+  const unmeasured = keyed - pairs.length
 
   const base = {
     period,
+    // A measurement count. Keyed-but-unmeasured months are not paired months,
+    // and reporting them as such is how a verdict on three points was labelled
+    // a verdict on six.
     paired_months: pairs.length,
+    unmeasured_months: unmeasured,
     pearson: null,
     rank_correlation: null,
     mean_absolute_difference: null,
@@ -164,7 +202,9 @@ export function compareMonth({ period, seriesA, seriesB, thresholds = AGREEMENT_
   if (pairs.length < thresholds.minPairedMonths) {
     return {
       ...base,
-      reason: `only ${pairs.length} paired month(s); ${thresholds.minPairedMonths} is the floor for a correlation to mean anything`,
+      reason: unmeasured > 0
+        ? `only ${pairs.length} of ${keyed} shared month(s) were measured by both products; ${thresholds.minPairedMonths} is the floor for a correlation to mean anything`
+        : `only ${pairs.length} paired month(s); ${thresholds.minPairedMonths} is the floor for a correlation to mean anything`,
     }
   }
 
@@ -175,8 +215,26 @@ export function compareMonth({ period, seriesA, seriesB, thresholds = AGREEMENT_
 
   // A correlation of exactly ±1 from three points is arithmetic, not evidence.
   // The verdict says so rather than reporting "perfect agreement".
-  const degenerate = Math.abs(pearsonValue ?? 0) >= 1
-  const lowRank = (rankValue ?? 1) < thresholds.minRankCorrelation
+  //
+  // Note what is *not* here any more: `pearsonValue ?? 0` and `rankValue ?? 1`.
+  // Both defaults sat on the "agree" side of every threshold — a missing
+  // Pearson read as maximally uncorrelated (tripping `degenerate`) and a
+  // missing rank correlation read as perfectly correlated (clearing `lowRank`),
+  // so a sensor that reported nothing in four of five months was certified
+  // `agree` with the one that reported everything. A missing correlation is now
+  // a refusal, checked before any threshold is consulted.
+  if (pearsonValue === null || rankValue === null) {
+    return {
+      ...base,
+      pearson: pearsonValue,
+      rank_correlation: rankValue,
+      verdict: 'unavailable',
+      reason: `${pairs.length} month(s) are paired but ${pearsonValue === null ? 'one product is flat' : 'a rank correlation could not be computed'}, so no verdict is available; agreement is not the default reading of a missing number`,
+    }
+  }
+
+  const degenerate = Math.abs(pearsonValue) >= 1
+  const lowRank = rankValue < thresholds.minRankCorrelation
   const bigGap = mad !== null && mad > thresholds.maxMeanAbsoluteDifference
   const contradictory = signRate !== null && signRate > thresholds.maxSignDisagreementRate
 
@@ -279,7 +337,8 @@ export function compareSeries({ district, period, recordsA, recordsB, productA, 
   const union = [...new Set([...indexA.keys(), ...indexB.keys()])].sort()
   const onlyA = union.filter((key) => indexA.has(key) && !indexB.has(key))
   const onlyB = union.filter((key) => indexB.has(key) && !indexA.has(key))
-  const coverage = classifyCoverage({ sizeA: indexA.size, sizeB: indexB.size, paired: common.length, onlyA: onlyA.length, onlyB: onlyB.length })
+  const overlap = classifyCoverage({ sizeA: indexA.size, sizeB: indexB.size, paired: common.length, onlyA: onlyA.length, onlyB: onlyB.length })
+  const coverage = coverageFor(comparison, overlap)
 
   return {
     ...comparison,
@@ -289,7 +348,12 @@ export function compareSeries({ district, period, recordsA, recordsB, productA, 
     product_b: productB,
     series_a_length: indexA.size,
     series_b_length: indexB.size,
-    paired_months: common.length,
+    // Overridden by `comparison`, which counts months both products *measured*.
+    // Coverage asks a different question of the same overlap: two products
+    // that both keyed a month and neither measured is not two products covering
+    // it, and reporting `both` for that is the key-presence conflation the
+    // count was fixed for, one level up.
+    paired_months: comparison.paired_months,
     unmatched_months: onlyA.length + onlyB.length,
     coverage,
     // Named, not just counted. A count of three is unreadable; the three months
@@ -317,6 +381,24 @@ function classifyCoverage({ sizeA, sizeB, paired, onlyA, onlyB }) {
   if (paired === 0) return sizeA && sizeB ? 'disjoint' : (sizeA ? 'a_only' : 'b_only')
   if (onlyA || onlyB) return 'partial'
   return 'both'
+}
+
+/**
+ * Coverage of a comparison, on measured months rather than keyed months.
+ *
+ * `classifyCoverage` above reads the raw overlap, which is the right question
+ * for "did these two series ever name the same month". It is the wrong question
+ * for "did these two products both measure anything here": a month that both
+ * keyed and neither measured is shared ground with nothing standing on it, and
+ * calling that `both` is the same key-presence conflation R-90 found in
+ * `paired_months`, applied to the coverage axis.
+ *
+ * A month both products keyed and neither measured is therefore a *gap*, which
+ * `partial` already describes accurately: some months covered, some not.
+ */
+function coverageFor(comparison, overlap) {
+  if (overlap === 'both' && comparison.unmeasured_months > 0) return 'partial'
+  return overlap
 }
 
 function indexByPeriod(records = []) {
