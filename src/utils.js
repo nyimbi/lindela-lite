@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { KNOWN_DISTRICTS } from './districts.js'
 
 export function stableId(prefix, value) {
@@ -126,8 +127,42 @@ function parseRecordBbox(value) {
  *   rather than trusted, because a client-supplied parameter is not access
  *   control.
  */
+/**
+ * The caller's identity, for code that is not handed it.
+ *
+ * Scoping was an **opt-in third argument** to `filterRecords`/`collectionPage`.
+ * Three route handlers did not pass one, and `partnerOrg` then evaluated to
+ * `null` and the whole collection came back — a partner token read every
+ * organisation's field reports, and one handler's by-id branch did not scope at
+ * all, so there was nothing to bypass. `docs/improvements/defects.md` recorded
+ * SEC-06 as fixed on the strength of the filter *existing*.
+ *
+ * Existence is not application. With ~60 call sites passing the argument by
+ * hand, one omission is silent, and nothing distinguishes an omitted argument
+ * from "this deployment has no partners configured".
+ *
+ * So the identity travels on the request instead. `filterRecords` still accepts
+ * an explicit context — a caller that knows better can override — but the
+ * default is now the authenticated caller, and the default is right.
+ */
+const requestContext = new AsyncLocalStorage()
+
+/** Run `fn` with the caller's identity visible to code that was not handed it. */
+export function runWithRequestContext(auth, fn) {
+  return requestContext.run({ auth: auth ?? null }, fn)
+}
+
+/** The current caller's identity, or null outside a request. */
+export function currentRequestAuth() {
+  return requestContext.getStore()?.auth ?? null
+}
+
 export function filterRecords(records, query, context = {}, { unlimited = false } = {}) {
-  const partnerOrg = context.auth?.partner_org || null
+  // An explicit context wins; otherwise the authenticated caller applies. There
+  // is no third path in which a partner-scoped token gets the whole store unless
+  // the deployment genuinely has no partners configured.
+  const auth = context.auth ?? currentRequestAuth()
+  const partnerOrg = auth?.partner_org || null
   const claimedOrg = query.get('partner_org')
   if (claimedOrg !== null) {
     // The portal sent this on every request. The server read nothing, so every

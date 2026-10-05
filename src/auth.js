@@ -54,6 +54,47 @@ export const READ_SCOPES = Object.freeze([
   ['/api/v1/ingest', 'read:integrations'],
   ['/api/v1/sources', 'read:integrations'],
   ['/api/v1/workflows', 'read:integrations'],
+  // Model governance and financial instruments. These carry no field reports,
+  // but they carry what a disbursement is, a risk score is, and whether the
+  // models are still calibrated — which is not a hazard-reader's business.
+  ['/api/v1/kpi', 'read:analytics'],
+  ['/api/v1/equity', 'read:analytics'],
+  ['/api/v1/analytics', 'read:analytics'],
+  ['/api/v1/model-drift', 'read:analytics'],
+  ['/api/v1/data-lineage', 'read:analytics'],
+  ['/api/v1/data-quality', 'read:analytics'],
+  ['/api/v1/flood-probability', 'read:analytics'],
+  ['/api/v1/scenarios', 'read:scenarios'],
+  // The audit chain, and the caller's own identity. `read:self` is not a
+  // privilege — it names what `/auth-info` returns, which is the caller's own
+  // token subject and organisation. Satisfied by any authenticated caller, and
+  // only by one: there is nothing in that response another caller could want.
+  ['/api/v1/audit', 'read:integrations'],
+  ['/api/v1/auth-info', 'read:self'],
+  ['/api/v1/districts', 'read:hazards'],
+  // The observation and assessment surfaces the console reads. Every one of
+  // these was readable by the fallback before, which meant a `read:hazards`
+  // token — the narrowest one the platform issues — could read all of them
+  // without any of them ever having been classified.
+  ['/api/v1/climate', 'read:hazards'],
+  ['/api/v1/conflict-risk', 'read:hazards'],
+  ['/api/v1/flood-risk', 'read:hazards'],
+  ['/api/v1/flood-depth', 'read:hazards'],
+  ['/api/v1/food-security', 'read:hazards'],
+  ['/api/v1/disease-observations', 'read:hazards'],
+  ['/api/v1/events', 'read:hazards'],
+  ['/api/v1/assessments', 'read:hazards'],
+  ['/api/v1/service-assets', 'read:hazards'],
+  ['/api/v1/service-impacts', 'read:hazards'],
+  ['/api/v1/impact', 'read:hazards'],
+  ['/api/v1/road-access', 'read:hazards'],
+  ['/api/v1/routing', 'read:hazards'],
+  ['/api/v1/operations', 'read:hazards'],
+  // Calibration and model governance, kept out of the hazard scope deliberately.
+  ['/api/v1/calibration', 'read:analytics'],
+  // Parametric insurance instruments and disbursements: financial, not hazard.
+  ['/api/v1/parametric-rules', 'read:parametric'],
+  ['/api/v1/parametric-disbursements', 'read:parametric'],
 ])
 
 /**
@@ -264,6 +305,11 @@ export function requireScope(auth, scope) {
 
   const { scopes } = auth
   if (scopes.includes('*')) return
+  // `read:self` names a response that can only describe the caller — their own
+  // token subject and organisation. Requiring a scope for it would be
+  // theatre: holding no scopes at all would still be allowed, because the
+  // content is the caller's own.
+  if (scope === 'read:self') return
   if (scopes.includes(scope)) return
   // `admin:*` satisfies every admin scope; `read:*` every read scope.
   const [family] = scope.split(':')
@@ -289,15 +335,30 @@ function firstMatch(table, pathname) {
 /**
  * The scope a route requires.
  *
- * An unmapped mutation returns `admin:*`, which no scoped token holds — so
- * adding a route without adding it here closes it rather than opening it.
- * Reads fall back to `read:hazards` because an unread route leaks data rather
- * than changing it; the write path is where a wrong default is dangerous.
+ * An unmapped route returns `admin:*`, which no scoped token holds — so adding a
+ * route without adding it here closes it rather than opening it.
+ *
+ * **Reads used to fall back to `read:hazards` instead**, on the reasoning that
+ * "an unread route leaks data rather than changing it" and the write path is
+ * where a wrong default is dangerous. That is inverted. For a read, the leak
+ * *is* the harm — it is the only harm — and `read:hazards` is a real,
+ * routinely-issued scope: the one the project's own roadmap names first, and the
+ * one `test/auth-deny-by-default.test.js` issues its own test token with.
+ *
+ * So every unmapped read was readable by the narrowest legitimate scope across
+ * the institutional KPI report, the equity tables, the model-governance
+ * endpoints, parametric disbursements, trigger protocol configuration and the
+ * audit chain — about twenty routes, none of them named in the table.
+ *
+ * The cost of the correct default is a 403 on a newly-added read route until it
+ * is classified. That is the same failure the write table has always accepted,
+ * and `test/route-scope-coverage.test.js` enumerates mutating routes from
+ * `server.js` and fails the build when one is missing, so the cost is caught
+ * rather than paid.
  */
 export function scopeForRoute(method, pathname) {
   const readOnly = method === 'GET' || method === 'HEAD'
-  return (readOnly ? firstMatch(READ_SCOPES, pathname) : firstMatch(WRITE_SCOPES, pathname))
-    || (readOnly ? 'read:hazards' : DENIED_SCOPE)
+  return (readOnly ? firstMatch(READ_SCOPES, pathname) : firstMatch(WRITE_SCOPES, pathname)) || DENIED_SCOPE
 }
 
 export function hasRole(auth, role) {

@@ -40,7 +40,7 @@ import {
 } from './reports.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
-import { collectionPage, createIdempotencyStore, filterRecords, jsonResponse, readRawBody, readRequestJson, toCsv, toGeoJson, stableId } from './utils.js'
+import { collectionPage, createIdempotencyStore, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays } from './pii.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
@@ -421,8 +421,26 @@ async function handleApi(store, req, res, url) {
   }
 }
 
+/**
+ * Every `/api/v1` request, inside its caller's identity.
+ *
+ * Wrapping the whole dispatcher rather than passing `{ auth }` to each of ~60
+ * call sites: scoping was opt-in, three sites did not opt in, and the by-id
+ * branch had no scoping expression to miss. `filterRecords` now reads the
+ * request's identity by default, so the default is the secure one and a new
+ * route cannot forget.
+ */
 async function handleApiRequest(store, req, res, url) {
-  let auth = null
+  // Resolve the identity once, here, and publish it for the whole dispatch.
+  //
+  // `authenticate` was already being called on this path for the idempotency
+  // key, so this is not a second authentication — it is the same call, hoisted
+  // so the answer is available before any handler runs rather than after.
+  const auth = (isAuthConfigured() && !isPublicPath(url.pathname) ? authenticate(req) : null) || null
+  return runWithRequestContext(auth, () => handleApiRequestInContext(store, req, res, url, auth))
+}
+
+async function handleApiRequestInContext(store, req, res, url, auth) {
   if (isAuthConfigured()) {
     if (url.pathname === '/api/v1/rapidpro/field-report' && req.method === 'POST') {
       // Buffer first. A signature covers the exact bytes sent, and the body
@@ -1607,6 +1625,16 @@ async function handleIngestionRoute(store, data, req, res, url, route) {
     const body = await readRequestJson(req)
     const result = await runDueIngestionSchedules(store, data, body)
     const analytics = await refreshAnalytics(store)
+    // The cycle the scheduler drives now ends by asking whether anything crossed
+    // a threshold. This is the one line the deployed product was missing: a risk
+    // score is a measurement, and an alert is what anyone does about it.
+    //
+    // `store.read()` rather than the request's `data`, because ingestion and
+    // `refreshAnalytics` have both written since it was taken.
+    const alerts = await evaluateAndPersistAlerts(store, await store.read(), {
+      actor: body.actor || 'scheduled-ingest',
+      subject: req.__auth?.subject,
+    })
     const logs = [
       ...result.source_runs.map((run) => actionLog('source_runs', run.status, run, body.actor, req.__auth?.subject)),
       ...result.schedules.map((schedule) => actionLog('ingestion_schedules', 'ran', schedule, body.actor, req.__auth?.subject)),
@@ -1621,6 +1649,7 @@ async function handleIngestionRoute(store, data, req, res, url, route) {
         impact_assessments: analytics.impact_assessments.length,
         data_quality: analytics.data_quality.length,
       },
+      alerts: { raised: alerts.raised.length, updated: alerts.updated.length },
       action_logs: logs,
     })
     return
@@ -2335,12 +2364,28 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleAlertEvaluation(store, data, req, res) {
-  if (req.method !== 'POST') {
-    jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
-    return
-  }
-  const body = await readRequestJson(req)
+/**
+ * Evaluate every active rule against the store and persist what moved.
+ *
+ * Extracted from the HTTP handler so there is exactly one implementation of
+ * "evaluate and persist" and the route and the cycle cannot drift.
+ *
+ * This existed only as an HTTP handler, reachable only by `POST
+ * /api/v1/alerts/evaluate`. The deployment's scheduler called
+ * `/ingest/run-due` and `/report-schedules/run-due`; `run-due` computed risk
+ * scores and returned. Nothing anywhere called this.
+ *
+ * So the shipped system ingested, scored, and **stopped**. A hazard crossing an
+ * alert threshold produced a risk score in the database and nothing else: no
+ * alert event, no SMS, no workflow instance, no log line. `|| true` in the
+ * scheduler loop then swallowed any error from the cycle that did run.
+ *
+ * The README does not claim automatic alerting — it says the product "computes
+ * transparent baseline risk scores, exposes formatted data through an API, and
+ * provides a lightweight dashboard" — so this was a missing capability rather
+ * than a false claim. It was still the core function, reachable only by hand.
+ */
+export async function evaluateAndPersistAlerts(store, data, { actor = null, subject = null } = {}) {
   const context = {
     counts: counts(data),
     operations: operationalSummary(data),
@@ -2348,8 +2393,8 @@ async function handleAlertEvaluation(store, data, req, res) {
   }
   const { raised, updated } = evaluateAlertRules(data, context)
   const logs = [
-    ...raised.map((event) => actionLog('alert_events', 'created', event, body.actor, req.__auth?.subject)),
-    ...updated.map((event) => actionLog('alert_events', event.status, event, body.actor, req.__auth?.subject)),
+    ...raised.map((event) => actionLog('alert_events', 'created', event, actor, subject)),
+    ...updated.map((event) => actionLog('alert_events', event.status, event, actor, subject)),
   ]
   if (raised.length || updated.length) await store.merge({ alert_events: [...raised, ...updated], action_logs: logs })
   // Only a raised alert is a new fact. An updated one is the same alert with a
@@ -2359,9 +2404,24 @@ async function handleAlertEvaluation(store, data, req, res) {
     try {
       await emit(store, 'alert_event.created', event)
     } catch (emitError) {
-      // Swallow emit errors
+      // A subscriber that cannot be reached is not a reason to abandon the
+      // alert, which is already persisted above. Recorded rather than dropped.
+      console.error('alert_event.created emit failed', emitError)
     }
   }
+  return { raised, updated }
+}
+
+async function handleAlertEvaluation(store, data, req, res) {
+  if (req.method !== 'POST') {
+    jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
+    return
+  }
+  const body = await readRequestJson(req)
+  const { raised, updated } = await evaluateAndPersistAlerts(store, data, {
+    actor: body.actor,
+    subject: req.__auth?.subject,
+  })
   jsonResponse(res, 201, {
     success: true,
     evaluated: data.alert_rules.length,
@@ -2542,7 +2602,20 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.id) {
-    const record = data[route.collection].find((item) => item.id === route.id)
+    // Through `filterRecords`, so a by-id read carries the same tenant predicate
+    // as the list form.
+    //
+    // This was `data[route.collection].find((item) => item.id === route.id)` with
+    // no scoping expression at all — so given an id from any listing, partner A
+    // read partner B's single record directly. There was nothing to bypass
+    // because there was nothing there: the list form's missing context was a
+    // bug, and this was the same bug with no predicate to remove.
+    //
+    // Routed through the list helper rather than reimplementing the predicate,
+    // so the two forms cannot diverge again. `unlimited` because there is at
+    // most one match.
+    const [record] = filterRecords(data[route.collection], new URLSearchParams(''), {}, { unlimited: true })
+      .filter((item) => item.id === route.id)
     if (!record || (isDeleted(record) && !includeDeleted)) {
       jsonResponse(res, 404, { success: false, error: 'Record not found' })
       return

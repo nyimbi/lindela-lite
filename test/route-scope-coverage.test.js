@@ -155,13 +155,29 @@ describe('every mutating route is on the list', () => {
     assert.equal(scopeForRoute('DELETE', '/api/v1/nonexistent/deep'), DENIED_SCOPE)
   })
 
+  it('refuses an unmapped read as well as an unmapped write', () => {
+    // This test used to assert the opposite. It called `read:hazards` "the
+    // deliberate choice for an unmapped read" and pinned it, which meant the
+    // defect could not be fixed without rewriting the test that described it.
+    //
+    // `read:hazards` is a real, routinely-issued scope — the narrowest one the
+    // platform hands out — so a catch-all on it is not a conservative default.
+    // It is the widest one in practice: about twenty routes (the institutional
+    // KPI report, equity, model drift, data lineage, parametric disbursements,
+    // trigger protocol configuration, the audit chain) were readable by it and
+    // had never been classified.
+    assert.equal(scopeForRoute('GET', '/api/v1/nonexistent'), DENIED_SCOPE,
+      'an unclassified read route is closed, exactly as an unclassified write is')
+    assert.equal(scopeForRoute('GET', '/api/v1/nonexistent/deep'), DENIED_SCOPE)
+  })
+
   it('does not let a GET reach a write scope by sharing a prefix', () => {
-    assert.equal(scopeFor('GET', '/api/v1/routing/plan'), null,
-      'a path that is write-only on POST is unmapped on GET, and falls back')
-    assert.equal(scopeForRoute('GET', '/api/v1/analytics'), 'read:hazards',
-      'the read fallback, which is the deliberate choice for an unmapped read')
     assert.notEqual(scopeForRoute('GET', '/api/v1/analytics'), 'admin:analytics',
-      'and it is never the write scope the same prefix carries for POST')
+      'a read is never the write scope the same prefix carries for POST')
+    assert.equal(scopeForRoute('GET', '/api/v1/analytics'), 'read:analytics',
+      'and model governance is not readable by a hazard token')
+    assert.equal(scopeForRoute('GET', '/api/v1/routing/plan'), 'read:hazards',
+      'while a hazard route is readable by exactly the hazard scope')
   })
 })
 
