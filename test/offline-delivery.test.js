@@ -134,11 +134,21 @@ describe('a report is queued because the request failed, not because the browser
   })
 
   it('bounds retries and surfaces what gave up', () => {
-    assert.match(code('public/shared/runtime.js'), /export const MAX_QUEUE_ATTEMPTS = \d+/,
+    // The rules live in /shared/queue-core.js now, because the service worker
+    // drains the same records and the two cannot be allowed to disagree about
+    // what a 400 means. Asserted there, and asserted here too — one number, two
+    // callers.
+    const core = code('public/shared/queue-core.js')
+    assert.match(core, /export const MAX_QUEUE_ATTEMPTS = \d+/,
       'a record the server permanently rejects must stop being retried forever')
+    assert.match(core, /failed: true/,
+      'a record that gives up must be marked, not silently retried')
+    assert.match(core, /400[\s\S]{0,80}499|>= 400[\s\S]{0,80}< 500/,
+      'and a 4xx is the class that will never succeed — retried forever, it is ' +
+      'the one rejection that keeps a queue full of records it can never send')
     const runtime = code('public/shared/runtime.js')
-    const flush = between('public/shared/runtime.js', 'async flush()', 'export const MAX_QUEUE_ATTEMPTS')
-    assert.match(flush, /failed: true/, 'a record that gives up must be marked, not silently retried')
+    assert.match(runtime, /MAX_QUEUE_ATTEMPTS = CORE_MAX_QUEUE_ATTEMPTS/,
+      "the page's export is the core's number, not a second one")
     assert.match(runtime, /async list\(/, 'the worker needs to see what is stuck')
     assert.match(runtime, /async discard\(/, 'and needs a way to get rid of it')
   })

@@ -50,7 +50,13 @@ export const PUBLIC_ROOT = pathToFileURL(path.join(ROOT, 'public') + path.sep)
 export function installModuleResolution(publicRoot = PUBLIC_ROOT) {
   registerHooks({
     resolve(specifier, context, nextResolve) {
-      if (specifier.startsWith('/shared/')) {
+      // Every *root-relative* specifier a front-end module uses, not just
+      // `/shared/`. The console and the CHW app lazy-load `/workflow/*.js` and
+      // `/panels/*.js` the same way they import `/shared/*.js`, and a resolver
+      // that only knew about one of those directories made a test fail with
+      // ERR_MODULE_NOT_FOUND for a module that exists — which reads as a missing
+      // file rather than as a gap in the harness.
+      if (specifier.startsWith('/shared/') || specifier.startsWith('/workflow/') || specifier.startsWith('/panels/')) {
         return { url: new URL(`.${specifier}`, publicRoot).href, shortCircuit: true }
       }
       return nextResolve(specifier, context)

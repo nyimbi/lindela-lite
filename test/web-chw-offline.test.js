@@ -78,7 +78,44 @@ function fakeIndexedDB({ openFails = false, requestError = null, abortAfterWrite
 								}, 0)
 								return req
 							},
-							delete() {},
+							// `put`, not just `add`: the shared queue core writes every
+							// record through `put` — a claim, a retry and a dead-letter
+							// are all updates to a row that already exists — and a double
+							// that only knows how to insert turns a working queue into
+							// "this browser has no storage available".
+							//
+							// IndexedDB's own rule, reproduced: an autoIncrement store
+							// assigns the next key when the record carries none, and
+							// replaces the row when it carries one.
+							put(value) {
+								const req = {}
+								setTimeout(() => {
+									if (requestError) {
+										req.onerror?.(requestError)
+										tx.onabort?.()
+										return
+									}
+									if (value.id === undefined || value.id === null) {
+										const id = nextId
+										nextId += 1
+										records.push({ id, ...value })
+										req.result = id
+									} else {
+										const at = records.findIndex((r) => r.id === value.id)
+										if (at >= 0) records[at] = { ...value }
+										else records.push({ ...value })
+										req.result = value.id
+									}
+									req.onsuccess?.()
+									if (abortAfterWrite) tx.onabort?.()
+									else tx.oncomplete?.()
+								}, 0)
+								return req
+							},
+							delete(id) {
+								const at = records.findIndex((r) => r.id === id)
+								if (at >= 0) records.splice(at, 1)
+							},
 							count() {
 								const req = {}
 								setTimeout(() => req.onsuccess?.(records.length), 0)
@@ -460,7 +497,11 @@ describe('WEB-05 — the CHW offline queue', () => {
 			await assert.rejects(
 				() => submitOrQueue('/api/v1/chw/report', { kind: 'symptom' }),
 				// A health worker who is told "saved" and is not has filed nothing.
-				(error) => /offline storage/i.test(error.message)
+				// Matched on the claim rather than on the old wording: the sentence
+				// is "this browser has no storage available, so the report was not
+				// saved", and what must survive any rewording is that it says
+				// *not saved* and names storage as the reason.
+				(error) => /not\s+saved/i.test(error.message) && /storage/i.test(error.message)
 			)
 		} finally {
 			browser.restore()

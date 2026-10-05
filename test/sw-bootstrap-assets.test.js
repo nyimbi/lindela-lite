@@ -177,3 +177,105 @@ describe('the oracle does not re-derive the answer it is checking', () => {
       'calling shellGraph, which is how it agreed with the broken traversal')
   })
 })
+
+describe('a comment is not a reference', () => {
+  // Found by `scripts/check-offline-roundtrip.mjs`: with the server genuinely
+  // stopped, the cold start served the browser's error page. The worker's
+  // precache had thirty-odd entries whose paths were sentences out of this
+  // repository's own comments — `/,%20and%20the%20import-from%20pattern…` —
+  // because `parseReferences` scanned source text without stripping comments.
+  // Each one was fetched at install, install was slow enough that the worker
+  // sometimes never activated, and an unactivated worker cannot answer a
+  // navigation.
+  const load = async () => ({
+    ok: true,
+    clone() { return this },
+    text: async () => [
+      '/**',
+      ' * Dynamic import is handled by the import(...) pattern below.',
+      ' * A comment about `import("some prose")` is not a reference.',
+      ' */',
+      'import real from "/real.js"',
+      '// import commented from "/commented.js"',
+      'const u = "https://example.com/not-a-reference.js"',
+    ].join('\n'),
+  })
+
+  it('reads the import and ignores both kinds of comment', async () => {
+    const { shellGraph } = await import(new URL('../public/sw.js', import.meta.url))
+    const reached = await shellGraph(load, 'http://lindela.test/')
+    assert.ok(reached.includes('/real.js'), 'the real import must still be found')
+    assert.ok(!reached.includes('/commented.js'),
+      'a line comment describing an import is not an import')
+  })
+
+  it('no reference in the closure looks like prose', async () => {
+    const { shellGraph } = await import(new URL('../public/sw.js', import.meta.url))
+    const reached = await shellGraph(load, 'http://lindela.test/')
+    const prose = reached.filter((p) => /\s|%[0-9A-Fa-f]{2}/.test(p))
+    assert.deepEqual(prose, [],
+      'a precache entry built from a sentence is a request for a document that does not exist')
+  })
+
+  it('the shipped closure carries no prose either', async () => {
+    // The regression guard for the shipped assets, not a fixture: a new comment
+    // that reads like an import would otherwise be cached silently.
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const PUBLIC = path.join(import.meta.dirname, '..', 'public')
+    const realLoad = async (url) => {
+      const rel = decodeURIComponent(url.pathname.replace(/^\//, ''))
+      try {
+        const text = fs.readFileSync(path.join(PUBLIC, rel), 'utf8')
+        return { ok: true, clone() { return this }, text: async () => text }
+      } catch {
+        return { ok: false }
+      }
+    }
+    const { shellGraph } = await import(new URL('../public/sw.js', import.meta.url))
+    const reached = await shellGraph(realLoad, 'http://lindela.test/')
+    const prose = reached.filter((p) => /\s|%[0-9A-Fa-f]{2}/.test(p))
+    assert.deepEqual(prose, [], 'the shipped closure has entries that are sentences: ' + prose.join(' | '))
+    assert.ok(reached.length > 40, `the closure shrank to ${reached.length} paths; the parser is probably no longer reading real references`)
+  })
+})
+
+describe('a claim about the server is never answered from a cache', () => {
+  // Found by scripts/check-offline-roundtrip.mjs, with the server genuinely
+  // stopped: `fetch('/api/v1/health')` returned **200** — a copy taken before it
+  // died. Every other response in the API cache is data a surface can label as
+  // stale; these three are statements, and a statement served from cache is a
+  // lie told to whoever is deciding whether to trust the deployment.
+  it('the never-cached list is the claims, not the data', async () => {
+    const { NEVER_CACHED, isNeverCached } = await import(new URL('../public/sw.js', import.meta.url))
+    for (const path of ['/api/v1/health', '/api/v1/ready', '/api/v1/auth-info']) {
+      assert.ok(isNeverCached(path), `${path} answers a question only the server can answer`)
+    }
+    for (const path of ['/api/v1/incidents', '/api/v1/field-reports', '/index.html', '/shared/runtime.js']) {
+      assert.equal(isNeverCached(path), false, `${path} is data or an asset, and caching it is the point`)
+    }
+    assert.ok(NEVER_CACHED.length >= 3)
+  })
+
+  it('classifyApiRequest refuses them, so no bucket claims them', async () => {
+    const { classifyApiRequest } = await import(new URL('../public/sw.js', import.meta.url))
+    for (const path of ['/api/v1/health', '/api/v1/ready', '/api/v1/auth-info']) {
+      assert.equal(classifyApiRequest(path), null,
+        `${path} must not be routed into an API cache bucket`)
+    }
+    assert.ok(classifyApiRequest('/api/v1/incidents'), 'ordinary data is still cached')
+  })
+
+  it('and the fetch handler sends them to the network without storing the answer', async () => {
+    // The exclusion alone was not enough: the paths then fell through to the
+    // static branch, whose job is to cache what it fetches, and the first online
+    // visit wrote a copy of "healthy" into the shell cache.
+    const src = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8')
+    const handler = src.slice(src.indexOf("addEventListener('fetch'"), src.indexOf('addEventListener(\'sync\''))
+    assert.match(handler, /if \(isNeverCached\(url\.pathname\)\)/,
+      'the never-cached paths need their own branch, or they land in the cache-first one')
+    const branch = handler.slice(handler.indexOf('isNeverCached(url.pathname)'))
+    assert.doesNotMatch(branch.slice(0, branch.indexOf('return')), /cache\.put|caches\.open/,
+      'the never-cached branch must not write the answer it fetched')
+  })
+})

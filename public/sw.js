@@ -1,7 +1,7 @@
 // Bumped with every release. Cache-first static assets are only safe while
 // this changes: with a fixed name, a deployed fix never reaches an operator
 // who has the app open, because the old app.js is served from cache forever.
-const CACHE_NAME = 'lindela-lite-v4'
+const CACHE_NAME = 'lindela-lite-v5'
 const API_CACHE_NAME = 'lindela-lite-api-v1'
 const DETAIL_CACHE_NAME = 'lindela-lite-detail-v1'
 const MAP_CACHE_NAME = 'lindela-lite-map-v1'
@@ -38,6 +38,7 @@ const API_MAX_ENTRIES = 200
  * `api` is everything else: KPI series, summaries, watermarks, ingest status.
  * Short-lived and high-churn, exactly as before.
  */
+import { openQueueDb, drainQueue, sendRecord } from './shared/queue-core.js'
 export const CACHE_POLICIES = {
 	detail: { name: DETAIL_CACHE_NAME, maxEntries: 60, ttlMs: 7 * 24 * 60 * 60 * 1000 },
 	map:    { name: MAP_CACHE_NAME,   maxEntries: 48, ttlMs: 2 * 24 * 60 * 60 * 1000 },
@@ -88,9 +89,40 @@ const MAP_LAYER_COLLECTIONS = new Set([
  * a cached 200 for a POST would make a submission that never reached the server
  * look filed, which is the exact failure the queue exists to prevent.
  */
+/**
+ * Endpoints that must never be answered from cache.
+ *
+ * Found by `scripts/check-offline-roundtrip.mjs`: with the server genuinely
+ * stopped, `fetch('/api/v1/health')` returned **200** — a cached answer from
+ * before it died. Everything else in the API cache is data a surface can label
+ * as stale; these three are claims, and a claim served from cache is a lie:
+ *
+ *   - `/health` and `/ready` answer "is the server up?", which is precisely the
+ *     question a cache cannot answer truthfully;
+ *   - `/auth-info` answers "is authentication configured, and what is this token's
+ *     scope", which is a statement about the server's current configuration. The
+ *     partner portal read it to decide whether to tell someone their token was
+ *     wrong, and a cached answer would have it blaming the wrong thing.
+ *
+ * They are excluded from the API buckets entirely rather than marked
+ * uncacheable, so they cannot be written into a bucket by another route's
+ * response either.
+ */
+export const NEVER_CACHED = Object.freeze([
+	'/api/v1/health',
+	'/api/v1/ready',
+	'/api/v1/readyz',
+	'/api/v1/auth-info',
+])
+
+export function isNeverCached(pathname) {
+	return NEVER_CACHED.includes(String(pathname))
+}
+
 export function classifyApiRequest(pathname, method = 'GET') {
 	if (String(method).toUpperCase() !== 'GET') return null
 	if (!pathname.startsWith('/api/v1/')) return null
+	if (isNeverCached(pathname)) return null
 	const segments = pathname.slice('/api/v1/'.length).split('/').filter(Boolean)
 	if (!segments.length) return null
 	const [collection, id] = segments
@@ -292,11 +324,34 @@ const REFERENCE_PATTERNS = [
 export function parseReferences(text, baseUrl) {
 	const origin = new URL(baseUrl).origin
 	const paths = new Set()
+	// Comments out, before anything is matched.
+	//
+	// This was reading source *prose* as references: a comment explaining that
+	// the import-from pattern "reads the rest of the sentence as a module path"
+	// produced thirty-odd precache entries — `/,%20and%20the%20import-from…` —
+	// fetched at install time from a server that answers unknown paths with the
+	// shell, so the shell was cached thirty times over. It also made install slow
+	// enough that the service worker sometimes failed to activate, which is how a
+	// cold start with no server produced the browser's error page rather than the
+	// app.
+	//
+	// Block comments always; line comments only when the line *starts* with one,
+	// so a `//` inside a string — `https://…` — cannot truncate the rest of a
+	// line and take a real import with it.
+	const scanable = String(text)
+		.replace(/\/\*[\s\S]*?\*\//g, ' ')
+		.split('\n')
+		.map((line) => (/^\s*\/\//.test(line) ? ' ' : line))
+		.join('\n')
 	for (const pattern of REFERENCE_PATTERNS) {
 		pattern.lastIndex = 0
-		for (const match of text.matchAll(pattern)) {
+		for (const match of scanable.matchAll(pattern)) {
 			const raw = match[1].trim()
 			if (!raw || raw.startsWith('#') || raw.startsWith('data:')) continue
+			// A reference is a path. Anything carrying a space or a percent-escape
+			// is prose that leaked past the comment stripper, and a precache entry
+			// built from one is a request for a document that does not exist.
+			if (/\s|%[0-9A-Fa-f]{2}/.test(raw)) continue
 			let resolved
 			try {
 				resolved = new URL(raw, baseUrl)
@@ -440,13 +495,46 @@ SW?.addEventListener('fetch', (event) => {
 		return
 	}
 
+	// Health, readiness and the auth-configuration probe go straight to the
+	// network and are never stored.
+	//
+	// Excluding them from the API buckets above was not enough on its own: they
+	// then fell through to the static branch, whose whole job is to cache what
+	// it fetches — so the first online visit wrote a copy of "the server is
+	// healthy" into the shell cache and served it back for the next seven
+	// minutes after the server died. Measured by the round-trip drill.
+	if (isNeverCached(url.pathname)) {
+		event.respondWith(
+			fetch(event.request).catch(() => new Response(
+				JSON.stringify(offlineMissBody({ kind: 'never-fetched', pathname: url.pathname })),
+				{
+					status: 503,
+					headers: { 'content-type': 'application/json', 'x-lindela-offline': '1', 'x-lindela-cache': 'never' },
+				},
+			))
+		)
+		return
+	}
+
 	// Stale-while-revalidate for static assets: serve immediately from cache,
 	// then refresh in the background so the next load picks up a deploy.
 	// Previously cache-first with no revalidation, so app.js was pinned to
 	// whatever was cached first.
+	//
+	// The second lookup ignores the query string, and that is not a nicety: the
+	// precache is keyed by the paths the graph found (`/chw/index.html`) while a
+	// navigation carries whatever the app put in the URL (`/chw/?cold=1`, every
+	// filter, every share link). `cache.match` compares the whole URL, so an exact
+	// lookup missed every navigation that had a query — and the app appeared to
+	// work offline only in the one case nobody uses, a bare URL.
+	//
+	// Exact first, so two genuinely different assets that differ only by query
+	// are still distinguished when both are cached.
 	event.respondWith(
 		caches.open(CACHE_NAME).then((cache) =>
-			cache.match(event.request).then((cached) => {
+			cache.match(event.request).then((exact) =>
+				(exact ? Promise.resolve(exact) : cache.match(event.request, { ignoreSearch: true }))
+			).then((cached) => {
 				const network = fetch(event.request)
 					.then((response) => {
 						if (response.ok) cache.put(event.request, response.clone())
@@ -696,11 +784,75 @@ async function pruneDataCaches() {
  * it is a claim-based queue with a single drainer — not two drainers and a hope.
  * When that lands it belongs here again, with a lease.
  */
+/**
+ * The worker's drain.
+ *
+ * This is the half that was deleted, and the comment above it said what would
+ * replace it: "the honest way to close it is a claim-based queue with a single
+ * drainer — not two drainers and a hope." That is `queue-core.js`: a drain
+ * claims the records it is about to send, and a record another drainer holds a
+ * live claim on is skipped. Two drains are then safe by construction, which is
+ * what lets this exist again beside the page's.
+ *
+ * Without it, a report filed on Friday reached the server when the health worker
+ * next opened the app — which on a phone that is charged weekly is Monday, or
+ * never.
+ *
+ * The claim narrows the race to two drains claiming inside the same
+ * millisecond; the `idempotency-key` on every queued record closes it, because
+ * the server replays a repeat rather than writing a second report. Either guard
+ * alone would be weaker than the pair, and this is why the record's key is
+ * minted before the write rather than at send time.
+ */
+async function drainFromWorker(reason) {
+	const db = await openQueueDb()
+	if (!db) return { attempted: 0, sent: 0, gaveUp: 0, retried: 0, reason }
+	const owner = `sw-${Date.now().toString(36)}`
+	// Closed on every path out, including the failure one.
+	//
+	// This was found by the round-trip drill: the worker opened the queue store
+	// and kept the connection for the life of the worker, and an open connection
+	// blocks `deleteDatabase` — so the *page* then failed to open the same store
+	// and reported "this browser has no storage available", with the queue's own
+	// `onblocked` handler resolving null. A worker that holds a database open
+	// makes that database undeletable, and a store holding a health worker's
+	// unsent reports has to stay deletable.
+	let result
+	try {
+		result = await drainQueue(db, { owner, send: (record) => sendRecord(record) })
+	} finally {
+		try { db.close() } catch { /* already closed */ }
+	}
+	if (result.sent) {
+		// A record delivered while nobody is looking changes what the next surface
+		// should show, and a page that is open has a `lindela-queue-flushed`
+		// listener shape to match.
+		for (const client of await self.clients.matchAll({ includeUncontrolled: true })) {
+			client.postMessage({ type: 'lindela-queue-flushed', detail: { ...result, reason, at: new Date().toISOString() } })
+		}
+	}
+	return { ...result, reason }
+}
+
+// Background Sync: the browser wakes the worker when connectivity returns, which
+// is the only way a report is delivered while the app is closed. Chrome and
+// Edge support it; where it is absent the page's `online` listener and its
+// 30-second poll remain the path, which is why they were never removed either.
+SW?.addEventListener('sync', (event) => {
+	if (event.tag === 'lindela-queue') event.waitUntil(drainFromWorker('sync'))
+})
+
 SW?.addEventListener('message', (event) => {
-	// The page owns replay. A message asking the worker to flush is answered
-	// with an acknowledgement rather than acted on, so a caller cannot start a
-	// second drain by asking.
+	// A page asking the worker to flush is a second drainer, and the claim makes
+	// that safe — so this now acts rather than acknowledging. It is answered with
+	// the outcome either way, so a caller can see what happened rather than
+	// inferring it from an empty queue.
 	if (event.data?.type === 'flushQueue') {
-		event.waitUntil(Promise.resolve({ replayed: 0, owner: 'page' }))
+		event.waitUntil((async () => {
+			const result = await drainFromWorker('message')
+			const reply = { replayed: result.sent, owner: 'worker', ...result }
+			if (event.ports?.[0]) event.ports[0].postMessage(reply)
+			return reply
+		})())
 	}
 })

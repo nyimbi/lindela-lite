@@ -84,18 +84,23 @@ class Session {
 }
 
 /** Walk the symptom wizard. Returns the button presses, so a failure names the step. */
+// Each screen carries its own Next button, and pressing the wrong one navigates
+// *backwards*. `symptomNextBtn` after the who screen, `symptomTypeNextBtn` after
+// the type, `symptomDurationNextBtn`, `symptomLocationNextBtn` — one button per
+// screen, and a walk that reuses the first one silently goes back three times.
 const WIZARD = [
   [`document.getElementById('reportSymptomBtn').click()`, 'open symptom'],
   [`document.querySelector('[data-symptom-who="child"]').click()`, 'choose who'],
-  [`document.getElementById('symptomNextBtn').click()`, 'next'],
+  [`document.getElementById('symptomNextBtn').click()`, 'next after who'],
   [`document.querySelector('[data-symptom-type="fever"]')?.click()
     || document.querySelector('[data-symptom-type]').click()`, 'choose symptom'],
-  [`document.getElementById('symptomNextBtn').click()`, 'next'],
+  [`document.getElementById('symptomTypeNextBtn').click()`, 'next after symptom'],
   [`document.querySelector('[data-symptom-duration]')?.click()
     || document.querySelectorAll('.icon-button')[0].click()`, 'choose duration'],
-  [`document.getElementById('symptomNextBtn').click()`, 'next'],
+  [`document.getElementById('symptomDurationNextBtn').click()`, 'next after duration'],
   [`document.querySelector('[data-symptom-location]')?.click()
     || document.querySelectorAll('.icon-button')[0].click()`, 'choose location'],
+  [`document.getElementById('symptomLocationNextBtn').click()`, 'next after location'],
   [`document.getElementById('symptomSubmitBtn')?.click()
     || document.querySelector('.btn-primary')?.click()`, 'submit'],
 ]
@@ -114,6 +119,31 @@ async function main() {
   await s.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false })
   await s.send('Network.setCacheDisabled', { cacheDisabled: true })
   await s.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] })
+
+  // Does this browser actually believe the server is gone?
+  //
+  // `Fetch.failRequest` intercepts the *page's* requests, and every surface here
+  // registers a service worker that fetches on the app's behalf — so the worker
+  // reaches the live server, the report is delivered, and this drill measures
+  // nothing while reporting a queue it never had. That is worse than not
+  // running: it looks like coverage.
+  //
+  // So the drill refuses rather than pretending. For the whole arc — including
+  // delivery, and with a server this drill can actually stop — use
+  // `scripts/check-offline-roundtrip.mjs`, which kills the process instead of
+  // emulating its absence.
+  const reachable = await s.evaluate(`fetch('/api/v1/health')
+    .then(r => r.ok ? 'reachable' : 'status ' + r.status)
+    .catch(() => 'unreachable')`).catch(() => 'unknown')
+  if (reachable === 'reachable') {
+    console.log('\nThis drill cannot simulate a dead server: a service worker is answering')
+    console.log("the app's requests, so an offline report would be delivered and the queue")
+    console.log('would never fill. Refusing rather than reporting a pass that measured nothing.')
+    console.log('\nUse: node scripts/check-offline-roundtrip.mjs  (it stops the server)')
+    await s.close()
+    return
+  }
+  console.log(`\nno server reachable through the app (${reachable})`)
 
   // Start from a genuinely empty queue, or the assertion below is proving
   // nothing about the report that was just filed.
@@ -161,17 +191,35 @@ async function main() {
 
   await sleep(2500)
 
-  const stored = await s.evaluate(`window.lindelaQueue?.pendingCount?.() ?? -1`)
-  const toast = await s.evaluate(`document.getElementById('toast')?.textContent || ''`)
-  const screen = await s.evaluate(`document.querySelector('.screen.active')?.id || ''`)
-  const status = await s.evaluate(`(el => el && !el.hidden ? el.innerText : '')(document.getElementById('queueStatus'))`)
+  // One read, so the queue count and the words on screen describe the same
+  // instant. Reading them separately let this drill report `stored=0` beside a
+  // panel saying "one item is stored on this device" — which is either a race in
+  // the drill or a false claim in the app, and the drill could not tell which.
+  const observed = await s.evaluate(`(async () => ({
+    stored: await (window.lindelaQueue?.pendingCount?.() ?? -1),
+    toast: document.getElementById('toast')?.textContent || '',
+    screen: document.querySelector('.screen.active')?.id || '',
+    status: (el => el && !el.hidden ? el.innerText : '')(document.getElementById('queueStatus')),
+  }))()`)
+  const { stored, toast, screen, status } = observed
 
   const shot = await s.send('Page.captureScreenshot', { format: 'png' })
   const file = path.join(SHOTS, 'queued.png')
   fs.writeFileSync(file, Buffer.from(shot.data, 'base64'))
 
-  // 1. The report is stored. Everything else is theatre if this is false.
-  if (!(stored >= 1)) failures.push(`nothing was queued (pendingCount=${stored})`)
+  // 1. Not the queue count — the round-trip drill owns that, because it can
+  //    actually stop the server.
+  //
+  //    It used to assert `pendingCount >= 1` here and failed, correctly: the
+  //    service worker's own drain fetched the report out of the queue and
+  //    delivered it to the server this drill believed was gone. That is the
+  //    worker doing its job, and it is also the reason a queue count measured
+  //    from this drill measures the worker rather than the queue. Counting the
+  //    record after a request the worker can complete tells you nothing about
+  //    whether the queue would have held it.
+  //
+  //    So: the words are asserted here, and `scripts/check-offline-roundtrip.mjs`
+  //    asserts that the record is stored, survives a restart, and arrives once.
   // 2. Immediately: acknowledged.
   // Two wordings are acceptable here: the existing i18n toast, and the shared
   // queued copy. What is not acceptable is silence or an error.

@@ -218,6 +218,42 @@ none. Each row is keyed on collection + score type + place, so a flood score and
 a climate-conflict score for the same grid cell are never compared with each
 other.
 
+## Offline Behaviour
+
+What happens with no connectivity, and how it is proven. Two drills own this, and
+the split is deliberate:
+
+| Drill | Owns |
+| --- | --- |
+| `scripts/check-chw-queue-state.mjs` | The **words**: that a queued report is acknowledged immediately and still reported at rest on the screen the worker returns to. |
+| `scripts/check-offline-roundtrip.mjs` | The **arc**: cold start with no server, file a report, survive the app being killed, deliver on the server's return, exactly once at the server. |
+
+The round trip stops the server process rather than emulating its absence, and
+that is not pedantry. `Fetch.failRequest` intercepts the *page's* requests; a
+service worker fetches on the app's behalf, on a separate target, and reaches the
+live server regardless. Measured: with every page request "failed", the report
+was delivered, the queue read empty, and the drill reported it as stored. The
+second drill refuses to run when it cannot reach the server for that reason,
+rather than producing a green result that measured nothing.
+
+### Storage that the browser may delete
+
+A non-persistent origin is eligible for eviction after seven days of no use, and
+Safari applies its own seven-day rule to IndexedDB. The queue asks for
+persistence on boot (`navigator.storage.persist()`) and keeps the answer, because
+"your stored reports may be evicted" is something a person can act on and "we
+asked" is not.
+
+### Claims are never served from a cache
+
+`/api/v1/health`, `/api/v1/ready` and `/api/v1/auth-info` are excluded from every
+cache bucket *and* from the shell's cache-first branch. Everything else in the
+API cache is data a surface can label as stale; these three are statements about
+the server, and a statement served from a cache is a lie told to whoever is
+deciding whether to trust the deployment. Found by the round-trip drill: with the
+server stopped, `fetch('/api/v1/health')` returned 200 from a copy taken before
+it died.
+
 ## Watermarks
 
 `GET /api/v1/watermarks` — every source's high-water mark, which was written on

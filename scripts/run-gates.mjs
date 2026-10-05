@@ -128,7 +128,13 @@ const GATES = [
     name: 'check-chw-queue-state',
     script: 'scripts/check-chw-queue-state.mjs',
     tier: 'needs-browser',
-    why: 'Exercises the CHW offline queue against a real dead socket.',
+    why: 'Exercises the CHW offline queue and asserts the words a health worker is shown.',
+  },
+  {
+    name: 'check-offline-roundtrip',
+    script: 'scripts/check-offline-roundtrip.mjs',
+    tier: 'needs-browser',
+    why: 'Stops the server — rather than emulating its absence, which a service worker defeats — and walks the whole arc: cold start, file, survive a restart, deliver on return, exactly once. The half that proves a stored report is not a lost one.',
   },
   {
     name: 'audit-a11y',

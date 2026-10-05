@@ -1,4 +1,8 @@
 import { applyLocaleToDocument } from './fmt.js'
+import {
+  openQueueDb, put, del, readAll, listRecords, clearRecords, drainQueue, requestPersistence,
+  MAX_QUEUE_ATTEMPTS as CORE_MAX_QUEUE_ATTEMPTS,
+} from './queue-core.js'
 let _swRegistration = null
 
 /**
@@ -68,30 +72,57 @@ export function initOfflineBanner() {
   updateStatus()
 }
 
+/**
+ * The page's half of the offline queue.
+ *
+ * The mechanics live in `queue-core.js` because the service worker has to be
+ * able to drain the same records: a report filed on Friday should reach the
+ * server when the link returns, not when the health worker next opens the app.
+ * When the worker could drain too, it read the same store with no claim, and
+ * two drains meant two field reports for one observation — so its drain was
+ * deleted and the page became the only drainer. The claim is what lets both
+ * drain again without that race returning.
+ *
+ * The public surface is unchanged — `window.lindelaQueue` with `enqueue`,
+ * `list`, `retry`, `discard`, `pendingCount`, `flush` — because six surfaces
+ * call it and the shape is what they were written against.
+ */
+/**
+ * Announce a queue change, if there is still a window to announce it to.
+ *
+ * Every one of these calls sits after an `await`, and an await does not keep the
+ * page alive — the module may be imported by a test that finishes first, and a
+ * bare `window.dispatchEvent` in that window is an unhandled TypeError after the
+ * test has passed. The notification is a courtesy to open surfaces; failing to
+ * deliver it must never fail the work.
+ */
+function announce(type, detail = null) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return false
+  if (typeof CustomEvent === 'undefined') return false
+  window.dispatchEvent(detail ? new CustomEvent(type, { detail }) : new CustomEvent(type))
+  return true
+}
+
 export async function initOfflineQueue() {
+  const owner = `page-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
   window.lindelaQueue = {
-    pending: [],
+    owner,
     db: null,
+    persistence: { supported: false, persisted: false },
+    lastFlush: null,
+
     async init() {
-      return new Promise((resolve) => {
-        if (!('indexedDB' in window)) {
-          resolve()
-          return
-        }
-        const req = window.indexedDB.open('lindela_queue', 1)
-        req.onupgradeneeded = (e) => {
-          const db = e.target.result
-          if (!db.objectStoreNames.contains('requests')) {
-            db.createObjectStore('requests', { keyPath: 'id', autoIncrement: true })
-          }
-        }
-        req.onsuccess = () => {
-          this.db = req.result
-          resolve()
-        }
-        req.onerror = () => resolve()
-      })
+      this.db = await openQueueDb()
+      // Asked once, early, and kept as a fact the surfaces can read: a browser
+      // that will not promise persistence can delete a stored report after
+      // seven days, and a report the worker was told was saved must not be
+      // something the browser deletes on a schedule.
+      this.persistence = await requestPersistence()
+      announce('lindela-queue-changed')
+      return this.db
     },
+
     /**
      * Persist a request for later replay.
      *
@@ -106,71 +137,39 @@ export async function initOfflineQueue() {
      * `{ queued: true, id }` when it is. A queued report is a report the user
      * still has to send, and the only way to say so honestly is for the store
      * to confirm it before anyone is told anything.
+     *
+     * The idempotency key is minted here, before the write, because it is what
+     * makes a second drain of the same record a no-op at the server rather than a
+     * second report.
      */
     async enqueue(path, options, meta = {}) {
       if (!this.db) {
-        throw new Error('This device has no offline storage, so the report was not saved')
+        throw new Error('This browser has no storage available, so the report was not saved. '
+          + 'Copy it somewhere before closing this page.')
       }
-      // Minted here, before the write, and carried into the request headers.
-      //
-      // The queue used to rely on IndexedDB's autoIncrement key, which is only
-      // known after the write completes — so the id could not be sent with the
-      // request. It is now the idempotency key, which is what makes replay
-      // safe: two drains that both hold this record send the same key, and the
-      // server answers the second with the first's receipt instead of creating
-      // a second field report for one health worker's observation.
-      //
-      // `randomUUID` rather than a counter: the key leaves the device and is
-      // compared by a server that has never seen this client, so it has to be
-      // unique rather than merely locally sequential.
-      const id = (globalThis.crypto?.randomUUID
-        ? crypto.randomUUID()
-        : `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`)
+      const id = options?.idempotencyKey || globalThis.crypto?.randomUUID?.()
+        || `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
       const headers = { ...(options?.headers || {}), 'idempotency-key': id }
       const record = {
-        id,
         path,
         options: { ...options, headers },
-        timestamp: Date.now(),
         what: meta.what || null,
+        queuedAt: new Date().toISOString(),
+        timestamp: Date.now(),
         attempts: 0,
-        lastError: null,
+        failed: false,
+        claimed_by: null,
+        claimed_at: 0,
       }
-      try {
-        const tx = this.db.transaction(['requests'], 'readwrite')
-        const store = tx.objectStore('requests')
-        await new Promise((resolve, reject) => {
-          // Transaction completion, not the request's own success: a quota
-          // error or a constraint violation aborts the transaction after the
-          // request has already reported success, and a record the store then
-          // drops must not read as saved.
-          tx.oncomplete = () => resolve()
-          tx.onabort = () => reject(tx.error || new Error('The offline queue write was aborted'))
-          tx.onerror = () => reject(tx.error || new Error('The offline queue write failed'))
-          const req = store.add(record)
-          req.onerror = () => reject(req.error || new Error('The offline queue write failed'))
-        })
-      } catch (error) {
-        throw new Error(error?.message || 'The offline queue write failed')
-      }
-      window.dispatchEvent(new CustomEvent('lindela-queue-changed'))
-      // Ask the service worker to register a Background Sync. The page flushes
-      // on `online`, on an interval and on load, but none of those fire if the
-      // tab is closed before connectivity returns — and a health worker closing
-      // the app is normal, not an edge case. Best effort: unsupported in some
-      // browsers and non-secure contexts, where the in-page flush still applies.
-      // Best effort, and bounded.
-      //
-      // This used to `await navigator.serviceWorker.ready` with no timeout. On a
-      // device whose worker is not yet controlling the page — which is every
-      // device, offline, before the first claim — `ready` does not settle, so
-      // `enqueue` never returned. A health worker filing a report with no
-      // signal got no save, no toast and no screen change: the press did
-      // nothing at all.
-      //
-      // The IndexedDB write above is what matters and has already committed.
-      // Registering a background sync is an optimisation on top of it, so it
-      // gets a bounded wait and its failure is ignored.
+      await put(this.db, record)
+      announce('lindela-queue-changed')
+
+      // Registering a background sync is an optimisation on top of the write,
+      // which has already committed. Bounded, because `navigator.serviceWorker.ready`
+      // does not settle on a device whose worker is not yet controlling the page —
+      // which is every device, offline, before the first claim — and an enqueue
+      // that waits on it never returns. That was the defect: a health worker
+      // filing a report with no signal got no save, no toast and no screen change.
       await Promise.race([
         (async () => {
           const reg = await navigator.serviceWorker?.ready
@@ -181,154 +180,72 @@ export async function initOfflineQueue() {
       return { queued: true, id }
     },
 
-    /**
-     * What is waiting, and what has given up.
-     *
-     * The count was the entire surface: a health worker whose reports had not
-     * sent had a number and no way to learn what it referred to, when it was
-     * filed, or why it was stuck. Returns the records themselves so the surface
-     * can list them, oldest first — a week offline produces a week of rows and
-     * the oldest is the one most likely to have been forgotten.
-     */
+    /** What is waiting, and what has given up. */
     async list({ failed = false } = {}) {
       if (!this.db) return []
-      try {
-        const tx = this.db.transaction(['requests'], 'readonly')
-        const records = await new Promise((resolve, reject) => {
-          const req = tx.objectStore('requests').getAll()
-          req.onsuccess = () => resolve(req.result || [])
-          req.onerror = () => reject(req.error || new Error('The offline queue could not be read'))
-        })
-        return records
-          .filter((r) => Boolean(r?.failed) === Boolean(failed))
-          .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
-      } catch {
-        return []
-      }
+      return listRecords(this.db, { failed })
     },
 
     /** Put a failed record back in the queue for another attempt. */
     async retry(id) {
       if (!this.db) return false
-      const tx = this.db.transaction(['requests'], 'readwrite')
-      const store = tx.objectStore('requests')
-      await new Promise((resolve, reject) => {
-        const get = store.get(id)
-        get.onsuccess = () => {
-          if (!get.result) { resolve(); return }
-          store.put({ ...get.result, failed: false, attempts: 0, lastError: null })
-        }
-        get.onerror = () => reject(get.error)
-      })
-      window.dispatchEvent(new CustomEvent('lindela-queue-changed'))
+      const all = await readAll(this.db)
+      const record = all.find((r) => r.id === id)
+      if (!record) return false
+      await put(this.db, { ...record, failed: false, attempts: 0, lastError: null, claimed_by: null, claimed_at: 0 })
+      announce('lindela-queue-changed')
       return true
     },
 
-    /** Discard a record. The worker asked for this; it is not a quiet removal. */
+    /** Discard a record. A person asked; it is not a quiet removal. */
     async discard(id) {
       if (!this.db) return false
-      const tx = this.db.transaction(['requests'], 'readwrite')
-      tx.objectStore('requests').delete(id)
-      await new Promise((resolve, reject) => {
-        tx.oncomplete = () => resolve()
-        tx.onerror = () => reject(tx.error)
-      })
-      window.dispatchEvent(new CustomEvent('lindela-queue-changed'))
+      await del(this.db, id)
+      announce('lindela-queue-changed')
       return true
     },
+
+    /**
+     * Discard everything queued. Returns how many records went.
+     *
+     * For a handset being handed to the next health worker, and for drills that
+     * need a known-empty queue. Counted, so the caller can say what it removed
+     * rather than implying a reset it did not perform.
+     */
+    async clear() {
+      if (!this.db) return 0
+      const removed = await clearRecords(this.db)
+      announce('lindela-queue-changed')
+      return removed
+    },
+
     /** How many reports are waiting to send. Surfaced so the promise is visible. */
     async pendingCount() {
       if (!this.db) return 0
-      try {
-        const tx = this.db.transaction(['requests'], 'readonly')
-        return await new Promise((resolve) => {
-          const req = tx.objectStore('requests').count()
-          req.onsuccess = () => resolve(req.result || 0)
-          req.onerror = () => resolve(0)
-        })
-      } catch {
-        return 0
-      }
+      const all = await readAll(this.db)
+      return all.filter((r) => !r?.failed).length
     },
 
     /**
      * Replay queued requests.
      *
-     * This existed but was never called from anywhere, so a report queued while
-     * offline sat in IndexedDB forever. The CHW app told the health worker
-     * "Queued (will send when connected)" and the report was silently lost —
-     * the UI made a promise the code never kept.
-     *
-     * Returns the number of records attempted, and never throws: a failing
-     * request must stay queued for the next cycle rather than break the cycle.
+     * Returns the number of records attempted. Never throws: a failing request
+     * must stay queued for the next cycle rather than break the cycle, and a
+     * drain is the only thing that turns a stored report into a delivered one.
      */
     async flush() {
-      // `navigator.onLine` is a link-layer flag, not reachability. A captive
-      // portal, an uplink that answers TCP but not HTTP, or a blackholed
-      // resolver all report `onLine === true`, and gating the drain on it
-      // meant the queue sat full while the browser insisted it was online.
-      // Kept as a cheap early-out only — never as the condition for *saving*,
-      // which is `submitOrQueue`'s job and no longer reads this flag.
+      // `navigator.onLine` is a link-layer flag, not reachability. Kept as a
+      // cheap early-out only — never as the condition for *saving*, which is
+      // `submitOrQueue`'s job and does not read this flag.
       if (!this.db || navigator.onLine === false) return 0
-      // One drain at a time. The service worker's own replay path was removed
-      // precisely because two drains could hold the same record, both POST it,
-      // and both delete it — two field reports for one observation. A second
-      // guard here costs nothing and closes the same hole from this side.
-      if (this._draining) return 0
-      this._draining = true
-      let records
-      try {
-        const tx = this.db.transaction(['requests'], 'readonly')
-        records = await new Promise((resolve) => {
-          const req = tx.objectStore('requests').getAll()
-          req.onsuccess = () => resolve(req.result || [])
-          req.onerror = () => resolve([])
-        })
-      } catch {
-        this._draining = false
-        return 0
-      }
-      let sent = 0
-      let gaveUp = 0
-      for (const record of records) {
-        if (record?.failed) continue
-        const attempts = (record.attempts || 0) + 1
-        try {
-          await apiFetch(record.path, record.options)
-          const delTx = this.db.transaction(['requests'], 'readwrite')
-          delTx.objectStore('requests').delete(record.id)
-          sent += 1
-        } catch (error) {
-          // Still failing: keep it, count the attempt, and — after enough of
-          // them, or on a rejection that will never succeed — move it aside
-          // rather than retrying forever.
-          //
-          // A record the server permanently rejects (a 400 on a bad district
-          // slug, a 422 on a stale schema) used to be retried on every 30s tick
-          // for the life of the install, was never surfaced, and could not be
-          // discarded — so `pendingCount` stayed inflated permanently and the
-          // banner kept promising delivery of something that would never go.
-          const permanent = Number(error?.status) >= 400 && Number(error?.status) < 500
-          if (permanent || attempts >= MAX_QUEUE_ATTEMPTS) {
-            const failTx = this.db.transaction(['requests'], 'readwrite')
-            failTx.objectStore('requests').put({
-              ...record,
-              attempts,
-              failed: true,
-              lastError: error?.message || String(error),
-              failedAt: new Date().toISOString(),
-            })
-            gaveUp += 1
-            continue
-          }
-          const retryTx = this.db.transaction(['requests'], 'readwrite')
-          retryTx.objectStore('requests').put({ ...record, attempts, lastError: error?.message || null })
-        }
-      }
-      this._draining = false
-      this.lastFlush = { at: new Date().toISOString(), attempted: records.length, sent, gaveUp }
-      window.dispatchEvent(new CustomEvent('lindela-queue-flushed', { detail: this.lastFlush }))
-      return records.length
+      const result = await drainQueue(this.db, {
+        owner: this.owner,
+        send: (record) => apiFetch(record.path, record.options),
+      })
+      this.lastFlush = { at: new Date().toISOString(), ...result }
+      announce('lindela-queue-flushed', this.lastFlush)
+      announce('lindela-queue-changed')
+      return result.attempted
     },
   }
   await window.lindelaQueue.init()
@@ -349,7 +266,7 @@ export async function initOfflineQueue() {
  * days is usually a link that has been down, and a record that gave up after
  * three would lose a week's work to one bad afternoon.
  */
-export const MAX_QUEUE_ATTEMPTS = 8
+export const MAX_QUEUE_ATTEMPTS = CORE_MAX_QUEUE_ATTEMPTS
 
 /**
  * How long to try before assuming the link is down.
