@@ -153,14 +153,14 @@ function planRun({ options, state, now }) {
  * is a fact about the grid cell, not a transient failure, and a region holding
  * no discharge is not training data.
  */
-async function fetchRegion(region, startDate, endDate, { timeoutMs, retries }) {
+async function fetchRegion(region, startDate, endDate, { timeoutMs, retries, source }) {
   const url = new URL(FLOOD_URL)
   url.searchParams.set('latitude', String(region.lat))
   url.searchParams.set('longitude', String(region.lon))
   url.searchParams.set('start_date', startDate)
   url.searchParams.set('end_date', endDate)
   url.searchParams.set('daily', 'river_discharge')
-  const text = await fetchWithRetry(url.toString(), { timeoutMs, retries, parse: 'text' })
+  const text = await fetchWithRetry(url.toString(), { timeoutMs, retries, parse: 'text', source })
   const payload = JSON.parse(text)
   const times = payload?.daily?.time
   const values = payload?.daily?.river_discharge
@@ -230,7 +230,7 @@ async function connectorIngest(options = {}) {
   const now = options.now ? new Date(options.now) : new Date()
   const chunkDays = chunkDaysFrom(options.flood_chunk_days, CHUNK_DAYS)
   const persist = typeof options.on_watermark_state === 'function' ? options.on_watermark_state : null
-  const fetchOptions = { timeoutMs, retries }
+  const fetchOptions = { timeoutMs, retries, source: options.source }
 
   const plan = planRun({ options, state: watermarkStateFrom(options), now })
   const climate_observations = []

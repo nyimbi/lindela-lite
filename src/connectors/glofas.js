@@ -13,7 +13,7 @@ async function glofasIngest(options = {}) {
 
     for (const feed of feeds) {
       try {
-        const text = await fetchWithRetry(feed, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2 })
+        const text = await fetchWithRetry(feed, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2, source: options.source })
 
         // A feed that returns an HTML page still answers 200, so a naive parse
         // finds zero items and reports success. Verified 2026-10-01: the

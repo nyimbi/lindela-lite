@@ -472,6 +472,45 @@ export function auditChainWarning(event, result) {
   return key
 }
 
+/**
+ * R-51. The verification result, in the shape a readiness probe wants.
+ *
+ * `verifyChain` was called from exactly one route — the one that returns the
+ * proof — so a tampered or truncated `action_logs` was detected when somebody
+ * asked for the proof, or never. Tamper-evidence that only fires on request is
+ * a capability, not evidence.
+ *
+ * This is the rollup for `/ready`: a boolean, the head, the counts, and the
+ * first fatal defect by name. Pure — it re-verifies from the entries, so
+ * calling it costs the same as asking for the proof and changes nothing.
+ *
+ * `unanchored` is reported separately rather than folded into `valid`. A chain
+ * that recomputes against itself proves it has not been *edited in place*; it
+ * cannot prove it has not been *rewritten end to end*, and only an
+ * out-of-band head can. Reporting those as one verdict would mean a rewritten
+ * log read as valid, which is the case the whole module exists to close.
+ */
+export function auditRollup(actionLogs = [], { expectedHead = null } = {}) {
+  const { entries } = chainEntries(Array.isArray(actionLogs) ? actionLogs : [])
+  const result = verifyChain(entries, { expectedHead })
+  const fatal = result.defects.filter((defect) => defect.severity === 'fatal')
+  return {
+    valid: result.verified,
+    // True when the chain recomputes but nothing outside it says it should.
+    // A readiness probe that reports `valid: true` for an unanchored chain is
+    // telling a donor their proof is stronger than it is.
+    anchored: result.anchored,
+    head: result.head,
+    seq: result.seq,
+    entry_count: result.entry_count,
+    withdrawn_count: result.withdrawn.length,
+    defect_count: result.defects.length,
+    first_defect: fatal[0] ? { type: fatal[0].type, detail: fatal[0].detail, seq: fatal[0].seq ?? null } : null,
+    // Names only. The full defect list belongs to whoever asks for the proof.
+    fatal_types: [...new Set(fatal.map((defect) => defect.type))],
+  }
+}
+
 /** Test seam: the "already warned" set is process state, not audit state. */
 export function resetAuditChainWarnings() {
   reportedHeads.clear()

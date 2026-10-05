@@ -71,7 +71,7 @@ async function openMeteoIngest(options = {}) {
         url.searchParams.set('timezone', 'UTC')
 
         // Note: ensemble endpoint would be different; for now fall back to deterministic
-        const data = await fetchWithRetry(url, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2, parse: 'json' })
+        const data = await fetchWithRetry(url, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2, parse: 'json', source: options.source })
 
         if (data.current) {
           climate_observations.push({

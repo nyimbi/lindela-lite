@@ -127,7 +127,7 @@ export const chirpsConnector = {
     }
 
     try {
-      const html = await fetchWithRetry(indexUrl, { timeoutMs, retries, parse: 'text' })
+      const html = await fetchWithRetry(indexUrl, { timeoutMs, retries, parse: 'text', source: options.source })
       const years = [...new Set([...html.matchAll(YEAR_DIR_PATTERN)].map((m) => m[1]))]
         .sort()
         .reverse()
@@ -143,7 +143,7 @@ export const chirpsConnector = {
       for (const year of years) {
         let yearHtml
         try {
-          yearHtml = await fetchWithRetry(`${indexUrl.replace(/\/$/, '')}/${year}/`, { timeoutMs, retries, parse: 'text' })
+          yearHtml = await fetchWithRetry(`${indexUrl.replace(/\/$/, '')}/${year}/`, { timeoutMs, retries, parse: 'text', source: options.source })
         } catch (error) {
           errors.push(`chirps: ${year} directory unreadable: ${error.message}`)
           continue

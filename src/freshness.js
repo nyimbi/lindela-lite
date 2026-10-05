@@ -433,16 +433,22 @@ export function explainVerdict({
   // here and there is returning an empty 200 — the exact case ENH-06 exists to
   // stop being flattened, surviving on the one input it could not distinguish.
   //
+  // Judged on the streak alone, not on `records`. `newRecordCount` takes the
+  // *maximum* over the window on purpose — one run that delivered is proof the
+  // feed works — so a source that delivered 210 records three runs ago and has
+  // returned nothing since still reports `records: 210`, and gating on that
+  // would put the exact case this verdict exists for back into `quiet`.
+  //
   // Deliberately not `broken`: the fetch worked, the parse worked, and we have
   // no evidence about which end is empty. The verdict is the name for "we
   // cannot tell", stated rather than guessed.
   const emptyStreak = consecutiveEmptyRuns(recentRecordCounts)
-  if (records === 0 && emptyStreak >= EMPTY_RESPONSE_MIN_RUNS) {
+  if (emptyStreak >= EMPTY_RESPONSE_MIN_RUNS) {
     return {
       ...base,
       verdict: 'empty_response',
-      reason: `${emptyStreak} consecutive runs returned 0 records and no run on record delivered anything`
-        + `${shortfallNote(lastRun)} — the source answers, but has never had anything for us;`
+      reason: `${emptyStreak} consecutive runs returned 0 records`
+        + `${shortfallNote(lastRun)} — the source answers, but has had nothing for us since it last did;`
         + ' a provider serving an empty body and a genuinely quiet feed are indistinguishable from one run',
     }
   }

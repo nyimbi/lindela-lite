@@ -193,6 +193,7 @@ async function noaaNinoConnectorIngest(options = {}) {
       timeoutMs: options.timeout_ms || 20000,
       retries: options.retries ?? 2,
       parse: 'text',
+      source: options.source,
     })
 
     const rows = parseNino34(text)

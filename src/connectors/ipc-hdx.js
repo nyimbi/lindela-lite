@@ -1,4 +1,5 @@
 import { fetchWithRetry } from './http.js'
+import { RATE_LIMIT_POLICIES } from '../rate-limit.js'
 import { parseCsv, stableId, toNumber } from '../utils.js'
 import { defineConnector } from './spec.js'
 
@@ -125,6 +126,7 @@ async function parseCsvResource(resource, options) {
     timeoutMs: options.timeout_ms || 30000,
     retries: options.retries ?? 2,
     parse: 'text',
+    source: options.source,
   })
   return parseCsv(text)
 }
@@ -256,34 +258,57 @@ function buildMetadata(row, { scope, area, level1, bbox, datasetUrl }) {
  * A missing or mismatched GeoJSON degrades to null bboxes and a stated error;
  * it is not an ingest failure. Half a feed being absent must not lose the CSV
  * half's data, and geometry is presentation, not evidence.
+ *
+ * R-11. The fan-out is capped at the declared `concurrency: 2`. It used to be
+ * one `Promise.all` over ~46 countries, two requests each — 92 simultaneous
+ * requests against `RATE_LIMIT_POLICIES.ipc_hdx`'s declared 20/min, from a
+ * free humanitarian data service, on every scheduled run. The limiter now
+ * resolves (`source: 'ipc_hdx'` is threaded at every call site) and would pace
+ * them anyway, but a queue built on *rejections* would rather drop a country
+ * than wait for it, and a silently missing country is the exact failure this
+ * file's own comment above warns about. So the pool is here, and it never
+ * drops: it is a worker count, not a semaphore with a `tryAcquire`.
  */
 async function areaBboxes(isoCodes, options) {
   const bboxes = new Map()
   const geoErrors = []
   if (options.geometry === false) return { bboxes, geoErrors }
 
-  await Promise.all([...new Set(isoCodes)].map(async (iso) => {
-    try {
-      const dataset = await packageShow(slugFor(iso), options)
-      const geo = (dataset.result?.resources || []).find((resource) => String(resource.name).endsWith('.geojson'))
-      if (!geo) {
-        geoErrors.push(`ipc_hdx: dataset "${slugFor(iso)}" carries no .geojson resource; areas get no bbox`)
-        return
+  const countries = [...new Set(isoCodes)]
+  const concurrency = Math.max(
+    1,
+    Number(options.concurrency) || RATE_LIMIT_POLICIES.ipc_hdx?.concurrency || 2,
+  )
+  let next = 0
+
+  async function worker() {
+    while (next < countries.length) {
+      const iso = countries[next]
+      next += 1
+      try {
+        const dataset = await packageShow(slugFor(iso), options)
+        const geo = (dataset.result?.resources || []).find((resource) => String(resource.name).endsWith('.geojson'))
+        if (!geo) {
+          geoErrors.push(`ipc_hdx: dataset "${slugFor(iso)}" carries no .geojson resource; areas get no bbox`)
+          continue
+        }
+        const text = await fetchWithRetry(geo.url, { timeoutMs: options.timeout_ms || 30000, retries: options.retries ?? 2, parse: 'text', source: options.source })
+        const geoJson = JSON.parse(text)
+        for (const feature of geoJson.features || []) {
+          const bbox = featureBbox(feature.geometry)
+          const title = feature.properties?.title
+          if (bbox && title) bboxes.set(title, bbox)
+        }
+        if (!bboxes.size) {
+          geoErrors.push(`ipc_hdx: GeoJSON for ${iso} yielded no area bounding boxes`)
+        }
+      } catch (error) {
+        geoErrors.push(`ipc_hdx: geometry lookup failed for ${iso}: ${error.message}`)
       }
-      const text = await fetchWithRetry(geo.url, { timeoutMs: options.timeout_ms || 30000, retries: options.retries ?? 2, parse: 'text' })
-      const geoJson = JSON.parse(text)
-      for (const feature of geoJson.features || []) {
-        const bbox = featureBbox(feature.geometry)
-        const title = feature.properties?.title
-        if (bbox && title) bboxes.set(title, bbox)
-      }
-      if (!bboxes.size) {
-        geoErrors.push(`ipc_hdx: GeoJSON for ${iso} yielded no area bounding boxes`)
-      }
-    } catch (error) {
-      geoErrors.push(`ipc_hdx: geometry lookup failed for ${iso}: ${error.message}`)
     }
-  }))
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, countries.length) }, worker))
   return { bboxes, geoErrors }
 }
 
@@ -391,6 +416,7 @@ async function packageShow(id, options) {
     timeoutMs: options.timeout_ms || 30000,
     retries: options.retries ?? 2,
     parse: 'text',
+    source: options.source,
   })
   const payload = JSON.parse(text)
   if (!payload.success || !payload.result) {

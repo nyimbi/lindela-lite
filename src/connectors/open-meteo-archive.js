@@ -185,7 +185,7 @@ function planRun({ options, state, now }) {
 }
 
 /** One region, one window. Throws rather than reporting; the caller collects. */
-async function fetchRegion(region, startDate, endDate, { timeoutMs, retries }) {
+async function fetchRegion(region, startDate, endDate, { timeoutMs, retries, source }) {
   const url = new URL(ARCHIVE_URL)
   url.searchParams.set('latitude', String(region.lat))
   url.searchParams.set('longitude', String(region.lon))
@@ -193,7 +193,7 @@ async function fetchRegion(region, startDate, endDate, { timeoutMs, retries }) {
   url.searchParams.set('end_date', endDate)
   url.searchParams.set('daily', 'precipitation_sum')
   url.searchParams.set('timezone', 'UTC')
-  const text = await fetchWithRetry(url.toString(), { timeoutMs, retries, parse: 'text' })
+  const text = await fetchWithRetry(url.toString(), { timeoutMs, retries, parse: 'text', source })
   const payload = JSON.parse(text)
   const times = payload?.daily?.time
   const values = payload?.daily?.precipitation_sum
@@ -255,7 +255,7 @@ async function connectorIngest(options = {}) {
   const now = options.now ? new Date(options.now) : new Date()
   const chunkDays = chunkDaysFrom(options.archive_chunk_days, CHUNK_DAYS)
   const persist = typeof options.on_watermark_state === 'function' ? options.on_watermark_state : null
-  const fetchOptions = { timeoutMs, retries }
+  const fetchOptions = { timeoutMs, retries, source: options.source }
 
   const plan = planRun({ options, state: watermarkStateFrom(options), now })
   const climate_observations = []

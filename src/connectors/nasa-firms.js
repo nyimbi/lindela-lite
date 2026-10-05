@@ -37,7 +37,7 @@ export const nasaFirmsConnector = {
     for (const region of regions) {
       try {
         const url = AREA_CSV.replace('{key}', key).replace('{bbox}', region.bbox).replace('{days}', String(days))
-        const rows = parseCsv(await fetchWithRetry(url, { timeoutMs: options.timeout_ms || 30000, retries: options.retries ?? 2 }))
+        const rows = parseCsv(await fetchWithRetry(url, { timeoutMs: options.timeout_ms || 30000, retries: options.retries ?? 2, source: options.source }))
         for (const row of rows) {
           const lat = toNumber(row.latitude)
           const lon = toNumber(row.longitude)

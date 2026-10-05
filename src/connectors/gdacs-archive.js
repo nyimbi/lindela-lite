@@ -84,6 +84,7 @@ async function connectorIngest(options = {}) {
           timeoutMs: options.timeout_ms || 30000,
           retries: options.retries ?? 2,
           parse: 'text',
+          source: options.source,
         })
         let payload
         try { payload = JSON.parse(text) } catch {

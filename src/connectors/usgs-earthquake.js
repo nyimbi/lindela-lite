@@ -22,6 +22,7 @@ async function usgsEarthquakeIngest(options = {}) {
       timeoutMs: options.timeout_ms || 20000,
       retries: options.retries ?? 2,
       parse: 'json',
+      source: options.source,
     })
 
     for (const feature of payload?.features || []) {

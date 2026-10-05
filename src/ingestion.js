@@ -15,12 +15,13 @@ import { openMeteoArchiveConnector } from './connectors/open-meteo-archive.js'
 import { openMeteoFloodConnector } from './connectors/open-meteo-flood.js'
 import { acledCsvConnector, conflictCsvConnector, serviceAssetsConnector } from './connectors/uploads.js'
 import { dhis2Connector } from './connectors/dhis2.js'
-import { allowRequest, createCircuitState, outcomesFromRuns, recordOutcome, scoreConnector } from './circuit.js'
+import { allowRequest, circuitStateFor, createCircuitState, outcomesFor, outcomesFromRuns, recordOutcome, scoreConnector } from './circuit.js'
 import { COMPLETENESS_VERDICTS, completenessVerdictName } from './completeness.js'
 import { runAssertions, quarantineRecords, quarantineCollectionName } from './assertions.js'
 import { buildProvenance, recordLineageRow } from './provenance.js'
-import { explainVerdict } from './freshness.js'
-import { beginFetchRecording, endFetchRecording } from './connectors/http.js'
+import { explainVerdict, freshnessReportBySource } from './freshness.js'
+import { fetchRecording, resetFetchRecordings, withFetchRecording } from './connectors/http.js'
+import { isDeclared } from './store.js'
 
 const CONNECTORS = Object.freeze({
   open_meteo: openMeteoConnector,
@@ -103,7 +104,20 @@ export function getConnector(sourceId, connectors = CONNECTORS) {
  * the registration guards for the silent-key-list bug class used to assert on
  * source text precisely because they could not do this.
  */
+/**
+ * R-07. Clear any orphaned recording keys before a run starts.
+ *
+ * `resetFetchRecordings` existed for tests and had no production caller, which
+ * is the shape of every leak in this file: the mechanism is there and nothing
+ * ever asks for it. `withFetchRecording` now closes its own key in a `finally`,
+ * so a throw cannot orphan one — but "cannot" is a property of the code, not an
+ * observation, and a process that was killed mid-crawl, or one running a build
+ * of this module from before the fix, can still hold a key. Clearing at the
+ * boundary costs one `Map.clear()` per run and turns a stale list that would
+ * silently accumulate every subsequent request into nothing.
+ */
 export async function runIngestion(store, request = {}, { connectors = CONNECTORS } = {}) {
+  resetFetchRecordings()
   const requestedSources = request.sources?.length ? request.sources : PUBLIC_INGESTION_SOURCES
   for (const source of requestedSources) {
     if (BLOCKED_SOURCE_IDS.includes(source)) {
@@ -121,21 +135,29 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
   // A store without `read` has no watermarks, which is true rather than a
   // failure: the in-process tests pass a merge-only stub, and a connector run
   // against one simply starts from the beginning of its series.
-  const existingWatermarks = typeof store.read === 'function'
-    ? (await store.read()).watermark_state || []
-    : []
+  const snapshot = typeof store.read === 'function' ? await store.read() : {}
+  const existingWatermarks = snapshot.watermark_state || []
   const watermarkBySource = new Map(existingWatermarks.map((row) => [row.source, row.state || {}]))
   // What each source returns this run, written back after every source has
   // finished — a partial write mid-run would leave the store claiming a position
   // the run never reached.
   const nextWatermarks = []
   const quarantined = Object.fromEntries(OUTPUT_COLLECTIONS.map((key) => [quarantineCollectionName(key), []]))
-  const provenance_by_run = new Map()
-  // ENH-10. Per-run, not per-process: the breaker exists to stop one dead
-  // source being retried inside one run and eating the wall-clock budget the
-  // healthy ones need. Carrying it across runs would mean persisting circuit
-  // state, which is a bigger claim than this item makes.
-  let circuitState = createCircuitState()
+  // R-42. The trailing window, read from the same snapshot the watermarks came
+  // from. Every source's `min_count_vs_trailing` assertion needs the source's own
+  // prior record counts, and they have been sitting in `source_runs` the whole
+  // time. `runSourceAssertions` was called without them, so `median([])` was
+  // null and the assertion that would catch GDACS collapsing from 40,000 to
+  // 4,000 reported itself `unmeasured` on every run of the product's life.
+  const runsBySource = groupRunsBySource(snapshot.source_runs || [])
+  // ENH-10 / R-41. Circuit state now *persists*, which the original comment here
+  // said was "a bigger claim than this item makes". It is the claim, and the
+  // reason it was not made is the whole defect: state created per `runIngestion`
+  // call means each source is visited exactly once per run, so
+  // `consecutive_failures` can reach 1 and the threshold is 3. The breaker could
+  // not trip, and `/ingest/status` reported a health score for a breaker that
+  // did not exist.
+  let circuitState = loadCircuitState(snapshot.connector_circuit || [])
 
   for (const source of requestedSources) {
     const startedAt = nowIso()
@@ -159,6 +181,7 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     let verdict = 'ok'
     let assertionReport = null
     let provenance = []
+    let retrieval = []
 
     // ENH-10. `failure_streak` was computed by this file and acted on by
     // nothing: a dead source was retried in full on every run-due tick,
@@ -168,7 +191,7 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     // a working pipeline and a dead one come to report the same thing.
     const gate = allowRequest(circuitState, source)
     if (!gate.allowed) {
-      source_runs.push({
+      const skippedRun = {
         id: stableId('run', [source, startedAt, verdict, [gate.reason]]),
         source,
         status: 'skipped',
@@ -188,18 +211,40 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
           skipped_reason: gate.reason,
           circuit_state: gate.state,
         },
-      })
+      }
+      source_runs.push(skippedRun)
+      // R-05. A skip is a run too, and it is written by the same per-source
+      // commit. A source the breaker declined is exactly the source an operator
+      // needs to see has been declined for a week.
+      await commitSource({ store, run: skippedRun })
       metrics.counter('ingestion_runs_total', { source, status: gate.reason })
       continue
     }
 
+    const recordingKey = `${source}:${startedAt}`
     try {
-      // ENH-15. Name the run before fetching, so every URL the connector
-      // pulls through http.js is attributable to it. Without this the lineage
-      // row cannot say where the data came from, because no connector exposes
-      // the URLs it builds internally.
-      beginFetchRecording(`${source}:${startedAt}`)
-      output = await runConnectorWithRetries(connector, sourceRequest)
+      // ENH-15 / R-10. Name the run before fetching, so every URL the connector
+      // pulls through http.js is attributable to it. `withFetchRecording` owns
+      // the begin *and* the end: the old `beginFetchRecording` at this point had
+      // no `finally`, so a connector that threw here left its key live for the
+      // life of the process and every subsequent run's URLs were appended to a
+      // dead run's list — a stale `upstream_url_or_endpoint` written
+      // confidently onto every row that followed.
+      const recorded = await withFetchRecording(
+        recordingKey,
+        async () => {
+          try {
+            return await runConnectorWithRetries(connector, sourceRequest)
+          } finally {
+            // Captured before `withFetchRecording` deletes the key, so a run
+            // that *failed* still names the URLs it managed to reach. A
+            // timeout at hour three of an archive walk is exactly when the
+            // lineage row needs to say where it got to.
+            retrieval = fetchRecording(recordingKey) || []
+          }
+        },
+      )
+      output = recorded.value
       // A connector that returns no state keeps the state it was given. Treating
       // the absence as a reset would lose the position on any connector that
       // has not been wired up yet.
@@ -208,7 +253,13 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
           id: `watermark_${source}`,
           type: 'watermark_state',
           source,
-          state: output.watermark_state,
+          // R-17. Merged forward-only against the position this run was seeded
+          // from. The connector's own `advanceWatermark` is correctly
+          // forward-only; the merge that persists its answer was not, so two
+          // overlapping runs — one started a minute before the other, finishing
+          // in the opposite order — wrote the store's cursor *backwards*, and
+          // the next incremental fetch re-requested everything in between.
+          state: mergeWatermarkForward(watermarkBySource.get(source) || {}, output.watermark_state),
           updated_at: new Date().toISOString(),
         })
       }
@@ -257,7 +308,7 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     // hashing of the code that did the transforming, so editing a connector's
     // mapping changes the version it stamps.
     const runRecords = OUTPUT_COLLECTIONS.flatMap((key) => output[key] || [])
-    const retrievalUrl = endFetchRecording(`${source}:${startedAt}`)[0]?.url || null
+    const retrievalUrl = retrieval[0]?.url || null
     provenance = buildProvenance({
       sourceRun: { id: runId, source },
       connector: { id: source },
@@ -272,7 +323,17 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     // returning 4,000 of 40,000 parses cleanly and reports success. Nothing in
     // the codebase noticed for the life of the product.
     if (status !== 'failed') {
-      assertionReport = runSourceAssertions({ source, output })
+      // R-42. `trailingRecords` is passed, from `source_runs` in the snapshot
+      // taken before this run started. Without it `median([])` is null, the
+      // count assertion reports itself `unmeasured`, and the assertion that
+      // would catch GDACS collapsing from 40,000 records to 4,000 has never
+      // once executed in production. Twenty-one test call sites passed it; the
+      // production caller passed nothing.
+      assertionReport = runSourceAssertions({
+        source,
+        output,
+        trailingRecords: trailingCountsFor(runsBySource.get(source) || []),
+      })
       if (assertionReport && !assertionReport.ok) {
         status = 'degraded'
         errors = [...errors, ...assertionReport.failures.map((f) => f.message)]
@@ -280,6 +341,9 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
       }
     }
 
+    // R-05. Kept per source as well as in the run-wide accumulator, because the
+    // commit below is per source and `merged` accumulates all nine.
+    const thisSourceRecords = {}
     for (const key of Object.keys(merged)) {
       const records = output[key] || []
       for (const record of records) {
@@ -294,18 +358,20 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
         record._source_run_id = runId
         record._source = source
       }
+      thisSourceRecords[key] = records
       merged[key].push(...records)
     }
 
     // Quarantined batches are stored apart from published ones, with the
     // assertion that condemned them attached. A condemned batch is a finding
     // to be read, not a zero to be averaged.
+    const quarantinedThisSource = {}
     if (assertionReport && !assertionReport.ok) {
       for (const [collection, rows] of Object.entries(assertionReport.quarantined)) {
+        quarantinedThisSource[collection] = rows
         quarantined[collection]?.push(...rows)
       }
     }
-    provenance_by_run.set(runId, provenance)
 
     const completedAt = nowIso()
     const durationMs = Date.now() - Date.parse(startedAt)
@@ -339,6 +405,30 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
       records_by_collection: countRecordsByCollection(output),
       completeness,
       errors,
+      // R-43. The report used to be computed and dropped on the floor. What
+      // survived was `assertionReport.failures.map((f) => f.message)` flattened
+      // into `errors` — so `stats` was gone, `unmeasured` was gone, and each
+      // failure's structured `detail` was gone, leaving an operator with the
+      // sentence "40 record(s) against a trailing median of 40000" and nothing
+      // about which assertion, what kind, or what the comparison was.
+      //
+      // `null` when no assertion ran (a failed fetch), which is a different
+      // statement from `ok: true` with an empty `unmeasured` list.
+      assertion_report: assertionReport
+        ? {
+            ok: assertionReport.ok,
+            assertions_evaluated: assertionReport.stats?.assertions_evaluated ?? null,
+            record_count: assertionReport.stats?.record_count ?? null,
+            trailing: assertionReport.stats?.trailing ?? null,
+            unmeasured: assertionReport.stats?.unmeasured ?? [],
+            field_coverage: assertionReport.stats?.field_coverage ?? {},
+            failures: assertionReport.failures || [],
+          }
+        : null,
+      // Read by `explainVerdict` to mark a tripped assertion as `broken` on
+      // sight. Present at the top level as well as in the report so the two
+      // cannot disagree about whether anything tripped.
+      assertions_failed: assertionReport?.failures?.length ?? 0,
       diagnostics: buildDiagnostics(output, errors, {
         attempts,
         timeout_ms: sourceRequest.timeout_ms,
@@ -354,60 +444,256 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
         // `degraded` cannot express it.
         possible_incomplete: completeness === 'possibly_incomplete' || completeness === 'incomplete',
         completeness_verdict: completeness,
+        assertions_failed: assertionReport?.failures?.length ?? 0,
       }),
     })
 
     metrics.counter('ingestion_runs_total', { source, status })
     metrics.histogram('ingestion_duration_ms', durationMs, { source })
+
+    // R-05 / ENH-25. Commit per source, inside the loop.
+    //
+    // The single merge at the end meant a run's records existed only in RAM
+    // until every source finished. `gdacs_archive` alone is ~166 requests and
+    // up to 4.2 h worst case, so a kill at hour 3.9 lost the other eight
+    // sources' work too and the next run restarted the archive from 1985 — a
+    // hardcoded constant, so "restarted from 1985" was the only behaviour the
+    // code had.
+    //
+    // Idempotent by construction, which is what makes it safe: `mergeById`
+    // keys on `id` and is pure, and every record already carries `payload_hash`
+    // and `_source_run_id`. Re-running a source that was already committed
+    // merges the same rows to the same values. Nothing about this makes the
+    // store's write path weaker; it only makes the loss window one source
+    // (~10 s) instead of one run (~4 h).
+    await commitSource({
+      store,
+      source,
+      runId,
+      run: source_runs[source_runs.length - 1],
+      records: thisSourceRecords,
+      quarantine: quarantinedThisSource,
+      lineage: recordLineageRow({
+        sourceRun: source_runs[source_runs.length - 1],
+        records: runRecords,
+        provenance,
+      }),
+      watermarks: nextWatermarks.filter((row) => row.source === source),
+    })
   }
 
-  const data_lineage = []
-  // ENH-15. This loop rebuilt a *run-wide* union of every record inside the
-  // per-source iteration, so a nine-source run wrote nine lineage rows that
-  // each described all nine sources — the audit trail was nine copies of one
-  // statement about the whole run, and no row could say which source it was
-  // about. `upstream_url_or_endpoint` was hardcoded null and
-  // `transform_version` was the constant '0.1.0', so even the one row had
-  // nothing to say about provenance.
-  //
-  // One row per source run now, over that run's own records, with a transform
-  // version derived from the code that transformed them.
-  for (const run of source_runs) {
-    if (run.status === 'skipped') continue
-    const provenance = provenance_by_run.get(run.id) || []
-    // Every published record is stamped with its run at line 252, so a record
-    // with no stamp belongs to no run. The `|| !record._source_run_id` clause
-    // that used to here matched those records for *every* run, which rebuilt
-    // the union the previous fix removed — nine rows, each describing all nine
-    // sources, which is the defect in the first place.
-    const records = OUTPUT_COLLECTIONS.flatMap((key) => merged[key])
-      .filter((record) => record._source_run_id === run.id)
-    data_lineage.push(recordLineageRow({ sourceRun: run, records, provenance }))
-  }
+  // ENH-15. The lineage row for a run is written inside the loop now, by
+  // `commitSource`, over that run's own records with a transform version
+  // derived from the code that transformed them. The loop this replaced rebuilt
+  // a run-wide union of every record per source run, so a nine-source run wrote
+  // nine rows that each described all nine sources — the audit trail was nine
+  // copies of one statement about the whole run.
 
   const quarantine_counts = Object.fromEntries(
     Object.entries(quarantined).map(([key, rows]) => [key, rows.length]),
   )
 
-  const data = await store.merge({
-    ...merged,
-    ...quarantined,
-    source_runs,
-    data_lineage,
-    // Only the sources that actually reported a position. A source that was not
-    // run, or that returned nothing, keeps the state it had rather than having
-    // it cleared — losing a cursor because a run was interrupted is exactly how
-    // a resumable backfill stops being resumable.
-    ...(nextWatermarks.length ? { watermark_state: nextWatermarks } : {}),
-  })
+  // R-41. Write the breaker back, so the next run reads it instead of starting
+  // from zero. Guarded on the collection being declared: `connector_circuit`
+  // belongs in `SCHEMA` in `src/store.js`, which this change does not own, and
+  // `assertDeclaredCollections` throws on an undeclared key rather than
+  // dropping the rows — so writing it before the declaration lands would take
+  // every ingestion run down. `circuit_persisted: false` says so out loud
+  // rather than letting the breaker quietly revert to per-run.
+  const circuitRows = circuitStateRows(circuitState)
+  const circuitPersisted = isCircuitCollectionDeclared(store)
+  if (circuitPersisted && circuitRows.length) {
+    await store.merge({ connector_circuit: circuitRows })
+  }
+
+  const data = await store.read?.() ?? null
+
   return {
     source_runs,
     counts: Object.fromEntries(
       OUTPUT_COLLECTIONS.map((key) => [key, merged[key].length]),
     ),
     quarantined: quarantine_counts,
+    // Named so a caller can report it. A health score for a breaker that cannot
+    // trip is worse than no score, and the score is the same shape either way —
+    // the reader cannot tell from `health` that the gate behind it resets.
+    circuit_persisted: circuitPersisted,
     data,
   }
+}
+
+/**
+ * One source's records, quarantined rows, run row, lineage row and watermark,
+ * written as a single merge.
+ *
+ * All or nothing per source, and not across sources: a partial write *within* a
+ * source would leave half an archive walk committed and half not, which is
+ * worse than neither. Across sources, a partial write is the normal case and is
+ * the entire point — the sources behind it are independent and none of them
+ * should wait on a four-hour archive.
+ */
+async function commitSource({ store, run, records = {}, quarantine = {}, lineage, watermarks = [] }) {
+  const payload = {
+    ...records,
+    ...quarantine,
+    source_runs: [run],
+  }
+  if (lineage) payload.data_lineage = [lineage]
+  if (watermarks.length) payload.watermark_state = watermarks
+  await store.merge(payload)
+}
+
+export function groupRunsBySource(runs = []) {
+  const bySource = new Map()
+  for (const run of Array.isArray(runs) ? runs : []) {
+    if (!run?.source) continue
+    if (!bySource.has(run.source)) bySource.set(run.source, [])
+    bySource.get(run.source).push(run)
+  }
+  return bySource
+}
+
+/**
+ * The trailing record counts a count assertion is judged against.
+ *
+ * Numbers, not run objects: `trailingCounts` reads run objects fine, but the
+ * window is capped here so a source with a year of runs does not hand the
+ * assertion a thousand-length baseline it will only take a median of. Twelve
+ * is two days at the busiest cadence in the repo, and long enough that one bad
+ * afternoon does not become the baseline the next afternoon is measured
+ * against.
+ *
+ * A failed run contributes its count too. Excluding failures would let a source
+ * that has been returning zero for six runs be measured against the median of
+ * the three good runs that preceded them, which is the exact window that hides
+ * a collapse.
+ */
+const TRAILING_RUN_WINDOW = 12
+
+function trailingCountsFor(runs) {
+  return runs.slice(0, TRAILING_RUN_WINDOW).map((run) => Number(run?.records_processed ?? 0))
+}
+
+/**
+ * R-17. Merge a connector's reported watermark forward over the one this run
+ * was seeded with.
+ *
+ * `advanceWatermark` in `src/watermarks.js` is already forward-only inside the
+ * connector's own state; this is the guard at the *persistence* layer, which is
+ * where the last-writer-wins lived. Two overlapping runs — the second started
+ * a minute after the first, the first finishing later because a backfill was
+ * in flight — each wrote its own answer and the store kept whichever arrived
+ * last. The run that started earlier finishes later and wins, moving the
+ * cursor backwards, and the next incremental fetch re-requests everything in
+ * between.
+ *
+ * Forward-only on `last_record_date` / `last_cursor`. Everything else is
+ * last-writer-wins, because `last_success_at` and `in_progress` describe the
+ * *latest* attempt and there is no reading of them in which the older one is
+ * the more current one.
+ */
+function mergeWatermarkForward(prior, next) {
+  if (!next || typeof next !== 'object') return prior
+  if (!prior || typeof prior !== 'object') return next
+  const merged = { ...prior, ...next }
+  for (const key of ['last_record_date', 'last_cursor']) {
+    const a = dayNumberOf(prior[key])
+    const b = dayNumberOf(next[key])
+    if (a !== null && b !== null) {
+      merged[key] = a >= b ? prior[key] : next[key]
+    } else if (a !== null) {
+      merged[key] = prior[key]
+    }
+  }
+  return merged
+}
+
+function dayNumberOf(value) {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * R-41. The breaker's persisted form.
+ *
+ * One row per source, keyed `connector_circuit_<source>`, holding the whole
+ * `entryFor` object. `circuit.js` owns the state machine and the vocabulary;
+ * this is only the round trip, so a change to the breaker does not require a
+ * matching change here — an unknown field survives the trip and an unreadable
+ * state falls back to a fresh one.
+ */
+export const CIRCUIT_COLLECTION = 'connector_circuit'
+
+export function loadCircuitState(rows = []) {
+  const state = createCircuitState()
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const source = row?.source
+    if (!source || !row?.state) continue
+    state.sources[source] = {
+      ...blankCircuitEntry(),
+      ...(typeof row.state === 'object' ? row.state : {}),
+      source,
+    }
+  }
+  return state
+}
+
+function blankCircuitEntry() {
+  return {
+    state: 'closed',
+    consecutive_failures: 0,
+    opened_at: null,
+    probe_in_flight: false,
+    history: [],
+  }
+}
+
+/** The breaker as rows. Only sources with something to say are written. */
+export function circuitStateRows(state) {
+  return Object.entries(state?.sources || {}).map(([source, entry]) => ({
+    id: `${CIRCUIT_COLLECTION}_${source}`,
+    type: CIRCUIT_COLLECTION,
+    source,
+    state: {
+      state: entry.state,
+      consecutive_failures: entry.consecutive_failures,
+      opened_at: entry.opened_at ?? null,
+      probe_in_flight: false,
+      history: entry.history || [],
+    },
+    // Mirrored at the top level so a reader paging the collection can filter on
+    // it without unpacking a nested object. `assertionFailures` in
+    // freshness.js reads the same shape from run rows.
+    circuit_state: entry.state,
+    consecutive_failures: entry.consecutive_failures ?? 0,
+    opened_at: entry.opened_at ?? null,
+    updated_at: new Date().toISOString(),
+  }))
+}
+
+/**
+ * Whether this store can hold `connector_circuit`.
+ *
+ * `src/store.js` owns `SCHEMA` and this change does not, so this is read rather
+ * than assumed: a store that cannot hold the collection must still be able to
+ * run ingestion, and a store that can must actually use it. Anything that is
+ * not a store with a `read` returns false, which for the merge-only test stubs
+ * is the correct answer — they have no persistence to carry the breaker in.
+ */
+function isCircuitCollectionDeclared(store = null) {
+  // Read from the store module's own declaration rather than a hard-coded
+  // list, so the moment `connector_circuit` is added to `SCHEMA` this starts
+  // persisting with no edit here. `isDeclared` is a pure read of the exported
+  // declaration; importing it does not edit `src/store.js`.
+  if (isDeclared(CIRCUIT_COLLECTION)) return true
+  // A store may name its own collections — `PostgresStore` reads a table per
+  // key rather than off `SCHEMA` — so a store that declares the collection
+  // itself is believed over the module default. This is also the seam a test
+  // uses to prove the whole persist-and-reload path works before the
+  // declaration lands in `src/store.js`, which this change does not own.
+  const declared = store?.declaredCollections
+  return Array.isArray(declared) && declared.includes(CIRCUIT_COLLECTION)
 }
 
 export function normalizeIngestionSchedule(input = {}, existing = null) {
@@ -488,13 +774,38 @@ export function computeNextIngestionRunAt(schedule, from = nowIso()) {
 export function ingestionStatus(data) {
   const schedules = data.ingestion_schedules || []
   const runs = data.source_runs || []
+  // R-41. The same breaker state the gate reads, from the same place. The score
+  // below and the gate that acts on it now refer to one state object, which is
+  // the whole condition: a health score computed from a different evidence
+  // base than the one that decides to stop calling a source is a score that can
+  // say `ok` about a breaker that is open.
+  const circuitState = loadCircuitState(data.connector_circuit || [])
+  // R-44. `freshnessReport` is the production caller the three-run window was
+  // written for. It had none: this function called `explainVerdict` directly,
+  // with no `recentRecordCounts` and no `now`, so the trailing window was dead
+  // code reachable only from a test that passed the array in itself.
+  const runsBySource = groupRunsBySource(runs)
+  const verdicts = freshnessReportBySource({
+    sourceRunsBySource: Object.fromEntries(runsBySource),
+    policies: SOURCE_POLICIES,
+    now: Date.now(),
+  })
+  // `ingestionStatus` reads a snapshot, not a store, so it cannot ask the
+  // store what it declares. It answers from the data instead: if the store
+  // holds `connector_circuit` rows at all, the collection exists and the
+  // breaker survives. That is a statement about this deployment rather than
+  // about the schema, which is the right one — a declared-but-never-written
+  // collection and an undeclared one are indistinguishable from the rows, and
+  // claiming either would be a guess.
+  const circuitPersisted = isDeclared(CIRCUIT_COLLECTION) || Array.isArray(data.connector_circuit)
   return SOURCE_IDS.filter((source) => !BLOCKED_SOURCE_IDS.includes(source)).map((source) => {
     const policy = SOURCE_POLICIES[source] || {}
-    const sourceRuns = runs.filter((run) => run.source === source)
+    const sourceRuns = runsBySource.get(source) || []
     const lastRun = sourceRuns[0] || null
     const lastSuccess = sourceRuns.find((run) => run.status === 'success') || null
     const schedule = schedules.find((item) => item.source === source && item.status !== 'archived') || null
     const staleAfter = schedule?.stale_after_minutes ?? policy.stale_after_minutes
+    const circuit = outcomesFor(circuitState, source)
     return {
       source,
       regular: Boolean(policy.regular),
@@ -508,11 +819,12 @@ export function ingestionStatus(data) {
       // Both fields are kept. `status` is what existing consumers read and the
       // openapi schema names; replacing it outright would break every caller to
       // fix a problem a second field solves. New code should read `verdict`.
-      verdict: explainVerdict({
+      verdict: verdicts[source] || explainVerdict({
         source,
         policy,
         lastRun,
         lastSuccessRun: lastSuccess,
+        now: Date.now(),
       }),
       last_run: lastRun,
       last_success: lastSuccess,
@@ -522,18 +834,35 @@ export function ingestionStatus(data) {
       // would say the walk was checked and found whole.
       completeness: lastRun?.completeness ?? null,
       failure_streak: failureStreak(sourceRuns),
-      // ENH-10. `scoreConnector` had no production caller: it scored the
-      // breaker's in-memory window, and `runIngestion` builds that window from
-      // scratch every run and discards it. The score was therefore always null
+      // R-41. The breaker, as it is right now. `open` here means the next run
+      // will not call this source — a fact the status route was previously
+      // unable to state, because the breaker it scored was rebuilt per run and
+      // could never open.
+      circuit: {
+        state: circuitStateFor(circuitState, source),
+        consecutive_failures: circuitState.sources?.[source]?.consecutive_failures ?? 0,
+        // `false` when `connector_circuit` is not declared in the store's
+        // schema. The breaker is then real within a run and gone between them,
+        // and a reader is told so rather than being shown `closed` and reading
+        // it as healthy.
+        persisted: circuitPersisted,
+      },
+      // ENH-10 / R-41. `scoreConnector` had no production caller: it scored the
+      // breaker's in-memory window, and `runIngestion` built that window from
+      // scratch every run and discarded it. The score was therefore always null
       // outside a test — the one number this item exists to produce, produced
-      // nowhere. Rebuilt from the stored run history instead, which is the same
-      // evidence and survives the run.
+      // nowhere.
+      //
+      // Scored over the *persisted* breaker's own retained outcomes, which are
+      // the same evidence the gate acts on. Falls back to the run history only
+      // when the breaker holds none, because a store that has never persisted
+      // circuit state should still report a score rather than a null.
       //
       // `score` stays null until there is enough to measure. A source with two
       // runs has a success rate and no meaningful p95, and reporting the
       // success rate alone as a 0-100 health score would be a score computed
       // from one of three signals wearing the other's label.
-      health: scoreConnector({ outcomes: outcomesFromRuns(sourceRuns) }),
+      health: scoreConnector({ outcomes: circuit.length ? circuit : outcomesFromRuns(sourceRuns) }),
       schedule,
       policy,
     }
@@ -549,11 +878,12 @@ export function ingestionStatus(data) {
  * boolean would force the caller to re-derive the split and get it subtly
  * different per source.
  *
- * `trailingRecords` is deliberately not passed. A count assertion needs the
- * source's own trailing window, which lives in the store and is read by the
- * caller that has it; wiring a plausible-looking default here would make every
- * count assertion pass vacuously, which is the failure mode ENH-07 exists to
- * catch.
+ * `trailingRecords` used to be deliberately not passed, on the argument that a
+ * plausible-looking default would make every count assertion pass vacuously.
+ * That argument was right about the default and wrong about the consequence:
+ * leaving it out did not make the assertion cautious, it made it *inert*. An
+ * assertion that reports `unmeasured` on every run is not caution, it is a
+ * check that has never run wearing the costume of one.
  */
 function runSourceAssertions({ source, output, trailingRecords = [] }) {
   const records = OUTPUT_COLLECTIONS.flatMap((key) => output?.[key] || [])

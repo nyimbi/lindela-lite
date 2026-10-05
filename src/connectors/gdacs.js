@@ -23,7 +23,7 @@ async function gdacsIngest(options = {}) {
 
     for (const feed of feeds) {
       try {
-        const xml = await fetchWithRetry(feed, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2 })
+        const xml = await fetchWithRetry(feed, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2, source: options.source })
         for (const item of parseRssItems(xml)) {
           const parsed = parseGdacsItem(item)
           hazard_events.push({

@@ -64,6 +64,7 @@
  * same kind, same manifest line. That is the reconciliation — one entry point
  * was already the seam, and it was waiting for the code that used it.
  */
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { CaptureStore, createReplayStore } from '../capture.js'
 import { coerceLimit, createRateLimiter, parseRetryAfter, RATE_LIMIT_POLICIES } from '../rate-limit.js'
 
@@ -127,18 +128,66 @@ export function isReplaying() {
 // can say where the data came from, because no connector exposes the URLs it
 // builds internally.
 //
-// That was added as `beginFetchRecording`/`endFetchRecording` in ingestion.js
-// and never landed here, so the server has not booted since. A key per run
-// rather than a single active capture: two sources ingesting concurrently each
-// see only their own requests, which a single slot cannot express.
+// A key per run rather than a single active capture: two sources ingesting
+// concurrently each see only their own requests, which a single slot cannot
+// express.
+//
+// R-10, and this is the reason the wiring is shaped the way it is. `captureBody`
+// used to iterate `recordingsByKey.values()` and push every URL into every
+// live recording, so with two sources in flight each lineage row named both
+// providers' URLs. Worse, `beginFetchRecording` had no `try/finally` around it:
+// a connector that threw between begin and end orphaned its key, the list
+// stayed live for the life of the process, and every *subsequent* run's
+// requests were appended to a dead run's list — a stale `upstream_url_or_endpoint`
+// on every row written from then on, which is a wrong provenance claim on every
+// record, delivered confidently.
+//
+// The list is now reached through async-local context rather than by iterating
+// the map, so a request is attributed to the run that was on the stack when it
+// was issued. AsyncLocalStorage rather than a module-level "current recording"
+// pointer for the same reason: a pointer is process-global, and the moment two
+// sources overlap, every request lands in whichever one was entered last.
 
 const recordingsByKey = new Map()
+const recordingContext = new AsyncLocalStorage()
 
 /** Begin attributing fetches to `key`. Returns the list it will be appended to. */
 export function beginFetchRecording(key) {
   const list = []
   recordingsByKey.set(key, list)
   return list
+}
+
+/**
+ * Run `fn` with its fetches attributed to `key`, and always end the recording.
+ *
+ * Returns `{ value, recording }` rather than the bare value: the caller needs
+ * what was recorded, and the only moment it exists is inside this function.
+ * Returning just the value would leave the caller reaching for
+ * `endFetchRecording` after the `finally` has already deleted the key — which
+ * is exactly the ordering bug R-10 is about, re-introduced one layer up.
+ *
+ * The `finally` is the fix, not tidiness: the orphaned-key failure was caused by
+ * the gap between begin and end having no owner, and this is where the owner
+ * lives. A connector that throws still ends its recording, so the next run
+ * does not inherit it.
+ *
+ * The ALS scope and the map entry are separate on purpose. The map entry is
+ * what `endFetchRecording` hands back, so a caller that began a recording by
+ * hand can still end it; the ALS scope is what `captureBody` reads, and it is
+ * confined to the dynamic extent of `fn` — nothing that runs afterwards can
+ * write into this run's list even though the entry is still in the map.
+ */
+export async function withFetchRecording(key, fn) {
+  const list = beginFetchRecording(key)
+  const value = await recordingContext.run(list, async () => {
+    try {
+      return await fn()
+    } finally {
+      endFetchRecording(key)
+    }
+  })
+  return { value, recording: list }
 }
 
 /**
@@ -158,6 +207,11 @@ export function endFetchRecording(key) {
 /** The active recording list for `key`, or null. */
 export function fetchRecording(key) {
   return recordingsByKey.get(key) ?? null
+}
+
+/** Keys currently recording. Read by the readiness rollup, never written. */
+export function activeRecordingKeys() {
+  return [...recordingsByKey.keys()]
 }
 
 /** Forget every recording. Tests need it so two runs do not share one. */
@@ -335,9 +389,12 @@ async function captureBody(response, url, source) {
   // Putting it inside the fixture path meant the list was always empty outside a
   // capture, and every lineage row came back `upstream_url_or_endpoint: null` —
   // the exact constant this was meant to replace.
-  for (const list of recordingsByKey.values()) {
-    list.push({ url, status: response.status, recorded_at: new Date().toISOString() })
-  }
+  //
+  // R-10. One list, the one belonging to the run on the stack, rather than every
+  // list in the map. Broadcasting to all of them meant an overlapped run put
+  // both providers' URLs on both lineage rows, and a key orphaned by a throw
+  // kept collecting every later request for the life of the process.
+  recordingContext.getStore()?.push({ url, status: response.status, recorded_at: new Date().toISOString() })
 
   const capture = activeCapture
   if (!capture || capture.replay) return null
