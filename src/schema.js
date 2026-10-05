@@ -277,6 +277,11 @@ export function emptyStore() {
     // `emptyStore` key means `read()` spreads a missing key over the default and
     // the first `store.payload_captures` access throws on a fresh file.
     payload_captures: [],
+    // One row: when the periodic driver last ran, what it attempted, what
+    // succeeded, and what failed. The point is that it is readable — a process
+    // that is up, serving 200s, and whose pipeline has been dead for a week is
+    // currently indistinguishable from a healthy one.
+    system_heartbeat: [],
   }
 }
 

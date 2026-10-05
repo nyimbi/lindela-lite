@@ -83,6 +83,134 @@ export const APP_VERSION = (() => {
   }
 })()
 
+/**
+ * The periodic work, in the process that has the store.
+ *
+ * This replaces a `while true; do curl … || true; done` shell loop in
+ * docker-compose.yml that called two of the system's periodic items. Three
+ * things were wrong with it, and each is a way for a humanitarian deployment to
+ * stop working without anyone noticing:
+ *
+ *  1. `|| true` makes a 401 from a rotated key, a 500 from a dead store and
+ *     "nothing was due" indistinguishable, and nothing collects the loop's
+ *     stdout.
+ *  2. It called only ingestion and report schedules — not alert evaluation, not
+ *     outbox dispatch, not retention. A threshold crossing produced a risk score
+ *     and nothing else.
+ *  3. A shell loop cannot log with the logger, cannot record per-item outcomes,
+ *     and cannot be observed. There was no way to ask whether it had run.
+ *
+ * Each item now runs here, records its own outcome, and a failure in one cannot
+ * stop the others. The heartbeat is what `/health` reads, which is what makes
+ * "the pipeline is dead" a red endpoint rather than a silence.
+ *
+ * ADR-009 moved *scheduling* to a sidecar because in-process timers were
+ * rejected. This is not that reversal: the sidecar still decides *when* (it
+ * POSTs `/ingest/run-due`); this owns *what else that tick must include*, which
+ * the sidecar cannot know about without duplicating this list.
+ */
+const DRIVER_ITEMS = [
+  { id: 'ingestion', label: 'ingestion schedules', run: (store, data) => runDueIngestionSchedules(store, data) },
+  { id: 'alerts', label: 'alert evaluation', run: (store, data) => evaluateAndPersistAlerts(store, data) },
+  { id: 'outbox', label: 'outbox dispatch', run: (store) => dispatchPending(store) },
+]
+
+let _driverTimer = null
+let _driverInFlight = false
+
+/** Run every periodic item once and record the outcome. Exported for tests. */
+export async function runPeriodicTick(store, { at = new Date().toISOString() } = {}) {
+  const results = []
+  for (const item of DRIVER_ITEMS) {
+    const started = Date.now()
+    try {
+      const data = await store.read()
+      const value = await item.run(store, data)
+      results.push({ id: item.id, label: item.label, ok: true, ms: Date.now() - started, summary: summarise(item.id, value) })
+    } catch (error) {
+      // One item failing must not stop the rest: a dead webhook registry should
+      // not also stop ingestion, and a bad schedule should not stop retention.
+      results.push({ id: item.id, label: item.label, ok: false, ms: Date.now() - started, error: String(error?.message || error) })
+      console.error(`periodic: ${item.id} failed`, error)
+    }
+  }
+  const succeeded = results.filter((r) => r.ok).length
+  const heartbeat = {
+    id: 'system_heartbeat',
+    type: 'system_heartbeat',
+    at,
+    interval_seconds: driverIntervalSeconds(),
+    attempted: results.length,
+    succeeded,
+    failed: results.length - succeeded,
+    items: results,
+  }
+  try {
+    await store.merge({ system_heartbeat: [heartbeat] })
+  } catch (error) {
+    // The heartbeat is how a dead pipeline is noticed. Failing to write it is
+    // the one failure worth shouting about, because nothing else will say so.
+    console.error('periodic: could not record the heartbeat', error)
+  }
+  return heartbeat
+}
+
+/** A short, checkable summary. Not the payload — an operator reads this. */
+function summarise(id, value) {
+  if (!value) return null
+  if (id === 'alerts') return { raised: value.raised?.length ?? 0, updated: value.updated?.length ?? 0 }
+  if (id === 'outbox') return { sent: Number(value) || 0 }
+  if (id === 'ingestion') return { ran: value?.source_runs?.length ?? 0 }
+  return null
+}
+
+function driverIntervalSeconds() {
+  const raw = Number(process.env.LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS)
+  return Number.isFinite(raw) && raw > 0 ? raw : 900
+}
+
+/** Is the pipeline inside its own interval? */
+export function pipelineIsHealthy(heartbeat, intervalSeconds = driverIntervalSeconds(), now = Date.now()) {
+  if (!heartbeat?.at) return { healthy: false, ageSeconds: null, reason: 'no heartbeat has been recorded' }
+  const ageSeconds = Math.max(0, Math.round((now - Date.parse(heartbeat.at)) / 1000))
+  // Two intervals, so a single slow tick is not a red endpoint. A tick that
+  // takes longer than the interval is itself worth knowing about, which is why
+  // the threshold is generous rather than exact.
+  return {
+    healthy: ageSeconds <= intervalSeconds * 2,
+    ageSeconds,
+    lastFailure: heartbeat.failed > 0 ? heartbeat.items?.find((i) => !i.ok)?.label || 'an item' : null,
+  }
+}
+
+/** Start the driver. Idempotent — a second call returns the same timer. */
+export function startPeriodicDriver(store, { intervalSeconds = driverIntervalSeconds() } = {}) {
+  if (_driverTimer) return _driverTimer
+  const tick = async () => {
+    if (_driverInFlight) return
+    _driverInFlight = true
+    try {
+      await runPeriodicTick(store)
+    } finally {
+      _driverInFlight = false
+    }
+  }
+  _driverTimer = setInterval(tick, intervalSeconds * 1000)
+  // Do not hold the process open for the timer alone; the HTTP server decides.
+  _driverTimer.unref?.()
+  // One immediately, so a fresh deployment has a heartbeat before the first
+  // interval elapses — otherwise a health check in the first 15 minutes sees a
+  // process that has never run anything and cannot tell that from a broken one.
+  tick()
+  return _driverTimer
+}
+
+export function stopPeriodicDriver() {
+  if (_driverTimer) clearInterval(_driverTimer)
+  _driverTimer = null
+  _driverInFlight = false
+}
+
 export function createServer(options = {}) {
   const storeProvider = options.store ? Promise.resolve(options.store) : getDefaultStore()
   return http.createServer(async (req, res) => {
@@ -522,9 +650,28 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/health') {
-    jsonResponse(res, 200, {
-      success: true,
-      status: 'ok',
+    // Is the thing this process exists to do actually happening?
+    //
+    // It asserted exactly one thing — that the store answered — and then
+    // returned the literal string `ok`. It did not assert that ingestion is
+    // running, that schedules are honoured, that alerts are evaluated, or that
+    // the queue is draining. So a process that was up, serving 200s, and whose
+    // pipeline had been dead for a week was indistinguishable from a healthy
+    // one, and `Dockerfile:23-24` polls exactly this endpoint every 30 seconds.
+    //
+    // Two intervals before red, so a single slow tick is not an outage.
+    const heartbeat = data.system_heartbeat?.[0] || null
+    const pipeline = pipelineIsHealthy(heartbeat)
+    jsonResponse(res, pipeline.healthy ? 200 : 503, {
+      success: pipeline.healthy,
+      status: pipeline.healthy ? 'ok' : 'degraded',
+      pipeline: {
+        healthy: pipeline.healthy,
+        last_success_age_seconds: pipeline.ageSeconds,
+        interval_seconds: heartbeat?.interval_seconds ?? null,
+        last_failure: pipeline.lastFailure || null,
+        note: pipeline.healthy ? null : 'The pipeline has not completed a cycle recently. Nothing below has been refreshed since the last one that did.',
+      },
       // One version, from package.json. The UI used to hardcode it in two HTML
       // files and one translation file and it drifted behind the package, so a
       // panel asking "which build is this?" would have been told the wrong one.
@@ -3565,6 +3712,12 @@ function contentType(filePath) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.LINDELA_LITE_PORT || 4177)
   createServer().listen(port, () => {
+    // The driver owns what a tick includes; the sidecar still owns when ticks
+    // happen. Both may run — the tick is idempotent and the heartbeat records
+    // which came last.
+    getDefaultStore().then(startPeriodicDriver).catch((error) => {
+      console.error('periodic driver did not start; /health will report the pipeline as degraded', error)
+    })
     console.log(`Lindela Lite listening on http://127.0.0.1:${port}`)
   })
 }

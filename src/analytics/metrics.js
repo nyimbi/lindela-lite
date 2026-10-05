@@ -97,7 +97,90 @@ function rate({ numerator, denominator, floor, dp = 2, refusal }) {
  * definition visible when one appears: the surface that disagrees also
  * disagrees about what it is measuring.
  */
+/**
+ * Population within range of a set of hazards, counted once per person.
+ *
+ * This one is a count over a *set*, not a rate, and the hazard overlap is the
+ * trap: an asset inside two hazards' radii appears in both per-hazard rows, and
+ * a reader summing the rows — which is exactly what
+ * `src/operations.js:425` does with `population_at_risk_total` — counts its
+ * population twice. Clustered events are the normal regime for floods, not an
+ * edge case, so this is not a rare over-count.
+ *
+ * The per-hazard rows stay per-hazard; each hazard has its own exposed
+ * population and collapsing them would lose that. What this provides is the
+ * figure that is safe to *sum to*: distinct assets, each contributing its
+ * population once. Note the null, which is the point of R-87: an asset with no
+ * recorded population contributes nothing to the total *and is counted*, so the
+ * payload can report "34 facilities, none of which records a population" rather
+ * than a confident zero.
+ */
+export const population_at_risk = Object.freeze({
+  unit: 'count',
+  basis: 'population served by distinct assets within range of at least one hazard, each asset counted once; per-hazard rows overlap and must not be summed',
+  sample_floor: 0,
+  compute({ assets = [], hazards = [], radiusKm = 25, haversineKm } = {}) {
+    const byService = new Map()
+    let exposedAssets = 0
+    let assetsWithPopulation = 0
+    let total = 0
+    let nullPopulationAssets = 0
+    for (const asset of assets) {
+      const lat = numericOrNull(asset?.latitude)
+      const lon = numericOrNull(asset?.longitude)
+      if (lat === null || lon === null) continue
+      let hits = 0
+      for (const hazard of hazards) {
+        const hlat = numericOrNull(hazard?.latitude)
+        const hlon = numericOrNull(hazard?.longitude)
+        if (hlat === null || hlon === null) continue
+        if (haversineKm({ latitude: hlat, longitude: hlon }, { latitude: lat, longitude: lon }) <= radiusKm) {
+          hits += 1
+        }
+      }
+      if (!hits) continue
+      exposedAssets += 1
+      const population = numericOrNull(asset?.population_served) ?? numericOrNull(asset?.beneficiaries)
+      if (population === null) nullPopulationAssets += 1
+      else { total += population; assetsWithPopulation += 1 }
+      const type = asset?.service_type || 'unknown'
+      byService.set(type, (byService.get(type) || 0) + 1)
+    }
+    return {
+      value: total,
+      // The null travels with the number. `population_at_risk: 0` on a store
+      // where no asset records a population is a claim that nobody is exposed;
+      // this says "0 people, of 34 facilities, none of which records one".
+      assets_at_risk: exposedAssets,
+      assets_with_recorded_population: assetsWithPopulation,
+      assets_without_recorded_population: nullPopulationAssets,
+      // True whenever any asset sits in more than one hazard's range — which is
+      // the clustered-events regime, and the reason the per-hazard rows must
+      // not be summed.
+      hazards_overlap: exposedAssets > 0 && hazardsOverlap(assets, hazards, radiusKm, haversineKm),
+      assets_by_service_type: Object.fromEntries(byService),
+      refusal: null,
+    }
+  },
+})
+
+// Declared before METRICS because the map refers to it. A registry that cannot
+// name its own entries is not a registry.
 export const METRICS = Object.freeze({
+  /**
+   * Population served by assets within range of at least one hazard.
+   *
+   * Registered here because it was written here and omitted from this map, so
+   * `computeMetric` refused it and the one caller wanting the union had to
+   * either register it or substitute a differently-named metric — which is the
+   * same-name-different-meaning defect this registry exists to prevent.
+   *
+   * The denominator is deliberately **not** the per-hazard row count. An asset
+   * inside two hazards' extent appears in two rows, and flood events cluster, so
+   * the more of them there are, the more a sum inflates the figure.
+   */
+  population_at_risk,
+
   /**
    * Share of *determined* alerts that were false.
    *
@@ -267,72 +350,6 @@ export const METRICS = Object.freeze({
   }),
 })
 
-/**
- * Population within range of a set of hazards, counted once per person.
- *
- * This one is a count over a *set*, not a rate, and the hazard overlap is the
- * trap: an asset inside two hazards' radii appears in both per-hazard rows, and
- * a reader summing the rows — which is exactly what
- * `src/operations.js:425` does with `population_at_risk_total` — counts its
- * population twice. Clustered events are the normal regime for floods, not an
- * edge case, so this is not a rare over-count.
- *
- * The per-hazard rows stay per-hazard; each hazard has its own exposed
- * population and collapsing them would lose that. What this provides is the
- * figure that is safe to *sum to*: distinct assets, each contributing its
- * population once. Note the null, which is the point of R-87: an asset with no
- * recorded population contributes nothing to the total *and is counted*, so the
- * payload can report "34 facilities, none of which records a population" rather
- * than a confident zero.
- */
-export const population_at_risk = Object.freeze({
-  unit: 'count',
-  basis: 'population served by distinct assets within range of at least one hazard, each asset counted once; per-hazard rows overlap and must not be summed',
-  sample_floor: 0,
-  compute({ assets = [], hazards = [], radiusKm = 25, haversineKm } = {}) {
-    const byService = new Map()
-    let exposedAssets = 0
-    let assetsWithPopulation = 0
-    let total = 0
-    let nullPopulationAssets = 0
-    for (const asset of assets) {
-      const lat = numericOrNull(asset?.latitude)
-      const lon = numericOrNull(asset?.longitude)
-      if (lat === null || lon === null) continue
-      let hits = 0
-      for (const hazard of hazards) {
-        const hlat = numericOrNull(hazard?.latitude)
-        const hlon = numericOrNull(hazard?.longitude)
-        if (hlat === null || hlon === null) continue
-        if (haversineKm({ latitude: hlat, longitude: hlon }, { latitude: lat, longitude: lon }) <= radiusKm) {
-          hits += 1
-        }
-      }
-      if (!hits) continue
-      exposedAssets += 1
-      const population = numericOrNull(asset?.population_served) ?? numericOrNull(asset?.beneficiaries)
-      if (population === null) nullPopulationAssets += 1
-      else { total += population; assetsWithPopulation += 1 }
-      const type = asset?.service_type || 'unknown'
-      byService.set(type, (byService.get(type) || 0) + 1)
-    }
-    return {
-      value: total,
-      // The null travels with the number. `population_at_risk: 0` on a store
-      // where no asset records a population is a claim that nobody is exposed;
-      // this says "0 people, of 34 facilities, none of which records one".
-      assets_at_risk: exposedAssets,
-      assets_with_recorded_population: assetsWithPopulation,
-      assets_without_recorded_population: nullPopulationAssets,
-      // True whenever any asset sits in more than one hazard's range — which is
-      // the clustered-events regime, and the reason the per-hazard rows must
-      // not be summed.
-      hazards_overlap: exposedAssets > 0 && hazardsOverlap(assets, hazards, radiusKm, haversineKm),
-      assets_by_service_type: Object.fromEntries(byService),
-      refusal: null,
-    }
-  },
-})
 
 function hazardsOverlap(assets, hazards, radiusKm, haversineKm) {
   if (typeof haversineKm !== 'function') return null
