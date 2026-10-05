@@ -20,9 +20,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { registerHooks } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { before, describe, it } from 'node:test'
+import { installModuleResolution } from './browser-env.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC_ROOT = path.join(ROOT, 'public')
@@ -130,15 +130,7 @@ async function loadParametric({ routes = {}, catalog = {} } = {}) {
   els.clear()
   const asked = []
 
-  registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier.startsWith('/shared/')) {
-        return { url: new URL(`.${specifier}`, `file://${PUBLIC_ROOT}/`).href, shortCircuit: true }
-      }
-      return nextResolve(specifier, context)
-    },
-  })
-
+  installModuleResolution()
   const store = new Map()
   globalThis.window = {
     addEventListener() {},

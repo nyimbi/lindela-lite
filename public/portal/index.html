@@ -220,14 +220,8 @@
         color: var(--ink-muted);
       }
 
-      .offline-banner {
-        background: #fef3c7;
-        color: #b45309;
-        padding: 0.75rem 1rem;
-        text-align: center;
-        font-size: 0.875rem;
-        display: none;
-      }
+      /* `.offline-banner` deleted: unflippable `#fef3c7`, plus a `display: none`
+         competing with `[hidden]`. styles.css ships it themed. */
 
       /* A failed load must not look like an empty one. The left rule does that
          work before a word is read; `data-state` keeps the two selectors apart
@@ -246,19 +240,9 @@
         color: var(--ink-muted);
       }
 
-      .retry-btn {
-        margin-top: 1rem;
-        padding: 0.5rem 1rem;
-        font: inherit;
-        color: var(--ink);
-        background: var(--surface);
-        border: 1px solid var(--ink-muted);
-        border-radius: 6px;
-        cursor: pointer;
-        min-height: 44px;
-      }
+      /* `.retry-btn` now lives in components.css — promoted, not copied. */
 
-      .retry-btn:hover { background: var(--surface-hover); }
+      /* `.retry-btn:hover` now lives in components.css — promoted, not copied. */
 
       .offline-banner.show {
         display: block;

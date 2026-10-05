@@ -20,9 +20,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { registerHooks } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { before, describe, it } from 'node:test'
+import { installModuleResolution } from './browser-env.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC = path.join(ROOT, 'public')
@@ -97,15 +97,7 @@ function stubElement(tag = 'DIV') {
 const byId = new Map()
 const stubLocation = { hash: '', href: 'http://localhost/', pathname: '/districts' }
 
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier.startsWith('/shared/')) {
-      return { url: new URL(`.${specifier}`, `file://${PUBLIC}/`).href, shortCircuit: true }
-    }
-    return nextResolve(specifier, context)
-  },
-})
-
+installModuleResolution()
 globalThis.window = {
   addEventListener() {},
   removeEventListener() {},

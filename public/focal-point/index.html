@@ -113,19 +113,9 @@
         max-width: 60ch;
       }
 
-      .retry-btn {
-        margin-top: 1rem;
-        padding: 0.5rem 1rem;
-        font: inherit;
-        color: var(--ink);
-        background: var(--surface);
-        border: 1px solid var(--ink-muted);
-        border-radius: 6px;
-        cursor: pointer;
-        min-height: 44px;
-      }
+      /* `.retry-btn` now lives in components.css — promoted, not copied. */
 
-      .retry-btn:hover { background: var(--surface-hover); }
+      /* `.retry-btn:hover` now lives in components.css — promoted, not copied. */
 
       .workflow-card {
         background: var(--surface);
@@ -344,13 +334,8 @@
         color: var(--ink-muted);
       }
 
-      .offline-banner {
-        background: #fef3c7;
-        color: #b45309;
-        padding: 0.75rem 1rem;
-        text-align: center;
-        font-size: 0.875rem;
-      }
+      /* `.offline-banner` deleted: its `#fef3c7` did not flip in the dark
+         theme, and styles.css already ships it against themed tokens. */
 
       @media (max-width: 640px) {
         main { padding: 1rem; }

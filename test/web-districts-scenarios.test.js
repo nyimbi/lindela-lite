@@ -20,8 +20,8 @@
  */
 
 import assert from 'node:assert/strict'
-import { registerHooks } from 'node:module'
 import { before, describe, it } from 'node:test'
+import { installModuleResolution } from './browser-env.mjs'
 
 const PUBLIC_ROOT = new URL('../public/', import.meta.url)
 
@@ -70,15 +70,7 @@ const byId = new Map()
 const location = { hash: '', search: '', href: 'http://localhost/', origin: 'http://localhost', pathname: '/' }
 
 function installDom() {
-  registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier.startsWith('/shared/')) {
-        return { url: new URL(`.${specifier}`, PUBLIC_ROOT).href, shortCircuit: true }
-      }
-      return nextResolve(specifier, context)
-    },
-  })
-
+  installModuleResolution()
   globalThis.window = {
     addEventListener() {},
     removeEventListener() {},

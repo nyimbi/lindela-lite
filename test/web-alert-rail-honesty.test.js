@@ -30,8 +30,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { registerHooks } from 'node:module'
 import { before, describe, it } from 'node:test'
+import { installBrowserEnv } from './browser-env.mjs'
+import { installModuleResolution } from './browser-env.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC_ROOT = new URL('../public/', import.meta.url)
@@ -55,75 +56,17 @@ let alertListOutcome
 before(async () => {
   // `alertListOutcome` is a pure export, but it lives in a module that boots
   // the whole console at import time — element lookups, a fetch loop, a poll.
-  // The console is imported with the DOM stub below so the export is reachable
-  // without executing a browser.
-  registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier.startsWith('/shared/')) {
-        return { url: new URL(`.${specifier}`, PUBLIC_ROOT).href, shortCircuit: true }
-      }
-      return nextResolve(specifier, context)
-    },
-  })
-
-  const stub = () => ({
-    tagName: 'DIV',
-    style: {},
-    dataset: {},
-    attrs: {},
-    hidden: false,
-    innerHTML: '',
-    textContent: '',
-    value: '',
-    checked: false,
-    options: [],
-    selectedIndex: 0,
-    childNodes: [],
-    children: [],
-    length: 0,
-    classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-    setAttribute() {}, removeAttribute() {}, getAttribute: () => null,
-    hasAttribute: () => false, addEventListener() {}, removeEventListener() {},
-    querySelector: () => null, querySelectorAll: () => [],
-    closest: () => null, focus() {}, blur() {}, appendChild() {}, removeChild() {},
-    insertBefore() {}, setSelectionRange() {},
-    getBoundingClientRect: () => ({ width: 0, height: 0, left: 0, top: 0 }),
-    contains: () => false, cloneNode: () => stub(),
-  })
-
-  const byId = new Map()
-  const location = { hash: '', search: '', href: 'http://localhost/', origin: 'http://localhost', pathname: '/' }
-  globalThis.window = {
-    addEventListener() {}, removeEventListener() {}, location,
-    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
-    setTimeout, clearTimeout,
-    innerWidth: 1440, innerHeight: 900, devicePixelRatio: 1,
-    scrollTo() {}, getComputedStyle: () => ({ getPropertyValue: () => '' }),
-  }
-  globalThis.document = {
-    getElementById: (id) => { if (!byId.has(id)) byId.set(id, stub()); return byId.get(id) },
-    querySelectorAll: () => [], querySelector: () => null,
-    createElement: stub, createElementNS: (_ns, tag) => stub(tag),
-    createTextNode: (t) => ({ textContent: t }),
-    documentElement: stub(), body: stub(), head: stub(),
-    scrollingElement: stub(), readyState: 'complete',
-    hidden: false, visibilityState: 'visible',
-    addEventListener() {}, fonts: { ready: Promise.resolve() },
-  }
-  globalThis.location = location
-  globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
-  globalThis.fetch = async () => ({
-    ok: true, status: 200, json: async () => ({ success: true, data: [] }), text: async () => '',
-  })
-  // The console's poll self-reschedules through setTimeout. Left real, the test
-  // file never finishes.
-  globalThis.setInterval = () => 0
-  globalThis.setTimeout = () => 0
-  globalThis.clearTimeout = () => {}
+  // The console is imported with the shared environment from
+  // `test/browser-env.mjs` — which also installs module resolution, so the
+  // browser-absolute `/shared/…` specifiers inside app.js resolve to disk.
+  // This file used to carry its own copy of both; see R-74.
+  installBrowserEnv()
 
   const mod = await import(new URL('app.js', PUBLIC_ROOT).href)
   alertListOutcome = mod.alertListOutcome
 })
+
+
 
 /* ---------------------------------------------------------------- helpers */
 

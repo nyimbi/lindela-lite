@@ -24,10 +24,10 @@
  */
 
 import assert from 'node:assert/strict'
-import { registerHooks } from 'node:module'
 import { before, describe, it } from 'node:test'
 
 import { redactPii } from '../src/pii.js'
+import { installModuleResolution } from './browser-env.mjs'
 
 const PUBLIC_ROOT = new URL('../public/', import.meta.url)
 
@@ -83,15 +83,7 @@ function stubElement(tag = 'DIV') {
  * under test.
  */
 async function loadBrowserModule(relativePath) {
-  registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier.startsWith('/shared/')) {
-        return { url: new URL(`.${specifier}`, PUBLIC_ROOT).href, shortCircuit: true }
-      }
-      return nextResolve(specifier, context)
-    },
-  })
-
+  installModuleResolution()
   const byId = new Map()
   const location = { hash: '', search: '', href: 'http://localhost/', origin: 'http://localhost', pathname: '/' }
 

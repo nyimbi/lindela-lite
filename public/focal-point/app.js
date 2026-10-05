@@ -191,7 +191,17 @@ async function loadData() {
     connectionStatus.style.color = 'var(--sev-high)'
     statusText.textContent = describeState(ERROR, { subject: 'The approval queue, the protocols and the decisions' }).title
   } else {
-    const counts = `${state.pending.length} to review · ${state.protocols.length} active`
+    // `state.pending` is assigned inside `renderPending`, which is skipped
+    // entirely when the workflows fetch failed — so on that path this read was
+    // `undefined.length` and the load threw a TypeError *after* the error state
+    // had already been rendered. A focal point whose queue endpoint was down
+    // got an error panel, and then a broken status line on top of it, and no
+    // retry because the handler had already died.
+    //
+    // Found by `web-module-importability.test.js`, which boots every surface:
+    // this is the primary failure path of this surface and nothing else in the
+    // suite reaches it.
+    const counts = `${(state.pending || []).length} to review · ${state.protocols.length} active`
     statusText.textContent = `Ready — ${counts}.`
   }
 }

@@ -110,38 +110,15 @@
         gap: 0.75rem;
       }
 
-      .kpi-tile {
-        background: var(--bg-elevated);
-        border: 1px solid var(--stroke);
-        border-radius: 6px;
-        padding: 0.875rem 1rem;
-        display: flex;
-        flex-direction: column;
-        gap: 0.25rem;
-      }
+      /* `.kpi-tile` now lives in components.css — promoted, not copied. */
 
-      .kpi-tile-label {
-        font-size: 0.75rem;
-        color: var(--ink-muted);
-      }
+      /* `.kpi-tile-label` now lives in components.css — promoted, not copied. */
 
-      .kpi-tile-value {
-        font-size: 1.75rem;
-        font-weight: 700;
-        color: var(--ink);
-        line-height: 1.1;
-      }
+      /* `.kpi-tile-value` now lives in components.css — promoted, not copied. */
 
-      .kpi-tile-unit {
-        font-size: 0.75rem;
-        color: var(--ink-muted);
-      }
+      /* `.kpi-tile-unit` now lives in components.css — promoted, not copied. */
 
-      .kpi-tile-annotation {
-        font-size: 0.7rem;
-        color: var(--brand);
-        margin-top: 0.25rem;
-      }
+      /* `.kpi-tile-annotation` now lives in components.css — promoted, not copied. */
 
       /* Sparkline tiles */
       .spark-tile {
@@ -179,7 +156,10 @@
         display: inline-block;
         font-size: 0.65rem;
         background: var(--danger);
-        color: #fff;
+        /* --on-danger, not #fff. The literal happened to be right in the dark
+           theme and wrong in the light one, where --danger is a lighter red
+           and white on it measures below the 4.5:1 floor. */
+        color: var(--on-danger);
         border-radius: 3px;
         padding: 0 0.4rem;
         line-height: 1.6;

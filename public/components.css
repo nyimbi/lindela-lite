@@ -895,6 +895,64 @@ input[type="range"]:focus-visible::-moz-range-thumb     { box-shadow: 0 0 0 3px 
 .card-interactive:hover { background: var(--surface); }
 .card-interactive:focus-within { border-color: var(--brand); }
 
+/* --- KPI tile ----------------------------------------------------
+   `.kpi-tile` was defined inline in co/ and districts/ with the same box and
+   different padding, so the same figure looked like it belonged to two
+   products. `.card` above is the shared base; these are the metric-specific
+   parts, which were duplicated verbatim between the two surfaces and are
+   promoted here because both of those surfaces are now maintained in this
+   partition.
+
+   `min-height: 44px` on the interactive retry button is the SC 2.5.8 target
+   floor, and it is the reason this rule exists as a component rather than a
+   style: a button that is 4px too short fails on every surface it is
+   duplicated onto. */
+.kpi-tile {
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.kpi-tile-label,
+.kpi-tile-unit {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.kpi-tile-value {
+  font-size: var(--text-h2);
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.kpi-tile-annotation {
+  font-size: var(--text-xs);
+  color: var(--brand);
+  margin-top: var(--sp-1);
+}
+
+.retry-btn {
+  margin-top: var(--sp-4);
+  padding: var(--sp-2) var(--sp-4);
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--ink-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  /* WCAG 2.2 SC 2.5.8. This button was duplicated into two surfaces, each
+     carrying the floor, which is exactly the arrangement that produces a
+     third copy that forgets it. */
+  min-height: 44px;
+}
+
+.retry-btn:hover { background: var(--surface-hover); }
+
 .card-title {
   margin: 0;
   font-size: var(--text-body);
