@@ -7,7 +7,8 @@ import {
   normalizeSeverity,
   riskLevel,
 } from './schema.js'
-import { stableId, toNumber } from './utils.js'
+import { haversineKm, stableId, toNumber } from './utils.js'
+import { computeMetric } from './analytics/metrics.js'
 
 const OPERATIONAL_COLLECTIONS = Object.freeze({
   incidents: 'incident',
@@ -422,7 +423,19 @@ export function counts(data) {
     // The row counts are kept under honest names, and the figures an operator
     // actually wants are given their own keys.
     population_at_risk_rows: data.population_at_risk?.length ?? null,
-    population_at_risk_total: sumOf(data.population_at_risk, 'population_at_risk'),
+    // The union of the distinct assets at risk, not the sum of the per-hazard
+    // rows.
+    //
+    // An asset inside two hazards' extent appears in two rows, so the sum
+    // counted it twice — and flood events cluster, so the more of them there
+    // are the more double-counting. This is `src/analytics/metrics.js`'s
+    // declared metric rather than a second arithmetic performed here, so there
+    // is one definition of "population at risk" instead of one per surface.
+    population_at_risk_total: computeMetric('population_at_risk', {
+      assets: data.service_assets || [],
+      hazards: data.hazard_events || [],
+      haversineKm,
+    }),
     facilities_at_risk_types: data.facilities_at_risk?.length ?? null,
     facilities_at_risk_total: sumOf(data.facilities_at_risk, 'at_risk_count'),
     data_lineage: data.data_lineage?.length || 0,

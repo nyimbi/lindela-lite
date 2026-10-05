@@ -270,6 +270,13 @@ export function emptyStore() {
     quarantine_service_assets: [],
     quarantine_food_security_records: [],
     quarantine_disease_observations: [],
+    // Raw upstream response bodies, for replay and fixture seeding (ENH-12).
+    //
+    // Declared here because `store.js` SCHEMA now carries it: an `emptyStore`
+    // key with no SCHEMA entry is harmless, but a SCHEMA entry with no
+    // `emptyStore` key means `read()` spreads a missing key over the default and
+    // the first `store.payload_captures` access throws on a fresh file.
+    payload_captures: [],
   }
 }
 
