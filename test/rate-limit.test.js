@@ -467,12 +467,46 @@ describe('declared limits are enforced', () => {
     }
   })
 
-  it('carries no entry for a connector that declares nothing', () => {
-    // The inverse check, so the table cannot quietly grow a policy for a source
-    // whose provider budget nobody has looked up. An invented rate is the exact
-    // failure the header comment warns against.
-    for (const id of ['gdacs_archive', 'chirps', 'nasa_firms', 'open_meteo_archive', 'open_meteo_flood', 'dhis2']) {
-      assert.equal(RATE_LIMIT_POLICIES[id], undefined, `${id} declares no rate limit and has no policy entry`)
+  it('carries no entry for a connector that makes no repeated outbound call', () => {
+    // Was: the same check over five sources that crawl, plus dhis2 — asserting
+    // they have no policy, on the principle that an invented rate is worse than
+    // none. The principle is right and the conclusion was wrong, so here is the
+    // reasoning rather than a deleted assertion.
+    //
+    // A policy in this table is a claim about *us*, not about the provider. The
+    // five entries added for R-11 say how fast this platform will call, and they
+    // are derived from what the connector does — `gdacs_archive` is ~166
+    // requests for one archive crawl, `chirps` is one directory listing per year
+    // — with values set well below what a public endpoint could plausibly
+    // object to. Nobody had to look up a provider's budget to know that 10
+    // requests a minute is not a flood.
+    //
+    // The failure the old conclusion was protecting against is real and it is
+    // one-sided: being wrong in the conservative direction costs a crawl a few
+    // minutes, and being wrong in the other direction means an unbounded
+    // fan-out against a free public API. R-11 is that second case, and it was
+    // live for all five.
+    //
+    // `dhis2` keeps the old treatment, because it is true of it: one push per
+    // run to a configured instance, not a crawl, and a rate limit on it would
+    // be a number nobody reads.
+    assert.equal(RATE_LIMIT_POLICIES.dhis2, undefined,
+      'dhis2 pushes once per run and is not a crawl; a policy for it is a number nobody reads')
+  })
+
+  it('every added ceiling is conservative enough to be our own claim, not the provider\'s', () => {
+    // The test above asserts the reasoning; this one makes the reasoning
+    // checkable. A ceiling above these numbers would be a claim about what a
+    // provider tolerates, which is a lookup somebody has to do.
+    const ceilings = { chirps: 10, nasa_firms: 5, gdacs_archive: 20, open_meteo_archive: 30, open_meteo_flood: 30 }
+    for (const [id, maxPerMinute] of Object.entries(ceilings)) {
+      const policy = RATE_LIMIT_POLICIES[id]
+      assert.ok(policy, `${id} should have a ceiling`)
+      assert.ok(policy.ratePerWindow <= maxPerMinute,
+        `${id} runs at ${policy.ratePerWindow}/min, above the ${maxPerMinute}/min this ` +
+        'project is willing to claim without a provider budget to cite')
+      assert.equal(policy.concurrency, 1,
+        `${id} is a crawl, not an API being used; a concurrency above 1 bursts the first requests`)
     }
   })
 

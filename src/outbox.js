@@ -50,7 +50,17 @@ function outboundEventId(event, payload) {
  * silently stops every future notification — was indistinguishable from a
  * healthy queue.
  */
-export async function emit(store, event, payload) {
+/**
+ * R-22: `emit` and the caller's own writes went in as two merges, in that
+ * order. A failure of the second left an outbox event announcing a transition
+ * that never happened, and subscribers act on events.
+ *
+ * `writes` is the fix: pass the records the event is announcing and both land in
+ * one merge, because one merge is the only unit this store has. A caller that
+ * has nothing else to persist still works, and one that passes writes it in the
+ * wrong order gets a store that refuses rather than a store that half-applies.
+ */
+export async function emit(store, event, payload, writes = {}) {
   const data = await store.read()
   const id = outboundEventId(event, payload)
   const existing = (data.events_outbox || []).find((row) => row.id === id)
@@ -93,11 +103,55 @@ export async function emit(store, event, payload) {
     next_attempt_at: existing?.next_attempt_at ?? null,
     ...(existing?.failed_at ? { failed_at: existing.failed_at } : {}),
   }
-  await store.merge({ events_outbox: [record] })
+  await store.merge({ events_outbox: [record], ...writes })
   return record
 }
 
+/**
+ * One in-flight dispatch per store, in one process.
+ *
+ * R-21: `dispatchPending` read the pending set, delivered to every matched
+ * webhook, then merged the outcomes. Two concurrent calls — the driver's tick
+ * and an operator pressing the button — both read the same pending rows and both
+ * delivered them. Two subscribers acted on one transition, which for a
+ * disbursement or an incident is the worst kind of duplicate: idempotent on the
+ * wire, twice in the world.
+ *
+ * A promise chain keyed on the store, so the second caller waits and then reads
+ * *fresh* state and finds the rows already sent. It is a lock rather than an
+ * in-flight claim because the store has no column to claim into, and a claim
+ * added to the row would need the same atomic write this is avoiding.
+ *
+ * Scope, stated: one process. Two replicas sharing a PostgreSQL store still need
+ * `pg_advisory_lock` around the read/merge, and that is the honest limit of an
+ * in-process mutex.
+ */
+const _dispatchLocks = new WeakMap()
+
+async function withDispatchLock(store, fn) {
+  const previous = _dispatchLocks.get(store) || Promise.resolve()
+  let release
+  const held = new Promise((resolve) => { release = resolve })
+  _dispatchLocks.set(store, previous.then(() => held))
+  try {
+    await previous
+  } catch {
+    // A previous holder's failure must not poison the queue; the lock is a
+    // timing device, not a result.
+  }
+  try {
+    return await fn()
+  } finally {
+    release()
+  }
+}
+
 export async function dispatchPending(store, options = {}) {
+  // R-21. The whole read-deliver-merge cycle runs under the store's lock.
+  return withDispatchLock(store, () => dispatchPendingUnlocked(store, options))
+}
+
+async function dispatchPendingUnlocked(store, options) {
   // checkUrl defaults to the SSRF guard and exists so tests can deliver to a
   // loopback listener; nothing in the request path passes it.
   const {

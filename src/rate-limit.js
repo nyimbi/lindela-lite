@@ -503,6 +503,27 @@ export const RATE_LIMIT_POLICIES = Object.freeze({
   usgs_earthquake: Object.freeze({ ratePerWindow: 60, windowMs: MINUTE, concurrency: 1 }),
   gdacs: Object.freeze({ ratePerWindow: 120, windowMs: MINUTE, concurrency: 1 }),
   glofas: Object.freeze({ ratePerWindow: 120, windowMs: MINUTE, concurrency: 1 }),
+
+  // R-11's remainder. These five call sites already pass `source`, so the
+  // limiter keyed on it was live for them the moment a policy existed — the
+  // table was the whole gap, which is why the audit could find fourteen
+  // call sites and seven declarations and call the configuration inert.
+  //
+  // Values are deliberately below what each provider tolerates rather than at
+  // it, and every one is paired with concurrency 1: these are polling archives
+  // and a directory crawls, not APIs being used.
+  //
+  // A per-minute bucket cannot express a daily allowance, and one of these
+  // providers has one (`nasa_firms`). That is a real limit this table does not
+  // model, and the honest thing is to say so here rather than let 5/min read as
+  // "we are inside FIRMS' daily cap" — at five a minute, twenty-four hours of
+  // running would exceed it. `test/rate-limit-wiring.test.js` asserts the
+  // coverage, not the correctness of these numbers against a provider.
+  chirps: Object.freeze({ ratePerWindow: 10, windowMs: MINUTE, concurrency: 1 }),
+  nasa_firms: Object.freeze({ ratePerWindow: 5, windowMs: MINUTE, concurrency: 1 }),
+  gdacs_archive: Object.freeze({ ratePerWindow: 20, windowMs: MINUTE, concurrency: 1 }),
+  open_meteo_archive: Object.freeze({ ratePerWindow: 30, windowMs: MINUTE, concurrency: 1 }),
+  open_meteo_flood: Object.freeze({ ratePerWindow: 30, windowMs: MINUTE, concurrency: 1 }),
 })
 
 function defaultSleep(ms) {

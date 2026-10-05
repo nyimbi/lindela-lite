@@ -179,19 +179,45 @@ export const ROUTE_SCOPES = Object.freeze([
  * deployment with correctly configured keys still handed out the district's
  * operational picture to anyone who could reach the port.
  */
+/**
+ * The paths this build decides are public, and how each is matched.
+ *
+ * `/ready` is public so a load balancer can reach it. It carries no records:
+ * store mode, reachability and latency. Anything more would be a map of the
+ * deployment's internals for anyone who can reach the port.
+ *
+ * The two matching rules are separate because R-15 lived in the difference
+ * between them. Everything was prefix-matched, so `/api/v1/health/anything` was
+ * public too — a path that 404s, but only *after* the request had been
+ * authenticated-or-not and, on a public path, handed a full-table read. An
+ * unauthenticated read amplifier with a 404 at the end of it.
+ *
+ * So: the paths this file ships with are matched exactly, and only an
+ * operator's own entries — who wrote them knowing what they are publishing —
+ * get prefix semantics. A prefix under a shipped path is the one thing a
+ * deployment can still opt into, and only by naming it.
+ */
+const SHIPPED_PUBLIC_PATHS = Object.freeze(['/api/v1/health', '/api/v1/ready'])
+
 export function publicPaths(env = process.env) {
   const configured = String(env.LINDELA_LITE_PUBLIC_PATHS || '')
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean)
-  // `/ready` is public so a load balancer can reach it. It carries no records:
-  // store mode, reachability and latency. Anything more would be a map of the
-  // deployment's internals for anyone who can reach the port.
-  return ['/api/v1/health', '/api/v1/ready', ...configured]
+  return [...SHIPPED_PUBLIC_PATHS, ...configured]
 }
 
+/**
+ * Does this path answer without a token?
+ *
+ * Exact for the shipped paths, prefix for the operator's. Returns false for
+ * anything under a shipped path that is not the path itself, which is what
+ * sends `/api/v1/health/anything` to the auth gate instead of to a store read.
+ */
 export function isPublicPath(pathname, env = process.env) {
-  return publicPaths(env).some((allowed) => pathname === allowed || pathname.startsWith(`${allowed}/`))
+  if (SHIPPED_PUBLIC_PATHS.includes(pathname)) return true
+  const configured = publicPaths(env).filter((allowed) => !SHIPPED_PUBLIC_PATHS.includes(allowed))
+  return configured.some((allowed) => pathname === allowed || pathname.startsWith(`${allowed}/`))
 }
 
 export function isAuthConfigured(env = process.env) {

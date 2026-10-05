@@ -1352,7 +1352,25 @@ describe('Lindela Lite API', () => {
     assert.equal(runDue.data[0].schedule_id, schedule.data.id)
     assert.equal(runDue.data[0].status, 'success')
     assert.equal(runDue.schedules[0].last_run_at, runDue.data[0].completed_at)
-    assert.ok(Date.parse(runDue.schedules[0].next_run_at) > Date.parse(runDue.schedules[0].last_run_at))
+    // R-53 changed what this can assert. It used to require `next_run_at` to be
+    // strictly after the run that just finished, which is true only when the
+    // schedule was on time — and this one was created with a `next_run_at` nine
+    // months in the past, so the old rule gave it another hour of grace on top
+    // of a nine-month debt. The next run of an overdue schedule is due now.
+    //
+    // What survives, and what the assertion now protects: the schedule never
+    // rewinds behind the run that just happened, and an overdue one is due
+    // immediately rather than pushed out by another interval.
+    const nextRunAt = Date.parse(runDue.schedules[0].next_run_at)
+    const lastRunAt = Date.parse(runDue.schedules[0].last_run_at)
+    assert.ok(nextRunAt >= Date.parse(runDue.data[0].started_at),
+      `next_run_at (${runDue.schedules[0].next_run_at}) must not precede the run that just finished`)
+    assert.ok(nextRunAt - lastRunAt < 60 * 60 * 1000,
+      'a schedule that was already nine months overdue is due now, not in another hour')
+    // And the lateness is recorded rather than invisible — the slip this test
+    // could not see is the one the status route now reports.
+    assert.equal(typeof runDue.schedules[0].last_slip_ms, 'number',
+      'a run that started long after it was due must record how late it was')
 
     const events = await fetchJson(`${baseUrl}/api/v1/events?event_type=scheduled_ingest`)
     assert.equal(events.data.length, 1)

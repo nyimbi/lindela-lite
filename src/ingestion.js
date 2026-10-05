@@ -797,10 +797,21 @@ export async function runDueIngestionSchedules(store, data, options = {}) {
     })
     runs.push(...result.source_runs)
     const completedAt = result.source_runs[0]?.completed_at || nowIso()
+    // R-53. The slip is measured here, where both times are known, and stored
+    // on the schedule — so `ingestionStatus` can report a drifting schedule
+    // instead of an `ok` that means only "it ran".
+    const startedAt = result.source_runs[0]?.started_at || nowIso()
+    const slip = scheduleSlip({
+      dueAt: schedule.next_run_at,
+      startedAt,
+      intervalMinutes: schedule.interval_minutes ?? SOURCE_POLICIES[schedule.source]?.interval_minutes,
+    })
     schedules.push({
       ...schedule,
       last_run_at: completedAt,
-      next_run_at: computeNextIngestionRunAt(schedule, completedAt),
+      next_run_at: computeNextIngestionRunAt(schedule, completedAt, { now: startedAt }),
+      last_slip_ms: slip.slip_ms,
+      last_slip_at: startedAt,
       updated_at: nowIso(),
     })
     analytics.push(result)
@@ -814,10 +825,63 @@ export function ingestionScheduleIsDue(schedule, now = new Date()) {
   return schedule.status === 'active' && schedule.next_run_at && Date.parse(schedule.next_run_at) <= timestamp
 }
 
-export function computeNextIngestionRunAt(schedule, from = nowIso()) {
+/**
+ * When this schedule next runs.
+ *
+ * R-53: this anchored on `completed_at`, so the interval was measured from the
+ * end of a run. A source that consistently takes 50 minutes on a 30-minute
+ * interval slipped 50 minutes every cycle, forever, and `ingestionStatus`
+ * reported `ok` throughout — the schedule was drifting and the only symptom was
+ * data that was quietly older than anyone believed.
+ *
+ * So the anchor is when the run was *due*, which is what "every 30 minutes" has
+ * always meant, with one guard: if that time has already passed — a slow
+ * source, or the process was down — the next run is now rather than in the
+ * past. Fixed-rate without drift, and without a catch-up storm that fires a
+ * missed hour of runs in a burst.
+ */
+export function computeNextIngestionRunAt(schedule, from = nowIso(), { now = from } = {}) {
   const interval = toNumber(schedule.interval_minutes, null)
   if (!interval) return null
-  return new Date(Date.parse(from) + interval * 60 * 1000).toISOString()
+  const dueAt = Date.parse(schedule.next_run_at || '')
+  const fromMs = Date.parse(from)
+  const nowMs = Date.parse(now)
+  // The due time is the anchor whenever there is one. Using completion as the
+  // fallback — "or the run finished, if it finished after it was due" — is the
+  // drift this function existed to remove: a run that takes longer than its
+  // interval is *always* later than its due time, so that branch would always
+  // be taken and the fix would do nothing.
+  //
+  // `from` is then only the fallback for a schedule with no due time at all,
+  // which is a schedule being created rather than one being rescheduled.
+  const anchor = Number.isFinite(dueAt) ? dueAt : fromMs
+  const next = anchor + interval * 60 * 1000
+  return new Date(next > nowMs ? next : nowMs).toISOString()
+}
+
+/**
+ * How late a scheduled run started, in ms, and whether that is a problem.
+ *
+ * A slip is not itself a failure — a provider that is slow for one cycle is a
+ * provider that was slow. It becomes a problem when it is *persistent*, which
+ * is why the number is recorded per run and the threshold is a multiple of the
+ * interval rather than a fixed duration: a 12-hour schedule is allowed an hour
+ * of lateness and a 30-minute schedule is allowed a minute.
+ */
+export function scheduleSlip({ dueAt, startedAt, intervalMinutes, thresholdMultiple = 1 }) {
+  const due = Date.parse(dueAt || '')
+  const started = Date.parse(startedAt || '')
+  if (!Number.isFinite(due) || !Number.isFinite(started)) {
+    return { slip_ms: null, slipping: false, reason: 'no due time recorded' }
+  }
+  const slipMs = Math.max(0, started - due)
+  const thresholdMs = toNumber(intervalMinutes, null) * thresholdMultiple * 60 * 1000
+  const threshold = Number.isFinite(thresholdMs) ? thresholdMs : null
+  return {
+    slip_ms: slipMs,
+    threshold_ms: threshold,
+    slipping: threshold === null ? false : slipMs > threshold,
+  }
 }
 
 export function ingestionStatus(data) {
@@ -855,10 +919,40 @@ export function ingestionStatus(data) {
     const schedule = schedules.find((item) => item.source === source && item.status !== 'archived') || null
     const staleAfter = schedule?.stale_after_minutes ?? policy.stale_after_minutes
     const circuit = outcomesFor(circuitState, source)
+    // R-53. A schedule that is slipping is not an `ok` schedule. Reported on
+    // the status route because that is the route an operator opens when a
+    // source looks wrong.
+    //
+    // The slip is the value measured against the real due time when the run
+    // started, and it is *read* here rather than recomputed. The first version
+    // reconstructed the due time as "one interval before the run started" and
+    // compared — which makes the slip exactly one interval by construction, so
+    // the check could never fire. A measurement that has to be re-derived at
+    // the far end is a measurement that will be.
+    const intervalMinutes = schedule
+      ? (schedule.interval_minutes ?? policy.interval_minutes ?? null)
+      : null
+    const slipMs = schedule?.last_slip_ms ?? null
+    const slipThresholdMs = Number.isFinite(Number(intervalMinutes))
+      ? Number(intervalMinutes) * 60 * 1000
+      : null
     return {
       source,
       regular: Boolean(policy.regular),
       status: sourceHealth(lastRun, staleAfter),
+      // `schedule` below is the raw record; this is the cadence read off it,
+      // under its own name because two fields cannot both be called `schedule`
+      // and the shorthand would win.
+      cadence: schedule ? {
+        next_run_at: schedule.next_run_at,
+        last_run_at: schedule.last_run_at,
+        // How late the last scheduled run started, and whether that is a
+        // problem. The threshold is one interval, so a daily source is allowed
+        // an hour and a 30-minute one is allowed 30 minutes.
+        last_slip_ms: slipMs,
+        slipping: Number.isFinite(slipMs) && slipThresholdMs !== null && slipMs > slipThresholdMs,
+        slip_threshold_ms: slipThresholdMs,
+      } : null,
       // ENH-06. The old `status` above is one clock judging every source: a
       // two-week staleness window applied to a daily rainfall product and to an
       // annual WHO national statistic alike, so a quiet GDACS week and a dead

@@ -1844,8 +1844,10 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
         jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
         return
       }
-      const outboxRecord = await emit(store, 'community_feedback.created', { feedback_id: record.id })
-      await store.merge({ community_feedback: [record] })
+      // R-22: one merge, so the event cannot outlive the record it announces.
+      const outboxRecord = await emit(store, 'community_feedback.created', { feedback_id: record.id }, {
+        community_feedback: [record],
+      })
       jsonResponse(res, 201, { success: true, data: record, outbox_event: outboxRecord.id })
       return
     }
@@ -2776,6 +2778,7 @@ export async function evaluateAndPersistAlerts(store, data, { actor = null, subj
     } catch (emitError) {
       // A subscriber that cannot be reached is not a reason to abandon the
       // alert, which is already persisted above. Recorded rather than dropped.
+      metrics.counter('outbox_emit_failed_total', { event: 'alert_event.created' })
       console.error('alert_event.created emit failed', emitError)
     }
   }
@@ -2842,7 +2845,16 @@ async function handleAlertRoute(store, data, req, res, url, route) {
     try {
       await emit(store, 'alert_rule.created', record)
     } catch (emitError) {
-      // Swallow emit errors to not break the request
+      // R-22. The record is already persisted above, so this gap runs the other
+      // way from the one the atomic call sites closed: the state is true and the
+      // notification is missing. That is the survivable direction — a subscriber
+      // that never hears is a gap; a subscriber that hears about a transition
+      // that did not happen is a false statement about the world — but a gap
+      // that is swallowed is a gap nobody can count. So it is counted and
+      // logged, and the request still succeeds: a failed notification is not a
+      // reason to abandon a rule that was created.
+      metrics.counter('outbox_emit_failed_total', { event: 'alert_rule.created' })
+      logger.error({ err: emitError, event: 'alert_rule.created' }, 'outbox emit failed; the record is stored and no subscriber was told')
     }
     jsonResponse(res, 201, { success: true, data: record, action_log: log })
     return
@@ -3007,7 +3019,10 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
       try {
         await emit(store, 'incident.created', record)
       } catch (emitError) {
-        // Swallow emit errors
+        // Counted and logged, not swallowed — see the alert_rule path above for
+        // why this direction of the gap is the survivable one.
+        metrics.counter('outbox_emit_failed_total', { event: 'incident.created' })
+        logger.error({ err: emitError, event: 'incident.created' }, 'outbox emit failed; the incident is stored and no subscriber was told')
       }
     }
     jsonResponse(res, 201, { success: true, data: record, action_log: log })
@@ -3242,12 +3257,13 @@ async function handleParametricRoute(store, data, req, res, url, route) {
         // paid, to whom, on what condition, could be created or edited with
         // nothing recording who did it.
         const log = actionLog('parametric_rules', 'created', rule, body.actor, req.__auth?.subject)
-        const updated = {
-          ...data,
-          parametric_rules: [...(data.parametric_rules || []), rule],
-          action_logs: [...(data.action_logs || []), log],
-        }
-        await store.write(updated)
+        // R-25. `write()` replaces the whole store, and these four routes used
+        // it to change one rule: on PostgreSQL that is a DELETE of every row
+        // and a reinsert, for an O(N + B) edit. `replaceCollection` says what
+        // actually happened, and the action log is its own merge rather than a
+        // reason to rewrite the world.
+        await store.replaceCollection('parametric_rules', [...(data.parametric_rules || []), rule])
+        await store.merge({ action_logs: [log] })
         jsonResponse(res, 201, { success: true, data: rule, action_log: log })
       } catch (err) {
         jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
@@ -3274,7 +3290,8 @@ async function handleParametricRoute(store, data, req, res, url, route) {
         const updated_rule = normalizeParametricRule(body, existing)
         const rules = (data.parametric_rules || []).map((r) => r.id === route.id ? updated_rule : r)
         const log = actionLog('parametric_rules', 'updated', updated_rule, body.actor, req.__auth?.subject)
-        await store.write({ ...data, parametric_rules: rules, action_logs: [...(data.action_logs || []), log] })
+        await store.replaceCollection('parametric_rules', rules)
+        await store.merge({ action_logs: [log] })
         jsonResponse(res, 200, { success: true, data: updated_rule, action_log: log })
       } catch (err) {
         jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
@@ -3293,7 +3310,8 @@ async function handleParametricRoute(store, data, req, res, url, route) {
       const log = actionLog('parametric_rules', 'deleted', existing, null, req.__auth?.subject, {
         removed_rule: existing,
       })
-      await store.write({ ...data, parametric_rules: rules, action_logs: [...(data.action_logs || []), log] })
+      await store.replaceCollection('parametric_rules', rules)
+      await store.merge({ action_logs: [log] })
       jsonResponse(res, 200, { success: true, data: { id: route.id, deleted: true }, action_log: log })
       return
     }
@@ -3371,7 +3389,8 @@ async function handleParametricRoute(store, data, req, res, url, route) {
       })
       const log = actionLog('parametric_disbursements', 'simulated', result, body.actor, req.__auth?.subject)
       const disbursements = [...(data.parametric_disbursements || []), result]
-      await store.write({ ...data, parametric_disbursements: disbursements, action_logs: [...(data.action_logs || []), log] })
+      await store.replaceCollection('parametric_disbursements', disbursements)
+      await store.merge({ action_logs: [log] })
       jsonResponse(res, 201, { success: true, data: result, sanctions })
     } catch (err) {
       jsonResponse(res, err.statusCode || 400, {
@@ -3655,8 +3674,9 @@ async function handleWorkflowRoute(store, data, req, res, url, route) {
   if (req.method === 'POST' && !route.id && !route.action) {
     const body = await readRequestJson(req)
     const record = normalizeWorkflowInstance(body)
-    const outboxRecord = await emit(store, 'workflow.created', { workflow_id: record.id, type: record.type })
-    await store.merge({ workflow_instances: [record] })
+    const outboxRecord = await emit(store, 'workflow.created', { workflow_id: record.id, type: record.type }, {
+      workflow_instances: [record],
+    })
     metrics.counter('workflow_created', { type: record.type })
     jsonResponse(res, 201, { success: true, data: record, outbox_event: outboxRecord.id })
     return
@@ -3693,8 +3713,7 @@ async function handleWorkflowRoute(store, data, req, res, url, route) {
         type: updated.type,
         from: existing.state,
         to: updated.state,
-      })
-      await store.merge({ workflow_instances: [updated] })
+      }, { workflow_instances: [updated] })
       metrics.counter('workflow_transition_total', { type: updated.type, from: existing.state, to: updated.state })
       jsonResponse(res, 200, { success: true, data: updated, outbox_event: outboxRecord.id })
       return

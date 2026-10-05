@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { emptyStore } from './schema.js'
@@ -345,7 +346,13 @@ export class JsonStore {
    *  leaves the previous store intact rather than a truncated JSON file. */
   async #writeFile(data) {
     const next = { ...emptyStore(), ...data, updated_at: nowIso() }
-    const tmp = `${this.filePath}.${process.pid}.tmp`
+    // R-18. Keyed on the pid alone, so two stores on one path in one process
+    // wrote to the same temp file and one of them renamed an empty file into
+    // place — reproduced as ENOENT or, worse, a truncated store. The random
+    // suffix makes the name unique per *write*, which is the unit that
+    // collides; the pid is kept because two processes writing the same path is
+    // a different problem and a different answer.
+    const tmp = `${this.filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
     await fs.mkdir(path.dirname(this.filePath), { recursive: true })
     // ENH-13 / R-29. Compact, not `null, 2`. Measured at 37.8 MB: 112.6 ms
     // pretty-printed against 17.6 ms compact — indentation is 84% of merge

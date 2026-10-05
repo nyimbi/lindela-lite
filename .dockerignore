@@ -3,6 +3,9 @@ npm-debug.log
 data
 .git
 .omx
+.omc
+.claude
+.zvec-grep
 .env
 .env.*
 coverage

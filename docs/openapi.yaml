@@ -653,6 +653,11 @@ paths:
   /api/v1/ingest/status:
     get:
       summary: Per-source ingestion health and schedule status
+      description: >-
+        Each entry carries a `cadence` block: when the schedule is next due, and
+        how late the last scheduled run started. `slipping` is true when that
+        lateness exceeds one interval, so a source that cannot hold its cadence
+        says so rather than reporting an `ok` that only means "it ran".
       responses:
         '200':
           description: Ingestion source health

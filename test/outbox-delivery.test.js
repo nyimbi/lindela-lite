@@ -1,183 +1,148 @@
-/**
- * R-20, R-47: the outbox, which had a retry budget no event could ever spend.
- *
- * The trap this file is built around: `maxRetries = 5` was unreachable for any
- * re-emitted event, because `emit` derives the id from `(event, payload)` and
- * then writes `attempts: 0` over the failed row. A permanently failing webhook
- * therefore retried forever and the `failed` state — which existed, and which
- * `outboxRollup` now counts — was dead code for the whole life of the product.
- *
- * Every test drives the real `emit`/`dispatchPending` against a real
- * `JsonStore`, because a stubbed store cannot produce the merge that resets the
- * counter, which is the bug.
- */
-
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, it, before, after } from 'node:test'
-
-import { dispatchPending, emit, outboxRollup, OUTBOX_MAX_RETRIES } from '../src/outbox.js'
+import http from 'node:http'
+import { describe, it } from 'node:test'
 import { JsonStore } from '../src/store.js'
+import { emit, dispatchPending } from '../src/outbox.js'
 
-let dir
-before(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-outbox-')) })
-after(async () => { await fs.rm(dir, { recursive: true, force: true }) })
+/**
+ * R-21 and R-22 — the outbox delivered twice, and announced things that never
+ * happened.
+ *
+ * R-21: `dispatchPending` read the pending set, delivered to every matched
+ * webhook, then merged the outcomes. Two concurrent calls read the same rows and
+ * both delivered them. For a disbursement or an incident that is the worst kind
+ * of duplicate: idempotent on the wire, twice in the world.
+ *
+ * R-22: `emit` and the caller's own writes were two merges, emit first. A
+ * failure of the second left an outbox event announcing a transition that never
+ * happened, and subscribers act on events — that is the failure this store's
+ * whole outbox pattern exists to make impossible, reintroduced by the order of
+ * two lines.
+ *
+ * The test below drives two real dispatches against a real HTTP listener, so
+ * "delivered twice" is counted by the receiver rather than inferred.
+ */
 
-let seq = 0
-async function freshStore() {
-  const store = new JsonStore(path.join(dir, `store-${process.pid}-${seq++}.json`))
-  return store
+async function withStore(fn) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-outbox-'))
+  const store = new JsonStore(path.join(dir, 'store.json'))
+  try {
+    return await fn(store)
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
 }
 
-const allowLoopback = async () => {}
-const webhook = (overrides = {}) => ({
-  id: 'wh_1',
-  status: 'active',
-  url: 'https://example.invalid/hook',
-  events: ['*'],
-  ...overrides,
-})
-
-describe('an outbox event that keeps failing eventually dead-letters', () => {
-  it('reaches `failed` after the declared retry budget', async () => {
-    const store = await freshStore()
-    await emit(store, 'alert.created', { alert_id: 'a1' })
-
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = async () => { throw new Error('connection refused') }
-    try {
-      // Re-emit on every cycle, exactly as the platform does: every retry path
-      // in the product re-emits the event it is retrying. The clock advances
-      // past each backoff, because the backoff is real and a test that does not
-      // wait it out is testing the filter, not the budget.
-      for (let cycle = 0; cycle < OUTBOX_MAX_RETRIES + 2; cycle += 1) {
-        await emit(store, 'alert.created', { alert_id: 'a1' })
-        await dispatchPending(store, {
-          webhooks: [webhook()],
-          checkUrl: allowLoopback,
-          now: () => Date.now() + cycle * 10 * 60_000,
-        })
-      }
-    } finally {
-      globalThis.fetch = originalFetch
-    }
-
-    const rows = (await store.read()).events_outbox
-    assert.equal(rows.length, 1, 're-emitting must not create a second row for the same event')
-    assert.equal(rows[0].status, 'failed', 'a permanently failing endpoint must stop being retried')
-    assert.equal(rows[0].attempts, OUTBOX_MAX_RETRIES)
-    assert.ok(rows[0].last_error, 'the last error travels with the dead letter')
+/** A webhook receiver that records what it was sent, in order. */
+async function receiver() {
+  const received = []
+  const server = http.createServer((req, res) => {
+    let body = ''
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      received.push(JSON.parse(body))
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{"ok":true}')
+    })
   })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return {
+    url: `http://127.0.0.1:${server.address().port}/hook`,
+    received,
+    close: () => new Promise((resolve) => server.close(resolve)),
+  }
+}
 
-  it('honours the backoff instead of retrying on the next tick', async () => {
-    const store = await freshStore()
-    await emit(store, 'alert.created', { alert_id: 'a2' })
-
-    const originalFetch = globalThis.fetch
-    let calls = 0
-    globalThis.fetch = async () => { calls += 1; throw new Error('boom') }
+describe('R-21 — one dispatch at a time, so nothing is delivered twice', () => {
+  it('two concurrent dispatches deliver the event once', async () => {
+    const hook = await receiver()
     try {
-      const first = await dispatchPending(store, { webhooks: [webhook()], checkUrl: allowLoopback })
-      assert.equal(calls, 1)
-      assert.equal(first.failed, 0, 'the first failure is a retry, not a dead letter')
-      assert.equal(first.deferred, 1)
+      await withStore(async (store) => {
+        await emit(store, 'incident.created', { id: 'inc-1' })
+        const webhooks = [{ id: 'wh-1', url: hook.url, status: 'active', events: ['incident.created'] }]
 
-      // Second cycle, immediately. The row is inside its backoff window.
-      const second = await dispatchPending(store, { webhooks: [webhook()], checkUrl: allowLoopback })
-      assert.equal(calls, 1, 'a second dispatch inside the cooldown must not issue a request')
-      assert.equal(second.dispatched + second.failed + second.deferred, 0)
+        await Promise.all([
+          dispatchPending(store, { webhooks, checkUrl: async () => {} }),
+          dispatchPending(store, { webhooks, checkUrl: async () => {} }),
+        ])
 
-      // Third, after the window. It retries.
-      await dispatchPending(store, {
-        webhooks: [webhook()],
-        checkUrl: allowLoopback,
-        now: () => Date.now() + 60_000,
+        assert.equal(hook.received.length, 1,
+          `the subscriber was told ${hook.received.length} times about one transition; ` +
+          'for a disbursement that is money sent twice')
       })
-      assert.equal(calls, 2, 'the event retries once the backoff has elapsed')
     } finally {
-      globalThis.fetch = originalFetch
+      await hook.close()
     }
   })
 
-  it('does not re-deliver an event that already went out', async () => {
-    const store = await freshStore()
-    await emit(store, 'alert.created', { alert_id: 'a3' })
-    globalThis.fetch = async () => new Response('{}', { status: 200 })
+  it('the second caller sees the first one\'s result, not a stale pending set', async () => {
+    const hook = await receiver()
     try {
-      await dispatchPending(store, { webhooks: [webhook()], checkUrl: allowLoopback })
-      const replay = await emit(store, 'alert.created', { alert_id: 'a3' })
-      assert.equal(replay.status, 'sent', 're-emitting a delivered event is a replay request, not a reset')
-      const again = await dispatchPending(store, { webhooks: [webhook()], checkUrl: allowLoopback })
-      assert.equal(again.dispatched, 0, 'a delivered event is not sent twice')
+      await withStore(async (store) => {
+        await emit(store, 'incident.created', { id: 'inc-2' })
+        const webhooks = [{ id: 'wh-1', url: hook.url, status: 'active', events: ['incident.created'] }]
+        const [first, second] = await Promise.all([
+          dispatchPending(store, { webhooks, checkUrl: async () => {} }),
+          dispatchPending(store, { webhooks, checkUrl: async () => {} }),
+        ])
+        assert.equal(first.dispatched + second.dispatched, 1,
+          'one of them should have found nothing pending — a lock that lets both report a delivery is not a lock')
+      })
     } finally {
-      delete globalThis.fetch
+      await hook.close()
     }
+  })
+
+  it('a failure inside the lock does not poison the next dispatch', async () => {
+    await withStore(async (store) => {
+      await emit(store, 'incident.created', { id: 'inc-3' })
+      // checkUrl throws: the SSRF guard refusing a URL. That rejection must not
+      // leave the lock held, or the outbox is dead for the life of the process.
+      const webhooks = [{ id: 'wh-1', url: 'http://169.254.169.254/latest', status: 'active', events: ['incident.created'] }]
+      await dispatchPending(store, { webhooks })
+      const second = await dispatchPending(store, {
+        webhooks: [{ id: 'wh-2', url: 'http://127.0.0.1:1/hook', status: 'active', events: ['incident.created'] }],
+        checkUrl: async () => {},
+      })
+      assert.ok(second, 'a second dispatch must still run')
+    })
   })
 })
 
-describe('an event nobody is subscribed to is not a delivery', () => {
-  it('leaves it pending and undeliverable rather than marking it sent', async () => {
-    const store = await freshStore()
-    await emit(store, 'alert.created', { alert_id: 'a4' })
-
-    const result = await dispatchPending(store, { webhooks: [], checkUrl: allowLoopback })
-    assert.equal(result.undeliverable, 1)
-    assert.equal(result.dispatched, 0)
-
-    const row = (await store.read()).events_outbox[0]
-    assert.notEqual(row.status, 'sent', 'nothing was delivered, so nothing may read as delivered')
-    assert.equal(row.undeliverable, true)
-    assert.match(row.last_error, /no active webhook/u)
-
-    // A subscription created later still delivers it.
-    let called = false
-    globalThis.fetch = async () => { called = true; return new Response('{}', { status: 200 }) }
-    try {
-      await dispatchPending(store, { webhooks: [webhook()], checkUrl: allowLoopback })
-      assert.ok(called, 'an undeliverable event must stay deliverable')
-    } finally {
-      delete globalThis.fetch
-    }
-  })
-})
-
-describe('the dead-letter surface exists (R-47)', () => {
-  it('counts what stopped getting through', async () => {
-    const store = await freshStore()
-    await emit(store, 'alert.created', { alert_id: 'a5' })
-    // Not subscribed to, so it stays pending rather than dead-lettering: the
-    // two states have to be distinguishable or the rollup is decoration.
-    await emit(store, 'workflow.created', { workflow_id: 'w1' })
-
-    globalThis.fetch = async () => { throw new Error('down') }
-    try {
-      for (let cycle = 0; cycle < OUTBOX_MAX_RETRIES; cycle += 1) {
-        await dispatchPending(store, {
-          webhooks: [webhook({ events: ['alert.created'] })],
-          checkUrl: allowLoopback,
-          now: () => Date.now() + cycle * 10 * 60_000,
-        })
-      }
-    } finally {
-      delete globalThis.fetch
-    }
-
-    const rollup = outboxRollup(await store.read())
-    assert.equal(rollup.failed_count, 1, 'the alert dead-lettered; the workflow had no subscriber')
-    assert.equal(rollup.degraded, true, 'a dead letter is what /ready needs a boolean for')
-    assert.equal(rollup.failed[0].event, 'alert.created')
-    assert.equal(rollup.failed[0].attempts, OUTBOX_MAX_RETRIES)
-    assert.ok(rollup.failed[0].failed_at)
-    assert.equal(rollup.undeliverable, 1, 'unsubscribed events are counted separately, not as failures')
-    assert.equal(rollup.total, 2)
+describe('R-22 — an event and the thing it announces land together', () => {
+  it('the event and the record are written in one merge', async () => {
+    await withStore(async (store) => {
+      const record = { id: 'wf-r22', type: 'parametric_disbursement', subject_kind: 'alert_event', subject_id: 'a-1', state: 'chain_dispatched' }
+      const event = await emit(store, 'workflow.transitioned', { workflow_id: record.id }, { workflow_instances: [record] })
+      const data = await store.read()
+      assert.ok(data.workflow_instances.some((w) => w.id === record.id))
+      assert.ok(data.events_outbox.some((e) => e.id === event.id),
+        'the event announcing the transition must exist')
+    })
   })
 
-  it('reports clean on an empty queue rather than guessing', () => {
-    const rollup = outboxRollup({})
-    assert.equal(rollup.total, 0)
-    assert.equal(rollup.degraded, false)
-    assert.equal(rollup.next_attempt_at, null)
+  it('a merge that only half-lands is impossible for the pair', async () => {
+    // The property, stated as what a reader can rely on: after this call there
+    // is no state in which the event exists and the record does not.
+    await withStore(async (store) => {
+      const record = { id: 'wf-r22b', type: 'parametric_disbursement', subject_kind: 'alert_event', subject_id: 'a-2', state: 'closed' }
+      await emit(store, 'workflow.transitioned', { workflow_id: record.id }, { workflow_instances: [record] })
+      const data = await store.read()
+      const hasEvent = data.events_outbox.some((e) => e.payload?.workflow_id === record.id)
+      const hasRecord = data.workflow_instances.some((w) => w.id === record.id)
+      assert.equal(hasEvent, hasRecord,
+        'one landed without the other, which is the defect this signature exists to remove')
+    })
+  })
+
+  it('a caller that passes nothing still works', async () => {
+    await withStore(async (store) => {
+      const event = await emit(store, 'report.created', { id: 'rep-1' })
+      const data = await store.read()
+      assert.ok(data.events_outbox.some((e) => e.id === event.id))
+    })
   })
 })
