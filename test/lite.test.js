@@ -2799,7 +2799,15 @@ describe('Lindela Lite client UI', () => {
     }
   })
 
-  it('GET / HTML contains equity panel elements', async () => {
+  // The panel is deferred out of the shell (commit a33a1c0: four rail panels
+  // stopped shipping in the first load), so its contents are no longer inline
+  // in `GET /`. What has to stay true is the property the old assertion was
+  // protecting, split into its two real halves: the markup exists somewhere a
+  // browser can actually fetch, and the shell still names it so `mountPanel`
+  // can find it. Asserting the inline form would have pinned the deferral as
+  // a bug — and asserting only that `/panels/equity.html` parses would let a
+  // panel nobody mounts, or a shell that lost its hook, pass.
+  it('GET / shell and its deferred equity panel both reach the operator', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-equity-'))
     const store = new JsonStore(path.join(dir, 'store.json'))
     const server = createServer({ store })
@@ -2811,9 +2819,26 @@ describe('Lindela Lite client UI', () => {
       const res = await fetch(`${baseUrl}/`)
       assert.equal(res.status, 200)
       const html = await res.text()
-      assert.ok(html.includes('id="panel-equity"'), 'equity panel missing')
-      assert.ok(html.includes('id="equityTable"'), 'equity table missing')
+      // The shell keeps the mount point and the tab that opens it. These are
+      // still inlined: a user who never opens the tab must still be able to see
+      // and read the tab, and the mount point is what the panel is inserted into.
+      assert.ok(html.includes('id="panel-equity"'), 'equity panel mount point missing from the shell')
       assert.ok(html.includes('data-i18n="tab.equity"'), 'tab.equity i18n missing')
+
+      // The contents come from the panel file, fetched over the same server —
+      // so this also fails if the static route that serves it breaks, which a
+      // filesystem read would not catch.
+      const panelRes = await fetch(`${baseUrl}/panels/equity.html`)
+      assert.equal(panelRes.status, 200, 'the deferred equity panel is not served')
+      const panel = await panelRes.text()
+      assert.ok(panel.includes('id="equityTable"'), 'equity table missing from the deferred panel')
+
+      // And the shell still points at it, so mounting is wired rather than
+      // merely possible.
+      const app = await (await fetch(`${baseUrl}/app.js`)).text()
+      assert.match(app, /equity:\s*'\/panels\/equity\.html'/,
+        'app.js no longer maps the equity panel to its deferred file, so the '
+        + 'mount point in the shell would stay empty')
     } finally {
       listener.close()
     }

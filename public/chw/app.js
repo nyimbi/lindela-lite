@@ -652,7 +652,7 @@ async function submitSymptomReport() {
   try {
     const sent = await submitOrQueue('/api/v1/chw/report', body, { what: 'symptom report' })
     showToast(
-      sent?.queued ? t('chw.report_queued', { what: 'symptom report' }) : t('chw.report_sent', { what: 'symptom report' }),
+      t(sent?.queued ? 'chw.report_queued' : 'chw.report_sent', { what: 'symptom report' }),
       sent?.queued ? 'info' : 'ok',
     )
     resetSymptomWizard()
@@ -761,7 +761,7 @@ function setupIncidentScreen() {
     try {
       const sent = await submitOrQueue('/api/v1/chw/report', body, { what: 'incident report' })
       showToast(
-        sent?.queued ? t('chw.report_queued', { what: 'incident report' }) : t('chw.report_sent', { what: 'incident report' }),
+        t(sent?.queued ? 'chw.report_queued' : 'chw.report_sent', { what: 'incident report' }),
         sent?.queued ? 'info' : 'ok',
       )
       categorySelect.value = ''
