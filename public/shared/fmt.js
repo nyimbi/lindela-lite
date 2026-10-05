@@ -45,11 +45,33 @@ export function num(value, { dp = 1, int = false, dash = '—' } = {}) {
     : Number(value).toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp })
 }
 
-/** A percentage. Takes the fraction (0.42) or the already-scaled value (42). */
-export function pct(value, { dp = 1, dash = '—' } = {}) {
+/**
+ * A percentage, with the scale stated rather than guessed.
+ *
+ * It used to infer the scale from magnitude — `Math.abs(n) <= 1 ? n * 100 : n`
+ * — on the reasoning that a fraction is small and a percentage is not. The
+ * heuristic cannot tell a fraction from a percentage, and a percentage has no
+ * floor above 1. Measured on the old code: `0.005 → 0.5%`, `0.5 → 50.0%`,
+ * `1 → 100.0%`, `1.5 → 1.5%`, `2 → 2.0%`. Two of the five are wrong, and
+ * worse than wrong: `pct(1)` rendering `100.0%` turns a 1% rate into a
+ * certain one, and `1 → 100.0` then `1.5 → 1.5` is *non-monotone*, so a
+ * higher true rate reads as a lower one. In an early-warning product the first
+ * failure raises a false alarm about the system and the second hides a real
+ * one.
+ *
+ * `scale: 'percent'` (the default) means the value is already 0–100 and is
+ * rendered as given. `scale: 'fraction'` means it is 0–1 and is multiplied by
+ * 100 first. The default is `'percent'` because the majority of callers pass
+ * already-scaled values and a call site that was silently getting the right
+ * answer by luck should keep it.
+ */
+export function pct(value, { dp = 1, dash = '—', scale = 'percent' } = {}) {
   if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value))) return dash
+  if (scale !== 'percent' && scale !== 'fraction') {
+    throw new TypeError(`pct(): scale must be 'percent' or 'fraction', got ${JSON.stringify(scale)}`)
+  }
   const n = Number(value)
-  return `${(Math.abs(n) <= 1 ? n * 100 : n).toFixed(dp)}%`
+  return `${(scale === 'fraction' ? n * 100 : n).toFixed(dp)}%`
 }
 
 /** A signed number, for anomalies and deltas: +2.17, -0.4. */

@@ -1,15 +1,27 @@
 import { haversineKm } from '../utils.js'
+import { numericOrNull } from './numeric.js'
 
 const HIGH_SEVERITY = new Set(['high', 'critical'])
 const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 }
 
 // `population_served: 0` is a real answer from a facility that serves nobody
-// today; `asset.population_served || asset.beneficiaries` reads 0 as "absent"
-// and substitutes the beneficiaries figure instead.
+// today, and it must survive as a 0 rather than be read as "absent". That was
+// the easy half of the fix and it was done — and then the same function was
+// written with `Number.isFinite(Number(asset.population_served))`, and
+// `Number(null)` is `0`, which is finite, so an asset recording *no* population
+// returned 0 by the first branch and the `beneficiaries` fallback below it never
+// ran. On the live store 0 of 34 service assets carry either field, so 105
+// hazard rows published `population_at_risk: 0`: "13 facilities affected, 0
+// people at risk", a claim that nobody is exposed, derived from a field no
+// connector populates.
+//
+// So the answer is null when the field is absent. A caller that sums this must
+// decide what an unrecorded population means, and it is not the sum's job to
+// decide it by omission.
 function servedPopulation(asset) {
-  if (Number.isFinite(Number(asset.population_served))) return Number(asset.population_served)
-  if (Number.isFinite(Number(asset.beneficiaries))) return Number(asset.beneficiaries)
-  return 0
+  const served = numericOrNull(asset.population_served)
+  if (served !== null) return served
+  return numericOrNull(asset.beneficiaries)
 }
 
 // A store can hold the same asset twice (a re-ingested connector payload). Left
@@ -25,6 +37,18 @@ function distinctAssets(assets) {
   })
   return out
 }
+
+// The per-hazard rows below overlap by construction: an asset inside two
+// hazards' radii is exposed by both, so its population appears in both rows.
+// That is correct for each row and fatal for a sum, and clustered events are
+// the normal regime for floods rather than an edge case. `sumOf(...,
+// 'population_at_risk')` at `src/operations.js:425` was that sum.
+//
+// The union total in `src/analytics/metrics.js` is the figure safe to add up;
+// it is stated here so a consumer reading only this file can find out why the
+// rows are not additive.
+const OVERLAP_NOTE =
+  'per-hazard rows overlap: an asset within range of two hazards appears in both, so population_at_risk must not be summed across rows — use the union total (metrics.population_at_risk)'
 
 export function computePopulationAtRisk(data, { radiusKm = 25 } = {}) {
   const resultMap = new Map()
@@ -42,22 +66,34 @@ export function computePopulationAtRisk(data, { radiusKm = 25 } = {}) {
       resultMap.set(hazardKey, {
         hazard_event_id: hazard.id,
         hazard_type: hazard.event_type,
-        population_at_risk: 0,
+        population_at_risk: null,
         service_assets_affected: 0,
+        assets_with_recorded_population: 0,
+        assets_without_recorded_population: 0,
+        overlap: OVERLAP_NOTE,
         facilities: [],
         generated_at: new Date().toISOString(),
       })
     }
 
     const entry = resultMap.get(hazardKey)
+    // Population is accumulated as a sum *plus a count of how many facilities
+    // contributed a measurement*. A facility that records no population is
+    // still a facility somebody must reach; it just cannot be added to a head
+    // count, and the difference between "0 people" and "34 facilities, none of
+    // which says how many people they serve" is the difference between a
+    // measurement and a gap.
     let populationSum = 0
+    let withPopulation = 0
+    let withoutPopulation = 0
 
     for (const asset of assets) {
       if (!Number.isFinite(asset.latitude) || !Number.isFinite(asset.longitude)) continue
       const distance = haversineKm(hazard, asset)
       if (distance <= radiusKm) {
         const population = servedPopulation(asset)
-        populationSum += population
+        if (population === null) withoutPopulation += 1
+        else { populationSum += population; withPopulation += 1 }
         entry.service_assets_affected += 1
 
         const distance_km = Math.round(distance * 100) / 100
@@ -71,7 +107,9 @@ export function computePopulationAtRisk(data, { radiusKm = 25 } = {}) {
       }
     }
 
-    entry.population_at_risk = populationSum
+    entry.population_at_risk = withPopulation ? populationSum : null
+    entry.assets_with_recorded_population = withPopulation
+    entry.assets_without_recorded_population = withoutPopulation
   }
 
   return [...resultMap.values()]
@@ -128,8 +166,10 @@ export function computeFacilitiesAtRisk(data, { radiusKm = 25 } = {}) {
         service_type: serviceType,
         at_risk_count: 0,
         high_severity_count: 0,
-        total_population_served: 0,
-        high_severity_population_served: 0,
+        total_population_served: null,
+        high_severity_population_served: null,
+        assets_with_recorded_population: 0,
+        assets_without_recorded_population: 0,
         max_hazards_per_asset: 0,
         assets: [],
       })
@@ -139,10 +179,17 @@ export function computeFacilitiesAtRisk(data, { radiusKm = 25 } = {}) {
     const population = servedPopulation(asset)
 
     entry.at_risk_count += 1
-    entry.total_population_served += population
+    if (population === null) {
+      entry.assets_without_recorded_population += 1
+    } else {
+      entry.assets_with_recorded_population += 1
+      entry.total_population_served = (entry.total_population_served ?? 0) + population
+      if (highSeverityCount > 0) {
+        entry.high_severity_population_served = (entry.high_severity_population_served ?? 0) + population
+      }
+    }
     if (highSeverityCount > 0) {
       entry.high_severity_count += 1
-      entry.high_severity_population_served += population
     }
     if (hazardCount > entry.max_hazards_per_asset) entry.max_hazards_per_asset = hazardCount
 
