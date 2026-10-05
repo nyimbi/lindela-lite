@@ -25,32 +25,66 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>
 
 ### 1a. `test/lite.test.js` — `GET / HTML contains equity panel elements` (~line 2802)
 
-The console agent deferred four rail panels out of `public/index.html` into `public/panels/*.html`, loaded at runtime by `mountPanel`. The test asserts the equity table exists in the `GET /` HTML, which is now stale. Do **not** delete the guard. Rewrite it: fetch the panel source from `public/panels/` (the way the tests in `test/` already read surface files) and assert (i) the equity panel's elements exist at its new location, and (ii) `index.html`/`app.js` still wires the panel in (`mountPanel` call for it, or the panel id appears in a load path). The invariant is "the equity panel exists somewhere real and is reachable", not "it inlines in index.html".
+The consoles' four panels are public/panels/equity.html, ingestion.html, reports.html, settings.html, fetched at runtime by `mountPanel` (`public/app.js:3438`; the deferral commit is `a33a1c0`). The test asserts the equity table exists in the `GET /` HTML, which is now stale. Do **not** delete the guard. Rewrite it to assert both halves of the invariant "the equity panel exists somewhere real and is reachable": (i) the equity panel's elements (the ids the test names — the equity table and its container) exist in `public/panels/equity.html`, and (ii) `public/index.html` or `public/app.js` still references that panel by name and path (`grep -n "panels/equity" public/`, and the `mountPanel` dispatch must name it).
 
 ### 1b. `test/chw-offline-feedback.test.js` — `names what was actually filed`
 
-The toast ternary now repeats the noun: `sent?.queued ? t('chw.report_queued', { what: 'symptom report' }) : t('chw.report_sent', { what: 'symptom report' })` — so each noun appears 4× per submission (submitOrQueue arg + two toast branches + reportSendFailure arg = 4) and the test, which asserts 3, fails. Fix in `public/chw/app.js` (the code, not the test): each of the three submission handlers should hold the noun once, e.g.
+The toast ternary now names the noun in **both** branches — `sent?.queued ? t('chw.report_queued', { what: 'symptom report' }) : t('chw.report_sent', { what: 'symptom report' })` — so each noun literal appears 4× per submission (submitOrQueue arg + two toast branches + reportSendFailure arg = 4) and the test, asserting 3, fails. Fix in `public/chw/app.js` (the code, not the test): collapse the duplicated object by moving the branch inside the template choice. In the **symptom** handler (~line 653) and the **incident** handler (~line 762):
 
 ```js
-const what = 'symptom report'
-const sent = await submitOrQueue('/api/v1/chw/report', body, { what })
 showToast(
-  sent?.queued ? t('chw.report_queued', { what }) : t('chw.report_sent', { what }),
+  t(sent?.queued ? 'chw.report_queued' : 'chw.report_sent', { what: 'symptom report' }),
   sent?.queued ? 'info' : 'ok',
 )
-...
-reportSendFailure(error, what)
 ```
 
-That satisfies the test's own invariant — "one sentence per noun per outcome" — rather than weakening the counts. Keep the toast on both branches (queued = 'info', sent = 'ok'); a queued report that says nothing is the defect a previous commit existed to fix (`98e1d53`).
+That lands exactly 3 literals per noun (submitOrQueue arg + one toast + reportSendFailure arg) and changes no behaviour.
+
+**Do NOT hoist the noun**, e.g. `const what = 'symptom report'; submitOrQueue(path, body, { what })`: that leaves only **1** literal per noun, the test's `assert.equal(...?.length, 3)` fails again at a different number, and you have changed more surface than needed.
+
+Leave the **reply** handler (~line 884) alone: it already uses `t('chw.reply_sent')` with no params on the sent branch, so its noun cannot collapse, and the test makes no total-count claim for `'reply'` — only `reportSendFailure(error, 'reply')` must stay exact.
 
 **Verify:** `npm test > /tmp/lindela-test.log 2>&1` → `pass 2323, fail 0`.
 
 ## §2 P5 residuals (small, mechanical, each is a commit)
 
-2. **R-62/63 — i18n base layer at boot.** `public/shared/runtime.js` `initI18n` (~line 474) fetches only `/i18n/${defaultLocale}.json`. A partial locale file therefore has no English floor, though `set()` correctly re-reads English first, and `scripts/check-i18n-offers.mjs`' justification comment claims the floor exists. Fix: after building the `i18n` object, route boot through the same two-step as `set()` — simplest correct form: delete the catalog-building block from `initI18n`, and at the end of it call `await i18n.set(defaultLocale)` before returning (keep the `applyI18n()` + `window.__i18n` wiring, and make `t()`'s `window.__i18n` guard order still safe). Then delete the now-false justification about fallback if the code contradicts it. Verify: `test/web-chw-offline.test.js` and any i18n test still pass.
+2. **R-62/63 — i18n base layer at boot.** `public/shared/runtime.js` `initI18n` (~line 474) fetches only `/i18n/${defaultLocale}.json`, so a partial locale file booted directly has no English floor — but `set()` re-reads English first, and `scripts/check-i18n-offers.mjs`' justification comment claims that floor exists. Replace the whole body from `const catalog = {}` down to the final `}` of the function with exactly this (keep `t()` and `set()` inside the object unchanged, and keep the three explanatory comments above `set()` untouched):
 
-3. **R-65/ENH-41 — precache closure.** In `public/sw.js` `REFERENCE_PATTERNS` (~line 224) add two patterns: a comment-tolerant dynamic `import(...)` call and a `lazy(...)` call (look at how `public/shared/app.js` and the panels load things dynamically — `grep -n "lazy(" public/`, `grep -n "await import(" public/`). Add to `BOOTSTRAP_ASSETS`: `/workflow/panel.css`, the ten `/i18n/*.json`, and the nine `/panels/*.html` (list them; keep the existing four entries). Update `test/sw-precache.test.js` (or the WEB-06 test) — the closure count it records will grow from 45; it asserts the number with reasoning, so update both number and reasoning, and confirm by running the test. Then re-check the budget gate (`node scripts/check-budget.mjs`) because precached size may matter to it — record any impact.
+   ```js
+   export async function initI18n(defaultLocale = 'en') {
+     const catalog = {}
+     const i18n = {
+       current: defaultLocale,
+       catalog,
+       t(key, params = {}) {
+         let text = catalog[key] || key
+         for (const [name, value] of Object.entries(params)) {
+           text = text.replace(new RegExp(`\\{${name}\\}`, 'g'), value)
+         }
+         return text
+       },
+       async set(locale) {
+         // [leave the existing set() body and its comments exactly as they are]
+       },
+     }
+     // R-62: boot goes through the same two-step as a switch, so English is the
+     // base layer even at load and a partial locale file falls back to English
+     // rather than to its key ids.
+     await i18n.set(defaultLocale)
+     window.__i18n = i18n
+     return i18n
+   }
+   ```
+
+   The single observable change a test should catch: `initI18n('so')` on a partial so.json now falls back to English for missing keys. `scripts/check-i18n-offers.mjs`' comment becomes true rather than false after this — do not touch it. Verify: `node --test test/web-chw-offline.test.js` and the i18n describe blocks still pass.
+
+3. **R-65/ENH-41 — precache closure.** `test/web-precache-report.test.js` is a written report with the exact change specified in its header comment (lines 106-135) — use those patterns verbatim:
+   ```js
+   // In REFERENCE_PATTERNS, after the existing five:
+   /(?:import|require)\s*\(\s*(?:\/\*[\s\S]*?\*\/\s*)?[`'"]([^`'"]+)[`'"]\s*\)/g,  // dynamic import, comment-tolerant
+   /\blazy\s*\(\s*[`'"]([^`'" ]+)[`'"]\s*\)/g,                                     // the repo's deferred-module helper
+   ```
+   Both return the path in group 1, which `parseReferences` expects. Add to `BOOTSTRAP_ASSETS`: `/workflow/panel.css`, the ten `/i18n/*.json` entries, and the nine `/panels/*.html` entries (equity, ingestion, reports, settings exist today — list whatever `ls public/panels/` shows; keep the existing four entries). **⚠ After the patterns land, `test/web-precache-report.test.js` will start failing on purpose** — its assertions say so, in their own messages: "R-65 may already be fixed… delete this report rather than leaving it stale". When it fails, that is the designed hand-off: retire the report test file (delete it) and keep a positive guard asserting `shellGraph` reaches `lazy()` targets (the file's last `describe` has the harness for that — move it into a positive test asserting `missing.length === 0`). Then re-run check-i18n and check-budget; record any size impact.
 
 4. **package.json** — add scripts: `"gates": "node scripts/run-gates.mjs --tier self-contained"` and `"gates:browser": "node scripts/run-gates.mjs --tier needs-server"`. Canary both: run them, and confirm each exits non-zero when one constituent gate fails (delete a locale file in a temp copy if needed — do not mutate the real tree for the canary).
 
@@ -87,3 +121,26 @@ Write tests per item in `test/`, run in batches at each commit boundary.
 - After each completed audit item, add a one-line status note to the item in `docs/improvements/system-audit/01-remediation.md` / `02-enhancements.md` (e.g. `**Fixed 2026-10-05** — commit subject`), and update `docs/improvements/status/STATUS-*.md`'s confirmed-done list.
 - No mention of UNICEF anywhere in docs or code. No new front-end dependencies (ADR-001). Keep the one-process/one-port/one-table model (ADR-002). Tabs in Python, two-space indent in the JS.
 - When you are fully done: the tree is green, `run-gates --tier self-contained` exits 0, and the audit docs' status sections match reality.
+
+## §7 Anti-loop policy — read once now, re-read whenever something misbehaves
+
+**Time budget.** A full `npm test` takes ~3.5 min (one suite exercises 205 s of deliberate wall-clock). Run it **once per numbered §-task**, never per file edit. While working inside a task, run only the affected files: `node --test test/<name>.test.js`.
+
+**Timing flakes.** `fetchWithRetry honours a declared limit → waits for a token instead of bursting` (`test/rate-limit-wiring.test.js:49`) failed one full run (205 s) and passed the next. If it flakes:
+- Rerun that one file first (seconds). A failure that disappears in isolation is suite-parallelism pressure, not your bug; move on.
+- If it fails in isolation repeatedly, the real suspect is `createRateLimiter`'s permit accounting (`src/connectors/http.js:283`, cached in `limitersByKey`, default `concurrency` 1) — the fix is an injected fake clock (both `now` and `sleep` params already exist on the limiter and on `fetchWithRetry`), never a wider timing window and never deleting the test.
+
+**Designed failures.** Some tests fail on purpose by their own design and say so in their assertion message:
+- `test/web-precache-report.test.js` — fails once R-65 lands; its messages tell you to delete the report and keep a positive guard. See §2 item 3.
+If your fix is followed by a failure whose message says "R-… may already be fixed in sw.js — delete this report", that message **is** the instruction. Follow it.
+
+**Bounded attempts.** If one fix has not landed after **3 attempts**, stop. Write one paragraph to `docs/improvements/status/STUCK.md` — task, what you tried, what you observed, best hypothesis — commit it, and move to the next task. Returning to it later after other work has changed the surface is a legitimate strategy, not laziness.
+
+**Never solve a problem by:**
+- rewriting a test's assertions to match your code's output (the only permitted test edit is recording a stale premise, with a comment saying which invariant survives — see rule 4);
+- deleting or skipping a test, or passing `--test-name-pattern` and calling the rest green;
+- widening timing windows to make a flake rare instead of making it impossible;
+- reverting, stashing or "cleaning up" files you did not write (rule 1 again: other agents share this tree);
+- editing a file whose failure you cannot explain. Green you cannot justify is not success.
+
+**Before diagnosing any odd failure** with no obvious cause: run `git status` and `git log --oneline -5`. Another agent may have touched the same file between your edit and your test. If the file's current contents are not yours and you did not write them, do not "fix" them — leave the file, record it in STUCK.md, move on.
