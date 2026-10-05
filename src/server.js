@@ -114,7 +114,20 @@ const DRIVER_ITEMS = [
   { id: 'ingestion', label: 'ingestion schedules', run: (store, data) => runDueIngestionSchedules(store, data) },
   { id: 'alerts', label: 'alert evaluation', run: (store, data) => evaluateAndPersistAlerts(store, data) },
   { id: 'outbox', label: 'outbox dispatch', run: (store) => dispatchPending(store) },
+  // The sidecar's second job, taken over with it. Report schedules were the one
+  // periodic item the driver did not run, which is why the shell loop had a
+  // reason to exist; with this in place it does not, and the loop's `|| true`
+  // — which made a 401, a 500 and "nothing was due" one indistinguishable line
+  // of stdout — goes with it.
+  { id: 'reports', label: 'report schedules', run: (store, data) => runDueReportSchedulesAndPersist(store, data) },
 ]
+
+/** The report-schedule cycle, with its writes persisted. Exported for tests. */
+export async function runDueReportSchedulesAndPersist(store, data, { actor = 'periodic-driver' } = {}) {
+  const result = await runDueReportSchedules(data, actor)
+  await store.merge(result.writes)
+  return result
+}
 
 let _driverTimer = null
 let _driverInFlight = false
@@ -162,6 +175,7 @@ function summarise(id, value) {
   if (id === 'alerts') return { raised: value.raised?.length ?? 0, updated: value.updated?.length ?? 0 }
   if (id === 'outbox') return { sent: Number(value) || 0 }
   if (id === 'ingestion') return { ran: value?.source_runs?.length ?? 0 }
+  if (id === 'reports') return { ran: value?.runs?.length ?? 0, reports: value?.reports?.length ?? 0 }
   return null
 }
 
@@ -3575,6 +3589,23 @@ async function handleWorkflowRoute(store, data, req, res, url, route) {
 
 async function handleStatic(req, res, pathname) {
   if (pathname === '/docs' || pathname.startsWith('/docs/')) {
+    // The deployment documentation is served from the image, and it was served
+    // to anyone who could reach the port: an unauthenticated map of how this
+    // deployment is put together — its store, its ports, its schedule
+    // structure and its operational surface. Gated the same way `/metrics` is,
+    // for the same reason: the two endpoints that answer before the API's auth
+    // gate are the two that must not.
+    //
+    // Unauthenticated mode still reads the docs, because "no tokens configured"
+    // is a deliberate local mode rather than an oversight — the same rule
+    // `isAuthConfigured` applies everywhere else.
+    if (isAuthConfigured()) {
+      const docsAuth = authenticate(req)
+      if (!docsAuth) {
+        jsonResponse(res, 401, { success: false, error: 'Unauthorized' })
+        return
+      }
+    }
     await handleDocs(req, res, pathname)
     return
   }

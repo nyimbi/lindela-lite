@@ -24,7 +24,7 @@ operator/browser
       -> JSON file, pg0, or external PostgreSQL
 ```
 
-The one-click deployment runs the same app container with PostgreSQL and a scheduler sidecar. The scheduler is intentionally outside the app process and calls due-run endpoints over HTTP.
+The one-click deployment runs the app container with PostgreSQL. Periodic work runs inside that process: one driver ticks ingestion schedules, alert evaluation, outbox dispatch and report schedules, and records the outcome of each item on a heartbeat. The HTTP due-run endpoints remain, so an external scheduler is still a supported option — the driver is the default, not the only way.
 
 ## Runtime Modules
 
@@ -157,7 +157,7 @@ Lite does not run hidden in-process background jobs. Scheduling is represented a
 - `POST /api/v1/ingest/run-due`
 - `POST /api/v1/report-schedules/run-due`
 
-The one-click stack runs a scheduler sidecar that calls those endpoints on an interval. Other deployments can use cron, systemd timers, Kubernetes CronJobs, GitHub Actions, or another scheduler.
+The one-click stack runs the in-process driver instead of a shell loop, and the driver records each item's outcome on a heartbeat that `/api/v1/health` turns into a 503 when the pipeline is stale. The endpoints above stay callable, so cron, systemd timers, Kubernetes CronJobs and GitHub Actions all remain options for a deployment that wants them. Calling them *in addition to* the driver runs the due schedules twice per interval; the driver is idempotent, but twice is twice.
 
 This design keeps retries, failures, auth, and logs visible through the same API surface used by operators.
 

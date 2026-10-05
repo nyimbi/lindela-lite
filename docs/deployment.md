@@ -1,6 +1,6 @@
 # One-Click Deployment
 
-Lindela Lite ships with a Docker Compose deployment that runs the platform, PostgreSQL, and a scheduler sidecar. The goal is one operational command on any Docker-capable machine:
+Lindela Lite ships with a Docker Compose deployment that runs the platform and PostgreSQL. Periodic work runs inside the app process. The goal is one operational command on any Docker-capable machine:
 
 ```bash
 ./deploy/one-click.sh
@@ -18,9 +18,7 @@ The script creates local secrets, builds the app image, starts the stack, waits 
 
 - `app`: Lindela Lite API and dashboard.
 - `db`: PostgreSQL 16 with a persistent Docker volume.
-- `scheduler`: a lightweight sidecar that calls:
-  - `POST /api/v1/ingest/run-due`
-  - `POST /api/v1/report-schedules/run-due`
+- A periodic driver inside `app` that runs ingestion schedules, alert evaluation, outbox dispatch and report schedules, and records the outcome of each item on a heartbeat. `/api/v1/health` returns 503 when that heartbeat is older than the interval, so a pipeline that has stopped running says so instead of looking idle.
 - `.env`: generated from `.env.example` with local secrets.
 - Health checks for Postgres and the app.
 - Restart policy for all services.
@@ -62,7 +60,7 @@ http://127.0.0.1:4177/docs/deployment.md
 | File | Purpose |
 | --- | --- |
 | `Dockerfile` | Production app image. |
-| `docker-compose.yml` | App, PostgreSQL, scheduler, health checks, persistent volume. |
+| `docker-compose.yml` | App, PostgreSQL, health checks, persistent volume. |
 | `.env.example` | Editable deployment configuration template. |
 | `deploy/one-click.sh` | Bootstrap script for local or VPS deployment. |
 | `.dockerignore` | Keeps local data, node modules, secrets, and git metadata out of the image. |
@@ -108,7 +106,7 @@ POSTGRES_PASSWORD=generated-by-script
 LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS=900
 ```
 
-The scheduler interval controls how often the sidecar checks due ingestion and report schedules. Each schedule still controls its own next-run time.
+The interval controls how often the in-process driver runs. Each schedule still controls its own next-run time. Running the due-run endpoints from an external scheduler *as well* makes every due schedule run twice per interval; pick one.
 
 ### RapidPro
 
@@ -140,7 +138,6 @@ Follow logs:
 
 ```bash
 docker compose logs -f app
-docker compose logs -f scheduler
 docker compose logs -f db
 ```
 
@@ -219,7 +216,18 @@ docker compose ps
 
 ## Scheduler Behavior
 
-The scheduler sidecar checks due work repeatedly:
+The in-process driver runs due work on the interval, and records what each item
+did on the heartbeat that `GET /api/v1/ready` returns and `/api/v1/health` reads:
+
+```text
+ingestion  → runDueIngestionSchedules
+alerts     → evaluateAndPersistAlerts
+outbox     → dispatchPending
+reports    → runDueReportSchedules
+```
+
+One item failing does not stop the others. The same work is available over HTTP
+for deployments that would rather trigger it from outside:
 
 ```text
 POST /api/v1/ingest/run-due

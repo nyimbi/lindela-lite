@@ -442,7 +442,7 @@ curl -fsS -X POST http://127.0.0.1:4177/api/v1/ingest/run-due \
   -H "x-api-key: $LINDELA_LITE_API_KEY"
 ```
 
-The one-click Docker Compose stack includes a scheduler sidecar that calls this endpoint.
+The one-click stack runs this from the in-process periodic driver. The endpoint stays callable for deployments that would rather trigger it from cron or a CI job — but not in addition to the driver, which would run every due schedule twice per interval.
 
 ## Troubleshooting
 
@@ -481,7 +481,8 @@ Check:
 
 - Schedule `status`.
 - Schedule `next_run_at`.
-- Scheduler sidecar/cron logs.
+- The heartbeat on `GET /api/v1/ready`, and the app log for an item that threw.
+- Cron/CI logs, if an external scheduler is what is calling the endpoint.
 - API key header on scheduler calls.
 
 ### Service Asset Import Fails

@@ -43,24 +43,5 @@ services:
       timeout: 5s
       retries: 10
 
-  scheduler:
-    build: .
-    restart: unless-stopped
-    depends_on:
-      app:
-        condition: service_healthy
-    environment:
-      LINDELA_LITE_API_KEY: ${LINDELA_LITE_API_KEY}
-      LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS: ${LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS:-900}
-    command:
-      - sh
-      - -c
-      - |
-        while true; do
-          curl -fsS -X POST http://app:4177/api/v1/ingest/run-due -H "x-api-key: $${LINDELA_LITE_API_KEY}" || true
-          curl -fsS -X POST http://app:4177/api/v1/report-schedules/run-due -H "x-api-key: $${LINDELA_LITE_API_KEY}" || true
-          sleep "$${LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS:-900}"
-        done
-
 volumes:
   lindela_lite_pgdata:

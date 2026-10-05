@@ -67,12 +67,15 @@ Lindela Lite is deployed.
 
 Dashboard: ${BASE_URL}
 Health:    ${BASE_URL}/api/v1/health
-Docs:      ${BASE_URL}/docs/platform.md
+Docs:      curl -H "x-api-key: \$LINDELA_LITE_API_KEY" ${BASE_URL}/docs/platform.md
+
+Periodic work (ingestion, alert evaluation, outbox, report schedules) runs
+inside the app process and records a heartbeat, so there is no scheduler
+container to watch — the app's log is where a periodic failure now says so.
 
 Useful commands:
   $COMPOSE ps
   $COMPOSE logs -f app
-  $COMPOSE logs -f scheduler
   $COMPOSE down
 
 EOF

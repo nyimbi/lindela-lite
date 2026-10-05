@@ -61,7 +61,7 @@ For the default production-like deployment, run:
 ./deploy/one-click.sh
 ```
 
-This creates `.env` with local secrets, builds the Docker image, starts PostgreSQL, starts the app, starts a scheduler sidecar, waits for health, and initializes default public-source ingestion schedules.
+This creates `.env` with local secrets, builds the Docker image, starts PostgreSQL, starts the app, waits for health, and initializes default public-source ingestion schedules. Periodic work runs inside the app process — ingestion, alert evaluation, outbox dispatch and report schedules — and records a heartbeat that `/api/v1/health` reports on, so there is no second container to watch.
 
 See [docs/deployment.md](docs/deployment.md).
 

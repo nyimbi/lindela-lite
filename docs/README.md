@@ -11,7 +11,7 @@ Start with [platform.md](platform.md) for the complete platform guide.
 - [API Reference](api.md): endpoint list, common filters, and payload examples.
 - [Dashboard](dashboard.md): operator dashboard usage, API key behavior, panels, refresh behavior, and security notes.
 - [Configuration](configuration.md): environment variables, storage configuration, RapidPro settings, and Docker Compose variables.
-- [One-Click Deployment](deployment.md): Docker Compose deployment, generated secrets, scheduler sidecar, updates, backups, and troubleshooting.
+- [One-Click Deployment](deployment.md): Docker Compose deployment, generated secrets, the in-process periodic driver, updates, backups, and troubleshooting.
 - [Operations Runbook](runbook.md): daily checks, incident response, scheduler checks, backups, updates, and release verification.
 - [OpenAPI Contract](openapi.yaml): machine-readable OpenAPI 3.1 specification.
 - [Storage](storage.md): JSON, pg0, and external PostgreSQL storage modes.

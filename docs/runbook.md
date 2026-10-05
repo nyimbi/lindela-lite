@@ -27,7 +27,7 @@ With API key, GET requests still do not need `x-api-key`.
 
 ## Scheduler Checks
 
-The one-click deployment uses a scheduler sidecar. Check that schedules exist:
+The one-click deployment runs periodic work in the app process. Check that schedules exist:
 
 ```bash
 curl -fsS http://127.0.0.1:4177/api/v1/ingest/schedules
@@ -44,7 +44,7 @@ curl -fsS -X POST http://127.0.0.1:4177/api/v1/report-schedules/run-due \
   -H "x-api-key: $LINDELA_LITE_API_KEY"
 ```
 
-If these manual calls work but automatic runs do not, inspect the external scheduler, scheduler sidecar logs, or cron/systemd configuration.
+If these manual calls work but automatic runs do not, read the heartbeat: `GET /api/v1/ready` carries the last tick's per-item outcomes, and a stale heartbeat means the driver itself is not running rather than that a schedule is late. The app log carries the failure if one item threw.
 
 ## Incident Response
 
