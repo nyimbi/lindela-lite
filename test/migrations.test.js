@@ -114,11 +114,24 @@ describe('what a database at version N still needs', () => {
   })
 
   it('needs only the tail, from both sides of each boundary', () => {
-    // The boundary assertions: version 2 must need 3 and not 1 or 2. A
-    // comparison that quietly became >= or <= would still pass the "needs
-    // everything" and "needs nothing" cases above.
-    assert.deepEqual(pendingMigrations(2).map((m) => m.version), [3])
-    assert.deepEqual(pendingMigrations(1).map((m) => m.version), [2, 3])
+    // The boundary assertion: a database at version N needs every migration
+    // above N and none at or below it. A comparison that quietly became >= or
+    // <= would still pass the "needs everything" and "needs nothing" cases
+    // above.
+    //
+    // Driven off MIGRATIONS rather than spelled out. This used to hard-code
+    // [3] and [2, 3], which made it a count check wearing a boundary check's
+    // clothes: adding a migration broke it without testing anything, and the
+    // fix that always satisfied it — editing the literal — would have hidden a
+    // real off-by-one. The form below fails for the only reason it should.
+    const versions = MIGRATIONS.map((m) => m.version)
+    for (const from of versions) {
+      assert.deepEqual(
+        pendingMigrations(from).map((m) => m.version),
+        versions.filter((version) => version > from),
+        `a database at version ${from} was given the wrong tail`,
+      )
+    }
   })
 
   it('needs nothing when the database is ahead of the build', () => {

@@ -25,7 +25,68 @@
  */
 
 /** The version this build expects. A database below it needs migrating. */
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 5
+
+/**
+ * The eight filters `filterRecords` implements in JavaScript with no index
+ * behind them, and the generated-column expression each one answers from.
+ *
+ * ENH-10. Every expression is the *whole* set of names that filter accepts for
+ * that field, joined by COALESCE — because an index over one spelling answers
+ * for one connector and silently answers nothing for the other, which is worse
+ * than no index: the query still returns the right rows, just by scanning.
+ *
+ * `jsonb_typeof(...) = 'string'` is not decoration. `->>` on a JSON *object*
+ * returns the serialised object, so a record with `country: {code: 'KE'}` would
+ * put `{"code": "KE"}` into an index that a `?country=KE` filter never matches,
+ * and every such row would be an index entry bought to answer nothing. The
+ * connectors send objects as often as they send strings, and `filterRecords`
+ * would never have matched the object either — so NULL here loses nothing and
+ * keeps the index to the values it can actually serve.
+ *
+ * Kept as one table rather than eight hand-written statements so the count and
+ * the spellings are checkable: `test/store-cost.test.js` asserts eight columns,
+ * eight indexes and eight `GENERATED ALWAYS` clauses, which is the only way to
+ * notice one of them quietly losing its index.
+ *
+ * Index key is `(collection, <column>)` for the filters that are scoped to a
+ * collection page. `incident_id` and `intervention_id` are not: those two are
+ * looked up across every collection at once — "everything attached to this
+ * incident" spans hazard events, field reports, interventions and tasks — so a
+ * leading `collection` would answer only the first of those collections asked.
+ */
+const FILTER_COLUMNS = Object.freeze([
+  ['country', `CASE
+      WHEN jsonb_typeof(body->'country') = 'string' THEN body->>'country'
+      WHEN jsonb_typeof(body#>'{scope,country}') = 'string' THEN body#>>'{scope,country}'
+      ELSE NULL END`],
+  ['source', `CASE
+      WHEN jsonb_typeof(body->'source') = 'string' THEN body->>'source'
+      WHEN jsonb_typeof(body->'source_name') = 'string' THEN body->>'source_name'
+      ELSE NULL END`],
+  ['status', `CASE
+      WHEN jsonb_typeof(body->'status') = 'string' THEN body->>'status'
+      ELSE NULL END`],
+  ['severity', `CASE
+      WHEN jsonb_typeof(body->'severity') = 'string' THEN body->>'severity'
+      WHEN jsonb_typeof(body->'risk_level') = 'string' THEN body->>'risk_level'
+      ELSE NULL END`],
+  ['incident_id', `CASE
+      WHEN jsonb_typeof(body->'incident_id') = 'string' THEN body->>'incident_id'
+      WHEN jsonb_typeof(body#>'{scope,incident_id}') = 'string' THEN body#>>'{scope,incident_id}'
+      ELSE NULL END`],
+  ['intervention_id', `CASE
+      WHEN jsonb_typeof(body->'intervention_id') = 'string' THEN body->>'intervention_id'
+      WHEN jsonb_typeof(body#>'{scope,intervention_id}') = 'string' THEN body#>>'{scope,intervention_id}'
+      ELSE NULL END`],
+  ['service_type', `CASE
+      WHEN jsonb_typeof(body->'service_type') = 'string' THEN body->>'service_type'
+      WHEN jsonb_typeof(body#>'{scope,service_type}') = 'string' THEN body#>>'{scope,service_type}'
+      ELSE NULL END`],
+  ['owner', `CASE
+      WHEN jsonb_typeof(body->'owner') = 'string' THEN body->>'owner'
+      ELSE NULL END`],
+].map(Object.freeze))
 
 /**
  * Ordered migrations. Each is idempotent and each is keyed on the version it
@@ -156,7 +217,83 @@ export const MIGRATIONS = Object.freeze([
        WHERE observed_at IS NOT NULL`,
     ],
   }),
+  Object.freeze({
+    version: 4,
+    name: 'index the version table by the record it versions',
+    // R-26. `pruneVersions` partitioned and ordered the entire
+    // `record_versions` collection on `body->>'record_id'` and
+    // `body->>'valid_to'` — two JSONB extractions with no index of any kind —
+    // on every bitemporal merge, to enforce a cap of five rows on the handful
+    // of records that merge had just revised. The scan was O(V): 31,549 rows,
+    // 85 MB, to serve a batch of k.
+    //
+    // `record_id` is an expression index rather than a real column because the
+    // version rows are written by `versionRow()` and read by nothing; promoting
+    // it to a first-class column is ENH-12's larger change and this index is
+    // the part of it that pays immediately.
+    //
+    // `valid_to` is in the key so the ranking sort is answered from the index
+    // for the handful of rows per record rather than by sorting them. The
+    // default ASC on a text column is close enough to chronological for the
+    // ISO-8601 instants `versionRow` writes, and the planner cannot use DESC
+    // here anyway — the query asks for `DESC NULLS LAST`, and a NULLS LAST
+    // scan on a DESC index is still a forward scan over the index.
+    //
+    // Partial on the collection rather than a leading `collection` column,
+    // because `record_versions` is 60% of the table by rows: keeping the other
+    // 40% out of the index halves its size for free, and the prune names the
+    // collection in a literal.
+    up: [
+      `CREATE INDEX IF NOT EXISTS lite_records_version_record_idx
+         ON lite_records ((body->>'record_id'), (body->>'valid_to'))
+       WHERE collection = 'record_versions'`,
+    ],
+  }),
+  Object.freeze({
+    version: 5,
+    name: 'extracted filter columns',
+    // ENH-10. Eight filters that `filterRecords` implements in JavaScript, with
+    // no index of any kind behind them, so `?severity=critical` over 39,715
+    // rows is a full scan of an already-materialised array — and the array
+    // itself is materialised by a query that fetches every row.
+    //
+    // Same shape as migration 3 and for the same reason: generated columns read
+    // from the body, so nothing is backfilled by hand and a write path cannot
+    // produce a row whose index columns disagree with its body.
+    //
+    // The spellings are the risk, and the audit is right to flag it: the
+    // connectors disagree with each other about what these are called, so each
+    // column is COALESCE over the names `filterRecords` actually accepts for
+    // that filter. An index over one spelling answers for one connector and
+    // silently fails to answer for the other — which is not a wrong answer, it
+    // is no answer, and the filter falls back to the scan it had before.
+    // Where `filterRecords` also matches a *third* spelling (`incident_id` and
+    // `intervention_id` both fall back to `item.id`), no single generated
+    // column can cover it and the predicate still needs the row. The index
+    // answers the part that can be answered; it does not make the filter
+    // total.
+    //
+    // Partial on IS NOT NULL because these are sparse: a `district` field on a
+    // `service_assets` row and an `owner` on a `hazard_events` row are null,
+    // and an index entry per null is storage bought to answer nothing.
+    //
+    // Honest cost: adding a STORED generated column rewrites the table. On a
+    // 39,715-row / 143 MB store that is one full rewrite, once, in its own
+    // transaction, and the ledger row recording it is written only if it
+    // commits. It is not a migration to run against a live district server at
+    // peak; it is a migration to run at the same time you would run one.
+    up: [
+      ...FILTER_COLUMNS.map(([column, expression]) => [
+        `ALTER TABLE lite_records ADD COLUMN IF NOT EXISTS ${column} TEXT
+           GENERATED ALWAYS AS (${expression}) STORED`,
+        `CREATE INDEX IF NOT EXISTS lite_records_${column}_idx
+           ON lite_records (${column === 'incident_id' || column === 'intervention_id' ? '' : 'collection, '}${column})
+         WHERE ${column} IS NOT NULL`,
+      ]).flat(),
+    ],
+  }),
 ])
+
 
 /** The version a fresh database gets, which is the newest. */
 export function targetVersion() {
