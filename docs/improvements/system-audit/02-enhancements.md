@@ -461,3 +461,26 @@ Impact is the weighted score (0.4 throughput / 0.3 veracity / 0.3 cognitive). Ef
 9.4, and both are cheaper than ENH-07 (3.3) which has a larger absolute impact (9.8).
 That inversion is the point: the two cheapest high-impact items are the two the system
 cannot function without.
+
+---
+
+## Status as of 2026-10-05
+
+| item | state | the guard that fails without it |
+| --- | --- | --- |
+| ENH-01, ENH-02, ENH-03 | Shipped on this branch: the worker registers, the queue is exactly-once with a dead letter, and it is precached. | `test/offline-delivery.test.js` |
+| ENH-04, ENH-05, ENH-06 | Shipped: one driver, per-item outcomes on a heartbeat, and a reconciliation that raises one alert per undelivered chain. | `test/periodic-driver.test.js`, `test/dispatch-delivery-reconciliation.test.js` |
+| ENH-07 | Shipped — and the audit's own framing was behind the code: `read(collections[])` had been implemented for months with **no caller**, so every request still materialised the whole store. 82 of 170 routes are now measured; the rest keep the old read, named. **14 ms against 110 ms** on 39,696 records. | `test/route-manifests.test.js` (enumeration **and** drift) |
+| ENH-08 | Shipped: every request passes a manifest without `includeHistory`, so the callers the audit said did not exist now do. | `test/route-manifests.test.js` |
+| ENH-10 | Shipped: 8 indexes, 8 `GENERATED ALWAYS` columns. | `test/database-*.test.js` |
+| ENH-13 | Shipped: compact JSON (1.2× write, 28% fewer bytes) and a write cache that is refreshed at the write. | `test/store-conformance.test.js` |
+| ENH-19 | Shipped: the outcome channel, the derivation on every alert, and the surface that finally lets somebody file one. | `test/alert-outcomes.test.js`, `test/outcome-surface.test.js` |
+| ENH-20 | Shipped: clustered intervals by effective sample size, with the design effect printed beside them. | `test/clustered-intervals.test.js` |
+| ENH-21 | Shipped: the registry's floors were already in the computation; the one rate that was not — the connector health score — now carries the same floor. | `test/sample-floors.test.js` |
+| ENH-23 | Shipped: input counts travel with every derived value, and a value that moves 5% while they stand still is written down. | `test/derived-reconciliation.test.js` |
+| ENH-24 | Shipped: `derivation` on every raised alert — rule version, reading, and the records behind it. | `test/alert-outcomes.test.js` |
+| ENH-49 | Shipped: the bitemporal history as a query, with a coverage block saying how much was pruned. | `test/history-query.test.js` |
+| ENH-50 | Shipped on this branch: the metric registry, with one declared denominator per published rate. | `test/metric-registry.test.js` |
+| ENH-09 | Open. See R-27 in [01-remediation.md](01-remediation.md) for the measurement. |
+| ENH-12 | Half shipped (the prune). See the same table. |
+| ENH-17 | Blocked on the deployment story. See the same table. |

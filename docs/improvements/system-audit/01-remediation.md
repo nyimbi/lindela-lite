@@ -210,3 +210,48 @@ handling contradicts them.
 household or person identifier in the payload. A union would be guesswork, and a guess
 here inflates or deflates the funder's headline reach number. The honest resolution is
 to say so on the surface, not to fake it.
+
+
+---
+
+## Status as of 2026-10-05
+
+Recorded against the ids rather than in the rows, so the tables stay readable.
+Every entry below is closed *with a test that fails without the fix* — the
+commit for each is on `fix/storage-and-ingestion-correctness`.
+
+### Closed in the final pass (2026-10-05)
+
+| id | closed by | the guard that fails without it |
+| --- | --- | --- |
+| R-03 | `229c301` — report schedules moved into the driver, then the sidecar went | `test/periodic-driver.test.js` |
+| R-04, ENH-06 | `ec19c41` — bounded retry; a reconciliation that raises one alert per undelivered chain, ever | `test/dispatch-delivery-reconciliation.test.js` |
+| R-09 | `ad5d8f6`, then `a003381` — inbound budgets; assets and documents outside them, `/stac` and `/ogc` inside | `test/inbound-rate-limit.test.js` |
+| R-10 | `cd91e74` — `Vary` on the credential, on the 304 too | `test/shared-device-cache.test.js` |
+| R-11 | `6f6be48` — the five remaining ceilings, with the reasoning for the values | `test/rate-limit-coverage.test.js` |
+| R-12 | `ad5d8f6` — community feedback's own window, applied by the driver | `test/retention-scheduled.test.js` |
+| R-13 | `ad5d8f6` — catalogues gated and redacted | `test/stac-authz.test.js` |
+| R-14 | `ad5d8f6` — non-root image, `/docs` behind auth | `test/container-hardening.test.js` |
+| R-15 | `6f6be48` — shipped public paths match exactly | `test/store-concurrency.test.js` |
+| R-18 | `6f6be48` — the temp file name is unique per write | `test/store-concurrency.test.js` |
+| R-21 | `6f6be48` — one dispatch at a time, per store | `test/outbox-delivery.test.js` |
+| R-22 | `6f6be48` — emit and its writes in one merge | `test/outbox-delivery.test.js` |
+| R-25 | `6f6be48` — `replaceCollection` instead of a store-wide rewrite | `test/parametric-edit-scope.test.js` |
+| R-52 | `12d916b` — `GET /api/v1/watermarks`, with cadence-aware staleness | `test/watermark-visibility.test.js` |
+| R-53 | `6f6be48` — fixed-rate next run; the lateness is measured and reported | `test/schedule-slip.test.js` |
+| R-65, ENH-41 | `55aaf01` — the precache closure reaches the lazy graph (45 → 74 paths) | `test/sw-bootstrap-assets.test.js` |
+| R-62, R-63 | `f7502a8` — the locale layer boots through the same two-step as a switch | `test/web-locale-boot.test.js` |
+
+### Closed earlier on this branch, verified rather than re-done
+
+R-01, R-02, R-06, R-07, R-08, R-16, R-17 (`mergeWatermarkForward`), R-19
+(async-local fetch recording), R-20 (`next_attempt_at` consulted), R-23, R-24,
+R-26, R-28, R-29, R-41, R-42, R-44, R-67.
+
+### Open, with the measurement or the blocker
+
+| id | why it is still open |
+| --- | --- |
+| R-27 / ENH-09 | Measured again at the audit's scale: **6.96 ms** for a 50-row page from 31,549 rows, flat in page depth (6.96 ms at page 1, 6.99 ms at page 500) — the cost is the filter chain over the array, not the slice. With ENH-07's manifest a list route now reads one collection rather than 39, so the slice is bounded by collection size. Pushing filters into SQL means moving 133 call sites' parameters into the read: ~3 engineer-weeks, and the trigger is a collection whose page cost matters against its own latency budget. |
+| ENH-17 | Blocked, and the audit says so: `src/pg0.js:62` connects as `postgres`, a superuser that bypasses RLS entirely. The deployment story changes first — a non-superuser role, `SET app.partner_org` per request — or the policy is decorative. Not attempted rather than attempted and ineffective. |
+| ENH-12 | The prune half shipped with R-26 (`O(V)` → `O(k log V)`, 15×). The table half — `record_versions` as a real relation with a real `record_id` — is the one item the audit calls "the schema the auditability claim rests on", ~4 engineer-weeks, with a data migration for existing deployments. |
