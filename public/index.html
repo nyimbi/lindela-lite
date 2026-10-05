@@ -462,247 +462,109 @@
           </div>
 
           <!-- Equity -->
-          <div id="panel-equity" class="rail-panel" role="tabpanel" aria-labelledby="tab-equity" hidden>
-            <div class="panel-header">
-              <h2 data-i18n="tab.equity">Equity</h2>
-              <button id="triggerEquityAuditButton" class="btn btn-sm" type="button" data-i18n="equity.trigger_audit">Trigger audit workflow</button>
-            </div>
-            <table id="equityTable" class="equity-table" role="table">
-              <thead>
-                <tr>
-                  <th scope="col" data-i18n="equity.district_column">District</th>
-                  <th scope="col" data-i18n="equity.dispatched">Dispatched</th>
-                  <th scope="col" data-i18n="equity.acknowledged">Acknowledged</th>
-                  <!--
-                    Deliberately not labelled "false positive rate". The
-                    underlying figure is dispatched alerts that were never
-                    acknowledged, which is not the same claim: an unactioned
-                    dispatch may be a bad alert or a missed human response,
-                    and this data cannot tell those apart.
-                  -->
-                  <th scope="col" data-i18n="equity.unacknowledged_rate" title="Dispatched alerts that were never acknowledged. Not a false-positive measure: an unactioned dispatch may be a poor alert or a missed response.">Not acknowledged</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-            <nav id="equityPager" class="pagination" aria-label="Equity rows" hidden></nav>
-            <p id="equityMethodNote" class="panel-note">
-              Dispatched counts come from RapidPro dispatch records, joined to the
-              alert event to recover the district. "Not acknowledged" is the share of
-              dispatches nobody acted on &mdash; it does not distinguish a poor alert
-              from a missed response, so it is not a false-positive rate.
-            </p>
-            <div id="equityEmptyState" class="empty-state" hidden><p data-i18n="equity.empty">No equity data yet. Alerts must be dispatched and reviewed.</p></div>
-          </div>
+          <!-- Deferred panel. The markup lives in /panels/equity.html and is
+               fetched on the first switch to this tab, then inserted here.
 
-          <!-- Reports -->
-          <div id="panel-reports" class="rail-panel" role="tabpanel" aria-labelledby="tab-reports" hidden>
-            <div class="panel-header">
-              <h2 data-i18n="tab.reports">Reports</h2>
-              <button id="newReportButton" class="btn btn-sm" type="button" data-i18n="action.new_report">New report</button>
-            </div>
-            <form id="newReportForm" class="inline-form" hidden>
-              <label>Template
-                <select id="reportTemplateIdInput"><option value="">None (create new)</option></select>
-              </label>
-              <label>Country <input type="text" id="reportCountryInput" placeholder="KE"></label>
-              <label>Incident ID <input type="text" id="reportIncidentInput" placeholder="incident_..."></label>
-              <label>Intervention ID <input type="text" id="reportInterventionInput" placeholder="intervention_..."></label>
-              <label>Sections
-                <input type="text" id="reportSectionsInput"
-                  value="executive_summary,incident_summary,alert_summary,appendix_sources">
-              </label>
-              <div class="form-actions">
-                <button id="createReportTemplateButton" type="button" class="btn btn-sm">Save template</button>
-                <button id="generateReportButton" type="button" class="btn btn-primary btn-sm"
-                        data-i18n="action.generate">Generate</button>
-              </div>
-            </form>
-            <div id="reportsList" class="list-container" role="list"></div>
-            <nav id="reportsPager" class="pagination" aria-label="Report pages" hidden></nav>
-          </div>
+               These four panels were 29.4% of this file raw and 33.5%
+               gzipped, and 58 of the 99 interactive controls the console had
+               at boot — every one of them inside a panel that starts `hidden`
+               and whose contents were laid out at `opacity: 0`, at coordinates
+               identical to the visible panel's. So 59% of the console's
+               interactive surface was keyboard-reachable and invisible: Tab
+               walked into it, and nothing on screen said where focus had gone.
 
-          <!-- Ingestion -->
-          <div id="panel-ingestion" class="rail-panel" role="tabpanel" aria-labelledby="tab-ingestion" hidden>
-            <div class="panel-header">
-              <h2 data-i18n="tab.ingestion">Ingestion</h2>
-            </div>
-            <div class="ingestion-region">
-              <label>Lat <input id="latInput" type="number" step="0.0001" value="3.1167"></label>
-              <label>Lon <input id="lonInput" type="number" step="0.0001" value="35.6"></label>
-              <label>Region <input id="regionInput" type="text" value="Turkana"></label>
-              <label>Country <input id="countryInput" type="text" value="KE" maxlength="3"></label>
-            </div>
-            <div id="sourceGrid" class="source-grid" role="group" aria-label="Select sources to run"></div>
-            <div class="ingestion-actions">
-              <button id="runButton" type="button" class="btn btn-primary btn-sm"
-                      data-i18n="action.run_now">Run selected</button>
-              <button id="createIngestionSchedulesButton" type="button" class="btn btn-sm"
-                      data-i18n="action.create_defaults">Create schedules</button>
-              <button id="runDueIngestionButton" type="button" class="btn btn-sm"
-                      data-i18n="action.run_all_due">Run due</button>
-            </div>
-            <div id="sourceStatusList" class="list-container"></div>
-            <div class="service-asset-section">
-              <h3>Service assets</h3>
-              <textarea id="serviceAssetInput" rows="4" spellcheck="false"
-                placeholder="CSV: name,service_type,country,latitude,longitude&#10;or GeoJSON FeatureCollection"></textarea>
-              <div class="form-actions">
-                <button id="importCsvButton" type="button" class="btn btn-sm">Import CSV</button>
-                <button id="importGeoJsonButton" type="button" class="btn btn-sm">Import GeoJSON</button>
-                <button id="exportGeoJsonButton" type="button" class="btn btn-sm">Export GeoJSON</button>
-                <button id="exportCsvButton" type="button" class="btn btn-sm">Export CSV</button>
-              </div>
-            </div>
-            <div class="service-asset-section" id="acledSection">
-              <h3>ACLED conflict import</h3>
-              <p class="settings-note">
-                Licensed, not open data. The import is refused unless you assert you
-                hold a current ACLED licence for it, and that assertion is recorded
-                against the run.
-              </p>
-              <textarea id="acledCsvInput" rows="4" spellcheck="false"
-                placeholder="event_id,event_date,country,event_type,sub_event_type,fatalities&#10;EVT-1,2026-08-01,KE,Protest,Peaceful protest,0"></textarea>
-              <div class="form-actions">
-                <button id="importAcledButton" type="button" class="btn btn-sm">Import ACLED CSV</button>
-              </div>
-              <p class="ops-result" role="status" aria-live="polite"></p>
-            </div>
-          </div>
+               An operator on a field connection paid 12 KB gzipped to download
+               controls they could not see and could not reach. The tabs are the
+               default view for 2 of 8 surfaces' users and an explicit choice for
+               the rest, so the panels are still one click away — they are just
+               no longer shipped to everyone.
 
-          <!-- Settings -->
-          <div id="panel-settings" class="rail-panel" role="tabpanel" aria-labelledby="tab-settings" hidden>
-            <div class="panel-header">
-              <h2 data-i18n="tab.settings">Settings</h2>
-            </div>
-            <div class="settings-content">
+               `mountPanel` in app.js fetches the template, inserts it before
+               this marker, and only then unhides the panel. The 63 `$()`
+               lookups that used to resolve at boot became guards, because for
+               the four deferred panels the element genuinely may not exist yet —
+               and a lookup that returns null must not be the thing that decides
+               whether a panel renders. -->
 
-              <section class="settings-section">
-                <h3>API token</h3>
-                <p class="settings-note">Stored in localStorage. Sent as <code>x-api-key</code> on mutating requests.</p>
-                <label>Token
-                  <input id="apiKeyInput" type="password" autocomplete="off" placeholder="optional">
-                </label>
-              </section>
+          <div id="panel-equity" class="rail-panel" role="tabpanel" aria-labelledby="tab-equity" hidden></div>
 
-              <section class="settings-section">
-                <h3>Trigger protocols</h3>
-                <div id="triggerProtocolsList" class="list-container"></div>
-              </section>
+          <!-- Deferred panel. The markup lives in /panels/reports.html and is
+               fetched on the first switch to this tab, then inserted here.
 
+               These four panels were 29.4% of this file raw and 33.5%
+               gzipped, and 58 of the 99 interactive controls the console had
+               at boot — every one of them inside a panel that starts `hidden`
+               and whose contents were laid out at `opacity: 0`, at coordinates
+               identical to the visible panel's. So 59% of the console's
+               interactive surface was keyboard-reachable and invisible: Tab
+               walked into it, and nothing on screen said where focus had gone.
 
-              <section class="settings-section">
-                <h3>Webhooks</h3>
-                <div id="webhooksList" class="list-container"></div>
-                <form id="addWebhookForm" class="inline-form">
-                  <label>URL <input type="url" id="webhookUrlInput" placeholder="https://..."></label>
-                  <label>Events <input type="text" id="webhookEventsInput" placeholder="alert.*"></label>
-                  <button type="submit" class="btn btn-sm">Add webhook</button>
-                </form>
-              </section>
+               An operator on a field connection paid 12 KB gzipped to download
+               controls they could not see and could not reach. The tabs are the
+               default view for 2 of 8 surfaces' users and an explicit choice for
+               the rest, so the panels are still one click away — they are just
+               no longer shipped to everyone.
 
-              <div id="opsApiHost"></div>
+               `mountPanel` in app.js fetches the template, inserts it before
+               this marker, and only then unhides the panel. The 63 `$()`
+               lookups that used to resolve at boot became guards, because for
+               the four deferred panels the element genuinely may not exist yet —
+               and a lookup that returns null must not be the thing that decides
+               whether a panel renders. -->
 
-              <section class="settings-section">
-                <h3>Operations</h3>
-                <div class="ops-forms">
-                  <details>
-                    <summary>Create incident</summary>
-                    <div class="details-body">
-                      <label>Title <input id="incidentTitleInput" type="text" placeholder="Incident title"></label>
-                      <label>Type <input id="incidentTypeInput" type="text" value="flood_access"></label>
-                      <label>Priority
-                        <select id="incidentPriorityInput">
-                          <option value="high">High</option>
-                          <option value="medium">Medium</option>
-                          <option value="low">Low</option>
-                        </select>
-                      </label>
-                      <button id="createIncidentButton" type="button" class="btn btn-sm">Create</button>
-                    </div>
-                  </details>
-                  <details>
-                    <summary>Create intervention</summary>
-                    <div class="details-body">
-                      <label>Incident ID <input id="interventionIncidentInput" type="text" placeholder="incident_..."></label>
-                      <label>Title <input id="interventionTitleInput" type="text" placeholder="Intervention title"></label>
-                      <label>Lead org <input id="interventionLeadInput" type="text" placeholder="Org name"></label>
-                      <button id="createInterventionButton" type="button" class="btn btn-sm">Create</button>
-                    </div>
-                  </details>
-                  <details>
-                    <summary>Create task</summary>
-                    <div class="details-body">
-                      <label>Intervention ID <input id="taskInterventionInput" type="text" placeholder="intervention_..."></label>
-                      <label>Title <input id="taskTitleInput" type="text" placeholder="Task title"></label>
-                      <label>Owner <input id="taskOwnerInput" type="text" placeholder="field-lead"></label>
-                      <button id="createTaskButton" type="button" class="btn btn-sm">Create</button>
-                    </div>
-                  </details>
-                  <details>
-                    <summary>Alert rules</summary>
-                    <div class="details-body">
-                      <label>Name <input id="alertNameInput" type="text" placeholder="Open incident alert"></label>
-                      <label>Metric <input id="alertMetricInput" type="text" value="operations.counts.open_incidents"></label>
-                      <label>Threshold <input id="alertThresholdInput" type="number" value="1"></label>
-                      <div class="form-actions">
-                        <button id="createAlertRuleButton" type="button" class="btn btn-sm">Create rule</button>
-                        <button id="evaluateAlertsButton" type="button" class="btn btn-sm">Evaluate</button>
-                      </div>
-                    </div>
-                  </details>
-                  <details>
-                    <summary>RapidPro</summary>
-                    <div class="details-body">
-                      <label>URNs (comma-separated) <input id="rapidProUrnsInput" type="text" placeholder="+254700000000"></label>
-                      <button id="sendRapidProAlertButton" type="button" class="btn btn-sm">Send latest alert</button>
-                    </div>
-                  </details>
-                  <details>
-                    <summary>Report schedules</summary>
-                    <div class="details-body">
-                      <label>Next run <input id="reportScheduleNextRunInput" type="datetime-local"></label>
-                      <div class="form-actions">
-                        <button id="createReportScheduleButton" type="button" class="btn btn-sm">Create schedule</button>
-                        <button id="runDueReportsButton" type="button" class="btn btn-sm">Run due</button>
-                      </div>
-                    </div>
-                  </details>
-                </div>
-              </section>
+          <div id="panel-reports" class="rail-panel" role="tabpanel" aria-labelledby="tab-reports" hidden></div>
 
-              <section class="settings-section" id="dhis2-settings-section">
-                <h3>DHIS2 sync scaffold</h3>
-                <p class="settings-note">Configure and test. Real bidirectional sync requires network wiring. See <a href="/docs/dhis2-integration.md" target="_blank">docs/dhis2-integration.md</a>.</p>
-                <label for="dhis2BaseUrl">Base URL</label>
-                <input type="url" id="dhis2BaseUrl" placeholder="https://play.dhis2.org/40.2.2" autocomplete="off">
-                <label for="dhis2ApiToken">API token</label>
-                <input type="password" id="dhis2ApiToken" placeholder="Personal access token" autocomplete="off">
-                <label for="dhis2OrgUnits">Org units (one per line)</label>
-                <textarea id="dhis2OrgUnits" rows="3" placeholder="DiszpKrYNg8&#10;YuQRtpLP10I" style="width:100%;resize:vertical;padding:0.4rem;border:1px solid var(--stroke);border-radius:var(--r)"></textarea>
-                <label for="dhis2DataElements">Data elements (one per line)</label>
-                <textarea id="dhis2DataElements" rows="3" placeholder="fbfJHSPpUQD&#10;cYeuwXTCPkU" style="width:100%;resize:vertical;padding:0.4rem;border:1px solid var(--stroke);border-radius:var(--r)"></textarea>
-                <label for="dhis2Period">Period</label>
-                <input type="text" id="dhis2Period" placeholder="2026Q3">
-                <div style="display:flex;gap:0.5rem;margin-top:0.75rem;flex-wrap:wrap">
-                  <button class="btn-secondary" id="dhis2SaveBtn">Save to localStorage</button>
-                  <button class="btn-secondary" id="dhis2TestBtn">Test connection</button>
-                </div>
-                <p id="dhis2TestResult" style="font-size:0.8rem;margin-top:0.5rem" hidden></p>
-              </section>
+          <!-- Deferred panel. The markup lives in /panels/ingestion.html and is
+               fetched on the first switch to this tab, then inserted here.
 
-              <section class="settings-section">
-                <h3>About</h3>
-                <p class="settings-note">Lindela Lite <span data-app-version>v0.1.0</span> — open-source climate-conflict monitoring toolkit.</p>
-                <p class="settings-note">
-                  <a href="/docs/platform.md" target="_blank" rel="noopener">Documentation</a>
-                  &middot; GDELT excluded from public sources.
-                </p>
-                <p class="settings-note">Keyboard: <kbd>?</kbd> cheatsheet &middot; <kbd>Cmd K</kbd> command palette &middot; <kbd>1</kbd>–<kbd>4</kbd> tabs</p>
-              </section>
+               These four panels were 29.4% of this file raw and 33.5%
+               gzipped, and 58 of the 99 interactive controls the console had
+               at boot — every one of them inside a panel that starts `hidden`
+               and whose contents were laid out at `opacity: 0`, at coordinates
+               identical to the visible panel's. So 59% of the console's
+               interactive surface was keyboard-reachable and invisible: Tab
+               walked into it, and nothing on screen said where focus had gone.
 
-            </div>
-          </div>
+               An operator on a field connection paid 12 KB gzipped to download
+               controls they could not see and could not reach. The tabs are the
+               default view for 2 of 8 surfaces' users and an explicit choice for
+               the rest, so the panels are still one click away — they are just
+               no longer shipped to everyone.
+
+               `mountPanel` in app.js fetches the template, inserts it before
+               this marker, and only then unhides the panel. The 63 `$()`
+               lookups that used to resolve at boot became guards, because for
+               the four deferred panels the element genuinely may not exist yet —
+               and a lookup that returns null must not be the thing that decides
+               whether a panel renders. -->
+
+          <div id="panel-ingestion" class="rail-panel" role="tabpanel" aria-labelledby="tab-ingestion" hidden></div>
+
+          <!-- Deferred panel. The markup lives in /panels/settings.html and is
+               fetched on the first switch to this tab, then inserted here.
+
+               These four panels were 29.4% of this file raw and 33.5%
+               gzipped, and 58 of the 99 interactive controls the console had
+               at boot — every one of them inside a panel that starts `hidden`
+               and whose contents were laid out at `opacity: 0`, at coordinates
+               identical to the visible panel's. So 59% of the console's
+               interactive surface was keyboard-reachable and invisible: Tab
+               walked into it, and nothing on screen said where focus had gone.
+
+               An operator on a field connection paid 12 KB gzipped to download
+               controls they could not see and could not reach. The tabs are the
+               default view for 2 of 8 surfaces' users and an explicit choice for
+               the rest, so the panels are still one click away — they are just
+               no longer shipped to everyone.
+
+               `mountPanel` in app.js fetches the template, inserts it before
+               this marker, and only then unhides the panel. The 63 `$()`
+               lookups that used to resolve at boot became guards, because for
+               the four deferred panels the element genuinely may not exist yet —
+               and a lookup that returns null must not be the thing that decides
+               whether a panel renders. -->
+
+          <div id="panel-settings" class="rail-panel" role="tabpanel" aria-labelledby="tab-settings" hidden></div>
 
         </div>
       </aside>

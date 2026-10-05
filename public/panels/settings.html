@@ -1,0 +1,132 @@
+          <div id="panel-settings" class="rail-panel" role="tabpanel" aria-labelledby="tab-settings" hidden>
+            <div class="panel-header">
+              <h2 data-i18n="tab.settings">Settings</h2>
+            </div>
+            <div class="settings-content">
+
+              <section class="settings-section">
+                <h3>API token</h3>
+                <p class="settings-note">Stored in localStorage. Sent as <code>x-api-key</code> on mutating requests.</p>
+                <label>Token
+                  <input id="apiKeyInput" type="password" autocomplete="off" placeholder="optional">
+                </label>
+              </section>
+
+              <section class="settings-section">
+                <h3>Trigger protocols</h3>
+                <div id="triggerProtocolsList" class="list-container"></div>
+              </section>
+
+
+              <section class="settings-section">
+                <h3>Webhooks</h3>
+                <div id="webhooksList" class="list-container"></div>
+                <form id="addWebhookForm" class="inline-form">
+                  <label>URL <input type="url" id="webhookUrlInput" placeholder="https://..."></label>
+                  <label>Events <input type="text" id="webhookEventsInput" placeholder="alert.*"></label>
+                  <button type="submit" class="btn btn-sm">Add webhook</button>
+                </form>
+              </section>
+
+              <div id="opsApiHost"></div>
+
+              <section class="settings-section">
+                <h3>Operations</h3>
+                <div class="ops-forms">
+                  <details>
+                    <summary>Create incident</summary>
+                    <div class="details-body">
+                      <label>Title <input id="incidentTitleInput" type="text" placeholder="Incident title"></label>
+                      <label>Type <input id="incidentTypeInput" type="text" value="flood_access"></label>
+                      <label>Priority
+                        <select id="incidentPriorityInput">
+                          <option value="high">High</option>
+                          <option value="medium">Medium</option>
+                          <option value="low">Low</option>
+                        </select>
+                      </label>
+                      <button id="createIncidentButton" type="button" class="btn btn-sm">Create</button>
+                    </div>
+                  </details>
+                  <details>
+                    <summary>Create intervention</summary>
+                    <div class="details-body">
+                      <label>Incident ID <input id="interventionIncidentInput" type="text" placeholder="incident_..."></label>
+                      <label>Title <input id="interventionTitleInput" type="text" placeholder="Intervention title"></label>
+                      <label>Lead org <input id="interventionLeadInput" type="text" placeholder="Org name"></label>
+                      <button id="createInterventionButton" type="button" class="btn btn-sm">Create</button>
+                    </div>
+                  </details>
+                  <details>
+                    <summary>Create task</summary>
+                    <div class="details-body">
+                      <label>Intervention ID <input id="taskInterventionInput" type="text" placeholder="intervention_..."></label>
+                      <label>Title <input id="taskTitleInput" type="text" placeholder="Task title"></label>
+                      <label>Owner <input id="taskOwnerInput" type="text" placeholder="field-lead"></label>
+                      <button id="createTaskButton" type="button" class="btn btn-sm">Create</button>
+                    </div>
+                  </details>
+                  <details>
+                    <summary>Alert rules</summary>
+                    <div class="details-body">
+                      <label>Name <input id="alertNameInput" type="text" placeholder="Open incident alert"></label>
+                      <label>Metric <input id="alertMetricInput" type="text" value="operations.counts.open_incidents"></label>
+                      <label>Threshold <input id="alertThresholdInput" type="number" value="1"></label>
+                      <div class="form-actions">
+                        <button id="createAlertRuleButton" type="button" class="btn btn-sm">Create rule</button>
+                        <button id="evaluateAlertsButton" type="button" class="btn btn-sm">Evaluate</button>
+                      </div>
+                    </div>
+                  </details>
+                  <details>
+                    <summary>RapidPro</summary>
+                    <div class="details-body">
+                      <label>URNs (comma-separated) <input id="rapidProUrnsInput" type="text" placeholder="+254700000000"></label>
+                      <button id="sendRapidProAlertButton" type="button" class="btn btn-sm">Send latest alert</button>
+                    </div>
+                  </details>
+                  <details>
+                    <summary>Report schedules</summary>
+                    <div class="details-body">
+                      <label>Next run <input id="reportScheduleNextRunInput" type="datetime-local"></label>
+                      <div class="form-actions">
+                        <button id="createReportScheduleButton" type="button" class="btn btn-sm">Create schedule</button>
+                        <button id="runDueReportsButton" type="button" class="btn btn-sm">Run due</button>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </section>
+
+              <section class="settings-section" id="dhis2-settings-section">
+                <h3>DHIS2 sync scaffold</h3>
+                <p class="settings-note">Configure and test. Real bidirectional sync requires network wiring. See <a href="/docs/dhis2-integration.md" target="_blank">docs/dhis2-integration.md</a>.</p>
+                <label for="dhis2BaseUrl">Base URL</label>
+                <input type="url" id="dhis2BaseUrl" placeholder="https://play.dhis2.org/40.2.2" autocomplete="off">
+                <label for="dhis2ApiToken">API token</label>
+                <input type="password" id="dhis2ApiToken" placeholder="Personal access token" autocomplete="off">
+                <label for="dhis2OrgUnits">Org units (one per line)</label>
+                <textarea id="dhis2OrgUnits" rows="3" placeholder="DiszpKrYNg8&#10;YuQRtpLP10I" style="width:100%;resize:vertical;padding:0.4rem;border:1px solid var(--stroke);border-radius:var(--r)"></textarea>
+                <label for="dhis2DataElements">Data elements (one per line)</label>
+                <textarea id="dhis2DataElements" rows="3" placeholder="fbfJHSPpUQD&#10;cYeuwXTCPkU" style="width:100%;resize:vertical;padding:0.4rem;border:1px solid var(--stroke);border-radius:var(--r)"></textarea>
+                <label for="dhis2Period">Period</label>
+                <input type="text" id="dhis2Period" placeholder="2026Q3">
+                <div style="display:flex;gap:0.5rem;margin-top:0.75rem;flex-wrap:wrap">
+                  <button class="btn-secondary" id="dhis2SaveBtn">Save to localStorage</button>
+                  <button class="btn-secondary" id="dhis2TestBtn">Test connection</button>
+                </div>
+                <p id="dhis2TestResult" style="font-size:0.8rem;margin-top:0.5rem" hidden></p>
+              </section>
+
+              <section class="settings-section">
+                <h3>About</h3>
+                <p class="settings-note">Lindela Lite <span data-app-version>v0.1.0</span> — open-source climate-conflict monitoring toolkit.</p>
+                <p class="settings-note">
+                  <a href="/docs/platform.md" target="_blank" rel="noopener">Documentation</a>
+                  &middot; GDELT excluded from public sources.
+                </p>
+                <p class="settings-note">Keyboard: <kbd>?</kbd> cheatsheet &middot; <kbd>Cmd K</kbd> command palette &middot; <kbd>1</kbd>–<kbd>4</kbd> tabs</p>
+              </section>
+
+            </div>
+          </div>

@@ -244,6 +244,28 @@ describe('the breaker survives the run (R-41)', () => {
   })
 })
 
+describe('two runs of one source are two runs (found by R-45)', () => {
+  it('does not collapse two same-millisecond runs into one row', async () => {
+    // `stableId('run', [source, started_at, status, errors])` with a
+    // millisecond `nowIso()` gives two back-to-back runs the same id, and
+    // `mergeById` keys on id — so the second run's row overwrote the first with
+    // no error anywhere. Found by the R-45 test flaking: sometimes two runs,
+    // sometimes one, depending on whether the two calls straddled a
+    // millisecond boundary.
+    //
+    // The consequence is not a cosmetic duplicate: `source_runs` is the
+    // trailing window every count assertion and every freshness verdict reads,
+    // so a dropped run makes both one run behind reality.
+    const store = await freshStore()
+    const connector = connectors(gdacs(0))
+    await Promise.all(Array.from({ length: 6 }, () => runIngestion(store, { sources: ['gdacs'] }, { connectors: connector })))
+
+    const runs = (await store.read()).source_runs
+    assert.equal(runs.length, 6, `six runs produced ${runs.length} rows; two collided`)
+    assert.equal(new Set(runs.map((run) => run.id)).size, 6, 'every run needs its own id')
+  })
+})
+
 describe('an empty feed is not a quiet feed (R-45 / R-44)', () => {
   it('separates a source that has never delivered from one that is merely quiet', async () => {
     const store = await freshStore()

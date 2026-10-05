@@ -1,0 +1,27 @@
+          <div id="panel-reports" class="rail-panel" role="tabpanel" aria-labelledby="tab-reports" hidden>
+            <div class="panel-header">
+              <h2 data-i18n="tab.reports">Reports</h2>
+              <button id="newReportButton" class="btn btn-sm" type="button" data-i18n="action.new_report">New report</button>
+            </div>
+            <form id="newReportForm" class="inline-form" hidden>
+              <label>Template
+                <select id="reportTemplateIdInput"><option value="">None (create new)</option></select>
+              </label>
+              <label>Country <input type="text" id="reportCountryInput" placeholder="KE"></label>
+              <label>Incident ID <input type="text" id="reportIncidentInput" placeholder="incident_..."></label>
+              <label>Intervention ID <input type="text" id="reportInterventionInput" placeholder="intervention_..."></label>
+              <label>Sections
+                <input type="text" id="reportSectionsInput"
+                  value="executive_summary,incident_summary,alert_summary,appendix_sources">
+              </label>
+              <div class="form-actions">
+                <button id="createReportTemplateButton" type="button" class="btn btn-sm">Save template</button>
+                <button id="generateReportButton" type="button" class="btn btn-primary btn-sm"
+                        data-i18n="action.generate">Generate</button>
+              </div>
+            </form>
+            <div id="reportsList" class="list-container" role="list"></div>
+            <nav id="reportsPager" class="pagination" aria-label="Report pages" hidden></nav>
+          </div>
+
+          <!-- Ingestion -->

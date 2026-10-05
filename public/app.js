@@ -95,7 +95,18 @@ const state = {
 // =============================================================
 const $ = (id) => document.getElementById(id)
 
-const apiKeyInput       = $('apiKeyInput')
+// `#apiKeyInput` is looked up lazily, never captured into a module-scope const.
+//
+// It lives in the deferred settings panel, so a const captured at load would
+// hold `null` for the life of the page: the field would never restore the saved
+// key, its `input` listener would never attach, and — because `authHeaders`
+// reads the same reference — every authenticated request would go out with no
+// key at all. A whole surface silently failing to authenticate, from a
+// performance change, in a file with no error and no failing test.
+//
+// `?.` on the old code hid exactly this: every access was already null-safe,
+// so nothing about the failure looked like a failure.
+const apiKeyInput       = () => $('apiKeyInput')
 const storageMode       = $('storageMode')
 const offlineBanner     = $('offlineBanner')
 const queuedBadge       = $('queuedBadge')
@@ -108,17 +119,36 @@ const queuedCount       = $('queuedCount')
 // API key
 // =============================================================
 const savedApiKey = localStorage.getItem('lindela_lite_api_key') || ''
-if (apiKeyInput) {
-  apiKeyInput.value = savedApiKey
-  apiKeyInput.addEventListener('input', () => {
-    const value = apiKeyInput.value.trim()
+
+/**
+ * Restore the saved API key into the field and start persisting edits.
+ *
+ * Called at boot and again after the settings panel is mounted. The second call
+ * is the one that matters: before the deferral the element existed at load, so
+ * this ran once against a live field; now it runs against nothing until the
+ * panel is fetched.
+ */
+function bindApiKeyInput() {
+  const input = apiKeyInput()
+  if (!input) return false
+  if (!input.value) input.value = savedApiKey
+  if (input.dataset.lindelaBound === '1') return true
+  input.addEventListener('input', () => {
+    const value = input.value.trim()
     if (value) localStorage.setItem('lindela_lite_api_key', value)
     else localStorage.removeItem('lindela_lite_api_key')
   })
+  input.dataset.lindelaBound = '1'
+  return true
 }
+bindApiKeyInput()
 
 function authHeaders(headers = {}) {
-  const apiKey = apiKeyInput?.value.trim()
+  // Re-read the field on every call rather than caching the element. A request
+  // can be made long before the settings panel is opened — the key is set on
+  // one tab and used by every other — so a cached reference is a cached
+  // "no key", permanently.
+  const apiKey = apiKeyInput()?.value?.trim()
   return apiKey ? { ...headers, 'x-api-key': apiKey } : headers
 }
 
@@ -2772,6 +2802,13 @@ async function refresh({ first = false, force = false } = {}) {
     else if (state.activeTab === 'reports')   renderReportsPanel()
     else if (state.activeTab === 'equity')    renderEquityTab()
     else if (state.activeTab === 'ingestion') renderIngestionPanel()
+    // A deferred panel that is open but whose markup has not landed yet renders
+    // nothing here — every one of the four renderers returns early when its
+    // container is absent. That is the guard doing its job, and it would
+    // otherwise leave an open tab showing data from the refresh *before* the
+    // panel loaded. `mountPanel` re-renders on completion, so the gap closes
+    // itself; this note is here so nobody "fixes" the early return by removing
+    // it and gets an exception on every poll instead.
 
     loadSignalToAction().catch(() => {})
 
@@ -3247,6 +3284,195 @@ $('dispatchGateDialog')?.addEventListener('close', () => {
 // =============================================================
 // Tabs
 // =============================================================
+
+/**
+ * The four panels whose markup is fetched on first open rather than shipped.
+ *
+ * The console shipped 58 keyboard-focusable controls inside panels that start
+ * `hidden` and lay out at `opacity: 0`, at coordinates identical to the visible
+ * panel's. That is 59% of the console's interactive surface reachable by Tab
+ * and invisible on screen — and 12 KB gzipped of HTML that a field operator
+ * paid for on every load to reach controls they could not see.
+ *
+ * The panel element itself stays in index.html; only its contents move. That
+ * is what makes the deferral safe: `switchTab` still finds `panel-equity`, the
+ * tab strip still has a panel to point `aria-controls` at, and the a11y tree
+ * still has a tabpanel to land on. What is deferred is the 58 controls.
+ *
+ * Each tab is fetched at most once per page and then cached in the module-level
+ * map, so a second switch is synchronous — the same shape as `lazy()` for the
+ * workflow modules.
+ */
+const DEFERRED_PANELS = {
+  equity: '/panels/equity.html',
+  reports: '/panels/reports.html',
+  ingestion: '/panels/ingestion.html',
+  settings: '/panels/settings.html',
+}
+
+const _mountedPanels = new Map()
+
+/**
+ * Bindings for controls inside the four deferred panels.
+ *
+ * These 21 listeners used to be `$('id')?.addEventListener(...)` at module
+ * scope. With the markup inline that ran against a live element and the `?.`
+ * was defensive. With the markup deferred it runs against *nothing*: the
+ * element does not exist yet, `?.` short-circuits, and the listener is never
+ * attached — silently, with no error, because a no-op optional call is not a
+ * failure anything reports.
+ *
+ * The result would have been four panels of buttons that render correctly and
+ * do nothing when clicked. That is a far worse defect than the 12 KB the
+ * deferral saves: a dead button tells an operator the platform cannot do the
+ * thing, and they will not retry it or report it, because there is nothing
+ * visible to report.
+ *
+ * So the deferred controls are bound from here, after their markup lands, and
+ * the registration is idempotent — `mountPanel` runs once per panel per page, but
+ * a listener added twice would fire a POST twice, which for
+ * `runButton`/`generateReportButton` is not a harmless duplicate.
+ */
+const _deferredBound = new Set()
+
+/** Attach every listener for one deferred panel's controls. */
+function bindDeferredPanel(name) {
+  // Side-effect bindings that are not a single control each. Named here rather
+  // than discovered, because a panel whose wiring is "whatever ran at module
+  // scope" is a panel whose wiring silently stopped when its markup moved.
+  if (name === 'settings') { bindApiKeyInput(); dhis2Settings() }
+  const entries = DEFERRED_PANEL_BINDINGS[name]
+  if (!entries) return 0
+  let bound = 0
+  for (const [id, event, handler] of entries) {
+    const key = `${name}:${id}:${event}`
+    if (_deferredBound.has(key)) continue
+    const el = $(id)
+    // A missing control is reported rather than skipped. Silence here is how a
+    // renamed id produced a dead button for a release.
+    if (!el) {
+      console.warn(`Deferred panel "${name}": no element with id "${id}" to bind ${event}`)
+      continue
+    }
+    el.addEventListener(event, handler)
+    _deferredBound.add(key)
+    bound += 1
+  }
+  return bound
+}
+
+/**
+ * Declared after the handlers it references, and read lazily inside
+ * `mountPanel`, so the ordering here is a documentation choice rather than a
+ * load-order dependency. Kept as data rather than as 21 wrapped closures so
+ * the set of deferred controls is greppable in one place — the failure mode
+ * this file exists to prevent was invisible precisely because it was scattered
+ * across 21 separate lines.
+ */
+const DEFERRED_PANEL_BINDINGS = {
+  reports: [
+    // Toggles the inline form rather than opening a dialog — the form is
+    // declared hidden in the panel and revealed here, which is why the
+    // `hidden` guard in R-56 matters for this control specifically.
+    ['newReportButton', 'click', () => {
+      const form = $('newReportForm')
+      if (form) form.hidden = !form.hidden
+    }],
+    ['generateReportButton', 'click', () => generateReport()],
+    ['createReportTemplateButton', 'click', () => createReportTemplate()],
+  ],
+  equity: [
+    ['triggerEquityAuditButton', 'click', async () => {
+      const district = prompt('Enter district for equity audit:')
+      if (!district) return
+      setStatus('Triggering equity audit workflow...')
+      const payload = await postJson('/api/v1/workflows', {
+        type: 'equity_audit_action',
+        state: 'threshold_breached',
+        district: district,
+      })
+      setStatus(payload.success ? `Equity audit workflow triggered for ${district}.` : (payload.error || 'Workflow trigger failed'))
+      await refresh({ force: true })
+    }],
+  ],
+  ingestion: [
+    ['runButton', 'click', () => runIngestion()],
+    ['createIngestionSchedulesButton', 'click', () => createPublicIngestionSchedules()],
+    ['runDueIngestionButton', 'click', () => runDueIngestion()],
+    ['importAcledButton', 'click', () => importAcledConflictCsv()],
+    ['importCsvButton', 'click', () => importServiceAssets('csv')],
+    ['importGeoJsonButton', 'click', () => importServiceAssets('geojson')],
+    ['exportGeoJsonButton', 'click', () => window.open('/api/v1/export.geojson', '_blank')],
+    ['exportCsvButton', 'click', () => window.open('/api/v1/export.csv', '_blank')],
+  ],
+  settings: [
+    ['addWebhookForm', 'submit', async (e) => {
+      e.preventDefault()
+      const url    = $('webhookUrlInput')?.value?.trim()
+      const events = ($('webhookEventsInput')?.value || 'alert.*').split(',').map((s) => s.trim()).filter(Boolean)
+      if (!url) return
+      const payload = await postJson('/api/v1/webhooks', { url, events })
+      setStatus(payload.success ? `Webhook added.` : (payload.error || 'Webhook failed'))
+      renderSettingsPanel()
+    }],
+    ['createIncidentButton', 'click', () => createIncident()],
+    ['createInterventionButton', 'click', () => createIntervention()],
+    ['createTaskButton', 'click', () => createTask()],
+    ['createAlertRuleButton', 'click', () => createAlertRule()],
+    ['evaluateAlertsButton', 'click', () => evaluateAlerts()],
+    ['sendRapidProAlertButton', 'click', () => sendLatestRapidProAlert()],
+    ['createReportScheduleButton', 'click', () => createReportSchedule()],
+    ['runDueReportsButton', 'click', () => runDueReports()],
+  ],
+}
+
+/**
+ * Fetch a deferred panel's markup and insert it into its shell.
+ *
+ * Resolves even on failure — the caller has already switched the tab, so a
+ * rejection would leave it looking switched with a blank panel and no reason.
+ * The failure is stated in words instead.
+ *
+ * @returns {Promise<boolean>} whether the panel's contents are now in the DOM
+ */
+async function mountPanel(name) {
+  const url = DEFERRED_PANELS[name]
+  if (!url) return true
+  const shell = $(`panel-${name}`)
+  if (!shell) return false
+  if (_mountedPanels.has(name)) return true
+
+  let html
+  try {
+    const res = await fetch(url, { cache: 'no-cache' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    html = await res.text()
+  } catch (err) {
+    // Say what happened rather than showing an empty tab. "No data" here would
+    // be the console's unearned-negative defect all over again, on the panel
+    // that holds the settings and the connector configuration.
+    console.error(`Failed to load the ${name} panel:`, err)
+    shell.innerHTML = '<div class="empty-state empty-state-error" role="status">'
+      + '<p class="empty-state-title">This panel could not be loaded</p>'
+      + `<p>The ${name} panel's markup was not fetched, so this is not an empty panel. `
+      + 'Check the connection and switch tabs again.</p></div>'
+    _mountedPanels.set(name, false)
+    return false
+  }
+
+  // The template carries the panel's own outer <div>, and the shell in
+  // index.html is that same element — so the contents are inserted here and the
+  // shell's own attributes (id, role, aria-labelledby, hidden) are kept. Two
+  // elements with one id would be a duplicate-id bug and a broken `for`/`id`
+  // relationship for every control inside.
+  shell.innerHTML = html
+  // Bind before the panel is unhidden, so a control is never focusable and
+  // clickable before it does anything.
+  bindDeferredPanel(name)
+  _mountedPanels.set(name, true)
+  return true
+}
+
 function switchTab(name) {
   state.activeTab = name
   document.querySelectorAll('.rail-tab').forEach((btn) => {
@@ -3264,12 +3490,25 @@ function switchTab(name) {
     panel.classList.toggle('active', active)
     panel.hidden = !active
   })
+
+  // Mount before rendering: for a deferred panel the ids do not exist yet, so
+  // rendering first would paint an empty panel and never fill it.
+  if (DEFERRED_PANELS[name]) {
+    mountPanel(name).then((mounted) => {
+      if (!mounted) return
+      if (name === 'reports')   renderReportsPanel()
+      else if (name === 'equity')    renderEquityTab()
+      else if (name === 'ingestion') renderIngestionPanel()
+      else if (name === 'settings')  renderSettingsPanel()
+    })
+    // Data for a deferred panel is still requested now, so the fetch overlaps
+    // the markup fetch rather than queueing behind it.
+    refresh({ force: false })
+    return
+  }
+
   if (name === 'workflows')   { loadWorkflowMetrics() }
   else if (name === 'alerts')    renderAlertsPanel()
-  else if (name === 'reports')   renderReportsPanel()
-  else if (name === 'equity')    renderEquityTab()
-  else if (name === 'ingestion') renderIngestionPanel()
-  else if (name === 'settings')  renderSettingsPanel()
   // Opening a tab is a request for its data. The poll only fetches the active
   // tab's endpoints, so without this a tab left open for an hour would render
   // from whatever the boot load put in state — hours old, with no indication.
@@ -3971,14 +4210,10 @@ async function handleReportAction(id, action) {
   }
 }
 
-$('newReportButton')?.addEventListener('click', () => {
-  const form = $('newReportForm')
-  if (form) form.hidden = !form.hidden
-})
-
-$('generateReportButton')?.addEventListener('click', generateReport)
-$('createReportTemplateButton')?.addEventListener('click', createReportTemplate)
-
+// The four deferred panels' controls are bound by `bindDeferredPanel` once
+// their markup has been fetched — see DEFERRED_PANEL_BINDINGS. These bindings
+// used to live here at module scope, where `?.` made them silently no-ops
+// against markup that no longer exists at load.
 function reportScope() {
   return Object.fromEntries(Object.entries({
     country:         $('reportCountryInput')?.value?.trim(),
@@ -4273,25 +4508,7 @@ function renderSettingsPanel() {
   }).catch(() => {})
 }
 
-$('addWebhookForm')?.addEventListener('submit', async (e) => {
-  e.preventDefault()
-  const url    = $('webhookUrlInput')?.value?.trim()
-  const events = ($('webhookEventsInput')?.value || 'alert.*').split(',').map((s) => s.trim()).filter(Boolean)
-  if (!url) return
-  const payload = await postJson('/api/v1/webhooks', { url, events })
-  setStatus(payload.success ? `Webhook added.` : (payload.error || 'Webhook failed'))
-  renderSettingsPanel()
-})
-
 // Operations forms
-$('createIncidentButton')?.addEventListener('click', createIncident)
-$('createInterventionButton')?.addEventListener('click', createIntervention)
-$('createTaskButton')?.addEventListener('click', createTask)
-$('createAlertRuleButton')?.addEventListener('click', createAlertRule)
-$('evaluateAlertsButton')?.addEventListener('click', evaluateAlerts)
-$('sendRapidProAlertButton')?.addEventListener('click', sendLatestRapidProAlert)
-$('createReportScheduleButton')?.addEventListener('click', createReportSchedule)
-$('runDueReportsButton')?.addEventListener('click', runDueReports)
 
 async function createIncident() {
   setStatus('Creating incident...')
@@ -4731,14 +4948,6 @@ if (locSel) {
 // Button wiring
 // =============================================================
 $('refreshButton')?.addEventListener('click', refresh)
-$('runButton')?.addEventListener('click', runIngestion)
-$('createIngestionSchedulesButton')?.addEventListener('click', createPublicIngestionSchedules)
-$('runDueIngestionButton')?.addEventListener('click', runDueIngestion)
-$('importAcledButton')?.addEventListener('click', importAcledConflictCsv)
-$('importCsvButton')?.addEventListener('click', () => importServiceAssets('csv'))
-$('importGeoJsonButton')?.addEventListener('click', () => importServiceAssets('geojson'))
-$('exportGeoJsonButton')?.addEventListener('click', () => window.open('/api/v1/export.geojson', '_blank'))
-$('exportCsvButton')?.addEventListener('click', () => window.open('/api/v1/export.csv', '_blank'))
 
 // =============================================================
 // Dispatch gate dialog handlers
@@ -4782,28 +4991,25 @@ $('coldChainToggle')?.addEventListener('change', (e) => {
 // =============================================================
 // Equity audit trigger
 // =============================================================
-$('triggerEquityAuditButton')?.addEventListener('click', async () => {
-  const district = prompt('Enter district for equity audit:')
-  if (!district) return
-  setStatus('Triggering equity audit workflow...')
-  const payload = await postJson('/api/v1/workflows', {
-    type: 'equity_audit_action',
-    state: 'threshold_breached',
-    district: district,
-  })
-  setStatus(payload.success ? `Equity audit workflow triggered for ${district}.` : (payload.error || 'Workflow trigger failed'))
-  await refresh({ force: true })
-})
-
 // =============================================================
 // DHIS2 settings (localStorage only; no credential backend)
 // =============================================================
-;(function dhis2Settings() {
+/**
+ * Wire the DHIS2 credential fields and restore their saved values.
+ *
+ * A named function rather than an IIFE, because these controls live in the
+ * deferred settings panel. As an IIFE it ran once at module load, found no
+ * `#dhis2SaveBtn` because that markup had not been fetched, and returned — so
+ * the fields would never restore their saved values and neither button would
+ * do anything, with nothing logged. `bindDeferredPanel` calls it after mount.
+ */
+function dhis2Settings() {
   const LS_KEY = 'lindela_lite_dhis2'
   const fields = ['dhis2BaseUrl', 'dhis2ApiToken', 'dhis2OrgUnits', 'dhis2DataElements', 'dhis2Period']
   const saveBtn = $('dhis2SaveBtn')
   const testBtn = $('dhis2TestBtn')
   const resultEl = $('dhis2TestResult')
+  // Not a guard against a missing control but a "not mounted yet" early exit.
   if (!saveBtn) return
 
   // Restore from localStorage
@@ -4868,7 +5074,10 @@ $('triggerEquityAuditButton')?.addEventListener('click', async () => {
       }
     }
   })
-})()
+}
+
+// No-op until the settings panel has been fetched; `bindDeferredPanel` calls it again.
+dhis2Settings()
 
 // =============================================================
 // Auto-refresh

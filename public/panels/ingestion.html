@@ -1,0 +1,48 @@
+          <div id="panel-ingestion" class="rail-panel" role="tabpanel" aria-labelledby="tab-ingestion" hidden>
+            <div class="panel-header">
+              <h2 data-i18n="tab.ingestion">Ingestion</h2>
+            </div>
+            <div class="ingestion-region">
+              <label>Lat <input id="latInput" type="number" step="0.0001" value="3.1167"></label>
+              <label>Lon <input id="lonInput" type="number" step="0.0001" value="35.6"></label>
+              <label>Region <input id="regionInput" type="text" value="Turkana"></label>
+              <label>Country <input id="countryInput" type="text" value="KE" maxlength="3"></label>
+            </div>
+            <div id="sourceGrid" class="source-grid" role="group" aria-label="Select sources to run"></div>
+            <div class="ingestion-actions">
+              <button id="runButton" type="button" class="btn btn-primary btn-sm"
+                      data-i18n="action.run_now">Run selected</button>
+              <button id="createIngestionSchedulesButton" type="button" class="btn btn-sm"
+                      data-i18n="action.create_defaults">Create schedules</button>
+              <button id="runDueIngestionButton" type="button" class="btn btn-sm"
+                      data-i18n="action.run_all_due">Run due</button>
+            </div>
+            <div id="sourceStatusList" class="list-container"></div>
+            <div class="service-asset-section">
+              <h3>Service assets</h3>
+              <textarea id="serviceAssetInput" rows="4" spellcheck="false"
+                placeholder="CSV: name,service_type,country,latitude,longitude&#10;or GeoJSON FeatureCollection"></textarea>
+              <div class="form-actions">
+                <button id="importCsvButton" type="button" class="btn btn-sm">Import CSV</button>
+                <button id="importGeoJsonButton" type="button" class="btn btn-sm">Import GeoJSON</button>
+                <button id="exportGeoJsonButton" type="button" class="btn btn-sm">Export GeoJSON</button>
+                <button id="exportCsvButton" type="button" class="btn btn-sm">Export CSV</button>
+              </div>
+            </div>
+            <div class="service-asset-section" id="acledSection">
+              <h3>ACLED conflict import</h3>
+              <p class="settings-note">
+                Licensed, not open data. The import is refused unless you assert you
+                hold a current ACLED licence for it, and that assertion is recorded
+                against the run.
+              </p>
+              <textarea id="acledCsvInput" rows="4" spellcheck="false"
+                placeholder="event_id,event_date,country,event_type,sub_event_type,fatalities&#10;EVT-1,2026-08-01,KE,Protest,Peaceful protest,0"></textarea>
+              <div class="form-actions">
+                <button id="importAcledButton" type="button" class="btn btn-sm">Import ACLED CSV</button>
+              </div>
+              <p class="ops-result" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+
+          <!-- Settings -->

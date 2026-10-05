@@ -42,6 +42,9 @@ const CONNECTORS = Object.freeze({
   dhis2: dhis2Connector,
 })
 
+/** Process-monotonic. See `runInvocationSeq` use in `runIngestion`. */
+let runInvocationSeq = 0
+
 export const PUBLIC_INGESTION_SOURCES = Object.freeze([
   'open_meteo',
   'gdacs',
@@ -118,6 +121,19 @@ export function getConnector(sourceId, connectors = CONNECTORS) {
  */
 export async function runIngestion(store, request = {}, { connectors = CONNECTORS } = {}) {
   resetFetchRecordings()
+  // The per-invocation discriminator for run ids. Two runs of the same source,
+  // both succeeding, both landing inside the same millisecond, mint the same
+  // `stableId` — and `mergeById` keys on id, so the second run's row silently
+  // overwrites the first's. One run vanishes from `source_runs` with no error
+  // anywhere, which then makes every trailing window one short and every
+  // verdict one run behind reality.
+  //
+  // A monotonic counter rather than a clock: a clock is exactly the thing that
+  // collided, and a counter cannot collide within a process however fast the
+  // runs come. Combined with `started_at` the id stays stable for a given run
+  // and unique across runs, which is what `mergeById` needs.
+  runInvocationSeq += 1
+  const invocation = runInvocationSeq
   const requestedSources = request.sources?.length ? request.sources : PUBLIC_INGESTION_SOURCES
   for (const source of requestedSources) {
     if (BLOCKED_SOURCE_IDS.includes(source)) {
@@ -192,7 +208,7 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     const gate = allowRequest(circuitState, source)
     if (!gate.allowed) {
       const skippedRun = {
-        id: stableId('run', [source, startedAt, verdict, [gate.reason]]),
+        id: stableId('run', [source, startedAt, invocation, verdict, [gate.reason]]),
         source,
         status: 'skipped',
         verdict: gate.reason,
@@ -300,7 +316,10 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     // stamp is what lets the lineage loop below attribute records to the run
     // that produced them. It used to be computed afterwards, from a status and
     // an error list that the stamping could not influence.
-    const runId = stableId('run', [source, startedAt, status, errors])
+    //
+    // `invocation` is in the preimage so two same-millisecond runs cannot
+    // share an id — see the note where it is minted.
+    const runId = stableId('run', [source, startedAt, invocation, status, errors])
 
     // ENH-15. Provenance per record, built before the batch is merged so the
     // `_provenance` envelope travels with the row rather than being inferred

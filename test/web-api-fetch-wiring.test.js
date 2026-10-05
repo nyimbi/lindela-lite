@@ -65,6 +65,36 @@ function frontEndModules(dir = PUBLIC, acc = []) {
  * the global in this codebase — banning it would ban the fix — so the module
  * that defines it is excluded from the scan and asserted on directly below.
  */
+/**
+ * Is the fetch at `line` inside the body of `functionName`?
+ *
+ * Found by scanning to the next line that is exactly `}` at column zero, which
+ * is how every top-level function in this codebase ends. That is a
+ * convention rather than a guarantee, so it is stated here rather than
+ * pretended at: it is correct for the file it is asked about, and the
+ * alternative — brace-counting — is worse, because a single template literal
+ * containing a brace silently ends the count early and the helper then returns
+ * false forever, exempting nothing while appearing to work.
+ *
+ * Scoped to one named function rather than matched on a path, because the
+ * deferred panel's path arrives as a variable: `fetch(url)` where `url` came
+ * from DEFERRED_PANELS. Matching the string would either miss it, or exempt
+ * every call using a variable called `url`, which is not an exemption anyone
+ * can reason about.
+ *
+ * `src` must be the same comment-stripped text the fetch scan ran against, so
+ * the two line numbering schemes agree.
+ */
+function inFunction(lines, line, functionName) {
+  const decl = new RegExp(`^(?:async\\s+)?function\\s+${functionName}\\s*\\(`)
+  const start = lines.findIndex((l) => decl.test(l))
+  if (start === -1) return false
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i] === '}') return line > start + 1 && line < i + 1
+  }
+  return false
+}
+
 const WRAPPER_MODULE = path.join('public', 'shared', 'runtime.js')
 
 const MODULES = frontEndModules().filter((m) => m !== WRAPPER_MODULE)
@@ -72,12 +102,13 @@ const MODULES = frontEndModules().filter((m) => m !== WRAPPER_MODULE)
 /** A call to `fetch(` that is not one of the sanctioned wrappers. */
 function rawApiFetches(src) {
   const out = []
+  let offset = 0
   src.split('\n').forEach((line, i) => {
     const m = /\bfetch\s*\(/.exec(line)
-    if (!m) return
+    if (!m) { offset += line.length + 1; return }
     // A call with a `.` before it is a method on some object, not global fetch.
-    if (/\.\s*fetch\s*\(/.test(line)) return
-    out.push({ line: i + 1, text: line.trim() })
+    if (/\.\s*fetch\s*\(/.test(line)) { offset += line.length + 1; return }
+    out.push({ line: i + 1, offset: offset + m.index, text: line.trim() })
   })
   return out
 }
@@ -94,9 +125,22 @@ describe('R-67 — no front-end module calls the global fetch on an API path', (
 
   const offenders = []
   for (const rel of MODULES) {
-    for (const hit of rawApiFetches(code(rel))) {
+    const src = code(rel)
+    for (const hit of rawApiFetches(src)) {
       // The i18n catalogues are exempt by design; see the header.
       if (/\/i18n\/|\/i18n\$\{|\/i18n['"`]/.test(hit.text)) continue
+      // A deferred panel's own template, fetched inside `mountPanel`. Same
+      // category as the catalogues: a static same-origin file with no
+      // partial-response semantics and no auth. It checks `res.ok` and renders
+      // a named failure, so `apiFetch` would add a bearer token and a JSON
+      // parse to a request that wants neither.
+      //
+      // Scoped to the one function rather than matched on a path, because the
+      // path arrives as a variable — `fetch(url)` where `url` came from
+      // DEFERRED_PANELS. Matching on the string would either miss it or match
+      // any call using a variable named `url`, which is not an exemption
+      // anyone can reason about.
+      if (inFunction(src.split('\n'), hit.line, 'mountPanel')) continue
       offenders.push(`${rel}:${hit.line}: ${hit.text}`)
     }
   }
@@ -154,8 +198,15 @@ describe('R-67 — the wrapper it routes through is the one that does the work',
     // The exemption above is a hole with a known width. Pinning the width means
     // a second exemption cannot be added quietly: this counts the wrappers,
     // rather than trusting the exclusion list to stay at one entry.
-    const wrappers = MODULES.concat([WRAPPER_MODULE]).filter((m) =>
-      rawApiFetches(code(m)).some((h) => !/\/i18n\//.test(h.text)))
+    const wrappers = MODULES.concat([WRAPPER_MODULE]).filter((m) => {
+      const src = code(m)
+      const lines = src.split('\n')
+      // Same two exemptions as the scan above, or this would count the very
+      // fetches the scan allows and report the wrapper's exemption as a
+      // second one.
+      return rawApiFetches(src).some((h) =>
+        !/\/i18n\//.test(h.text) && !inFunction(lines, h.line, 'mountPanel'))
+    })
     assert.deepEqual(wrappers, [WRAPPER_MODULE],
       'only the module that defines apiFetch may call the global fetch')
   })
