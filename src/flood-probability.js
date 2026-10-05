@@ -115,7 +115,10 @@ export function buildDistrictSamples(daily, floodEvents, district, options = {})
     const stats = monthStats(month, series, minCoverage, indexByDate)
     if (!stats) continue
     const label = monthHasFlood(month, events)
-    samples.push({ ...stats, label })
+    // The month key travels with the sample: ENH-20 needs a block to measure
+    // clustering over, and a sample that does not say when it was is a sample
+    // nobody can group.
+    samples.push({ ...stats, month: month.key, label })
   }
   return { samples, events_matched: events.length, months_kept: samples.length }
 }
@@ -269,7 +272,7 @@ export function buildDistrictSamplesFromDischarge(rainDaily, dischargeDaily, opt
       months_missing_discharge += 1
       continue
     }
-    samples.push({ ...stats, label: monthly.max > thresholdCms })
+    samples.push({ ...stats, month: month.key, label: monthly.max > thresholdCms })
   }
   return {
     samples,
@@ -295,7 +298,11 @@ export function contingencyCount(samples, feature, percentile) {
   const threshold = quantile(values, percentile)
   const above = samples.filter((s) => s[feature] > threshold)
   const positives = above.filter((s) => s.label).length
-  const wilson = wilsonInterval(positives, above.length)
+  // ENH-20. The interval is computed over the months that crossed the
+  // threshold, because that is the population the conditional probability
+  // describes — the clustering of the months below it does not narrow it.
+  const design = designEffectForMonths(above)
+  const wilson = clusteredWilsonInterval(positives, above.length, design.deff)
   return {
     counts: {
       feature,
@@ -306,6 +313,17 @@ export function contingencyCount(samples, feature, percentile) {
       flood_months_below_threshold: samples.filter((s) => s[feature] <= threshold && s.label).length,
       conditional_probability: round4(positives / Math.max(1, above.length)),
       conditional_probability_wilson: wilson,
+      // Why the interval is this wide, in numbers a reader can check. A design
+      // effect of 1 means the months carried no measurable clustering and the
+      // interval is the ordinary Wilson one.
+      clustering: {
+        block: 'calendar_year',
+        design_effect: design.deff,
+        intra_cluster_correlation: design.icc,
+        blocks: design.clusters,
+        mean_block_size: design.mean_cluster_size,
+        effective_n: design.effective_n,
+      },
       lift_over_base_rate: baseRate(samples) > 0 ? round4(positives / above.length / baseRate(samples)) : null,
     },
   }
@@ -326,6 +344,103 @@ function round4(x) { return Math.round(x * 10000) / 10000 }
 function baseRate(samples) {
   const events = samples.filter((s) => s.label).length
   return samples.length ? events / samples.length : 0
+}
+
+/**
+ * ENH-20 — months are not independent, and the interval said they were.
+ *
+ * The conditional probability is a rate over *months*, and consecutive months
+ * are not independent draws: two flood months in a row share a season, a river
+ * basin and a fortnight of rain. Wilson's interval is built on the assumption
+ * that they are, so the interval it produces is too narrow exactly where the
+ * clustering is strongest — which is the case an operator most wants a number
+ * for.
+ *
+ * The correction is an effective sample size rather than a block bootstrap,
+ * for two reasons. A bootstrap needs a seed to be reproducible, and a
+ * reproducibility argument is a worse property than a closed form. And the
+ * design effect is *reportable*: the number that says why the interval is this
+ * wide is the part a reader can check.
+ *
+ * Blocks are calendar years. Not because a year is a natural unit of flood —
+ * it is not, and the choice is conservative in the wrong direction for
+ * multi-year droughts — but because it is a block everyone can see, and the
+ * observed design effect is printed beside the interval so a reader who
+ * disagrees with the choice can see what it cost.
+ */
+export function clusterDesignEffect(perClusterHits, perClusterTotals) {
+  const clusters = []
+  for (let i = 0; i < perClusterTotals.length; i += 1) {
+    const n = perClusterTotals[i]
+    if (n > 0) clusters.push({ h: perClusterHits[i], n })
+  }
+  const k = clusters.length
+  const n = clusters.reduce((acc, c) => acc + c.n, 0)
+  if (k < 2 || n === 0) {
+    return { deff: 1, icc: 0, clusters: k, n, effective_n: n, mean_cluster_size: n / k }
+  }
+  const grandHits = clusters.reduce((acc, c) => acc + c.h, 0)
+  const p = grandHits / n
+
+  // ANOVA (ICC(1)) estimator. Between-cluster variance is the part of the
+  // variance that a bigger sample would not reduce; within-cluster variance is
+  // the part it would. Their ratio is the design effect, and it is 1 exactly
+  // when the clusters carry no information beyond the individual observations.
+  const msBetween = clusters.reduce((acc, c) => acc + c.n * ((c.h / c.n) - p) ** 2, 0) / (k - 1)
+  const msWithin = clusters.reduce((acc, c) => {
+    if (c.n < 2) return acc
+    const pj = c.h / c.n
+    return acc + c.h * ((1 - pj) ** 2) + (c.n - c.h) * (pj ** 2)
+  }, 0) / Math.max(1, n - k)
+
+  const n0 = (n - (clusters.reduce((acc, c) => acc + c.n ** 2, 0) / n)) / (k - 1)
+  const icc = n0 > 0 ? Math.max(0, (msBetween - msWithin) / (msBetween + (n0 - 1) * msWithin)) : 0
+  const meanClusterSize = n / k
+  const deff = Math.max(1, 1 + (meanClusterSize - 1) * icc)
+  return {
+    deff: Math.round(deff * 1000) / 1000,
+    icc: Math.round(icc * 1000) / 1000,
+    clusters: k,
+    n,
+    effective_n: Math.round((n / deff) * 100) / 100,
+    mean_cluster_size: Math.round(meanClusterSize * 100) / 100,
+  }
+}
+
+/**
+ * Wilson on the effective sample size.
+ *
+ * The rate is unchanged — clustering does not move the point estimate, it moves
+ * how much the estimate is worth — and the denominator shrinks by the design
+ * effect, so the interval widens by exactly the amount the clustering justifies.
+ * `deff: 1` returns the plain Wilson interval, so a series with no measurable
+ * clustering publishes the same numbers it always did.
+ */
+export function clusteredWilsonInterval(hits, total, deff = 1) {
+  if (!total) return null
+  const factor = Number.isFinite(deff) && deff > 1 ? deff : 1
+  const interval = wilsonInterval(hits / factor, total / factor)
+  if (!interval) return null
+  return {
+    ...interval,
+    design_effect: Math.round(factor * 1000) / 1000,
+    effective_n: Math.round((total / factor) * 100) / 100,
+  }
+}
+
+/** The design effect over a set of samples carrying their `month`. */
+export function designEffectForMonths(samples) {
+  const byBlock = new Map()
+  for (const sample of samples) {
+    const key = typeof sample.month === 'string' ? sample.month.slice(0, 4) : null
+    if (!key) continue
+    if (!byBlock.has(key)) byBlock.set(key, { h: 0, n: 0 })
+    const block = byBlock.get(key)
+    block.n += 1
+    if (sample.label) block.h += 1
+  }
+  const blocks = [...byBlock.values()]
+  return clusterDesignEffect(blocks.map((b) => b.h), blocks.map((b) => b.n))
 }
 
 /** Wilson score interval at 95%: a count-based probability must carry its uncertainty. */

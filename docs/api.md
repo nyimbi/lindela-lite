@@ -150,6 +150,56 @@ caller's cached body to the next, and a cache between here and the browser, the
 service worker's Cache API included, keys on those headers only when the response
 says so.
 
+## History
+
+What the platform believed, and when it stopped believing it. The store keeps
+every superseded value with the interval it was held for; until now nothing in
+the API could reach it, so a question like "why does this district's count
+disagree with the report" had an answer in the repository and no way to ask.
+
+| Endpoint | |
+| --- | --- |
+| `GET /api/v1/history/:collection` | The series: every value the platform held, each with `believed_from`, `believed_to`, and `source: history \| current`. `?district=` narrows it, `?at=` answers what was held then. |
+| `GET /api/v1/history/:collection/record?id=` | One record: its revision list, and `value_as_of` when `?at=` is given. |
+
+Only the bitemporal collections project. A field report is an event, not a state
+the platform held and later changed, so it has no observation history — the
+response says so and lists what *is* projectable rather than returning nothing.
+
+`coverage` is on every response and should be read first: superseded values are
+retained for the most recent five revisions per record (the store's cap, kept so
+the table stays readable), so this answers the recent past. A series that quietly
+stops in 2019 would read as "the platform believed nothing then", which is the one
+claim this must never make.
+
+A date with no value is `null`, never `0`. Absence of a belief is not a count of
+zero, and a retrospective edit is exactly the case a zero would hide.
+
+## Flood Probability Intervals
+
+The conditional probability is a rate over **months**, and consecutive months are
+not independent draws — two flood months in a row share a season, a basin and a
+fortnight of rain. The interval therefore carries a design effect:
+
+```json
+"conditional_probability_wilson": { "low": 0.21, "high": 0.66,
+                                    "design_effect": 1.47, "effective_n": 19.0 },
+"clustering": { "block": "calendar_year", "design_effect": 1.47,
+                "intra_cluster_correlation": 0.19, "blocks": 6, "mean_block_size": 4.0 }
+```
+
+The point estimate is unchanged — clustering does not move what the score is, it
+moves what the score is worth — and the denominator shrinks by the design effect,
+so the interval widens by exactly the amount the clustering justifies. A
+`design_effect` of `1` means the months carried no measurable clustering and the
+published numbers are the ordinary Wilson ones.
+
+Blocks are calendar years, printed beside the interval so a reader who prefers a
+different block can see what the choice cost. The correction is an effective
+sample size rather than a bootstrap: a bootstrap needs a seed to be
+reproducible, and a closed form that can be checked by hand is worth more here
+than resampling precision.
+
 ## Derived-Value Reconciliation
 
 Every refresh stamps each derived score with **the input counts it was computed

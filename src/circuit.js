@@ -87,12 +87,27 @@ export const CIRCUIT_SCORE_WEIGHTS = Object.freeze({
 // vocabulary drifts from the code.
 export const CIRCUIT_SCORE_REASONS = Object.freeze({
   NO_OUTCOMES: 'no_outcomes',
+  // ENH-21. A success rate over two calls is two calls. The floor is the same
+  // one the metric registry uses for operational rates, because it is the same
+  // claim: a proportion computed from too few observations is not a weaker
+  // number, it is not a number.
+  TOO_FEW_OUTCOMES: 'too_few_outcomes',
   LATENCY_UNKNOWN: 'latency_unknown',
   RECORD_DRIFT_UNKNOWN: 'record_drift_unknown',
   P95_FROM_SINGLE_SAMPLE: 'p95_from_single_sample',
 })
 
 const COOLDOWN_MS = CIRCUIT_COOLDOWN_MINUTES * 60000
+
+/**
+ * The fewest outcomes a health score may be computed from.
+ *
+ * Not zero — the previous floor, which refused an empty window and accepted a
+ * two-call one, so a source called twice and succeeded twice published a
+ * perfect health score. Five matches MIN_OPERATIONAL_SAMPLES in the metric
+ * registry, for the same reason: the same claim, in the same codebase.
+ */
+export const CIRCUIT_SCORE_MIN_OUTCOMES = 5
 
 export function createCircuitState() {
   return { version: 1, sources: {} }
@@ -299,6 +314,7 @@ export function scoreConnector({ outcomes = [] } = {}) {
   const drift = recordDrift(window)
 
   if (samples === 0) reasons.push(CIRCUIT_SCORE_REASONS.NO_OUTCOMES)
+  if (samples > 0 && samples < CIRCUIT_SCORE_MIN_OUTCOMES) reasons.push(CIRCUIT_SCORE_REASONS.TOO_FEW_OUTCOMES)
   if (p95_latency_ms === null) reasons.push(CIRCUIT_SCORE_REASONS.LATENCY_UNKNOWN)
   if (drift.ratio === null) reasons.push(CIRCUIT_SCORE_REASONS.RECORD_DRIFT_UNKNOWN)
   if (latencies.length === 1) reasons.push(CIRCUIT_SCORE_REASONS.P95_FROM_SINGLE_SAMPLE)

@@ -1923,6 +1923,65 @@ paths:
       responses:
         '200':
           description: Seeded
+  /api/v1/history/{id}:
+    get:
+      summary: What the platform believed about a collection, over time
+      description: >-
+        The path segment is the collection name. It is `{id}` here because the
+        spec gate derives parameter names from the route patterns in
+        `src/server.js`, and every path capture in this document carries that
+        name; the API reference calls it `:collection`.
+      description: >-
+        The bitemporal history, as a query. Every value the platform held, with
+        the interval it was held for, plus a `coverage` block stating how much
+        history was pruned — the store keeps the most recent five revisions per
+        record, so this answers the recent past and says so. Only the bitemporal
+        collections project: a field report is an event, not a state the platform
+        held and later changed.
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The collection name — one of the bitemporal collections.
+          schema: { type: string }
+        - name: district
+          in: query
+          schema: { type: string }
+        - name: at
+          in: query
+          description: Return the value the platform held at this instant. Null when it held nothing then.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: The series, its coverage, and the value as of `at`
+  /api/v1/history/{id}/record:
+    get:
+      summary: One record's revision list, and its value at a date
+      description: >-
+        `?id=` names the record and `?at=` returns the value the platform held at
+        that instant — `null` when it held nothing then, which is an absence of a
+        belief and not a count of zero.
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The collection name.
+          schema: { type: string }
+        - name: id
+          in: query
+          required: true
+          description: The record id within that collection.
+          schema: { type: string }
+        - name: at
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Revisions, current value, and value as of `at`
+        '400':
+          description: No record id was given
   /api/v1/alert-outcomes:
     get:
       summary: Alert outcome determinations

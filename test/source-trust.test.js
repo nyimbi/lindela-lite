@@ -401,14 +401,20 @@ describe('a truncated walk says so where an operator will see it', () => {
   })
 
   it('surfaces the last verdict and a health score on the status route', () => {
-    // Four runs, because three is the floor at which a latency percentile means
-    // anything. With one run the score is correctly null, and asserting a score
-    // here would either fail or — worse, if someone "fixed" it by widening the
-    // score to two of three signals — pin a number that describes no
-    // distribution.
+    // Five runs, and the number moved up from four. The floor used to be three,
+    // argued from the latency percentile alone — a p95 from three points is
+    // thin. The score is also a *success rate*, and a proportion over three
+    // observations is one of three numbers (33 / 67 / 100), which is not a
+    // weaker health score, it is a claim. ENH-21 moved the floor to
+    // MIN_OPERATIONAL_SAMPLES, the same one the metric registry uses, so that a
+    // source's connector score and its published rates are floored once.
+    //
+    // With one run the score is correctly null, and asserting a score here would
+    // either fail or — worse, if someone "fixed" it by widening the score to two
+    // of three signals — pin a number that describes no distribution.
     const now = new Date().toISOString()
     const status = ingestionStatus({
-      source_runs: Array.from({ length: 4 }, (_, i) => ({
+      source_runs: Array.from({ length: 5 }, (_, i) => ({
         source: 'chirps',
         status: i === 0 ? 'degraded' : 'success',
         started_at: now,
@@ -420,7 +426,7 @@ describe('a truncated walk says so where an operator will see it', () => {
     })
     const chirps = status.find((s) => s.source === 'chirps')
     assert.equal(chirps.completeness, 'possibly_incomplete')
-    assert.equal(chirps.health.samples, 4, 'the score is measured from stored history, not from nothing')
+    assert.equal(chirps.health.samples, 5, 'the score is measured from stored history, not from nothing')
     assert.notEqual(chirps.health.score, null, 'and the health score is now produced in production')
   })
 

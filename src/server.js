@@ -45,6 +45,7 @@ import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWi
 import { createInboundLimiter } from './inbound-rate-limit.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { normalizeAlertOutcome, determinationFor, projectDetermination, outcomeTally, outcomeReasons } from './outcomes.js'
+import { observationSeries, recordHistory, projectableCollections } from './series.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
@@ -590,6 +591,11 @@ function contingencyByFeature(rows) {
       flood_months_above_threshold: row.flood_months_above_threshold,
       conditional_probability: row.conditional_probability,
       conditional_probability_wilson: row.conditional_probability_wilson,
+      // ENH-20. A wider interval with no stated reason is a number nobody trusts
+      // twice, so the design effect that produced it travels with it. Projecting
+      // the interval without this is how a corrected number would arrive looking
+      // like the uncorrected one.
+      clustering: row.clustering,
       lift_over_base_rate: row.lift_over_base_rate,
     }
   }
@@ -1606,6 +1612,12 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
   const reportingRoute = matchReportingRoute(url.pathname)
   if (reportingRoute) {
     await handleReportingRoute(store, data, req, res, url, reportingRoute)
+    return
+  }
+
+  const historyRoute = matchHistoryRoute(url.pathname)
+  if (historyRoute) {
+    await handleHistoryRoute(store, data, req, res, url, historyRoute)
     return
   }
 
@@ -2805,6 +2817,43 @@ async function handleAlertEvaluation(store, data, req, res) {
   })
 }
 
+/**
+ * ENH-49 — the history exists and nothing could reach it.
+ *
+ * `valueAsOf` and `versionsFor` had zero production callers, so "why does this
+ * district's count disagree with the report" was a question the repository held
+ * the answer to and had no way to ask. This is that question as a query.
+ */
+async function handleHistoryRoute(store, data, req, res, url, route) {
+  if (req.method !== 'GET') {
+    jsonResponse(res, 405, { success: false, error: 'History is read-only: a value the platform believed is written by an ingestion run or a correction, not by an API caller' })
+    return
+  }
+  if (route.record) {
+    const recordId = url.searchParams.get('id')
+    if (!recordId) {
+      jsonResponse(res, 400, { success: false, error: 'id is required: /history/:collection/record asks about one record' })
+      return
+    }
+    jsonResponse(res, 200, {
+      success: true,
+      data: recordHistory(data, { collection: route.collection, recordId, at: url.searchParams.get('at') }),
+    })
+    return
+  }
+  jsonResponse(res, 200, {
+    success: true,
+    data: observationSeries(data, {
+      collection: route.collection,
+      district: url.searchParams.get('district'),
+      at: url.searchParams.get('at'),
+    }),
+    // Repeated at the top level so a client that guessed a collection name sees
+    // the right ones without reaching into the data object.
+    projectable_collections: projectableCollections(),
+  })
+}
+
 async function handleAlertRoute(store, data, req, res, url, route) {
   // The generic collection branches below read `data[route.collection]`, and a
   // route that is a *view* rather than a collection has no such key — so these
@@ -3617,6 +3666,15 @@ function matchReportingRoute(pathname) {
   const match = pathname.match(/^\/api\/v1\/([^/]+)(?:\/([^/]+))?$/)
   if (!match || !routes[match[1]]) return null
   return { kind: routes[match[1]], id: match[2] ? decodeURIComponent(match[2]) : null }
+}
+
+/** ENH-49. A named matcher rather than an inline prefix test, so the spec gate can see it. */
+function matchHistoryRoute(pathname) {
+  const record = pathname.match(/^\/api\/v1\/history\/([^/]+)\/record$/)
+  if (record) return { kind: 'history', collection: decodeURIComponent(record[1]), record: true }
+  const series = pathname.match(/^\/api\/v1\/history\/([^/]+)$/)
+  if (!series) return null
+  return { kind: 'history', collection: decodeURIComponent(series[1]), record: null }
 }
 
 function matchAlertRoute(pathname) {
