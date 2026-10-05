@@ -1921,6 +1921,13 @@ paths:
   /stac/catalog.json:
     get:
       summary: STAC catalogue of published items
+      description: >-
+        Authenticated like the rest of the API. The spatial catalogues are
+        interoperability surfaces, so they carry every field a record has
+        except coordinates (carried as geometry) and the fields that identify a
+        person or a secret. An operator that wants an open catalogue adds
+        `/stac` to LINDELA_LITE_PUBLIC_PATHS.
+      security: [{ apiKey: [] }]
       responses:
         '200':
           description: STAC catalogue
@@ -1928,6 +1935,8 @@ paths:
             application/json:
               schema:
                 type: object
+        '401':
+          description: Unauthorized
   /api/v1/metrics:
     get:
       summary: Prometheus-format request metrics

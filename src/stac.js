@@ -1,4 +1,4 @@
-import { toGeoJson, readCoordinate } from './utils.js'
+import { toGeoJson, readCoordinate, publicProperties } from './utils.js'
 
 /**
  * The catalog's collections, in one place.
@@ -168,9 +168,7 @@ export function stacItem(record, collectionId, baseUrl) {
       'location_status': hasGeometry
         ? 'point coordinates as provided by the source'
         : 'the source reported no coordinates for this record; this item has no geometry',
-      ...Object.fromEntries(
-        Object.entries(record).filter(([key]) => key !== 'latitude' && key !== 'longitude')
-      ),
+      ...publicProperties(record),
     },
     assets: {},
     links: [

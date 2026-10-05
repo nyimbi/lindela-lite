@@ -41,7 +41,8 @@ import {
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
 import { collectionPage, createIdempotencyStore, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
-import { redactPii, applyRetention, loadPolicy, retentionWindowDays } from './pii.js'
+import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor } from './pii.js'
+import { createInboundLimiter } from './inbound-rate-limit.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
@@ -120,7 +121,49 @@ const DRIVER_ITEMS = [
   // — which made a 401, a 500 and "nothing was due" one indistinguishable line
   // of stdout — goes with it.
   { id: 'reports', label: 'report schedules', run: (store, data) => runDueReportSchedulesAndPersist(store, data) },
+  // R-12's other half. Retention was reachable only by POSTing to a maintenance
+  // route: a control that runs when somebody remembers it has run is a control
+  // somebody will not remember. A privacy window that is never applied is a
+  // comment in a JSON file, and the thing it was written to protect keeps
+  // accumulating.
+  { id: 'retention', label: 'retention', run: (store, data) => applyScheduledRetention(store, data) },
 ]
+
+/**
+ * Expire every collection that has a window, on the driver's cadence.
+ *
+ * A policy with no positive window purges nothing and says so in the heartbeat
+ * rather than silently — the DAT-07 failure mode was a retention job that
+ * reported success forever.
+ */
+export async function applyScheduledRetention(store, data, { now = Date.now() } = {}) {
+  const policy = await loadPolicy()
+  const perCollection = {}
+  const removals = {}
+  for (const [collection, records] of Object.entries({
+    field_reports: data.field_reports || [],
+    rapidpro_inbound_messages: data.rapidpro_inbound_messages || [],
+    community_feedback: data.community_feedback || [],
+  })) {
+    const days = retentionWindowFor(policy, collection)
+    if (days === null) {
+      perCollection[collection] = { window_days: null, expired: 0, kept: records.length }
+      continue
+    }
+    const result = applyRetention(records, days, now)
+    perCollection[collection] = {
+      window_days: days,
+      expired: result.expired.length,
+      kept: result.kept.length,
+    }
+    removals[collection] = result.expired.map((record) => record.id)
+  }
+  const expiredTotal = Object.values(perCollection).reduce((sum, c) => sum + c.expired, 0)
+  if (expiredTotal > 0) {
+    await store.remove({ collection: removals })
+  }
+  return { expired: expiredTotal, collections: perCollection }
+}
 
 /** The report-schedule cycle, with its writes persisted. Exported for tests. */
 export async function runDueReportSchedulesAndPersist(store, data, { actor = 'periodic-driver' } = {}) {
@@ -176,6 +219,7 @@ function summarise(id, value) {
   if (id === 'outbox') return { sent: Number(value) || 0 }
   if (id === 'ingestion') return { ran: value?.source_runs?.length ?? 0 }
   if (id === 'reports') return { ran: value?.runs?.length ?? 0, reports: value?.reports?.length ?? 0 }
+  if (id === 'retention') return { expired: Number(value?.expired) || 0 }
   return null
 }
 
@@ -228,6 +272,10 @@ export function stopPeriodicDriver() {
 
 export function createServer(options = {}) {
   const storeProvider = options.store ? Promise.resolve(options.store) : getDefaultStore()
+  // One limiter per server, not per request: the budget is per client across
+  // the process, and a limiter rebuilt per request would have no memory of the
+  // last request at all. Injectable so a test can drive it with a fake clock.
+  const inboundLimiter = options.inboundLimiter || createInboundLimiter(options.inboundLimiterOptions || {})
   return http.createServer(async (req, res) => {
     const t = timer()
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
@@ -244,7 +292,42 @@ export function createServer(options = {}) {
         return
       }
 
+      // R-09. Charged before anything expensive happens, including
+      // authentication — a token-guessing flood should cost the server one map
+      // lookup, not a full auth path per guess. The slot is released when the
+      // response finishes rather than when the handler returns, so a slow
+      // request holds its slot for as long as it is actually in flight.
+      const budget = inboundLimiter.charge(req, url)
+      if (!budget.allowed) {
+        const retryAfterSec = budget.retryAfterMs === null
+          ? 1
+          : Math.max(1, Math.ceil(budget.retryAfterMs / 1000))
+        jsonResponse(res, 429, {
+          success: false,
+          error: `Rate limit exceeded for the ${budget.className} budget. Retry in ${retryAfterSec}s.`,
+          class: budget.className,
+          retry_after_seconds: retryAfterSec,
+        }, { 'retry-after': String(retryAfterSec) })
+        return
+      }
+      res.once('close', budget.release)
+
       if (url.pathname.startsWith('/stac/') || url.pathname.startsWith('/ogc/')) {
+        // These dispatched ahead of every gate, so clinic, water-point and road
+        // locations were readable by anyone who could reach the port. They are
+        // interoperability surfaces, which is a reason to be careful rather than
+        // to be open: the client did not ask us which fields it may have.
+        //
+        // Closed by default, opt-in by configuration — an operator who wants an
+        // open catalogue adds `/stac` to LINDELA_LITE_PUBLIC_PATHS, which is the
+        // same switch `/ready` and `/health` go through, so the decision is
+        // recorded in one place rather than inferred from a code path.
+        if (isAuthConfigured() && !isPublicPath(url.pathname)) {
+          if (!authenticate(req)) {
+            jsonResponse(res, 401, { success: false, error: 'Unauthorized' })
+            return
+          }
+        }
         await handleStacRoute(await storeProvider, req, res, url)
         return
       }
@@ -1042,6 +1125,14 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
     }
     const fieldReportRetention = applyRetention(data.field_reports, windowDays)
     const inboundRetention = applyRetention(data.rapidpro_inbound_messages, windowDays)
+    // R-12. `community_feedback` carried a reporter hash and free text from a
+    // member of the public, and was in no retention table at all — the two
+    // collections holding the same class of data were, which is what made it an
+    // oversight rather than a decision.
+    const feedbackDays = retentionWindowFor(policy, 'community_feedback')
+    const feedbackRetention = feedbackDays === null
+      ? { kept: data.community_feedback || [], expired: [] }
+      : applyRetention(data.community_feedback, feedbackDays)
     // remove(), not merge(). merge() keyed on id, so re-merging the survivors
     // over the originals left every expired record exactly where it was — the
     // route reported `{success: true, expired: 1}` and deleted nothing (DAT-07).
@@ -1049,6 +1140,7 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
       collection: {
         field_reports: fieldReportRetention.expired.map((record) => record.id),
         rapidpro_inbound_messages: inboundRetention.expired.map((record) => record.id),
+        community_feedback: feedbackRetention.expired.map((record) => record.id),
       },
     })
     jsonResponse(res, 200, {
@@ -1060,6 +1152,11 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
       rapidpro_inbound_messages: {
         kept: inboundRetention.kept.length,
         expired: inboundRetention.expired.length,
+      },
+      community_feedback: {
+        window_days: feedbackDays,
+        kept: feedbackRetention.kept.length,
+        expired: feedbackRetention.expired.length,
       },
     })
     return

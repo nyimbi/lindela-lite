@@ -550,6 +550,44 @@ export function readCoordinate(value) {
   return Number.isFinite(number) ? number : null
 }
 
+/**
+ * Fields a spatial catalogue must not carry, whatever collection it is asked
+ * about.
+ *
+ * STAC and OGC are interoperability surfaces: the whole point of them is that
+ * a record goes out to a client that did not ask us which fields it may have.
+ * So the question is not "is this collection sensitive today" — the three
+ * exposed today are hazards, service assets and risk scores, and none of them
+ * carries a person — but "what happens when someone adds a collection that
+ * does". The previous answer was: every field, including the free-text message
+ * and the reporter hash, because the renderer spread the whole record.
+ *
+ * A denylist rather than an allowlist, deliberately. An allowlist would be
+ * safer still and would also mean a new collection renders as a list of nulls
+ * until someone remembers it, which is how interoperability surfaces rot: the
+ * response is well-formed, so nothing complains. This list is about the fields
+ * that identify a person or a secret, which do not get added to a hazard
+ * catalogue by accident.
+ */
+const NEVER_PUBLISHED = new Set([
+  'latitude', 'longitude',
+  'reporter_urn_hash', 'reporter', 'reporter_name',
+  'message', 'notes', 'note', 'comment', 'comments', 'description_detail',
+  'phone', 'phone_number', 'email', 'contact', 'contact_details',
+  'api_key', 'token', 'secret', 'password', 'authorization',
+])
+
+/**
+ * The record's fields minus the coordinates (carried as geometry) and the ones
+ * above. Case-insensitive, because a connector that names a field `Message`
+ * leaks exactly as much as one that names it `message`.
+ */
+export function publicProperties(record) {
+  return Object.fromEntries(
+    Object.entries(record || {}).filter(([key]) => !NEVER_PUBLISHED.has(key.toLowerCase()))
+  )
+}
+
 export function toGeoJson(records) {
   return {
     type: 'FeatureCollection',
@@ -562,9 +600,7 @@ export function toGeoJson(records) {
           type: 'Point',
           coordinates: [lon, lat],
         },
-        properties: Object.fromEntries(
-          Object.entries(item).filter(([key]) => key !== 'latitude' && key !== 'longitude'),
-        ),
+        properties: publicProperties(item),
       })),
   }
 }

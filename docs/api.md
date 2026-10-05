@@ -144,6 +144,41 @@ curl -s -H "If-None-Match: $etag" localhost:4177/api/v1/events -o /dev/null -w '
 `201` responses are not tagged: a created resource is not a cacheable
 representation of a collection.
 
+Every JSON response also carries `Vary: authorization, x-api-key`. A shared
+device — one district phone, several health workers — must not serve one
+caller's cached body to the next, and a cache between here and the browser, the
+service worker's Cache API included, keys on those headers only when the response
+says so.
+
+## Rate Limits
+
+Every request is charged to a per-client budget before it does any work,
+including authentication. Over budget is `429` with `Retry-After` in seconds and
+the class in the body:
+
+```json
+{ "success": false, "error": "Rate limit exceeded for the read budget. Retry in 3s.",
+  "class": "read", "retry_after_seconds": 3 }
+```
+
+| Class | Budget | Applies to |
+| --- | --- | --- |
+| `read` | 120/min, 8 concurrent | `GET`s, and everything not listed below |
+| `write` | 60/min, 6 concurrent | `POST`/`PUT`/`PATCH`/`DELETE` |
+| `heavy` | 6/min, 1 concurrent | `/api/v1/ingest/run`, `/ingest/run-one`, `/ingest/run-due`, `/ingest/schedules/defaults`, `/report-schedules/run-due` |
+
+`/api/v1/health`, `/api/v1/ready` and `/metrics` are never limited: a load
+balancer polling health through a spent budget is an outage reported as a slow
+response. The write budget is sized for a health worker draining a week of
+queued reports when signal returns — that burst is the feature, and a limit that
+refused it would re-queue a worker's week.
+
+The client is the socket address. Behind a reverse proxy, set
+`LINDELA_LITE_TRUST_PROXY=1` and the last `x-forwarded-for` hop is used instead —
+the hop the proxy observed, which a client prepending to the chain cannot forge.
+The per-client registry is bounded and evicts least-recently-seen, so a caller
+cannot exhaust memory by inventing source addresses.
+
 ## Idempotency
 
 Send `Idempotency-Key` on any `POST`, `PUT`, `PATCH` or `DELETE`. A repeat within
@@ -712,12 +747,22 @@ Response:
   "rapidpro_inbound_messages": { "kept": 3,  "expired": 0 } }
 ```
 
-Side effect: **deletes** the expired `field_reports` and `rapidpro_inbound_messages` by id. This is the
-only hard delete in the API; see [ADR-007](architecture/decisions/ADR-007-soft-delete.md).
+Side effect: **deletes** the expired `field_reports`, `rapidpro_inbound_messages` and
+`community_feedback` by id. This is the only hard delete in the API; see
+[ADR-007](architecture/decisions/ADR-007-soft-delete.md).
 
 Returns `400` when `retentionDays` is not a positive number, and deletes nothing. That refusal is
 deliberate — a non-numeric window used to become `NaN`, and `age > NaN` is false for every record, so
 the route expired nothing and reported `success: true` on every run.
+
+`community_feedback` has its own window, `communityFeedbackDays` (180 by default, against
+`retentionDays`' 365): a hazard report is an operational record and a community comment is a person
+exercising the right to be heard. Set them equal if your deployment disagrees.
+
+**This route is not the only thing that applies retention.** The periodic driver runs the same
+expiry on its interval, and reports the per-collection counts on the heartbeat that
+`GET /api/v1/ready` returns. A window applied only when somebody remembers to POST is a comment in
+a JSON file.
 
 ---
 
@@ -725,7 +770,13 @@ the route expired nothing and reported `success: true` on every run.
 
 ### `GET /ogc/collections/:id/items`
 
-Auth: none required. Returns GeoJSON FeatureCollection for the specified collection id.
+Auth: a token, like the rest of the API. An operator that wants an open catalogue adds `/ogc` to
+`LINDELA_LITE_PUBLIC_PATHS`. Returns GeoJSON FeatureCollection for the specified collection id.
+
+Each feature's `properties` carry every field of the record except the coordinates (which are the
+geometry) and the fields that identify a person or a secret — `reporter_urn_hash`, `message`,
+`phone`, `api_key` and their relatives, case-insensitively. The three collections published today
+hold no personal data; the rule exists so that adding a fourth cannot publish a fifth by accident.
 
 Supported ids: `alert_events`, `hazard_events`, `service_assets`, `field_reports`.
 

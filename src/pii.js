@@ -13,6 +13,13 @@ const DEFAULT_POLICY = {
   redactPhone: true,
   coarsenGeoToH3Cell: null,
   retentionDays: 365,
+  // Community feedback is the one collection whose retention rule was missing
+  // entirely (R-12) while carrying a reporter hash and free text written by a
+  // member of the public. It gets its own window rather than the general one,
+  // shorter by default, because a field report is an operational record about a
+  // hazard and a community comment is a person exercising the right to be heard.
+  // A deployment that wants them equal sets this to the same number.
+  communityFeedbackDays: 180,
 }
 
 export function redactPii(record, config = {}) {
@@ -149,6 +156,24 @@ export async function loadPolicy() {
  */
 export function retentionWindowDays(policy) {
   const days = policy?.retentionDays
+  if (!Number.isFinite(days) || days <= 0) return null
+  return days
+}
+
+/**
+ * The window for one named collection, or null when neither it nor the general
+ * window is configured.
+ *
+ * Named because the two are different decisions: `retentionDays` is how long an
+ * operational record is kept, `communityFeedbackDays` is how long a person's
+ * own words are kept, and a deployment that never thought about the second was
+ * keeping it forever.
+ */
+export function retentionWindowFor(policy, collection) {
+  const specific = collection === 'community_feedback'
+    ? policy?.communityFeedbackDays
+    : undefined
+  const days = Number.isFinite(specific) && specific > 0 ? specific : policy?.retentionDays
   if (!Number.isFinite(days) || days <= 0) return null
   return days
 }

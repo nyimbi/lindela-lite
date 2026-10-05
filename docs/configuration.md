@@ -120,7 +120,10 @@ The one-click stack uses:
 | `POSTGRES_DB` | PostgreSQL database name. |
 | `POSTGRES_USER` | PostgreSQL user. |
 | `POSTGRES_PASSWORD` | PostgreSQL password. |
-| `LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` | Sidecar scheduler loop interval. |
+| `LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` | How often the in-process periodic driver ticks. Also the staleness threshold `/api/v1/health` uses to return 503. |
+| `LINDELA_LITE_PUBLIC_PATHS` | Comma-separated paths served without a token. Defaults to `/api/v1/health` and `/api/v1/ready`. Add `/stac` or `/ogc` to publish the spatial catalogues openly. |
+| `LINDELA_LITE_TRUST_PROXY` | `1` when a reverse proxy in front of this process sets `x-forwarded-for`. The rate limiter then keys on the last hop — the one the proxy observed — instead of the socket address. Leave unset otherwise: an untrusted header is a client choosing its own budget. |
+| `LINDELA_LITE_PII_POLICY` | JSON privacy policy. `retentionDays` (365) and `communityFeedbackDays` (180) are the retention windows; see [api.md](api.md#post-apiv1maintenanceapply-retention). |
 
 The generated `.env` is based on `.env.example`.
 
