@@ -498,6 +498,11 @@
              that had filed nothing and was owed nothing. "Not sent yet" is a
              third thing, and the worker is entitled to see it at rest. -->
         <div id="queueStatus" class="queue-status" data-state="none" role="status" hidden></div>
+        <!-- ENH-19/native. Says whether this device can deliver a queued report
+             with the app closed. A worker who files a report and closes the phone
+             should be able to know whether "it will send when you have signal"
+             means "when you open the app" or "without you". -->
+        <p id="deliveryMode" class="filter-scope-note" hidden></p>
         <div class="button-group">
           <button class="btn-primary" id="reportSymptomBtn" data-i18n="chw.report_symptom">Report symptom</button>
           <button class="btn-secondary" id="reportIncidentBtn" data-i18n="chw.report_incident">Report incident</button>

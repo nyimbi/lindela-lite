@@ -1,0 +1,73 @@
+name: LindelaCHW
+options:
+  bundleIdPrefix: org.lindela
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+# The CHW app. One target, no dependencies — the web app is the UI, and
+# `apps/mobile/shared/bridge-contract.md` is what the two of them speak.
+targets:
+  LindelaCHW:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.lindela.chw
+        INFOPLIST_FILE: Resources/Info.plist
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        # A debug build has to be runnable on a simulator without a signing
+        # identity; a release build must not be. Left explicit so nobody has to
+        # discover it by trying to archive.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Lindela CHW
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen:
+          UIColorName: ""
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # The app loads one server, and it is this deployment's. Overridable per
+        # build; see `ServerURL` in Sources/AppDelegate.swift.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSAllowsArbitraryLoads: true
+        NSLocationWhenInUseUsageDescription: >-
+          A symptom report can carry where the person reporting it is. The
+          location is stored on the report and nowhere else, and a report filed
+          without it says so rather than guessing.
+        NSLocationAlwaysAndWhenInUseUsageDescription: >-
+          Background location lets a report filed outside the app be placed when
+          the app is closed. Only requested after a report is started.
+        NSCameraUsageDescription: >-
+          Attaching a photo to a symptom report. Nothing is uploaded without you
+          submitting the report.
+        UIBackgroundModes:
+          - fetch
+          - processing
+          - location
+          - remote-notification
+        BGTaskSchedulerPermittedIdentifiers:
+          - org.lindela.chw.queue-drain
+        # The web app the shell serves.
+        LindelaSurface: /chw/
+        # The server this build talks to. A build setting rather than a screen:
+        # the alternative is a host URL typed on a phone by somebody in a hurry,
+        # and a health worker with a mistyped host files reports into the void
+        # while being told they are saved.
+        #
+        #   LINDELA_SERVER_URL=http://10.0.0.5:4177 xcodebuild ...
+        #
+        # Unset leaves the literal "$(LINDELA_SERVER_URL)" in the plist, which
+        # `ServerURL.current` recognises and falls back from.
+        LindelaServerURL: $(LINDELA_SERVER_URL)

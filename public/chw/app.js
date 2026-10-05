@@ -404,6 +404,36 @@ async function refreshQueueStatus() {
 }
 
 window.addEventListener('lindela-queue-changed', () => { refreshQueueStatus() })
+
+/**
+ * Whether this device can deliver a queued report with the app closed.
+ *
+ * Worth saying out loud, because the promise the queue makes — "it will send
+ * when you have signal" — means two different things depending on what is
+ * installed. In a browser the report waits for the app to be opened; in the
+ * native shell the OS scheduler drains it. A worker who files a report and puts
+ * the phone in a pocket should be able to know which one they have, and so should
+ * the person reading over their shoulder.
+ *
+ * Silent when there is no shell: the browser is the normal case and the line
+ * would be noise on every load.
+ */
+async function renderDeliveryMode() {
+  const el = $('deliveryMode')
+  if (!el) return
+  const native = await import('/shared/native.js').catch(() => null)
+  if (!native?.isNative()) { el.hidden = true; return }
+  const caps = native.capabilities()
+  el.hidden = false
+  el.textContent = caps.backgroundSync
+    ? 'This app delivers queued reports with the app closed.'
+    : 'Queued reports send the next time you open the app.'
+  // Ask once per load: the OS may decline a duplicate request, and the page
+  // polls anyway, so this is an optimisation rather than the mechanism.
+  if (caps.backgroundSync) native.prepareForBackgroundDelivery().catch(() => {})
+}
+
+renderDeliveryMode()
 window.addEventListener('lindela-queue-flushed', () => { refreshQueueStatus() })
 
 /**
