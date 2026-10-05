@@ -583,7 +583,20 @@ export function toGeoJson(records) {
  */
 export function jsonResponse(res, status, body, headers = {}, req = res?.req || null) {
   const payload = JSON.stringify(body)
-  const outgoing = { 'content-type': 'application/json; charset=utf-8', ...headers }
+  // Vary on the credential, so no cache between here and the browser — the
+  // service worker's Cache API included — may serve one caller's body to
+  // another. It is the shared-device case: a district phone handed to the next
+  // health worker, the worker offline, the previous worker's districts served
+  // from cache for a week because the detail bucket has a 7-day TTL.
+  //
+  // Both credential headers are named because both are accepted (auth.js reads
+  // `authorization` and falls back to `x-api-key`); a Vary naming only one of
+  // them protects the path nobody uses.
+  const outgoing = {
+    'content-type': 'application/json; charset=utf-8',
+    ...headers,
+    vary: headers.vary || headers.Vary || 'authorization, x-api-key',
+  }
 
   if (status === 200 && req && !headers.etag && !headers.ETag) {
     const etag = etagFor(payload)
@@ -591,7 +604,10 @@ export function jsonResponse(res, status, body, headers = {}, req = res?.req || 
     outgoing['cache-control'] = 'no-cache'
     const tags = ifNoneMatch(req)
     if (tags.includes('*') || tags.includes(etag)) {
-      res.writeHead(304, { etag, 'cache-control': 'no-cache' })
+      // The 304 carries the same Vary as the 200 it stands in for. A 304
+      // without it is the leak with extra steps: a cache stores the
+      // revalidation under no vary condition at all.
+      res.writeHead(304, { etag, 'cache-control': 'no-cache', vary: outgoing.vary })
       res.end()
       return
     }
