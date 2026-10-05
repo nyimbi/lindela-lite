@@ -3130,16 +3130,30 @@ function renderEquityTab() {
 // =============================================================
 async function loadSignalToAction() {
   try {
-    const [eventsRes, dispatchesRes] = await Promise.all([
-      fetch('/api/v1/events?limit=1&order=desc'),
-      fetch('/api/v1/rapidpro/dispatches?limit=50'),
+    // `apiSettled`, not `fetch`. These two were raw `fetch` with no `res.ok`
+    // check and no timeout, which is the specific failure `apiFetch` exists to
+    // prevent and whose mechanism is recorded at runtime.js:196-202 — a service
+    // worker offline-miss body parses fine as `json()`, so a disconnected
+    // console called `.json()` on a response that was never the data and got
+    // `undefined` rather than an error. `undefined?.data` is `undefined`, so the
+    // status bar blanked all three metrics and reported nothing about why.
+    //
+    // Settled per endpoint rather than `Promise.all` on purpose: these are two
+    // independent facts about the same question, and one dead endpoint must not
+    // blank the other's. A dead `/events` with a live `/dispatches` still tells
+    // an operator the last dispatch was hours ago.
+    const [events, dispatches] = await Promise.all([
+      apiSettled('/api/v1/events?limit=1&order=desc'),
+      apiSettled('/api/v1/rapidpro/dispatches?limit=50'),
     ])
 
-    const events = await eventsRes.json()
-    const dispatches = await dispatchesRes.json()
-
-    const lastEvent = events.data?.[0]
-    const lastDispatch = dispatches.data?.sort((a, b) =>
+    // `?.` rather than `?.data?.` on the payload: `apiSettled` returns `null` on
+    // failure, not a rejected promise, so `events.data` on a null throws — and
+    // the old `catch` would then hide all three metrics, reporting one dead
+    // endpoint as "nothing has been checked", which is the opposite of what
+    // settled-per-endpoint is for.
+    const lastEvent = events?.data?.[0]
+    const lastDispatch = dispatches?.data?.sort((a, b) =>
       new Date(b.sent_at || 0) - new Date(a.sent_at || 0))[0]
 
     // Set on every pass, in both directions.
@@ -3167,9 +3181,13 @@ async function loadSignalToAction() {
     setMetric('lastActionMetric', 'lastActionTime',
       lastDispatch?.sent_at ? formatRelative(lastDispatch.sent_at) : null)
 
-    // Median lag
-    if (dispatches.data && dispatches.data.length > 0) {
-      const lags = dispatches.data
+    // Median lag. Guarded on the payload, not on `dispatches.data` — this
+    // endpoint's failure is now a `null` from `apiSettled` rather than a
+    // throw, and the metric has to go *unknown* rather than take the panel down
+    // with it.
+    const dispatchRows = dispatches?.data || []
+    if (dispatchRows.length > 0) {
+      const lags = dispatchRows
         .filter((d) => d.dispatched_at && d.matched_signal_at)
         .map((d) => (new Date(d.dispatched_at) - new Date(d.matched_signal_at)) / 1000 / 60)
         .sort((a, b) => a - b)
@@ -4193,12 +4211,26 @@ async function runDueIngestion() {
 async function importServiceAssets(kind) {
   setStatus(`Importing service assets as ${kind.toUpperCase()}...`)
   const key = kind === 'geojson' ? 'service_assets_geojson' : 'service_assets_csv'
-  const response = await fetch('/api/v1/service-assets', {
-    method: 'POST',
-    headers: authHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify({ [key]: $('serviceAssetInput')?.value }),
-  })
-  const payload = await response.json()
+  // `apiFetch`, not raw `fetch`. This one checked neither `res.ok` nor a
+  // timeout, and the consequence was specific: an import that hung left the
+  // status line reading "Importing service assets as GEOJSON…" for the life of
+  // the page, promising work still in progress that had already been abandoned.
+  // A write with no timeout is worse than a read with none — a read going
+  // quiet is annoying, a write going quiet leaves the operator unsure whether to
+  // resubmit, and resubmitting an import is not free.
+  let payload
+  try {
+    payload = await apiFetch('/api/v1/service-assets', {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ [key]: $('serviceAssetInput')?.value }),
+    })
+  } catch (err) {
+    // Say what happened. The alternative — an unhandled rejection — leaves the
+    // status line mid-sentence, which is the state `states.js` forbids.
+    setStatus(`Import failed: ${err.message || 'the request did not get an answer'}`)
+    return
+  }
   setStatus(payload.success ? `Imported ${payload.imported} service assets.` : ((payload.errors || [payload.error]).join(' | ')))
   await refresh({ force: true })
 }

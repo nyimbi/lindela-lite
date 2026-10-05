@@ -9,7 +9,7 @@
 import { esc, formatTimestamp, num, pct, truncate, applyLocaleToDocument } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { barChart, sparkline } from '/shared/charts.js'
-import { apiFetch, autoMarkScrollableRegions } from '/shared/runtime.js'
+import { apiFetch, apiSettled, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { createLoadSequence } from '/shared/states.js'
 
 /**
@@ -679,16 +679,25 @@ export async function load() {
   announce(fill(t('co.status_loading', 'Checking the figures for {period}.'), { period }), { state: 'working' })
 
   try {
+    // `apiSettled`, not raw `fetch`. These five had `res.ok` checks but no
+    // timeout, which is the half of `apiFetch` that mattered most here: on a
+    // field connection a request that hangs forever never settles, so
+    // `Promise.all` never resolves, `failed` never increments, and the
+    // dashboard sat on "Checking the figures for Q4" indefinitely — the one
+    // state `shared/states.js` exists to guarantee cannot outlive its request.
+    //
+    // Settled rather than all-or-nothing so one dead endpoint does not blank
+    // the other four: a donor on a weak link gets the figures that arrived.
     const [kpiRes, equityRes, dispatchRes, feedbackRes, trendRes] = await Promise.all([
-      fetch(`/api/v1/kpi/quarterly?quarter=${q}&year=${y}`),
-      fetch('/api/v1/equity/by-district'),
-      fetch('/api/v1/rapidpro/dispatches'),
-      fetch('/api/v1/community-feedback/summary'),
-      fetch(`/api/v1/kpi/monthly-series?monthsBack=${monthsBackFor(q, y)}`),
+      apiSettled(`/api/v1/kpi/quarterly?quarter=${q}&year=${y}`),
+      apiSettled('/api/v1/equity/by-district'),
+      apiSettled('/api/v1/rapidpro/dispatches'),
+      apiSettled('/api/v1/community-feedback/summary'),
+      apiSettled(`/api/v1/kpi/monthly-series?monthsBack=${monthsBackFor(q, y)}`),
     ])
 
-    if (kpiRes.ok) {
-      const { data: kpi } = await kpiRes.json()
+    if (kpiRes) {
+      const { data: kpi } = kpiRes
       renderKpi(kpi)
       renderCohort(kpi.cohort || {})
       const sigEl = document.getElementById('sig-hash')
@@ -699,29 +708,29 @@ export async function load() {
       failed += 2
     }
 
-    if (equityRes.ok) {
-      const { data: equity } = await equityRes.json()
+    if (equityRes) {
+      const { data: equity } = equityRes
       renderEquity(equity || [])
     } else {
       failed += 1
     }
 
-    if (dispatchRes.ok) {
-      const { data: dispatches } = await dispatchRes.json()
+    if (dispatchRes) {
+      const { data: dispatches } = dispatchRes
       renderHistogram(dispatches || [])
     } else {
       failed += 1
     }
 
-    if (feedbackRes.ok) {
-      const { data: summary } = await feedbackRes.json()
+    if (feedbackRes) {
+      const { data: summary } = feedbackRes
       renderFeedback(summary || [])
     } else {
       failed += 1
     }
 
-    if (trendRes.ok) {
-      const { data: series } = await trendRes.json()
+    if (trendRes) {
+      const { data: series } = trendRes
       // The series is trailing-to-now whatever quarter is selected; the charts
       // belong to the selected quarter, so the window is cut here.
       const win = selectTrendWindow(series, q, y)
