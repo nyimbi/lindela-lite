@@ -64,10 +64,49 @@ import { toNumber } from './utils.js'
 export const FRESHNESS_VERDICTS = Object.freeze([
   'ok',
   'quiet',
+  'empty_response',
   'stale',
   'broken',
   'never_run',
 ])
+
+/**
+ * R-45. How many consecutive zero-record runs it takes before "quiet" stops
+ * being the honest word.
+ *
+ * One zero-record run cannot tell an empty feed from a dead provider: the run
+ * record says the fetch worked, and that is all it says. Two consecutive runs
+ * that have *never* delivered a record is a different claim — the source has
+ * been asked repeatedly and has never once had anything, which is what a
+ * provider serving an empty body looks like from here, and it is not what a
+ * quiet week looks like, because a quiet week is a source that delivered last
+ * week.
+ *
+ * So the split is drawn on the trailing window rather than on the last run, and
+ * that window is what `freshnessReport` builds and `ingestionStatus` did not
+ * pass. Three runs is `FRESHNESS_RECORD_WINDOW` below.
+ */
+export const EMPTY_RESPONSE_MIN_RUNS = 2
+
+/**
+ * Consecutive zero-record runs in the trailing window, or 0.
+ *
+ * Counting from the newest backwards, which is the only order that means
+ * "consecutive": a source that returned 40,000, then 0, then 0 has one
+ * consecutive empty run, not two, and calling it an empty response would be
+ * reporting the shape of the array rather than the history.
+ */
+function consecutiveEmptyRuns(recentRecordCounts) {
+  const window = Array.isArray(recentRecordCounts)
+    ? recentRecordCounts.map((entry) => toNumber(entry, null)).filter((entry) => entry !== null)
+    : []
+  let streak = 0
+  for (const count of window) {
+    if (count !== 0) break
+    streak += 1
+  }
+  return streak
+}
 
 function cadence(cadence_days, min_expected_delta) {
   return Object.freeze({ cadence_days, min_expected_delta })
@@ -143,6 +182,11 @@ function assertionFailures(run) {
   const direct = run?.assertions_failed ?? run?.diagnostics?.assertions_failed
   if (Array.isArray(direct)) return direct.length
   return toNumber(direct, 0)
+}
+
+function shortfallNote(run) {
+  const shortfall = countShortfall(run)
+  return shortfall ? ` (ingestion flagged: ${shortfall})` : ''
 }
 
 function runFailed(run) {
@@ -381,6 +425,28 @@ export function explainVerdict({
     }
   }
 
+  // R-45. Zero records on every run we can see is not a quiet feed; it is a
+  // source that has never once delivered, and it reads as the same sentence as
+  // a genuinely quiet source otherwise. `quiet` says "the publisher had nothing
+  // for us", which is a claim about the publisher. On a source that has never
+  // published anything to us, the more likely reading is that something between
+  // here and there is returning an empty 200 — the exact case ENH-06 exists to
+  // stop being flattened, surviving on the one input it could not distinguish.
+  //
+  // Deliberately not `broken`: the fetch worked, the parse worked, and we have
+  // no evidence about which end is empty. The verdict is the name for "we
+  // cannot tell", stated rather than guessed.
+  const emptyStreak = consecutiveEmptyRuns(recentRecordCounts)
+  if (records === 0 && emptyStreak >= EMPTY_RESPONSE_MIN_RUNS) {
+    return {
+      ...base,
+      verdict: 'empty_response',
+      reason: `${emptyStreak} consecutive runs returned 0 records and no run on record delivered anything`
+        + `${shortfallNote(lastRun)} — the source answers, but has never had anything for us;`
+        + ' a provider serving an empty body and a genuinely quiet feed are indistinguishable from one run',
+    }
+  }
+
   // Zero records is an observation with a meaning, not the absence of one. It
   // says the fetch worked and the publisher had nothing for us, and it is
   // reported as exactly that — never as a failed run, and never as `ok` with
@@ -409,6 +475,15 @@ export function verdictFor(input = {}) {
 }
 
 /**
+ * How many recent runs' record counts the verdict reasons over.
+ *
+ * Three is enough to separate "quiet this run" from "has never delivered" (see
+ * `EMPTY_RESPONSE_MIN_RUNS`) without letting one 40,000-row backfill among nine
+ * 40-row runs redefine what normal looks like for a source.
+ */
+export const FRESHNESS_RECORD_WINDOW = 3
+
+/**
  * One entry per `SOURCE_IDS` member, in `SOURCE_IDS` order.
  *
  * Driven off the id list rather than off the runs, so a source that has not
@@ -424,7 +499,7 @@ export function freshnessReport({ sourceRuns = [], policies = SOURCE_POLICIES, n
     const sourceRunsForSource = runs.filter((run) => run?.source === source)
     const lastRun = sourceRunsForSource[0] || null
     const lastSuccessRun = sourceRunsForSource.find((run) => run?.status === 'success') || null
-    const recentRecordCounts = sourceRunsForSource.slice(0, 3).map((run) => run?.records_processed)
+    const recentRecordCounts = sourceRunsForSource.slice(0, FRESHNESS_RECORD_WINDOW).map((run) => run?.records_processed)
     return explainVerdict({
       source,
       policy: policies[source] || {},
@@ -439,4 +514,34 @@ export function freshnessReport({ sourceRuns = [], policies = SOURCE_POLICIES, n
       now,
     })
   })
+}
+
+/**
+ * The same report, keyed by source, for callers that already have the runs
+ * grouped and do not want to re-filter the whole history per source.
+ *
+ * `ingestionStatus` is the caller. It was calling `explainVerdict` directly
+ * with no `recentRecordCounts` and no `now`, which left the trailing window
+ * dead code in production: the three-run logic existed, was tested, and could
+ * not run outside a test that passed the array itself.
+ */
+export function freshnessReportBySource({ sourceRunsBySource = {}, policies = SOURCE_POLICIES, now = Date.now() } = {}) {
+  const out = {}
+  for (const source of SOURCE_IDS) {
+    const sourceRunsForSource = sourceRunsBySource[source] || []
+    const lastRun = sourceRunsForSource[0] || null
+    const lastSuccessRun = sourceRunsForSource.find((run) => run?.status === 'success') || null
+    const recentRecordCounts = sourceRunsForSource.slice(0, FRESHNESS_RECORD_WINDOW).map((run) => run?.records_processed)
+    out[source] = explainVerdict({
+      source,
+      policy: policies[source] || {},
+      lastRun,
+      lastSuccessRun,
+      recentRecordCounts: recentRecordCounts.some((count) => toNumber(count, null) !== null)
+        ? recentRecordCounts
+        : null,
+      now,
+    })
+  }
+  return out
 }

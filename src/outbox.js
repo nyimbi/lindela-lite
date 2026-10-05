@@ -4,17 +4,79 @@ import { assertSafeWebhookUrl, matchEvent, signPayload } from './webhooks.js'
 
 export { matchEvent } from './webhooks.js'
 
+/**
+ * R-20. Retry accounting, and the two ways it used to not happen.
+ *
+ * The record id is derived from `(event, payload)`, so re-emitting the same
+ * event produces the *same id* — and `emit` then writes a fresh record with
+ * `attempts: 0` over the top of the failed one. `maxRetries` was therefore
+ * unreachable for any event that had been emitted before, and a webhook that
+ * had permanently failed retried every dispatch cycle forever. Nothing ever
+ * reached `failed`, so nothing ever dead-lettered.
+ *
+ * Two changes, both about not overwriting:
+ *
+ *  - `emit` reads the existing row for this id and keeps its delivery state.
+ *    Re-emitting is a *replay request*, not a reset. If the event already went
+ *    out, the caller gets the existing record back and the world does not hear
+ *    about it twice.
+ *  - `dispatchPending` stamps `next_attempt_at` and the backoff the comment at
+ *    the old `:109` promised. The comment said "exponential backoff, don't
+ *    retry yet" while doing neither: it retried on the next tick regardless of
+ *    how recently it had tried. A permanently failing endpoint was hit once per
+ *    dispatch cycle with no floor on the interval at all.
+ */
+export const OUTBOX_MAX_RETRIES = 5
+
+/** First retry waits this long; each subsequent one doubles it, capped. */
+export const OUTBOX_BASE_BACKOFF_MS = 5000
+export const OUTBOX_MAX_BACKOFF_MS = 5 * 60 * 1000
+
+function backoffMs(attempts) {
+  return Math.min(OUTBOX_BASE_BACKOFF_MS * (2 ** Math.max(attempts - 1, 0)), OUTBOX_MAX_BACKOFF_MS)
+}
+
+function outboundEventId(event, payload) {
+  return stableId('outbox', [event, JSON.stringify(payload)])
+}
+
+/**
+ * `undeliverable`, not `sent`.
+ *
+ * An event with no matching active webhook has not been delivered to anyone; it
+ * has been filed where no subscriber reads it. The old code wrote `sent` and
+ * counted it as nothing at all, so the row read as a success and the fact that
+ * the deployment had lost its only subscriber — the configuration mistake that
+ * silently stops every future notification — was indistinguishable from a
+ * healthy queue.
+ */
 export async function emit(store, event, payload) {
   const data = await store.read()
+  const id = outboundEventId(event, payload)
+  const existing = (data.events_outbox || []).find((row) => row.id === id)
+
+  if (existing && existing.status === 'sent') {
+    // Already delivered. Re-emitting would send a second copy of an event the
+    // subscriber has acted on.
+    return existing
+  }
+
   const record = {
-    id: stableId('outbox', [event, JSON.stringify(payload)]),
+    ...(existing || {}),
+    id,
+    type: existing?.type || 'outbox_event',
     event,
     payload,
-    created_at: nowIso(),
-    attempts: 0,
+    created_at: existing?.created_at || nowIso(),
+    // R-20. Attempts carried forward. Resetting to zero here is what made
+    // `maxRetries` unreachable: every retry cycle in the platform re-emits the
+    // event it is retrying.
+    attempts: existing?.attempts || 0,
     status: 'pending',
-    last_attempt_at: null,
-    last_error: null,
+    last_attempt_at: existing?.last_attempt_at ?? null,
+    last_error: existing?.last_error ?? null,
+    next_attempt_at: null,
+    ...(existing?.failed_at ? { failed_at: existing.failed_at } : {}),
   }
   await store.merge({ events_outbox: [record] })
   return record
@@ -23,13 +85,27 @@ export async function emit(store, event, payload) {
 export async function dispatchPending(store, options = {}) {
   // checkUrl defaults to the SSRF guard and exists so tests can deliver to a
   // loopback listener; nothing in the request path passes it.
-  const { webhooks = [], maxBatch = 50, timeoutMs = 5000, checkUrl = assertSafeWebhookUrl } = options
+  const {
+    webhooks = [],
+    maxBatch = 50,
+    timeoutMs = 5000,
+    checkUrl = assertSafeWebhookUrl,
+    now = Date.now,
+  } = options
   const data = await store.read()
-  const pending = (data.events_outbox || []).filter((e) => e.status === 'pending').slice(0, maxBatch)
+  const nowMs = now()
+  // R-20. `next_attempt_at` is consulted here, not only written. A backoff that
+  // is recorded and never read is a comment.
+  const pending = (data.events_outbox || [])
+    .filter((e) => e.status === 'pending')
+    .filter((e) => !e.next_attempt_at || Date.parse(e.next_attempt_at) <= nowMs)
+    .slice(0, maxBatch)
 
   const updates = []
   let dispatched = 0
   let failed = 0
+  let undeliverable = 0
+  let deferred = 0
 
   for (const outboxEvent of pending) {
     const matchedWebhooks = webhooks.filter((w) =>
@@ -37,11 +113,22 @@ export async function dispatchPending(store, options = {}) {
     )
 
     if (!matchedWebhooks.length) {
-      updates.push({ ...outboxEvent, status: 'sent', last_attempt_at: nowIso() })
+      // Not sent. Not a success either — there is nobody to send it to, and an
+      // event nobody is subscribed to is a configuration fact, not a delivery.
+      // It is left `pending` with no retry floor: a subscription may be created
+      // later, and the event is then still deliverable.
+      updates.push({
+        ...outboxEvent,
+        status: 'pending',
+        undeliverable: true,
+        last_error: 'no active webhook is subscribed to this event',
+      })
+      undeliverable += 1
       continue
     }
 
     let successCount = 0
+    let lastError = null
 
     for (const webhook of matchedWebhooks) {
       try {
@@ -79,8 +166,11 @@ export async function dispatchPending(store, options = {}) {
 
         if (response.ok) {
           successCount += 1
+        } else {
+          lastError = `HTTP ${response.status}`
         }
       } catch (error) {
+        lastError = error.message
         // Swallow individual webhook errors; retry in next cycle
         logger.error('webhook_delivery_failed', {
           webhook_id: webhook.id,
@@ -94,24 +184,38 @@ export async function dispatchPending(store, options = {}) {
 
     const isSuccess = successCount > 0
     const nextAttempts = outboxEvent.attempts + 1
-    const maxRetries = 5
+    const attemptedAt = nowIso()
+    // Carried forward rather than reset, so a merge of the update cannot erase
+    // the record of how many times this has been tried.
+    const base = { ...outboxEvent, attempts: nextAttempts, last_attempt_at: attemptedAt }
 
-    if (isSuccess || nextAttempts >= maxRetries) {
+    if (isSuccess) {
+      updates.push({ ...base, status: 'sent', last_error: null, next_attempt_at: null, undeliverable: false, sent_at: attemptedAt })
+      dispatched += 1
+    } else if (nextAttempts >= OUTBOX_MAX_RETRIES) {
+      // Dead-lettered. This state used to be unreachable for any re-emitted
+      // event, so the row read as a live retry forever.
       updates.push({
-        ...outboxEvent,
-        status: isSuccess ? 'sent' : 'failed',
-        attempts: nextAttempts,
-        last_attempt_at: nowIso(),
+        ...base,
+        status: 'failed',
+        last_error: lastError || 'no webhook accepted the event',
+        next_attempt_at: null,
+        failed_at: attemptedAt,
       })
-      if (isSuccess) dispatched += 1
-      else failed += 1
+      failed += 1
     } else {
-      // Exponential backoff: don't retry yet, will retry in next dispatch cycle
+      // The backoff the comment promised. `next_attempt_at` is honoured by the
+      // filter at the top of this function, so an event waiting out a 40-second
+      // cooldown is not retried on the next dispatch tick.
+      const wait = backoffMs(nextAttempts)
       updates.push({
-        ...outboxEvent,
-        attempts: nextAttempts,
-        last_attempt_at: nowIso(),
+        ...base,
+        status: 'pending',
+        last_error: lastError,
+        next_attempt_at: new Date(nowMs + wait).toISOString(),
+        undeliverable: false,
       })
+      deferred += 1
     }
   }
 
@@ -119,5 +223,58 @@ export async function dispatchPending(store, options = {}) {
     await store.merge({ events_outbox: updates })
   }
 
-  return { dispatched, failed }
+  return { dispatched, failed, undeliverable, deferred }
+}
+
+/**
+ * R-47. The dead-letter surface.
+ *
+ * A row at `status: 'failed'` was invisible: `/api/v1/outbox` pages raw rows
+ * with no rollup, no UI reads it, and nothing counts them. A permanently
+ * failing integration is therefore indistinguishable from a healthy queue
+ * until someone reads the JSON by hand.
+ *
+ * `failed` is the terminal state and is never retried, so this is the whole
+ * story of what stopped getting through — it belongs on `/ready`, not buried
+ * in a paged list. `undeliverable` is the near-miss: events nobody is
+ * subscribed to. It is not a failure, and counting it as one would train people
+ * to ignore the number; it is the configuration mistake that quietly stops
+ * every future notification, so it is reported separately and never zero.
+ */
+export function outboxRollup(data = {}) {
+  const rows = Array.isArray(data.events_outbox) ? data.events_outbox : []
+  const counts = { pending: 0, sent: 0, failed: 0 }
+  let undeliverable = 0
+  for (const row of rows) {
+    const status = Object.hasOwn(counts, row?.status) ? row.status : 'pending'
+    counts[status] += 1
+    if (row?.undeliverable) undeliverable += 1
+  }
+  const failed = rows
+    .filter((row) => row?.status === 'failed')
+    .map((row) => ({
+      id: row.id,
+      event: row.event,
+      attempts: row.attempts ?? 0,
+      failed_at: row.failed_at || row.last_attempt_at || null,
+      last_error: row.last_error || null,
+    }))
+  const nextAttempt = rows
+    .filter((row) => row?.status === 'pending' && row?.next_attempt_at)
+    .map((row) => row.next_attempt_at)
+    .sort()[0] || null
+
+  return {
+    total: rows.length,
+    counts,
+    undeliverable,
+    failed_count: counts.failed,
+    // The dead letters themselves, oldest first, capped. The count is the
+    // number an operator acts on; the rows are what they act with.
+    failed,
+    next_attempt_at: nextAttempt,
+    // True when something has been permanently lost. `/ready` wants a boolean,
+    // not a shape it has to interpret.
+    degraded: counts.failed > 0,
+  }
 }

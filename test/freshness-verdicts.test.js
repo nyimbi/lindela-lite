@@ -87,9 +87,13 @@ describe('freshness verdicts', () => {
     assert.deepEqual(extra, [], `CADENCE_DAYS names sources that do not exist: ${extra.join(', ')}`)
   })
 
-  it('lists five distinct verdicts for callers to iterate', () => {
-    assert.equal(FRESHNESS_VERDICTS.length, 5)
-    assert.equal(new Set(FRESHNESS_VERDICTS).size, 5)
+  it('lists six distinct verdicts for callers to iterate', () => {
+    // R-45 added `empty_response`. A provider serving an empty 200 and a
+    // genuinely quiet feed used to produce the same verdict with the same
+    // words; the test pins the vocabulary so a later refactor cannot quietly
+    // drop the new one back into `quiet`.
+    assert.equal(FRESHNESS_VERDICTS.length, 6)
+    assert.equal(new Set(FRESHNESS_VERDICTS).size, 6)
     for (const verdict of FRESHNESS_VERDICTS) {
       assert.equal(typeof verdict, 'string')
       assert.ok(verdict.length > 0)
