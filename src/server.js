@@ -46,6 +46,7 @@ import { createInboundLimiter } from './inbound-rate-limit.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { normalizeAlertOutcome, determinationFor, projectDetermination, outcomeTally, outcomeReasons } from './outcomes.js'
 import { observationSeries, recordHistory, projectableCollections } from './series.js'
+import { collectionsForRequest } from './route-manifests.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
@@ -831,7 +832,11 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
   }
 
 
-  const data = await store.read()
+  // ENH-07. The manifest is what the route reads, measured rather than guessed
+  // (`src/route-manifests.js`). `null` — a whole-store read — is the answer for
+  // an unrecognised path and for the surfaces measured as genuinely wide, so
+  // this fails towards the old cost and never towards a 500.
+  const data = await store.read({ collections: collectionsForRequest(req.method, url.pathname) })
   req.__auth = auth
 
   if (req.method === 'GET' && url.pathname === '/api/v1/auth-info') {

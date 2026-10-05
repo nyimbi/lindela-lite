@@ -280,7 +280,28 @@ export class JsonStore {
    * cache for every later reader, which is why this is written down rather than
    * left to be discovered.
    */
-  async read() {
+  /**
+   * `options.collections` narrows what is returned, exactly as the PostgreSQL
+   * store's does.
+   *
+   * Honoured here rather than ignored for two reasons. A store that ignores a
+   * manifest cannot be tested against one: the test suite runs on JSON, so a
+   * manifest naming too few collections would pass every test and 500 in
+   * production. And "the two stores behave the same way" is the property the
+   * whole storage design rests on — a caller cannot know which one it has.
+   */
+  async read(options = {}) {
+    const manifest = Array.isArray(options) ? options : (options?.collections ?? null)
+    const read = await this.#readAll()
+    if (manifest === null) return read
+    const out = {}
+    for (const collection of manifest) {
+      if (collection in read) out[collection] = read[collection]
+    }
+    return out
+  }
+
+  async #readAll() {
     let stamp
     try {
       const stat = await fs.stat(this.filePath)
