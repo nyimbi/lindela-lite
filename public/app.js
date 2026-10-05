@@ -3315,7 +3315,7 @@ const _mountedPanels = new Map()
 /**
  * Bindings for controls inside the four deferred panels.
  *
- * These 21 listeners used to be `$('id')?.addEventListener(...)` at module
+ * These 21 listeners used to bind by element id at module
  * scope. With the markup inline that ran against a live element and the `?.`
  * was defensive. With the markup deferred it runs against *nothing*: the
  * element does not exist yet, `?.` short-circuits, and the listener is never

@@ -1169,7 +1169,19 @@ describe('Lindela Lite API', () => {
       fs.readFile(path.join(process.cwd(), 'public/app.js'), 'utf8'),
       fs.readFile(path.join(process.cwd(), 'public/index.html'), 'utf8'),
     ])
+    // The four deferred tab panels ship their contents in /panels/*.html and are
+    // inserted at runtime, so an id declared only there is just as declared as
+    // one in index.html. Reading index.html alone would have quietly stopped
+    // covering 75 ids after ENH-46, and would have reported nothing.
+    const panelDir = path.join(process.cwd(), 'public', 'panels')
     const declared = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]))
+    let panelFiles = []
+    try { panelFiles = await fs.readdir(panelDir) } catch { panelFiles = [] }
+    for (const f of panelFiles) {
+      if (!f.endsWith('.html')) continue
+      const panel = await fs.readFile(path.join(panelDir, f), 'utf8')
+      for (const m of panel.matchAll(/\bid="([^"]+)"/g)) declared.add(m[1])
+    }
     const looked = new Set([
       ...[...app.matchAll(/\$\('([^']+)'\)/g)].map((m) => m[1]),
       ...[...app.matchAll(/getElementById\('([^']+)'\)/g)].map((m) => m[1]),
