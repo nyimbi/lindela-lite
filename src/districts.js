@@ -1,3 +1,11 @@
+import { METRICS, computeMetric } from './analytics/metrics.js'
+import { median } from './analytics/numeric.js'
+
+// The payload quotes the declared basis verbatim, so a reader comparing this
+// page with the CO tile or the equity table sees the same sentence and knows
+// the same number is being described.
+const FALSE_ALERT_BASIS = METRICS.false_alert_rate.basis
+
 export const KNOWN_DISTRICTS = Object.freeze([
   { slug: 'turkana', name: 'Turkana', country: 'KE', center: { lat: 3.1167, lon: 35.6 }, radius_km: 200 },
   { slug: 'aweil', name: 'Aweil', country: 'SS', center: { lat: 8.767, lon: 27.4 }, radius_km: 150 },
@@ -6,6 +14,16 @@ export const KNOWN_DISTRICTS = Object.freeze([
   { slug: 'mandera', name: 'Mandera', country: 'KE', center: { lat: 3.9366, lon: 41.8569 }, radius_km: 150 },
 ])
 
+/**
+ * Names the data uses that are not the district names the platform publishes.
+ *
+ * `moroto → karamoja` used to be consulted by `resolveDistrict` alone, so a
+ * slug resolved and a record matched by its own `district` field did not:
+ * `inDistrict` compared `"moroto"` against `"Karamoja"`, found no match, and the
+ * Karamoja page read `people_reached: 0` while 3,504 Moroto recipients existed.
+ * Two functions, one vocabulary, and the gap between them was a district that
+ * looked like it had never been warned.
+ */
 const SYNONYMS = { moroto: 'karamoja' }
 
 export function resolveDistrict(slugOrName) {
@@ -25,9 +43,35 @@ function haversineKm(center, lat, lon) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+/**
+ * The canonical slug a free-text district name refers to.
+ *
+ * Applied inside `inDistrict` so the synonym table governs every match, not
+ * only the slug a caller typed. A table consulted by one of two functions that
+ * need it is not a synonym table; it is a lookup the second function does not
+ * know about.
+ */
+function canonicalDistrictName(value) {
+  const key = String(value ?? '').toLowerCase().trim()
+  if (!key) return ''
+  return SYNONYMS[key] || key
+}
+
 function inDistrict(district, record) {
-  const df = String(record.district || record.scope?.district || record.metadata?.district || '')
-  if (df && df.toLowerCase() === district.name.toLowerCase()) return true
+  const df = record.district || record.scope?.district || record.metadata?.district
+  const districtName = String(district.name).toLowerCase()
+  if (df) {
+    const named = canonicalDistrictName(df)
+    // Either the record names this district, or it names one of its synonyms.
+    // Both directions: `inDistrict(karamoja, {district:'moroto'})` and
+    // `inDistrict(<the Moroto record>, {district:'karamoja'})` are the same
+    // statement, and resolving only one direction is how the page and the
+    // record disagreed.
+    const resolvesToThis = named === districtName
+    const isSynonymOfThis = KNOWN_DISTRICTS.some((d) =>
+      String(d.name).toLowerCase() !== districtName && canonicalDistrictName(d.name) === named)
+    if (resolvesToThis || isSynonymOfThis) return true
+  }
   const lat = record.latitude ?? record.lat
   const lon = record.longitude ?? record.lon
   if (typeof lat === 'number' && typeof lon === 'number') {
@@ -91,6 +135,38 @@ function sampleBlock(total, returned) {
   }
 }
 
+/**
+ * Which district a dispatch belongs to, and whether the two sources agree.
+ *
+ * Dispatches carry neither coordinates nor a district field. They used to be
+ * attributed through `alert.scope.district` — and that disagreed with the
+ * dispatch's own `metadata.region` on 12 of 20 dispatches on the live store.
+ * The alert's scope is a claim about where the warning applied; the dispatch's
+ * region is a claim about where the message went, and people were reached
+ * where the message went.
+ *
+ * So the dispatch's own region wins where it names a district the platform
+ * knows, and the disagreement is reported rather than resolved silently —
+ * a reader who sees `attribution_conflicts` can go and fix the underlying
+ * record instead of trusting either number without knowing they conflict.
+ */
+function districtForDispatch(dispatch, alert, knownDistricts) {
+  const byName = (value) => {
+    const key = String(value ?? '').toLowerCase().trim()
+    if (!key) return null
+    return knownDistricts.find(d => String(d.name).toLowerCase() === key || d.slug === key) || null
+  }
+  const fromDispatch = byName(dispatch?.metadata?.region || dispatch?.metadata?.district)
+  const fromAlert = alert
+    ? (byName(alert.scope?.district || alert.district || alert.metadata?.district))
+    : null
+  return {
+    district: fromDispatch ?? fromAlert,
+    conflict: Boolean(fromDispatch && fromAlert && fromDispatch.slug !== fromAlert.slug),
+    attributed_to: fromDispatch ? 'dispatch.metadata.region' : fromAlert ? 'alert.scope.district' : null,
+  }
+}
+
 export function districtOverview(data, districtSlug) {
   const district = resolveDistrict(districtSlug)
   if (!district) return null
@@ -127,45 +203,46 @@ export function districtOverview(data, districtSlug) {
   // scope.district. Filtering them directly matched nothing, so "People
   // reached" read 0 in every district while 20 dispatches existed.
   const alertById = new Map((data.alert_events || []).map((a) => [a.id, a]))
-  const dispatches = (data.rapidpro_dispatches || [])
-    .filter((d) => {
-      const alert = d.alert_event_id ? alertById.get(d.alert_event_id) : null
-      return alert ? inDistrict(district, alert) : false
-    })
-  const people_reached = dispatches.reduce(
-    (s, d) => s + (d.recipients_count || d.metadata?.recipients_count || 0), 0
-  )
+  const allDispatches = data.rapidpro_dispatches || []
+  const dispatches = []
+  let attributionConflicts = 0
+  for (const d of allDispatches) {
+    const alert = d.alert_event_id ? alertById.get(d.alert_event_id) : null
+    const { district: owner, conflict } = districtForDispatch(d, alert, KNOWN_DISTRICTS)
+    if (!owner) continue
+    if (owner.slug !== district.slug) continue
+    if (conflict) attributionConflicts += 1
+    dispatches.push(d)
+  }
 
-  const feedingInterventions = interventions.filter(i => i.type === 'feeding')
-  const feedingCompleted = feedingInterventions.filter(i => ['completed', 'verified'].includes(i.status))
-  const feeding_repositioning_rate = feedingInterventions.length
-    ? (100 * feedingCompleted.length) / feedingInterventions.length : null
-
-  const coldChainWorkflows = workflowInstances.filter(w => w.type === 'cold_chain_protection')
-  const coldChainTerminal = coldChainWorkflows.filter(w => ['closed', 'verified'].includes(w.state))
-  const cold_chain_protection_rate = coldChainWorkflows.length
-    ? (100 * coldChainTerminal.length) / coldChainWorkflows.length : null
-
-  // Over the whole district, not the returned window. The numerator is a scan of
-  // every alert the district has, so dividing it by the first 30 of them
-  // described an arbitrary prefix as a district rate.
-  const falseAlerts = allAlertEvents.filter(a => a.resolution_note && /false|invalid|noop/i.test(a.resolution_note))
-  // An alert nobody resolved has no outcome, so it cannot be counted as a
-  // sound one either. Dividing by all alerts kept the denominator honest and
-  // threw the numerator's meaning away: with nothing ever resolved the
-  // numerator is zero and the rate read 0% — "no false alerts happened" where
-  // the truth is "no alert was ever looked at". The equity surface called the
-  // same district unmeasurable. One district's honest unknown was another's
-  // confident zero.
+  // People reached, from the registry rather than from an inline sum.
   //
-  // So the denominator stays every alert the district raised — that is what a
-  // false-alert *rate* means, and it is what the sample blocks report — and the
-  // rate is null when no outcome has been recorded. Once an operator reviews
-  // anything, zero is a real answer: zero false alerts out of forty, read off
-  // the notes that exist.
-  const reviewedAlerts = allAlertEvents.filter(a => a.status === 'resolved' && a.resolution_note)
-  const false_alert_rate = reviewedAlerts.length
-    ? (100 * falseAlerts.length) / allAlertEvents.length : null
+  // Three things this changed, all of which moved the number toward the truth
+  // and none of which moved it toward looking complete:
+  //
+  // - Failed dispatches are excluded. `status: 'failed', sent_at: null`, HTTP
+  //   503, `recipients_count: 40` — the old sum counted them at their intended
+  //   size. 1,399 people, of whom 503's reached nobody.
+  // - District attribution prefers the dispatch's own `metadata.region`, which
+  //   disagreed with the alert's `scope.district` on 12 of 20 dispatches.
+  // - Recipients are still summed, not de-duplicated, and the payload says so.
+  //   There is no stable person identifier in the payload: 20 dispatches to 20
+  //   distinct numbers summed to 22,130 recipients, and a union would be
+  //   guesswork. A guess here inflates or deflates a funder's headline number,
+  //   so the surface says "not de-duplicated" instead.
+  const reached = computeMetric('people_reached', { dispatches })
+
+  const feeding = computeMetric('feeding_repositioning_rate', { interventions })
+  const coldChain = computeMetric('cold_chain_protection_rate', { workflows: workflowInstances })
+
+  // False alert rate, from the registry. This surface used to scan
+  // `resolution_note` for /false|invalid|noop/i over every alert the district
+  // had, dividing by `reviewedAlerts.length` — two different populations in
+  // adjacent lines, with a long comment arguing for the denominator. It scored
+  // Mandera 0% on a district whose confirmed false alert reads "Reading traced
+  // to a faulty sensor": no `false`, no `invalid`, no `noop`. The comment was
+  // locally reasonable and false, and so is the one it replaced.
+  const far = computeMetric('false_alert_rate', { alerts: allAlertEvents })
 
   const lags = []
   for (const d of dispatches) {
@@ -174,8 +251,24 @@ export function districtOverview(data, districtSlug) {
       if (ms >= 0) lags.push(ms / 3600000)
     }
   }
-  lags.sort((a, b) => a - b)
-  const warning_to_action_median_hours = lags.length ? lags[Math.floor(lags.length / 2)] : null
+  // `lags[Math.floor(n/2)]` returns the upper of the two middle values at even
+  // n — 3 for [1,2,3,4] — so every even-length median on this page was biased
+  // high by up to half the central gap. `median()` averages the pair.
+  const warning_to_action_median_hours = median(lags)
+
+  // Turkana and Karamoja centres are 122 km apart with 200 km radii, so 17 of
+  // 34 service assets fall inside both. Each page is correct about its own
+  // filter and a reader summing the two double-counts. Stated here because the
+  // payload is where a reader can be told, and because the alternative is a
+  // silent invitation to add up pages that are not disjoint.
+  const overlapping = KNOWN_DISTRICTS
+    .filter((d) => d.slug !== district.slug)
+    .map((other) => {
+      const shared = filterForDistrict(district, data.service_assets || [])
+        .filter((asset) => filterForDistrict(other, [asset]).length > 0)
+      return { district: other.name, shared_service_assets: shared.length }
+    })
+    .filter((row) => row.shared_service_assets > 0)
 
   return {
     district: {
@@ -216,17 +309,41 @@ export function districtOverview(data, districtSlug) {
     alert_events: alertEvents,
     workflow_instances: workflowInstances,
     community_feedback: communityFeedback,
+    // Stated rather than left for a reader to discover by comparing pages.
+    // Turkana and Karamoja are 122 km apart with 200 km radii, so an asset in
+    // both is counted on both pages and district pages must not be summed.
+    overlaps_with: overlapping,
     kpi_snapshot: {
-      people_reached,
+      people_reached: reached.value,
+      // The send count, the excluded failures and the de-duplication refusal
+      // travel with the number. "People reached" without them is a claim that
+      // nobody can check.
+      people_reached_basis: {
+        sends: reached.sends,
+        failed_dispatches_excluded: reached.failed_excluded,
+        without_recipient_count: reached.without_recipient_count,
+        de_duplicated: reached.de_duplicated,
+        de_duplication_refusal: 'the dispatch payload carries no stable person identifier — only a phone number per send — so a union of recipients across sends would be a guess, and a guess here inflates or deflates a funder\'s headline reach number',
+        attribution_conflicts: attributionConflicts,
+        attribution_note: attributionConflicts > 0
+          ? `${attributionConflicts} dispatch(es) name a different region in metadata.region than the alert names in scope.district; the dispatch's own region is used and the conflict is counted here`
+          : 'every dispatch agrees with its alert on district',
+      },
       warning_to_action_median_hours,
-      false_alert_rate,
-      // A rate with no denominator beside it is a claim, not a measurement. The
-      // same two fields name the sample on `src/kpi.js`, so an officer reading
-      // either page sees the same words.
-      false_alert_determined: reviewedAlerts.length,
+      warning_to_action_measure: 'median hours from a dispatch matching a signal to that dispatch being sent; the median of an even-length series averages the two middle values',
+      false_alert_rate: far.value,
+      // The denominator, the floor and the method travel with the rate. A rate
+      // with no denominator beside it is a claim, not a measurement, and the
+      // same three fields name the sample on `src/kpi.js`, so an officer
+      // reading either page sees the same words.
+      false_alert_determined: far.denominator,
       false_alert_of_total: allAlertEvents.length,
-      feeding_repositioning_rate,
-      cold_chain_protection_rate,
+      false_alert_method: FALSE_ALERT_BASIS,
+      false_alert_refusal: far.refusal,
+      feeding_repositioning_rate: feeding.value,
+      feeding_repositioning_refusal: feeding.refusal,
+      cold_chain_protection_rate: coldChain.value,
+      cold_chain_refusal: coldChain.refusal,
     },
   }
 }

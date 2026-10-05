@@ -1,5 +1,7 @@
 import crypto from 'node:crypto'
 import { computeShortTermSuccessRate } from './observability.js'
+import { METRICS, computeMetric } from './analytics/metrics.js'
+import { median } from './analytics/numeric.js'
 // Neither of these imports back from kpi.js, so the quarterly export can compute the
 // dashboard's equity and feedback sections from the same helpers the page uses —
 // which is the point: a figure cannot be one thing on screen and another in the file.
@@ -65,8 +67,11 @@ export function signalToDispatchHours(dispatches) {
     const ms = new Date(d.sent_at).getTime() - new Date(d.matched_signal_at).getTime()
     if (ms >= 0) lags.push(ms / 3600000)
   }
-  lags.sort((a, b) => a - b)
-  return lags.length ? lags[Math.floor(lags.length / 2)] : null
+  // `lags[Math.floor(n/2)]` returns the upper of the two middle values at even
+  // n — 3 for [1,2,3,4] — so every even-length median published here was biased
+  // high by up to half the central gap, and it was never visible because the
+  // same expression appeared on the district page too.
+  return median(lags)
 }
 
 export const WARNING_TO_ACTION_MEASURE =
@@ -119,8 +124,12 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   const workflowInstances = kpiSnapshotForPeriod(data.workflow_instances || [], from, to, 'created_at')
   const reportTemplates = data.report_templates || []
 
-  // People reached: sum of recipients_count across dispatches (may live on d.metadata in some providers)
-  const people_reached = dispatches.reduce((sum, d) => sum + (d.recipients_count || d.metadata?.recipients_count || 0), 0)
+  // People reached, from the registry. The inline sum counted every dispatch,
+  // including `status: 'failed', sent_at: null, HTTP 503` — 1,399 people, of
+  // whom 503's reached nobody. Recipients are still not de-duplicated, because
+  // the payload carries no stable person identifier, and the reason travels
+  // with the number rather than being left for a reader to discover.
+  const reached = computeMetric('people_reached', { dispatches })
 
   // Community reporters: distinct reporter identifiers in field_reports
   const reporterIds = new Set(
@@ -158,40 +167,27 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   // so, rather than becoming a different measurement under the same name.
   const warning_to_action_median_hours = signalToDispatchHours(data.rapidpro_dispatches)
 
-  // Feeding supply repositioning rate
-  const feedingInterventions = interventions.filter((i) => i.type === 'feeding')
-  const feedingCompleted = feedingInterventions.filter((i) =>
-    ['completed', 'verified'].includes(i.status)
-  )
-  const feeding_supply_repositioning_rate = feedingInterventions.length
-    ? (100 * feedingCompleted.length) / feedingInterventions.length
-    : null
+  // Feeding and cold-chain rates, from the registry. Both were `length ? 100 *
+  // done / total : null`, which published a rate from a single intervention as
+  // confidently as from forty. The floor is inside the computation now, so no
+  // surface can publish below it by forgetting to check.
+  const feeding = computeMetric('feeding_repositioning_rate', { interventions })
+  const coldChain = computeMetric('cold_chain_protection_rate', { workflows: workflowInstances })
 
-  // Cold chain protection rate
-  const coldChainWorkflows = workflowInstances.filter((w) => w.type === 'cold_chain_protection')
-  const coldChainTerminal = coldChainWorkflows.filter((w) => ['closed', 'verified'].includes(w.state))
-  const cold_chain_protection_rate = coldChainWorkflows.length
-    ? (100 * coldChainTerminal.length) / coldChainWorkflows.length
-    : null
-
-  // False alert rate
+  // False alert rate, from the registry.
   //
-  // Measured only over alerts whose outcome was actually determined. It used to
-  // scan resolution_note for /false|invalid|noop/i and divide by the alert count,
-  // which on the demo data reported 0% — read as "no false alerts occurred" when
-  // it means "nobody wrote the word false". A resolution note like "situation
-  // stabilised" says nothing about whether the alert was warranted.
+  // This surface was the one that had it right — it read `alert_events.
+  // false_alert` rather than scanning the resolution note, so it saw the
+  // Mandera confirmation the other two missed — but it computed the metric
+  // itself, which is what made its being right a matter of luck rather than of
+  // design. Two sibling modules derived the same name from the same data and
+  // got a different answer, and nothing in the codebase said which was
+  // authoritative.
   //
-  // With no determinations recorded the rate is null, not zero, and the reason is
-  // reported as a data gap. A number that looks authoritative without being sound
-  // is worse than no number.
-  const determinedAlerts = alertEvents.filter((a) => a.false_alert !== null && a.false_alert !== undefined)
-  const falseAlerts = determinedAlerts.filter((a) => a.false_alert === true)
-  const false_alert_rate = determinedAlerts.length
-    ? (100 * falseAlerts.length) / determinedAlerts.length
-    : null
-  const false_alert_determined = determinedAlerts.length
-  const false_alert_sample = determinedAlerts.length
+  // `src/analytics/metrics.js` now says so once: numerator, denominator, floor
+  // of 30 determined alerts, and the refusal when the floor is not met. All
+  // four surfaces compute from it.
+  const far = computeMetric('false_alert_rate', { alerts: alertEvents })
 
   // Demographic KPIs from field_reports.demographics
   const reportsWithDemo = fieldReports.filter((r) => r.demographics != null)
@@ -232,10 +228,19 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   if (cohort_refugees_idps === null) data_gaps.push({ field: 'cohort.refugees_idps', reason: 'no demographics recorded yet' })
   if (!youth_mappers_count) data_gaps.push({ field: 'youth_mappers_count', reason: 'role=mapper flag rarely set on field_reports' })
   if (warning_to_action_median_hours === null) data_gaps.push({ field: 'warning_to_action_median_hours', reason: 'no dispatch carries both matched_signal_at and sent_at, so the signal-to-dispatch interval cannot be measured; returns null rather than substituting a different interval' })
-  if (false_alert_rate === null) data_gaps.push({ field: 'false_alert_rate', reason: 'no alert event carries a false_alert determination; the rate is measured over determined alerts only and is null rather than 0 until an outcome is recorded' })
+  if (far.value === null) data_gaps.push({ field: 'false_alert_rate', reason: far.refusal })
 
   const result = {
-    people_reached,
+    people_reached: reached.value,
+    // What "reached" counts, in words, on the payload. A funder's headline
+    // number should not need a footnote to be interpreted.
+    people_reached_basis: {
+      sends: reached.sends,
+      failed_dispatches_excluded: reached.failed_excluded,
+      without_recipient_count: reached.without_recipient_count,
+      de_duplicated: reached.de_duplicated,
+      de_duplication_refusal: 'the dispatch payload carries no stable person identifier, so recipients are summed per send rather than de-duplicated; a union would be a guess, and a guess here inflates or deflates the headline number',
+    },
     percent_children_u18,
     percent_women_and_girls,
     percent_pwd,
@@ -246,15 +251,20 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
     warning_to_action_measure: WARNING_TO_ACTION_MEASURE,
     warning_to_action_limit: WARNING_TO_ACTION_LIMIT,
     warning_to_action_is_field_outcome: false,
-    feeding_supply_repositioning_rate,
-    cold_chain_protection_rate,
-    false_alert_rate,
-    // The denominator and the method travel with the number. A rate with an
-    // unstated denominator cannot be judged, and a rate whose denominator is
-    // "every alert ever raised" is not a false-alert rate at all.
-    false_alert_determined,
+    feeding_supply_repositioning_rate: feeding.value,
+    feeding_supply_repositioning_refusal: feeding.refusal,
+    cold_chain_protection_rate: coldChain.value,
+    cold_chain_protection_refusal: coldChain.refusal,
+    false_alert_rate: far.value,
+    // The denominator, the floor and the method travel with the number. A rate
+    // with an unstated denominator cannot be judged, and the registry's basis
+    // sentence is the same one `src/districts.js` and `src/equity.js` publish,
+    // so an officer reading any of the three pages sees the same words.
+    false_alert_determined: far.denominator,
     false_alert_of_total: alertEvents.length,
-    false_alert_method: 'share of alert events with a recorded false_alert determination (true) among alert events with any determination; null when none are determined',
+    false_alert_sample_floor: METRICS.false_alert_rate.sample_floor,
+    false_alert_method: METRICS.false_alert_rate.basis,
+    false_alert_refusal: far.refusal,
     api_uptime_pct: computeApiUptime(),
     cohort: {
       total: demoTotal,
@@ -305,9 +315,9 @@ export function computeMonthlyKpiSeries(data, { monthsBack = 12 } = {}) {
     const interventions = kpiSnapshotForPeriod(data.interventions || [], from, to, 'created_at')
     const workflowInstances = kpiSnapshotForPeriod(data.workflow_instances || [], from, to, 'created_at')
 
-    const people_reached = dispatches.reduce(
-      (s, d) => s + (d.recipients_count || d.metadata?.recipients_count || 0), 0
-    )
+    // Same registry route as the quarterly figure. It used to be a third
+    // inline copy of the same sum.
+    const people_reached = computeMetric('people_reached', { dispatches }).value
 
     const reporterIds = new Set(
       fieldReports.map(r => r.reported_by || r.reporter_urn_hash || r.reporter_id).filter(Boolean)
@@ -316,24 +326,18 @@ export function computeMonthlyKpiSeries(data, { monthsBack = 12 } = {}) {
 
     const warning_to_action_median_hours = signalToDispatchHours(dispatches)
 
-    const feedingInterventions = interventions.filter(iv => iv.type === 'feeding')
-    const feedingCompleted = feedingInterventions.filter(iv => ['completed', 'verified'].includes(iv.status))
-    const feeding_repositioning_rate = feedingInterventions.length
-      ? (100 * feedingCompleted.length) / feedingInterventions.length : null
-
-    const coldChainWorkflows = workflowInstances.filter(w => w.type === 'cold_chain_protection')
-    const coldChainTerminal = coldChainWorkflows.filter(w => ['closed', 'verified'].includes(w.state))
-    const cold_chain_protection_rate = coldChainWorkflows.length
-      ? (100 * coldChainTerminal.length) / coldChainWorkflows.length : null
-
-    // Same rule as the quarterly figure: measured only over alerts whose outcome
-    // was determined, and null rather than 0 when none were. This path had kept
-    // the old keyword scan, so the trend card showed a flat 0% while the KPI tile
-    // correctly showed a gap — the same metric contradicting itself on one screen.
-    const determined = alertEvents.filter(a => a.false_alert !== null && a.false_alert !== undefined)
-    const false_alert_rate = determined.length
-      ? (100 * determined.filter(a => a.false_alert === true).length) / determined.length : null
-    const false_alert_determined = determined.length
+    // The monthly series was a *fifth* inline copy of each rate, and the
+    // comment above it claimed it was "the same rule as the quarterly figure"
+    // while computing the same three numbers a different way. A trend card that
+    // reads differently from the tile above it is the same defect wearing a
+    // time axis.
+    const feeding = computeMetric('feeding_repositioning_rate', { interventions })
+    const coldChain = computeMetric('cold_chain_protection_rate', { workflows: workflowInstances })
+    const far = computeMetric('false_alert_rate', { alerts: alertEvents })
+    const feeding_repositioning_rate = feeding.value
+    const cold_chain_protection_rate = coldChain.value
+    const false_alert_rate = far.value
+    const false_alert_determined = far.denominator
 
     series.push({
       month: monthStr,
@@ -430,16 +434,14 @@ export function quarterlyPdfSections(data, { quarter, year } = {}) {
       const disp = kpiSnapshotForPeriod(data.rapidpro_dispatches || [], r.from, r.to, 'sent_at')
       const reps = kpiSnapshotForPeriod(data.field_reports || [], r.from, r.to, 'created_at')
       const ivs = kpiSnapshotForPeriod(data.interventions || [], r.from, r.to, 'created_at')
-      const feeding = ivs.filter((i) => i.type === 'feeding')
-      const done = feeding.filter((i) => ['completed', 'verified'].includes(i.status))
       return {
         month: `${my}-${String(month).padStart(2, '0')}`,
-        people_reached: disp.reduce((t, d) => t + (d.recipients_count || d.metadata?.recipients_count || 0), 0),
+        people_reached: computeMetric('people_reached', { dispatches: disp }).value,
         community_reporters_count: new Set(
           reps.map((x) => x.reported_by || x.reporter_urn_hash || x.reporter_id).filter(Boolean),
         ).size,
         warning_to_action_median_hours: signalToDispatchHours(disp),
-        feeding_repositioning_rate: feeding.length ? (100 * done.length) / feeding.length : null,
+        feeding_repositioning_rate: computeMetric('feeding_repositioning_rate', { interventions: ivs }).value,
       }
     })
     .map((m) => ({

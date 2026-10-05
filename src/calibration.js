@@ -1,6 +1,7 @@
 import { clamp, stableId } from './utils.js'
 import { honestyEnvelope } from './analytics.js'
 import { MIN_EVENTS, MIN_MONTHS, MODEL_BASIS, wilsonInterval } from './flood-probability.js'
+import { METRICS, computeMetric } from './analytics/metrics.js'
 
 /**
  * Per-region calibration and a trust score (ENH-03).
@@ -41,7 +42,13 @@ import { MIN_EVENTS, MIN_MONTHS, MODEL_BASIS, wilsonInterval } from './flood-pro
  */
 
 /**
- * Minimum resolved alerts before a region's false-alert rate is reportable.
+ * Minimum determined alerts before a region's false-alert rate is reportable.
+ *
+ * Re-exported from the metric registry rather than declared here. This module
+ * had the floor; `src/kpi.js`, `src/districts.js` and `src/equity.js` did not,
+ * and that asymmetry is why three of them published rates from one or two
+ * records while this one refused at four. A floor that lives in one module is a
+ * floor the other three do not have.
  *
  * Set where the Wilson interval at a plausible-looking rate stops being able to
  * distinguish a good region from a poor one. At 30 resolved alerts a 10% rate
@@ -50,7 +57,7 @@ import { MIN_EVENTS, MIN_MONTHS, MODEL_BASIS, wilsonInterval } from './flood-pro
  * interval is honest and useless, and an honest useless interval presented as a
  * trust score is the failure this module exists to avoid.
  */
-export const MIN_DETERMINED_ALERTS = 30
+export const MIN_DETERMINED_ALERTS = METRICS.false_alert_rate.sample_floor
 
 export const CALIBRATION_BASIS = Object.freeze({
   basis: 'measured agreement between what this system signalled and what a reviewer recorded afterwards, per region',
@@ -92,10 +99,14 @@ export function alertOutcomeCalibration(alerts = []) {
   for (const alert of alerts) {
     const key = regionKey(alert)
     if (!byRegion.has(key)) {
-      byRegion.set(key, { region: key, raised: 0, resolved: 0, false_alerts: 0, resolved_true: 0, unresolved: 0 })
+      byRegion.set(key, { region: key, raised: 0, resolved: 0, false_alerts: 0, resolved_true: 0, unresolved: 0, alerts: [] })
     }
     const row = byRegion.get(key)
     row.raised += 1
+    // The records travel with the counts so the registry can compute the rate
+    // from the same declarations the other three surfaces use, rather than
+    // from counts this module happened to keep in step with its own copy.
+    row.alerts.push(alert)
     const determination = alert.false_alert
     if (determination === true || determination === false) {
       row.resolved += 1
@@ -109,11 +120,24 @@ export function alertOutcomeCalibration(alerts = []) {
   const regions = []
   const refusals = []
   for (const row of byRegion.values()) {
-    const refusal = alertOutcomeRefusal(row)
-    const rate = refusal ? null : row.false_alerts / row.resolved
+    // The registry decides whether the rate is reportable and what it is; this
+    // module adds the two calibration-specific questions the registry does not
+    // answer: is there contrast to measure against, and how wide is the
+    // interval. It does not recompute the rate — a fourth definition of a name
+    // three others publish is what this whole file exists to end.
+    const declared = computeMetric('false_alert_rate', { alerts: row.alerts })
+    const refusal = alertOutcomeRefusal(row, declared)
     regions.push({
+      // `alerts` is spread out: the raw records are an input to the
+      // computation, not a field of the answer, and forty alert records
+      // repeated on every region row is a payload problem disguised as data.
       ...row,
-      false_alert_rate: refusal ? null : Math.round(rate * 10000) / 10000,
+      alerts: undefined,
+      // The fraction, not the percent: this feeds a trust score and a Wilson
+      // interval, and the published percent surfaces get it from the registry
+      // directly. Same metric, same denominator, stated scale.
+      false_alert_rate: refusal ? null : Math.round((declared.numerator / declared.denominator) * 10000) / 10000,
+      false_alert_rate_pct: declared.value,
       // Wilson on the resolved count only. Widening it over `raised` would
       // pretend the unresolved alerts were resolved and not-wrong.
       false_alert_rate_wilson: refusal ? null : wilsonInterval(row.false_alerts, row.resolved),
@@ -129,19 +153,22 @@ export function alertOutcomeCalibration(alerts = []) {
  * Why this region's false-alert rate is not reportable.
  *
  * Three gates, each of which has produced a real wrong number when skipped:
- * too few resolved alerts (a rate off one alert moves 33 points), one class
- * only (every resolved alert marked false gives a confident 0% that says
- * nothing), and a non-finite determination that slipped past the boolean test.
+ * too few determined alerts (a rate off one alert moves 33 points), one class
+ * only (every determined alert marked false gives a confident 0% that says
+ * nothing), and a non-finite count that slipped past the boolean test.
+ *
+ * The first gate is the registry's, not this module's — it returns the same
+ * reason string for the same reason, so the two cannot drift.
  */
-function alertOutcomeRefusal(row) {
-  if (row.resolved < MIN_DETERMINED_ALERTS) {
-    return { reason: `only ${row.resolved} resolved alert(s) of the ${MIN_DETERMINED_ALERTS} required; an unresolved alert is not a miss, so the rest cannot enter the rate` }
+function alertOutcomeRefusal(row, declared) {
+  if (declared.value === null) {
+    return { reason: declared.refusal }
   }
   if (row.false_alerts === 0 || row.false_alerts === row.resolved) {
-    return { reason: `every resolved alert in this region carries the same determination (${row.false_alerts} false, ${row.resolved - row.false_alerts} warranted); there is no contrast to measure a rate against` }
+    return { reason: `every determined alert in this region carries the same determination (${row.false_alerts} false, ${row.resolved - row.false_alerts} warranted); there is no contrast to measure a rate against` }
   }
   if (!Number.isFinite(row.false_alerts) || !Number.isFinite(row.resolved)) {
-    return { reason: 'the resolved-alert counts are not finite, so no rate is computed' }
+    return { reason: 'the determined-alert counts are not finite, so no rate is computed' }
   }
   return null
 }

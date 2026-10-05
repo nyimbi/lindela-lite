@@ -1,12 +1,12 @@
 import { normalizeWorkflowInstance } from './workflows.js'
+import { computeMetric } from './analytics/metrics.js'
 
-const FALSE_POSITIVE_NOTE = /false|invalid|noop/i
 const SEVERITIES = ['critical', 'high', 'medium', 'low']
 
 const DATA_GAPS = [
   'alerts_by_gender_demographic: no gender field on alert_events',
   'alerts_by_age_band: no age field on alert_events',
-  'false_positive: keyword scan of resolution_note, not a confirmed outcome label',
+  'false_positive: count of alerts carrying a recorded false_alert determination, not a keyword scan of resolution_note',
   'accuracy_pct: legacy alias of dispatch_precision_pct — read the named field',
 ]
 
@@ -26,17 +26,15 @@ export function equityByDistrict(data) {
     if (!byDistrict.has(district)) {
       byDistrict.set(district, {
         district,
-        alerts: 0,
+        alert_records: [],
         dispatched: 0,
         acknowledged: 0,
         false_positive: 0,
-        // Alerts whose outcome someone actually recorded: resolved, with a
-        // note. Below this line there is nothing to be right or wrong about.
-        reviewed: 0,
-        // The subset that can carry an outcome: dispatched AND resolved. The
-        // old metric divided by every dispatch while subtracting false positives
-        // that included alerts never dispatched — two different populations, so
-        // the result could go negative and meant nothing.
+        // The alerts whose outcome is recorded, and the ones recorded false.
+        // These are counts of a declared field, not a scan of free text: the
+        // keyword version could not see the confirmed Mandera alert, whose note
+        // reads "Reading traced to a faulty sensor" and contains none of the
+        // three words it looked for.
         determined: 0,
         determined_false_positive: 0,
         alerts_by_severity: { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 },
@@ -47,7 +45,7 @@ export function equityByDistrict(data) {
     }
 
     const row = byDistrict.get(district)
-    row.alerts += 1
+    row.alert_records.push(alert)
 
     // Dispatched = alert_event had a matching dispatch
     const wasDispatched = dispatchedAlertIds.has(alert.id)
@@ -60,22 +58,18 @@ export function equityByDistrict(data) {
       row.acknowledged += 1
     }
 
-    const flaggedFalsePositive =
-      alert.status === 'resolved' &&
-      alert.resolution_note &&
-      FALSE_POSITIVE_NOTE.test(alert.resolution_note)
-
-    // False positive = resolved with false/invalid/noop note
-    if (flaggedFalsePositive) {
+    // A determination is `false_alert === true` or `=== false`. Anything else —
+    // null, absent, a string — is the absence of one, and an alert without an
+    // outcome is not a sound alert.
+    const determination = alert.false_alert === true || alert.false_alert === false
+      ? alert.false_alert
+      : null
+    if (determination === true) {
       row.false_positive += 1
-    }
-    if (alert.status === 'resolved' && alert.resolution_note) {
-      row.reviewed += 1
-    }
-
-    if (wasDispatched && alert.status === 'resolved') {
       row.determined += 1
-      if (flaggedFalsePositive) row.determined_false_positive += 1
+      row.determined_false_positive += 1
+    } else if (determination === false) {
+      row.determined += 1
     }
 
     // Severity breakdown
@@ -85,42 +79,38 @@ export function equityByDistrict(data) {
   }
 
   return Array.from(byDistrict.values()).map((row) => {
-    // Of the alert events this district both dispatched and resolved, the share
-    // not marked false positive. Numerator and denominator are the same
-    // population, the sample size travels with it, and it is null when nothing
-    // in the district has an outcome yet.
-    //
-    // It is a keyword-derived precision proxy, not response rate. The response
-    // metric lives in `rapidpro.responseMetrics` (`response_rate_pct`: inbound
-    // messages per dispatch) and counts messages, not people who replied.
-    const dispatch_precision_pct =
-      row.determined > 0
-        ? Math.round((10000 * (row.determined - row.determined_false_positive)) / row.determined) / 100
-        : null
-    // The district's false-alert rate, defined exactly as `districtOverview`
-    // defines it: flagged false positives over every alert the district raised,
-    // and null when no alert has a recorded outcome. The two surfaces shipped
-    // the same concept under the same name with different denominators, so an
-    // officer comparing them got two answers and no way to tell which was which.
-    const false_alert_rate = row.reviewed > 0
-      ? (100 * row.false_positive) / row.alerts
-      : null
+    // Both rates come from `src/analytics/metrics.js`, which declares their
+    // numerators, denominators, floors and refusals. This surface used to
+    // compute its own, and its comment claimed it was "defined exactly as
+    // `districtOverview` defines it" immediately before defining it otherwise.
+    // It is not a comment that was out of date; it was a second definition
+    // wearing the first one's clothes.
+    const precision = computeMetric('dispatch_precision_pct', {
+      alerts: row.alert_records,
+      dispatchedAlertIds,
+    })
+    const far = computeMetric('false_alert_rate', { alerts: row.alert_records })
+
     return {
       district: row.district,
-      alerts: row.alerts,
+      alerts: row.alert_records.length,
       dispatched: row.dispatched,
       acknowledged: row.acknowledged,
       false_positive: row.false_positive,
-      determined_dispatched: row.determined,
-      determined_false_positive: row.determined_false_positive,
-      dispatch_precision_pct,
-      false_alert_rate,
-      false_alert_determined: row.reviewed,
-      false_alert_of_total: row.alerts,
+      determined_dispatched: precision.denominator,
+      determined_false_positive: precision.numerator === null
+        ? row.determined_false_positive
+        : precision.denominator - precision.numerator,
+      dispatch_precision_pct: precision.value,
+      dispatch_precision_refusal: precision.refusal,
+      false_alert_rate: far.value,
+      false_alert_determined: far.denominator,
+      false_alert_of_total: row.alert_records.length,
+      false_alert_refusal: far.refusal,
       // Kept so existing consumers keep rendering. The value is the metric
       // above; the name is the old lie, and callers should migrate to
       // `dispatch_precision_pct`.
-      accuracy_pct: dispatch_precision_pct,
+      accuracy_pct: precision.value,
       alerts_by_severity: row.alerts_by_severity,
       alerts_by_gender_demographic: row.alerts_by_gender_demographic,
       alerts_by_age_band: row.alerts_by_age_band,

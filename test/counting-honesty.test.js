@@ -207,20 +207,40 @@ describe('district overview reports totals, not the size of its sample', () => {
     assert.equal(overview.field_reports[29].id, 'fr-15')
   })
 
-  it('computes false_alert_rate over every alert in the district', () => {
+  it('computes false_alert_rate over every determined alert in the district', () => {
+    // The assertion this test used to make was "4 false of 40, not 4 of
+    // whatever the window happened to hold" — correct about the window, wrong
+    // about the denominator. 40 alerts of which 36 nobody ever reviewed is not
+    // "4 false out of 40"; it is 4 false out of 4 determined, which is four
+    // records and below the floor of 30. The window question and the
+    // denominator question are separate, and this test was half right.
     const data = {
       field_reports: [],
-      alert_events: Array.from({ length: 40 }, (_, i) => alertEvent(i, i < 4 ? 'false alarm' : null)),
+      alert_events: Array.from({ length: 40 }, (_, i) => ({
+        ...alertEvent(i, i < 4 ? 'faulty sensor' : 'situation stabilised'),
+        false_alert: i < 4 ? true : false,
+      })),
     }
 
     const overview = districtOverview(data, 'turkana')
     assert.equal(overview.counts.alert_events, 40)
     assert.equal(overview.alert_events.length, 30)
-    assert.equal(
-      overview.kpi_snapshot.false_alert_rate,
-      (100 * 4) / 40,
-      '4 false of 40, not 4 of whatever the window happened to hold'
-    )
+    assert.equal(overview.kpi_snapshot.false_alert_rate, 10, '4 false of 40 determined')
+    assert.equal(overview.kpi_snapshot.false_alert_determined, 40)
+  })
+
+  it('does not let a keyword-free resolution note hide a confirmed false alert', () => {
+    // The Mandera case. The note reads "Reading traced to a faulty sensor" —
+    // no `false`, no `invalid`, no `noop` — so the keyword scan this surface
+    // used to run scored the district 0% for the one district where a false
+    // alert was confirmed.
+    const alerts = Array.from({ length: 40 }, (_, i) => ({
+      ...alertEvent(i, i === 0 ? 'Reading traced to a faulty sensor' : 'Situation stabilised'),
+      false_alert: i === 0,
+    }))
+    const overview = districtOverview({ field_reports: [], alert_events: alerts }, 'mandera')
+    assert.equal(overview.kpi_snapshot.false_alert_rate, 2.5,
+      '1 confirmed false alert of 40 determined is 2.5%, not 0%')
   })
 
   it('does not truncate a district that fits inside the limit', () => {
@@ -255,12 +275,20 @@ describe('district overview reports totals, not the size of its sample', () => {
 })
 
 describe('equity precision divides by the population it subtracted from', () => {
-  const alert = (id, district, status, note, dispatched = true) => ({
+  // The `false_alert` field is what these tests used to *infer* from the note
+  // text. They now set it, because inference from a note is what made two
+  // surfaces blind to the confirmed Mandera alert: its note reads "Reading
+  // traced to a faulty sensor" and contains none of the three keywords the old
+  // scan looked for. `note` is kept because `false_alert_rate` and the
+  // determination field are separate, and a test that only set one of them
+  // would not notice if the implementation started reading the other.
+  const alert = (id, district, status, note, dispatched = true, falseAlert = undefined) => ({
     id,
     scope: { district },
     severity: 'high',
     status,
     resolution_note: note,
+    false_alert: falseAlert,
     _dispatched: dispatched,
   })
 
@@ -272,24 +300,32 @@ describe('equity precision divides by the population it subtracted from', () => 
   })
 
   it('matches a hand-computed precision, sample size included', () => {
-    // Turkana: 4 dispatched (a1 confirmed, a2 invalid, a3 still open, a5
-    // confirmed), 1 resolved alert that was never dispatched and is flagged
-    // false. Determined sample = a1, a2, a5 = 3, of which 1 is false.
+    // Turkana: dispatched and determined = a1, a2, a5, a6, a7 (five), of which
+    // a2 is recorded false; a3 is dispatched but undetermined; a4 was resolved
+    // and recorded false but never dispatched, so it is outside both the
+    // numerator and the denominator.
+    //
+    // Five rather than the three this test used to use: the sample floor is 5,
+    // and a precision computed from three records is exactly the n=1 problem
+    // one layer down. The arithmetic is unchanged — 4 of 5 warranted, 80% — and
+    // the test still fails if the populations drift apart.
     const data = pack([
-      alert('a1', 'Turkana', 'resolved', 'flood confirmed'),
-      alert('a2', 'Turkana', 'resolved', 'no flood, invalid report'),
-      alert('a3', 'Turkana', 'open', null),
-      alert('a4', 'Turkana', 'resolved', 'false alarm', false),
-      alert('a5', 'Turkana', 'resolved', 'flood confirmed'),
+      alert('a1', 'Turkana', 'resolved', 'flood confirmed', true, false),
+      alert('a2', 'Turkana', 'resolved', 'no flood, invalid report', true, true),
+      alert('a3', 'Turkana', 'open', null, true, null),
+      alert('a4', 'Turkana', 'resolved', 'false alarm', false, true),
+      alert('a5', 'Turkana', 'resolved', 'flood confirmed', true, false),
+      alert('a6', 'Turkana', 'resolved', 'flood confirmed', true, false),
+      alert('a7', 'Turkana', 'resolved', 'flood confirmed', true, false),
     ])
 
     const [turkana] = equityByDistrict(data)
 
-    assert.equal(turkana.dispatched, 4)
-    assert.equal(turkana.determined_dispatched, 3)
+    assert.equal(turkana.dispatched, 6)
+    assert.equal(turkana.determined_dispatched, 5)
     assert.equal(turkana.determined_false_positive, 1)
-    assert.equal(turkana.acknowledged, 4)
-    assert.equal(turkana.dispatch_precision_pct, 66.67, '2 of 3 determined dispatches were right')
+    assert.equal(turkana.acknowledged, 6)
+    assert.equal(turkana.dispatch_precision_pct, 80, '4 of 5 determined dispatches were right')
 
     // The old formula divided every dispatch (4) by a numerator that also
     // subtracted an alert that was never dispatched, and returned 50.
@@ -316,7 +352,7 @@ describe('equity precision divides by the population it subtracted from', () => 
 
   it('does not report a precision derived from a single record as a district figure', () => {
     const data = pack([
-      alert('a1', 'Turkana', 'resolved', 'false alarm'),
+      alert('a1', 'Turkana', 'resolved', 'false alarm', true, true),
       alert('a2', 'Turkana', 'open', null),
       alert('a3', 'Turkana', 'open', null),
       alert('a4', 'Turkana', 'open', null),
@@ -325,16 +361,21 @@ describe('equity precision divides by the population it subtracted from', () => 
     ])
 
     const [turkana] = equityByDistrict(data)
-    assert.equal(turkana.dispatch_precision_pct, 0, '1 determined record, and it was false')
+    // This used to assert `0` — "1 determined record, and it was false". A 0%
+    // precision published from a single record is the sample-floor defect
+    // R-93, in the direction that reads as a finding: the district's dispatch
+    // quality is not measured, and one bad alert does not measure it.
+    assert.equal(turkana.dispatch_precision_pct, null)
+    assert.match(turkana.dispatch_precision_refusal, /not a precision/)
     assert.deepEqual(detectDispatchPrecisionBreaches(data), [], 'below the minimum sample')
   })
 
   it('breaches on the hand-computed value once the sample is large enough', () => {
-    // 10 dispatched and resolved, 3 flagged false: 7 of 10 = 70%, under 80.
+    // 10 dispatched and determined, 3 recorded false: 7 of 10 = 70%, under 80.
     const alerts = Array.from({ length: 10 }, (_, i) =>
-      alert(`a${i}`, 'Turkana', 'resolved', i < 3 ? 'invalid, no flood' : 'flood confirmed')
+      alert(`a${i}`, 'Turkana', 'resolved', i < 3 ? 'invalid, no flood' : 'flood confirmed', true, i < 3)
     )
-    alerts.push(alert('x1', 'Turkana', 'resolved', 'false alarm', false))
+    alerts.push(alert('x1', 'Turkana', 'resolved', 'false alarm', false, true))
     const data = pack(alerts)
 
     const [turkana] = equityByDistrict(data)
@@ -371,15 +412,27 @@ describe('equity precision divides by the population it subtracted from', () => 
     assert.equal(metrics.mean_response_seconds, 300)
 
     // ...while the equity metric above measures dispatch precision. Two names,
-    // two denominators, neither presented as the other.
+    // two denominators, neither presented as the other. The precision figure
+    // needs five determined dispatches before it says anything; one is not a
+    // district quality figure in either direction.
     const equity = equityByDistrict({
       alert_events: [
-        { id: 'ae-1', scope: { district: 'Turkana' }, status: 'resolved', resolution_note: 'flood confirmed' },
+        { id: 'ae-1', scope: { district: 'Turkana' }, status: 'resolved', false_alert: false, resolution_note: 'flood confirmed' },
       ],
       rapidpro_dispatches: [{ id: 'd1', alert_event_id: 'ae-1' }],
     })
-    assert.equal(equity[0].dispatch_precision_pct, 100)
-    assert.notEqual(metrics.response_rate_pct, equity[0].dispatch_precision_pct)
+    // One determined dispatch is below the floor of 5, so this is null rather
+    // than a confident 100% — the same n=1 problem the response-rate refusal
+    // above is about, on the other metric.
+    assert.equal(equity[0].dispatch_precision_pct, null)
+    // Neither metric has a rate, and they are two different quantities that
+    // happen to both be unmeasurable here. That they coincide must be a
+    // coincidence of the fixture, not the reason they share a value: the
+    // denominators differ (inbound messages per dispatch, versus determined
+    // dispatches), which is exactly why neither may be substituted for the
+    // other by a consumer who has one and not the other.
+    assert.match(equity[0].dispatch_precision_refusal, /not a precision/)
+    assert.match(metrics.response_rate_note, /not a rate/)
   })
 })
 

@@ -45,7 +45,7 @@ describe('DATA-05 — a district rate is computed over the district, not over th
     const data = {
       field_reports: [],
       alert_events: Array.from({ length: 40 }, (_, i) =>
-        alertEvent(i, [2, 3, 6, 7, 18, 19, 26, 27].includes(i) ? 'false alarm' : null)
+        ({ ...alertEvent(i, [2, 3, 6, 7, 18, 19, 26, 27].includes(i) ? 'false alarm' : null), false_alert: [2, 3, 6, 7, 18, 19, 26, 27].includes(i) })
       ),
     }
 
@@ -62,7 +62,11 @@ describe('DATA-05 — a district rate is computed over the district, not over th
       (100 * 8) / 40,
       'eight false of forty — not eight of thirty, and not four of thirty'
     )
-    assert.equal(overview.kpi_snapshot.false_alert_determined, 8)
+    // Every alert in this fixture carries a determination, so the denominator
+    // is all forty. It used to read 8, which was the count of alerts whose
+    // *note* matched a keyword — a different population entirely, and the
+    // reason two surfaces could score the same district from zero to fifty.
+    assert.equal(overview.kpi_snapshot.false_alert_determined, 40)
     assert.equal(overview.kpi_snapshot.false_alert_of_total, 40)
   })
 
@@ -86,7 +90,7 @@ describe('DATA-05 — a district rate is computed over the district, not over th
     const data = {
       field_reports: [],
       alert_events: Array.from({ length: 40 }, (_, i) =>
-        alertEvent(i, [2, 3, 6, 7, 18, 19, 26, 27].includes(i) ? 'false alarm' : null)
+        ({ ...alertEvent(i, [2, 3, 6, 7, 18, 19, 26, 27].includes(i) ? 'false alarm' : null), false_alert: [2, 3, 6, 7, 18, 19, 26, 27].includes(i) })
       ),
     }
 
@@ -131,22 +135,47 @@ describe('DATA-07 — "not measured" is not "measured as zero"', () => {
   })
 
   it('still reports a real 0% when outcomes were reviewed and none were false', () => {
-    // Ten alerts were resolved with a note. Ten outcomes looked at, none false.
-    // That is a zero with a denominator, and it must survive the fix — a null
-    // here would be its own kind of lie.
+    // Forty outcomes recorded, none false. A zero with a denominator must
+    // survive the fix — a null here would be its own kind of lie.
+    //
+    // This used to use ten determinations and read `0`. Ten is below the floor
+    // of 30, so the correct answer for that fixture is now null — which is not
+    // a retreat from the point of the test, it is a second instance of it: a
+    // rate that cannot discriminate "rarely wrong" from "half the time" is not
+    // a rate whether it reads 0% or 100%. Forty determinations clears the floor,
+    // so the zero below is a measurement.
     const data = {
       field_reports: [],
-      alert_events: Array.from({ length: 40 }, (_, i) =>
-        alertEvent(i, i < 10 ? 'situation stabilised' : null)
-      ),
+      alert_events: Array.from({ length: 40 }, (_, i) => ({
+        ...alertEvent(i, 'situation stabilised'),
+        false_alert: false,
+      })),
     }
 
     const overview = districtOverview(data, 'turkana')
 
-    assert.equal(overview.kpi_snapshot.false_alert_rate, 0, 'zero of ten, measured')
-    assert.equal(overview.kpi_snapshot.false_alert_determined, 10)
+    assert.equal(overview.kpi_snapshot.false_alert_rate, 0, 'zero of forty, measured')
+    assert.equal(overview.kpi_snapshot.false_alert_determined, 40)
     assert.equal(overview.kpi_snapshot.false_alert_of_total, 40)
     assert.equal(turkanaRow(data).false_alert_rate, 0, 'and the equity surface agrees it is zero, not null')
+  })
+
+  it('a real zero below the sample floor is still a refusal', () => {
+    // The case the test above had before it was scaled: ten determinations,
+    // none false. The rate is genuinely zero and genuinely unpublishable.
+    // Those are different facts and the payload has to carry both.
+    const data = {
+      field_reports: [],
+      alert_events: Array.from({ length: 40 }, (_, i) => ({
+        ...alertEvent(i, i < 10 ? 'situation stabilised' : null),
+        false_alert: i < 10 ? false : null,
+      })),
+    }
+
+    const snapshot = districtOverview(data, 'turkana').kpi_snapshot
+    assert.equal(snapshot.false_alert_rate, null)
+    assert.equal(snapshot.false_alert_determined, 10, 'the sample that would have produced the 0%')
+    assert.match(snapshot.false_alert_refusal, new RegExp('of the 30 required'))
   })
 
   it('reports a district with no alerts at all as null on both surfaces', () => {
