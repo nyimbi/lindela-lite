@@ -150,6 +150,22 @@ caller's cached body to the next, and a cache between here and the browser, the
 service worker's Cache API included, keys on those headers only when the response
 says so.
 
+## Delivery Reconciliation
+
+An alert whose SMS never left raises an alert about itself. This is not a
+duplicate of the escalation endpoint below: escalation asks "a message was
+delivered and nobody has answered", and it only ever considers dispatches the
+gateway *accepted*. A failed dispatch is in neither set, so without this pass
+the workflow instance sits in `chain_dispatched` — a state the system believes
+it has reached — and no human was ever told.
+
+The pass runs on the periodic driver. Each undelivered chain produces one alert
+with `rule_id: delivery.reconciliation`, `severity: high`,
+`approval.state: auto_approved` (an alert about a failed notification must not
+itself need approval) and `synthetic_for` naming the original — which is the
+memory that makes it fire once, ever. `GET /api/v1/ready` reports how many it
+raised in the last tick.
+
 ## Rate Limits
 
 Every request is charged to a per-client budget before it does any work,

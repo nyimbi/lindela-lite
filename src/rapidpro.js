@@ -29,6 +29,33 @@ export function rapidProStatus(env = process.env) {
   }
 }
 
+/**
+ * How many times to try, and how long to wait between tries.
+ *
+ * R-04: a failed dispatch used to be a record and a 502, and nothing retried it
+ * — so a gateway that was down for ninety seconds meant an alert no human was
+ * ever told about, presented to the operator as a completed send. Three tries
+ * over about eight seconds covers a gateway restart without holding an operator
+ * request open for a minute.
+ */
+export function dispatchRetryPolicy(env = process.env) {
+  // Below 1 is a configuration error, not an instruction to stop delivering.
+  // Reading `0` as "one attempt" would let a typo quietly restore the defect
+  // this retry exists to fix, on the one path where silence is the harm.
+  const declared = Number(env.RAPIDPRO_DISPATCH_ATTEMPTS)
+  const attempts = Number.isFinite(declared) && declared >= 1 ? Math.floor(declared) : 3
+  const baseMs = Math.max(0, Number(env.RAPIDPRO_DISPATCH_RETRY_BASE_MS) || 2000)
+  const sleep = env.RAPIDPRO_DISPATCH_SLEEP
+  return { attempts, baseMs, sleep: typeof sleep === 'function' ? sleep : null }
+}
+
+/** Exponential, and never longer than the caller is willing to wait. */
+function retryDelayMs(attempt, baseMs) {
+  return Math.min(baseMs * 2 ** (attempt - 1), 30_000)
+}
+
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
 export async function sendRapidProAlert(alert, options = {}, env = process.env) {
   const config = rapidProConfig(env)
   const recipients = normalizeRecipients(options, env)
@@ -37,9 +64,25 @@ export async function sendRapidProAlert(alert, options = {}, env = process.env) 
   const request = buildRapidProRequest(mode, config, recipients, alert, message, options)
   const queuedAt = new Date().toISOString()
   const startedAt = queuedAt
+  const policy = dispatchRetryPolicy(env)
+  const sleep = policy.sleep || defaultSleep
 
   try {
-    const { response, responseBody } = await dispatchToRapidPro(request.url, config, request.body, env)
+    let response = null
+    let responseBody = null
+    let attempt = 0
+    for (;;) {
+      attempt += 1
+      const result = await dispatchToRapidPro(request.url, config, request.body, env)
+      response = result.response
+      responseBody = result.responseBody
+      // A 4xx is the gateway telling us the request is wrong. Retrying it sends
+      // the same wrong request again, and the audit's failure is silence, not
+      // impatience — so only transport errors and 5xx/429 are retried.
+      const worthRetrying = !response || response.status >= 500 || response.status === 429
+      if (attempt >= policy.attempts || !worthRetrying) break
+      await sleep(retryDelayMs(attempt, policy.baseMs))
+    }
     const sentAt = new Date().toISOString()
     const dispatch = rapidProDispatchRecord({
       alert,
@@ -55,6 +98,7 @@ export async function sendRapidProAlert(alert, options = {}, env = process.env) 
       matchedSignalId: options.matched_signal_id || null,
       matchedSignalAt: options.matched_signal_at || null,
     })
+    dispatch.attempts = attempt
     if (!response.ok) {
       dispatch.status = 'failed'
       dispatch.error = responseBody?.detail || responseBody?.error || `RapidPro HTTP ${response.status}`
@@ -939,6 +983,125 @@ export function applyEscalation(dispatch, escalation) {
  *   3. Any reply counts as response, even an unparseable one.
  *   4. A recipient already escalated is not escalated again.
  */
+/**
+ * ENH-06 / R-04 — the alerts whose notification never left.
+ *
+ * The escalation path only ever looks at dispatches the gateway *accepted*
+ * (`dispatchAccepted`). That is correct for "nobody has responded yet" and
+ * useless for "nobody was ever told": a failed dispatch is not in the
+ * escalation set, produces no alert about itself, and leaves the workflow
+ * instance sitting in `chain_dispatched` — a chain the system believes it has
+ * run. A focal point approves a trigger, the SMS fails, and the record says the
+ * chain was dispatched.
+ *
+ * So this is the other question: given everything the system believes it
+ * dispatched, which of those has no accepted dispatch behind it? One synthetic
+ * alert per original, ever — a reconciliation that fires on every tick is a
+ * second outage with more rows.
+ *
+ * `graceMinutes` is not a retry budget; it is how long a dispatch may plausibly
+ * still be in flight before its absence means something.
+ */
+export function dispatchGraceMinutes(env = process.env) {
+  const override = Number(env.RAPIDPRO_DISPATCH_GRACE_MINUTES)
+  return Number.isFinite(override) && override > 0 ? Math.round(override) : 15
+}
+
+/** Workflow states that mean "this has been handed off", by type. */
+const DISPATCHED_STATES = new Set([
+  'chain_dispatched', 'alert_dispatched', 'focal_point_confirmed', 'threshold_breached',
+])
+
+export function undeliveredDispatches(data, options = {}) {
+  const { now = new Date().toISOString(), env = process.env } = options
+  const nowMs = Date.parse(now)
+  const graceMinutes = dispatchGraceMinutes(env)
+  const dispatches = data?.rapidpro_dispatches || []
+  const alerts = data?.alert_events || []
+  const instances = data?.workflow_instances || []
+
+  const acceptedByEvent = new Set()
+  for (const dispatch of dispatches) {
+    if (dispatch.alert_event_id && dispatchAccepted(dispatch)) acceptedByEvent.add(dispatch.alert_event_id)
+  }
+
+  // Already-flagged originals, so the pass is idempotent. The synthetic alert
+  // records what it is about in `synthetic_for`; that is the whole memory of it.
+  const alreadyFlagged = new Set(
+    alerts.filter((a) => a.synthetic_for).map((a) => a.synthetic_for),
+  )
+  const alertById = new Map(alerts.map((a) => [a.id, a]))
+  const seenOriginals = new Set()
+  const undelivered = []
+
+  for (const instance of instances) {
+    if (instance.subject_kind !== 'alert_event') continue
+    const state = String(instance.state || '')
+    if (!DISPATCHED_STATES.has(state)) continue
+    const originalId = instance.subject_id
+    if (!originalId || alreadyFlagged.has(originalId) || seenOriginals.has(originalId)) continue
+    if (acceptedByEvent.has(originalId)) continue
+
+    // Grace: a chain that reached this state seconds ago may have a dispatch
+    // in flight, and an alert about that is a false alarm about an outage that
+    // is about to resolve itself.
+    const since = Date.parse(instance.updated_at || instance.created_at || '')
+    if (!Number.isFinite(since)) continue
+    const waitedMs = nowMs - since
+    if (waitedMs < graceMinutes * 60 * 1000) continue
+
+    const original = alertById.get(originalId)
+    seenOriginals.add(originalId)
+    undelivered.push({
+      original_alert_event_id: originalId,
+      workflow_instance_id: instance.id,
+      workflow_type: instance.type,
+      state,
+      severity: original?.severity || 'high',
+      rule_name: original?.rule_name || null,
+      waited_minutes: Math.round(waitedMs / 60_000),
+      attempted_dispatches: dispatches.filter((d) => d.alert_event_id === originalId).length,
+      raised_at: now,
+    })
+  }
+  return undelivered
+}
+
+/** The alert record raised for one undelivered chain. */
+export function buildUndeliveredAlert(finding, { now = new Date().toISOString() } = {}) {
+  return {
+    id: stableId('alert', ['undelivered', finding.original_alert_event_id]),
+    rule_id: 'delivery.reconciliation',
+    rule_name: 'Notification delivery failure',
+    status: 'open',
+    severity: 'high',
+    metric: 'dispatch.delivered',
+    value: 0,
+    threshold: 1,
+    operator: '>=',
+    message: `Alert ${finding.original_alert_event_id} entered "${finding.state}" and no accepted SMS was delivered`
+      + `${finding.attempted_dispatches ? ` after ${finding.attempted_dispatches} attempt(s)` : ''}.`
+      + ' Nobody was told. Dispatch by hand or check the RapidPro flow.',
+    actions: ['notify_operator'],
+    scope: null,
+    created_at: now,
+    updated_at: now,
+    suppression_bucket: now.slice(0, 16),
+    approval: { state: 'auto_approved' },
+    // What makes this idempotent: the reconciliation looks for an alert that
+    // already names this original, and finds this one.
+    synthetic_for: finding.original_alert_event_id,
+    delivery_failure: {
+      workflow_instance_id: finding.workflow_instance_id,
+      workflow_type: finding.workflow_type,
+      state: finding.state,
+      waited_minutes: finding.waited_minutes,
+      attempted_dispatches: finding.attempted_dispatches,
+    },
+    metadata: { reconciliation: 'dispatch.delivery' },
+  }
+}
+
 export function dueEscalations(data, options = {}) {
   const { now = new Date().toISOString(), env = process.env } = options
   const nowMs = Date.parse(now)

@@ -43,6 +43,7 @@ import { createStoreFromEnv } from './storage.js'
 import { collectionPage, createIdempotencyStore, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
+import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
@@ -127,7 +128,28 @@ const DRIVER_ITEMS = [
   // comment in a JSON file, and the thing it was written to protect keeps
   // accumulating.
   { id: 'retention', label: 'retention', run: (store, data) => applyScheduledRetention(store, data) },
+  // ENH-06. The escalation path only sees dispatches the gateway accepted, so a
+  // failed one was invisible: the workflow instance sat in `chain_dispatched`
+  // — a chain the system believes it ran — and nobody was ever told. This is the
+  // pass that notices, and it raises one synthetic alert per original, ever.
+  { id: 'reconcile', label: 'delivery reconciliation', run: (store, data) => reconcileUndeliveredDispatches(store, data) },
 ]
+
+/** Raise an alert for every chain the system believes it dispatched and did not. */
+export async function reconcileUndeliveredDispatches(store, data, { now = new Date().toISOString() } = {}) {
+  const findings = undeliveredDispatches(data, { now })
+  if (findings.length === 0) return { raised: 0, findings: [] }
+  const alerts = findings.map((finding) => buildUndeliveredAlert(finding, { now }))
+  const logs = alerts.map((alert) => actionLog('alert_events', 'created', alert, 'delivery-reconciliation', 'system'))
+  await store.merge({ alert_events: alerts, action_logs: logs })
+  for (const finding of findings) {
+    logger.error(
+      { alert_event_id: finding.original_alert_event_id, workflow_instance_id: finding.workflow_instance_id },
+      'dispatch reconciliation: a chain was entered and no notification was delivered',
+    )
+  }
+  return { raised: alerts.length, findings }
+}
 
 /**
  * Expire every collection that has a window, on the driver's cadence.
@@ -220,6 +242,7 @@ function summarise(id, value) {
   if (id === 'ingestion') return { ran: value?.source_runs?.length ?? 0 }
   if (id === 'reports') return { ran: value?.runs?.length ?? 0, reports: value?.reports?.length ?? 0 }
   if (id === 'retention') return { expired: Number(value?.expired) || 0 }
+  if (id === 'reconcile') return { raised: Number(value?.raised) || 0 }
   return null
 }
 

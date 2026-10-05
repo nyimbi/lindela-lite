@@ -110,6 +110,11 @@ openssl rand -hex 32   # → LINDELA_LITE_PII_SALT
 | `RAPIDPRO_ALERT_GROUPS` | unset | Default comma-separated group UUIDs. |
 | `RAPIDPRO_BASE_LANGUAGE` | `eng` | Broadcast language code. |
 | `RAPIDPRO_WEBHOOK_SECRET` | unset | Shared secret for inbound field-report webhooks. |
+| `RAPIDPRO_DISPATCH_ATTEMPTS` | `3` | Tries per alert dispatch. Below 1 is a configuration error and falls back to 3 — a typo must not restore "notify once and say nothing". A 4xx is never retried: the gateway has rejected the request. |
+| `RAPIDPRO_DISPATCH_RETRY_BASE_MS` | `2000` | First backoff; doubles per attempt, capped at 30s. |
+| `RAPIDPRO_DISPATCH_GRACE_MINUTES` | `15` | How long a chain may sit in a dispatched state with no accepted dispatch before the reconciliation calls it a delivery failure. A grace period, not a retry budget. |
+| `RAPIDPRO_ACK_SLA_MINUTES` | by severity | Acknowledgement deadline, which is also when an unanswered page escalates. |
+| `RAPIDPRO_ESCALATION_URNS` | unset | Where escalations go. Empty is reported as `escalation_target_unresolved`, never as "paged". |
 
 ## Docker Compose
 
