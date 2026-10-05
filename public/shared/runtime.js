@@ -473,15 +473,6 @@ async function queueTheReport(path, body, headers, what, reason) {
 
 export async function initI18n(defaultLocale = 'en') {
   const catalog = {}
-  try {
-    const res = await fetch(`/i18n/${defaultLocale}.json`)
-    if (res.ok) {
-      Object.assign(catalog, await res.json())
-    }
-  } catch {
-    // Fallback
-  }
-
   const i18n = {
     current: defaultLocale,
     catalog,
@@ -546,7 +537,14 @@ export async function initI18n(defaultLocale = 'en') {
     })
   }
 
-  applyI18n()
+  // R-62/R-63. Boot goes through the same two-step as a locale switch, so
+  // English is the base layer even at load: a partial catalogue falls back to
+  // English rather than to its own key ids, and `lang`/`dir` are set from the
+  // first paint. Loading the requested locale alone left a Somali or Amharic
+  // page rendering raw key names for everything that file had not translated —
+  // which is also what `scripts/check-i18n-offers.mjs`'s floor assumes and
+  // never got.
+  await i18n.set(defaultLocale)
   window.__i18n = i18n
   return i18n
 }

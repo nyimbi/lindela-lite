@@ -103,6 +103,45 @@ describe('R-61 — the navbar does not register a key it then overwrites', () =>
 /* ================================================================== R-62 */
 
 describe('R-62 — English is the base layer at boot, not only after a locale change', () => {
+  it('shared/runtime.js boots through the same two-step as a switch', () => {
+    // The change this file reported on. `initI18n` used to fetch only the
+    // requested locale and build the catalogue from it, so the base layer
+    // existed only inside `set()` — which runs only on a locale *change*. A
+    // device whose stored locale was Somali rendered raw key ids for the 77% of
+    // strings so.json does not define, with no way to recover except a manual
+    // language switch.
+    //
+    // Asserted on the boot function's own body rather than on the file: `set()`
+    // legitimately fetches en.json, and a file-wide "does it mention en.json"
+    // check would have passed against the broken version, because the broken
+    // version contained the *fix* for a different code path.
+    const src = code('public/shared/runtime.js')
+    const start = src.indexOf('export async function initI18n')
+    assert.ok(start >= 0, 'shared/runtime.js still exports initI18n')
+    const body = src.slice(start, src.indexOf('export function t(', start))
+    assert.ok(body.length > 0, 'initI18n has a body to check')
+    // Only the part before the object literal — the boot path proper. `set()`
+    // is declared inside
+    // `initI18n` and legitimately fetches the requested locale; slicing to the
+    // end of the function would flag the switch path as if it were the boot
+    // path, and the assertion would then be unsatisfiable — a check no correct
+    // code can pass is a check nobody trusts.
+    const boot = src.slice(start, src.indexOf('const i18n = {', start))
+
+    assert.match(body, /await i18n\.set\(defaultLocale\)/,
+      'initI18n must boot through the same two-step as a locale switch, so ' +
+      'English is the base layer at first paint and not only after a switch')
+    assert.doesNotMatch(boot, /fetch\(\s*`\/i18n\/\$\{/,
+      'initI18n loads the requested locale directly; a partial catalogue then ' +
+      'renders its own key ids instead of falling back to English')
+    // R-63's other half rides on the same routing: `set()` is what calls
+    // `applyLocaleToDocument`, so reaching it at boot is what puts Arabic in
+    // dir="rtl" at first paint instead of after a language change.
+    assert.match(body, /async set\(locale\)\s*\{[\s\S]*?applyLocaleToDocument\(locale\)/,
+      'set() must apply lang and dir; the boot path reaches it, and a set() that ' +
+      'stopped applying them would make R-63 return on every surface')
+  })
+
   it('co/ layers its locale over English rather than replacing it', () => {
     // `co/` ships a private copy of the loader. The copy fetched only the
     // requested locale, so `t(key, fallback)` fell through to the raw key for
