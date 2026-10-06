@@ -1,3 +1,4 @@
+import { clearApiKey, hydrateFromSecureStore } from '/shared/secret.js'
 import { initI18n, t, apiFetch, initOfflineBanner, initServiceWorker, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { esc as escapeHtml, formatTimestamp, sevChipHtml, applyLocaleToDocument } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
@@ -21,6 +22,9 @@ const state = {
   currentWorkflowId: null,
   protocols: [],
 }
+
+// Same as the portal: the credential moves into secure hardware on a shell.
+hydrateFromSecureStore()
 
 const $ = (id) => document.getElementById(id)
 
@@ -73,7 +77,10 @@ localeSelect.addEventListener('change', async (e) => {
 })
 
 signoutBtn.addEventListener('click', () => {
-  localStorage.removeItem('lindela_lite_api_key')
+  // ENH/native: both places the key can be, because "signed out" has to mean
+  // signed out — a key left in the Keychain after a sign-out is a credential
+  // the next person to pick up the handset inherits.
+  clearApiKey()
   localStorage.removeItem('lindela_lite_focal_point')
   window.location.href = '/'
 })

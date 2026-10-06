@@ -12,6 +12,7 @@ import { applyLocaleToDocument, esc as escapeHtml, formatTimestamp, metres, num,
 import { metricLabel } from '/shared/labels.js'
 import { formatRelative } from '/shared/fmt.js'
 import { describeState, ERROR } from '/shared/states.js'
+import { readApiKey, writeApiKey, clearApiKey, bindApiKeyField, hydrateFromSecureStore, keyStorage } from '/shared/secret.js'
 import { determinationFor, submitOutcome, fetchCoverage, fetchReasons, coverageNote, reasonOptions, humanReason } from '/shared/outcomes.js'
 
 /**
@@ -119,7 +120,19 @@ const queuedCount       = $('queuedCount')
 // =============================================================
 // API key
 // =============================================================
-const savedApiKey = localStorage.getItem('lindela_lite_api_key') || ''
+// ENH/native: the key lives in the Keychain or the Keystore when a shell is
+// installed, and in localStorage otherwise. Read here for the synchronous
+// answer every request needs; the migration into secure hardware happens once
+// below, because it cannot.
+const savedApiKey = readApiKey() || ''
+hydrateFromSecureStore().then((key) => {
+  if (key && key !== savedApiKey) {
+    // The vault had a different key than the field was seeded with — a key
+    // rotated on another device, or a migration that has just completed.
+    const input = apiKeyInput()
+    if (input) input.value = key
+  }
+})
 
 /**
  * Restore the saved API key into the field and start persisting edits.
@@ -134,12 +147,7 @@ function bindApiKeyInput() {
   if (!input) return false
   if (!input.value) input.value = savedApiKey
   if (input.dataset.lindelaBound === '1') return true
-  input.addEventListener('input', () => {
-    const value = input.value.trim()
-    if (value) localStorage.setItem('lindela_lite_api_key', value)
-    else localStorage.removeItem('lindela_lite_api_key')
-  })
-  input.dataset.lindelaBound = '1'
+  bindApiKeyField(input)
   return true
 }
 bindApiKeyInput()
@@ -3108,58 +3116,29 @@ function renderWorkflowInstanceList() {
 // =============================================================
 // Equity panel
 // =============================================================
+/**
+ * The panel's rendering, in `/panels/equity.js` and fetched with the panel's
+ * markup — the same deferral the other panels' behaviour got, and the reason the
+ * console's first load carries a table an operator opens when auditing district
+ * coverage rather than when opening the console.
+ */
 function renderEquityTab() {
-  const alerts = state.data.alerts?.data || []
-  const dispatches = state.data.dispatches?.data || []
-  const table = $('equityTable')
-  const emptyState = $('equityEmptyState')
-  if (!table) return
-
-  // Dispatched counts come from rapidpro_dispatches, joined to the alert event
-  // to recover the district. Alert events do not carry a dispatch_status field
-  // at all, so reading it from them yields zero dispatched for every district —
-  // which renders as a false-positive rate of "—" everywhere, and reads as
-  // "we never send" rather than "this was computed from the wrong table".
-  const dispatchedByAlert = new Map()
-  for (const dispatch of dispatches) {
-    if (!dispatch.alert_event_id) continue
-    if (dispatch.status !== 'sent') continue
-    dispatchedByAlert.set(dispatch.alert_event_id, (dispatchedByAlert.get(dispatch.alert_event_id) || 0) + 1)
-  }
-
-  const grouped = {}
-  for (const a of alerts) {
-    const district = a.scope?.district || 'unknown'
-    if (!grouped[district]) grouped[district] = { dispatched: 0, acknowledged: 0 }
-    grouped[district].dispatched += dispatchedByAlert.get(a.id) || 0
-    if (a.status === 'acknowledged' || a.status === 'resolved') grouped[district].acknowledged++
-  }
-
-  const districts = Object.entries(grouped)
-  if (!districts.length) {
-    emptyState.hidden = false
-    table.hidden = true
-    renderPager($('equityPager'), 'equity', 0, renderEquityTab)
-    return
-  }
-
-  emptyState.hidden = true
-  table.hidden = false
-  const slice = pageWindow('equity', districts.length)
-  const tbody = table.querySelector('tbody')
-  if (tbody) {
-    tbody.innerHTML = districts.slice(slice.start, slice.end).map(([district, data]) => {
-      const rate = data.dispatched > 0 ? ((data.dispatched - data.acknowledged) / data.dispatched * 100).toFixed(1) : '—'
-      return `<tr>
-        <td title="${escapeHtml(district)}">${escapeHtml(truncate(district, { max: 40 }))}</td>
-        <td>${escapeHtml(String(data.dispatched))}</td>
-        <td>${escapeHtml(String(data.acknowledged))}</td>
-        <td>${escapeHtml(String(rate))}%</td>
-      </tr>`
-    }).join('')
-  }
-
-  renderPager($('equityPager'), 'equity', districts.length, renderEquityTab)
+  lazy('/panels/equity.js')
+    .then((module) => module.render({
+      $, state, escapeHtml, truncate, pageWindow, renderPager,
+    }))
+    .catch((error) => {
+      // Said rather than blank: an empty equity table reads as "no district has
+      // a false-positive rate", which is a finding, not a failure.
+      console.error('equity panel failed to load:', error)
+      const table = $('equityTable')
+      const empty = $('equityEmptyState')
+      if (empty) {
+        empty.hidden = false
+        empty.textContent = 'The equity table could not be loaded, so nothing is being shown about district coverage.'
+      }
+      if (table) table.hidden = true
+    })
 }
 
 // =============================================================
@@ -3565,8 +3544,10 @@ const DEFERRED_PANEL_BINDINGS = {
       const form = $('newReportForm')
       if (form) form.hidden = !form.hidden
     }],
-    ['generateReportButton', 'click', () => generateReport()],
-    ['createReportTemplateButton', 'click', () => createReportTemplate()],
+    // Through the module: these used to close over functions in this file, so
+    // every console load parsed six actions for a tab nobody had opened.
+    ['generateReportButton', 'click', () => reportsPanel().then((panel) => panel.generateReport())],
+    ['createReportTemplateButton', 'click', () => reportsPanel().then((panel) => panel.createReportTemplate())],
   ],
   equity: [
     ['triggerEquityAuditButton', 'click', async () => {
@@ -3607,14 +3588,14 @@ const DEFERRED_PANEL_BINDINGS = {
       setStatus(payload.success ? `Webhook added.` : (payload.error || 'Webhook failed'))
       renderSettingsPanel()
     }],
-    ['createIncidentButton', 'click', () => createIncident()],
-    ['createInterventionButton', 'click', () => createIntervention()],
-    ['createTaskButton', 'click', () => createTask()],
-    ['createAlertRuleButton', 'click', () => createAlertRule()],
-    ['evaluateAlertsButton', 'click', () => evaluateAlerts()],
-    ['sendRapidProAlertButton', 'click', () => sendLatestRapidProAlert()],
-    ['createReportScheduleButton', 'click', () => createReportSchedule()],
-    ['runDueReportsButton', 'click', () => runDueReports()],
+    ['createIncidentButton', 'click', () => settingsAction('createIncident')],
+    ['createInterventionButton', 'click', () => settingsAction('createIntervention')],
+    ['createTaskButton', 'click', () => settingsAction('createTask')],
+    ['createAlertRuleButton', 'click', () => settingsAction('createAlertRule')],
+    ['evaluateAlertsButton', 'click', () => settingsAction('evaluateAlerts')],
+    ['sendRapidProAlertButton', 'click', () => settingsAction('sendLatestRapidProAlert')],
+    ['createReportScheduleButton', 'click', () => settingsAction('createReportSchedule')],
+    ['runDueReportsButton', 'click', () => settingsAction('runDueReports')],
   ],
 }
 
@@ -4440,151 +4421,43 @@ async function handleAlertAction(id, action) {
 // =============================================================
 // Reports panel
 // =============================================================
+/**
+ * The panel's rendering and its six actions, in `/panels/reports.js` and
+ * fetched with the panel's markup.
+ *
+ * The actions used to live behind `DEFERRED_PANEL_BINDINGS` closures over
+ * functions in this file, which meant every console load parsed them to bind
+ * buttons behind a tab. The module is loaded on first visit instead, and the
+ * bindings ask for it.
+ */
+let _reports = null
+
+async function reportsPanel() {
+  if (_reports) return _reports
+  const module = await lazy('/panels/reports.js')
+  _reports = module.mount({
+    $, state, escapeHtml, truncate, displayDate, pageWindow, renderPager,
+    setStatus, postJson, refresh,
+  })
+  return _reports
+}
+
 function renderReportsPanel() {
-  const container = $('reportsList')
-  if (!container) return
-  const reports = state.reports
-
-  if (!reports.length) {
-    container.innerHTML = `<div class="empty-state"><p>${escapeHtml(t('state.empty_reports'))}</p></div>`
-  } else {
-    const slice = pageWindow('reports', reports.length)
-    container.innerHTML = reports.slice(slice.start, slice.end).map((r) => {
-      const canApprove = r.status === 'ready' || r.status === 'draft'
-      const canDist    = r.status === 'approved' || r.status === 'ready'
-      // A generated report's title is the generator's own prose and can run to
-      // a clause. Shortened for the rail; the full string is on the title, and
-      // the exported document carries all of it.
-      const title = r.title || r.template_name || 'Untitled report'
-      return `<div class="report-item" role="listitem">
-        <div class="report-item-title" title="${escapeHtml(title)}">${escapeHtml(truncate(title, { max: 64 }))}</div>
-        <div class="report-item-meta">
-          <span class="status-pill status-${safeClass(r.status || 'draft')}">${escapeHtml(r.status || '')}</span>
-          <span>${displayDate(r.generated_at)}</span>
-        </div>
-        <div class="item-actions">
-          ${canApprove ? `<button class="btn btn-xs btn-approve" data-id="${escapeHtml(r.id)}" data-action="approve">Approve</button>` : ''}
-          ${canDist    ? `<button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="distribute">Distribute</button>` : ''}
-          <button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="export-md">MD</button>
-          <button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="export-csv">CSV</button>
-          <button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="export-json">JSON</button>
-          <button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="export-geojson">GeoJSON</button>
-        </div>
-      </div>`
-    }).join('')
-
-    container.querySelectorAll('[data-action]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const { id, action } = e.currentTarget.dataset
-        handleReportAction(id, action)
-      })
+  reportsPanel()
+    .then((panel) => panel.renderReportsPanel())
+    .catch((error) => {
+      // An empty list reads as "no reports exist", which is a finding about the
+      // district rather than about this console. Say which it is.
+      console.error('reports panel failed to load:', error)
+      const container = $('reportsList')
+      if (container) {
+        container.innerHTML = '<div class="empty-state empty-state-error" role="status">'
+          + '<p class="empty-state-title">The reports panel could not be loaded</p>'
+          + '<p>Nothing is being shown about reports. Switch tabs and try again.</p></div>'
+      }
     })
-  }
-
-  renderPager($('reportsPager'), 'reports', reports.length, renderReportsPanel)
-
-  // Populate template select
-  const sel = $('reportTemplateIdInput')
-  if (sel) {
-    const cur = sel.value
-    sel.innerHTML = `<option value="">None (create new)</option>` +
-      state.templates.map((tmpl) => `<option value="${escapeHtml(tmpl.id)}">${escapeHtml(tmpl.name)}</option>`).join('')
-    if (cur && sel.querySelector(`option[value="${CSS.escape(cur)}"]`)) sel.value = cur
-    else if (state.templates[0] && !sel.value) sel.value = state.templates[0].id
-  }
 }
 
-async function handleReportAction(id, action) {
-  const safeId = encodeURIComponent(id)
-  if (action === 'approve') {
-    const payload = await postJson(`/api/v1/reports/${safeId}/approve`, { actor: 'dashboard' })
-    setStatus(payload.success ? `Report ${report.id} approved. It can now be distributed.`
-      : `Could not approve report ${report.id}: ${payload.error || 'the server gave no reason'}.`)
-    await refresh({ force: true })
-  } else if (action === 'distribute') {
-    const payload = await postJson(`/api/v1/reports/${safeId}/distribute`, { channels: [{ channel: 'markdown_download' }] })
-    if (payload.success || payload.report) {
-      window.open(`/api/v1/reports/${safeId}/export.md`, '_blank')
-      setStatus(`Report ${report.id} distributed. Check the delivery record for who received it.`)
-    } else {
-      setStatus(payload.error || 'Distribute failed')
-    }
-    await refresh({ force: true })
-  } else if (action === 'export-md') {
-    window.open(`/api/v1/reports/${safeId}/export.md`, '_blank')
-  } else if (action === 'export-csv') {
-    window.open(`/api/v1/reports/${safeId}/export.csv`, '_blank')
-  } else if (action === 'export-json') {
-    window.open(`/api/v1/reports/${safeId}/export.json`, '_blank')
-  } else if (action === 'export-geojson') {
-    window.open(`/api/v1/reports/${safeId}/export.geojson`, '_blank')
-  }
-}
-
-// The four deferred panels' controls are bound by `bindDeferredPanel` once
-// their markup has been fetched — see DEFERRED_PANEL_BINDINGS. These bindings
-// used to live here at module scope, where `?.` made them silently no-ops
-// against markup that no longer exists at load.
-function reportScope() {
-  return Object.fromEntries(Object.entries({
-    country:         $('reportCountryInput')?.value?.trim(),
-    incident_id:     $('reportIncidentInput')?.value?.trim(),
-    intervention_id: $('reportInterventionInput')?.value?.trim(),
-  }).filter(([, v]) => v))
-}
-
-function reportSections() {
-  return ($('reportSectionsInput')?.value || 'executive_summary,incident_summary,appendix_sources')
-    .split(',').map((s) => s.trim()).filter(Boolean)
-}
-
-async function createReportTemplate() {
-  setStatus('Creating report template...')
-  const body = {
-    name: 'SITREP',
-    report_type: 'situation_report',
-    title_pattern: 'SITREP - {{country}} - {{date}}',
-    default_filters: reportScope(),
-    sections: reportSections(),
-  }
-  const payload = await postJson('/api/v1/report-templates', body)
-  if (!payload.success) { setStatus(payload.error || 'Template creation failed'); return }
-  const sel = $('reportTemplateIdInput')
-  if (sel) sel.value = payload.data.id
-  setStatus(`Template created. Reports built on it will use your section list.`)
-  await refresh({ force: true })
-}
-
-async function generateReport() {
-  setStatus('Generating report...')
-  let templateId = $('reportTemplateIdInput')?.value?.trim()
-  if (!templateId) {
-    await createReportTemplate()
-    templateId = $('reportTemplateIdInput')?.value?.trim()
-  }
-  const payload = await postJson('/api/v1/reports', { template_id: templateId, scope: reportScope(), generate: true })
-  if (!payload.success) { setStatus(payload.error || 'Report generation failed'); return }
-  setStatus(`Report generated. It needs approval before anyone is sent it.`)
-  await refresh({ force: true })
-}
-
-async function approveLatestReport() {
-  const report = state.reports.find((r) => r.status === 'ready') || state.reports[0]
-  if (!report) { setStatus('No report to approve.'); return }
-  const payload = await postJson(`/api/v1/reports/${report.id}/approve`, {})
-  setStatus(payload.success ? `Approved report ${payload.data.id}.` : (payload.error || 'Approval failed'))
-  await refresh({ force: true })
-}
-
-async function distributeLatestReport() {
-  const report = state.reports.find((r) => ['ready', 'approved'].includes(r.status)) || state.reports[0]
-  if (!report) { setStatus('No report to distribute.'); return }
-  const payload = await postJson(`/api/v1/reports/${report.id}/distribute`, { channels: [{ channel: 'markdown_download' }] })
-  if (!payload.success) { setStatus(payload.error || payload.data?.[0]?.error || 'Distribution failed'); return }
-  window.open(`/api/v1/reports/${report.id}/export.md`, '_blank')
-  setStatus(`Markdown export ready for report ${report.id}. The browser will download it.`)
-  await refresh({ force: true })
-}
 
 // =============================================================
 // Ingestion panel
@@ -4694,158 +4567,39 @@ async function runOrExplain(name, ...args) {
 }
 // Settings panel
 // =============================================================
+/**
+ * The Settings panel's rendering and its operations forms, in
+ * `/panels/settings.js` and fetched with the panel's markup — the last of the
+ * four deferred panels whose behaviour still shipped in the console's first
+ * load. Its eight actions were parsed on every console open to serve a screen an
+ * operator visits to configure a webhook.
+ */
+let _settings = null
+
+async function settingsPanel() {
+  if (_settings) return _settings
+  const module = await lazy('/panels/settings.js')
+  _settings = module.mount({
+    $, state, escapeHtml, fetchJson, lazy, setStatus, queueRequest, refresh,
+    bindApiKeyInput, reportsPanel, postJson,
+  })
+  return _settings
+}
+
 function renderSettingsPanel() {
-  // The six API-only routes. Mounted once, on the first visit to Settings,
-  // because a control for a route nobody has asked for is not a first-paint cost
-  // worth paying for.
-  lazy('/workflow/confirm.js').then(({ askToConfirm }) =>
-    lazy('/workflow/ops.js').then((m) => m.mountOps({ askToConfirm }))
-  ).catch((err) => console.error('Operations controls failed to load:', err))
-
-  fetchJson('/api/v1/trigger-protocols').then((payload) => {
-    const list = $('triggerProtocolsList')
-    if (!list) return
-    const protos = payload.data || []
-    list.innerHTML = protos.length
-      ? protos.map((p) => `<div class="source-card"><div class="source-card-header">
-          <span class="source-name">${escapeHtml(p.name || p.id)}</span>
-        </div></div>`).join('')
-      : `<p class="settings-note">No trigger protocols configured.</p>`
-  }).catch(() => {
-    const list = $('triggerProtocolsList')
-    if (list) list.innerHTML = `<p class="settings-note">Trigger protocols unavailable.</p>`
-  })
-
-  fetchJson('/api/v1/webhooks').then((payload) => {
-    const list = $('webhooksList')
-    if (!list) return
-    const webhooks = payload.data || []
-    list.innerHTML = webhooks.length
-      ? webhooks.map((w) => `<div class="source-card"><div class="source-card-header">
-          <span class="source-name">${escapeHtml(w.url || w.id)}</span>
-          <span class="status-pill status-${safeClass(w.status || 'unknown')}">${escapeHtml(w.status || 'unknown')}</span>
-        </div></div>`).join('')
-      : `<p class="settings-note">No webhooks configured.</p>`
-  }).catch(() => {})
+  settingsPanel()
+    .then((panel) => panel.renderSettingsPanel())
+    .catch((error) => {
+      // Said rather than blank: an empty settings list reads as "nothing is
+      // configured", which is a statement about the deployment.
+      console.error('settings panel failed to load:', error)
+      setStatus('The settings panel could not be loaded, so nothing is being shown about configuration.')
+    })
 }
 
-// Operations forms
-
-async function createIncident() {
-  setStatus('Creating incident...')
-  const body = {
-    title:         $('incidentTitleInput')?.value,
-    incident_type: $('incidentTypeInput')?.value,
-    priority:      $('incidentPriorityInput')?.value,
-    country:       $('countryInput')?.value,
-    latitude:      Number($('latInput')?.value),
-    longitude:     Number($('lonInput')?.value),
-  }
-  // A field report raised without connectivity is the ordinary case this app is
-  // meant to survive, so the write is queued rather than rejected.
-  const payload = await queueRequest('/api/v1/incidents', body)
-  if (payload?.queued) {
-    setStatus('Incident queued — it will be sent when the connection returns.')
-    return
-  }
-  if (!payload?.success) { setStatus(payload?.error || 'Incident creation failed'); return }
-  const intInput = $('interventionIncidentInput')
-  if (intInput) intInput.value = payload.data.id
-  setStatus(`Created incident ${payload.data.id}.`)
-  await refresh({ force: true })
-}
-
-async function createIntervention() {
-  setStatus('Creating intervention...')
-  const body = {
-    incident_id: $('interventionIncidentInput')?.value,
-    title:       $('interventionTitleInput')?.value,
-    lead_org:    $('interventionLeadInput')?.value,
-    status:      'active',
-  }
-  const payload = await postJson('/api/v1/interventions', body)
-  if (!payload.success) { setStatus(payload.error || 'Intervention creation failed'); return }
-  const taskInput = $('taskInterventionInput')
-  if (taskInput) taskInput.value = payload.data.id
-  setStatus(`Created intervention ${payload.data.id}.`)
-  await refresh({ force: true })
-}
-
-async function createTask() {
-  setStatus('Creating task...')
-  const body = {
-    intervention_id: $('taskInterventionInput')?.value,
-    title:           $('taskTitleInput')?.value,
-    owner:           $('taskOwnerInput')?.value,
-    status:          'todo',
-  }
-  const payload = await postJson('/api/v1/tasks', body)
-  if (!payload.success) { setStatus(payload.error || 'Task creation failed'); return }
-  setStatus(`Created task ${payload.data.id}.`)
-  await refresh({ force: true })
-}
-
-async function createAlertRule() {
-  setStatus('Creating alert rule...')
-  const payload = await postJson('/api/v1/alert-rules', {
-    name:      $('alertNameInput')?.value,
-    metric:    $('alertMetricInput')?.value,
-    operator:  '>=',
-    threshold: Number($('alertThresholdInput')?.value),
-    severity:  'high',
-    actions:   [{ type: 'notify', target: 'response-lead' }],
-  })
-  if (!payload.success) { setStatus(payload.error || 'Alert rule creation failed'); return }
-  setStatus(`Created alert rule ${payload.data.id}.`)
-  await refresh({ force: true })
-}
-
-async function evaluateAlerts() {
-  setStatus('Evaluating alert rules...')
-  const payload = await postJson('/api/v1/alerts/evaluate', {})
-  if (!payload.success) { setStatus(payload.error || 'Alert evaluation failed'); return }
-  setStatus(`Evaluated ${payload.evaluated} rules; created ${payload.created} alert events.`)
-  await refresh({ force: true })
-}
-
-async function sendLatestRapidProAlert() {
-  setStatus('Sending latest alert through RapidPro...')
-  const alerts = await fetchJson('/api/v1/alert-events?status=open&limit=1')
-  const alert = alerts.data?.[0]
-  if (!alert) { setStatus('No open alert event to send.'); return }
-  const urns = $('rapidProUrnsInput')?.value?.split(',').map((u) => u.trim()).filter(Boolean)
-  const payload = await postJson(`/api/v1/rapidpro/alert-events/${alert.id}/send`, { urns })
-  if (!payload.success) { setStatus(payload.data?.error || payload.error || 'RapidPro dispatch failed'); return }
-  setStatus(`RapidPro dispatch ${payload.data.id} recorded.`)
-  await refresh({ force: true })
-}
-
-async function createReportSchedule() {
-  setStatus('Creating report schedule...')
-  let templateId = $('reportTemplateIdInput')?.value?.trim()
-  if (!templateId) {
-    await createReportTemplate()
-    templateId = $('reportTemplateIdInput')?.value?.trim()
-  }
-  const localValue = $('reportScheduleNextRunInput')?.value
-  const payload = await postJson('/api/v1/report-schedules', {
-    template_id:  templateId,
-    timezone:     Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-    recurrence:   { type: 'daily', time: '07:00' },
-    next_run_at:  localValue ? new Date(localValue).toISOString() : undefined,
-    auto_distribute: false,
-  })
-  if (!payload.success) { setStatus(payload.error || 'Report schedule creation failed'); return }
-  setStatus(`Created report schedule ${payload.data.id}.`)
-  await refresh({ force: true })
-}
-
-async function runDueReports() {
-  setStatus('Running due report schedules...')
-  const payload = await postJson('/api/v1/report-schedules/run-due', {})
-  if (!payload.success) { setStatus(payload.error || 'Due report run failed'); return }
-  setStatus(`Completed ${payload.data.length} due report schedule runs.`)
-  await refresh({ force: true })
+/** Run one of the panel's actions — the bindings and the palette both do. */
+function settingsAction(name, ...args) {
+  return settingsPanel().then((panel) => panel[name]?.(...args))
 }
 
 // =============================================================
@@ -4955,10 +4709,10 @@ const PALETTE_BASE = [
   { icon: '4', label: 'Settings tab',            category: 'Navigation', action: () => switchTab('settings') },
   { icon: '>', label: 'Run all due sources',     category: 'Ingestion',  action: () => runOrExplain('runDueIngestion') },
   { icon: '>', label: 'Create default schedules',category: 'Ingestion',  action: () => runOrExplain('createPublicIngestionSchedules') },
-  { icon: '+', label: 'Generate report',         category: 'Reports',   action: generateReport },
-  { icon: '+', label: 'Approve latest report',   category: 'Reports',   action: approveLatestReport },
-  { icon: '+', label: 'Distribute latest report',category: 'Reports',   action: distributeLatestReport },
-  { icon: '!', label: 'Evaluate alert rules',    category: 'Alerts',    action: evaluateAlerts },
+  { icon: '+', label: 'Generate report',         category: 'Reports',   action: () => reportsPanel().then((panel) => panel.generateReport()) },
+  { icon: '+', label: 'Approve latest report',   category: 'Reports',   action: () => reportsPanel().then((panel) => panel.approveLatestReport()) },
+  { icon: '+', label: 'Distribute latest report',category: 'Reports',   action: () => reportsPanel().then((panel) => panel.distributeLatestReport()) },
+  { icon: '!', label: 'Evaluate alert rules',    category: 'Alerts',    action: () => settingsAction('evaluateAlerts') },
   { icon: '?', label: 'Keyboard shortcuts',      category: 'Help',      action: () => $('shortcutDialog')?.showModal() },
   { icon: '~', label: 'Export GeoJSON',          category: 'Export',    action: () => window.open('/api/v1/export.geojson', '_blank') },
   { icon: '~', label: 'Export CSV',              category: 'Export',    action: () => window.open('/api/v1/export.csv', '_blank') },

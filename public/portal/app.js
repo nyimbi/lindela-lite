@@ -1,6 +1,7 @@
 import { initI18n, t, apiFetch, initOfflineBanner, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
 import { ERROR, EMPTY, LOADING, OK, createLoadSequence, describeState, distinguishFailure, staleReadNote } from '/shared/states.js'
+import { readApiKey, clearApiKey, hydrateFromSecureStore } from '/shared/secret.js'
 import { esc as escapeHtml, formatTimestamp, num, pct, sevChipHtml, truncate, applyLocaleToDocument } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 mountNavbar({ activePath: '/portal' })
@@ -24,9 +25,17 @@ const state = {
   loaded: Object.fromEntries(COLLECTIONS.map((k) => [k, null])),
 }
 
+// Move the credential into the Keychain/Keystore when a shell is installed. Every
+// later read goes through the resolved value, so this does not have to be awaited.
+hydrateFromSecureStore()
+
 const $ = (id) => document.getElementById(id)
 
-const apiKey = () => localStorage.getItem('lindela_lite_api_key')
+// ENH/native: the Keychain or Keystore when a shell is installed. A partner's
+// credential is the most damaging thing on a lost handset in this product — it
+// reads another organisation's records — so the store that holds it is the one
+// thing here worth moving.
+const apiKey = () => readApiKey() || ''
 
 /** One load in flight at a time. `loadData` is reachable from its own retry
  *  button, and two overlapping partner loads would otherwise let the slower,
@@ -77,7 +86,7 @@ async function init() {
   })
 
   signoutBtn.addEventListener('click', () => {
-    localStorage.removeItem('lindela_lite_api_key')
+    clearApiKey()
     window.location.href = '/'
   })
 
