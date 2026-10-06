@@ -71,3 +71,49 @@ targets:
         # Unset leaves the literal "$(LINDELA_SERVER_URL)" in the plist, which
         # `ServerURL.current` recognises and falls back from.
         LindelaServerURL: $(LINDELA_SERVER_URL)
+
+  # The focal point's app. Same shell, same sources, different identity and
+  # surface — a community health worker's handset and a focal point's are
+  # different risks, and a district counts its handsets.
+  #
+  # Sources are shared rather than forked, because a shell that exists in two
+  # versions is two shells to keep in step, and the only things that differ here
+  # are the three a target can state for itself.
+  LindelaFocalPoint:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.lindela.focalpoint
+        INFOPLIST_FILE: Resources/Info-FocalPoint.plist
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: Resources/Info-FocalPoint.plist
+      properties:
+        CFBundleDisplayName: Lindela FP
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen:
+          UIColorName: ""
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscape
+        NSLocationWhenInUseUsageDescription: >-
+          A focal point's location is not recorded. Only the district a decision
+          belongs to is, and it comes from the workflow rather than from here.
+        NSCameraUsageDescription: >-
+          Not used by this app. Declared because the shared shell compiles it in.
+        UIBackgroundModes:
+          - fetch
+          - remote-notification
+        BGTaskSchedulerPermittedIdentifiers:
+          - org.lindela.focalpoint.queue-drain
+        LindelaSurface: /focal-point/
+        LindelaServerURL: $(LINDELA_SERVER_URL)

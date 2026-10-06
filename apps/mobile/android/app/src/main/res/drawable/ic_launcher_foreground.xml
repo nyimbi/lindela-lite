@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The product's own mark, as a vector: a disc with "LL" on it. Vector rather
+     than five raster densities because the mark is two shapes, and a bitmap
+     ladder for two shapes is five files nobody can edit. Mirrors public/icon.svg,
+     which is the icon the browser install uses — the same mark on both platforms
+     is the point of a mark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="192"
+    android:viewportHeight="192">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M52,60 L72,60 L72,132 L52,132 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M84,60 L104,60 L104,132 L84,132 Z" />
+</vector>

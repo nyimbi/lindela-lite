@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- `app_name` is defined per flavour in build.gradle.kts: a health worker's
+     handset and a focal point's must not be mistaken for one another on a home
+     screen, and a shared default would put both under the same name. -->
+<resources>
+    <string name="app_name_default" translatable="false">Lindela</string>
+</resources>

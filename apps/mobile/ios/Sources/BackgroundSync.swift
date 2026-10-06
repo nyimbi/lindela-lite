@@ -20,14 +20,19 @@ final class BackgroundSync {
     /// Matches `BGTaskSchedulerPermittedIdentifiers` in Info.plist. iOS refuses
     /// to schedule an identifier that is not declared there, which is why the
     /// string appears in both files.
-    static let taskIdentifier = "org.lindela.chw.queue-drain"
     static let tag = "lindela-queue"
 
     private var lastResult: [String: Any] = ["sent": 0, "failed": 0]
 
-    func register() {
+    /// The identifier this app registered, from its own Info.plist. Per app: the
+    /// CHW build and the focal-point build declare different ones, and a
+    /// constant here would be wrong in exactly one of them.
+    private var taskIdentifier = "org.lindela.chw.queue-drain"
+
+    func register(identifier: String) {
+        taskIdentifier = identifier
         BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: Self.taskIdentifier,
+            forTaskWithIdentifier: identifier,
             using: nil
         ) { [weak self] task in
             guard let self, let processing = task as? BGProcessingTask else {
@@ -43,7 +48,7 @@ final class BackgroundSync {
     /// way, so a `false` here is not a failure.
     @discardableResult
     func register(tag: String = BackgroundSync.tag) -> Bool {
-        let request = BGProcessingTaskRequest(identifier: Self.taskIdentifier)
+        let request = BGProcessingTaskRequest(identifier: taskIdentifier)
         request.requiresNetworkConnectivity = true
         request.requiresExternalPower = false
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)

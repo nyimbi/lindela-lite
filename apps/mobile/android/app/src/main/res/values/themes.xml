@@ -1,0 +1,8 @@
+<resources>
+    <!-- The app's own palette, so a splash and a status bar do not flash white
+         before the dark surface loads. -->
+    <style name="Theme.Lindela" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/surface</item>
+        <item name="android:statusBarColor">@color/surface</item>
+    </style>
+</resources>

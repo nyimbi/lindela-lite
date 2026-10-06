@@ -54,7 +54,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         self.bridge = NativeBridge()
-        BackgroundSync.shared.register()
+        BackgroundSync.shared.register(identifier: Self.backgroundTaskIdentifier)
         return true
     }
 
@@ -66,6 +66,18 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
         configuration.delegateClass = SceneDelegate.self
         return configuration
+    }
+
+    /// The BGTask identifier, namespaced by this app's bundle id.
+    ///
+    /// iOS refuses to schedule an identifier that is not in
+    /// `BGTaskSchedulerPermittedIdentifiers`, and that list is per-app — so the
+    /// two targets declare their own, and the code reads the one the running
+    /// bundle was built with rather than a constant that would be wrong in one of
+    /// them.
+    static var backgroundTaskIdentifier: String {
+        let declared = Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String]
+        return declared?.first ?? "org.lindela.chw.queue-drain"
     }
 
     /// Push registration. The token goes to the server through the same bridge
