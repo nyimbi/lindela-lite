@@ -4173,13 +4173,32 @@ function contentType(filePath) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.LINDELA_LITE_PORT || 4177)
-  createServer().listen(port, () => {
+  // `LINDELA_LITE_HOST` defaults to 0.0.0.0 because that is what the container
+  // needs: binding 127.0.0.1 inside a container makes the published port
+  // unreachable, so the default cannot move without breaking every deployment.
+  //
+  // The startup line used to say `http://127.0.0.1:${port}` unconditionally,
+  // which was the wrong thing to tell an operator. With no host argument,
+  // `listen(port)` binds every interface, so a bare-metal run was reachable on
+  // every interface the machine had — and with no tokens configured, auth is
+  // off entirely. This platform holds field reports with names and household
+  // counts, so "it said 127.0.0.1" was a claim the process was not making.
+  //
+  // The default is unchanged. What changes is that the line tells the truth,
+  // and `scripts/run.sh` binds loopback on purpose rather than by accident.
+  const host = process.env.LINDELA_LITE_HOST || '0.0.0.0'
+  createServer().listen(port, host, () => {
     // The driver owns what a tick includes; the sidecar still owns when ticks
     // happen. Both may run — the tick is idempotent and the heartbeat records
     // which came last.
     getDefaultStore().then(startPeriodicDriver).catch((error) => {
       console.error('periodic driver did not start; /health will report the pipeline as degraded', error)
     })
-    console.log(`Lindela Lite listening on http://127.0.0.1:${port}`)
+    const shown = host === '0.0.0.0' || host === '::' ? '127.0.0.1 (bound to every interface)' : host
+    console.log(`Lindela Lite listening on http://${shown}:${port}`)
+    if (host === '0.0.0.0' || host === '::') {
+      console.log('  This is reachable from other machines on your network.')
+      console.log('  Set LINDELA_LITE_HOST=127.0.0.1 to bind loopback only.')
+    }
   })
 }

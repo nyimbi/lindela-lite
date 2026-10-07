@@ -25,6 +25,10 @@ services:
       LINDELA_LITE_DATABASE_URL: ${LINDELA_LITE_DATABASE_URL}
       LINDELA_LITE_API_KEY: ${LINDELA_LITE_API_KEY}
       LINDELA_LITE_PORT: ${LINDELA_LITE_PORT:-4177}
+      # Explicit, though it matches the default: binding loopback inside a
+      # container would make the published port unreachable, so the container
+      # must bind every interface and it is better said than implied.
+      LINDELA_LITE_HOST: 0.0.0.0
       NASA_FIRMS_MAP_KEY: ${NASA_FIRMS_MAP_KEY:-OPEN_KEY}
       RAPIDPRO_BASE_URL: ${RAPIDPRO_BASE_URL:-https://rapidpro.io}
       RAPIDPRO_API_TOKEN: ${RAPIDPRO_API_TOKEN:-}

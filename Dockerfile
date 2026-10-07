@@ -28,6 +28,10 @@ USER lindela
 
 ENV NODE_ENV=production
 ENV LINDELA_LITE_PORT=4177
+# Must be 0.0.0.0 here: a container bound to 127.0.0.1 is unreachable through
+# a published port. Set on the image, not only in compose, so `docker run -p`
+# without a compose file behaves the same.
+ENV LINDELA_LITE_HOST=0.0.0.0
 EXPOSE 4177
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
