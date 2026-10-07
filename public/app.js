@@ -1309,11 +1309,48 @@ function setStatus(message) {
 // =============================================================
 // Offline
 // =============================================================
+/**
+ * Whether this browser holds a key for a deployment that requires one.
+ *
+ * Only ever cleared by a re-check after a key is pasted, so the badge can read
+ * stale for one reload if the field is emptied. That is a cosmetic bug against
+ * the alternative: a locked-out console that says nothing, which reads exactly
+ * like a deployment with no data.
+ */
+let needsKey = false
+
 function updateConnectionStatus() {
   const online = navigator.onLine
-  offlineBanner.hidden = online
-  connectionStatus.textContent = online ? 'online' : 'offline'
-  connectionStatus.className = `badge badge-connection${online ? '' : ' offline'}`
+  // `hidden = online` was the bug: it showed the banner only when the network
+  // was down, so a reachable server rejecting this browser rendered every panel
+  // empty with no message. Two conditions, not one.
+  offlineBanner.hidden = online && !needsKey
+  offlineBanner.classList.toggle('banner-auth', !needsKey)
+  // Exactly one message at a time. Both together would claim the data is queued
+  // for sync when none of it was ever fetched.
+  const locked = needsKey && online
+  const offlineText = offlineBanner?.querySelector('[data-i18n="banner.offline"]')
+  const authText = $('authBannerText')
+  if (offlineText) offlineText.hidden = locked
+  if (authText) authText.hidden = !locked
+  connectionStatus.textContent = online ? (needsKey ? 'sign in' : 'online') : 'offline'
+  connectionStatus.className = `badge badge-connection${online && !needsKey ? '' : ' offline'}`
+}
+
+/**
+ * Ask whether this deployment needs a token, and whether ours was accepted.
+ *
+ * `/auth-info` answers without a key by design, so it works on a cold console
+ * with nothing saved. A throw means the server is gone or the answer came from
+ * cache — the offline banner already covers that, and "sign in" on worse
+ * evidence would be a second guess.
+ */
+async function refreshAuthState() {
+  try {
+    const data = (await apiFetch('/api/v1/auth-info', { headers: authHeaders() }))?.data
+    // Three cases: auth off, auth on and we are in, auth on and we are out.
+    if (data && (needsKey = Boolean(data.auth_configured) && !data.subject)) updateConnectionStatus()
+  } catch { /* unreachable; the offline banner is the honest message */ }
 }
 
 window.addEventListener('online', () => {
@@ -1322,6 +1359,10 @@ window.addEventListener('online', () => {
 })
 window.addEventListener('offline', updateConnectionStatus)
 updateConnectionStatus()
+// Asked after the connection status so the offline case wins if the server
+// is unreachable — a banner saying "sign in" on a dead server would be a worse
+// lie than no banner at all.
+refreshAuthState()
 
 /**
  * The offline queue.
@@ -3506,7 +3547,7 @@ function bindDeferredPanel(name) {
   // Side-effect bindings that are not a single control each. Named here rather
   // than discovered, because a panel whose wiring is "whatever ran at module
   // scope" is a panel whose wiring silently stopped when its markup moved.
-  if (name === 'settings') { bindApiKeyInput(); dhis2Settings() }
+  if (name === 'settings') { bindApiKeyInput(); refreshAuthState(); dhis2Settings() }
   const entries = DEFERRED_PANEL_BINDINGS[name]
   if (!entries) return 0
   let bound = 0

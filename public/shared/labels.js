@@ -84,39 +84,10 @@ export function metricLabel(key) {
   return METRIC_LABELS[k] || humanise(k)
 }
 
-/** All known metric keys, for validation and tests. */
-export const KNOWN_METRICS = Object.keys(METRIC_LABELS)
-
-/** Render "precipitation_mm >= 40" as "Rainfall (mm) ≥ 40". */
-export function ruleLabel(metric, threshold) {
-  if (!metric) return '—'
-  const label = metricLabel(metric)
-  if (threshold === null || threshold === undefined || threshold === '') return label
-  return `${label} ≥ ${threshold}`
-}
-
-/**
- * Render an arbitrary record as readable lines, one field per line.
- *
- * Nested objects and arrays are summarised rather than dumped: an operator
- * opening a record wants to know what it is, and `JSON.stringify` of a payload
- * is not that. The full record stays available in the detail view.
+/*
+ * `KNOWN_METRICS`, `ruleLabel` and `describeRecord` were exported from here
+ * with no consumer on any surface. `describeRecord` in particular is ~25 lines
+ * of formatter logic shipped to every console load to render a detail view that
+ * does not exist. Removed to pay for the locked-out-console banner rather than
+ * to raise the first-load budget a third time.
  */
-export function describeRecord(record, { skip = ['id'] } = {}) {
-  const parts = []
-  for (const [key, value] of Object.entries(record || {})) {
-    if (skip.includes(key)) continue
-    if (value === null || value === undefined || value === '') continue
-    if (Array.isArray(value)) {
-      parts.push(`${metricLabel(key)}: ${value.length} item${value.length === 1 ? '' : 's'}`)
-    } else if (typeof value === 'object') {
-      const keys = Object.keys(value)
-      parts.push(`${metricLabel(key)}: ${keys.length ? keys.slice(0, 3).map(metricLabel).join(', ') : '—'}`)
-    } else if (typeof value === 'boolean') {
-      parts.push(`${metricLabel(key)}: ${value ? 'yes' : 'no'}`)
-    } else {
-      parts.push(`${metricLabel(key)}: ${value}`)
-    }
-  }
-  return parts.join('\n')
-}

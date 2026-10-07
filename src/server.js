@@ -761,6 +761,31 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
       // enabled looked secured and was not.
       auth = authenticate(req)
       if (!auth) {
+        // `/auth-info` is the one route an unauthenticated caller may reach,
+        // and it is here rather than in the handler so the answer is available
+        // *because* the key was missing.
+        //
+        // It reports `auth_configured`, so gating it meant the client could
+        // never learn it needed a key: a fresh console asked, got the same 401
+        // as every other route, and had nothing to distinguish "this deployment
+        // requires a token" from "this deployment is broken". It leaked nothing
+        // to get that far — a 401 already says authentication is on, which is
+        // what `auth_configured` would report.
+        //
+        // Identity is still returned only for a caller who presented a token;
+        // without one the response is nulls and the flag.
+        if (req.method === 'GET' && url.pathname === '/api/v1/auth-info') {
+          jsonResponse(res, 200, {
+            success: true,
+            data: {
+              subject: null,
+              scopes: [],
+              partner_org: null,
+              auth_configured: true,
+            },
+          })
+          return
+        }
         jsonResponse(res, 401, { success: false, error: 'Unauthorized' })
         return
       }

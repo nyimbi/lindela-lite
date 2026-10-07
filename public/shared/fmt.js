@@ -82,12 +82,6 @@ export function signed(value, { dp = 2, unit = '', dash = '—' } = {}) {
   return `${sign}${Math.abs(n).toFixed(dp)}${unit}`
 }
 
-/** Yes/no, for booleans that arrive as either. */
-export function yesNo(value, yes = 'Yes', no = 'No') {
-  if (value === null || value === undefined || value === '') return '—'
-  return value === true || value === 'true' || value === 1 ? yes : no
-}
-
 // =============================================================
 // Severity and status
 // =============================================================
@@ -288,11 +282,6 @@ export function metres(value, { dash = '—' } = {}) {
   return n >= 100 ? `${Math.round(n).toLocaleString()} m` : n >= 1 ? `${n.toFixed(1)} m` : `${n.toFixed(2)} m`
 }
 
-/** Square kilometres, rounded to something an operator can hold in mind. */
-export function sqKm(value, { dash = '—' } = {}) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return dash
-  return `${num(value, { dp: 0 })} km²`
-}
 // =============================================================
 // Locales
 // =============================================================
@@ -320,15 +309,16 @@ const LOCALE_INFO = {
   ar: { label: 'العربية',      rtl: true },
 }
 
-/** The locales this build ships, in picker order. */
-export const AVAILABLE_LOCALES = Object.keys(LOCALE_INFO)
-
+/**
+ * The locales this build ships, in picker order.
+ *
+ * `AVAILABLE_LOCALES` was the exported name for `Object.keys(LOCALE_INFO)` and
+ * had no consumer on any surface — the picker reads `LOCALE_INFO` directly. It
+ * and two other unused exports were removed to pay for the auth banner rather
+ * than to raise the first-load budget a third time.
+ */
 export function isRtl(locale) {
   return Boolean(LOCALE_INFO[locale]?.rtl)
-}
-
-export function localeLabel(locale) {
-  return LOCALE_INFO[locale]?.label || locale
 }
 
 /**
