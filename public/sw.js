@@ -483,6 +483,14 @@ SW?.addEventListener('activate', (event) => {
 
 SW?.addEventListener('fetch', (event) => {
 	const url = new URL(event.request.url)
+	// Requests that do not come from this origin: browser extensions run code
+	// inside the page and their fetches arrive here too. The static branch
+	// below answered one with cache.put, which throws for schemes a Cache
+	// cannot store (chrome-extension), and the throw propagated as an uncaught
+	// promise rejection in the console. A request this app does not own is also
+	// not its to respond to — fall through untouched, and the browser does the
+	// normal thing.
+	if (url.protocol !== 'http:' && url.protocol !== 'https:') return
 	const kind = classifyApiRequest(url.pathname, event.request.method)
 
 	// Network-first for API calls, falling back to the last good response and
@@ -516,10 +524,25 @@ SW?.addEventListener('fetch', (event) => {
 		return
 	}
 
-	// Stale-while-revalidate for static assets: serve immediately from cache,
-	// then refresh in the background so the next load picks up a deploy.
-	// Previously cache-first with no revalidation, so app.js was pinned to
-	// whatever was cached first.
+	// Code the page executes, and the documents loading it: network first,
+	// cache only when the network fails. Stale-while-revalidate was the wrong
+	// trade for code. The first load after a deploy ran the previous module; the
+	// revalidate fetch consulted the browser's HTTP cache; so a module served
+	// with max-age re-stored ITS OWN STALE BODY, and a deploy took an hour of
+	// HTTP-cache expiry or luck to reach the console at all. Offline support is
+	// unchanged — the cache is still what answers when the network is gone —
+	// and a fix now reaches an open console at the next reload.
+	if (event.request.mode === 'navigate' || isCodeAsset(url.pathname)) {
+		event.respondWith(codeFirst(event, url))
+		return
+	}
+
+	// Stale-while-revalidate for the remaining static assets: serve immediately
+	// from cache, then refresh in the background so the next load picks up a
+	// deploy. Previously cache-first with no revalidation, so app.js was pinned
+	// to whatever was cached first. The refresh fetch carries cache: 'reload'
+	// for the same reason the code path above does: a revalidation that can be
+	// answered from the HTTP cache revalidates nothing.
 	//
 	// The second lookup ignores the query string, and that is not a nicety: the
 	// precache is keyed by the paths the graph found (`/chw/index.html`) while a
@@ -535,7 +558,7 @@ SW?.addEventListener('fetch', (event) => {
 			cache.match(event.request).then((exact) =>
 				(exact ? Promise.resolve(exact) : cache.match(event.request, { ignoreSearch: true }))
 			).then((cached) => {
-				const network = fetch(event.request)
+				const network = fetch(event.request, { cache: 'reload' })
 					.then((response) => {
 						if (response.ok) cache.put(event.request, response.clone())
 						return response
@@ -546,6 +569,37 @@ SW?.addEventListener('fetch', (event) => {
 		)
 	)
 })
+
+/** Code and markup the page executes or renders: these must be current. */
+function isCodeAsset(pathname) {
+	return /\.(js|mjs|css)(\?|$)/.test(String(pathname))
+}
+
+/**
+ * Network first for code, with the cache as the offline half.
+ * The fetch carries cache: 'reload' so the revalidation cannot be answered
+ * from the HTTP cache — the browser's max-age entry for a module would
+ * otherwise be re-stored over and over as if it were fresh.
+ */
+async function codeFirst(event, url) {
+	const cache = await caches.open(CACHE_NAME)
+	try {
+		const response = await fetch(event.request, { cache: 'reload' })
+		if (response.ok) {
+			const put = cache.put(event.request, response.clone())
+			if (event && typeof event.waitUntil === 'function') event.waitUntil(put)
+		}
+		return response
+	} catch {
+		const cached = await cache.match(event.request)
+			.then((hit) => hit || cache.match(event.request, { ignoreSearch: true }))
+		if (cached) return cached
+		return new Response(JSON.stringify(offlineMissBody({ kind: 'static-miss', pathname: url.pathname })), {
+			status: 503,
+			headers: { 'content-type': 'application/json', 'x-lindela-offline': '1', 'x-lindela-cache': 'miss' },
+		})
+	}
+}
 
 /**
  * Network-first read with an honest fallback chain.
