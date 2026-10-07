@@ -7,7 +7,7 @@ mountNavbar({ activePath: '/chw' })
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
   currentScreen: 'home',
-  symptom: { who: null, type: null, duration: null, durationUnit: 'days', durationValue: null, location: null },
+  symptom: { who: null, type: null, duration: null, durationUnit: 'days', durationValue: null, location: null, severity: { dangerSigns: [], verySleepy: null, breathing: null, drinking: null, bleeding: null, other: null }, exposure: { contactSick: null, contactDead: null, vaccinationStatus: null, waterSource: 'clean', otherExposure: null } },
   incident: { category: null, description: null, location: null },
   anonymous: true,
 }
@@ -27,8 +27,10 @@ const state = {
 const SYMPTOM_STEPS = [
   { screen: 'symptom', label: 'Who has this symptom?' },
   { screen: 'symptomType', label: 'Which symptom?' },
+  { screen: 'symptomSeverity', label: 'Danger signs?' },
   { screen: 'symptomDuration', label: 'How long has it been?' },
   { screen: 'symptomLocation', label: 'Where is the person?' },
+  { screen: 'symptomExposure', label: 'Exposure and contact?' },
   { screen: 'symptomAboutWho', label: 'About the patient' },
 ]
 const TOTAL_STEPS = SYMPTOM_STEPS.length
@@ -161,6 +163,8 @@ async function init() {
   setupHomeScreen()
   setupSymptomScreen()
   setupSymptomTypeScreen()
+  setupSymptomSeverityScreen()
+  setupSymptomExposureScreen()
   setupSymptomDurationScreen()
   setupSymptomLocationScreen()
   setupSymptomAboutWhoScreen()
@@ -518,6 +522,30 @@ function setupSymptomScreen() {
   $('symptomBackBtn').addEventListener('click', () => showScreen('home'))
 }
 
+function setupSymptomSeverityScreen() {
+  $('severityNextBtn').addEventListener('click', () => showScreen('symptomExposure'))
+  $('severityBackBtn').addEventListener('click', () => showScreen('symptomType'))
+  document.querySelectorAll('#severityChecklist input[type="checkbox"]').forEach((chk) => {
+    chk.addEventListener('change', () => {
+      const selected = Array.from(document.querySelectorAll('#severityChecklist input:checked')).map(c => c.dataset.severity)
+      state.symptom.severity = { dangerSigns: selected, verySleepy: selected.includes('sleepy'), breathing: selected.includes('breathing'), drinking: selected.includes('drinking'), bleeding: selected.includes('bleeding'), other: selected.includes('other') }
+      setHint('severityHint')
+    })
+  })
+}
+
+function setupSymptomExposureScreen() {
+  $('exposureNextBtn').addEventListener('click', () => {
+    if ($('exposeContactSick').value === '' && $('exposeContactDead').value === '' && $('exposeVaccination').value === '' && $('exposeWater').value === '') {
+      setHint('exposureHint', 'Select at least the water source before continuing.', 'warn')
+      return
+    }
+    state.symptom.exposure = { contactSick: $('exposeContactSick').value || null, contactDead: $('exposeContactDead').value || null, vaccinationStatus: $('exposeVaccination').value || null, waterSource: $('exposeWater').value || 'clean', otherExposure: null }
+    showScreen('symptomDuration')
+  })
+  $('exposureBackBtn').addEventListener('click', () => showScreen('symptomSeverity'))
+}
+
 function setupSymptomTypeScreen() {
   document.querySelectorAll('[data-symptom-type]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -533,7 +561,7 @@ function setupSymptomTypeScreen() {
       setHint('symptomTypeHint', HINTS.symptomType, 'warn')
       return
     }
-    showScreen('symptomDuration')
+    showScreen('symptomSeverity')
   })
   $('symptomTypeBackBtn').addEventListener('click', () => showScreen('symptom'))
 }
@@ -580,7 +608,7 @@ function setupSymptomDurationScreen() {
     state.symptom.durationValue = value
     showScreen('symptomLocation')
   })
-  $('symptomDurationBackBtn').addEventListener('click', () => showScreen('symptomType'))
+  $('symptomDurationBackBtn').addEventListener('click', () => showScreen('symptomExposure'))
 }
 
 /**
@@ -701,6 +729,8 @@ async function submitSymptomReport() {
     location: state.symptom.location,
     anonymous: state.anonymous,
     demographics: state.symptom.demographics || undefined,
+    severity: state.symptom.severity || undefined,
+    exposure: state.symptom.exposure || undefined,
   }
 
   try {
@@ -734,6 +764,8 @@ function resetSymptomWizard() {
     durationUnit: 'days',
     durationValue: null,
     location: null,
+    severity: { dangerSigns: [], verySleepy: null, breathing: null, drinking: null, bleeding: null, other: null },
+    exposure: { contactSick: null, contactDead: null, vaccinationStatus: null, waterSource: 'clean', otherExposure: null },
   }
   document.querySelectorAll('[data-symptom-who].selected, [data-symptom-type].selected').forEach((el) => {
     el.classList.remove('selected')
@@ -745,6 +777,12 @@ function resetSymptomWizard() {
   if (valueInput) valueInput.value = ''
   for (const id of ['manualLat', 'manualLon']) {
     if ($(id)) $(id).value = ''
+  }
+  document.querySelectorAll('#severityChecklist input[type="checkbox"]').forEach(chk => { chk.checked = false })
+  const exposeFields = ['exposeContactSick', 'exposeContactDead', 'exposeVaccination', 'exposeWater']
+  for (const id of exposeFields) {
+    const el = $(id)
+    if (el) el.value = id === 'exposeWater' ? 'clean' : ''
   }
   for (const id of ['symptomWhoHint', 'symptomTypeHint', 'symptomDurationHint', 'symptomLocationHint', 'manualLocationHint']) {
     setHint(id)

@@ -559,13 +559,66 @@
         </div>
       </div>
 
+      <!-- Severity / danger signs screen -->
+      <div id="symptomSeverityScreen" class="screen">
+        <div class="progress-dots" data-step="3"></div>
+        <p class="step-counter" data-step-counter></p>
+        <h2 class="screen-title" data-i18n="chw.severity">Any danger signs?</h2>
+        <p style="font-size:0.875rem;color:var(--ink-muted);margin-bottom:1rem" data-i18n="chw.severity_note">Select all that apply. These help triage urgency and guide the response.</p>
+        <div class="form-group">
+          <label data-i18n="chw.severity_check">Check any that apply</label>
+          <div id="severityChecklist" style="display:flex;flex-direction:column;gap:0.5rem;padding:0.5rem;background:var(--surface);border:1px solid var(--stroke);border-radius:var(--r);">
+            <label style="font-size:0.9rem;display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="sevSleepy" data-severity="sleepy"> <span data-i18n="chw.sev_sleepy">Very sleepy or hard to wake</span></label>
+            <label style="font-size:0.9rem;display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="sevBreathing" data-severity="breathing"> <span data-i18n="chw.sev_breathing">Difficulty breathing or very fast breathing</span></label>
+            <label style="font-size:0.9rem;display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="sevDrinking" data-severity="drinking"> <span data-i18n="chw.sev_drinking">Not drinking or very dry mouth</span></label>
+            <label style="font-size:0.9rem;display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="sevBleeding" data-severity="bleeding"> <span data-i18n="chw.sev_bleeding">Unexplained bleeding (gums, nose, stool, bruising)</span></label>
+            <label style="font-size:0.9rem;display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="sevWeak" data-severity="weak"> <span data-i18n="chw.sev_weak">Severe weakness or cannot stand</span></label>
+            <label style="font-size:0.9rem;display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="sevOther" data-severity="other"> <span data-i18n="chw.sev_other">Something else serious</span></label>
+          </div>
+        </div>
+        <p class="step-hint" id="severityHint" role="status" aria-live="polite"></p>
+        <div class="action-buttons">
+          <button class="btn-primary" id="severityNextBtn" data-i18n="chw.next">Next</button>
+          <button id="severityBackBtn" data-i18n="chw.back">Back</button>
+        </div>
+      </div>
+
+      <!-- Exposure / contact history screen -->
+      <div id="symptomExposureScreen" class="screen">
+        <div class="progress-dots" data-step="4"></div>
+        <p class="step-counter" data-step-counter></p>
+        <h2 class="screen-title" data-i18n="chw.exposure">Exposure and contact?</h2>
+        <p style="font-size:0.875rem;color:var(--ink-muted);margin-bottom:1rem" data-i18n="chw.exposure_note">These help identify outbreak sources and guide response.</p>
+        <div class="form-group">
+          <label for="exposeContactSick">Close contact with a sick person with similar symptoms?</label>
+          <select id="exposeContactSick"><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option><option value="unknown">Unknown</option></select>
+        </div>
+        <div class="form-group">
+          <label for="exposeContactDead">Close contact with someone who died of a bleeding or fever illness?</label>
+          <select id="exposeContactDead"><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option><option value="unknown">Unknown</option></select>
+        </div>
+        <div class="form-group">
+          <label for="exposeVaccination">Vaccinated for measles (if rash/fever) or relevant disease?</label>
+          <select id="exposeVaccination"><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option><option value="unknown">Unknown</option></select>
+        </div>
+        <div class="form-group">
+          <label for="exposeWater">Main drinking water source</label>
+          <select id="exposeWater"><option value="clean">Clean / protected source</option><option value="unprotected">Unprotected / open water</option><option value="unclean">Unclean / shared with animals</option></select>
+        </div>
+        <p class="step-hint" id="exposureHint" role="status" aria-live="polite"></p>
+        <div class="action-buttons">
+          <button class="btn-primary" id="exposureNextBtn" data-i18n="chw.next">Next</button>
+          <button id="exposureBackBtn" data-i18n="chw.back">Back</button>
+        </div>
+      </div>
+
       <!-- Symptom duration screen.
            A unit with no number is a unit. The queued payload used to read
            "self with fever for days", which is indistinguishable between a
            two-day and a twenty-day fever — and outbreak triage thresholds are
            duration-sensitive. The number is a field now, not prose. -->
       <div id="symptomDurationScreen" class="screen">
-        <div class="progress-dots" data-step="3"></div>
+        <div class="progress-dots" data-step="5"></div>
         <p class="step-counter" data-step-counter></p>
         <h2 class="screen-title" data-i18n="chw.symptom_duration">How long has it been?</h2>
         <div class="form-group">
@@ -594,7 +647,7 @@
 
       <!-- Symptom location screen -->
       <div id="symptomLocationScreen" class="screen">
-        <div class="progress-dots" data-step="4"></div>
+        <div class="progress-dots" data-step="6"></div>
         <p class="step-counter" data-step-counter></p>
         <h2 class="screen-title" data-i18n="chw.symptom_location">Where is the person?</h2>
         <div class="form-group">
@@ -632,9 +685,9 @@
         </div>
       </div>
 
-      <!-- Symptom about-who screen (demographics — step 5) -->
+      <!-- Symptom about-who screen (demographics — step 7) -->
       <div id="symptomAboutWhoScreen" class="screen">
-        <div class="progress-dots" data-step="5"></div>
+        <div class="progress-dots" data-step="7"></div>
         <p class="step-counter" data-step-counter></p>
         <h2 class="screen-title" data-i18n="chw.about_who">About the patient</h2>
         <p style="font-size:0.8rem;color:var(--ink-muted);margin-bottom:0.75rem" data-i18n="chw.demographics_note">
