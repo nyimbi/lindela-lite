@@ -52,7 +52,7 @@ the critical path is **P0 → P3 → P4 ≈ 19 weeks**; with one, ~31.
    ENH-07 read() manifest ────────┘        │
    ENH-12 version table columns ───────────┘
    P2 ──────────────────────────────────────────────────────────────
-   ENH-14 scoping from request ──┬──► ENH-17 partner_org + RLS
+   ENH-14 scoping from request ──┬──► ENH-17 partner_org + predicate
    ENH-15 read fallback denial ──┘
    ENH-16 inbound cost bounded
    P3 ──────────────────────────────────────────────────────────────

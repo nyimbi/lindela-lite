@@ -488,4 +488,4 @@ cannot function without.
 | ENH-50 | Shipped on this branch: the metric registry, with one declared denominator per published rate. | `test/metric-registry.test.js` |
 | ENH-09 | Open. See R-27 in [01-remediation.md](01-remediation.md) for the measurement. |
 | ENH-12 | Half shipped (the prune). See the same table. |
-| ENH-17 | Blocked on the deployment story. See the same table. |
+| ENH-17 | Shipped (2026-10-07), in the form this deployment model warrants: the generated column, the partial index, and the predicate in the read's `WHERE` clause. The RLS half was **withdrawn as not applicable**, not blocked — it was a remedy for cross-*tenant* reads, and this deployment has one operator, one country programme and one database. See the correction under the item, and the same table. | `test/partner-sql-predicate.test.js` |

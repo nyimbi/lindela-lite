@@ -326,9 +326,30 @@ is what surfaced them; a reading of the source had not.
 
 - **`/districts/` renders raw i18n keys** — a live defect the audit confirmed; the fix is in
   flight and its exact shape is recorded in the findings file.
+  > **Resolved.** `0213876` (followed by `ae29f58`, `1877cd8`) landed the fix: every
+  > `t()` call on the surface now carries an inline English fallback, so a key missing
+  > from a locale renders English rather than the raw key. `npm run check:i18n` passes
+  > against the current tree. Kept here as a record rather than deleted, because the
+  > fallback-argument pattern it produced is the thing worth remembering.
 - **The parametric store currently holds malformed rules** the audit agent created, which cannot be
   deleted until the `DELETE` route lands. Restore from a store backup before a demo, or accept that
   the demo shows three impossible rules.
+  > **Partly resolved.** The `DELETE /api/v1/parametric-rules/:id` route landed
+  > (`src/server.js`), so the rules can now be removed. The three audit-agent rules
+  > (`pr-1` Aweil Drought Rainfall Index, `pr-2` Turkana Flood Pre-financing, `pr-3`
+  > Mandera Conflict Displacement Support) are still present in the untracked
+  > `data/lindela-lite-store.json` — not deleted, only now deletable. Nothing in the
+  > repository depends on them either way.
 - **`/co` FCP measured 5356 ms** in one cold run. That was cold-profile noise — warm steady state
   is 36 ms — and is recorded here because the number is in the findings file and would otherwise read
   as a defect.
+
+## Still open
+
+- **HX-06 — first-load payload.** The one finding of the 45 that was not closed. The console
+  still carries four *inactive* tab panels in `index.html`, parsed on every load, among the
+  controls the audit counted above the fold. Deferring them into modules loaded on first tab
+  switch pays the byte debt back and fixes HX-05 in the same edit. The audit's own note is that
+  it touches roughly 150 element lookups in `app.js` and is not a change to attempt at the end
+  of a pass — that still holds, and it wants a pass of its own. The debt is recorded in
+  `scripts/check-budget.mjs` next to the budget it defers.

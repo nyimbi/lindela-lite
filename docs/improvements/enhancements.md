@@ -735,7 +735,8 @@ Two things in the spec above are **not** done and remain open:
    one is real work and is not started.
 2. **The evidence line is now partly stale.** "Exports are uncapped and
    unauthenticated (SEC-01)" was fixed earlier — exports now require
-   `read:export` and are tenant-scoped. The uncapped part still stands:
+   `read:export` and are scoped to the caller's partner organisation. The
+   uncapped part still stands:
    `filterRecords` clamps `limit` to 5000, but the CSV and GeoJSON exports are
    built from the whole store, not from a filtered page.
 

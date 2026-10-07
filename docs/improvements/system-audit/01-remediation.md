@@ -254,4 +254,9 @@ R-26, R-28, R-29, R-41, R-42, R-44, R-67.
 | --- | --- |
 | R-27 / ENH-09 | Measured again at the audit's scale: **6.96 ms** for a 50-row page from 31,549 rows, flat in page depth (6.96 ms at page 1, 6.99 ms at page 500) — the cost is the filter chain over the array, not the slice. With ENH-07's manifest a list route now reads one collection rather than 39, so the slice is bounded by collection size. Pushing filters into SQL means moving 133 call sites' parameters into the read: ~3 engineer-weeks, and the trigger is a collection whose page cost matters against its own latency budget. |
 | ENH-17 | **Shipped, in the form this deployment model warrants** (2026-10-07). The generated column, the partial index, and the predicate in `PostgresStore.read()`'s `WHERE` clause. The audit's RLS half is withdrawn rather than blocked: it was specified as row-level security keyed on `current_setting('app.partner_org')`, which is a remedy for cross-*tenant* reads, and this deployment has one operator, one country programme and one database. `partner_org` separates organisations working the same response — where the records carry names and household counts, so the disclosure is real. Guard: `test/partner-sql-predicate.test.js`. |
+
+ENH-17 is listed here rather than above because this table has moved over the
+project's life: it once meant "still open", and ENH-17 is now closed with its RLS
+half withdrawn rather than blocked. R-27/ENH-09 and ENH-12 are the only two items
+remaining genuinely open.
 | ENH-12 | The prune half shipped with R-26 (`O(V)` → `O(k log V)`, 15×). The table half — `record_versions` as a real relation with a real `record_id` — is the one item the audit calls "the schema the auditability claim rests on", ~4 engineer-weeks, with a data migration for existing deployments. |

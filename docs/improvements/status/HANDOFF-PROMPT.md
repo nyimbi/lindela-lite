@@ -1,5 +1,14 @@
 # Handoff prompt — finish the system-audit remediation
 
+> **Historical — the handoff this describes was executed.** Kept as the record of
+> what the pass was asked to do. The task list below is stale in one respect worth
+> knowing before copying it anywhere: its §4 lists ENH-17 (`partner_org` row
+> scoping) as outstanding. That landed on 2026-10-07 — see
+> [STATUS-2026-10-05.md](STATUS-2026-10-05.md#2026-10-07--enh-17-landed-and-its-framing-corrected).
+> Everything else it lists as open has since been addressed, and the only items
+> still open in the audit are R-27/ENH-09 and ENH-12. Do not start from this file;
+> start from the audit's own status tables.
+
 Copy everything below the line into the new agent's first message verbatim.
 
 ---
