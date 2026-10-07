@@ -106,6 +106,20 @@
             <input type="checkbox" id="coldChainToggle">
             <span data-i18n="filter.cold_chain">Cold-chain nodes</span>
           </label>
+          <label class="filter-label">
+            <span>Basemap</span>
+            <select id="mapTileSource" aria-label="Basemap imagery source">
+              <option value="osm">OpenStreetMap</option>
+              <option value="carto">Carto light</option>
+              <option value="none">Offline vector</option>
+            </select>
+          </label>
+          <span class="filter-label map-zoom-controls" aria-label="Map zoom">
+            <button type="button" id="zoomOutBtn" aria-label="Zoom out">−</button>
+            <span id="zoomLevel" aria-live="polite">100%</span>
+            <button type="button" id="zoomInBtn" aria-label="Zoom in">+</button>
+            <button type="button" id="zoomResetBtn" aria-label="Reset map view">⌂</button>
+          </span>
           <span id="mapRecordCount" class="map-record-count"></span>
           <!-- The map's text alternative. Nothing in the product listed hazards,
                assets, flood extents or road state as text, so on both
@@ -173,17 +187,44 @@
               opaque enough to bury it entirely. IPC area boxes shade below the
               flood layer so a flood simulation stays legible inside them; road
               markers stay on top of all so a cut-off segment is never hidden by
-              the shading it caused.
+              the shading it caused. River discharge markers sit just above the
+              flood layer so they remain legible inside a shaded simulation.
+              Disease markers sit above river discharge and below hazards:
+              an alert on the road still wins over the outbreak context it
+              travels through, but the outbreak must not bury the discharge
+              reading at the same location.
             -->
             <g id="mapTransform">
-              <image id="mapTileImage" href="" x="0" y="0" width="800" height="500" preserveAspectRatio="none" aria-hidden="true"/>
               <g id="mapOcean" class="ocean-layer"></g>
               <g id="mapLand" class="land-layer"></g>
+              <!--
+                Raster basemap (ADR-013). This layer sits between the vector
+                land rings and everything the operator reads: where tiles are
+                loaded the imagery covers the rings, and where a tile failed
+                to fetch (offline, upstream down) the vector rings that painted
+                first show through — the map degrades to the old basemap
+                rather than blanking. Every layer above (districts, graticule,
+                risk, flood, discharge, hazards, route, roads, assets) paints
+                over the raster, which is the point of a basemap.
+              -->
+              <g id="mapTiles" aria-hidden="true">
+                <image id="mapTileImage" href="" x="0" y="0" width="800" height="500" preserveAspectRatio="none" aria-hidden="true"/>
+              </g>
               <g id="mapDistricts" class="districts-layer"></g>
               <g id="mapGraticule" class="graticule"></g>
+              <!--
+                Weather glyphs sit above the graticule but below the risk blobs
+                and hazard markers: a hazard on the road is the thing the
+                operator must never have to look behind a weather glyph for.
+                The glyphs are district-anchored and few (five), so they never
+                bury the shading layers either.
+              -->
+              <g id="mapWeather" class="weather-layer"></g>
               <g id="mapRisk" class="risk-layer"></g>
               <g id="mapFoodSecurity" class="food-layer"></g>
               <g id="mapFlood" class="flood-layer"></g>
+              <g id="mapRiverDischarge" class="river-discharge-layer"></g>
+              <g id="mapDisease" class="disease-layer"></g>
               <g id="mapHazards" class="hazard-layer"></g>
               <g id="mapRoute" class="route-layer"></g>
               <g id="mapRoads" class="roads-layer"></g>
@@ -193,9 +234,20 @@
             <g id="mapScale" class="map-scale">
               <text x="720" y="480" font-size="8" fill="var(--ink-faint)" font-family="var(--font-mono)" text-anchor="end">Scale: ~400 km</text>
             </g>
+            <!--
+              Tile attribution (ADR-013). OSM's tile usage policy requires a
+              visible © OpenStreetMap contributors line — and serving tiles
+              through our proxy does not change that, it just delivers it.
+              renderMapTiles keeps the text current with the chosen source and
+              says "Offline vector basemap" when the choice is the fallback.
+            -->
+            <g id="mapAttribution">
+              <text id="mapAttributionText" x="8" y="492" font-size="8" fill="var(--ink-faint)"
+                    font-family="var(--font-mono)" pointer-events="none">Basemap © OpenStreetMap contributors</text>
+            </g>
           </svg>
           <div class="map-legend-text" aria-label="Map layer relationships">
-            <p>Districts · Routes · Assets · Hazards · Flood simulation · Food security · Risk assessment</p>
+            <p>Districts · Routes · Assets · Hazards · Flood simulation · Food security · Risk assessment · Weather · Disease outbreak</p>
           </div>
           <div class="seasonal-strip" role="group" aria-label="Seasonal context">
             <div class="seasonal-head">
@@ -348,6 +400,9 @@
             </p>
             <p id="roadStatus" class="map-sim-status" role="status" aria-live="polite"></p>
             <p id="ipcStatus" class="map-sim-status" role="status" aria-live="polite"></p>
+            <p id="weatherStatus" class="map-sim-status" role="status" aria-live="polite"></p>
+            <p id="riverDischargeStatus" class="map-sim-status" role="status" aria-live="polite"></p>
+            <p id="diseaseStatus" class="map-sim-status" role="status" aria-live="polite"></p>
             <div id="floodLegend" class="flood-legend" hidden></div>
           </div>
 

@@ -3,9 +3,15 @@
 // =============================================================
 import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS } from '/shared/basemap.js'
 import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage, surveyedAreaKm2 } from '/shared/flood-bands.js'
-import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets, withinBbox, NEAR_REGION_MARGIN_DEG, REGION_OF_INTEREST } from '/shared/map-frame.js'
+import { weatherCodeLabel, weatherLayerView } from '/shared/weather-bands.js'
+import { dischargeBand, DISCHARGE_MODEL_NOTE } from '/shared/discharge-bands.js'
+import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets, withinBbox, NEAR_REGION_MARGIN_DEG, REGION_OF_INTEREST, AFRICA_BBOX, fitTransform } from '/shared/map-frame.js'
+import {
+  TILE_SOURCES, TILE_ATTRIBUTION,
+  tileGridKey, tileUrlFor, tilesForRect, svgPlacement, visibleWorldRect, zoomForRect,
+} from '/shared/tiles.js'
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState, seasonalCalendar, seasonalCalendarNote } from '/shared/seasonal.js'
-import { decodeView, encodeView, isCustom, resolveView, shareUrl } from '/shared/view-state.js'
+import { decodeView, encodeView, isCustom, resolveView, sanitizeMapTransform, shareUrl } from '/shared/view-state.js'
 import { fillAppVersion } from '/shared/app-version.js'
 import { apiFetch, apiSettled, autoMarkScrollableRegions, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
 import { applyLocaleToDocument, esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
@@ -54,8 +60,18 @@ const state = {
   alertFilter: 'all',
   workflowTypeFilter: null,
   mapTransform: { x: 0, y: 0, scale: 1 },
+  mapTransformUserSet: false,
   mapDragging: false,
   mapDragStart: null,
+  // Raster basemap state (ADR-013). `mapBBox` is the frame `renderMap` last
+  // drew at — tiles re-project against it when the transform moves without a
+  // refresh; `tileGridKey` is the last-rendered grid's identity, so a pan
+  // that changes nothing visible repaints nothing. `tileSource` defaults to
+  // OpenStreetMap; the state alone decides, and an undeclared default here is
+  // what shipped the map with no tiles the first time this feature ran.
+  tileSource: 'osm',
+  tileGridKey: null,
+  mapBBox: null,
   data: {},
   reports: [],
   templates: [],
@@ -85,6 +101,18 @@ const state = {
   diseaseSummary: null,
   showIpcAreas: false,
   climate: [],
+  // The weather overlay's last good payload from /api/v1/weather. Kept across
+  // refreshes like the other map inputs, so one failed poll does not blank the
+  // glyphs; staleness is re-derived from each district's as_of at render time,
+  // because this payload may itself be hours old off the service worker.
+  weather: null,
+  // Same contract as weather: the river-discharge overlay reads whatever the
+  // last fetch left here, and the status line explains when there is nothing.
+  riverDischarge: null,
+  // Disease-outbreak overlay (/api/v1/disease-observations?map=1): only
+  // placeable records; granularity travels with each one so an aggregate at a
+  // country centroid is never drawn as if it were district evidence.
+  diseaseObservations: null,
   routePlan: null,
   roadsById: new Map(),
   // workflow type -> Set of alert ids that a workflow of that type governs.
@@ -424,6 +452,350 @@ function renderFoodSecurityLayer(records, bbox) {
 }
 
 /**
+ * Weather overlay: one glyph per pilot district, banded on today's forecast
+ * rain and labelled with the current temperature.
+ *
+ * Which districts are fresh enough to draw — and which were withheld as stale
+ * or never ingested — is decided in shared/weather-bands.js, where it is
+ * testable without a DOM; this function only turns the plan into elements. The
+ * glyph reuses the map's severity vocabulary (radius and dash pattern) for the
+ * rain band, because a second visual language for the same screen is one more
+ * thing an operator must relearn under pressure. The 7-day detail stays in the
+ * tooltip and the detail dialog: five districts do not need seven numbers each
+ * painted on the map.
+ */
+function renderWeatherLayer(bbox) {
+  if (!mapWeatherEl) return
+  mapWeatherEl.innerHTML = ''
+  const view = weatherLayerView(state.weather, { now: Date.now() })
+  if (!view.glyphs.length) return
+  const hitR = currentHitRadius()
+  for (const glyph of view.glyphs) {
+    if (!Number.isFinite(glyph.latitude) || !Number.isFinite(glyph.longitude)) continue
+    const { x, y } = project(glyph.latitude, glyph.longitude, bbox)
+    const label = weatherGlyphLabel(glyph)
+    const record = weatherDetailRecord(glyph)
+
+    // The dot and its temperature label are wrapped in one `.map-pin` group so
+    // the pair counter-scales around the district point together: the label
+    // stays attached to its dot at any zoom instead of drifting by the zoom
+    // factor (see the .map-pin rule in styles.css).
+    const pin = svgEl('g', { class: 'map-pin' })
+    pin.style.setProperty('--pin-x', `${x}px`)
+    pin.style.setProperty('--pin-y', `${y}px`)
+
+    // Same hit-target pattern as hazard and asset markers: an invisible
+    // fingertip-sized circle receives the events, the visible mark keeps its
+    // band radius, and the accessible name carries the numbers.
+    const hit = svgEl('circle', {
+      cx: x, cy: y, r: hitR,
+      class: 'weather-hit',
+      fill: 'transparent', stroke: 'none', 'pointer-events': 'all',
+      'data-tap-target': '',
+      tabindex: '0',
+      role: 'button',
+      'aria-label': label,
+    })
+    hit.addEventListener('click', () => openDetailDialog(record))
+    hit.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetailDialog(record) }
+    })
+    pin.append(hit)
+
+    const dot = svgEl('circle', {
+      cx: x, cy: y, r: sevRadius(glyph.severity),
+      class: `weather-marker weather-${glyph.precipBand ? safeClass(glyph.precipBand.key) : 'ungraded'}`,
+      'stroke-dasharray': severityDash(glyph.severity),
+      'pointer-events': 'none',
+      'aria-hidden': 'true',
+    })
+    const titleEl = svgEl('title')
+    titleEl.textContent = label
+    dot.append(titleEl)
+    pin.append(dot)
+
+    if (Number.isFinite(glyph.temperatureC)) {
+      const temp = svgEl('text', {
+        x: x + sevRadius(glyph.severity) + 3, y: y + 3,
+        class: `weather-temp weather-temp-${glyph.temperatureBand ? safeClass(glyph.temperatureBand.key) : 'unknown'}`,
+        'pointer-events': 'none',
+        'aria-hidden': 'true',
+      })
+      temp.textContent = `${Math.round(glyph.temperatureC)}°`
+      pin.append(temp)
+    }
+    mapWeatherEl.append(pin)
+  }
+}
+
+/**
+ * River discharge markers for the GloFAS overlay.
+ *
+ * One marker per region, coloured by absolute discharge band. The value is
+ * modelled, not gauged, so every tooltip carries that caveat. Markers sit just
+ * above the flood simulation layer so a computed inundation does not hide the
+ * discharge reading at the same location.
+ */
+function renderRiverDischargeLayer(bbox) {
+  if (!mapRiverDischargeEl) return
+  mapRiverDischargeEl.innerHTML = ''
+  const payload = state.riverDischarge
+  if (!payload?.data?.length) return
+  const hitR = currentHitRadius()
+  for (const item of payload.data) {
+    if (!Number.isFinite(item.latitude) || !Number.isFinite(item.longitude)) continue
+    const { x, y } = project(item.latitude, item.longitude, bbox)
+    const band = dischargeBand(item.river_discharge_m3s) || { key: 'unknown', label: 'Discharge unknown', severity: 'ungraded' }
+    const label = `${item.region_name}: ${item.river_discharge_m3s} m³/s (${band.label})${item.as_of ? ` as of ${item.as_of}` : ''}. ${payload.note || DISCHARGE_MODEL_NOTE}`
+    const record = {
+      title: `${item.region_name} — river discharge`,
+      region_name: item.region_name,
+      river_discharge_m3s: item.river_discharge_m3s,
+      band: band.label,
+      as_of: item.as_of,
+      model_limit: item.model_limit,
+      note: payload.note || DISCHARGE_MODEL_NOTE,
+    }
+
+    const margin = hitR + sevRadius(band.severity) + 2
+    if (x < -margin || y < -margin || x > SVG_W + margin || y > SVG_H + margin) continue
+
+    const hit = svgEl('circle', {
+      cx: x, cy: y, r: hitR,
+      class: 'discharge-hit',
+      fill: 'transparent', stroke: 'none', 'pointer-events': 'all',
+      'data-tap-target': '',
+      tabindex: '0',
+      role: 'button',
+      'aria-label': label,
+    })
+    hit.addEventListener('click', () => openDetailDialog(record))
+    hit.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetailDialog(record) }
+    })
+    mapRiverDischargeEl.append(hit)
+
+    const dot = svgEl('circle', {
+      cx: x, cy: y, r: sevRadius(band.severity),
+      class: `discharge-marker discharge-${safeClass(band.key)}`,
+      'stroke-dasharray': severityDash(band.severity),
+      'pointer-events': 'none',
+      'aria-hidden': 'true',
+    })
+    const titleEl = svgEl('title')
+    titleEl.textContent = label
+    dot.append(titleEl)
+    mapRiverDischargeEl.append(dot)
+  }
+}
+
+// The outbreak-event glyphs (ADR-014). Shape carries the disease so a colour-blind
+// operator is not stranded by a colour-only vocabulary; the class is the slug
+// the stylesheet colours.
+const DISEASE_SHAPE = {
+  cholera: 'triangle',
+  measles: 'diamond',
+  meningitis: 'hexagon',
+  'yellow fever': 'square',
+  plague: 'cross',
+  other: 'circle',
+}
+
+function renderDiseaseLayer(bbox) {
+  if (!mapDiseaseEl) return
+  mapDiseaseEl.innerHTML = ''
+  const payload = state.diseaseObservations
+  if (!payload?.data?.length) return
+  const hitR = currentHitRadius()
+  for (const item of payload.data) {
+    // The `?map=1` route already filters unplaceable records; this guard is
+    // for a direct store seed and a future caller that skips the route.
+    if (!Number.isFinite(item.latitude) || !Number.isFinite(item.longitude)) continue
+    const { x, y } = project(item.latitude, item.longitude, bbox)
+    const shape = DISEASE_SHAPE[item.disease] || 'circle'
+    const isNational = item.granularity === 'national'
+    const label = `${item.disease || 'Disease outbreak'} — ${item.location_name || 'unnamed location'}${item.country ? ` (${item.country})` : ''}${item.cases != null ? `, ${item.cases} cases` : ''}${item.deaths != null ? `, ${item.deaths} deaths` : ''}${item.observed_at ? `, observed ${item.observed_at.slice(0, 10)}` : ''}. ${isNational ? 'National aggregate placed at a country centroid — not district evidence.' : 'Subnational location.'}`
+    const record = {
+      title: `${item.disease || 'Disease outbreak'} — ${item.location_name || 'unnamed location'}`,
+      disease: item.disease,
+      country: item.country,
+      location_name: item.location_name,
+      granularity: item.granularity,
+      cases: item.cases,
+      deaths: item.deaths,
+      observed_at: item.observed_at,
+      source_url: item.source_url,
+      model_limit: item.model_limit,
+    }
+
+    const margin = hitR + 10
+    if (x < -margin || y < -margin || x > SVG_W + margin || y > SVG_H + margin) continue
+
+    // The hit target carries the keyboard/AT contract (tabindex, role, label)
+    // the discharge layer uses; the visible shape renders inside with
+    // pointer-events none so only the target answers.
+    const hit = svgEl('circle', {
+      cx: x, cy: y, r: hitR,
+      class: 'disease-hit',
+      fill: 'transparent', stroke: 'none', 'pointer-events': 'all',
+      'data-tap-target': '',
+      tabindex: '0',
+      role: 'button',
+      'aria-label': label,
+    })
+    hit.addEventListener('click', () => openDetailDialog(record))
+    hit.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetailDialog(record) }
+    })
+    mapDiseaseEl.append(hit)
+
+    const marker = markerEl(shape, x, y, 6, `disease-marker disease-${safeClass(item.disease || 'other')}${isNational ? ' disease-national' : ''}`, {
+      'pointer-events': 'none',
+      'aria-hidden': 'true',
+      ...(isNational ? { 'stroke-dasharray': '2,2' } : {}),
+    })
+    const titleEl = svgEl('title')
+    titleEl.textContent = label
+    marker.append(titleEl)
+    mapDiseaseEl.append(marker)
+  }
+}
+
+/** Honest-state line for the disease overlay: fetch failure, empty feed, and the national/subnational split are each their own sentence. */
+function updateDiseaseStatus() {
+  if (!diseaseStatusEl) return
+  if (state.failedSources.has('diseaseObservations')) {
+    diseaseStatusEl.textContent = state.diseaseObservations
+      ? 'Disease outbreak fetch failed — markers shown are the last successful read.'
+      : 'Disease outbreak layer unavailable — the fetch failed and nothing has been cached.'
+    return
+  }
+  const payload = state.diseaseObservations
+  if (!payload || !payload.data?.length) {
+    diseaseStatusEl.textContent = 'No disease outbreak observations ingested yet — run the reliefweb_epidemics source; until then no outbreaks are shown.'
+    return
+  }
+  const subnational = payload.data.filter((d) => d.granularity === 'subnational').length
+  diseaseStatusEl.textContent = `Disease outbreak data for ${payload.data.length} location${payload.data.length === 1 ? '' : 's'}${payload.as_of ? ` as of ${payload.as_of.slice(0, 10)}` : ''}. ${subnational} subnational; ${payload.data.length - subnational} national aggregate.`
+}
+
+/** The glyph's spoken and tooltip text: every number on it, plus the issue time. */
+function weatherGlyphLabel(glyph) {
+  const parts = [glyph.name]
+  if (Number.isFinite(glyph.temperatureC)) parts.push(`now ${Math.round(glyph.temperatureC)}°C`)
+  if (glyph.conditionLabel) parts.push(glyph.conditionLabel.toLowerCase())
+  const today = []
+  if (Number.isFinite(glyph.todayPrecipitationMm)) today.push(`${glyph.todayPrecipitationMm} mm`)
+  if (Number.isFinite(glyph.todayProbabilityPct)) today.push(`${Math.round(glyph.todayProbabilityPct)}% chance`)
+  if (today.length) parts.push(`today: ${today.join(', ')}`)
+  if (glyph.precipBand) parts.push(glyph.precipBand.label.toLowerCase())
+  // The issue time is part of the reading, not metadata: a forecast without
+  // it cannot be told from a current one.
+  if (glyph.asOf) parts.push(`forecast issued ${formatTimestamp(glyph.asOf)}`)
+  return parts.join(' — ')
+}
+
+/** One forecast day as a sentence fragment, for the detail dialog. */
+function weatherForecastDayLine(day) {
+  const parts = [day.date]
+  const condition = weatherCodeLabel(day.weather_code)
+  if (condition) parts.push(condition.toLowerCase())
+  parts.push(Number.isFinite(day.precipitation_mm) ? `${day.precipitation_mm} mm` : 'precipitation not reported')
+  if (Number.isFinite(day.precipitation_probability_pct)) parts.push(`${Math.round(day.precipitation_probability_pct)}% chance`)
+  if (Number.isFinite(day.temperature_max_c)) parts.push(`max ${Math.round(day.temperature_max_c)}°C`)
+  return parts.join(', ')
+}
+
+/**
+ * The detail dialog for a weather glyph, flattened: the dialog renders
+ * `Object.entries`, and a nested forecast array would print as
+ * "[object Object]" — the one read worse than none.
+ */
+function weatherDetailRecord(glyph) {
+  const record = {
+    title: `${glyph.name} — weather`,
+    district: glyph.name,
+    country: glyph.district.country,
+    data_source: 'Open-Meteo forecast API (deterministic point forecast; no ensemble)',
+    as_of: glyph.asOf,
+    current_temperature_c: glyph.temperatureC,
+    current_conditions: glyph.conditionLabel,
+    today_precipitation_mm: glyph.todayPrecipitationMm,
+    today_precipitation_probability_pct: glyph.todayProbabilityPct,
+    today_temperature_max_c: glyph.todayTemperatureMaxC,
+  }
+  for (const [i, day] of (glyph.district.forecast || []).entries()) {
+    record[`forecast_day_${i + 1}`] = weatherForecastDayLine(day)
+  }
+  return record
+}
+
+/**
+ * The weather status line, written on success and on failure alike.
+ *
+ * The three states say three different things, because they are three
+ * different situations: the fetch failed (nothing shown, last good payload
+ * kept on screen if there is one), the source has never run (nothing to
+ * show), or districts were withheld as stale (named, with the window). None
+ * of them may read as "there is no weather".
+ */
+function updateWeatherStatus() {
+  if (!weatherStatusEl) return
+  if (state.failedSources.has('weather')) {
+    weatherStatusEl.textContent = state.weather
+      ? 'Weather fetch failed — the glyphs shown are the last successful read, aged by their issue times.'
+      : 'Weather layer unavailable — the fetch failed and nothing has been cached, so no weather is shown.'
+    return
+  }
+  const view = weatherLayerView(state.weather, { now: Date.now() })
+  if (!view.available) {
+    weatherStatusEl.textContent = 'No weather observations ingested yet — run the open_meteo_forecast source; until then no weather is shown.'
+    return
+  }
+  if (!view.glyphs.length && !view.staleSlugs.length) {
+    weatherStatusEl.textContent = 'No weather observations ingested yet — run the open_meteo_forecast source; until then no weather is shown.'
+    return
+  }
+  const parts = []
+  if (view.glyphs.length) {
+    parts.push(
+      `Weather for ${view.glyphs.length} district${view.glyphs.length === 1 ? '' : 's'}`
+      + (view.asOf ? `, forecast issued ${formatTimestamp(view.asOf)}` : '')
+      + ' — glyph size and dashes show today’s forecast rain.',
+    )
+  }
+  if (view.staleSlugs.length) {
+    parts.push(`Not shown as stale: ${view.staleSlugs.join(', ')}.`)
+  }
+  if (view.missingSlugs.length && (view.glyphs.length || view.staleSlugs.length)) {
+    parts.push(`Never ingested: ${view.missingSlugs.join(', ')}.`)
+  }
+  weatherStatusEl.textContent = parts.join(' ')
+}
+
+/**
+ * The river-discharge status line, written on success and on failure alike.
+ *
+ * The overlay is ambient, like weather: it reads the last good payload and the
+ * status line says when there is nothing to draw.
+ */
+function updateRiverDischargeStatus() {
+  if (!riverDischargeStatusEl) return
+  if (state.failedSources.has('riverDischarge')) {
+    riverDischargeStatusEl.textContent = state.riverDischarge
+      ? 'River discharge fetch failed — the markers shown are the last successful read.'
+      : 'River discharge layer unavailable — the fetch failed and nothing has been cached, so no discharge is shown.'
+    return
+  }
+  const payload = state.riverDischarge
+  if (!payload || !payload.data?.length) {
+    riverDischargeStatusEl.textContent = 'No river discharge observations ingested yet — run the open_meteo_flood source; until then no discharge is shown.'
+    return
+  }
+  riverDischargeStatusEl.textContent = `River discharge for ${payload.data.length} region${payload.data.length === 1 ? '' : 's'}${payload.as_of ? ` as of ${payload.as_of}` : ''}. ${payload.note || DISCHARGE_MODEL_NOTE}`
+}
+
+/**
  * Pilot districts the flood simulation can be run over.
  *
  * The area must be chosen explicitly. Framing the map on the whole region of
@@ -487,6 +859,7 @@ async function loadFloodSimulation() {
       minLon: area.lon - half - pad,
       maxLon: area.lon + half + pad,
     }
+    state.mapTransformUserSet = false
     const body = await fetchJson(`/api/v1/flood-depth?${query}`)
     if (!body?.success || !body.data?.depth_grid) {
       state.floodGrid = null
@@ -540,6 +913,7 @@ function clearFloodSimulation() {
   state.floodGrid = null
   state.floodFocus = null
   state.floodAreaKey = null
+  state.mapTransformUserSet = false
   if (floodLegendEl) { floodLegendEl.hidden = true; floodLegendEl.innerHTML = '' }
   setFloodStatus('Flood overlay cleared')
   reRenderMapFromState()
@@ -838,6 +1212,7 @@ async function planRoute() {
   if (from === to) {
     state.routePlan = null
     state.routeFocus = null
+    state.mapTransformUserSet = false
     renderRouteHops(null)
     setRouteStatus('Origin and destination must be different roads.')
     reRenderMapFromState()
@@ -857,6 +1232,7 @@ async function planRoute() {
     // is four roads inside six kilometres and the reroute that is the entire
     // point of the feature collapsed into one unreadable cluster.
     state.routeFocus = routeFocusFor(plan, { from, to: [to] })
+    state.mapTransformUserSet = false
     renderRouteHops(plan)
     setRouteStatus(describeRoutePlan(plan))
     reRenderMapFromState()
@@ -913,6 +1289,7 @@ function setRouteStatus(message) {
 function clearRoutePlan() {
   state.routePlan = null
   state.routeFocus = null
+  state.mapTransformUserSet = false
   renderRouteHops(null)
   setRouteStatus('Route cleared. Routing works over imported road assets.')
   reRenderMapFromState()
@@ -1421,6 +1798,12 @@ const mapFloodEl      = $('mapFlood')
 const mapRoadsEl      = $('mapRoads')
 const mapRouteEl      = $('mapRoute')
 const mapFoodSecurityEl = $('mapFoodSecurity')
+const mapWeatherEl    = $('mapWeather')
+const mapRiverDischargeEl = $('mapRiverDischarge')
+const mapDiseaseEl    = $('mapDisease')
+const weatherStatusEl = $('weatherStatus')
+const riverDischargeStatusEl = $('riverDischargeStatus')
+const diseaseStatusEl = $('diseaseStatus')
 const seasonalIndexEl    = $('seasonalIndex')
 const seasonalPhaseEl    = $('seasonalPhase')
 const seasonalAnomalyEl  = $('seasonalAnomaly')
@@ -2054,9 +2437,27 @@ function renderMap(records) {
   // an operator saying "look here", and a data-derived frame would swallow them.
   const focus = state.floodFocus || state.routeFocus || null
   const regionFrame = mapFrame(geo, undefined, focus).frame
-  const bbox = focus ? regionFrame : autoFitBox(visible, regionFrame)
+  const targetFrame = focus ? regionFrame : autoFitBox(visible, regionFrame)
+
+  // The projection frame is Africa-wide so the operator can zoom out for regional
+  // context; the transform is fitted to the target frame (Horn, flood extent,
+  // route, etc.) unless the operator has panned or zoomed manually.
+  const bbox = AFRICA_BBOX
+  if (!state.mapTransformUserSet) {
+    const fitted = fitTransform(targetFrame, bbox, SVG_W, SVG_H)
+    if (fitted) {
+      state.mapTransform = fitted
+      applyMapTransform()
+    }
+  }
 
   renderStaticLayers(bbox)
+  // The raster basemap (ADR-013) re-projects inside this same frame; it must
+  // re-render even when renderStaticLayers early-returns on an unchanged frame,
+  // because a transform pan that moved the visible window off the previous
+  // grid is invisible to the frame key.
+  state.mapBBox = bbox
+  renderMapTiles()
   mapHazardsEl.innerHTML = ''
   mapAssetsEl.innerHTML = ''
   mapRiskEl.innerHTML = ''
@@ -2064,6 +2465,9 @@ function renderMap(records) {
   if (mapRoadsEl) mapRoadsEl.innerHTML = ''
   if (mapRouteEl) mapRouteEl.innerHTML = ''
   if (mapFoodSecurityEl) mapFoodSecurityEl.innerHTML = ''
+  if (mapWeatherEl) mapWeatherEl.innerHTML = ''
+  if (mapRiverDischargeEl) mapRiverDischargeEl.innerHTML = ''
+  if (mapDiseaseEl) mapDiseaseEl.innerHTML = ''
 
   // The simulation overlay and road status persist across filter changes, so
   // a severity or source filter must not silently discard the flood extent the
@@ -2072,6 +2476,12 @@ function renderMap(records) {
   if (state.roadAccess?.length) renderRoadLayer(state.roadAccess, bbox)
   if (state.routePlan) renderRouteLayer(state.routePlan, bbox)
   if (state.showIpcAreas && state.foodSecurity?.length) renderFoodSecurityLayer(state.foodSecurity, bbox)
+  // Ambient, like the hazard feed rather than a toggle: the overlays read
+  // whatever the last fetch left in state, and the status line under the map
+  // says when that is nothing.
+  renderWeatherLayer(bbox)
+  renderRiverDischargeLayer(bbox)
+  renderDiseaseLayer(bbox)
 
   const hazards = visible.filter((r) => r.event_type || r.source === 'gdacs' || r.source === 'glofas' || r.source === 'nasa_firms')
   const assets  = visible.filter((r) => r.service_type)
@@ -2412,7 +2822,7 @@ function renderMapLegend() {
   if (_legendDrawn) return
   _legendDrawn = true
   mapLegendEl.innerHTML = ''
-    const items = [
+  const items = [
     { cls: 'hazard-flood',     label: 'Flood',     shape: hazardShape('flood'),            dash: severityDash('critical') },
     { cls: 'hazard-landslide', label: 'Landslide', shape: hazardShape('landslide'),        dash: severityDash('high') },
     { cls: 'hazard-storm',     label: 'Storm',     shape: hazardShape('tropical storm'),   dash: severityDash('medium') },
@@ -2422,6 +2832,9 @@ function renderMapLegend() {
     { cls: 'food-medium',      label: 'IPC Phase 3+ area', shape: 'footprint' },
     { cls: 'asset-health',     label: 'Health',    shape: 'asset' },
     { cls: 'asset-water',     label: 'Water',     shape: 'asset' },
+    { cls: 'weather-moderate', label: 'Weather (rain today)', shape: 'weather' },
+    { cls: 'discharge-moderate', label: 'River discharge', shape: 'discharge' },
+    { cls: 'disease-other', label: 'Disease outbreak', shape: 'disease' },
   ]
   const pad = 8
   const rowH = 17
@@ -2449,6 +2862,18 @@ function renderMapLegend() {
       // the shape, does not find it, and concludes the map is wrong.
       if (item.shape === 'asset') {
         mapLegendEl.append(svgEl('rect', { x: 14, y: y - 4, width: 8, height: 8, class: `asset-marker ${item.cls}` }))
+      } else if (item.shape === 'weather') {
+        mapLegendEl.append(markerEl('circle', 18, y, 6, `weather-marker ${item.cls}`, {
+          'stroke-dasharray': severityDash('medium'),
+        }))
+      } else if (item.shape === 'discharge') {
+        mapLegendEl.append(markerEl('circle', 18, y, 6, `discharge-marker ${item.cls}`, {
+          'stroke-dasharray': severityDash('medium'),
+        }))
+      } else if (item.shape === 'disease') {
+        mapLegendEl.append(markerEl('circle', 18, y, 6, `disease-marker ${item.cls}`, {
+          'stroke-dasharray': '2,2',
+        }))
       } else {
         mapLegendEl.append(markerEl(item.shape, 18, y, 6, `hazard-marker ${item.cls}`, {
           'stroke-dasharray': item.dash,
@@ -2464,20 +2889,75 @@ function renderMapLegend() {
 // Map zoom / pan
 function applyMapTransform() {
   if (!mapTransformEl) return
+  // Clamp everything here too: callers such as the keyboard handlers, URL
+  // restore, and the new +/- buttons all converge on one guard, and a corrupt
+  // transform cannot escape into the share-link encoder.
+  state.mapTransform.scale = Math.max(0.3, Math.min(10, state.mapTransform.scale))
   mapTransformEl.setAttribute('transform',
     `translate(${state.mapTransform.x},${state.mapTransform.y}) scale(${state.mapTransform.scale})`)
+  // Live zoom scale for CSS: point markers counter-scale by 1/this so they keep
+  // a constant screen size (see the marker rules in styles.css). Set on the SVG
+  // root so every marker layer inherits it.
+  mapEl?.style.setProperty('--map-scale', String(state.mapTransform.scale))
+  updateZoomLevel()
+  // Panning and zooming moved the visible window; the raster basemap (ADR-013)
+  // follows it, debounced so a drag or a wheel burst fetches once per settle,
+  // not once per event.
+  scheduleTileRender()
+}
+
+function updateZoomLevel() {
+  const el = $('zoomLevel')
+  if (el) el.textContent = `${Math.round(state.mapTransform.scale * 100)}%`
+}
+
+/**
+ * Zoom while keeping the viewBox point (cx, cy) fixed.
+ *
+ * The default view is a fitted transform with a large negative translate, so
+ * multiplying scale alone drifts the visible window off the continent. Keeping
+ * the anchor point stationary means zooming out from a Horn fit centres Africa
+ * instead of empty ocean, and zooming in from Africa keeps the cursor region.
+ */
+function zoomAt(cx, cy, factor) {
+  const { x, y, scale } = state.mapTransform
+  const newScale = Math.max(0.3, Math.min(10, scale * factor))
+  const px = (cx - x) / scale
+  const py = (cy - y) / scale
+  state.mapTransform.scale = newScale
+  state.mapTransform.x = cx - px * newScale
+  state.mapTransform.y = cy - py * newScale
+  applyMapTransform()
 }
 
 mapEl?.addEventListener('wheel', (e) => {
   e.preventDefault()
-  const delta = e.deltaY > 0 ? 0.86 : 1.16
-  state.mapTransform.scale = Math.max(0.3, Math.min(10, state.mapTransform.scale * delta))
-  applyMapTransform()
+  state.mapTransformUserSet = true
+  const rect = mapEl.getBoundingClientRect()
+  const cx = ((e.clientX - rect.left) / rect.width) * SVG_W
+  const cy = ((e.clientY - rect.top) / rect.height) * SVG_H
+  zoomAt(cx, cy, e.deltaY > 0 ? 0.86 : 1.16)
 }, { passive: false })
 
+$('zoomInBtn')?.addEventListener('click', () => {
+  state.mapTransformUserSet = true
+  zoomAt(SVG_W / 2, SVG_H / 2, 1.2)
+})
+
+$('zoomOutBtn')?.addEventListener('click', () => {
+  state.mapTransformUserSet = true
+  zoomAt(SVG_W / 2, SVG_H / 2, 1 / 1.2)
+})
+
+$('zoomResetBtn')?.addEventListener('click', () => {
+  state.mapTransformUserSet = false
+  reRenderMapFromState()
+})
+
 mapEl?.addEventListener('pointerdown', (e) => {
-  if (e.target.closest('.hazard-marker, .asset-marker, .hazard-hit, .asset-hit')) return
+  if (e.target.closest('.hazard-marker, .asset-marker, .hazard-hit, .asset-hit, .weather-marker, .weather-hit')) return
   state.mapDragging = true
+  state.mapTransformUserSet = true
   state.mapDragStart = { x: e.clientX - state.mapTransform.x, y: e.clientY - state.mapTransform.y }
   mapEl.setPointerCapture(e.pointerId)
 })
@@ -2492,20 +2972,96 @@ mapEl?.addEventListener('pointermove', (e) => {
 mapEl?.addEventListener('pointerup', () => { state.mapDragging = false })
 mapEl?.addEventListener('pointercancel', () => { state.mapDragging = false })
 
-// Double-click resets zoom
+// Double-click resets zoom to the fitted target frame.
 mapEl?.addEventListener('dblclick', () => {
-  state.mapTransform = { x: 0, y: 0, scale: 1 }
-  applyMapTransform()
+  state.mapTransformUserSet = false
+  reRenderMapFromState()
 })
 
 // Click-to-place pin on the geographic map: a temporary reference marker.
-// Multiple tile services: user-selectable sources for the geographic map.
+
+// The raster basemap (ADR-013).
+//
+// The handler this slot used to hold was the reason the map showed no tiles:
+// it listened for a `<select id="mapTileSource">` that was never added to
+// index.html — optional chaining swallowed the dead binding, so no change ever
+// fired; the one hardcoded `<image>` it would have set (z6/x30/y20) covers the
+// North Sea off Denmark, not the pilot region; and `img-src 'self'` in the CSP
+// forbids fetching a third-party tile host anyway. All three are fixed here:
+// the select exists, the grid is enumerated by the tested slippy-map arithmetic
+// in shared/tiles.js (Turkana at zoom 6 is x38, y31), and every URL is
+// same-origin, served by the server's own proxy route.
+function renderMapTiles() {
+  const mapTilesEl = $('mapTiles')
+  const attributionEl = $('mapAttributionText')
+  if (attributionEl) attributionEl.textContent = TILE_ATTRIBUTION[state.tileSource] || TILE_ATTRIBUTION.none
+  const bbox = state.mapBBox
+  if (!mapTilesEl || !bbox) return
+  if (!TILE_SOURCES[state.tileSource]) {
+    // "none": the vector basemap is the map again — rings and graticule are
+    // already on screen beneath where the tiles were, so clearing is all it
+    // takes and the frame never goes blank.
+    if (state.tileGridKey !== 'none') {
+      state.tileGridKey = 'none'
+      mapTilesEl.innerHTML = ''
+    }
+    return
+  }
+  const view = visibleWorldRect(bbox, state.mapTransform, SVG_W, SVG_H)
+  const zoom = zoomForRect(view, SVG_W, SVG_H)
+  const tiles = tilesForRect(view, zoom)
+  // A guard-bumped frame (degenerate span, > maxTiles) keeps its previous
+  // grid rather than blanking the map mid-gesture.
+  if (!tiles.length) return
+  const key = tileGridKey(state.tileSource, tiles)
+  if (key === state.tileGridKey) return
+  state.tileGridKey = key
+  mapTilesEl.innerHTML = ''
+  for (const tile of tiles) {
+    const rect = svgPlacement(tile, bbox, SVG_W, SVG_H)
+    // Zero-area rects are tiles entirely outside the frame; skip rather than
+    // append invisible elements.
+    if (!rect || rect.width < 1 || rect.height < 1) continue
+    const img = svgEl('image', {
+      href: tileUrlFor(state.tileSource, tile),
+      x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+      preserveAspectRatio: 'none',
+    })
+    img.setAttribute('class', 'map-tile')
+    mapTilesEl.append(img)
+  }
+}
+
+let tileRenderTimer = null
+function scheduleTileRender() {
+  clearTimeout(tileRenderTimer)
+  tileRenderTimer = setTimeout(renderMapTiles, 120)
+}
+
+// The operator's basemap choice persists: a district office opens the same
+// console every morning, and a preference that resets on every restart is a
+// setting the operator will set twice and then stop trusting.
+try {
+  const savedBasemap = localStorage.getItem('lindela.basemap')
+  if (TILE_SOURCES[savedBasemap] || savedBasemap === 'none') {
+    state.tileSource = savedBasemap
+    // The control is rendered into the shell before this module runs, so it
+    // shows the restored choice from first paint rather than the default a
+    // change listener would only correct on first interaction.
+    const basemapSelect = $('mapTileSource')
+    if (basemapSelect) basemapSelect.value = savedBasemap
+  }
+} catch { /* storage unavailable (private mode, disabled) — default stands */ }
+
 $('mapTileSource')?.addEventListener('change', (e) => {
-  const tileEl = $('mapTileImage')
-  if (!tileEl) return
-  const source = e.target.value
-  const urls = { osm: 'https://tile.openstreetmap.org/6/30/20.png', carto: 'https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/6/30/20.png', stamen: 'https://stamen-tiles-a.ssl.fastly.net/toner/6/30/20.png', none: '' }
-  tileEl.setAttribute('href', urls[source] || '')
+  // An unknown value must not be adopted or persisted: a control clobbered
+  // with '' would otherwise store an unrenderable source and disable the
+  // basemap on every load after it.
+  if (!TILE_SOURCES[e.target.value] && e.target.value !== 'none') return
+  state.tileSource = e.target.value
+  state.tileGridKey = null
+  try { localStorage.setItem('lindela.basemap', state.tileSource) } catch { /* storage unavailable */ }
+  renderMapTiles()
 })
 
 mapEl?.addEventListener('click', (e) => {
@@ -2513,7 +3069,9 @@ mapEl?.addEventListener('click', (e) => {
   const rect = mapEl.getBoundingClientRect()
   const x = e.clientX - rect.left, y = e.clientY - rect.top
   const pinEl = document.createElementNS('http://www.w3.org/2000/svg', 'g')
-  pinEl.setAttribute('class', 'user-pin')
+  pinEl.setAttribute('class', 'user-pin map-pin')
+  pinEl.style.setProperty('--pin-x', `${x}px`)
+  pinEl.style.setProperty('--pin-y', `${y}px`)
   pinEl.innerHTML = `<circle cx="${x}" cy="${y}" r="6" fill="#e63946" stroke="white" stroke-width="1.5"/><text x="${x + 8}" y="${y + 4}" font-size="9" fill="#e63946" font-family="var(--font-mono)" font-weight="700">PIN</text>`
   $('mapAssets')?.appendChild(pinEl)
   setTimeout(() => pinEl.remove(), 8000)
@@ -2534,15 +3092,16 @@ mapEl?.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return
 
   switch (e.key) {
-    case 'ArrowLeft':  state.mapTransform.x += PAN_STEP; break
-    case 'ArrowRight': state.mapTransform.x -= PAN_STEP; break
-    case 'ArrowUp':    state.mapTransform.y += PAN_STEP; break
-    case 'ArrowDown':  state.mapTransform.y -= PAN_STEP; break
-    case '+': case '=': state.mapTransform.scale = Math.min(10, state.mapTransform.scale * ZOOM_STEP); break
-    case '-': case '_': state.mapTransform.scale = Math.max(0.3, state.mapTransform.scale / ZOOM_STEP); break
+    case 'ArrowLeft':  state.mapTransformUserSet = true; state.mapTransform.x += PAN_STEP; break
+    case 'ArrowRight': state.mapTransformUserSet = true; state.mapTransform.x -= PAN_STEP; break
+    case 'ArrowUp':    state.mapTransformUserSet = true; state.mapTransform.y += PAN_STEP; break
+    case 'ArrowDown':  state.mapTransformUserSet = true; state.mapTransform.y -= PAN_STEP; break
+    case '+': case '=': state.mapTransformUserSet = true; zoomAt(SVG_W / 2, SVG_H / 2, ZOOM_STEP); break
+    case '-': case '_': state.mapTransformUserSet = true; zoomAt(SVG_W / 2, SVG_H / 2, 1 / ZOOM_STEP); break
     case '0':
-      state.mapTransform = { x: 0, y: 0, scale: 1 }
-      break
+      state.mapTransformUserSet = false
+      reRenderMapFromState()
+      return
     case 't': case 'T':
       toggleMapRecordList()
       break
@@ -2683,12 +3242,13 @@ export function pollDelayMs({ failures = 0, hidden = false, inFlight = false } =
 export const ALL_ENDPOINTS = [
   'health', 'sources', 'ingestionHealth', 'flood', 'conflict', 'events',
   'assets', 'alerts', 'reports', 'reportTemplates', 'climate', 'dispatches', 'workflows',
+  'weather', 'riverDischarge', 'diseaseObservations',
 ]
 
 /** Fetched on every tick: the map and the status bar are never hidden. */
 export const AMBIENT_ENDPOINTS = [
   'health', 'sources', 'ingestionHealth', 'flood', 'conflict', 'events',
-  'assets', 'climate',
+  'assets', 'climate', 'weather', 'riverDischarge', 'diseaseObservations',
 ]
 
 /** Endpoints owned by one tab. Nothing else is fetched while that tab is open. */
@@ -2771,6 +3331,9 @@ async function refresh({ first = false, force = false } = {}) {
       load('reports', '/api/v1/reports?limit=20'),
       load('reportTemplates', '/api/v1/report-templates?limit=20'),
       load('climate', '/api/v1/climate?limit=200'),
+      load('weather', '/api/v1/weather'),
+      load('riverDischarge', '/api/v1/river-discharge'),
+      load('diseaseObservations', '/api/v1/disease-observations?map=1'),
       load('dispatches', '/api/v1/rapidpro/dispatches?limit=200'),
       load('workflows', '/api/v1/workflows?limit=200'),
     ])
@@ -2848,6 +3411,18 @@ async function refresh({ first = false, force = false } = {}) {
       state.climate = merged.climate.data || []
       renderSeasonalStrip(state.climate)
     }
+
+    if (merged.weather) state.weather = merged.weather
+    // Written on failure too, like the workflow panel: a failed weather fetch
+    // must say so rather than leave last tick's sentence standing under glyphs
+    // that are quietly ageing.
+    updateWeatherStatus()
+
+    if (merged.riverDischarge) state.riverDischarge = merged.riverDischarge
+    updateRiverDischargeStatus()
+
+    if (merged.diseaseObservations) state.diseaseObservations = merged.diseaseObservations
+    updateDiseaseStatus()
 
     // Strips load once per refresh for every viewer; the IPC overlay still only
     // fetches its records when the operator ticks it on.
@@ -3945,8 +4520,10 @@ function restoreFiltersFromUrl() {
   const view = decodeView(window.location.search)
   applyFilterValue('mapSeverity', view.severity)
   applyFilterValue('mapTimeRange', view.window)
-  if (view.map) {
-    state.mapTransform = { ...state.mapTransform, ...view.map }
+  const restoredMap = sanitizeMapTransform(view.map)
+  if (restoredMap) {
+    state.mapTransform = { ...state.mapTransform, ...restoredMap }
+    state.mapTransformUserSet = true
     applyMapTransform()
   }
   if (view.selected) state.selectedRecordId = view.selected
