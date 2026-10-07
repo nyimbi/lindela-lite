@@ -2498,6 +2498,18 @@ mapEl?.addEventListener('dblclick', () => {
   applyMapTransform()
 })
 
+// Click-to-place pin on the geographic map: a temporary reference marker.
+mapEl?.addEventListener('click', (e) => {
+  if (e.target.closest('.map-list-toggle, .hazard-marker, .asset-marker')) return
+  const rect = mapEl.getBoundingClientRect()
+  const x = e.clientX - rect.left, y = e.clientY - rect.top
+  const pinEl = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+  pinEl.setAttribute('class', 'user-pin')
+  pinEl.innerHTML = `<circle cx="${x}" cy="${y}" r="6" fill="#e63946" stroke="white" stroke-width="1.5"/><text x="${x + 8}" y="${y + 4}" font-size="9" fill="#e63946" font-family="var(--font-mono)" font-weight="700">PIN</text>`
+  $('mapAssets')?.appendChild(pinEl)
+  setTimeout(() => pinEl.remove(), 8000)
+})
+
 /**
  * Keyboard control of the map.
  *
