@@ -334,12 +334,15 @@ is what surfaced them; a reading of the source had not.
 - **The parametric store currently holds malformed rules** the audit agent created, which cannot be
   deleted until the `DELETE` route lands. Restore from a store backup before a demo, or accept that
   the demo shows three impossible rules.
-  > **Partly resolved.** The `DELETE /api/v1/parametric-rules/:id` route landed
-  > (`src/server.js`), so the rules can now be removed. The three audit-agent rules
-  > (`pr-1` Aweil Drought Rainfall Index, `pr-2` Turkana Flood Pre-financing, `pr-3`
-  > Mandera Conflict Displacement Support) are still present in the untracked
-  > `data/lindela-lite-store.json` — not deleted, only now deletable. Nothing in the
-  > repository depends on them either way.
+  > **Resolved.** The `DELETE /api/v1/parametric-rules/:id` route landed
+  > (`src/server.js`), so the rules could be removed — and on 2026-10-07 they were,
+  > through that route rather than by editing the store: `pr-1` Aweil Drought
+  > Rainfall Index, `pr-2` Turkana Flood Pre-financing, `pr-3` Mandera Conflict
+  > Displacement Support. Each left an action-log entry carrying the whole removed
+  > rule, which is the archive a hard delete depends on. The route had no test at
+  > all, so `test/parametric-rule-delete.test.js` now guards it — including the
+  > claim that the archive survives the write that removes the rule, which is the
+  > failure mode of doing two writes in the wrong order.
 - **`/co` FCP measured 5356 ms** in one cold run. That was cold-profile noise — warm steady state
   is 36 ms — and is recorded here because the number is in the findings file and would otherwise read
   as a defect.

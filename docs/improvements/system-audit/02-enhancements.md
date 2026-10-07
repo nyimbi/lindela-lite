@@ -99,6 +99,12 @@ The floor under every request in the system is one full-table scan. Six of the 5
 **Why not incremental:** unlocks an unbounded, stable, O(1)-per-page browse over a collection that grows without limit — currently impossible, because `total` forces materialisation.
 **Note:** not shipped without `total`. `collectionPage`'s docstring exists to provide it.
 
+**Rescoped, 2026-10-07 — the metric above measures a collection no paginated route can reach.** `record_versions` is 31,629 rows and `collectionPage` has 26 call sites, none of which can name it; the largest collection a paginated route *can* read is `community_feedback` at 360 rows, which pages in 0.115 ms. So "8.2 ms → 0.5 ms on 31,549 rows" is not a latency the product pays.
+
+What R-27 *did* turn up while being re-measured is a correctness defect of the same family, and that is closed: two routes returned a capped `filterRecords` page with no `total`, no `has_more` and no cursor, so a caller could not distinguish a truncated set from a complete one or reach the rest without raising `limit` by hand — and both computed their roll-up from the page, so `summary` described whatever happened to fit. See `01-remediation.md`.
+
+What remains here is genuinely the performance half, bounded by the collections that exist, and worth ~1 week rather than the ~3 the item's call-site arithmetic implied. The trigger is unchanged: a paginated collection large enough that its page cost matters against its own latency budget.
+
 ### ENH-10 — Generated columns for the eight filters that have no index
 **Metric:** filtered query over 39,715 rows `O(N) → O(log N + k)`; predicate filters leaving the 18-pass JS chain: **14 → 2** · **Score: 7.6/3 = 2.5**
 **Change:** extend the established pattern (`src/migrations.js:90-156`) — `country`, `source`, `status`, `severity`, `incident_id`, `intervention_id`, `service_type`, `owner` as generated columns with partial indexes.
@@ -486,6 +492,6 @@ cannot function without.
 | ENH-24 | Shipped: `derivation` on every raised alert — rule version, reading, and the records behind it. | `test/alert-outcomes.test.js` |
 | ENH-49 | Shipped: the bitemporal history as a query, with a coverage block saying how much was pruned. | `test/history-query.test.js` |
 | ENH-50 | Shipped on this branch: the metric registry, with one declared denominator per published rate. | `test/metric-registry.test.js` |
-| ENH-09 | Open. See R-27 in [01-remediation.md](01-remediation.md) for the measurement. |
+| ENH-09 | Half closed (2026-10-07). The correctness half — two routes truncating silently and rolling up from the page — is done and guarded by `test/r27-silent-truncation.test.js`. The performance half (keyset pagination in SQL) is open, re-scoped to ~1 week: the collection the original metric measured is not reachable by any paginated route, and the largest that is, pages in 0.115 ms. See R-27 in [01-remediation.md](01-remediation.md). |
 | ENH-12 | Half shipped (the prune). See the same table. |
 | ENH-17 | Shipped (2026-10-07), in the form this deployment model warrants: the generated column, the partial index, and the predicate in the read's `WHERE` clause. The RLS half was **withdrawn as not applicable**, not blocked — it was a remedy for cross-*tenant* reads, and this deployment has one operator, one country programme and one database. See the correction under the item, and the same table. | `test/partner-sql-predicate.test.js` |
