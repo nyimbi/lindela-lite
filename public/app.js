@@ -2504,7 +2504,7 @@ $('mapTileSource')?.addEventListener('change', (e) => {
   const tileEl = $('mapTileImage')
   if (!tileEl) return
   const source = e.target.value
-  const urls = { osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', carto: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', stamen: 'https://stamen-tiles.a.ssl.fastly.net/toner/{z}/{x}/{y}.png', none: '' }
+  const urls = { osm: 'https://tile.openstreetmap.org/6/30/20.png', carto: 'https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/6/30/20.png', stamen: 'https://stamen-tiles-a.ssl.fastly.net/toner/6/30/20.png', none: '' }
   tileEl.setAttribute('href', urls[source] || '')
 })
 
