@@ -2043,7 +2043,7 @@ label:has(> input[type="radio"]) {
 
 .seasonal-anomaly {
   font-family: var(--font-mono);
-  font-size: 20px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--ink);
 }
@@ -2094,6 +2094,14 @@ label:has(> input[type="radio"]) {
   line-height: 1.5;
   color: var(--ink-faint);
 }
+
+.map-scale { font-family: var(--font-mono); font-size: 8px; color: var(--ink-faint); }
+.map-legend-text { font-size: 10px; color: var(--ink-muted); padding: 4px 0; line-height: 1.4; }
+.map-legend-text p { margin: 0; font-weight: 600; }
+
+.seasonal-enhanced { font-size: 0.8125rem; padding: 0.5rem; background: var(--surface); border: 1px solid var(--stroke); border-radius: var(--r); line-height: 1.5; color: var(--ink); }
+.seasonal-enhanced strong { font-weight: 700; color: var(--ink); }
+.seasonal-enhanced p { margin: 0; }
 
 /* The calendar is the one chart in the strip, and it is allowed to be wider
    than the strip's text column: twelve months cannot be read at 10px in a

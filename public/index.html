@@ -189,7 +189,13 @@
               <g id="mapAssets" class="assets-layer"></g>
             </g>
             <g id="mapLegend" class="map-legend"></g>
+            <g id="mapScale" class="map-scale">
+              <text x="720" y="480" font-size="8" fill="var(--ink-faint)" font-family="var(--font-mono)" text-anchor="end">Scale: ~400 km</text>
+            </g>
           </svg>
+          <div class="map-legend-text" aria-label="Map layer relationships">
+            <p>Districts · Routes · Assets · Hazards · Flood simulation · Food security · Risk assessment</p>
+          </div>
           <div class="seasonal-strip" role="group" aria-label="Seasonal context">
             <div class="seasonal-head">
               <span class="seasonal-label">Seasonal context</span>
@@ -219,6 +225,9 @@
                  that stops the strip being read as a prediction, and burying it is
                  how it gets misread. -->
             <p id="seasonalSummary" class="muted-sm"></p>
+            <div class="seasonal-enhanced" aria-label="Seasonal advisory summary">
+              <p>The Niño 3.4 SST anomaly is <strong id="seasonalAdvisoryValue">—</strong> °C (threshold ±0.5 °C). <strong id="seasonalAdvisoryCount">—</strong> of the required 5 overlapping seasons currently qualify. This is <strong id="seasonalAdvisoryQual">not a declared ENSO event</strong> — advisory only.</p>
+            </div>
             <details>
               <summary>Show the full advisory</summary>
               <p id="seasonalNote" class="seasonal-note">

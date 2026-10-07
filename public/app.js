@@ -674,6 +674,12 @@ function renderSeasonalStrip(observations) {
   }
   if (seasonalSummaryEl) seasonalSummaryEl.textContent = seasonalSummary(state)
   if (seasonalNoteEl) seasonalNoteEl.textContent = seasonalNarrative(state)
+  const advVal = $('seasonalAdvisoryValue')
+  const advCount = $('seasonalAdvisoryCount')
+  const advQual = $('seasonalAdvisoryQual')
+  if (advVal && state) { advVal.textContent = `${state.anomalyC > 0 ? '+' : ''}${state.anomalyC?.toFixed(2) || '—'}` } else if (advVal) { advVal.textContent = '—' }
+  if (advCount && state) { const met = Math.min(state.overlappingSeasons || 0, 5); advCount.textContent = `${met} of 5` } else if (advCount) { advCount.textContent = '— of 5' }
+  if (advQual && state) { advQual.textContent = state.episodeDeclared ? 'CPC episode criterion met: declared event' : 'Not a declared event — advisory only' } else if (advQual) { advQual.textContent = 'Not ingested — no advisory' }
   if (seasonalIndexEl && state?.indexUsed) {
     seasonalIndexEl.textContent = `Niño 3.4 SST anomaly (${state.indexUsed})`
   }
