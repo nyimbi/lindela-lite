@@ -130,7 +130,7 @@ The floor under every request in the system is one full-table scan. Six of the 5
 ### ENH-14 — Scoping is derived from the request, never passed
 **Metric:** routes with unenforced partner scoping **3 handlers → 0**, and the by-id class → impossible · **Score: 9.9/1 = 9.9**
 **Change:** `src/utils.js:130` reads `context.auth` from a request-scoped value rather than an argument; the ~60 `{ auth: req.__auth }` call-site arguments are deleted. A route that forgets now throws rather than returning the store.
-**Why not incremental:** **fail-closed by construction** rather than by review, and it is the only item that makes multi-tenant deployment possible at all.
+**Why not incremental:** **fail-closed by construction** rather than by review, and it is the only item that makes it possible for a handler added next year to be closed rather than silently widened.
 **Remediation:** R-06, R-08.
 
 ### ENH-15 — The read fallback becomes a denial
@@ -144,11 +144,16 @@ The floor under every request in the system is one full-table scan. Six of the 5
 **Why not incremental:** the only limiter in the system protects Lindela *from* RapidPro, not Lindela from its callers. On a field deployment this is the difference between a slow morning and an ingestion pipeline that stops during an outbreak.
 **Remediation:** R-09.
 
-### ENH-17 — `partner_org` becomes a stored column with row-level security
-**Metric:** the tenant predicate `O(N)` scan → index lookup; the ENH-14 leak class → **impossible to express** · **Score: 8.0/3 = 2.7**
-**Change:** generated column + `(collection, partner_org)` partial index, then `ALTER TABLE … ENABLE ROW LEVEL SECURITY` keyed on `current_setting('app.partner_org')`.
-**Why not incremental:** moves isolation out of application code and into the engine, so a future query author cannot forget it.
-**Blocker:** `src/pg0.js:62-64` connects as `postgres`, a superuser who **bypasses RLS entirely**. The deployment story changes first, or the policy is decorative.
+### ENH-17 — `partner_org` becomes a stored column, and the predicate moves into the query
+**Metric:** the partner predicate `O(N)` scan → index lookup; rows the caller may not see stay off the wire · **Score: 8.0/2 = 4.0**
+**Change:** generated column + `(collection, partner_org)` partial index; the predicate becomes a `WHERE` clause in `PostgresStore.read()` instead of a filter over what was already fetched. `src/server.js` passes the caller's organisation from the request context, as it already does for the collection manifest (ENH-07).
+**Why not incremental:** the JavaScript predicate was correct and already applied by `filterRecords`, so this is a cost change rather than a leak fix — rows crossed the wire and were then discarded. Both layers remain; this one removes them from the result.
+
+**Correction to the original framing, 2026-10-07.** This item was written as tenancy, and the RLS half was specified as `ALTER TABLE … ENABLE ROW LEVEL SECURITY` keyed on `current_setting('app.partner_org')`. That framing does not describe this product. A Lindela Lite deployment is **one operator running one country programme against one database**; `partner_org` separates *organisations working the same response* — NGO A's field reports from NGO B's — not customers sharing infrastructure. The records behind it carry names and affected household counts, so one organisation reading another's is a disclosure, which is why the boundary is worth enforcing.
+
+RLS is a remedy for the threat it is designed against: making cross-*tenant* reads inexpressible, so that no future query author can forget the predicate. This deployment has no second tenant. The stated "blocker" was also self-defeating — `src/pg0.js` connects as `postgres`, a superuser that bypasses RLS entirely, so the policy would have been decorative regardless of framing. So the RLS half is **not applicable** rather than blocked. What is worth building for this model is what shipped: the predicate in the query, so the rows never leave the database.
+
+Guard: `test/partner-sql-predicate.test.js`, against a real PostgreSQL. Note that `filterRecords` masks a broken SQL clause by re-applying the same predicate in JavaScript, so no existing partner-isolation test can see a clause that matches too much; the tests here assert on what the store returns.
 
 ### ENH-18 — Retention runs on a schedule and covers every PII collection
 **Metric:** PII collections without a retention rule **1 → 0**; retention runs that happen only when a human remembers → **scheduled** · **Score: 7.8/1.5 = 5.2**

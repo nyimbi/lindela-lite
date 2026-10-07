@@ -8,7 +8,16 @@ import { createServer } from '../src/server.js'
 import { JsonStore } from '../src/store.js'
 
 /**
- * Multi-tenancy was a no-op that displayed itself as working.
+ * Partner-organisation scoping was a no-op that displayed itself as working.
+ *
+ * To be precise about what this separates, because the word "multi-tenancy" is
+ * the wrong one and has been used for this feature throughout: a Lindela Lite
+ * deployment is one operator running one country programme against one
+ * database. `partner_org` separates *organisations working the same response* —
+ * NGO A's field reports from NGO B's — not customers sharing infrastructure.
+ * The records it guards are the ones carrying names and affected household
+ * counts, so one organisation reading another's is a disclosure, not a cosmetic
+ * mismatch.
  *
  * `scopeToPartnerOrg` keyed on `auth.partner_org`, a field `authenticate()`
  * never set — so it always returned every record. It had no call sites in
@@ -28,7 +37,7 @@ const TOKENS = JSON.stringify([
 ])
 
 async function withServer(fn) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-tenant-'))
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-partner-'))
   const store = new JsonStore(path.join(dir, 'store.json'))
   const listener = createServer({ store }).listen(0)
   const base = `http://localhost:${listener.address().port}`
@@ -126,7 +135,7 @@ describe('a partner claim is enforced', () => {
   it('scopes the widest read in the API', async () => {
     // GET /api/v1/export.csv is the route SEC-01 found serving field reports
     // and RapidPro message bodies unauthenticated. It also passed no context
-    // at all, so it had no tenant scoping either: an export that ignored the
+    // at all, so it had no partner scoping either: an export that ignored the
     // token would undo everything the list routes now do.
     await withServer(async (base, store) => {
       await store.merge({ service_assets: assets })
@@ -205,7 +214,7 @@ describe('the calibration figures are scoped like the records beside them', () =
 	// JTBD-018 cited `calibrationReport` as evidence that
 	// GET /api/v1/assessments "includes calibration metadata". It did not: the
 	// function was exported, documented and called from nowhere. Wiring it
-	// creates a second way to learn about another tenant's data — a mean over
+	// creates a second way to learn about another organisation's data — a mean over
 	// scores the caller may not read — so the wiring has to carry the scope.
 	const scores = [
 		{ id: 's1', type: 'flood_risk', score: 40, confidence: 0.8, interval_width: 20, partner_org: 'orgA' },

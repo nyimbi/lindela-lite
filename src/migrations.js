@@ -25,7 +25,7 @@
  */
 
 /** The version this build expects. A database below it needs migrating. */
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 /**
  * The eight filters `filterRecords` implements in JavaScript with no index
@@ -290,6 +290,57 @@ export const MIGRATIONS = Object.freeze([
            ON lite_records (${column === 'incident_id' || column === 'intervention_id' ? '' : 'collection, '}${column})
          WHERE ${column} IS NOT NULL`,
       ]).flat(),
+    ],
+  }),
+
+  /**
+   * ENH-17 — the partner-organisation predicate becomes an index lookup, and
+   * moves into the engine's WHERE clause rather than into a filter over a
+   * materialised array.
+   *
+   * Before this, a partner token's isolation was `filterRecords` comparing
+   * `item.partner_org` across every record the read had already fetched — an
+   * O(N) scan over rows the caller was never entitled to see, on a store the
+   * audit measured at 39,715 rows. The rows crossed the wire either way. The
+   * isolation was correct and the cost of it was not.
+   *
+   * Same shape as migrations 3 and 5 for the same reason: a generated column
+   * read from the body, so nothing is backfilled by hand and a write path cannot
+   * produce a row whose column disagrees with it.
+   *
+   * **Null is not a match.** The JavaScript predicate is
+   * `item?.partner_org === partnerOrg` — strict equality — so a record with no
+   * partner is *invisible* to a partner token. An index on (collection,
+   * partner_org) answers that exactly. It must not become
+   * `partner_org IS NULL OR partner_org = $2`: that would hand every partner
+   * token every untagged record in the deployment, which is the leak this item
+   * exists to close. The index is partial on IS NOT NULL for the same reason as
+   * the others.
+   *
+   * **What this is protecting, and what it is not.** This is not multi-tenancy.
+   * A Lindela Lite deployment is one operator running one country programme
+   * against one database, and `partner_org` separates *organisations working the
+   * same response* — NGO A's field reports versus NGO B's — not customers sharing
+   * infrastructure. The records behind it are the ones carrying names and
+   * affected household counts, which is why a partner token reading another
+   * organisation's rows is a disclosure and not a cosmetic mismatch. That
+   * boundary is worth an index and a WHERE clause. It is not the threat
+   * row-level security was designed for, and the audit's RLS proposal — keyed on
+   * `current_setting('app.partner_org')`, with a non-superuser role and per-request
+   * session plumbing — was aimed at making cross-*tenant* reads inexpressible.
+   * That remedy belongs to a deployment model this product does not have, so
+   * ENH-17's RLS half is recorded as not applicable rather than as blocked on a
+   * superuser. What is left of ENH-17 is the half this migration delivers.
+   */
+  Object.freeze({
+    version: 6,
+    name: 'partner_org index column',
+    up: [
+      `ALTER TABLE lite_records ADD COLUMN IF NOT EXISTS partner_org TEXT
+         GENERATED ALWAYS AS (NULLIF(body->>'partner_org', '')) STORED`,
+      `CREATE INDEX IF NOT EXISTS lite_records_partner_org_idx
+         ON lite_records (collection, partner_org)
+       WHERE partner_org IS NOT NULL`,
     ],
   }),
 ])

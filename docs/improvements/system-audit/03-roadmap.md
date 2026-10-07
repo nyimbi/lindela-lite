@@ -113,7 +113,7 @@ parallelism and every lineage row's `upstream_url_or_endpoint` is another source
 |---|---|---|---|---|
 | **P0** | 6 | 1 | Client offline correctness + the alert loop | A service worker registers in a browser; a week of offline reports reaches the server exactly once; a scheduled cycle raises an alert when a threshold crosses; a failed dispatch raises an alert about itself |
 | **P1** | 5 | 1 | Storage | `read()` takes a manifest; a request transfers one collection, not the store; a write no longer reads the whole table; the version table is off the default read path |
-| **P2** | 4 | 1 | Authorisation | Every route derives its tenant from the request; an unmapped read is denied; every route has an inbound budget; retention runs on a schedule over every PII collection |
+| **P2** | 4 | 1 | Authorisation | Every route derives the caller's partner organisation from the request; an unmapped read is denied; every route has an inbound budget; retention runs on a schedule over every PII collection |
 | **P3** | 5 | 1 | Ingestion | A killed run loses at most one source; 9 sources run with bounded concurrency; a killed backfill resumes from its cursor |
 | **P4** | 8 | 2 | Veracity | Outcomes are recorded; calibration is estimable; a district rate below the sample floor cannot be produced by any consumer |
 | **P5** | 3 | 1 | Client + gates | Every gate runs on every push; the front end is testable in Node; the console's alert rail cannot claim an unearned negative |
@@ -136,7 +136,7 @@ should be pulled *forward* into P0 — it is half a day and it is what stops the
 |---|---|
 | **P0** | A health worker can file for a week with no connectivity and be believed. A threshold crossing alerts without a human. A deployment that is down says so. |
 | **P1** | The store can grow past a laptop. Per-collection cost replaces whole-store cost, so the storage model stops being the thing that dictates whether a deployment is viable. |
-| **P2** | Multi-tenant partner hosting becomes possible at all. Today it is not a configuration; it is a decision not to route `auth` on three handlers. |
+| **P2** | Organisations working the same response stop reading each other's field reports. Today it is not a configuration; it is a decision not to route `auth` on three handlers. (Not multi-tenant hosting — see the correction under ENH-17 in `02-enhancements.md`.) |
 | **P3** | Runs become interruptible and resumable. A 4.2-hour archive crawl is no longer an all-or-nothing gamble, and adding sources stops costing wall-clock linearly. |
 | **P4** | Calibration becomes estimable. Today every calibration surface reports "not measurable" because nothing reports outcomes — this is the item that makes the honesty discipline *productive* rather than purely defensive. |
 | **P5** | The front end is testable without a browser, and a defect that needs a browser to find is one that will be found. |

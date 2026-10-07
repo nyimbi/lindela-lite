@@ -78,7 +78,7 @@ describe('Lindela Lite webhook URL SSRF guard', () => {
   it('accepts public address literals, including one just outside 172.16/12', async () => {
     // Address literals need no resolver, so this holds offline too. 172.32.0.1
     // sits outside RFC1918; getting that boundary wrong silently blackholes a
-    // block of legitimate tenants.
+    // block of legitimate subscriber addresses.
     assert.equal(await assertSafeWebhookUrl('https://8.8.8.8/hook'), 'https://8.8.8.8/hook')
     assert.equal(await assertSafeWebhookUrl('http://172.32.0.1/hook'), 'http://172.32.0.1/hook')
   })

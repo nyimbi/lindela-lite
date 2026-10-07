@@ -347,12 +347,14 @@ traversal check already applied upstream.
 
 ## Unresolved
 
-- **`scopeToPartnerOrg` is unreachable.** `authenticate` returns `{token,
-  scopes, subject}` and nothing sets `partner_org`, so the guard
-  `if (!auth?.partner_org) return records` always takes the early return.
-  Multi-tenant record filtering is designed but not wired. Whether the intent is
-  to populate `partner_org` from the token record or to delete the function is
-  not decided in the code.
+- ~~**`scopeToPartnerOrg` is unreachable.**~~ Resolved. `authenticate` used to
+  return `{token, scopes, subject}` with nothing setting `partner_org`, so the
+  guard `if (!auth?.partner_org) return records` always took the early return.
+  Tokens may now carry `partner_org`, and it is read from the token definition
+  into the authenticated principal (`src/auth.js`). Note this is
+  per-*organisation* record filtering for organisations working the same
+  response, not multi-tenancy: one deployment is one operator running one
+  country programme against one database.
 - **`LINDELA_LITE_MAX_BODY_BYTES` is read once, at module load.**
   `DEFAULT_MAX_BODY_BYTES` (`src/utils.js:270`) is a module-level constant
   initialised from `process.env`, so changing the variable after the process

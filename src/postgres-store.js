@@ -33,11 +33,17 @@ const HISTORY_COLLECTION = 'record_versions'
  * `read([])` a way to accidentally read everything.
  */
 function normaliseReadOptions(options) {
-  if (Array.isArray(options)) return { collections: options, includeHistory: false }
-  const { collections = null, includeHistory = false } = options || {}
+  if (Array.isArray(options)) return { collections: options, includeHistory: false, partnerOrg: null }
+  const { collections = null, includeHistory = false, partnerOrg = null } = options || {}
   return {
     collections: collections === null || collections === undefined ? null : [...collections],
     includeHistory: Boolean(includeHistory),
+    // ENH-17. Null means "this token is not scoped to a partner organisation",
+    // which is a different statement from "this caller may see everything" and
+    // has to stay distinguishable: `partner_org = $2` with a null parameter
+    // matches nothing, which would blank every partner's view rather than
+    // over-share it.
+    partnerOrg: typeof partnerOrg === 'string' && partnerOrg ? partnerOrg : null,
   }
 }
 
@@ -196,7 +202,7 @@ export class PostgresStore {
    */
   async read(options = {}) {
     await this.ensureSchema()
-    const { collections, includeHistory } = normaliseReadOptions(options)
+    const { collections, includeHistory, partnerOrg } = normaliseReadOptions(options)
 
     const clauses = ["collection <> '__schema'"]
     const params = []
@@ -205,6 +211,26 @@ export class PostgresStore {
       clauses.push(`collection = ANY($${params.length}::text[])`)
     }
     if (!includeHistory) clauses.push(`collection <> '${HISTORY_COLLECTION}'`)
+    // ENH-17: the partner-organisation predicate in the WHERE clause, not in a
+    // filter over what was already fetched. An index lookup on (collection,
+    // partner_org) instead of an O(N) scan over rows the caller may not see.
+    //
+    // This is one deployment serving one country programme, and this predicate
+    // keeps one partner organisation out of another's field reports. It is not a
+    // tenancy boundary, and it is not the only thing standing between two NGOs:
+    // `filterRecords` still applies the same predicate in JavaScript over what
+    // comes back. This clause removes rows the caller may not see from the
+    // result rather than replacing that check.
+    //
+    // Strict equality, deliberately — `filterRecords` uses `===`, so a record
+    // with no partner is invisible to a partner token, and
+    // `partner_org IS NULL OR partner_org = $2` would hand every partner token
+    // every untagged row in the deployment. Verified against PostgreSQL 18: the
+    // strict form returns 1 of 4 seeded rows, the nullable form returns 3.
+    if (partnerOrg) {
+      params.push(partnerOrg)
+      clauses.push(`partner_org = $${params.length}`)
+    }
 
     // ENH-07 / ENH-08. This used to be
     //

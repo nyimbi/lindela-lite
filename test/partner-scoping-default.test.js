@@ -77,7 +77,7 @@ describe('partner scoping applies by default', () => {
     const inside = runWithRequestContext(null, () =>
       filterRecords(records, query, {}).map((r) => r.id))
     assert.deepEqual(inside, ['fr-a', 'fr-b', 'fr-c'],
-      'no partners configured means no tenant predicate — not an empty result')
+      'no partners configured means no partner predicate — not an empty result')
   })
 
   it('outside a request there is no identity', () => {
@@ -111,7 +111,7 @@ describe('the scoping is wired to the request, not to the call site', () => {
     // directly. There was nothing to bypass because nothing was there.
     // Anchored inside `handleOperationalRoute`: the file has several by-id
     // branches and the first one globally belongs to report_templates, which is
-    // platform configuration rather than tenant data.
+    // platform configuration rather than one partner's data.
     const fnStart = source.indexOf('async function handleOperationalRoute')
     assert.ok(fnStart > 0, 'handleOperationalRoute must exist')
     // The GET branch only. A write path legitimately looks the record up raw
@@ -122,7 +122,7 @@ describe('the scoping is wired to the request, not to the call site', () => {
     assert.ok(getStart > fnStart && postStart > getStart, 'both branches must exist')
     const branch = source.slice(getStart, postStart)
     assert.match(branch, /filterRecords\(/,
-      'a by-id read must carry the same tenant predicate as the list form')
+      'a by-id read must carry the same partner predicate as the list form')
     assert.ok(
       !/data\[route\.collection\]\.find\(/.test(branch),
       'a raw `.find()` over the collection bypasses every predicate by construction',

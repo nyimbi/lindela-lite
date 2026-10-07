@@ -508,7 +508,7 @@ integration.
   A repeat inside the window replays the original response byte for byte, with
   `idempotency-replayed: true`. The key is scoped by caller, method and path
   before lookup — unscoped, two partners both using `"1"` would receive each
-  other's writes, a cross-tenant read manufactured entirely from request headers.
+  other's writes, a cross-partner read manufactured entirely from request headers.
   A key reused with a *different* body is a `409`, not a replay: answering with
   a receipt for work that was never done is worse than running the request.
   Failures are never cached. The window is 24 hours, in-process, capped at 1000
@@ -636,7 +636,7 @@ be checked.
   server and, when the token carries no partner scope, says so instead of
   showing platform data under a partner's heading.
 - **`GET /api/v1/export.csv` passed no context at all** — no district
-  resolution, and now no tenant scoping either. It is the widest read in the
+  resolution, and now no partner scoping either. It is the widest read in the
   API and the route SEC-01 found serving field reports and message bodies
   unauthenticated; an export that ignored the token would undo the scoping the
   list routes now perform.

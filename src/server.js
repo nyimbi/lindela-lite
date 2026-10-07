@@ -40,7 +40,7 @@ import {
 } from './reports.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
-import { collectionPage, createIdempotencyStore, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
+import { collectionPage, createIdempotencyStore, currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
@@ -617,7 +617,7 @@ const idempotency = createIdempotencyStore({ ttlMs: 24 * 60 * 60 * 1000, maxEntr
  *
  * An unscoped key would let one caller name another's response: two partners
  * both using `key: "1"` would receive each other's incidents, which is a
- * cross-tenant read manufactured entirely from request headers.
+ * cross-partner read manufactured entirely from request headers.
  */
 function idempotencyKey(req, subject, url) {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return null
@@ -837,7 +837,17 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
   // (`src/route-manifests.js`). `null` — a whole-store read — is the answer for
   // an unrecognised path and for the surfaces measured as genuinely wide, so
   // this fails towards the old cost and never towards a 500.
-  const data = await store.read({ collections: collectionsForRequest(req.method, url.pathname) })
+  // ENH-07 and ENH-17 in one call: which collections this route reads, and which
+  // partner organisation's rows it may see. The organisation comes from the
+  // request context rather than from a parameter, for the same reason the scope
+  // does — a caller that forgets to pass it must not see another organisation's
+  // data, and one that does pass it wrong must not either. `filterRecords`
+  // applies the same predicate in JavaScript to what comes back; this keeps the
+  // rows the caller may not see off the query in the first place.
+  const data = await store.read({
+    collections: collectionsForRequest(req.method, url.pathname),
+    partnerOrg: currentRequestAuth()?.partner_org || null,
+  })
   req.__auth = auth
 
   if (req.method === 'GET' && url.pathname === '/api/v1/auth-info') {
@@ -1941,7 +1951,7 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
       ...data.rapidpro_inbound_messages,
       ...data.service_assets,
     // No context at all, so this route had neither district resolution nor
-    // tenant scoping. It is the single widest read in the API and the one
+    // partner scoping. It is the single widest read in the API and the one
     // SEC-01 found serving field reports and message bodies unauthenticated.
     ], url.searchParams, { auth: req.__auth, data, collection: 'export' })
     res.writeHead(200, {
@@ -3097,8 +3107,8 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.id) {
-    // Through `filterRecords`, so a by-id read carries the same tenant predicate
-    // as the list form.
+    // Through `filterRecords`, so a by-id read carries the same
+    // partner-organisation predicate as the list form.
     //
     // This was `data[route.collection].find((item) => item.id === route.id)` with
     // no scoping expression at all — so given an id from any listing, partner A

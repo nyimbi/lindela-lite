@@ -265,7 +265,7 @@ describe('a retried mutation happens once', () => {
   it('does not let one caller name another\'s response', async () => {
     // The key is scoped by caller, method and path before lookup. Unscoped,
     // two partners both using "1" would receive each other's imports — a
-    // cross-tenant read manufactured entirely from request headers.
+    // cross-partner read manufactured entirely from request headers.
     const tokens = JSON.stringify([
       { token: 'tok-a', scopes: ['*'], partner_org: 'orgA' },
       { token: 'tok-b', scopes: ['*'], partner_org: 'orgB' },

@@ -5,7 +5,8 @@ import { stableId, nowIso } from './utils.js'
 
 // Ranges that must never be reachable from a subscriber-supplied webhook target.
 // Anything here is either the platform's own infrastructure, a cloud metadata
-// service, or a private network the operator never intended to expose to tenants.
+// service, or a private network on the operator's LAN that no external
+// subscriber — partner organisation or not — was ever meant to reach.
 const NON_PUBLIC_IPV4 = [
   ['0.0.0.0', 8], // "this network"
   ['10.0.0.0', 8], // RFC1918
