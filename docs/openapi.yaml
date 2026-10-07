@@ -1029,21 +1029,27 @@ paths:
         `0.2` means 20%. Coordinates are null; geometry is a bounding box where
         the dataset GeoJSON matched the area name — a bbox includes
         neighbouring ground the classification does not cover.
+
+        `data` is one page and carries `PaginationMeta` beside it; `summary` is
+        computed over every record that matched the filters, not over the page.
+        Page with `?cursor=` — a small `limit` does not change the roll-up.
       responses:
         '200':
           description: Food security records and a summary
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  success: { type: boolean }
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/FoodSecurityRecord'
-                  summary:
-                    $ref: '#/components/schemas/FoodSecuritySummary'
+                allOf:
+                  - $ref: '#/components/schemas/PaginationMeta'
+                  - type: object
+                    properties:
+                      success: { type: boolean }
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FoodSecurityRecord'
+                      summary:
+                        $ref: '#/components/schemas/FoodSecuritySummary'
   /api/v1/food-security/summary:
     get:
       summary: Phase 3+ roll-up, latest published window per country/area
@@ -1063,21 +1069,28 @@ paths:
         are null and nothing here is evidence about a district. Series that
         stopped publishing are marked stale in the summary — silence may mean
         absence of published data, not absence of disease.
+
+        `data` is one page and carries `PaginationMeta` beside it; `summary` is
+        computed over every record that matched the filters, so `series_state`
+        names every indicator that matched rather than the ones that happened to
+        fit the page. Page with `?cursor=`.
       responses:
         '200':
           description: Disease observation records and a summary
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  success: { type: boolean }
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/DiseaseObservation'
-                  summary:
-                    $ref: '#/components/schemas/DiseaseObservationsSummary'
+                allOf:
+                  - $ref: '#/components/schemas/PaginationMeta'
+                  - type: object
+                    properties:
+                      success: { type: boolean }
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/DiseaseObservation'
+                      summary:
+                        $ref: '#/components/schemas/DiseaseObservationsSummary'
   /api/v1/flood-probability/train:
     post:
       summary: Train the empirical rainfall-flood model per pilot district

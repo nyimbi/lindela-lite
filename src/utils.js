@@ -242,18 +242,21 @@ export function filterRecords(records, query, context = {}, { unlimited = false 
 }
 
 /**
- * A collection response that can say how much it is not showing you.
+ * A page, plus the whole matched set it was cut from.
  *
- * `filterRecords` alone answered "here are up to `limit` records" with nothing
- * about what else exists, so a caller could not distinguish an empty collection
- * from a truncated one. Every consumer that wanted to show a count had to
- * re-derive it by fetching with a raised limit, which is a second full scan
- * and a second chance to disagree with the first.
+ * Split out from `collectionPage` for the routes that carry a roll-up beside
+ * their list — `/food-security`, `/disease-observations`. Those routes used to
+ * compute the summary from the *capped page*, which is the same honesty failure
+ * `collectionPage` exists to prevent, one layer up: a caller reading `summary`
+ * had no way to know it described 500 records rather than 4,517. They need both
+ * halves — the page for `data`, the full set for the roll-up — and calling
+ * `filterRecords` twice to get them would be a second scan that could disagree
+ * with the first.
  *
- * `total` is what matched the filters, `returned` is what this page carries,
- * and `has_more` says whether asking again is worth it.
+ * `matched` is not serialised by `collectionPage`; only the two routes that
+ * want it read it.
  */
-export function collectionPage(records, query, context = {}) {
+export function matchedAndPage(records, query, context = {}) {
   const matched = filterRecords(records, query, context, { unlimited: true })
   const cursor = decodeCursor(query.get('cursor'))
   const limit = Math.min(Math.max(Number(query.get('limit') || 500), 1), 5000)
@@ -277,6 +280,7 @@ export function collectionPage(records, query, context = {}) {
   const last = page.length ? page[page.length - 1] : null
   const hasMore = start + page.length < matched.length
   return {
+    matched,
     returned: page.length,
     limit,
     total: matched.length,
@@ -286,6 +290,23 @@ export function collectionPage(records, query, context = {}) {
     next_cursor: hasMore && last ? encodeCursor(last.id) : null,
     data: page,
   }
+}
+
+/**
+ * A collection response that can say how much it is not showing you.
+ *
+ * `filterRecords` alone answered "here are up to `limit` records" with nothing
+ * about what else exists, so a caller could not distinguish an empty collection
+ * from a truncated one. Every consumer that wanted to show a count had to
+ * re-derive it by fetching with a raised limit, which is a second full scan
+ * and a second chance to disagree with the first.
+ *
+ * `total` is what matched the filters, `returned` is what this page carries,
+ * and `has_more` says whether asking again is worth it.
+ */
+export function collectionPage(records, query, context = {}) {
+  const { matched, ...page } = matchedAndPage(records, query, context)
+  return page
 }
 
 /**

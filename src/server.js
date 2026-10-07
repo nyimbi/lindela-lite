@@ -40,7 +40,7 @@ import {
 } from './reports.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
-import { collectionPage, createIdempotencyStore, currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
+import { collectionPage, createIdempotencyStore, currentRequestAuth, filterRecords, jsonResponse, matchedAndPage, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
@@ -1303,8 +1303,16 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
   if (url.pathname === '/api/v1/food-security') {
     // Summary rides along with the list, like road-access: a caller paging the
     // records gets the roll-up for nothing instead of a second request.
-    const records = filterRecords(data.food_security_records || [], url.searchParams, { auth: req.__auth, data, collection: 'food_security_records' })
-    jsonResponse(res, 200, { success: true, data: records, summary: summarizeFoodSecurity(records) })
+    //
+    // R-27. This called `filterRecords` and returned its capped page directly —
+    // no `total`, no `has_more`, no cursor. Against the demo store that is 500
+    // of 4,517 records with nothing to say so, and the remaining 4,017 were
+    // unreachable: raising `limit` was the only way in, which is the second
+    // full scan `collectionPage`'s docstring was written to end. The roll-up is
+    // computed from the whole matched set rather than the page, so it describes
+    // what matched rather than what happened to fit.
+    const { matched, ...page } = matchedAndPage(data.food_security_records || [], url.searchParams, { auth: req.__auth, data, collection: 'food_security_records' })
+    jsonResponse(res, 200, { success: true, ...page, summary: summarizeFoodSecurity(matched) })
     return
   }
 
@@ -1314,8 +1322,12 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
   }
 
   if (url.pathname === '/api/v1/disease-observations') {
-    const records = filterRecords(data.disease_observations || [], url.searchParams, { auth: req.__auth, data, collection: 'disease_observations' })
-    jsonResponse(res, 200, { success: true, data: records, summary: summarizeDiseaseObservations(records) })
+    // R-27, as above: paged and self-describing rather than a silent cap, and
+    // the series states come from the whole matched set. The comment on
+    // `/disease-observations/summary` below already said why computing them
+    // over a page is wrong — this route was doing exactly that.
+    const { matched, ...page } = matchedAndPage(data.disease_observations || [], url.searchParams, { auth: req.__auth, data, collection: 'disease_observations' })
+    jsonResponse(res, 200, { success: true, ...page, summary: summarizeDiseaseObservations(matched) })
     return
   }
 
