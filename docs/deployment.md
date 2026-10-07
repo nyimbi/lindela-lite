@@ -63,7 +63,78 @@ http://127.0.0.1:4177/docs/deployment.md
 | `docker-compose.yml` | App, PostgreSQL, health checks, persistent volume. |
 | `.env.example` | Editable deployment configuration template. |
 | `deploy/one-click.sh` | Bootstrap script for local or VPS deployment. |
+| `install.sh` | `curl … \| bash` installer for a bare host. |
+| `scripts/deploy.sh` | Pushes this checkout to a remote host over SSH. |
+| `run.sh` | Runs an instance from this checkout, no Docker. |
 | `.dockerignore` | Keeps local data, node modules, secrets, and git metadata out of the image. |
+
+## Three Ways In
+
+They all end at the same Compose stack, because a second deployment story is a
+second thing that can be wrong. They differ in how the code gets there and in
+where the process runs.
+
+| | `run.sh` | `install.sh` | `scripts/deploy.sh` |
+| --- | --- | --- | --- |
+| For | development | provisioning a bare host | updating a host you already have |
+| Store | JSON, no Docker | PostgreSQL, Compose | PostgreSQL, Compose |
+| Where it runs | this machine | the target machine | your machine, over SSH |
+| Binds | `127.0.0.1` | every interface (published port) | every interface (published port) |
+| Auth | off unless `--key` | generated, never printed | generated on the host, never printed |
+
+```bash
+./run.sh --check                 # what a local run would do, starting nothing
+./run.sh --seed                  # seed a demo store, then serve it
+curl -fsSL https://raw.githubusercontent.com/nyimbi/lindela-lite/main/install.sh | bash
+./scripts/deploy.sh deploy@edge.example.org
+```
+
+### A note on `curl … | bash`
+
+`install.sh` is the usual remote-install pattern, and that pattern has a property
+worth stating rather than glossing: **it executes whatever the server returns, as
+the invoking user, with no review step.** Nothing in the script can change that.
+Two things reduce the risk, and both are the reader's to take:
+
+```bash
+# Read it first.
+curl -fsSL <url> -o install.sh && less install.sh && bash install.sh
+
+# Or pin a commit — …/main/install.sh pins nothing, because `main` moves.
+curl -fsSL <url>/v0.2.0/install.sh | bash
+```
+
+The script prints its own SHA-256 and the repository and ref it is about to
+install, before doing anything. That does not make the download trustworthy; it
+makes the bytes you ran identifiable afterwards, which is the part that helps
+when something has already gone wrong.
+
+It will not install Docker for you. An installer that silently modifies the
+host's package manager is a much larger thing to trust than one that reads the
+host, says what is missing, and stops.
+
+## Bind Address
+
+`LINDELA_LITE_HOST` controls what the process binds. It defaults to `0.0.0.0`,
+because a container bound to `127.0.0.1` is unreachable through a published
+port — so the default cannot move without breaking every deployment. `Dockerfile`
+and `docker-compose.yml` both set it explicitly for the same reason.
+
+Set it to `127.0.0.1` for a bare-metal run. This matters more than it looks:
+`listen(port)` with no host binds every interface, so a run on a laptop is
+reachable from the office network — and **with no `LINDELA_LITE_TOKENS` and no
+`LINDELA_LITE_API_KEY` set, authentication is disabled entirely.** The startup
+line used to print `http://127.0.0.1:<port>` regardless, which was the opposite
+of what the process was doing. It now says which it is:
+
+```
+Lindela Lite listening on http://127.0.0.1 (bound to every interface):4177
+  This is reachable from other machines on your network.
+  Set LINDELA_LITE_HOST=127.0.0.1 to bind loopback only.
+```
+
+`run.sh` binds loopback by default and refuses to start unauthenticated on any
+other address. Guarded by `test/listen-address-honesty.test.js`.
 
 ## What The Script Does
 

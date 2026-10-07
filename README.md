@@ -38,6 +38,22 @@ npm start
 
 The server listens on `LINDELA_LITE_PORT` or `4177`.
 
+`npm start` binds **every interface**, because a container bound to loopback
+would make a published port unreachable. On a laptop that publishes the
+platform to your network, and with no API key configured, authentication is off.
+Use `./run.sh` for development — it binds loopback, reports what it is doing, and
+refuses to start unauthenticated on any wider address:
+
+```bash
+./run.sh --check        # preflight only
+./run.sh --seed         # seed a demo store, then serve it
+./run.sh --key devkey   # require an API key
+```
+
+For deployment see [docs/deployment.md](docs/deployment.md): `deploy/one-click.sh`
+for Docker Compose, `install.sh` for `curl … | bash` on a bare host, and
+`scripts/deploy.sh` to push over SSH.
+
 ```bash
 curl http://127.0.0.1:4177/api/v1/health
 curl -X POST http://127.0.0.1:4177/api/v1/ingest/run \
