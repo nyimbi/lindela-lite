@@ -2499,6 +2499,15 @@ mapEl?.addEventListener('dblclick', () => {
 })
 
 // Click-to-place pin on the geographic map: a temporary reference marker.
+// Multiple tile services: user-selectable sources for the geographic map.
+$('mapTileSource')?.addEventListener('change', (e) => {
+  const tileEl = $('mapTileImage')
+  if (!tileEl) return
+  const source = e.target.value
+  const urls = { osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', carto: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', stamen: 'https://stamen-tiles.a.ssl.fastly.net/toner/{z}/{x}/{y}.png', none: '' }
+  tileEl.setAttribute('href', urls[source] || '')
+})
+
 mapEl?.addEventListener('click', (e) => {
   if (e.target.closest('.map-list-toggle, .hazard-marker, .asset-marker')) return
   const rect = mapEl.getBoundingClientRect()
