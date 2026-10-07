@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, it } from 'node:test'
 import { ROUTE_MANIFESTS, WIDE_ROUTES, UNMAPPED_COUNT, collectionsForRequest } from '../src/route-manifests.js'
 import { emptyStore } from '../src/schema.js'
@@ -208,5 +211,63 @@ describe('ENH-07 — the measurement still reproduces', () => {
       'these routes read collections their manifest does not declare, so on ' +
       'PostgreSQL they would read undefined and answer with a 500. Re-run ' +
       'scripts/collect-route-manifests.mjs and commit its output: ' + drifted.join(' | '))
+  })
+})
+
+describe('explain', () => {
+  // The handler resolves an arbitrary ?kind= collection by name. The route's
+  // measured entry covered only the default kind, so `?kind=service_assets`
+  // materialised a manifest without the collection, and the handler read
+  // `undefined` — a 404 for records the store holds. The dashboard read that
+  // 404 class as a property of the endpoint and told the operator the record
+  // type was "not served", which was true by accident and for the wrong
+  // reason. The kind resolution lives here, tested as code.
+  it('reads the caller-named collection plus the provenance lookups', () => {
+    for (const kind of ['service_assets', 'impact_assessments', 'field_reports', 'risk_scores']) {
+      const out = collectionsForRequest('GET', '/api/v1/explain/asset_x', new URLSearchParams(`kind=${kind}`))
+      assert.deepEqual(out, [kind, 'source_runs', 'data_lineage'], `kind=${kind}`)
+    }
+  })
+
+  it('falls back to the measured entry for a kind that is not a collection', () => {
+    // gdacs-style upstream ids are not store collections; the handler's 404
+    // is the honest miss, on a narrow read rather than a whole-store one.
+    for (const kind of [null, 'gdacs', 'acled_csv', '__proto__']) {
+      const search = kind ? new URLSearchParams(`kind=${kind}`) : null
+      assert.deepEqual(
+        collectionsForRequest('GET', '/api/v1/explain/asset_x', search),
+        ROUTE_MANIFESTS['GET /api/v1/explain/:id'],
+        `kind=${kind}`,
+      )
+    }
+  })
+
+  it('declares source_runs in the static entry, because the handler looks provenance up there', () => {
+    assert.ok(ROUTE_MANIFESTS['GET /api/v1/explain/:id'].includes('source_runs'),
+      'a risk score naming a source run would have its run silently dropped to null otherwise')
+  })
+
+  it('explains a caller-named kind end to end', async () => {
+    const { createServer } = await import('../src/server.js')
+    const { JsonStore } = await import('../src/store.js')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'explain-kind-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const record = { id: 'asset_0001', source: 'service_assets', name: 'Bor Model Primary', service_type: 'school', status: 'operational' }
+    await store.write({ service_assets: [record] })
+    const listener = createServer({ store }).listen(0)
+    try {
+      const base = `http://localhost:${listener.address().port}`
+      const served = await (await fetch(`${base}/api/v1/explain/asset_0001?kind=service_assets`)).json()
+      assert.equal(served.success, true)
+      assert.equal(served.kind, 'service_assets')
+      assert.equal(served.record?.id, 'asset_0001')
+      assert.equal(served.provenance?.known, false, `absence of provenance is the fact to report: ${JSON.stringify(served.provenance)}`)
+
+      const missing = await (await fetch(`${base}/api/v1/explain/asset_0001?kind=hazard_events`)).json()
+      assert.equal(missing.success, false, 'a kind that holds no such record misses')
+    } finally {
+      listener.close()
+      await fs.rm(dir, { recursive: true, force: true })
+    }
   })
 })

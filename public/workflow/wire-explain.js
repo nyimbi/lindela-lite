@@ -119,21 +119,38 @@ function bandBlock(record, explanation) {
 /**
  * The store collection a record type lives in, or null.
  *
- * The route serves `risk_scores` and `impact_assessments` by name; it does not
- * serve alerts, hazards or assets, and asking it for a collection it does not
- * hold is a 404 that would blank the derivation on records that have one.
+ * The default `?kind=` is risk_scores; a caller names any other collection it
+ * wants. Two things decide what this panel may fetch:
+ *
+ *   - The record's `type` field, for the derived scores that carry one.
+ *   - The record's `source` field, when source IS the store collection's name
+ *     (service_assets records carry it). It is NOT always the collection: a
+ *     hazard_event's source is `gdacs`, an upstream ingestor's id, and asking
+ *     explain for that kind is a 404 by design. Only a real collection name is
+ *     used; anything else gets the truthful refusal, which names the value and
+ *     says nothing was fetched for it.
  */
 const KIND_BY_TYPE = Object.freeze({
   flood_risk: 'risk_scores',
   climate_conflict_risk: 'risk_scores',
 })
 
+/** `/^[a-z][a-z0-9_]+$/` and at least one underscore, to keep upstream source
+ *  ids like `gdacs` or `acled_csv` from masquerading as collection names. */
+function collectionMaybeFromSource(source) {
+  if (typeof source !== 'string' || !/^[a-z][a-z0-9_]+_[a-z0-9_]+$/.test(source)) return null
+  return source
+}
+
 /** The provenance block, from whatever `/api/v1/explain` returned. */
-function provenanceBlock(provenance, served) {
-  if (!served) {
-    return `<p class="chart-panel-refused">This record type is not served by /api/v1/explain, so the run that produced it and the lineage behind that run cannot be traced from here. `
-      + 'What follows is the arithmetic the record carries, not its provenance.</p>'
-  }
+function provenanceBlock(provenance, served, refusal) {
+  // The four reasons provenance can be missing are different facts and say
+  // different things: the route was not fetched (no kind was derived), the
+  // fetch failed (network), the route has no such record (404), or the
+  // record genuinely names no run (a 200 with known:false). The first three
+  // are rendered by the caller as a refusal naming what actually happened;
+  // this block only renders when a real answer arrived.
+  if (!served) return refusal || ''
   const run = provenance?.source_run
   const lineage = Array.isArray(provenance?.lineage) ? provenance.lineage : []
   if (!run && !lineage.length) {
@@ -177,19 +194,34 @@ export async function renderExplain(host, record, { load, kind } = {}) {
     return null
   }
 
-  const collection = kind || KIND_BY_TYPE[record?.type] || null
+  const collection = kind || KIND_BY_TYPE[record?.type] || collectionMaybeFromSource(record?.source) || null
   let served = null
+  let fetchState = null // null | 'unreachable' | 'not-a-record'
   if (collection && typeof load === 'function' && record?.id) {
     try {
       const body = await load(`/api/v1/explain/${encodeURIComponent(record.id)}?kind=${encodeURIComponent(collection)}`)
-      served = body?.success === false ? null : body
+      if (body?.success === false) {
+        served = null
+        fetchState = 'not-a-record'
+      } else {
+        served = body
+      }
     } catch {
       // A record the store cannot serve, or a console running without a
       // network. Neither invalidates the arithmetic, so the derivation still
       // renders and the provenance line says why it is thin.
       served = null
+      fetchState = 'unreachable'
     }
   }
+
+  const provedanceRefusal = !collection
+    ? `<p class="chart-panel-refused">The dashboard does not know a /api/v1/explain kind for this record's <code>${esc(String(record?.source || 'type'))}</code>. Nothing was fetched, and the derivation below is what this record itself carries.</p>`
+    : fetchState === 'unreachable'
+      ? `<p class="chart-panel-refused">/api/v1/explain could not be reached for <code>${esc(String(record.id))}</code> (kind=${esc(collection)}); the derivation below is what this record itself carries.</p>`
+      : fetchState === 'not-a-record'
+        ? `<p class="chart-panel-refused">/api/v1/explain answered 404 for <code>${esc(String(record.id))}</code> with kind=${esc(collection)}. The derivation below is what this record itself carries.</p>`
+        : null
 
   const verdict = explanation.consistent === null
     ? 'not checkable from this record alone'
@@ -214,7 +246,7 @@ export async function renderExplain(host, record, { load, kind } = {}) {
     ${bandBlock(record, explanation)}
     ${explanation.missing.length ? `<p class="chart-panel-title">Absent inputs</p>${paragraphs('chart-panel-refused', explanation.missing.map((m) => `${esc(m.key)} — ${esc(m.reason || 'contributed nothing')}`))}` : ''}
     ${explanation.limits.length ? `<p class="chart-panel-title">What this score does not model</p>${paragraphs('chart-panel-note', explanation.limits.map((l) => esc(l)))}` : ''}
-    ${provenanceBlock(served?.provenance, collection)}
+    ${provenanceBlock(served?.provenance, served, provedanceRefusal)}
     ${provenanceBits ? `<p class="chart-panel-note">${provenanceBits}${provenance.methodology ? ` · ${esc(provenance.methodology)}` : ''}</p>` : ''}`
   return explanation
 }

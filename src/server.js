@@ -870,7 +870,7 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
   // applies the same predicate in JavaScript to what comes back; this keeps the
   // rows the caller may not see off the query in the first place.
   const data = await store.read({
-    collections: collectionsForRequest(req.method, url.pathname),
+    collections: collectionsForRequest(req.method, url.pathname, url.searchParams),
     partnerOrg: currentRequestAuth()?.partner_org || null,
   })
   req.__auth = auth
@@ -4044,7 +4044,7 @@ export function fillAppVersionMarker(html, version = APP_VERSION) {
   return html.replace(VERSION_MARKER, (_m, open, _body, close) => `${open}v${version}${close}`)
 }
 
-async function sendFile(req, res, filePath, { immutable = false } = {}) {
+async function sendFile(req, res, filePath) {
   let content
   try {
     content = await fs.readFile(filePath)
@@ -4073,15 +4073,18 @@ async function sendFile(req, res, filePath, { immutable = false } = {}) {
     'last-modified': new Date().toUTCString(),
   }
 
-  if (immutable) {
-    // Asset filenames are not content-hashed, so a long max-age would pin an
-    // operator to a stale build after a fix ships. Revalidate instead: cheap
-    // with an ETag, and correct.
-    headers['cache-control'] = 'public, max-age=0, must-revalidate'
-  } else if (/\.(html|webmanifest)$/.test(filePath) || filePath.endsWith('sw.js')) {
+  if (/\.(html|webmanifest)$/.test(filePath) || filePath.endsWith('sw.js')) {
     // The service worker must never be served stale, or a fix cannot reach a
     // device that already has the app open.
     headers['cache-control'] = 'no-cache'
+  } else if (/\.(js|mjs|css)$/.test(filePath)) {
+    // Asset filenames are not content-hashed, so a long max-age would pin an
+    // operator to a stale build after a fix ships. Code revalidates instead:
+    // cheap with an ETag, and correct. This branch existed only as an
+    // `immutable` flag no caller ever passed — so every module, and every
+    // script the console lazily imports, answered `max-age=3600` and an hour
+    // of deploy latency; the flag is gone and the rule applies by extension.
+    headers['cache-control'] = 'public, max-age=0, must-revalidate'
   } else {
     headers['cache-control'] = 'public, max-age=3600, must-revalidate'
   }

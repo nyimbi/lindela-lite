@@ -26,6 +26,8 @@
  * either mapped here or explicitly wide, so a new route cannot arrive unmapped
  * and silently expensive.
  */
+import { COLLECTIONS } from './store.js'
+
 export const ROUTE_MANIFESTS = Object.freeze({
   'DELETE /api/v1/parametric-rules/:id': Object.freeze(["parametric_rules"]),
   'GET /api/v1/action-logs': Object.freeze(["action_logs"]),
@@ -52,7 +54,7 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/equity/breaches': Object.freeze(["alert_events", "rapidpro_dispatches"]),
   'GET /api/v1/equity/by-district': Object.freeze(["alert_events", "rapidpro_dispatches"]),
   'GET /api/v1/events': Object.freeze(["conflict_events", "hazard_events"]),
-  'GET /api/v1/explain/:id': Object.freeze(["data_lineage", "risk_scores"]),
+  'GET /api/v1/explain/:id': Object.freeze(["data_lineage", "risk_scores", "source_runs"]),
   'GET /api/v1/export.geojson': Object.freeze(["alert_events", "conflict_events", "field_reports", "hazard_events", "impact_assessments", "incidents", "response_resources", "risk_scores", "service_assets"]),
   'GET /api/v1/field-reports': Object.freeze(["field_reports"]),
   'GET /api/v1/field-reports/:id': Object.freeze(["field_reports"]),
@@ -226,17 +228,37 @@ export const WIDE_ROUTES = Object.freeze([
 /** How much of the API is still on the whole-store read, as one number. */
 export const UNMAPPED_COUNT = WIDE_ROUTES.length
 
+const EXPLAIN_KEY = 'GET /api/v1/explain/:id'
+
 /**
  * The manifest for one request, or `null` for "read everything".
  *
  * Keyed on the path with any id segment blanked, because a manifest is a
  * property of the route and not of the record. The method is part of the key
  * because several write routes read the audit log their GET sibling does not.
+ *
+ * `search` (the URLSearchParams of the request) is consulted by exactly one
+ * key: explain. Its handler resolves whatever collection `?kind=` names, so
+ * the read is caller-chosen rather than a property of the route. The measured
+ * entry above covers the default kind — and it carries `source_runs`, because
+ * the handler looks the record's source run up there, and the measured
+ * manifest omitted it: a risk score naming a source run had its run dropped
+ * to null by the narrow read, and the provenance panel would have reported
+ * provenance as "none found" that the store actually held. A caller-selected
+ * kind that names a real collection is read alongside the same two provenance
+ * lookups; a kind that does not falls back to the measured entry and the
+ * handler's 404, which for a nonsense or misspelled kind is the honest miss.
  */
-export function collectionsForRequest(method, pathname) {
+export function collectionsForRequest(method, pathname, search = null) {
   const bare = String(pathname || '')
     .replace(/\/api\/v1\/([^/]+)\/[^/]+(?=\/|$)/, '/api/v1/$1/:id')
   const key = `${String(method || 'GET').toUpperCase()} ${bare}`
   if (WIDE_ROUTES.includes(key)) return null
+  if (key === EXPLAIN_KEY) {
+    const kind = typeof search?.get === 'function' ? search.get('kind') : null
+    if (kind && COLLECTIONS.includes(kind)) {
+      return [kind, 'source_runs', 'data_lineage']
+    }
+  }
   return ROUTE_MANIFESTS[key] || null
 }
