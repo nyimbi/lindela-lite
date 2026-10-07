@@ -434,6 +434,14 @@
         color: var(--ink-muted);
       }
 
+      .reference-list > div {
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .reference-list > div:hover {
+        background: var(--surface-hover);
+        border-color: var(--ink-muted);
+      }
       @media (max-width: 640px) {
         body { font-size: 1rem; }
         header { gap: 0.5rem; }
@@ -507,6 +515,7 @@
           <button class="btn-primary" id="reportSymptomBtn" data-i18n="chw.report_symptom">Report symptom</button>
           <button class="btn-secondary" id="reportIncidentBtn" data-i18n="chw.report_incident">Report incident</button>
           <button id="replyAlertBtn" data-i18n="chw.reply_alert">Reply to alert</button>
+          <button id="referenceBtn" data-i18n="chw.reference">Reference</button>
         </div>
       </div>
 
@@ -730,6 +739,22 @@
         <div class="action-buttons">
           <button class="btn-primary" id="replySubmitBtn" data-i18n="chw.submit">Submit</button>
           <button id="replyBackBtn" data-i18n="chw.back">Back</button>
+        </div>
+      </div>
+
+      <!-- Reference / guidance screen -->
+      <div id="referenceScreen" class="screen">
+        <h2 class="screen-title" data-i18n="chw.reference">Reference</h2>
+        <p style="font-size:0.875rem;color:var(--ink-muted);margin-bottom:1rem" data-i18n="chw.reference_note">
+          Symptom guidance. Tap a card to expand. Works without a connection.
+        </p>
+        <div class="form-group">
+          <label for="referenceSearch" data-i18n="chw.reference_search">Search symptoms or danger signs</label>
+          <input type="search" id="referenceSearch" inputmode="text" placeholder="fever, danger signs, cough..." autocomplete="off">
+        </div>
+        <div id="referenceList" class="form-group" role="list" aria-label="Symptom reference cards"></div>
+        <div class="action-buttons">
+          <button id="referenceBackBtn" data-i18n="chw.back">Back</button>
         </div>
       </div>
     </main>

@@ -166,6 +166,7 @@ async function init() {
   setupSymptomAboutWhoScreen()
   setupIncidentScreen()
   setupReplyScreen()
+  setupReferenceScreen()
 
   refreshQueueStatus()
   // No location request here. `init` used to call `requestUserLocation()`, which
@@ -980,6 +981,157 @@ function setupReplyScreen() {
   })
 
   $('replyBackBtn').addEventListener('click', () => showScreen('home'))
+}
+
+/** Symptom-to-disease mapping — 20 high-risk ailments, embedded offline.
+ *  Each entry links symptoms (from the wizard) to a named disease.
+ */
+const DISEASE_MAP = [
+  { name: 'Cholera', symptoms: 'fever, diarrhea (watery, frequent)', danger: 'Rapid dehydration: sunken eyes, dry mouth, no urine. Refer urgently.', note: 'Water contamination. Give oral rehydration; do not delay referral.' },
+  { name: 'Typhoid', symptoms: 'fever (prolonged), headache, diarrhea/constipation, weakness', danger: 'Very high prolonged fever with confusion or abdominal swelling. Bleeding serious.', note: 'Clean water and cooked food prevent spread. Over 7 days is serious.' },
+  { name: 'Malaria', symptoms: 'fever (often cyclical), headache, chills, weakness', danger: 'Very high fever, confusion, very sleepy, difficulty breathing, yellow eyes.', note: 'Rapid test if available; treat quickly. Record cycle pattern.' },
+  { name: 'Measles', symptoms: 'rash (face then body), fever, cough, red eyes, runny nose', danger: 'Rash does NOT fade under glass, very sleepy, difficulty breathing.', note: 'Highly contagious. Isolate; report immediately. Vaccine-preventable.' },
+  { name: 'Pneumonia', symptoms: 'cough, fast or difficult breathing, chest pain, fever', danger: 'Fast breathing, chest pulling in, blue lips/nails, very sleepy.', note: 'A leading child killer. Count breaths; refer if fast or labored.' },
+  { name: 'Meningitis', symptoms: 'fever, severe headache, stiff neck, very sleepy, confusion, rash', danger: 'Stiff neck, confusion, non-blanching rash, very sleepy or hard to wake.', note: 'Medical emergency. Do not wait. Isolate; report through incident screen.' },
+  { name: 'Tuberculosis', symptoms: 'cough over 2 weeks, fever, weight loss, night sweats, blood in sputum', danger: 'Blood in sputum, severe weakness, rapid weight loss, very sleepy.', note: 'Airborne. Long treatment. Report for tracking and support.' },
+  { name: 'Dengue', symptoms: 'fever, severe headache, eye pain, rash, bleeding from gums/nose', danger: 'Severe abdominal pain, bleeding, very sleepy, cold clammy skin.', note: 'Keep hydrated. Watch bleeding signs. No specific medicine.' },
+  { name: 'Yellow fever', symptoms: 'fever, headache, muscle pain, yellow eyes/skin, bleeding', danger: 'Yellow eyes/skin with bleeding or confusion — urgent.', note: 'Vaccine-preventable. Report immediately; outbreak risk high.' },
+  { name: 'Leptospirosis', symptoms: 'fever, headache, muscle pain, red eyes, sometimes jaundice', danger: 'Yellow eyes, very little urine, bleeding, severe weakness.', note: 'Contaminated water. Wear boots; avoid standing water.' },
+  { name: 'Hepatitis A / E', symptoms: 'fever, yellow eyes/skin, dark urine, nausea, tiredness', danger: 'Deep yellow eyes/skin with confusion or bleeding.', note: 'Fecal-oral spread. Clean water and handwashing prevent.' },
+  { name: 'Tetanus', symptoms: 'stiff jaw and neck, painful spasms, difficulty swallowing', danger: 'Spasms spreading, difficulty breathing, locked jaw.', note: 'Often from unclean wounds. Clean wound; seek care. Vaccine-preventable.' },
+  { name: 'Diphtheria', symptoms: 'fever, sore throat with thick gray membrane, difficulty swallowing', danger: 'Thick gray membrane blocking throat, very high fever, very sleepy.', note: 'Airborne. Report immediately. Vaccination is protection.' },
+  { name: 'Pertussis (whooping cough)', symptoms: 'cough lasting weeks, whooping breath in, vomiting after cough', danger: 'Difficulty breathing, very sleepy (infants), blue lips.', note: 'Highly contagious. Protect infants; report clusters.' },
+  { name: 'Plague (bubonic)', symptoms: 'fever, painful swollen lymph nodes (buboes), weakness', danger: 'Swollen nodes spreading, very high fever, confusion, bleeding under skin.', note: 'Flea-borne; airborne in lung form. Report immediately; isolation critical.' },
+  { name: 'Rabies', symptoms: 'fever, anxiety, difficulty swallowing, excessive saliva', danger: 'Difficulty swallowing, confusion, paralysis, fear of water or air.', note: 'Always fatal once symptoms appear. Any bite must be treated before symptoms. Report bites.' },
+  { name: 'Severe acute malnutrition', symptoms: 'very thin, visible ribs, swollen feet/legs, very weak, very sleepy', danger: 'Swollen feet with very thin body; very weak; not feeding; very sleepy.', note: 'Measure upper arm. Refer urgently. Food plus medical care together.' },
+  { name: 'Schistosomiasis', symptoms: 'blood in urine, painful urination, abdominal pain, sometimes blood in stool', danger: 'Very little urine, continuous blood, severe abdominal swelling.', note: 'Water contact disease. Treat early; avoid contaminated freshwater.' },
+  { name: 'Onchocerciasis (river blindness)', symptoms: 'severe itching, skin changes, eye pain, vision loss over time', danger: 'Rapid vision loss, severe eye pain, very swollen skin.', note: 'Blackfly-borne. Report vision changes. Mass treatment exists.' },
+  { name: 'Dracunculiasis (Guinea worm)', symptoms: 'painful blister on leg/foot, worm emerging slowly', danger: 'Worm breaking inside body, severe infection around site.', note: 'Pull slowly (do not break); clean with chlorine; filter water; report any case — near elimination.' },
+]
+
+/** Offline-cached symptom reference — the "dramatically inform" addition.
+ *  Each card carries danger signs (when to refer urgently), home care, and a
+ *  duration note so the worker knows whether a 2-day and a 20-day fever are
+ *  the same report or different ones. No network needed: the data is baked
+ *  into the module, not fetched.
+ */
+const SYMPTOM_GUIDE = [
+  {
+    id: 'fever', title: 'Fever', keywords: 'fever, hot, temperature',
+    body: 'Fever is the body fighting infection. Most improve in 2–3 days. Refer urgently if: very high or lasts more than 3 days, stiff neck, severe headache, confusion, rash that does not fade when pressed, not drinking, very sleepy, difficulty breathing, or the person is under 2 months old.',
+    danger: 'Refer urgently: very high temperature over 3 days, stiff neck, severe headache, confusion, non-blanching rash, very sleepy or hard to wake, not drinking, difficulty breathing, under 2 months.',
+    care: 'Keep hydrated with small frequent sips. Rest. Use a cool cloth. Seek care for danger signs above.',
+    durationNote: 'The wizard records duration in days or hours. A 2-day fever and a 20-day fever are different reports; both need to be filed.',
+  },
+  {
+    id: 'cough', title: 'Cough', keywords: 'cough, chest, breathing',
+    body: 'A cough can be a cold, pneumonia, or asthma. Refer urgently if: fast or difficult breathing, chest pulling in under ribs, blue lips or nails, very sleepy, not feeding (child), blood in sputum, or lasts more than 2 weeks.',
+    danger: 'Refer urgently: fast or difficult breathing, chest indrawing, blue lips/nails, very sleepy, not feeding, blood in sputum, over 2 weeks.',
+    care: 'Keep warm, give warm fluids, rest. Seek care for any danger sign above.',
+    durationNote: 'Cough duration matters: a new cough is usually different from one lasting weeks.',
+  },
+  {
+    id: 'diarrhea', title: 'Diarrhea', keywords: 'diarrhea, loose stool, watery',
+    body: 'Loose watery stools more than 3 times in a day. Refer urgently if: very watery with sunken eyes, very dry mouth, no tears when crying, not passing urine, blood in stool, very sleepy or weak.',
+    danger: 'Refer urgently: sunken eyes, very dry mouth, no tears, no urine, blood in stool, very sleepy, very weak.',
+    care: 'Keep giving small frequent sips of clean water or oral rehydration. Wash hands. Seek care for danger signs.',
+    durationNote: 'Record how long the loose stools have lasted; duration helps identify outbreaks.',
+  },
+  {
+    id: 'rash', title: 'Rash', keywords: 'rash, spots, skin',
+    body: 'A new rash with fever may signal measles, chickenpox, or another outbreak. Refer urgently if: the rash does not fade when pressed (glass test negative, i.e. does NOT blanch), very high fever, very sleepy, confusion, or difficulty swallowing.',
+    danger: 'Refer urgently: rash that does NOT fade under glass, very high fever, very sleepy, confusion, difficulty swallowing.',
+    care: 'Keep cool, avoid scratching, give fluids. Seek care immediately for any danger sign.',
+    durationNote: 'Note when the rash first appeared; outbreak tracking depends on timing.',
+  },
+  {
+    id: 'ebola_precursor', title: 'Ebola / hemorrhagic precursors', keywords: 'ebola, hemorrhagic, bleeding, precursor, unexplained bleeding',
+    body: 'Ebola and related viral hemorrhagic fevers begin with sudden fever, extreme weakness, headache, sore throat, muscle pain, vomiting, or diarrhea. Unexplained bleeding (gums, nose, blood in stool, bruising that appears without injury) is the defining precursor. It spreads by direct contact with blood or body fluids of a sick or dead person.',
+    danger: 'Refer urgently and isolate: sudden fever with unexplained bleeding from gums/nose/stool/eyes; blood-tinged vomit or diarrhea; severe weakness with inability to stand; any bleeding without injury; or close contact with someone who died of a bleeding illness.',
+    care: 'Keep the person separated from others. Do not touch blood or body fluids without gloves. Use chlorine solution (0.5%) to clean surfaces. Report immediately through the incident screen — do not wait. Keep small sips of clean water available only if the person can swallow safely.',
+    durationNote: 'Record onset precisely: the first day of symptoms and the first sign of any bleeding. This is outbreak-critical.',
+  },
+  {
+    id: 'other', title: 'Other symptoms', keywords: 'other, unknown',
+    body: 'Not every serious condition is a common symptom. If the person is very unwell but does not match the common patterns above, file it anyway. Describe clearly. Refer urgently for: sudden collapse, severe pain, difficulty swallowing, bleeding that will not stop.',
+    danger: 'Refer urgently: sudden collapse, severe unexplained pain, difficulty swallowing, bleeding that will not stop, or any rapid worsening.',
+    care: 'Describe the symptom clearly when filing. Keep the person comfortable and seek help for any danger sign.',
+    durationNote: 'Always record how long the symptom has been present.',
+  },
+]
+
+function setupReferenceScreen() {
+  $('referenceBtn').addEventListener('click', () => {
+    state.currentScreen = 'reference'
+    showScreen('reference')
+    renderReferenceCards()
+  })
+  $('referenceBackBtn').addEventListener('click', () => showScreen('home'))
+
+  $('referenceSearch')?.addEventListener('input', (e) => {
+    renderReferenceCards(e.target.value.trim().toLowerCase())
+  })
+}
+
+function renderReferenceCards(query = '') {
+  const list = $('referenceList')
+  if (!list) return
+  list.innerHTML = ''
+  const cards = SYMPTOM_GUIDE.filter((g) => {
+    if (!query) return true
+    const q = query
+    return g.title.toLowerCase().includes(q) || g.keywords.toLowerCase().includes(q)
+      || g.danger.toLowerCase().includes(q) || g.care.toLowerCase().includes(q) || g.durationNote.toLowerCase().includes(q)
+  })
+  if (!cards.length) {
+    list.innerHTML = `<p style="font-size:0.875rem;color:var(--ink-muted);padding:0.5rem">No match for "${escapeHtml(query)}". Try "fever", "danger", or "refer".</p>`
+    return
+  }
+  // Disease mapping layer: for each symptom card, show diseases that match
+  // its keywords (symptom-to-disease mapping). Diseases are also searchable.
+  const matchDiseases = (symptomId) => {
+    const sym = SYMPTOM_GUIDE.find(s => s.id === symptomId)
+    if (!sym) return []
+    return DISEASE_MAP.filter(d => d.symptoms.toLowerCase().includes(sym.title.toLowerCase()) || sym.keywords.split(', ').some(kw => d.symptoms.toLowerCase().includes(kw.trim())))
+  }
+  for (const item of cards) {
+    const card = document.createElement('div')
+    card.className = 'icon-button'
+    card.style.alignItems = 'flex-start'
+    card.style.justifyContent = 'flex-start'
+    card.style.padding = '0.875rem'
+    card.style.gap = '0.25rem'
+    const diseases = matchDiseases(item.id)
+    const diseaseLine = diseases.length ? `<p style="font-size:0.75rem;color:var(--brand);font-weight:600;margin-top:0.25rem">Related diseases: ${escapeHtml(diseases.map(d => d.name).join(', '))}</p>` : ''
+    card.innerHTML = `<div style="font-weight:700;font-size:1rem;margin-bottom:0.25rem">${escapeHtml(item.title)}</div>`
+      + `<p style="font-size:0.8125rem;color:var(--danger);font-weight:600;line-height:1.2">${escapeHtml(item.danger)}</p>`
+      + `<p style="font-size:0.8125rem;color:var(--ink-muted);line-height:1.4;margin-top:0.25rem">${escapeHtml(item.care)}</p>`
+      + `<p style="font-size:0.75rem;color:var(--ink-muted);margin-top:0.25rem;font-style:italic">${escapeHtml(item.durationNote)}</p>`
+      + diseaseLine
+    list.appendChild(card)
+  }
+  // If no symptom cards matched but diseases did, show disease cards too.
+  const diseaseCards = DISEASE_MAP.filter(d => {
+    if (!query) return false
+    const q = query
+    return d.name.toLowerCase().includes(q) || d.symptoms.toLowerCase().includes(q) || d.danger.toLowerCase().includes(q) || d.note.toLowerCase().includes(q)
+  })
+  if (!cards.length && diseaseCards.length > 0 && query.length > 0) {
+    list.innerHTML += `<p style="font-size:0.875rem;color:var(--ink-muted);padding:0.5rem;margin-top:0.5rem;font-weight:600">— Disease references for "${escapeHtml(query)}" —</p>`
+    for (const d of diseaseCards) {
+      const card = document.createElement('div')
+      card.className = 'icon-button'
+      card.style.alignItems = 'flex-start'
+      card.style.justifyContent = 'flex-start'
+      card.style.padding = '0.875rem'
+      card.style.gap = '0.25rem'
+      card.innerHTML = `<div style="font-weight:700;font-size:1rem;margin-bottom:0.25rem">${escapeHtml(d.name)}</div>`
+        + `<p style="font-size:0.8125rem;color:var(--danger);font-weight:600;line-height:1.2">Danger: ${escapeHtml(d.danger)}</p>`
+        + `<p style="font-size:0.8125rem;color:var(--ink-muted);line-height:1.4;margin-top:0.25rem">Symptoms: ${escapeHtml(d.symptoms)}</p>`
+        + `<p style="font-size:0.75rem;color:var(--ink-muted);margin-top:0.25rem;font-style:italic">${escapeHtml(d.note)}</p>`
+      list.appendChild(card)
+    }
+  }
 }
 
 await init()
