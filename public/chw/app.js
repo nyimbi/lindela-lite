@@ -528,7 +528,10 @@ function setupSymptomSeverityScreen() {
   document.querySelectorAll('#severityChecklist input[type="checkbox"]').forEach((chk) => {
     chk.addEventListener('change', () => {
       const selected = Array.from(document.querySelectorAll('#severityChecklist input:checked')).map(c => c.dataset.severity)
-      state.symptom.severity = { dangerSigns: selected, verySleepy: selected.includes('sleepy'), breathing: selected.includes('breathing'), drinking: selected.includes('drinking'), bleeding: selected.includes('bleeding'), other: selected.includes('other') }
+      state.symptom.severity = { dangerSigns: selected, verySleepy: selected.includes('sleepy'), breathing: selected.includes('breathing'), drinking: selected.includes('drinking'), bleeding: selected.includes('bleeding'), other: selected.includes('other'), otherText: $('severityOtherText')?.value?.trim() || null }
+      const otherGroup = $('severityOtherGroup')
+      if (otherGroup) otherGroup.style.display = selected.includes('other') ? 'block' : 'none'
+      if (selected.includes('other')) $('severityOtherText')?.focus()
       setHint('severityHint')
     })
   })
@@ -729,7 +732,7 @@ async function submitSymptomReport() {
     location: state.symptom.location,
     anonymous: state.anonymous,
     demographics: state.symptom.demographics || undefined,
-    severity: state.symptom.severity || undefined,
+    severity: state.symptom.severity ? { ...state.symptom.severity, otherText: (state.symptom.severity.other && $('severityOtherText')) ? $('severityOtherText').value?.trim() || null : null } : undefined,
     exposure: state.symptom.exposure || undefined,
   }
 

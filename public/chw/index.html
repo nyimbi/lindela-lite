@@ -575,6 +575,10 @@
             <label style="font-size:0.9rem;display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="sevWeak" data-severity="weak"> <span data-i18n="chw.sev_weak">Severe weakness or cannot stand</span></label>
             <label style="font-size:0.9rem;display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="sevOther" data-severity="other"> <span data-i18n="chw.sev_other">Something else serious</span></label>
           </div>
+          <div id="severityOtherGroup" class="form-group" style="display:none;margin-top:0.5rem;">
+            <label for="severityOtherText" data-i18n="chw.sev_other_desc">Describe the other serious sign or symptom</label>
+            <textarea id="severityOtherText" rows="3" placeholder="e.g. sudden collapse, bleeding that will not stop, confusion..."></textarea>
+          </div>
         </div>
         <p class="step-hint" id="severityHint" role="status" aria-live="polite"></p>
         <div class="action-buttons">

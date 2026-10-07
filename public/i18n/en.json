@@ -71,6 +71,7 @@
   "chw.sev_bleeding": "Unexplained bleeding (gums, nose, stool, bruising)",
   "chw.sev_weak": "Severe weakness or cannot stand",
   "chw.sev_other": "Something else serious",
+  "chw.sev_other_desc": "Describe the other serious sign or symptom",
   "chw.exposure": "Exposure and contact?",
   "chw.exposure_note": "These help identify outbreak sources.",
   "chw.symptom_rash": "Rash",
