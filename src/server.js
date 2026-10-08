@@ -20,7 +20,6 @@ import {
 import { actionLog, buildCreate, buildSoftDelete, buildUpdate, counts, isDeleted, operationalSummary } from './operations.js'
 import { parseRapidProFieldReport, rapidProStatus, responseMetrics, sendRapidProAlert, sendRapidProReportSummary, verifyRapidProWebhook, parseRapidProReply, reconcileInbound, deliveryReport, dueEscalations, formatDeliveryReport } from './rapidpro.js'
 import { chainEntries, verifyChain, renderAuditProof } from './audit-chain.js'
-import { renderExportMarkdown } from './reports.js'
 import {
   approveReport,
   buildExportNarrative,
@@ -43,6 +42,7 @@ import { createStoreFromEnv } from './storage.js'
 import { collectionPage, createIdempotencyStore, currentRequestAuth, filterRecords, jsonResponse, matchedAndPage, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
+import { executeTriggerProtocols } from './protocols.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { normalizeAlertOutcome, determinationFor, projectDetermination, outcomeTally, outcomeReasons } from './outcomes.js'
 import { observationSeries, recordHistory, projectableCollections } from './series.js'
@@ -66,7 +66,8 @@ import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots, quar
 import { KNOWN_DISTRICTS, districtOverview } from './districts.js'
 import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from './equity.js'
 import { normalizeCommunityFeedback, feedbackSummaryByAlert } from './community.js'
-import { renderQuarterlyReportPdf, quarterlyReportCoverage, DASHBOARD_SECTIONS } from './pdf.js'
+import { normalizeSchoolAttendance, normalizeIotObservation, districtAttendanceRate, latestSensorReadings } from './field-signals.js'
+import { renderQuarterlyReportPdf, renderQuarterlyReportMarkdown, quarterlyReportCoverage, DASHBOARD_SECTIONS } from './pdf.js'
 import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.js'
 import { normalizeParametricRule, simulateDisbursement } from './parametric.js'
 import { screenNames } from './sanctions.js'
@@ -129,6 +130,7 @@ const DRIVER_ITEMS = [
   // — which made a 401, a 500 and "nothing was due" one indistinguishable line
   // of stdout — goes with it.
   { id: 'reports', label: 'report schedules', run: (store, data) => runDueReportSchedulesAndPersist(store, data) },
+  { id: 'protocols', label: 'trigger protocol execution', run: (store, data) => executeTriggerProtocols(store, data) },
   // R-12's other half. Retention was reachable only by POSTing to a maintenance
   // route: a control that runs when somebody remembers it has run is a control
   // somebody will not remember. A privacy window that is never applied is a
@@ -1825,6 +1827,12 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
     return
   }
 
+  const protocolRoute = matchProtocolRoute(url.pathname)
+  if (protocolRoute) {
+    await handleProtocolRoute(store, data, req, res, url, protocolRoute)
+    return
+  }
+
   // Parametric disbursement routes
   const parametricRoute = matchParametricRoute(url.pathname)
   if (parametricRoute) {
@@ -1882,10 +1890,30 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
     return
   }
 
-  // The export that carries the reasoning. `renderExportMarkdown` composes with
-  // the report renderer rather than reimplementing it, so the two cannot drift,
-  // and every withheld figure prints as "not measured" rather than a dash in a
-  // column of numbers.
+  // The narrative both quarterly exports ride with. A report that cannot be
+  // built still yields an export — one that says the narrative could not be
+  // produced, because a missing page reads as "there was nothing to refuse".
+  function buildQuarterlyExportNarrative(data, period) {
+    try {
+      const templates = data.report_templates || []
+      const template = templates[0] || normalizeReportTemplate({ id: 'quarterly-export', name: 'Quarterly export' }, data)
+      const report = generateReportSections(
+        normalizeReport({ template_id: template.id, period }, data),
+        data,
+      )
+      return buildExportNarrative({ report, data })
+    } catch (err) {
+      return {
+        measured: [],
+        refused: [{
+          subject: 'Narrative',
+          reason: `the report could not be generated for this period: ${err.message}`,
+        }],
+        limits: ['This file carries the figures only. Nothing below the KPI page is a claim about what was measured.'],
+      }
+    }
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly.md') {
     const quarter = url.searchParams.get('quarter') || undefined
     const year = url.searchParams.get('year') || undefined
@@ -1896,23 +1924,18 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
       jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
       return
     }
-    // renderExportMarkdown takes a REPORT, not a KPI snapshot. Handing it the
-    // snapshot produced an export headed "# undefined" that said "no generated
-    // sections" — refusals rendered correctly while the document described
-    // nothing, which is the worst of both.
-    let report
-    try {
-      const templates = data.report_templates || []
-      const template = templates[0] || normalizeReportTemplate({ id: 'quarterly-export', name: 'Quarterly export' }, data)
-      report = generateReportSections(
-        normalizeReport({ template_id: template.id, period: { quarter, year } }, data),
-        data,
-      )
-    } catch (err) {
-      jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
-      return
-    }
-    const markdown = renderExportMarkdown(report, data)
+    // The same composition the PDF renders: the dashboard sections computed by
+    // the same helpers, the narrative, and the coverage sheet. This route used
+    // to hand renderExportMarkdown a generic alert digest, so the download
+    // button on the CO dashboard delivered a report with no quarterly figures
+    // in it at all — the right refusals wrapped around the wrong numbers.
+    const sections = quarterlyPdfSections(data, { quarter: kpi.period.quarter, year: kpi.period.year })
+    const narrative = buildQuarterlyExportNarrative(data, { quarter: kpi.period.quarter, year: kpi.period.year })
+    const markdown = renderQuarterlyReportMarkdown(kpi, {
+      narrative,
+      sections,
+      coverage: quarterlyReportCoverage,
+    })
     res.writeHead(200, {
       'content-type': 'text/markdown; charset=utf-8',
       'content-disposition': `attachment; filename="lindela-kpi-${kpi.period.year}-${kpi.period.quarter}.md"`,
@@ -1951,36 +1974,11 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
     // figure cannot be one thing on screen and another in the file.
     const sections = quarterlyPdfSections(data, { quarter: kpi.period.quarter, year: kpi.period.year })
 
-    // The narrative, built from the report the Markdown export builds, not a
-    // literal `true`.
-    //
-    // It was passed as `narrative: true` behind a comment saying the refusals
-    // travelled with the numbers. The renderer tests `narrative.measured?.length`,
-    // a boolean has no `measured`, so the page was never emitted and the export
-    // went out with every refusal stripped off it. The comment asserted the
-    // exact opposite of what the file did.
-    let narrative
-    try {
-      const templates = data.report_templates || []
-      const template = templates[0] || normalizeReportTemplate({ id: 'quarterly-export', name: 'Quarterly export' }, data)
-      const report = generateReportSections(
-        normalizeReport({ template_id: template.id, period: { quarter: kpi.period.quarter, year: kpi.period.year } }, data),
-        data,
-      )
-      narrative = buildExportNarrative({ report, data })
-    } catch (err) {
-      // A report that cannot be built still yields a PDF. It yields one that
-      // says the narrative could not be produced, because a missing page reads
-      // as "there was nothing to refuse".
-      narrative = {
-        measured: [],
-        refused: [{
-          subject: 'Narrative',
-          reason: `the report could not be generated for this period: ${err.message}`,
-        }],
-        limits: ['This file carries the figures only. Nothing below the KPI page is a claim about what was measured.'],
-      }
-    }
+    // The narrative, built by the same helper the Markdown export uses, so the
+    // two files carry the same reasoning. A report that cannot be built still
+    // yields a PDF — one that says the narrative could not be produced,
+    // because a missing page reads as "there was nothing to refuse".
+    const narrative = buildQuarterlyExportNarrative(data, { quarter: kpi.period.quarter, year: kpi.period.year })
 
     const buf = renderQuarterlyReportPdf(kpi, {
       narrative,
@@ -2054,6 +2052,111 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
         community_feedback: [record],
       })
       jsonResponse(res, 201, { success: true, data: record, outbox_event: outboxRecord.id })
+      return
+    }
+  }
+
+  if (url.pathname === '/api/v1/school-attendance') {
+    if (req.method === 'GET') {
+      const rows = data.school_attendance_observations || []
+      const districts = [...new Set(rows.map((row) => row.district).filter(Boolean))].sort()
+      jsonResponse(res, 200, {
+        success: true,
+        ...collectionPage(rows, url.searchParams, { auth: req.__auth, data, collection: 'school_attendance_observations' }),
+        summary: {
+          overall_rate: districtAttendanceRate(data),
+          districts: Object.fromEntries(districts.map((district) => [district, districtAttendanceRate(data, { district })])),
+          schools: new Set(rows.map((row) => row.school_id || row.school_name).filter(Boolean)).size,
+        },
+      })
+      return
+    }
+    if (req.method === 'POST') {
+      const body = await readRequestJson(req)
+      let record
+      try {
+        record = normalizeSchoolAttendance(body)
+      } catch (err) {
+        jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
+        return
+      }
+      const log = actionLog('school_attendance_observations', 'created', record, body.actor, req.__auth?.subject)
+      const outboxRecord = await emit(store, 'school_attendance.created', { record_id: record.id }, {
+        school_attendance_observations: [record],
+        action_logs: [log],
+      })
+      jsonResponse(res, 201, { success: true, data: record, outbox_event: outboxRecord.id })
+      return
+    }
+  }
+
+  if (url.pathname === '/api/v1/iot-observations') {
+    if (req.method === 'GET') {
+      // `?map=1` returns the latest reading per sensor with coordinates — the
+      // shape the map layer draws. `?sensor_type=X&above=N` scopes the summary;
+      // a cold-chain rule asks "latest reading per fridge, and how many readings
+      // breached 8°C", which is what `latestSensorReadings` answers.
+      if (url.searchParams.get('map') === '1') {
+        const rows = data.iot_observations || []
+        const bySensor = new Map()
+        for (const row of rows) {
+          if (!Number.isFinite(Number(row.lat)) || !Number.isFinite(Number(row.lon))) continue
+          const current = bySensor.get(row.sensor_id)
+          if (!current || String(row.observed_at) > String(current.observed_at)) bySensor.set(row.sensor_id, row)
+        }
+        const latest = [...bySensor.values()].map((row) => ({
+          id: row.id,
+          sensor_id: row.sensor_id,
+          sensor_type: row.sensor_type,
+          district: row.district || null,
+          lat: Number(row.lat),
+          lon: Number(row.lon),
+          value: row.value,
+          unit: row.unit || '',
+          observed_at: row.observed_at,
+          battery_pct: row.battery_pct ?? null,
+        }))
+        const times = rows.map((row) => row.observed_at).filter(Boolean)
+        jsonResponse(res, 200, { success: true, data: latest, as_of: times.length ? times.sort().at(-1) : null })
+        return
+      }
+      const rows = data.iot_observations || []
+      const sensorType = url.searchParams.get('sensor_type')
+      const above = url.searchParams.get('above')
+      const summary = sensorType
+        ? latestSensorReadings(data, { sensorType, above: above === null ? null : Number(above) })
+        : null
+      jsonResponse(res, 200, {
+        success: true,
+        ...collectionPage(rows, url.searchParams, { auth: req.__auth, data, collection: 'iot_observations' }),
+        summary,
+      })
+      return
+    }
+    if (req.method === 'POST') {
+      // Sensor gateways push either one reading or { readings: [...] }. A
+      // partial batch rejects as a unit: half-written batches are how a
+      // gateway and the store disagree about what was recorded.
+      const body = await readRequestJson(req)
+      const inputs = Array.isArray(body?.readings) ? body.readings : [body]
+      if (!inputs.length) {
+        jsonResponse(res, 400, { success: false, error: 'a reading or a non-empty readings array is required' })
+        return
+      }
+      let records
+      try {
+        records = inputs.map((input) => normalizeIotObservation(input))
+      } catch (err) {
+        jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
+        return
+      }
+      const now = new Date().toISOString()
+      const logs = records.map((record) => actionLog('iot_observations', 'created', record, body.actor || 'iot_gateway', req.__auth?.subject))
+      const outboxRecord = await emit(store, 'iot.observations_recorded', { count: records.length }, {
+        iot_observations: records,
+        action_logs: logs,
+      })
+      jsonResponse(res, 201, { success: true, data: records.length === 1 ? records[0] : records, count: records.length, outbox_event: outboxRecord.id })
       return
     }
   }
@@ -3915,6 +4018,15 @@ function matchTriggerRoute(pathname) {
   return { id: match[1] ? decodeURIComponent(match[1]) : null }
 }
 
+function matchProtocolRoute(pathname) {
+  if (pathname === '/api/v1/protocol-executions') return { kind: 'protocol-executions', id: null }
+  const summary = pathname.match(/^\/api\/v1\/protocol-executions\/summary$/)
+  if (summary) return { kind: 'protocol-executions-summary' }
+  const run = pathname.match(/^\/api\/v1\/trigger-protocols\/run$/)
+  if (run) return { action: 'run' }
+  return null
+}
+
 function matchRapidProRoute(pathname) {
   if (pathname === '/api/v1/rapidpro/status') return { kind: 'status' }
   if (pathname === '/api/v1/rapidpro/response-metrics') return { kind: 'response-metrics' }
@@ -3930,6 +4042,33 @@ function matchRapidProRoute(pathname) {
   const sendAlert = pathname.match(/^\/api\/v1\/rapidpro\/alert-events\/([^/]+)\/send$/)
   if (sendAlert) return { kind: 'send-alert', id: decodeURIComponent(sendAlert[1]) }
   return null
+}
+
+async function handleProtocolRoute(store, data, req, res, url, route) {
+  if (req.method === 'GET' && url.pathname === '/api/v1/protocol-executions') {
+    jsonResponse(res, 200, { success: true, ...collectionPage(data.protocol_executions || [], url.searchParams, { auth: req.__auth, data, collection: 'protocol_executions' }) })
+    return
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/protocol-executions/summary') {
+    const rows = data.protocol_executions || []
+    const last24hStr = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const recent = rows.filter((r) => r.fired_at > last24hStr)
+    const byStatus = rows.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc }, {})
+    const latestPer = {}
+    for (const r of [...rows].sort((a, b) => new Date(b.fired_at) - new Date(a.fired_at))) {
+      if (!latestPer[r.protocol_id]) latestPer[r.protocol_id] = { execution_id: r.id, status: r.status, fired_at: r.fired_at, observed_value: r.observed_value, would_fire: r.would_fire }
+    }
+    jsonResponse(res, 200, { success: true, total: rows.length, by_status: byStatus, last_24h: recent.length, latest_per_protocol: latestPer })
+    return
+  }
+  if (req.method === 'POST' && url.pathname === '/api/v1/trigger-protocols/run') {
+    const body = await readRequestJson(req)
+    const dryRun = Boolean(body.dry_run)
+    const result = await executeTriggerProtocols(store, await store.read(), { dryRun, actor: body.actor, subject: req.__auth?.subject })
+    jsonResponse(res, dryRun ? 200 : 201, { success: true, dry_run: dryRun, data: result })
+    return
+  }
+  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
 /**
