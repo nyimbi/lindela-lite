@@ -100,7 +100,69 @@ Every execution carries the protocol version and approver list in the audit chai
 `src/reports.js`, `src/kpi.js` and `src/pdf.js` produce operational and quarterly reports. `src/audit-chain.js` signs every export. `src/routing.js` and `src/road-access.js` route over imported road assets; an impassable segment is removed from the network entirely rather than penalised, because no finite cost is a barrier. `src/flood-depth.js` simulates static water surface against a DEM and prints what the percentage is a share of — the surveyed box, not the district.
 
 ### Data model
+### Record flow
 
+How a signal becomes an auditable action. Every box is a collection; every
+arrow is a write the executor actually performs.
+
+```mermaid
+flowchart LR
+    subgraph S[Signals]
+        CO[climate_observations]
+        HE[hazard_events]
+        CE[conflict_events]
+    end
+
+    subgraph D[Decision]
+        TP[trigger_protocols]
+        AE[alert_events]
+        PE[protocol_executions]
+    end
+
+    subgraph A[Action]
+        IN[incidents]
+        IV[interventions]
+        IT[intervention_tasks]
+    end
+
+    subgraph C[Communication]
+        RD[rapidpro_dispatches]
+        RI[rapidpro_inbound_messages]
+        FR[field_reports]
+    end
+
+    subgraph R[Reporting]
+        RP[reports]
+        RDR[report_distribution_runs]
+    end
+
+    CO --> TP
+    HE --> TP
+    CE --> TP
+    TP --> PE
+    PE --> AE
+    AE --> RD
+    PE --> IN
+    IN --> IV
+    IV --> IT
+    RD --> RI
+    RI --> FR
+    FR --> AE
+    AE --> RP
+    RP --> RDR
+```
+
+Read it left to right. A signal crosses a protocol threshold (`TP`). The
+executor writes an execution row (`PE`) and, in live mode, an auto-approved
+alert (`AE`). The playbook then branches: the notify action writes a dispatch
+(`RD`), the intervention action writes an incident, an intervention and a task
+(`IN` → `IV` → `IT`). A reply arrives as an inbound message (`RI`) and becomes
+a field report (`FR`), which can inform the next alert evaluation.
+
+`protocol_executions` is the join point. It carries `alert_id`, the protocol
+version, and the action results. That is the audit chain the demo shows.
+
+Full column-level schema in [docs/data-model.md](docs/data-model.md).
 The store is a declared-schema document store, switchable between JSON and Postgres (see [Storage](#storage)). Forty-plus collections, grouped:
 
 - **Signals** — `climate_observations`, `hazard_events`, `conflict_events`, `school_attendance_observations`, `iot_observations`, `field_outcomes`
@@ -323,39 +385,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.
 
 See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 ```
-
----
-
-## What changed and why
-
-| Section | Change | Reason |
-|---|---|---|
-| Opening | Added **what it is, who uses it, where it is live** in the first three paragraphs | A reader should know the product, its operational partner, and its public URL within ten seconds |
-| What It Does | Expanded to name the executor, the pre-authorisation, the refusal semantics, the routing and flood-depth modules | The prior list described a data toolkit; the product is a coordination layer |
-| What It Does Not Do | Added four honest gaps: no calibrated models, no flood probability, no district outbreak surveillance, no SMS without RapidPro | The refusal discipline is your strongest signal. It belongs at the top, not buried |
-| **Architecture** | **New section** — the three-layer Mermaid diagram, layer-by-layer code paths, data-model grouping, offline and test notes | Directly answers the UNICEF requirement for "overview of schema and major code components" |
-| Demo data | **New section** — the five seeded regions and the two seed methods | The prior README never told a reader how to reproduce the demo store |
-| Sources | Unchanged — the table is accurate | Leave it alone |
-| RapidPro | Added one paragraph on the refusal behaviour | Pre-empts the "what happens without a token" question |
-| Trigger protocols | **New section** — points at the examples directory and the executor module | The executor is the product. It should be discoverable from the README |
-| API | Added the public-path list | A reviewer visiting `lindela.co.ke` needs to know what is public and what is not |
-| Open-Source Boundary | Replaced the one-line pointer with the full split | The prior version assumed the reader would follow the link. The link is now summarised in place |
-
-## Do not change
-
-- The source table — it is accurate
-- The storage modes — they are accurate
-- The run commands — they are accurate
-- The one-click deployment section — it is accurate
-
-## Commit and push
-
-This is a single-file change. Commit it, push it, verify Mermaid renders on GitHub, and you are done. No deploy, no risk.
-
-```
-git add README.md
-git commit -m "Expand README: architecture, demo data, executor, open-source boundary"
-git push
-```
-
-Open `github.com/nyimbi/lindela-lite` and confirm the diagram renders before you join the call. If Mermaid does not render, the fallback is to describe the three layers verbally and point at the file tree.
