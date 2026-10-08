@@ -168,14 +168,9 @@ a field report (`FR`), which can inform the next alert evaluation.
 `protocol_executions` is the join point. It carries `alert_id`, the protocol
 version, and the action results. That is the audit chain the demo shows.
 
-**Populated in the demo store:** `climate_observations`, `hazard_events`,
-`conflict_events`, `rapidpro_dispatches`, `rapidpro_inbound_messages`,
-`field_reports`, `reports`, `report_distribution_runs`.
 
-**Declared, not yet populated in the demo store:**
-`school_attendance_observations`, `iot_observations`, `field_outcomes`. The
-schema, ingest path and protocol bindings exist; the connectors activate
-against a partner endpoint.
+
+**Demo store:** the five pilot regions are seeded by npm run demo:seed and augmented by live public-source ingestion. Signals arrive from the seed, from scheduled ingestion, and from API writes — including cold-chain sensor readings and field outcome confirmations. GET /api/v1/health reports current counts.
 
 Full column-level schema in [docs/data-model.md](docs/data-model.md).
 
