@@ -1,11 +1,95 @@
 /**
  * Protocol execution engine — Phase D (vision gap-closure).
  *
- * Protocols are pre-authorised conditions. When their metric crosses the
- * threshold, the alert is auto-approved (`approval.state = 'auto_approved'`)
- * and the playbook executes without a human gate — the protocol IS the
- * authorisation. The audit chain (`approval.approvers`, `approval.decided_at`,
- * `derivation.engine.rule_schema = 'protocol/1'`) makes that claim verifiable.
+ * THE POINT OF THE MODULE
+ *
+ * Alert *rules* (src/alerts.js) detect. They raise an alert and stop, and a
+ * human decides what happens next. That decision latency — four to six days
+ * between an early warning and an approved response in the settings this
+ * platform is built for — is the failure the vision document names first:
+ * "Early warning without coordination becomes delayed suffering."
+ *
+ * Protocols close that latency by moving the decision *before* the event. A
+ * trigger protocol is a condition the district has already agreed to and
+ * signed off (`agreed_at`, `approvers`) together with the actions that
+ * agreement authorises (`action_playbook`). When the condition holds, the
+ * alert is raised already approved (`approval.state = 'auto_approved'`,
+ * `approval.pre_authorised = true`) and the playbook executes in the same
+ * tick — no human gate, because the humans met when the protocol was signed.
+ * The audit chain (`approvers`, `decided_at`,
+ * `derivation.engine.rule_schema = 'protocol/1'`) is what makes "the district
+ * agreed" a verifiable claim rather than a slogan.
+ *
+ * EXECUTION MODEL
+ *
+ * `executeTriggerProtocols(store, data, opts)` runs every protocol in the
+ * store against a live context (`counts(data)` plus data quality — the same
+ * metric vocabulary the backtester scores against, so a protocol fires on the
+ * quantities it was evaluated on). Per protocol, exactly one of four things
+ * happens:
+ *
+ *   - shadow mode writes one `protocol_executions` row recording what WOULD
+ *     have fired. Shadow protocols are how a condition earns promotion to
+ *     live: it runs silently, a backtest (backtestTriggerProtocol) measures
+ *     its precision lift over the base rate, and only the evidence turns it
+ *     on. A shadow row is the answer to "why did we start trusting this?"
+ *   - live and not firing writes nothing at all. Silence means the condition
+ *     does not hold; the feed shows actions, not heartbeats.
+ *   - live, firing, with an open protocol alert already in the store records
+ *     nothing new — one open action per protocol, ever. A persistent
+ *     condition re-alerting every tick would multiply dispatches, tasks and
+ *     equity-KPI noise without adding any information.
+ *   - live, firing, none open builds the alert, executes the playbook, and
+ *     commits EVERYTHING — alert, execution row, dispatches, incidents,
+ *     interventions, tasks, logs — in ONE store.merge. A crash mid-run must
+ *     not leave the playbook committed and the alert that justified it
+ *     missing; the merge is the atomicity.
+ *
+ * COMPOSITION AND FAIL-CLOSED SEMANTICS
+ *
+ * Conditions compose as a flat set (`condition_set` in src/alerts.js): 1–5
+ * terms combined by `and` / `or` / `xor`, with per-term negation and optional
+ * group inversion — the whole practical space of district-phrased protocols
+ * ("heat AND cold-chain breach", "flood OR landslide", "exactly one gauge
+ * family reporting"), including NAND/NOR/XNOR via inversion. The one rule
+ * that binds every combinator: if ANY term's metric cannot be resolved, the
+ * set does not fire. An unresolvable term is a non-answer, and a non-answer
+ * must never become a fire — group inversion of a missing reading would
+ * otherwise turn silence into action, the one result guaranteed to be wrong.
+ * Every evaluation (alert derivation, execution row, shadow row) snapshots
+ * the per-term readings alongside the verdict, so "why did this fire?" has
+ * the same answer for a compound protocol as for a single threshold.
+ *
+ * PLAYBOOK ACTIONS
+ *
+ * A closed set, executed in order:
+ *
+ *   - notify    — RapidPro dispatch to the protocol's recipients. Refused,
+ *     not skipped, when RapidPro is unconfigured: the alert exists and is
+ *     sendable by hand, so a missing gateway is a deferred delivery, not a
+ *     failed step. The refusal says exactly that.
+ *   - intervention — creates the incident first (an intervention is a
+ *     response TO something; the chain incident → intervention → task must be
+ *     real), then the intervention. Its optional `id` labels it for tasks.
+ *   - task      — attaches to the intervention its `for` label names, or the
+ *     most recent intervention this execution created. An unresolvable label
+ *     is refused with the reason; a task is never filed against null or
+ *     against last week's response.
+ *
+ * One refusal does not abort the playbook — the execution status (executed /
+ * partial / refused) is computed from the RESULTS, never from the operator's
+ * input JSON, which has no status fields to read.
+ *
+ * THE SHAPE OF AN HONEST LEDGER
+ *
+ * Everything lands in `protocol_executions`: what fired, the evaluated
+ * condition set, which actions ran, which refused and why, the alert it
+ * produced, and the actor (`protocol-engine`) — plus an action_log row and
+ * a `protocol.executed` outbox event per execution so webhook subscribers
+ * learn of pre-authorised actions in the same breath as the audit chain.
+ * A pre-authorised action that nobody could observe would be indistinguishable
+ * from nothing happening, and "nothing happened" is the one false claim this
+ * system refuses to make.
  */
 
 import { evaluateConditionSet } from './alerts.js'
@@ -124,6 +208,13 @@ export async function executeTriggerProtocols(store, data, {
     // of that pair has to be filled in after the fact; doing it this way means
     // both are real rather than one being null.
     const executionId = stableId('protocol_execution', [p.id, now])
+    // Protocol metrics are aggregate counts over the whole store — counts.* —
+    // so the alert has no per-record identity to inherit a place from. The
+    // playbook is where a district lives: the first action that names one is
+    // the alert's where. Null when the playbook names none; the console words
+    // that ("not recorded for this alert") rather than guessing.
+    const playbookDistrict = (p.action_playbook || [])
+      .find((a) => a && typeof a === 'object' && a.district)?.district || null
     const alert = {
       id: stableId('alert', [p.id, 'protocol', now]),
       rule_id: null,
@@ -134,9 +225,12 @@ export async function executeTriggerProtocols(store, data, {
       operator: p.operator,
       threshold: p.threshold,
       value,
+      location: playbookDistrict
+        ? { name: playbookDistrict, admin1: null, country: null, latitude: null, longitude: null }
+        : null,
       message: `${p.name} (pre-authorised protocol): ${p.metric} ${p.operator} ${p.threshold} (actual ${value})`,
       actions: p.action_playbook,
-      scope: { protocol_id: p.id },
+      scope: { protocol_id: p.id, ...(playbookDistrict ? { district: playbookDistrict } : {}) },
       created_at: now,
       updated_at: now,
       // The pre-authorisation IS the protocol record. That is the entire point:
@@ -148,6 +242,11 @@ export async function executeTriggerProtocols(store, data, {
         protocol_id: p.id,
         protocol_version: p.version || 1,
         approvers: p.approvers || [],
+        // The date the district signed the protocol off, carried with the
+        // approvers and decided_at it belongs beside: "pre-authorised" is a
+        // claim about a decision made ON a date. Null when the protocol has
+        // none, which is itself the honest answer.
+        agreed_at: p.agreed_at || null,
         decided_at: now,
       },
       metadata: {
@@ -275,6 +374,13 @@ export async function executeTriggerProtocols(store, data, {
         anyRefused = true
       }
     }
+
+    // What authorisation DID, on the alert itself. `actionsResults` is the same
+    // array the execution row records below, and the alert was already pushed
+    // into `alerts`, so the single merge at the end of the run covers it — no
+    // second write exists or is needed. The alert card and the explain view
+    // read this first and the execution row only as a fallback.
+    alert.metadata.playbook_results = actionsResults
 
     // The execution status is computed from the RESULTS, not from the playbook
     // input. The first version of this checked `playbookActions.some(a =>
