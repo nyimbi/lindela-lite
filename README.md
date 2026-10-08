@@ -111,6 +111,9 @@ flowchart LR
         CO[climate_observations]
         HE[hazard_events]
         CE[conflict_events]
+        SA[school_attendance_observations]
+        IO[iot_observations]
+        FO[field_outcomes]
     end
 
     subgraph D[Decision]
@@ -139,6 +142,9 @@ flowchart LR
     CO --> TP
     HE --> TP
     CE --> TP
+    SA --> TP
+    IO --> TP
+    FO --> TP
     TP --> PE
     PE --> AE
     AE --> RD
@@ -152,7 +158,7 @@ flowchart LR
     RP --> RDR
 ```
 
-Read it left to right. A signal crosses a protocol threshold (`TP`). The
+Read it left to right. Any signal can cross a protocol threshold (`TP`). The
 executor writes an execution row (`PE`) and, in live mode, an auto-approved
 alert (`AE`). The playbook then branches: the notify action writes a dispatch
 (`RD`), the intervention action writes an incident, an intervention and a task
@@ -162,8 +168,18 @@ a field report (`FR`), which can inform the next alert evaluation.
 `protocol_executions` is the join point. It carries `alert_id`, the protocol
 version, and the action results. That is the audit chain the demo shows.
 
+**Populated in the demo store:** `climate_observations`, `hazard_events`,
+`conflict_events`, `rapidpro_dispatches`, `rapidpro_inbound_messages`,
+`field_reports`, `reports`, `report_distribution_runs`.
+
+**Declared, not yet populated in the demo store:**
+`school_attendance_observations`, `iot_observations`, `field_outcomes`. The
+schema, ingest path and protocol bindings exist; the connectors activate
+against a partner endpoint.
+
 Full column-level schema in [docs/data-model.md](docs/data-model.md).
-The store is a declared-schema document store, switchable between JSON and Postgres (see [Storage](#storage)). Forty-plus collections, grouped:
+
+Forty-plus collections, grouped:
 
 - **Signals** — `climate_observations`, `hazard_events`, `conflict_events`, `school_attendance_observations`, `iot_observations`, `field_outcomes`
 - **Decisions** — `alert_rules`, `alert_events`, `trigger_protocols`, `protocol_executions`
