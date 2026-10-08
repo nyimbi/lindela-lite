@@ -462,7 +462,7 @@ version="unknown"
 pipeline_healthy="unknown"
 DRY_LABEL=""
 if [ "$DRY_RUN" = 0 ]; then
-  health_json="$(remote "curl -fsS 'http://127.0.0.1:$REMOTE_PORT/api/v1/health' 2>/dev/null || echo '{}")"
+  health_json="$(remote "curl -fsS 'http://127.0.0.1:$REMOTE_PORT/api/v1/health' 2>/dev/null || echo '{}'")"
   pipeline_healthy="$(printf '%s' "$health_json" | sed -n 's/.*"healthy":\(true\|false\).*/\1/p' | head -1)"
   version="$(printf '%s' "$health_json" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -1)"
 else

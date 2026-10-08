@@ -8,7 +8,7 @@
  * `derivation.engine.rule_schema = 'protocol/1'`) makes that claim verifiable.
  */
 
-import { resolveMetric, compare } from './alerts.js'
+import { evaluateConditionSet } from './alerts.js'
 import { counts, buildCreate, actionLog } from './operations.js'
 import { sendRapidProAlert, rapidProStatus } from './rapidpro.js'
 import { stableId } from './utils.js'
@@ -28,20 +28,26 @@ export function liveContext(data) {
   return { counts: counts(data), data_quality: data.data_quality || null }
 }
 
-/** Pure evaluation: returns per-protocol `{ protocol, value, firing }`. */
+/** Pure evaluation: returns per-protocol firing against the full logic. */
 export function evaluateTriggerProtocols(data, { now = new Date().toISOString() } = {}) {
   const protocols = data.trigger_protocols || []
   const context = liveContext(data)
   const out = []
   for (const p of protocols) {
-    const value = resolveMetric(context, p.metric)
-    out.push({ protocol: p, value, firing: Number.isFinite(value) && compare(value, p.operator, p.threshold) })
+    const evaluation = evaluateConditionSet(conditionSetFor(p), context)
+    out.push({ protocol: p, value: evaluation.primary?.observed_value ?? null, firing: evaluation.firing, evaluation })
   }
   return out
 }
 
-/** Effectful execution: shadow writes execution row only; live creates
- * auto-approved alert + executes playbook + writes executions row. */
+/** Records normalised before condition sets existed — and hand-built fixtures —
+ * carry only the flat fields; they always meant a one-term AND set. */
+function conditionSetFor(p) {
+  return p.condition_set?.terms?.length
+    ? p.condition_set
+    : { combinator: 'and', negate: false, terms: [{ metric: p.metric, operator: p.operator, threshold: p.threshold }] }
+}
+
 export async function executeTriggerProtocols(store, data, {
   now = new Date().toISOString(), dryRun = false, actor = null, subject = null, env = process.env,
 } = {}) {
@@ -57,8 +63,11 @@ export async function executeTriggerProtocols(store, data, {
 
   for (const p of protocols) {
     const context = liveContext(data)
-    const value = resolveMetric(context, p.metric)
-    const wouldFire = Number.isFinite(value) && compare(value, p.operator, p.threshold)
+    const conditionSet = conditionSetFor(p)
+    const evaluation = evaluateConditionSet(conditionSet, context)
+    const primary = evaluation.primary || { observed_value: null }
+    const value = primary.observed_value
+    const wouldFire = evaluation.firing
 
     if (p.mode === 'shadow') {
       executionsRows.push({
@@ -71,6 +80,14 @@ export async function executeTriggerProtocols(store, data, {
         metric: p.metric, operator: p.operator, threshold: p.threshold,
         observed_value: value,
         would_fire: wouldFire,
+        // The full evaluated logic travels with the row: the feed shows the
+        // readings per term, not just the verdict.
+        condition_set: {
+          combinator: conditionSet.combinator,
+          negate: Boolean(conditionSet.negate),
+          evaluable: evaluation.evaluable,
+          terms: evaluation.results,
+        },
         // Explicitly null rather than absent. `alert_id` is part of the declared
         // execution shape, and a reader that has to tell "no alert was created"
         // from "this field does not exist" gets the wrong answer for a missing
@@ -149,6 +166,15 @@ export async function executeTriggerProtocols(store, data, {
         observed_value: value,
         observed_at: now,
         context_snapshot: context,
+        // The full evaluated logic, so "why did this fire?" has the same
+        // answer for a compound protocol as for a single threshold: every
+        // term's reading and satisfaction at the moment of the decision.
+        condition_set: {
+          combinator: conditionSet.combinator,
+          negate: Boolean(conditionSet.negate),
+          evaluable: evaluation.evaluable,
+          terms: evaluation.results,
+        },
         // Null, not an empty array: a count over an aggregate has no per-record
         // identity to name, and `[]` would read as "no records were involved".
         input_record_ids: null,
@@ -283,6 +309,12 @@ export async function executeTriggerProtocols(store, data, {
       status: executionStatus,
       metric: p.metric, operator: p.operator, threshold: p.threshold,
       observed_value: value,
+      condition_set: {
+        combinator: conditionSet.combinator,
+        negate: Boolean(conditionSet.negate),
+        evaluable: evaluation.evaluable,
+        terms: evaluation.results,
+      },
       alert_id: alert.id,
       dry_run: Boolean(dryRun),
       actions: actionsResults,

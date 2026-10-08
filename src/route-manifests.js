@@ -103,6 +103,7 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/service-assets/:id': Object.freeze(["service_assets"]),
   'GET /api/v1/service-impacts': Object.freeze(["impact_assessments"]),
   'GET /api/v1/sources': Object.freeze(["connector_circuit", "ingestion_schedules", "source_runs"]),
+  'GET /api/v1/connectors/status': Object.freeze(["source_runs"]),
   'GET /api/v1/tasks': Object.freeze(["intervention_tasks"]),
   'GET /api/v1/tasks/:id': Object.freeze(["intervention_tasks"]),
   'GET /api/v1/trigger-protocols': Object.freeze(["trigger_protocols"]),

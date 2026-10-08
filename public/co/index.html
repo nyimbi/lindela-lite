@@ -166,42 +166,13 @@
         margin-left: 0.25rem;
       }
 
-      /* Histogram */
-      .histogram {
-        display: flex;
-        align-items: flex-end;
-        gap: 0.4rem;
-        height: 80px;
-        padding: 0 0.25rem;
-      }
-
-      .hist-bar-wrap {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 0.2rem;
-        flex: 1;
-      }
-
-      .hist-bar {
-        width: 100%;
-        background: var(--brand);
-        border-radius: 2px 2px 0 0;
-        min-height: 2px;
-        transform-origin: bottom;
-        transition: transform 0.3s;
-      }
-
-      .hist-label {
-        font-size: 0.65rem;
-        color: var(--ink-muted);
-        white-space: nowrap;
-      }
-
-      .hist-count {
-        font-size: 0.65rem;
-        color: var(--ink-muted);
-      }
+      /* Histogram
+         The chart is the shared barChart() from /shared/charts.js — an SVG
+         sized by the .chart rules in components.css plus a .chart-table
+         sibling. This block was the styling for the old CSS-<div> bar chart
+         (fixed 80px flex row, .hist-bar pixel heights); that chart moved to
+         the shared library and its leftover rules crammed a ~450px SVG into
+         an 80px box, so the bars painted across the sections below. */
 
       /* Footer */
       footer {

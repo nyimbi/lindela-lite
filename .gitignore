@@ -15,6 +15,8 @@ coverage/
 
 # Internal tender analysis — never publish bid requirements or scoring
 docs/u*-requirements-traceability.md
+docs/plans/vision-gap-closure.md
+docs/research/worldmonitor-review-brief.md
 
 # Browser-gate output. Every check in the needs-browser tier writes a screenshot
 # here, and there are eight of them across eight surfaces and two viewports —
@@ -29,3 +31,9 @@ AGENTS.md
 
 # Operator bootstrap script with environment-specific credentials
 start-claude.sh
+
+# External-repo research reports (third-party analysis, not product source)
+docs/research/worldmonitor-review.md
+
+# Demo script — internal only, contains claim-discipline and unreleased status
+docs/demo-playbook.md

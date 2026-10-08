@@ -385,31 +385,43 @@
   {
     "id": "dhis2",
     "module": "src/connectors/dhis2.js",
-    "description": "DHIS2 bidirectional sync scaffold (configure base_url and api_token to activate)",
+    "description": "DHIS2 dataValueSets pull. Maps configured data elements to climate observations and, when a mapping names BOTH enrolled_from and present_from data element UIDs, to normalized daily school attendance records (absent derived as enrolled minus present, the register arithmetic, stated per record). A single aggregate headcount is refused with an error — no invented present counts. Runs only when LINDELA_LITE_DHIS2_ENABLED=on and request.base_url is set.",
     "schemas": {
       "input": {
         "base_url": "string — DHIS2 instance root URL",
-        "api_token": "string — personal access token",
+        "api_token": "string — personal access token (ApiToken auth)",
+        "username": "string — basic auth user (used when api_token absent)",
+        "password": "string — basic auth password",
         "org_units": "array of string — org unit UIDs",
-        "data_elements": "array of string — data element UIDs",
-        "period": "string — DHIS2 period e.g. 2026Q3"
+        "data_elements": "array of string — data element UIDs to pull",
+        "period": "string — DHIS2 period e.g. 2026Q3 (default current quarter)",
+        "mappings": "object keyed by data element UID: { kind: climate|school_attendance, indicator?, unit?, district?, school_id?, school_name?, enrolled_from?, present_from? }",
+        "timeout_ms": "number (default 20000)"
       },
       "output": [
-        "climate_observations"
+        "climate_observations",
+        "school_attendance_observations"
       ]
     },
     "defaults": {
-      "timeout_ms": 20000,
-      "retries": 1
+      "rateLimit": {
+        "perMinute": 30
+      },
+      "retry": {
+        "max": 1,
+        "backoffMs": 1000
+      },
+      "timeout_ms": 20000
     },
     "tags": [
       "dhis2",
       "health",
-      "bidirectional",
-      "scaffold"
+      "education",
+      "school-attendance",
+      "pull"
     ],
     "contributor": "core",
-    "since": "0.2.0"
+    "since": "0.4.0"
   },
   {
     "id": "gdacs_archive",
@@ -593,5 +605,77 @@
     "source": "ReliefWeb (UN OCHA)",
     "license": "ReliefWeb content per ReliefWeb reuse terms, attribution required; GLIDE licence for ids",
     "since": "0.3.0"
+  },
+  {
+    "id": "kobo",
+    "module": "src/connectors/kobo.js",
+    "description": "KoboToolbox submission pull. Every submission becomes a field_report carrying the raw form answers (source kobotoolbox, reporter_urn_hash null — no hashable URN arrives). A field_mapping school_attendance entry additionally yields normalized daily school attendance when the form carries school_id/date/enrolled/present fields; missing fields are recorded as errors and skipped. Runs only when LINDELA_LITE_KOBO_ENABLED=on with base_url, asset_uid and api_token.",
+    "schemas": {
+      "input": {
+        "base_url": "string — KoboToolbox server root URL",
+        "asset_uid": "string — the form asset UID",
+        "api_token": "string — API token (Token auth)",
+        "field_mapping": "object; a school_attendance entry maps canonical names to Kobo field names: { kind, school_id, date, enrolled, present, absent?, school_name?, district? }",
+        "timeout_ms": "number (default 20000)"
+      },
+      "output": [
+        "field_reports",
+        "school_attendance_observations"
+      ]
+    },
+    "defaults": {
+      "rateLimit": {
+        "perMinute": 60
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
+      "timeout_ms": 20000
+    },
+    "tags": [
+      "kobo",
+      "kobotoolbox",
+      "field-reports",
+      "education",
+      "school-attendance",
+      "pull"
+    ],
+    "contributor": "core",
+    "since": "0.4.0"
+  },
+  {
+    "id": "iot",
+    "module": "src/connectors/iot.js",
+    "description": "Generic IoT sensor gateway pull: one GET returning a JSON array of readings (sensor_id, sensor_type, district, lat/lon, observed_at, value, unit, battery_pct). Each reading is normalized with the closed sensor-type enum and per-type unit defaults; a reading that fails validation lands in errors and the rest of the batch still returns. Runs only when LINDELA_LITE_IOT_ENABLED=on and request.base_url is set; the bearer token is sent only when configured.",
+    "schemas": {
+      "input": {
+        "base_url": "string — gateway endpoint returning a JSON array of readings",
+        "api_token": "string — optional bearer token",
+        "timeout_ms": "number (default 20000)"
+      },
+      "output": [
+        "iot_observations"
+      ]
+    },
+    "defaults": {
+      "rateLimit": {
+        "perMinute": 60
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
+      "timeout_ms": 20000
+    },
+    "tags": [
+      "iot",
+      "sensors",
+      "cold-chain",
+      "flood-gauge",
+      "pull"
+    ],
+    "contributor": "core",
+    "since": "0.4.0"
   }
 ]

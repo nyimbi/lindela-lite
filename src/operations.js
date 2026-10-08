@@ -409,6 +409,16 @@ export function counts(data) {
     impact_assessments: data.impact_assessments.length,
     risk_scores: data.risk_scores.length,
     data_quality: data.data_quality.length,
+    // Field signals: raw row counts, so alert rules and trigger protocols can
+    // threshold on them directly (e.g. "iot_observations with sensor_type
+    // cold_chain and value > 8°C" is a *query*, not a count — rules that need it
+    // read the derived keys below).
+    school_attendance_observations: data.school_attendance_observations?.length ?? null,
+    iot_observations: data.iot_observations?.length ?? null,
+    // The action loop, as counts an operator can trend: how many pre-authorised
+    // actions fired, and how many field outcomes responders confirmed.
+    protocol_executions: data.protocol_executions?.length ?? null,
+    field_outcomes: data.field_outcomes?.length ?? null,
     // Both of these were `.length`, and both lengths are of something other than
     // what the key names. `population_at_risk` is keyed by *hazard* — one row
     // per hazard, because each hazard has its own exposed population — so its
@@ -435,12 +445,19 @@ export function counts(data) {
     // from, because a per-hazard row does not carry the asset ids and so cannot
     // be de-duplicated after the fact.
     //
-    // Both are published rather than one replacing the other, because they answer
-    // different questions and the first is what the stored collection literally
-    // contains. Every published *rate* must use the union: flood events cluster,
-    // so the sum inflates in proportion to the hazard count rather than to the
-    // people exposed.
+    // `_total` is the de-duplicated PEOPLE figure (what the metric calls
+    // `value`). It used to publish `assets_at_risk` — a facility count — under
+    // this name, which made "population_at_risk_union_total: 23" a sentence
+    // about facilities wearing a name that promises people. The facility count
+    // stays available under its own honest name.
     population_at_risk_union_total: data.population_at_risk
+      ? (computeMetric('population_at_risk', {
+        assets: data.service_assets || [],
+        hazards: data.hazard_events || [],
+        haversineKm,
+      }).value ?? null)
+      : null,
+    population_at_risk_union_assets: data.population_at_risk
       ? (computeMetric('population_at_risk', {
         assets: data.service_assets || [],
         hazards: data.hazard_events || [],

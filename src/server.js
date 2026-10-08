@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, publicPaths } from './auth.js'
+import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, isPublicRequest, publicReadsOpen, publicPaths } from './auth.js'
 import { logger, metrics, timer } from './observability.js'
 import { refreshAnalytics, calibrationReport } from './analytics.js'
 import { biasCorrectClimate } from './analytics/downscaling.js'
@@ -80,6 +80,23 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
 const docsDir = path.resolve(__dirname, '../docs')
 const registryPath = path.resolve(__dirname, '../connectors.registry.json')
+
+/**
+ * Env gate per connector id, for `GET /api/v1/connectors/status`.
+ *
+ * Only the three field-system connectors are gated; everything else runs
+ * unconditionally, and is reported as enabled rather than being given an
+ * invented flag an operator could set and be ignored. A gate listed here but not
+ * honoured by the connector would be worse than no gate — it would report
+ * "enabled" over a source that then refuses to run — so this table is kept next
+ * to the gates it mirrors rather than derived from them.
+ */
+const GATE_ENV = Object.freeze({
+  dhis2: 'LINDELA_LITE_DHIS2_ENABLED',
+  kobo: 'LINDELA_LITE_KOBO_ENABLED',
+  iot: 'LINDELA_LITE_IOT_ENABLED',
+})
+
 let defaultStorePromise
 let connectorRegistry = null
 
@@ -738,7 +755,7 @@ async function handleApiRequest(store, req, res, url) {
   // `authenticate` was already being called on this path for the idempotency
   // key, so this is not a second authentication — it is the same call, hoisted
   // so the answer is available before any handler runs rather than after.
-  const auth = (isAuthConfigured() && !isPublicPath(url.pathname) ? authenticate(req) : null) || null
+  const auth = (isAuthConfigured() && !isPublicRequest(req.method, url.pathname) ? authenticate(req) : null) || null
   return runWithRequestContext(auth, () => handleApiRequestInContext(store, req, res, url, auth))
 }
 
@@ -759,12 +776,14 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
         jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook' })
         return
       }
-    } else if (!isPublicPath(url.pathname)) {
-      // Every route needs a token, GET included. The old guard rejected only
+    } else if (!isPublicRequest(req.method, url.pathname)) {
+      // Every route needs a token — and public paths are a read widening only
+      // (see `isPublicRequest`), so a mutation to a publicly listed path still
+      // lands here and still authenticates. The old guard rejected only
       // non-GET methods, so `GET /api/v1/export.csv` — field reports and
       // RapidPro message bodies — was served to anyone who could reach the
-      // port even with API keys correctly configured. A deployment with auth
-      // enabled looked secured and was not.
+      // port even with API keys correctly configured; the read side of that
+      // fix stays, the write side of it now never widens.
       auth = authenticate(req)
       if (!auth) {
         // `/auth-info` is the one route an unauthenticated caller may reach,
@@ -788,6 +807,7 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
               scopes: [],
               partner_org: null,
               auth_configured: true,
+              anonymous_reads: publicReadsOpen(),
             },
           })
           return
@@ -893,6 +913,10 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
         scopes: auth?.scopes || [],
         partner_org: auth?.partner_org || null,
         auth_configured: isAuthConfigured(),
+        // Whether anonymous visitors can read the console's data surface.
+        // The banner gate uses this to distinguish "paste a token to see
+        // anything" from "browse freely; a token only unlocks writes".
+        anonymous_reads: publicReadsOpen(),
       },
     })
     return
@@ -1831,6 +1855,57 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
   const protocolRoute = matchProtocolRoute(url.pathname)
   if (protocolRoute) {
     await handleProtocolRoute(store, data, req, res, url, protocolRoute)
+    return
+  }
+
+  // Which connectors this deployment can actually run, and why not.
+  //
+  // The vision claims the platform works from field systems — school attendance,
+  // sensor readings, survey responses. An operator looking at a dashboard built
+  // on those claims needs to know which of them are switched on, because a panel
+  // quietly full of zeroes is indistinguishable from a panel fed by nothing.
+  //
+  // `enabled` is decided by the gate the connector itself uses, read from the
+  // registry rather than hardcoded here — a gate declared in two places is a
+  // gate that will be updated in one. Where a connector has no gate it is
+  // reported as always-on rather than given an invented flag name.
+  if (req.method === 'GET' && url.pathname === '/api/v1/connectors/status') {
+    const registry = await getConnectorRegistry()
+    const entries = Array.isArray(registry) ? registry : []
+    const runs = data.source_runs || []
+    const rows = entries.map((connector) => {
+      const gateVar = GATE_ENV[connector.id] || null
+      const enabled = gateVar ? process.env[gateVar] === 'on' : true
+      // The most recent run for THIS connector, not the most recent run overall.
+      // Attributing the newest run's status to every connector would report a
+      // working DHIS2 as broken because the weather source failed afterwards.
+      const lastRun = runs
+        .filter((run) => run.source === connector.id)
+        .sort((a, b) => String(b.completed_at || b.started_at || '').localeCompare(String(a.completed_at || a.started_at || '')))[0] || null
+      return {
+        id: connector.id,
+        description: connector.description || '',
+        gate: gateVar,
+        enabled,
+        // A gated-off connector is a deliberate choice by an operator, so it says
+        // what to set rather than just reporting false.
+        reason: enabled ? null : `set ${gateVar}=on and provide its credentials to enable this source`,
+        output: connector.schemas?.output || [],
+        last_run: lastRun ? {
+          id: lastRun.id,
+          status: lastRun.status,
+          completed_at: lastRun.completed_at || null,
+          records: lastRun.records ?? null,
+          error: lastRun.error || null,
+        } : null,
+      }
+    })
+    jsonResponse(res, 200, {
+      success: true,
+      total: rows.length,
+      enabled: rows.filter((r) => r.enabled).length,
+      data: rows,
+    })
     return
   }
 
@@ -4140,6 +4215,10 @@ function matchTriggerRoute(pathname) {
   if (shadowRun) return { id: decodeURIComponent(shadowRun[1]), action: 'shadow-run' }
   const match = pathname.match(/^\/api\/v1\/trigger-protocols(?:\/([^/]+))?$/)
   if (!match) return null
+  // `/run` executes every protocol and belongs to the protocol-execution
+  // route, not to a record id. The generic pattern swallows it as id 'run',
+  // and the record handler then 405s a route that exists one matcher later.
+  if (match[1] === 'run') return null
   return { id: match[1] ? decodeURIComponent(match[1]) : null }
 }
 

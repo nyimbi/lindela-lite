@@ -234,6 +234,38 @@ export function isPublicPath(pathname, env = process.env) {
   return configured.some((allowed) => pathname === allowed || pathname.startsWith(`${allowed}/`))
 }
 
+/**
+ * Public eligibility for one request. Public paths are a *read* widening: an
+ * operator who lists `/api/v1` in `LINDELA_LITE_PUBLIC_PATHS` is publishing the
+ * data for anyone who can reach the port — that is what "public dashboard"
+ * means. It has never meant anonymous writes: a mutation that arrived without
+ * a token was an operator action forged by whoever found the URL. So the
+ * public-path bypass applies to GET and HEAD only, and every POST/PATCH/PUT/
+ * DELETE authenticates whenever auth is configured, whatever the path list
+ * says. An operator who genuinely needs an open write endpoint can say so in
+ * the tokens file with a scoped token, which is a decision with a name on it.
+ */
+export function isPublicRequest(method, pathname, env = process.env) {
+  if (method !== 'GET' && method !== 'HEAD') return false
+  return isPublicPath(pathname, env)
+}
+
+/**
+ * Does this deployment allow anonymous reads across the console's data
+ * surface? `/auth-info` reports this so the console can tell "browse freely"
+ * from "paste a token" without probing a real record route. The check is
+ * whether any operator-configured prefix covers the `/api/v1/` namespace —
+ * which is what `LINDELA_LITE_PUBLIC_PATHS=/api/v1` (the public-demo
+ * deployment) arranges.
+ */
+export function publicReadsOpen(env = process.env) {
+  const configured = String(env.LINDELA_LITE_PUBLIC_PATHS || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+  return configured.some((allowed) => '/api/v1/'.startsWith(allowed.endsWith('/') ? allowed : `${allowed}/`) || allowed === '/api/v1')
+}
+
 export function isAuthConfigured(env = process.env) {
   return Boolean(env.LINDELA_LITE_TOKENS || env.LINDELA_LITE_API_KEY)
 }

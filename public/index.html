@@ -106,6 +106,15 @@
             <input type="checkbox" id="coldChainToggle">
             <span data-i18n="filter.cold_chain">Cold-chain nodes</span>
           </label>
+          <!-- Off by default. Sensors are the most numerous point layer here and
+               the least useful without the list view beside it, so they draw on
+               request. The status line still reports what was ingested whether or
+               not the toggle is on: "no sensors" and "sensors not shown" are
+               different facts. -->
+          <label class="filter-label">
+            <input type="checkbox" id="sensorsToggle">
+            <span data-i18n="filter.sensors">Sensors</span>
+          </label>
           <label class="filter-label">
             <span>Basemap</span>
             <select id="mapTileSource" aria-label="Basemap imagery source">
@@ -225,6 +234,13 @@
               <g id="mapFlood" class="flood-layer"></g>
               <g id="mapRiverDischarge" class="river-discharge-layer"></g>
               <g id="mapDisease" class="disease-layer"></g>
+              <!-- Sensors, above the hazards so a sensor pin is never hidden by a
+                   hazard marker on the same coordinate — the reading is the thing
+                   the operator is looking for, and the hazard is context for it.
+                   Drawn from /api/v1/iot-observations?map=1, which returns only
+                   sensors with finite coordinates, so nothing here needs to be
+                   placed off Null Island. -->
+              <g id="mapSensors" class="sensors-layer"></g>
               <g id="mapHazards" class="hazard-layer"></g>
               <g id="mapRoute" class="route-layer"></g>
               <g id="mapRoads" class="roads-layer"></g>
@@ -403,6 +419,7 @@
             <p id="weatherStatus" class="map-sim-status" role="status" aria-live="polite"></p>
             <p id="riverDischargeStatus" class="map-sim-status" role="status" aria-live="polite"></p>
             <p id="diseaseStatus" class="map-sim-status" role="status" aria-live="polite"></p>
+            <p id="sensorsStatus" class="map-sim-status" role="status" aria-live="polite"></p>
             <div id="floodLegend" class="flood-legend" hidden></div>
           </div>
 
@@ -482,6 +499,62 @@
             <ol id="routeHops" class="route-hops" hidden></ol>
           </div>
         </div>
+      </section>
+
+      <!-- The action rail.
+           The map shows what is happening; this shows what the platform DID
+           about it. Without it the vision's central claim — "not a dashboard,
+           actual pre-authorised coordinated action" — is unfalsifiable: a protocol
+           that fires at 03:00 and opens an incident looks identical to one that
+           never fired at all, and a playbook that opened an incident but refused
+           to dispatch looks identical to one that did both.
+
+           Refusals are rendered as first-class rows, not hidden as errors. For an
+           operator whose deployment is half-configured, "the notify step declined
+           because RapidPro is not configured" is the most useful sentence on the
+           page — and it is exactly what an error-styled, collapsed or filtered
+           row would hide.
+
+           Hidden until it has something to say, like every other panel here: an
+           empty "Pre-authorised action" frame on a deployment with no protocols
+           reads as a broken product rather than an unconfigured one. -->
+      <section class="action-rail" id="actionRail" aria-label="Pre-authorised action" data-i18n="ops.actionRail" hidden>
+        <div class="action-rail-head">
+          <h2 class="chart-panel-title" data-i18n="ops.actionRail">Pre-authorised action</h2>
+          <div class="action-rail-chips">
+            <span class="rail-chip" id="railProtocolsLive">—</span>
+            <span class="rail-chip" id="railExecutions24h">—</span>
+            <span class="rail-chip" id="railFieldAction">—</span>
+            <span class="rail-chip" id="railChannels">—</span>
+            <button type="button" class="btn btn-xs" id="railRefresh" data-i18n="ops.railRefresh">Refresh</button>
+          </div>
+        </div>
+
+        <div class="action-rail-body">
+          <div class="action-rail-protocols">
+            <table class="rail-table">
+              <caption class="visually-hidden" data-i18n="ops.protocolsCaption">Pre-authorised trigger protocols</caption>
+              <thead>
+                <tr>
+                  <th scope="col" data-i18n="ops.colProtocol">Protocol</th>
+                  <th scope="col" data-i18n="ops.colCondition">Condition</th>
+                  <th scope="col" data-i18n="ops.colMode">Mode</th>
+                  <th scope="col" data-i18n="ops.colLastRun">Last run</th>
+                  <th scope="col"><span class="visually-hidden" data-i18n="ops.colRun">Run</span></th>
+                </tr>
+              </thead>
+              <tbody id="railProtocolBody"></tbody>
+            </table>
+            <p class="empty-note" id="railProtocolEmpty" hidden data-i18n="ops.noProtocols">No trigger protocols are defined.</p>
+          </div>
+
+          <div class="action-rail-feed">
+            <h3 class="chart-panel-title" data-i18n="ops.executionFeed">Recent executions</h3>
+            <ol class="rail-feed" id="railExecutions"></ol>
+            <p class="empty-note" id="railExecutionsEmpty" hidden data-i18n="ops.noExecutions">Nothing has executed yet.</p>
+          </div>
+        </div>
+        <p class="action-rail-status" id="railStatus" role="status" aria-live="polite"></p>
       </section>
 
       <aside class="rail" id="railPanel" role="complementary" aria-label="Operations rail" tabindex="-1">

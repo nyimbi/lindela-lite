@@ -662,6 +662,142 @@ function renderDiseaseLayer(bbox) {
   }
 }
 
+// =============================================================
+// Sensor layer
+// =============================================================
+
+/**
+ * Sensor glyph shape by type.
+ *
+ * Shape rather than colour alone, for the same reason every other layer here
+ * uses shape: colour-blind operators, and the legend has to name each one.
+ */
+const SENSOR_SHAPE = Object.freeze({
+  // The closed enum `IOT_SENSOR_TYPES` in src/field-signals.js: cold_chain,
+  // flood_gauge, heat, humidity, water_point, other. These keys are the real
+  // values, not invented ones — a shape map keyed on `temperature` or
+  // `air_quality` would match nothing and every sensor would fall to the default
+  // circle, so the layer would claim to distinguish sensor types while drawing
+  // one glyph for all of them.
+  cold_chain: 'square',
+  flood_gauge: 'triangle',
+  heat: 'hexagon',
+  humidity: 'diamond',
+  water_point: 'circle',
+})
+
+/**
+ * Draw the sensor pins.
+ *
+ * One pin per sensor, from `?map=1`, which already reduced the readings to the
+ * latest per sensor. Drawing every reading instead would pile up to thousands of
+ * pins on a refrigerator that reports every minute, bury the map, and imply a
+ * density of sensors that does not exist — the count on the status line is the
+ * number of sensors, not the number of readings, for the same reason.
+ *
+ * A reading with a non-finite coordinate never reaches here from the route, which
+ * filters them; the guard is for a direct store seed, as on the disease layer.
+ */
+function renderSensorLayer(bbox) {
+  if (!mapSensorsEl) return
+  mapSensorsEl.innerHTML = ''
+  if (!$('sensorsToggle')?.checked) return
+  const payload = state.iotObservations
+  if (!payload?.data?.length) return
+  const hitR = currentHitRadius()
+  for (const sensor of payload.data) {
+    if (!Number.isFinite(sensor.lat) || !Number.isFinite(sensor.lon)) continue
+    const { x, y } = project(sensor.lat, sensor.lon, bbox)
+    const margin = hitR + 10
+    if (x < -margin || y < -margin || x > SVG_W + margin || y > SVG_H + margin) continue
+
+    // Every number the operator would act on, in the spoken label: the reading,
+    // its unit, when it was taken, and a dead battery — which is the failure that
+    // makes a missing reading rather than a missing reading itself.
+    const parts = [`${sensor.sensor_type || 'sensor'} ${sensor.sensor_id}`]
+    if (sensor.value !== null && sensor.value !== undefined) parts.push(`${sensor.value}${sensor.unit ? ` ${sensor.unit}` : ''}`)
+    if (sensor.district) parts.push(sensor.district)
+    if (sensor.observed_at) parts.push(`observed ${sensor.observed_at.slice(0, 10)}`)
+    // The battery is stated in words rather than by colour, so "battery 8%" is
+    // never mistaken for a second reading.
+    if (Number.isFinite(Number(sensor.battery_pct)) && Number(sensor.battery_pct) < 20) {
+      parts.push(`battery low at ${Math.round(Number(sensor.battery_pct))} percent`)
+    }
+    const label = `${parts.join(', ')}. Latest reading for this sensor.`
+
+    const record = {
+      title: `${sensor.sensor_type || 'Sensor'} ${sensor.sensor_id}`,
+      sensor_id: sensor.sensor_id,
+      sensor_type: sensor.sensor_type,
+      district: sensor.district,
+      value: sensor.value,
+      unit: sensor.unit,
+      observed_at: sensor.observed_at,
+      battery_pct: sensor.battery_pct,
+    }
+
+    // The hit target carries the keyboard and screen-reader contract; the visible
+    // shape is pointer-events none so only the target answers, exactly as the
+    // disease layer does.
+    const hit = svgEl('circle', {
+      cx: x, cy: y, r: hitR,
+      class: 'sensor-hit',
+      fill: 'transparent', stroke: 'none', 'pointer-events': 'all',
+      'data-tap-target': '',
+      tabindex: '0',
+      role: 'button',
+      'aria-label': label,
+    })
+    hit.addEventListener('click', () => openDetailDialog(record))
+    hit.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetailDialog(record) }
+    })
+    mapSensorsEl.append(hit)
+
+    const marker = markerEl(SENSOR_SHAPE[sensor.sensor_type] || 'circle', x, y, 5, `sensor-marker sensor-${safeClass(sensor.sensor_type || 'other')}`, {
+      'pointer-events': 'none',
+      'aria-hidden': 'true',
+      ...(Number.isFinite(Number(sensor.battery_pct)) && Number(sensor.battery_pct) < 20
+        ? { class: 'sensor-marker sensor-low-battery' }
+        : {}),
+    })
+    const titleEl = svgEl('title')
+    titleEl.textContent = label
+    marker.append(titleEl)
+    mapSensorsEl.append(marker)
+  }
+}
+
+/**
+ * Honest-state line for the sensor layer.
+ *
+ * Four states, four sentences, because they call for different actions: the fetch
+ * failed, nothing has been ingested, there are sensors but the toggle is off, and
+ * there are sensors on the map. Collapsing the last two into one — the obvious
+ * simplification — would report "no sensors" on a fully-instrumented deployment
+ * whose operator simply has not ticked the box.
+ */
+function updateSensorsStatus() {
+  if (!sensorsStatusEl) return
+  const shown = Boolean($('sensorsToggle')?.checked)
+  if (state.failedSources.has('iotObservations')) {
+    sensorsStatusEl.textContent = state.iotObservations
+      ? 'Sensor fetch failed — pins shown are the last successful read.'
+      : 'Sensor layer unavailable — the fetch failed and nothing has been cached.'
+    return
+  }
+  const payload = state.iotObservations
+  const count = payload?.data?.length || 0
+  if (!count) {
+    sensorsStatusEl.textContent = 'No sensor readings ingested yet — enable the iot connector and post observations; until then no pins are shown.'
+    return
+  }
+  const low = payload.data.filter((s) => Number.isFinite(Number(s.battery_pct)) && Number(s.battery_pct) < 20).length
+  sensorsStatusEl.textContent = shown
+    ? `${count} sensor${count === 1 ? '' : 's'} with coordinates, latest reading each${payload.as_of ? ` as of ${payload.as_of.slice(0, 10)}` : ''}.${low ? ` ${low} with a low battery.` : ''}`
+    : `${count} sensor${count === 1 ? '' : 's'} ingested, not shown — tick Sensors to draw them.`
+}
+
 /** Honest-state line for the disease overlay: fetch failure, empty feed, and the national/subnational split are each their own sentence. */
 function updateDiseaseStatus() {
   if (!diseaseStatusEl) return
@@ -1732,8 +1868,11 @@ function updateConnectionStatus() {
 async function refreshAuthState() {
   try {
     const data = (await apiFetch('/api/v1/auth-info', { headers: authHeaders() }))?.data
-    // Three cases: auth off, auth on and we are in, auth on and we are out.
-    if (data && (needsKey = Boolean(data.auth_configured) && !data.subject)) updateConnectionStatus()
+    // Four cases, two of which gate: auth off; auth on and we are in; auth on,
+    // we are out, and anonymous reads are open (a public demo deployment) — the
+    // console browses freely and a token only unlocks writes; auth on, we are
+    // out, and reads are gated — that is the only "paste a token" state.
+    if (data && (needsKey = Boolean(data.auth_configured) && !data.subject && !data.anonymous_reads)) updateConnectionStatus()
   } catch { /* unreachable; the offline banner is the honest message */ }
 }
 
@@ -1802,9 +1941,11 @@ const mapFoodSecurityEl = $('mapFoodSecurity')
 const mapWeatherEl    = $('mapWeather')
 const mapRiverDischargeEl = $('mapRiverDischarge')
 const mapDiseaseEl    = $('mapDisease')
+const mapSensorsEl    = $('mapSensors')
 const weatherStatusEl = $('weatherStatus')
 const riverDischargeStatusEl = $('riverDischargeStatus')
 const diseaseStatusEl = $('diseaseStatus')
+const sensorsStatusEl = $('sensorsStatus')
 const seasonalIndexEl    = $('seasonalIndex')
 const seasonalPhaseEl    = $('seasonalPhase')
 const seasonalAnomalyEl  = $('seasonalAnomaly')
@@ -2490,6 +2631,10 @@ function renderMap(records) {
   renderWeatherLayer(bbox)
   renderRiverDischargeLayer(bbox)
   renderDiseaseLayer(bbox)
+  // Gated on the toggle rather than ambient: sensors are the most numerous point
+  // layer, and the three above are few enough that they never bury the shading.
+  // The status line still reports what was ingested either way.
+  renderSensorLayer(bbox)
 
   const hazards = visible.filter((r) => r.event_type || r.source === 'gdacs' || r.source === 'glofas' || r.source === 'nasa_firms')
   const assets  = visible.filter((r) => r.service_type)
@@ -2823,12 +2968,20 @@ function _renderMapRecordList(entries) {
   })
 }
 
-let _legendDrawn = false
+let _legendKey = null
 function renderMapLegend() {
-  // Eight fixed swatches, rebuilt on every refresh for the life of the console
-  // to say the same thing. Drawn once; nothing about it varies with the data.
-  if (_legendDrawn) return
-  _legendDrawn = true
+  // Swatches that say the same thing for the life of the console are drawn once
+  // and left; the legend is not rebuilt on every refresh just to redraw the same
+  // twelve rows.
+  //
+  // Keyed rather than a boolean because the sensor row is conditional on the
+  // toggle. A one-way boolean could not represent "drawn, then the operator
+  // ticked Sensors" — the legend would keep claiming the pins it is now showing
+  // are not on the map, which is the specific error the legend exists to
+  // prevent.
+  const key = $('sensorsToggle')?.checked ? 'with-sensors' : 'base'
+  if (_legendKey === key) return
+  _legendKey = key
   mapLegendEl.innerHTML = ''
   const items = [
     { cls: 'hazard-flood',     label: 'Flood',     shape: hazardShape('flood'),            dash: severityDash('critical') },
@@ -2843,6 +2996,15 @@ function renderMapLegend() {
     { cls: 'weather-moderate', label: 'Weather (rain today)', shape: 'weather' },
     { cls: 'discharge-moderate', label: 'River discharge', shape: 'discharge' },
     { cls: 'disease-other', label: 'Disease outbreak', shape: 'disease' },
+    // Only when the layer is on. Two rows, not one per sensor type: the shape
+    // carries the type and the pin's own label and detail dialog name it, but the
+    // two states an operator has to decode from the map alone are "a reading" and
+    // "a battery that is nearly dead". Five type rows would explain the least
+    // important distinction at the cost of the important one.
+    ...(key === 'with-sensors' ? [
+      { cls: 'sensor-cold_chain', label: 'Sensor (latest)', shape: 'sensor' },
+      { cls: 'sensor-low-battery', label: 'Sensor, low battery', shape: 'sensor-low-battery' },
+    ] : []),
   ]
   const pad = 8
   const rowH = 17
@@ -2881,6 +3043,14 @@ function renderMapLegend() {
       } else if (item.shape === 'disease') {
         mapLegendEl.append(markerEl('circle', 18, y, 6, `disease-marker ${item.cls}`, {
           'stroke-dasharray': '2,2',
+        }))
+      } else if (item.shape === 'sensor') {
+        // The real shape and the real size a sensor is drawn with, so the legend
+        // entry is a mark an operator can match to a pin. The low-battery row
+        // passes its own class, which is hollow and dashed for the same reason
+        // the pin is.
+        mapLegendEl.append(markerEl('square', 18, y, 5, `sensor-marker ${item.cls}`, {
+          'pointer-events': 'none',
         }))
       } else {
         mapLegendEl.append(markerEl(item.shape, 18, y, 6, `hazard-marker ${item.cls}`, {
@@ -3283,13 +3453,18 @@ export function pollDelayMs({ failures = 0, hidden = false, inFlight = false } =
 export const ALL_ENDPOINTS = [
   'health', 'sources', 'ingestionHealth', 'flood', 'conflict', 'events',
   'assets', 'alerts', 'reports', 'reportTemplates', 'climate', 'dispatches', 'workflows',
-  'weather', 'riverDischarge', 'diseaseObservations',
+  'weather', 'riverDischarge', 'diseaseObservations', 'iotObservations',
 ]
 
 /** Fetched on every tick: the map and the status bar are never hidden. */
 export const AMBIENT_ENDPOINTS = [
   'health', 'sources', 'ingestionHealth', 'flood', 'conflict', 'events',
   'assets', 'climate', 'weather', 'riverDischarge', 'diseaseObservations',
+  // Ambient but gated on the toggle inside the loader: the status line has to
+  // know how many sensors exist even when none are drawn, and that count can
+  // only come from a fetch. A deployment that has never enabled the iot connector
+  // gets an empty array and a sentence saying so.
+  'iotObservations',
 ]
 
 /** Endpoints owned by one tab. Nothing else is fetched while that tab is open. */
@@ -3375,6 +3550,20 @@ async function refresh({ first = false, force = false } = {}) {
       load('weather', '/api/v1/weather'),
       load('riverDischarge', '/api/v1/river-discharge'),
       load('diseaseObservations', '/api/v1/disease-observations?map=1'),
+      // Fetched on every tick even with the layer switched off, because the
+      // status line reports how many sensors were ingested either way. Gating
+      // the fetch on the toggle would make "sensors off" indistinguishable from
+      // "no sensors exist" on a cold start, which is the one reading an operator
+      // must never be given about their own deployment. Only the drawing is
+      // gated.
+      (async () => {
+        if (!want.has('iotObservations')) return { skipped: true }
+        try {
+          return { iotObservations: await fetchJson('/api/v1/iot-observations?map=1'), failed: null }
+        } catch {
+          return { iotObservations: null, failed: 'iotObservations' }
+        }
+      })(),
       load('dispatches', '/api/v1/rapidpro/dispatches?limit=200'),
       load('workflows', '/api/v1/workflows?limit=200'),
     ])
@@ -3465,6 +3654,9 @@ async function refresh({ first = false, force = false } = {}) {
     if (merged.diseaseObservations) state.diseaseObservations = merged.diseaseObservations
     updateDiseaseStatus()
 
+    if (merged.iotObservations) state.iotObservations = merged.iotObservations
+    updateSensorsStatus()
+
     // Strips load once per refresh for every viewer; the IPC overlay still only
     // fetches its records when the operator ticks it on.
     loadFoodSecuritySummary().catch(() => {})
@@ -3503,6 +3695,18 @@ async function refresh({ first = false, force = false } = {}) {
     // it and gets an exception on every poll instead.
 
     loadSignalToAction().catch(() => {})
+
+    // The action rail. Unconditional: it sits under the map, which is on screen
+    // on every tab, so gating it on `activeTab` would hide it for most of the
+    // console's life.
+    //
+    // It fetches its own five endpoints rather than joining `refresh`'s settled
+    // set, because it settles them independently: one refusal or one failed
+    // request must not decide what the other four panels show. Adding them to
+    // `want` would also make a rail panel's failure count towards the console's
+    // "N sources unavailable" line, blaming the map's data for a panel the map
+    // does not display.
+    renderActionRailSafely().catch(() => {})
 
     // A partial failure and a total one are different sentences, and the total
     // one is the only one that was being written. When every panel missed, the
@@ -3826,6 +4030,38 @@ function renderEquityTab() {
 }
 
 // =============================================================
+// =============================================================
+// Action rail
+// =============================================================
+
+/**
+ * Render the action rail, deferring to its own module and reporting failure here.
+ *
+ * The module reports per-panel failures itself — it distinguishes "the server
+ * declined to compute this" from "the request failed", which is the whole reason
+ * it is not part of `refresh`'s settled set. What it does not do is report a
+ * module-level failure: if the lazy import or the render itself throws, the
+ * console would be a rail that silently never appears, which is precisely the
+ * dead-panel state this rail was added to eliminate.
+ */
+async function renderActionRailSafely() {
+  try {
+    const module = await lazy('/action-rail.js')
+    // The API key lives in the settings field; the rail has no business reaching
+    // for it, so the headers are passed in like every other panel's. Passed as a
+    // function because the key can be set after this module was first loaded.
+    module.mountActionRail(authHeaders)
+    await module.renderActionRail(authHeaders())
+  } catch (err) {
+    console.error('Action rail failed to render:', err)
+    const status = document.getElementById('railStatus')
+    if (status) {
+      status.textContent = `The action rail could not be loaded: ${err.message}. `
+        + 'The map below is unaffected.'
+    }
+  }
+}
+
 // Signal to action metrics
 // =============================================================
 async function loadSignalToAction() {
@@ -5268,6 +5504,7 @@ async function settingsPanel() {
   _settings = module.mount({
     $, state, escapeHtml, fetchJson, lazy, setStatus, queueRequest, refresh,
     bindApiKeyInput, reportsPanel, postJson,
+    patchJson: async (path, body) => apiFetch(path, { method: 'PATCH', body, headers: authHeaders() }),
   })
   return _settings
 }
@@ -5647,6 +5884,17 @@ $('coldChainToggle')?.addEventListener('change', (e) => {
   state.filters.coldChain = e.target.checked
   syncFiltersToUrl()
   reRenderMapFromState()
+})
+
+// The sensor toggle redraws and re-states rather than refetching: the readings are
+// already in state because the status line needs the count whether or not pins
+// are drawn. Ticking the box must therefore be instant, not a spinner.
+$('sensorsToggle')?.addEventListener('change', () => {
+  // The legend is keyed on this toggle, so it redraws with two more rows rather
+  // than claiming to explain a layer it can no longer see.
+  renderMapLegend()
+  reRenderMapFromState()
+  updateSensorsStatus()
 })
 
 // =============================================================

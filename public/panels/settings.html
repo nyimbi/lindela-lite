@@ -14,7 +14,85 @@
 
               <section class="settings-section">
                 <h3>Trigger protocols</h3>
+                <p class="settings-note">Pre-authorised agreements: when the conditions hold, the actions run without a further approval, because the district already signed the protocol off. Every firing is recorded with its evidence.</p>
                 <div id="triggerProtocolsList" class="list-container"></div>
+                <details id="defineProtocolDetails">
+                  <summary>Define a protocol</summary>
+                  <div class="details-body">
+                    <style>
+                      .proto-term-row, .proto-action-row { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: .35rem 0; }
+                      .proto-term-row input[type="text"], .proto-action-row input[type="text"] { flex: 1 1 12rem; }
+                      .proto-term-row input[type="number"] { width: 6.5rem; }
+                      .proto-term-row select, .proto-action-row select { width: auto; }
+                      .proto-term-row .proto-negate { display: inline-flex; gap: .25rem; align-items: center; white-space: nowrap; }
+                      .proto-action-fields { display: flex; gap: .4rem; flex-wrap: wrap; flex: 1 1 100%; }
+                      .proto-action-fields label { flex: 1 1 10rem; }
+                      .proto-meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .5rem; margin: .5rem 0; }
+                      .proto-protocol-row { border-block-start: 1px solid var(--stroke); padding: .5rem 0; }
+                      .proto-protocol-head { display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+                      .proto-protocol-logic { font-family: var(--font-mono, monospace); font-size: .8rem; color: var(--ink-muted); margin: .25rem 0; }
+                      .proto-protocol-meta { font-size: .75rem; color: var(--ink-muted); }
+                      .proto-mode-pill { border: 1px solid var(--stroke); border-radius: 999px; padding: 0 .6rem; font-size: .75rem; }
+                      .proto-mode-pill[data-mode="live"] { border-color: var(--danger); color: var(--danger); }
+                    </style>
+                    <label>Name <input id="protoNameInput" type="text" placeholder="Cold-chain heat watch"></label>
+                    <fieldset style="border:1px solid var(--stroke);border-radius:var(--r);padding:.6rem;margin:.5rem 0">
+                      <legend>When…</legend>
+                      <label>Combination
+                        <select id="protoCombinatorInput">
+                          <option value="and">ALL of the conditions hold (AND)</option>
+                          <option value="or">ANY of the conditions holds (OR)</option>
+                          <option value="xor">EXACTLY ONE holds (XOR)</option>
+                        </select>
+                      </label>
+                      <div id="protoTermRows"></div>
+                      <button id="protoAddTermButton" type="button" class="btn btn-sm">+ And also…</button>
+                      <label style="display:flex;gap:.35rem;align-items:center;margin-top:.4rem">
+                        <input id="protoNegateInput" type="checkbox"> Fire when the combination is <strong>not</strong> met (NAND / NOR / XNOR)
+                      </label>
+                    </fieldset>
+                    <fieldset style="border:1px solid var(--stroke);border-radius:var(--r);padding:.6rem;margin:.5rem 0">
+                      <legend>Then do this</legend>
+                      <div id="protoActionRows"></div>
+                      <button id="protoAddActionButton" type="button" class="btn btn-sm">+ Add action</button>
+                    </fieldset>
+                    <div class="proto-meta-grid">
+                      <label>Severity
+                        <select id="protoSeverityInput">
+                          <option value="medium" selected>Medium</option>
+                          <option value="critical">Critical</option>
+                          <option value="high">High</option>
+                          <option value="low">Low</option>
+                        </select>
+                      </label>
+                      <label>Mode
+                        <select id="protoModeInput">
+                          <option value="shadow" selected>Shadow — evaluate only, act on nothing</option>
+                          <option value="live">Live — execute the actions</option>
+                        </select>
+                      </label>
+                      <label>Lead time (days) <input id="protoLeadInput" type="number" value="3" min="0"></label>
+                      <label>Agreed on <input id="protoAgreedInput" type="date"></label>
+                    </div>
+                    <label>Approvers <input id="protoApproversInput" type="text" placeholder="District Health Management Team"></label>
+                    <div class="form-actions">
+                      <button id="createProtocolButton" type="button" class="btn btn-sm">Create protocol</button>
+                    </div>
+                    <p id="protocolFormStatus" class="settings-note" role="status" aria-live="polite"></p>
+                    <datalist id="protoMetricList">
+                      <option value="counts.hazard_events"></option>
+                      <option value="counts.climate_observations"></option>
+                      <option value="counts.conflict_events"></option>
+                      <option value="counts.disease_observations"></option>
+                      <option value="counts.field_reports"></option>
+                      <option value="counts.iot_observations"></option>
+                      <option value="counts.school_attendance_observations"></option>
+                      <option value="counts.service_assets"></option>
+                      <option value="counts.protocol_executions"></option>
+                      <option value="counts.field_outcomes"></option>
+                    </datalist>
+                  </div>
+                </details>
               </section>
 
 

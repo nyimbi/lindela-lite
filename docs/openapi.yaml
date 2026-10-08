@@ -303,6 +303,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListResponse'
+  /api/v1/connectors/status:
+    get:
+      summary: Per-connector enablement gate, last run status, and the reason a gated-off connector is off
+      operationId: getconnectors_status
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
   /api/v1/data-lineage:
     get:
       summary: Record and read source lineage for ingested data

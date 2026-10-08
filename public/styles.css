@@ -368,6 +368,154 @@ body.app-shell {
   overflow: hidden;
 }
 
+/* --- Action rail ------------------------------------------------
+   The panel that answers "what did the platform do about it", which the map
+   cannot. Sits below the map rather than in the right-hand rail because it is
+   read alongside the map's own record strip: an operator comparing an execution
+   against the hazard that caused it needs both in one glance, and the rail is a
+   column of tabs far to the right. */
+.action-rail {
+  border-top: 1px solid var(--stroke);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--bg);
+}
+
+.action-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-3);
+}
+
+.action-rail-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.rail-chip {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  color: var(--ink-muted);
+  /* Tabular figures because these are counts, and a count that re-flows as its
+     digits change is harder to read than one that does not. */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A chip carrying a refusal wears the warning ground rather than the neutral
+   one. "No figure" and "no number" are different states, and the difference is
+   the whole point of the tile. */
+.rail-chip.is-refused {
+  background: var(--warn-wash);
+  color: var(--warn-ink);
+  border-color: var(--warn);
+}
+
+.action-rail-body {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--sp-5);
+  align-items: start;
+}
+
+.rail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+
+.rail-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--stroke);
+}
+
+.rail-table td {
+  padding: var(--sp-2);
+  border-bottom: 1px solid var(--stroke);
+  vertical-align: top;
+}
+
+.rail-table td.is-mono {
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+}
+
+.rail-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.rail-feed li {
+  font-size: var(--text-xs);
+  padding: var(--sp-2);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+
+.rail-feed-meta {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+}
+
+/* Status is carried by a word as well as a colour. A badge that only changes
+   hue is unreadable to a colour-blind operator and invisible to a screen reader,
+   and this panel's entire content is status. */
+.rail-status-badge { font-weight: 700; }
+.rail-status-badge[data-status='executed'] { color: var(--ok); }
+.rail-status-badge[data-status='partial']  { color: var(--warn-ink); }
+.rail-status-badge[data-status='refused']  { color: var(--danger); }
+.rail-status-badge[data-status='shadow']   { color: var(--ink-muted); }
+
+.rail-action-chip {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 1px var(--sp-2);
+  margin-left: var(--sp-1);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--stroke);
+  color: var(--ink-muted);
+  display: inline-block;
+}
+
+/* A refused step keeps its reason on hover AND as the chip's accessible name.
+   The title attribute alone would hide the sentence from a keyboard or screen
+   reader user, which is the exact audience that cannot see the colour. */
+.rail-action-chip[data-status='refused'] {
+  background: var(--warn-wash);
+  color: var(--warn-ink);
+  border-color: var(--warn);
+  cursor: help;
+}
+
+.action-rail-status {
+  margin: var(--sp-3) 0 0;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  min-height: 1.2em;
+}
+
+@media (max-width: 900px) {
+  .action-rail-body { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* --- Map section --------------------------------------------- */
 .map-section {
   position: relative;
@@ -547,6 +695,34 @@ body.app-shell {
 .disease-national     { fill-opacity: 0.4; }
 .disease-hit { cursor: pointer; }
 
+/* --- Sensor pins ------------------------------------------------
+   Filled shapes on a white halo rather than outlines: a sensor is a small
+   instrument, not a hazard, and an outline at this size reads as an empty circle
+   the operator cannot tell from a map feature. The halo is what keeps a pin
+   legible over a flood extent. */
+.sensor-marker {
+  stroke: var(--bg);
+  stroke-width: 2;
+  fill-opacity: 0.95;
+}
+.sensor-cold_chain  { fill: oklch(60% 0.19 30); }
+.sensor-humidity    { fill: oklch(62% 0.14 220); }
+.sensor-flood_gauge { fill: oklch(58% 0.16 245); }
+.sensor-heat        { fill: oklch(65% 0.18 45); }
+.sensor-water_point { fill: oklch(58% 0.13 195); }
+.sensor-other       { fill: oklch(55% 0.05 0); }
+
+/* A sensor under 20% battery is drawn hollow. It is the one state here where a
+   missing reading is the finding — the instrument has stopped reporting, and an
+   operator reading a stale "8°C" needs to know before they act on it. The state
+   is also named in the pin's label and title, so it never rests on the fill. */
+.sensor-low-battery {
+  fill-opacity: 0.25;
+  stroke-dasharray: 2 1.5;
+  stroke: oklch(50% 0.19 30);
+}
+.sensor-hit { cursor: pointer; }
+
 /*
  * Constant-size point markers. The map zooms by scaling `#mapTransform`, which
  * would balloon markers at district zoom and shrink them to nothing at the
@@ -568,6 +744,8 @@ body.app-shell {
 #mapTransform .discharge-hit,
 #mapTransform .disease-marker,
 #mapTransform .disease-hit,
+#mapTransform .sensor-marker,
+#mapTransform .sensor-hit,
 #mapTransform .districts-layer text,
 #mapTransform .graticule text {
   transform-box: fill-box;

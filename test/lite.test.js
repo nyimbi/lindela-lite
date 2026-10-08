@@ -3125,6 +3125,35 @@ describe('Lindela Lite Phase 1d - KPI, Equity, Community Feedback, CO Dashboard'
     }
   })
 
+  it('GET /api/v1/kpi/quarterly.md returns the quarterly report, not an alert digest', async () => {
+    // The route used to render a generic alert digest, so the CO dashboard's
+    // "Download as Markdown" button produced a file with no quarterly figures
+    // in it at all. The export must open as the KPI report for its own period.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-kpimd-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    const baseUrl = `http://localhost:${addr.port}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/kpi/quarterly.md?quarter=Q3&year=2026`)
+      assert.equal(res.status, 200)
+      const ct = res.headers.get('content-type') || ''
+      assert.ok(ct.includes('text/markdown'), `Unexpected content-type: ${ct}`)
+      const body = await res.text()
+      assert.match(body, /^# Lindela Lite - Climate & Health KPI Report/)
+      assert.match(body, /Period: Q3 2026/)
+      assert.match(body, /## KPI Summary/)
+      assert.match(body, /## Quarter-over-quarter/)
+      assert.doesNotMatch(body, /^# Alert Digest/m)
+      const cd = res.headers.get('content-disposition') || ''
+      assert.ok(cd.includes('lindela-kpi-2026-Q3.md'), `filename should name the period: ${cd}`)
+    } finally {
+      listener.close()
+    }
+  })
+
   it('GET /api/v1/equity/by-district returns 200 array', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-equity2-'))
     const store = new JsonStore(path.join(dir, 'store.json'))

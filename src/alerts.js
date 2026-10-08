@@ -280,14 +280,40 @@ export function normalizeTriggerProtocol(input, existing = null) {
   const severity = normalizeSeverity(input.severity || existing?.severity || 'medium')
   const mode = enumValue(input.mode || existing?.mode || 'live', TRIGGER_MODES, 'mode')
   const leadTimeDays = toNumber(input.lead_time_days ?? existing?.lead_time_days, 3)
+
+  // Logical composition of the trigger. A condition set is a flat list of
+  // terms combined by one operator — `and`, `or`, or `xor` — with per-term
+  // negation and an optional inversion of the whole result, which is how a
+  // district actually phrases a protocol: "heat AND cold-chain breach",
+  // "flood OR landslide", "exactly one of the three gauges reading high"
+  // (xor), or their negations. A fully recursive expression tree would be
+  // more expressive than any protocol we have ever seen written down, and
+  // harder to audit afterwards — the flat set is the whole practical space.
+  const flatTerm = { metric, operator, threshold }
+  const rawSet = input.condition_set || existing?.condition_set
+  const conditionSet = normalizeConditionSet(rawSet && rawSet.terms?.length ? rawSet : { terms: [flatTerm] })
+
+  // The date the district signed the protocol off. "Pre-authorised" is a
+  // claim about a decision made ON a date — a protocol with no agreed date is
+  // a protocol nobody can prove was agreed. YYYY-MM-DD or any ISO date-time.
+  const agreedAt = input.agreed_at || existing?.agreed_at || null
+  if (agreedAt && !Number.isFinite(Date.parse(agreedAt))) {
+    throw Object.assign(new Error('agreed_at must be a YYYY-MM-DD date or ISO date-time'), { statusCode: 400 })
+  }
+
   return {
     id: input.id || stableId('trigger_protocol', [input.name, metric, operator, threshold]),
     name: input.name || existing?.name || metric,
     version: input.version || existing?.version || 1,
     description: input.description || existing?.description || '',
-    metric,
-    operator,
-    threshold,
+    // Flat primary fields stay for parity: backtests and the alert
+    // derivation's top level read them, and the executor combines the full
+    // condition_set, whose first term these are.
+    metric: conditionSet.terms[0].metric,
+    operator: conditionSet.terms[0].operator,
+    threshold: conditionSet.terms[0].threshold,
+    condition_set: conditionSet,
+    agreed_at: agreedAt,
     severity,
     lead_time_days: leadTimeDays,
     mode,
@@ -298,6 +324,56 @@ export function normalizeTriggerProtocol(input, existing = null) {
     updated_at: input.updated_at || now,
     backtest: objectValue(input.backtest || existing?.backtest),
   }
+}
+
+export const CONDITION_COMBINATORS = Object.freeze(['and', 'or', 'xor'])
+
+function normalizeConditionSet(set) {
+  const combinator = enumValue(set.combinator || 'and', CONDITION_COMBINATORS, 'condition_set.combinator')
+  const negate = set.negate === true
+  const terms = set.terms
+  if (!Array.isArray(terms) || !terms.length) {
+    throw Object.assign(new Error('condition_set.terms must be a non-empty array'), { statusCode: 400 })
+  }
+  if (terms.length > 5) throw Object.assign(new Error('at most 5 terms per condition set'), { statusCode: 400 })
+  const normalized = terms.map((term, index) => {
+    if (!term?.metric) throw Object.assign(new Error(`condition_set.terms[${index}].metric is required`), { statusCode: 400 })
+    const op = term.operator || '>='
+    if (!OPERATORS.includes(op)) throw Object.assign(new Error(`condition_set.terms[${index}].operator must be one of ${OPERATORS.join(', ')}`), { statusCode: 400 })
+    const t = toNumber(term.threshold)
+    if (!Number.isFinite(t)) throw Object.assign(new Error(`condition_set.terms[${index}].threshold is required and must be numeric`), { statusCode: 400 })
+    return { metric: term.metric, operator: op, threshold: t, negate: term.negate === true }
+  })
+  return { combinator, negate, terms: normalized }
+}
+
+/**
+ * Evaluate a condition set against a live metric context.
+ *
+ * Fail closed: if ANY term's metric does not resolve to a number, the set
+ * does not fire — whatever the combinator or negation. An unresolvable term
+ * with group inversion (NAND) would otherwise flip a non-answer into a fire,
+ * which is the one result guaranteed to be wrong. `results` carries every
+ * term's observed value so the alert derivation and the execution feed show
+ * the readings, not just the verdict.
+ */
+export function evaluateConditionSet(set, context) {
+  // `set` can be absent on records normalised before condition sets existed
+  // (and on hand-built test fixtures); an empty term list is unevaluable and
+  // therefore does not fire, rather than throwing into the driver tick.
+  const results = (set?.terms || []).map((term) => {
+    const value = resolveMetric(context, term.metric)
+    const satisfied = Number.isFinite(value) && compare(value, term.operator, term.threshold)
+    return { ...term, observed_value: value, satisfied: term.negate ? !satisfied : satisfied, term_unresolvable: !Number.isFinite(value) }
+  })
+  const evaluable = results.length > 0 && results.every((r) => !r.term_unresolvable)
+  let firing
+  if (!evaluable) firing = false
+  else if (set.combinator === 'or') firing = results.some((r) => r.satisfied)
+  else if (set.combinator === 'xor') firing = results.filter((r) => r.satisfied).length === 1
+  else firing = results.every((r) => r.satisfied)
+  if (evaluable && set.negate) firing = !firing
+  return { firing, evaluable, results, primary: results[0] || null }
 }
 
 /**
@@ -441,12 +517,18 @@ function pointInTimeContext(data, run) {
 
 
 export function evaluateInShadowMode(protocol, context) {
-  const value = resolveMetric(context, protocol.metric)
-  const wouldFire = Number.isFinite(value) && compare(value, protocol.operator, protocol.threshold)
+  // The shadow answer must reflect the protocol's full logic, not just its
+  // primary term — "would this fire?" means the AND/OR/XOR as written, and
+  // answering with the first condition alone is how a compound protocol gets
+  // adopted on the wrong evidence.
+  const evaluation = evaluateConditionSet(protocol.condition_set || { combinator: 'and', negate: false, terms: [{ metric: protocol.metric, operator: protocol.operator, threshold: protocol.threshold }] }, context)
+  const value = evaluation.primary ? evaluation.primary.observed_value : null
   return {
-    would_fire: wouldFire,
-    message: wouldFire ? `${protocol.name}: ${protocol.metric} ${protocol.operator} ${protocol.threshold} (actual ${value})` : 'No trigger condition met',
+    would_fire: evaluation.firing,
+    message: evaluation.firing ? `${protocol.name}: ${protocol.metric} ${protocol.operator} ${protocol.threshold} (actual ${value})` : 'No trigger condition met',
     computed_value: value,
+    evaluable: evaluation.evaluable,
+    terms: evaluation.results.map((r) => ({ metric: r.metric, operator: r.operator, threshold: r.threshold, observed_value: r.observed_value, satisfied: r.satisfied })),
     shadow: true,
   }
 }

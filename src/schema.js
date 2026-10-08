@@ -256,6 +256,23 @@ export function emptyStore() {
     food_security_records: [],
     disease_observations: [],
     flood_probability_models: [],
+    // The two field-signal channels the vision names and the correlation layer
+    // counts: school attendance (a leading indicator for child welfare shocks)
+    // and direct IoT sensor readings (cold-chain temperature, flood gauges,
+    // heat). Both are ingestable, so both get a quarantine home via
+    // QUARANTINE_SOURCES in store.js.
+    school_attendance_observations: [],
+    iot_observations: [],
+    // The pre-authorised action ledger. A trigger protocol firing is a decision
+    // somebody pre-made; this collection is the record that it executed, what it
+    // did, and what refused — the "not a dashboard" half of the system, kept
+    // with the same audit discipline as everything else.
+    protocol_executions: [],
+    // Field-outcome confirmations: a responder's DONE reply confirming the
+    // action on the ground (supplies arrived, vaccine safe, clinic triaged).
+    // This is the other end of the warning-to-action interval the SMS-latency
+    // metric cannot see.
+    field_outcomes: [],
     // The map weather overlay's own collection. Deliberately not
     // climate_observations: the flood-risk scorer sums precipitation over that
     // collection, so a second source writing the same forecast there would
@@ -283,6 +300,8 @@ export function emptyStore() {
     quarantine_food_security_records: [],
     quarantine_disease_observations: [],
     quarantine_weather_forecasts: [],
+    quarantine_school_attendance_observations: [],
+    quarantine_iot_observations: [],
     // Raw upstream response bodies, for replay and fixture seeding (ENH-12).
     //
     // Declared here because `store.js` SCHEMA now carries it: an `emptyStore`

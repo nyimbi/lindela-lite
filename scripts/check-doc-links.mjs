@@ -31,6 +31,14 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const ROOTS = ['README.md', 'CHANGELOG.md', 'llms.txt', 'docs']
 
 /**
+ * Files walked but not link-checked. `docs/old-readme.md` is an archival
+ * snapshot of the pre-rewrite README: its relative links describe the tree as
+ * it stood when it was archived, and "fixing" them would rewrite history to
+ * look like the current docs. Nothing links to it as a source of truth.
+ */
+const EXCLUDED = new Set(['docs/old-readme.md'])
+
+/**
  * Markdown link and bare reference. Skips fenced code, where a bracket is a
  * character rather than a link — a doc about CSV or JSON is full of them, and
  * a checker that trips over an example is a checker people disable.
@@ -61,6 +69,7 @@ let checked = 0
 
 for (const rootEntry of ROOTS) {
 	for (const relative of documentsIn(rootEntry)) {
+		if (EXCLUDED.has(relative)) continue
 		const file = path.join(root, relative)
 		const text = stripFences(fs.readFileSync(file, 'utf8'))
 		const links = [

@@ -45,6 +45,8 @@ export const QUARANTINE_SOURCES = Object.freeze([
   'food_security_records',
   'disease_observations',
   'weather_forecasts',
+  'school_attendance_observations',
+  'iot_observations',
 ])
 
 /**
@@ -165,6 +167,14 @@ export const SCHEMA = Object.freeze([
   { key: 'food_security_records' },
   { key: 'disease_observations' },
   { key: 'flood_probability_models' },
+  // Field signals (school attendance, IoT sensors) and the two ledgers the
+  // pre-authorised action loop writes: protocol executions and the field
+  // outcomes responders confirm. Unlisted here means silently dropped on merge —
+  // the comment on food_security_records above applies to all six.
+  { key: 'school_attendance_observations' },
+  { key: 'iot_observations' },
+  { key: 'protocol_executions' },
+  { key: 'field_outcomes' },
   // The weather overlay's records. Kept out of climate_observations on purpose:
   // computeFloodRisk sums precipitation over that collection, and the same
   // Open-Meteo forecast under two source ids would be counted twice.

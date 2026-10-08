@@ -36,7 +36,8 @@ import {
   resolveReportContext,
   rowProvenanceLine,
 } from '../src/reports.js'
-import { renderQuarterlyReportPdf } from '../src/pdf.js'
+import { renderQuarterlyReportPdf, renderQuarterlyReportMarkdown } from '../src/pdf.js'
+import { quarterlyPdfSections } from '../src/kpi.js'
 import { MIN_EVENTS, MIN_MONTHS, MODEL_BASIS } from '../src/flood-probability.js'
 import { isReplayDerived, stampReplayProvenance } from '../src/capture.js'
 
@@ -386,6 +387,78 @@ describe('the PDF carries the narrative too', () => {
       assert.ok(Number.isInteger(offset), `xref entry ${i} must carry an offset`)
       assert.match(text.slice(offset, offset + 12), new RegExp(`^${i} 0 obj`), `object ${i} must sit at its xref offset`)
     }
+  })
+})
+
+describe('the quarterly Markdown export is the quarterly report', () => {
+  const kpi = {
+    generated_at: NOW,
+    period: { quarter: 'Q3', year: 2026, from: '2026-07-01', to: '2026-09-30' },
+    people_reached: 13776,
+    community_reporters_count: 7,
+    youth_mappers_count: 0,
+    oss_releases_count: 4,
+    warning_to_action_median_hours: 0.2,
+    feeding_supply_repositioning_rate: null,
+    cold_chain_protection_rate: null,
+    false_alert_rate: null,
+    api_uptime_pct: 100,
+    percent_children_u18: 50,
+    percent_women_and_girls: 56.25,
+    percent_pwd: 6.25,
+    data_gaps: [{ field: 'false_alert_rate' }],
+    cohort: { total: 16, u18: 8, women_and_girls: 9, pwd: 1, refugees_idps: 0 },
+  }
+  const sections = quarterlyPdfSections(storeData(), { quarter: 'Q3', year: 2026 })
+
+  it('carries the KPI figures, not a generic alert digest', () => {
+    // The route used to hand renderExportMarkdown a generic report, so the CO
+    // dashboard's download button produced an Alert Digest with no quarterly
+    // figures at all. The markdown must open as the KPI report and carry the
+    // numbers for its own period.
+    const markdown = renderQuarterlyReportMarkdown(kpi, { sections, coverage: { total: 7, carried: 7, missing: [] } })
+    assert.match(markdown, /^# Lindela Lite - Climate & Health KPI Report/)
+    assert.match(markdown, /Period: Q3 2026/)
+    assert.match(markdown, /\| People reached \| 13776\.0 \|/)
+    assert.doesNotMatch(markdown, /^# Alert Digest/m, 'the quarterly export must not be the alert digest')
+  })
+
+  it('prints a withheld figure as "not measured", matching the PDF', () => {
+    const markdown = renderQuarterlyReportMarkdown(kpi, { sections })
+    assert.match(markdown, /\| False alert rate \| not measured \|/)
+    assert.doesNotMatch(markdown, /\| False alert rate \| -+\s*\|/)
+  })
+
+  it('renders the dashboard sections and the coverage sheet', () => {
+    const markdown = renderQuarterlyReportMarkdown(kpi, {
+      sections,
+      coverage: { total: 7, carried: 6, missing: ['Community Feedback'] },
+    })
+    for (const heading of ['## What this file contains', '## Trend', '## Quarter-over-quarter', '## Equity by District', '## Signal-to-Action Lag', '## Community Feedback']) {
+      assert.ok(markdown.includes(heading), `missing section: ${heading}`)
+    }
+    assert.match(markdown, /Community Feedback/)
+    assert.match(markdown, /Sections carried: 6 of 7/)
+  })
+})
+
+describe('the quarterly export trend window ends in the reported quarter', () => {
+  it('spans the twelve months ending at the quarter for the current quarter', () => {
+    const { trend } = quarterlyPdfSections({}, { quarter: 'Q4', year: 2026 })
+    assert.equal(trend.length, 12)
+    assert.equal(trend[0].month, '2026-01')
+    assert.equal(trend[trend.length - 1].month, '2026-12')
+  })
+
+  it('keeps out every month after a past quarter', () => {
+    // The first version of the window arithmetic added the 1-based end month
+    // without converting it, shifting every export window one month late: a Q2
+    // file trended 2025-08 → 2026-07, carrying a month past its own heading.
+    const { trend } = quarterlyPdfSections({}, { quarter: 'Q2', year: 2026 })
+    assert.equal(trend[0].month, '2025-07')
+    assert.equal(trend[trend.length - 1].month, '2026-06')
+    assert.ok(!trend.some((m) => m.month > '2026-06'),
+      'a month after the quarter in the heading is a month of the wrong period')
   })
 })
 
