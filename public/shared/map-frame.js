@@ -17,6 +17,70 @@ export const REGION_OF_INTEREST = Object.freeze({
 })
 
 /**
+ * Projection frame for the raster basemap.
+ *
+ * The map's day-to-day view is the Horn of interest, but operators need to zoom
+ * out to Africa for regional context. All layers project into this frame; the
+ * initial transform is then fitted to the Horn so the default view is unchanged.
+ *
+ * The frame's aspect is matched to the 800×500 viewBox (1.6:1) so the Africa
+ * zoom-out fills the panel instead of leaving empty letterbox bands — the
+ * span runs from the mid-Atlantic, across the whole continent (Cape to
+ * Tunisia, Senegal to the Horn), to the Indian Ocean. Because the projection
+ * is aspect-preserving, this frames Africa at its true shape; widening the
+ * longitude span only adds honest surrounding ocean, never stretch.
+ */
+export const AFRICA_BBOX = Object.freeze({
+  minLat: -38,
+  maxLat: 40,
+  minLon: -45,
+  maxLon: 79,
+})
+
+/**
+ * Fit a target bbox inside a larger projection bbox so it fills an SVG viewBox.
+ *
+ * Returns a translate/scale transform that, applied to `#mapTransform`, shows
+ * `targetBbox` centered in the viewport while using `projectionBbox` as the
+ * coordinate system. This lets the map default to a Horn view while remaining
+ * zoomable out to the full Africa projection frame.
+ */
+export function fitTransform(targetBbox, projectionBbox, viewBoxW, viewBoxH, paddingPct = 0.06) {
+  if (!targetBbox || !projectionBbox || !(viewBoxW > 0) || !(viewBoxH > 0)) return null
+  const targetLatSpan = targetBbox.maxLat - targetBbox.minLat
+  const targetLonSpan = targetBbox.maxLon - targetBbox.minLon
+  if (!(targetLatSpan > 0) || !(targetLonSpan > 0)) return null
+
+  const padLat = Math.max(0, targetLatSpan * paddingPct)
+  const padLon = Math.max(0, targetLonSpan * paddingPct)
+  const fitMinLat = targetBbox.minLat - padLat
+  const fitMaxLat = targetBbox.maxLat + padLat
+  const fitMinLon = targetBbox.minLon - padLon
+  const fitMaxLon = targetBbox.maxLon + padLon
+  const fitLatSpan = fitMaxLat - fitMinLat
+  const fitLonSpan = fitMaxLon - fitMinLon
+
+  const projLatSpan = projectionBbox.maxLat - projectionBbox.minLat
+  const projLonSpan = projectionBbox.maxLon - projectionBbox.minLon
+  if (!(projLatSpan > 0) || !(projLonSpan > 0)) return null
+
+  const scaleX = projLonSpan / fitLonSpan
+  const scaleY = projLatSpan / fitLatSpan
+  const scale = Math.min(scaleX, scaleY)
+
+  const targetCxLon = (fitMinLon + fitMaxLon) / 2
+  const targetCxLat = (fitMinLat + fitMaxLat) / 2
+  const cx = ((targetCxLon - projectionBbox.minLon) / projLonSpan) * viewBoxW
+  const cy = ((projectionBbox.maxLat - targetCxLat) / projLatSpan) * viewBoxH
+
+  return {
+    x: viewBoxW / 2 - scale * cx,
+    y: viewBoxH / 2 - scale * cy,
+    scale,
+  }
+}
+
+/**
  * Degrees of margin around the region of interest that still shapes the frame.
  *
  * GDACS is a worldwide feed. A seeded demo pulls ~125 geolocated events

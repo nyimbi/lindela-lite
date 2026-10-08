@@ -13,8 +13,10 @@ import { whoGhoConnector } from './connectors/who-gho.js'
 import { gdacsArchiveConnector } from './connectors/gdacs-archive.js'
 import { openMeteoArchiveConnector } from './connectors/open-meteo-archive.js'
 import { openMeteoFloodConnector } from './connectors/open-meteo-flood.js'
+import { openMeteoForecastConnector } from './connectors/open-meteo-forecast.js'
 import { acledCsvConnector, conflictCsvConnector, serviceAssetsConnector } from './connectors/uploads.js'
 import { dhis2Connector } from './connectors/dhis2.js'
+import { reliefwebEpidemicsConnector } from './connectors/reliefweb-epidemics.js'
 import { allowRequest, circuitStateFor, createCircuitState, outcomesFor, outcomesFromRuns, recordOutcome, scoreConnector } from './circuit.js'
 import { COMPLETENESS_VERDICTS, completenessVerdictName } from './completeness.js'
 import { runAssertions, quarantineRecords, quarantineCollectionName } from './assertions.js'
@@ -36,6 +38,8 @@ const CONNECTORS = Object.freeze({
   gdacs_archive: gdacsArchiveConnector,
   open_meteo_archive: openMeteoArchiveConnector,
   open_meteo_flood: openMeteoFloodConnector,
+  open_meteo_forecast: openMeteoForecastConnector,
+  reliefweb_epidemics: reliefwebEpidemicsConnector,
   service_assets: serviceAssetsConnector,
   acled_csv: acledCsvConnector,
   conflict_csv: conflictCsvConnector,
@@ -55,6 +59,13 @@ export const PUBLIC_INGESTION_SOURCES = Object.freeze([
   'noaa_enso',
   'ipc_hdx',
   'who_gho',
+  // The map weather overlay's feed: a short-lived forecast, so it belongs on
+  // the regular schedule beside open_meteo, not with the on-demand backfills.
+  'open_meteo_forecast',
+  // ADR-014: epidemic events for the map overlay. regular:true (an outbreak
+  // can move funding this month); the record floor is the repo-wide R-41 rule,
+  // and a legitimately quiet feed reads empty_response, not broken.
+  'reliefweb_epidemics',
   // The historical backfills are deliberately NOT here: PUBLIC sources
   // are the default run set, and a default run must not re-walk 40 years of a
   // free archive. They run on explicit request — see docs/ingestion.md.
@@ -86,6 +97,18 @@ export const SOURCE_POLICIES = Object.freeze({
   gdacs_archive: { interval_minutes: 0, timeout_ms: 30000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
   open_meteo_archive: { interval_minutes: 0, timeout_ms: 60000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
   open_meteo_flood: { interval_minutes: 0, timeout_ms: 60000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
+  // Same cadence as open_meteo: the forecast is refreshed upstream roughly
+  // hourly and the overlay is only honest while the issue time is recent. The
+  // staleness window is the one WEATHER_STALE_AFTER_MINUTES publishes.
+  open_meteo_forecast: { interval_minutes: 180, timeout_ms: 20000, retries: 2, stale_after_minutes: 360, minimum_records: 1, regular: true },
+  // The plan asked for minimum_records: 0 ("no epidemic in the window is
+  // legitimate"), but every regular PUBLIC source is held to a floor by the
+  // no-silent-empty-success rule (R-41 family, enforced in test/lite.test.js).
+  // The honest vocabulary for legitimate emptiness already exists: two
+  // consecutive zero-record runs report the freshness verdict empty_response —
+  // "the source answers, but has had nothing for us" — while a FIRST empty run
+  // reads degraded, which is the correct suspicion.
+  reliefweb_epidemics: { interval_minutes: 360, timeout_ms: 20000, retries: 2, stale_after_minutes: 720, minimum_records: 1, regular: true },
   service_assets: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   acled_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   conflict_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
@@ -1108,6 +1131,7 @@ export const OUTPUT_COLLECTIONS = [
   'service_assets',
   'food_security_records',
   'disease_observations',
+  'weather_forecasts',
 ]
 
 function countRecords(output) {

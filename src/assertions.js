@@ -56,6 +56,7 @@ export const ASSERTION_KINDS = Object.freeze([
   'required_fields',
   'coordinate_bounds',
   'value_range',
+  'value_vocabulary',
   'min_count_vs_trailing',
   'monotonic_dates',
 ])
@@ -80,6 +81,8 @@ export const SOURCE_COLLECTIONS = Object.freeze({
   gdacs_archive: 'hazard_events',
   open_meteo_archive: 'climate_observations',
   open_meteo_flood: 'climate_observations',
+  open_meteo_forecast: 'weather_forecasts',
+  reliefweb_epidemics: 'disease_observations',
   service_assets: 'service_assets',
   acled_csv: 'conflict_events',
   conflict_csv: 'conflict_events',
@@ -133,6 +136,55 @@ export const SOURCE_ASSERTIONS = deepFreeze({
     // (each region's whole forecast before the next region's today), so the
     // batch is not date-ordered by design. Asserting it would quarantine every
     // healthy run and teach operators to ignore quarantine.
+  ],
+
+  open_meteo_forecast: [
+    {
+      name: 'open_meteo_forecast.every reading is identified, placed and dated',
+      kind: 'required_fields',
+      fields: ['id', 'source', 'region_name', 'observed_at', 'as_of'],
+      // `as_of` is required, not optional: the report groups a district's latest
+      // forecast issue by it, and a record without one can neither be grouped
+      // nor aged — it would render as current weather with no issue time.
+      note: 'The overlay draws from these records directly; one missing anchor is a glyph with no provable age.',
+    },
+    {
+      name: 'open_meteo_forecast.district points land in the pilot region',
+      kind: 'coordinate_bounds',
+      // The default region list is the five pilot districts, so unlike
+      // open_meteo's hemisphere-wide box this one can be tight: the region of
+      // interest with margin, which catches a swapped lat/lon rather than only
+      // a sign error.
+      latitude: { min: -8, max: 18 },
+      longitude: { min: 24, max: 55 },
+      note: 'Operator-supplied regions can legitimately sit outside this box; the defaults cannot.',
+    },
+    {
+      name: 'open_meteo_forecast.temperature in degrees Celsius',
+      kind: 'value_range',
+      field: 'temperature_c',
+      min: -90,
+      max: 60,
+      note: 'Physical bound, not a climate bound. Daily records carry temperature_max_c instead and pass with null, which is absence, not a reading.',
+    },
+    {
+      name: 'open_meteo_forecast.weather_code is a WMO code',
+      kind: 'value_range',
+      field: 'weather_code',
+      min: 0,
+      max: 99,
+      note: 'WMO 4677 codes run 0-99; a value outside that is a parse failure, not a new kind of weather.',
+    },
+    {
+      name: 'open_meteo_forecast.one batch per configured district',
+      kind: 'min_count_vs_trailing',
+      ratio: 0.5,
+      zero_is_legitimate: false,
+      note: 'Every district yields a current reading plus the daily points on every call, so a collapsed count means districts were dropped in this process, upstream, or in the request.',
+    },
+    // No monotonic_dates here either, for the same reason as open_meteo:
+    // records are pushed district by district, each district's whole week
+    // before the next district's today.
   ],
 
   gdacs: [
@@ -620,6 +672,57 @@ export const SOURCE_ASSERTIONS = deepFreeze({
       note: 'Zero is the scaffold\'s correct output until LINDELA_LITE_DHIS2_ENABLED is on and a base_url is configured.',
     },
   ],
+
+  reliefweb_epidemics: [
+    {
+      name: 'reliefweb_epidemics.records are identified, typed and dated',
+      kind: 'required_fields',
+      fields: ['id', 'source', 'source_id', 'disease', 'observed_at'],
+      note: 'The RSS backend guarantees a GLIDE id as source_id (it comes from the /disaster/ link path); the API id is the item id. A survivor without one is a parse drift, not a sparse feed.',
+    },
+    {
+      name: 'reliefweb_epidemics.geometry, when present, is in the Horn of Africa; absent is honest (unknown)',
+      kind: 'coordinate_bounds',
+      latitude: { min: -12, max: 18 },
+      longitude: { min: 20, max: 55 },
+      // Null coordinates are legitimate here — an unplaced record has
+      // granularity 'unknown' and the map draws nothing for it.
+      zero_is_legitimate: true,
+      note: 'A transposed or foreign coordinate suggests the geocoder matched text it had no business matching; nulls are the honest fallback, not the failure.',
+    },
+    {
+      name: 'reliefweb_epidemics.granularity is one of the three honesty labels',
+      kind: 'value_vocabulary',
+      field: 'granularity',
+      values: ['subnational', 'national', 'unknown'],
+      note: 'This label is what keeps a country-centroid aggregate from reading as district evidence; anything outside the vocabulary is a rendering hazard.',
+    },
+    {
+      name: 'reliefweb_epidemics.case counts are plausible, absent, or null',
+      kind: 'value_range',
+      field: 'cases',
+      min: 0,
+      max: 1e7,
+      zero_is_legitimate: true,
+      note: 'Heuristic extraction from glance text; null (not stated) is the normal case and passes as absence.',
+    },
+    {
+      name: 'reliefweb_epidemics.death counts are plausible, absent, or null',
+      kind: 'value_range',
+      field: 'deaths',
+      min: 0,
+      max: 1e6,
+      zero_is_legitimate: true,
+      note: 'Same as cases: 0 deaths is a real published figure; absence is the default.',
+    },
+    {
+      name: 'reliefweb_epidemics.the feed may legitimately be empty',
+      kind: 'min_count_vs_trailing',
+      ratio: 0.5,
+      zero_is_legitimate: true,
+      note: 'No current epidemic disaster is a reading, not a silence to condemn; a collapse from a large trailing count is still worth its row.',
+    },
+  ],
 })
 
 /** Every source with at least one declared assertion, frozen and iterable. */
@@ -687,6 +790,9 @@ export function runAssertions({ source, records = [], trailingRecords = [], opti
         break
       case 'value_range':
         failures.push(...checkValueRange(assertion, context))
+        break
+      case 'value_vocabulary':
+        failures.push(...checkValueVocabulary(assertion, context))
         break
       case 'min_count_vs_trailing':
         failures.push(...checkCount(assertion, context))
@@ -955,6 +1061,42 @@ function checkValueRange(assertion, { batch, unmeasured }) {
     detail: { values_checked: checked, offenders },
   }]
 }
+
+
+/**
+ * Closed vocabulary check. Exists because the granularity label is the
+ * honesty payload of the outbreak records: a granularity outside
+ * subnational/national/unknown would render an aggregate as district
+ * evidence or drop an honest record without a reason. Absence passes —
+ * the label is optional the way the engine treats absence everywhere
+ * else; the connector guarantees it when it matters (record shapes that
+ * must carry it do).
+ */
+function checkValueVocabulary(assertion, { batch, unmeasured }) {
+  const offenders = []
+  let checked = 0
+
+  for (const record of batch) {
+    const value = readPath(record, assertion.field)
+    if (value === null || value === undefined) continue
+    checked += 1
+    if (!assertion.values.includes(String(value))) {
+      if (offenders.length < 5) {
+        offenders.push({ record_id: record?.id ?? null, field: assertion.field, value, allowed: assertion.values })
+      }
+    }
+  }
+
+  if (!checked) unmeasured.push(assertion.name)
+  if (!offenders.length) return []
+  return [{
+    assertion: assertion.name,
+    kind: assertion.kind,
+    message: `${offenders.length} value(s) of ${assertion.field} outside the declared vocabulary.`,
+    detail: { values_checked: checked, allowed: assertion.values, offenders },
+  }]
+}
+
 
 function checkCount(assertion, { batch, trailingRecords, unmeasured }) {
   const counts = trailingCounts(trailingRecords)

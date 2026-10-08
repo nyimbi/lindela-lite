@@ -44,6 +44,7 @@ export const QUARANTINE_SOURCES = Object.freeze([
   'service_assets',
   'food_security_records',
   'disease_observations',
+  'weather_forecasts',
 ])
 
 /**
@@ -164,6 +165,10 @@ export const SCHEMA = Object.freeze([
   { key: 'food_security_records' },
   { key: 'disease_observations' },
   { key: 'flood_probability_models' },
+  // The weather overlay's records. Kept out of climate_observations on purpose:
+  // computeFloodRisk sums precipitation over that collection, and the same
+  // Open-Meteo forecast under two source ids would be counted twice.
+  { key: 'weather_forecasts' },
   // ENH-13. Every superseded value of a record upstream revises in place.
   // Leaving it off this list would drop every history row silently — the exact
   // silent-key-list bug the comment above warns about, one level down.

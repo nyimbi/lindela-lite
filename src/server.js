@@ -54,9 +54,12 @@ import { renderCapXml } from './cap.js'
 import { emit, dispatchPending, outboxRollup } from './outbox.js'
 import { summarizeRoadAccess } from './road-access.js'
 import { summarizeFoodSecurity } from './connectors/ipc-hdx.js'
+import { districtWeatherReport } from './connectors/open-meteo-forecast.js'
 import { summarizeDiseaseObservations } from './connectors/who-gho.js'
+import { dischargeBand } from '../public/shared/discharge-bands.js'
 import { planDelivery } from './routing.js'
 import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
+import { upstreamTileUrl, loadRasterTile } from './basemap-tiles.js'
 import { trainDistrictModels, predict } from './flood-probability.js'
 import { normalizeWebhookSubscription } from './webhooks.js'
 import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots, quarterlyPdfSections } from './kpi.js'
@@ -1286,6 +1289,67 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
     return
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/v1/weather') {
+    // The map overlay's roll-up: per pilot district, one current reading and
+    // the 7-day daily forecast, each batch-stamped with the forecast's issue
+    // time. Not paged — five districts, seven days each, is a fixed small
+    // payload, and `districtWeatherReport` states the absence of data rather
+    // than answering with an empty page that reads as "no weather".
+    jsonResponse(res, 200, { success: true, ...districtWeatherReport(data.weather_forecasts || []) })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/river-discharge') {
+    // Latest non-null daily river discharge per region from the GloFAS model.
+    // The source stores a full daily series for each region; this route rolls it
+    // to one current point per region so the map overlay can draw it like the
+    // other ambient layers. No records at all is normal on a fresh deployment.
+    const note = 'Modelled river discharge from GloFAS; not gauged observations.'
+    const records = (data.climate_observations || []).filter((r) => r.source === 'open_meteo_flood')
+    if (!records.length) {
+      jsonResponse(res, 200, { success: true, data: [], as_of: null, note })
+      return
+    }
+
+    const latestByRegion = new Map()
+    for (const record of records) {
+      const days = Array.isArray(record.daily) ? record.daily : []
+      let latest = null
+      for (const day of days) {
+        if (!day || !Number.isFinite(day.river_discharge_m3s)) continue
+        if (!latest || day.date > latest.date) latest = day
+      }
+      if (!latest) continue
+      const existing = latestByRegion.get(record.region_name)
+      if (
+        !existing
+        || latest.date > existing.date
+        || (latest.date === existing.date && latest.river_discharge_m3s > existing.river_discharge_m3s)
+      ) {
+        latestByRegion.set(record.region_name, {
+          region_name: record.region_name,
+          latitude: record.latitude,
+          longitude: record.longitude,
+          river_discharge_m3s: latest.river_discharge_m3s,
+          as_of: latest.date,
+          model_limit: record.metadata?.model_limit ?? null,
+        })
+      }
+    }
+
+    const items = [...latestByRegion.values()].sort((a, b) => String(a.region_name).localeCompare(String(b.region_name)))
+    let asOf = null
+    for (const item of items) {
+      if (!asOf || item.as_of > asOf) asOf = item.as_of
+    }
+    const withBand = items.map((item) => ({
+      ...item,
+      band: dischargeBand(item.river_discharge_m3s)?.key || 'unknown',
+    }))
+    jsonResponse(res, 200, { success: true, data: withBand, as_of: asOf, note })
+    return
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/v1/flood-risk') {
     jsonResponse(res, 200, { success: true, ...collectionPage(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
     return
@@ -1347,6 +1411,45 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
   }
 
   if (url.pathname === '/api/v1/disease-observations') {
+    // `?map=1` asks the narrow shape the map layer consumes: only records
+    // with finite coordinates, and the placement honesty carried alongside
+    // them. Unplacable records (granularity 'unknown') are deliberately NOT
+    // here — the map draws nothing for them — while the paged default below
+    // still lists them, so nothing an operator could read in the detail
+    // dialog is hidden by the geometry filter.
+    if (url.searchParams.get('map') === '1') {
+      // Number.isFinite(record.latitude) directly, not Number.isFinite(Number(record.latitude)):
+      // Number(null) === 0 is finite, and that coercion once planted every alert
+      // of a CAP feed on Null Island — the exact reuse this must not repeat.
+      const mapped = (data.disease_observations || [])
+        .filter((record) => Number.isFinite(record.latitude) && Number.isFinite(record.longitude))
+        .map((record) => ({
+          id: record.id,
+          source: record.source,
+          disease: record.disease || null,
+          country: record.country || null,
+          latitude: Number(record.latitude),
+          longitude: Number(record.longitude),
+          location_name: record.location_name || null,
+          granularity: record.granularity || 'unknown',
+          cases: Number.isFinite(Number(record.cases)) ? Number(record.cases) : null,
+          deaths: Number.isFinite(Number(record.deaths)) ? Number(record.deaths) : null,
+          observed_at: record.observed_at || null,
+          source_url: record.source_url || null,
+        }))
+      // String-folded latest timestamp, seeded from undefined — folding
+      // against a null seed silently loses everything ('2026…' > 'null' is
+      // alphabetically false).
+      const times = (data.disease_observations || []).map((r) => r.observed_at).filter(Boolean)
+      const asOf = times.length ? times.sort().at(-1) : null
+      jsonResponse(res, 200, {
+        success: true,
+        data: mapped,
+        as_of: asOf,
+        note: 'Subnational coordinates where available; national centroid otherwise.',
+      })
+      return
+    }
     // R-27, as above: paged and self-describing rather than a silent cap, and
     // the series states come from the whole matched set. The comment on
     // `/disease-observations/summary` below already said why computing them
@@ -1519,6 +1622,36 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
   if (url.pathname === '/api/v1/flood-depth') {
     const result = await handleFloodDepth(url, res)
     if (result !== undefined) return
+  }
+
+  // Raster basemap tiles (ADR-013). The route shape is deliberately strict —
+  // `upstreamTileUrl` range-checks every field, so a malformed z/x/y is a 400
+  // rather than a fetch against a public tile service with a nonsense path.
+  // The response is immutable imagery: max-age, no ETag revalidation, the same
+  // caching rule the browser's own HTTP layer applies to a tile it fetched itself.
+  const rasterTileMatch = req.method === 'GET' &&
+    /^\/api\/v1\/basemap\/tiles\/(osm|carto)\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(url.pathname)
+  if (rasterTileMatch) {
+    const source = rasterTileMatch[1]
+    const z = Number(rasterTileMatch[2])
+    const x = Number(rasterTileMatch[3])
+    const y = Number(rasterTileMatch[4])
+    if (!upstreamTileUrl(source, z, x, y)) {
+      jsonResponse(res, 400, { success: false, error: `Invalid basemap tile: ${url.pathname}` })
+      return
+    }
+    const tile = await loadRasterTile(source, z, x, y)
+    if (!tile) {
+      jsonResponse(res, 502, { success: false, error: 'Basemap tile upstream fetch failed' })
+      return
+    }
+    res.writeHead(200, {
+      'content-type': 'image/png',
+      'content-length': tile.bytes.length,
+      'cache-control': 'public, max-age=86400, immutable',
+    })
+    res.end(req.method === 'HEAD' ? undefined : tile.bytes)
+    return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/data-quality') {

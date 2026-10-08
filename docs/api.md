@@ -25,13 +25,15 @@ All endpoints return JSON unless otherwise noted. The default server is local an
   is written. See [Bulk Upload](#bulk-upload).
 - `GET /api/v1/events` returns hazard and conflict events.
 - `GET /api/v1/climate` returns climate observations.
+- `GET /api/v1/weather` returns per-pilot-district current conditions and the 7-day daily forecast, with per-district `as_of` and staleness metadata; districts with no ingested data are present with nulls.
+- `GET /api/v1/river-discharge` rolls the `open_meteo_flood` GloFAS series to one latest modelled discharge point per region (`m³/s`), date-stamped; empty on a fresh deployment by design.
 - `GET /api/v1/flood-risk` returns flood risk scores.
 - `GET /api/v1/flood-depth` returns static flood depth for a water surface elevation, with per-level coverage, extent polygons, and model limits stated in the payload.
 - `GET /api/v1/road-access` returns passage status for every road asset, plus a summary.
 - `GET /api/v1/road-access/summary` returns road access counts and cut-off rate.
 - `GET /api/v1/food-security` returns IPC acute food insecurity classifications, plus a Phase 3+ summary.
 - `GET /api/v1/food-security/summary` returns the IPC Phase 3+ roll-up alone.
-- `GET /api/v1/disease-observations` returns WHO GHO outbreak indicators with staleness verdicts.
+- `GET /api/v1/disease-observations` returns WHO GHO outbreak indicators and ReliefWeb epidemic events, with staleness verdicts; `?map=1` returns only placeable records (finite coordinates) with the honesty fields — `granularity` (`subnational` | `national` | `unknown`), `location_name`, heuristic `cases`/`deaths`, `observed_at`, `source_url` — so an aggregate at a country centroid can never read as district evidence.
 - `POST /api/v1/flood-probability/train` fits the empirical rainfall–flood model per pilot district from the store, writing trained models and explicit refusals.
 - `GET /api/v1/flood-probability/score` scores rainfall statistics against a trained model, carrying model card, validation, and basis.
 - `GET /api/v1/flood-probability/models` lists trained models, refusals included.

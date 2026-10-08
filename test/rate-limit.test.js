@@ -446,7 +446,7 @@ describe('declared limits are enforced', () => {
     assert.ok(declared.length >= 7, `expected at least 7 connectors declaring a rateLimit, found ${declared.length}`)
     assert.deepEqual(
       declared.map((entry) => entry.id).sort(),
-      ['gdacs', 'glofas', 'ipc_hdx', 'noaa_enso', 'open_meteo', 'usgs_earthquake', 'who_gho'],
+      ['gdacs', 'glofas', 'ipc_hdx', 'noaa_enso', 'open_meteo', 'reliefweb_epidemics', 'usgs_earthquake', 'who_gho'],
     )
   })
 

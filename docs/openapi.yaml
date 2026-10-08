@@ -893,6 +893,63 @@ paths:
       responses:
         '200':
           description: Climate observations
+  /api/v1/weather:
+    get:
+      summary: Current conditions and 7-day forecast per pilot district
+      description: |
+        The map weather overlay's roll-up. Per pilot district: one current
+        reading and up to seven daily forecast points (precipitation,
+        precipitation probability, temperature max, WMO weather code), each
+        batch-stamped with the forecast's issue time (`as_of`) and a `stale`
+        flag against `stale_after_minutes`.
+
+        Deterministic point forecasts only: no ensemble members, no
+        percentiles. A district with no ingested data is present with nulls,
+        not omitted — an absent district and an unmeasured one are different
+        statements.
+      responses:
+        '200':
+          description: Per-district current conditions and 7-day forecast
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  generated_at: { type: string, format: date-time }
+                  source: { type: string }
+                  stale_after_minutes: { type: integer }
+                  districts_covered: { type: integer }
+                  note: { type: ['string', 'null'] }
+                  districts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        slug: { type: string }
+                        name: { type: string }
+                        country: { type: string }
+                        latitude: { type: number }
+                        longitude: { type: number }
+                        as_of: { type: ['string', 'null'], format: date-time }
+                        stale: { type: ['boolean', 'null'] }
+                        current:
+                          type: ['object', 'null']
+                          properties:
+                            observed_at: { type: string }
+                            temperature_c: { type: ['number', 'null'] }
+                            precipitation_mm: { type: ['number', 'null'] }
+                            weather_code: { type: ['integer', 'null'] }
+                        forecast:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              date: { type: string }
+                              precipitation_mm: { type: ['number', 'null'] }
+                              precipitation_probability_pct: { type: ['number', 'null'] }
+                              temperature_max_c: { type: ['number', 'null'] }
+                              weather_code: { type: ['integer', 'null'] }
   /api/v1/flood-risk:
     get:
       summary: Flood risk scores
@@ -1060,6 +1117,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FoodSecuritySummary'
+  /api/v1/river-discharge:
+    get:
+      summary: Latest modelled river discharge per region (map overlay roll-up)
+      description: |
+        One current point per region from the GloFAS v4 series stored by
+        `open_meteo_flood`: latest non-null daily value, with its date. This
+        is modelled discharge, not gauged observation, and every record and
+        the roll-up both say so.
+
+        Empty on a fresh deployment (`data: []`, `as_of: null`) — that is the
+        normal state before an ingest, not an error.
+      responses:
+        '200':
+          description: Latest discharge per region
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        region_name: { type: string }
+                        latitude: { type: ['number', 'null'] }
+                        longitude: { type: ['number', 'null'] }
+                        river_discharge_m3s: { type: ['number', 'null'] }
+                        date: { type: ['string', 'null'] }
+                        as_of: { type: ['string', 'null'] }
+                        band: { type: ['string', 'null'] }
+                        model_limit: { type: ['string', 'null'] }
+                  as_of: { type: ['string', 'null'] }
+                  note: { type: string }
   /api/v1/disease-observations:
     get:
       summary: WHO GHO outbreak indicators, national-annual aggregates
@@ -1074,6 +1166,19 @@ paths:
         computed over every record that matched the filters, so `series_state`
         names every indicator that matched rather than the ones that happened to
         fit the page. Page with `?cursor=`.
+
+        Sources: `who_gho` national-annual aggregates (coordinates null) and
+        `reliefweb_epidemics` event records (ADR-014: subnational coordinates
+        where ReliefWeb publishes them, otherwise a country centroid placed
+        with `granularity: 'national'`).
+
+        `?map=1` returns the narrow shape the map layer consumes: only records
+        with finite coordinates, each carrying its honesty fields
+        (`granularity`, `location_name`, `cases`, `deaths`, `observed_at`,
+        `source_url`, `note`), and `as_of` = the latest `observed_at` in the
+        collection. Records without geometry (including every who_gho row) are
+        absent here but present on the paged default — nothing an operator
+        could read in the detail dialog is hidden by the geometry filter.
       responses:
         '200':
           description: Disease observation records and a summary

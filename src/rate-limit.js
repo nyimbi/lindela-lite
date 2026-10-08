@@ -524,6 +524,14 @@ export const RATE_LIMIT_POLICIES = Object.freeze({
   gdacs_archive: Object.freeze({ ratePerWindow: 20, windowMs: MINUTE, concurrency: 1 }),
   open_meteo_archive: Object.freeze({ ratePerWindow: 30, windowMs: MINUTE, concurrency: 1 }),
   open_meteo_flood: Object.freeze({ ratePerWindow: 30, windowMs: MINUTE, concurrency: 1 }),
+  // Same host and same published budget as open_meteo; the forecast overlay
+  // polls five districts per run, sequentially.
+  open_meteo_forecast: Object.freeze({ ratePerWindow: 60, windowMs: MINUTE, concurrency: 1 }),
+  // ReliefWeb (ADR-014): one RSS fetch or one v2 API call per ingest — a
+  // handful per 6-hour window. The connector's own declared budget (spec
+  // defaults rateLimit.perMinute: 30) is what this table must match; the
+  // declarations test fails the drift.
+  reliefweb_epidemics: Object.freeze({ ratePerWindow: 30, windowMs: MINUTE, concurrency: 1 }),
 })
 
 function defaultSleep(ms) {

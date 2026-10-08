@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
+  AFRICA_BBOX,
   NEAR_REGION_MARGIN_DEG,
   REGION_OF_INTEREST,
   computeBbox,
+  fitTransform,
   isFinitePoint,
   mapFrame,
   withinBbox,
@@ -176,5 +178,44 @@ describe('map framing with an active simulation', () => {
       frame.maxLat < R.maxLat,
       `and the frame does not climb back to the region ceiling (${frame.maxLat.toFixed(2)} vs ${R.maxLat})`,
     )
+  })
+})
+
+describe('Africa projection frame and transform fitting', () => {
+  it('exposes an Africa-wide bbox', () => {
+    assert.ok(AFRICA_BBOX.minLat < -30)
+    assert.ok(AFRICA_BBOX.maxLat > 30)
+    assert.ok(AFRICA_BBOX.minLon < 0)
+    assert.ok(AFRICA_BBOX.maxLon > 50)
+    assert.ok(AFRICA_BBOX.maxLat - AFRICA_BBOX.minLat > 70)
+    assert.ok(AFRICA_BBOX.maxLon - AFRICA_BBOX.minLon > 70)
+  })
+
+  it('fits the Horn region into the Africa frame at scale > 1', () => {
+    const t = fitTransform(REGION_OF_INTEREST, AFRICA_BBOX, 800, 500)
+    assert.ok(t.scale > 1, `scale ${t.scale} should zoom in on the Horn`)
+    // Center of the Horn should project near the centre of the viewport after fitting.
+    const hornCx = (REGION_OF_INTEREST.minLon + REGION_OF_INTEREST.maxLon) / 2
+    const hornCy = (REGION_OF_INTEREST.minLat + REGION_OF_INTEREST.maxLat) / 2
+    const px = ((hornCx - AFRICA_BBOX.minLon) / (AFRICA_BBOX.maxLon - AFRICA_BBOX.minLon)) * 800
+    const py = ((AFRICA_BBOX.maxLat - hornCy) / (AFRICA_BBOX.maxLat - AFRICA_BBOX.minLat)) * 500
+    const screenX = t.x + t.scale * px
+    const screenY = t.y + t.scale * py
+    assert.ok(Math.abs(screenX - 400) < 1, `fitted center x ${screenX} should be viewport centre`)
+    assert.ok(Math.abs(screenY - 250) < 1, `fitted center y ${screenY} should be viewport centre`)
+  })
+
+  it('fits the whole Africa frame at unit scale when padding is zero', () => {
+    const t = fitTransform(AFRICA_BBOX, AFRICA_BBOX, 800, 500, 0)
+    assert.ok(Math.abs(t.scale - 1) < 1e-9)
+    assert.ok(Math.abs(t.x) < 1e-9)
+    assert.ok(Math.abs(t.y) < 1e-9)
+  })
+
+  it('returns null for invalid inputs', () => {
+    assert.equal(fitTransform(null, AFRICA_BBOX, 800, 500), null)
+    assert.equal(fitTransform(AFRICA_BBOX, null, 800, 500), null)
+    assert.equal(fitTransform(AFRICA_BBOX, AFRICA_BBOX, 0, 500), null)
+    assert.equal(fitTransform({ minLat: 0, maxLat: 0, minLon: 0, maxLon: 10 }, AFRICA_BBOX, 800, 500), null)
   })
 })

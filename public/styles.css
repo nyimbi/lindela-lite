@@ -497,6 +497,110 @@ body.app-shell {
 .food-severe  { fill: oklch(58% 0.20 25);  stroke: oklch(45% 0.20 25); }
 .food-unclassified { fill: none; stroke: oklch(55% 0.02 250); stroke-opacity: 0.35; }
 
+/*
+ * Weather glyphs. The rain band is the sequential blue ramp the flood layer
+ * already taught (same variable, same direction: wetter is darker), and the
+ * size and dash pattern come from the severity vocabulary — colour is never
+ * the only channel, per the WEB-04/WEB-10 note above the marker styles.
+ * `ungraded` is a district whose total was not reported, drawn hollow rather
+ * than in the dry band's fill, because "no reading" is not "no rain".
+ */
+.weather-marker {
+  stroke-width: 1.5;
+  fill-opacity: 0.8;
+}
+
+.weather-dry      { fill: none; stroke: var(--ink-muted); }
+.weather-light    { fill: oklch(72% 0.10 230); stroke: oklch(60% 0.12 230); }
+.weather-moderate { fill: oklch(64% 0.14 232); stroke: oklch(52% 0.16 232); }
+.weather-heavy    { fill: oklch(55% 0.18 236); stroke: oklch(42% 0.20 238); }
+.weather-extreme  { fill: oklch(42% 0.20 244); stroke: oklch(30% 0.22 248); }
+.weather-ungraded { fill: none; stroke: var(--ink-muted); stroke-opacity: 0.6; }
+
+/* River discharge markers reuse the severity radius/dash vocabulary; colour is
+   the band, with the same low→critical ramp so a high or extreme discharge
+   pops against the basemap without inventing a new visual language. */
+.discharge-marker {
+  stroke-width: 1.5;
+  fill-opacity: 0.85;
+}
+
+.discharge-marker:hover { fill-opacity: 1; }
+
+.discharge-low      { fill: oklch(70% 0.12 145); stroke: oklch(58% 0.14 145); }
+.discharge-moderate { fill: oklch(64% 0.14 232); stroke: oklch(52% 0.16 232); }
+.discharge-high     { fill: oklch(55% 0.18 85);  stroke: oklch(42% 0.20 85); }
+.discharge-extreme  { fill: var(--sev-critical); stroke: oklch(30% 0.22 25); }
+.discharge-unknown  { fill: none; stroke: var(--ink-muted); stroke-opacity: 0.6; }
+
+/* Disease-outbreak markers (ADR-014). One shape and hue per disease in the
+   vocabulary; national aggregates are dashed *and* washed out so the
+   country-centroid placement cannot pass for district evidence. */
+.disease-marker { stroke-width: 1.5; fill-opacity: 0.85; }
+.disease-marker:hover { fill-opacity: 1; }
+.disease-cholera      { fill: oklch(65% 0.18 145); stroke: oklch(50% 0.20 145); }
+.disease-measles      { fill: oklch(65% 0.18 30);  stroke: oklch(50% 0.20 30); }
+.disease-meningitis   { fill: oklch(65% 0.18 285); stroke: oklch(50% 0.20 285); }
+.disease-yellow-fever { fill: oklch(65% 0.18 85);  stroke: oklch(50% 0.20 85); }
+.disease-plague       { fill: oklch(65% 0.18 320); stroke: oklch(50% 0.20 320); }
+.disease-other        { fill: oklch(60% 0.05 0);   stroke: var(--ink-muted); }
+.disease-national     { fill-opacity: 0.4; }
+.disease-hit { cursor: pointer; }
+
+/*
+ * Constant-size point markers. The map zooms by scaling `#mapTransform`, which
+ * would balloon markers at district zoom and shrink them to nothing at the
+ * Africa zoom-out. Point markers and their labels are not geography — like
+ * every mainstream slippy map they keep a constant screen size — so each is
+ * counter-scaled by the inverse of the live zoom scale (`--map-scale`, set on
+ * #situationMap by applyMapTransform in app.js). Geographic layers (tiles,
+ * country rings, district rings, risk blobs, flood cells, roads) still scale:
+ * they represent extent, not points. transform-box/origin make each marker
+ * shrink around its own centre so its anchor stays glued to the geography.
+ * Rules are scoped to #mapTransform so the legend swatches, which reuse these
+ * marker classes but live outside the transform, keep their designed size.
+ */
+#mapTransform .hazard-marker,
+#mapTransform .hazard-hit,
+#mapTransform .asset-marker,
+#mapTransform .asset-hit,
+#mapTransform .discharge-marker,
+#mapTransform .discharge-hit,
+#mapTransform .disease-marker,
+#mapTransform .disease-hit,
+#mapTransform .districts-layer text,
+#mapTransform .graticule text {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(calc(1 / var(--map-scale, 1)));
+}
+
+/*
+ * Grouped glyphs whose label must stay attached — the weather dot + its
+ * temperature, and the temporary click pin. Counter-scaling each element
+ * around its own box would let an offset label drift away from its dot as the
+ * zoom changes, so the whole group counter-scales around the anchor point
+ * (--pin-x/--pin-y, set where the group is built).
+ */
+#mapTransform .map-pin {
+  transform-box: view-box;
+  transform-origin: var(--pin-x, 0px) var(--pin-y, 0px);
+  transform: scale(calc(1 / var(--map-scale, 1)));
+}
+
+.weather-temp {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  fill: var(--ink-muted);
+}
+
+/* Heat stress is the one temperature an operator routes around, so it is the
+   only band the label raises its voice for. */
+.weather-temp-hot {
+  fill: var(--sev-critical);
+  font-weight: 600;
+}
+
 /* Road status: impassable must read instantly at map scale. */
 .roads-layer { pointer-events: none; }
 
@@ -645,6 +749,28 @@ body.app-shell {
   font-size: var(--text-xs);
   /* Same reason as #locale-select: a hard px floor here outranked the shared
      tap-target rule and left the map filters at 24px on a phone. */
+}
+
+.map-zoom-controls button {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-sm);
+  width: 1.75rem;
+  height: 1.5rem;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: var(--text-sm);
+}
+.map-zoom-controls button:hover { background: var(--surface-2); }
+.map-zoom-controls button:active { transform: translateY(1px); }
+.map-zoom-controls #zoomResetBtn { font-size: 0.85rem; }
+.map-zoom-controls #zoomLevel {
+  display: inline-block;
+  min-width: 2.75rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
 }
 
 .map-record-count {

@@ -7,6 +7,86 @@ All additions are additive; no existing endpoint changed shape.
 
 ### Added
 
+**River-discharge overlay on the situation map.** The GloFAS v4 daily series
+the `open_meteo_flood` backfill stores rolls up as
+`GET /api/v1/river-discharge` — one latest non-null discharge point per
+region, banded on the absolute m³/s value (`public/shared/discharge-bands.js`),
+drawn as markers between the flood simulation and the hazards. Every marker
+and the roll-up both carry the modelled-not-gauged caveat; regions whose
+river cell has no GloFAS reach error honestly in the run ("no GloFAS reach")
+and appear as nothing on the map rather than as a null reading.
+
+**Disease-outbreak overlay on the situation map (ADR-014).** A new
+`reliefweb_epidemics` connector fetches ReliefWeb epidemic disaster events for
+the pilot countries. Two retrieval backends, one record shape: the keyless RSS
+feed of the 20 latest disasters worldwide (today, no registration; GLIDE
+`EP-` prefix + pilot-country filtering, country-centroid geography) and the
+v2 Disasters API (subnational coordinates where published) behind a
+ReliefWeb-approved appname via `LINDELA_LITE_RELIEFWEB_APPNAME`, with
+automatic RSS fallback while the registration pends — the spike
+(2026-10-07) found the API version the plan quoted (v1) decommissioned (410)
+and an unapproved appname answering 403. Geography resolves through
+`public/shared/outbreak-geocode.js`, shared by the connector and the front
+end: a pilot-district name in the glance text (word-boundary matched — "Bor"
+must not swallow "Borno") is subnational evidence; a pilot country is a
+national aggregate; nothing matches and the record is honest `unknown` and
+the map draws nothing. Records ride the existing
+`disease_observations` collection beside `who_gho`'s national-annual context,
+with `source_id` = the GLIDE id, heuristic case/death counts (parsed from
+glance text or `null`), the honest `model_limit` string, and the same
+quarantine/assertion machinery (a new `value_vocabulary` assertion kind pins
+`granularity` to `subnational|national|unknown`). `minimum_records` kept at
+1 per the repo-wide no-silent-empty-success rule — a legitimately quiet feed
+reads the freshness verdict `empty_response` after two runs, not `broken`.
+`GET /api/v1/disease-observations?map=1` serves the map shape: placeable
+records only, honesty fields included, unplaced records still on the paged
+default. The console draws one shape-and-hue-per-disease glyph between river
+discharge and the hazards (colour-blind safe via SHAPE, national aggregates
+dashed and washed out), keyboard- and screen-reader-reachable, with a status
+line stating the subnational/national split; `npm run validate` doc-link,
+OpenAPI and connector-registry checks updated in the same change.
+
+**Weather overlay on the situation map.** A new `open_meteo_forecast`
+connector (`src/connectors/open-meteo-forecast.js`) fetches current conditions
+and the 7-day daily forecast (precipitation sum, precipitation probability,
+temperature max, WMO weather code) for the five pilot district centroids from
+the keyless Open-Meteo forecast API. Records land in a new `weather_forecasts`
+collection — deliberately not `climate_observations`, because the flood-risk
+scorer sums precipitation over that collection and the same forecast under a
+second source id would be counted twice. Every record carries an `as_of` batch
+stamp identifying the forecast issue it belongs to. `GET /api/v1/weather`
+rolls the collection up per district (one current reading, seven daily points,
+per-district staleness against the published 6-hour window; a district with no
+data is present with nulls, not omitted). The console draws one glyph per
+district between the graticule and the risk layer — banded on today's forecast
+rain using the map's existing severity vocabulary (radius and dash pattern),
+labelled with the current temperature, keyboard- and screen-reader-reachable
+like the hazard markers — and withholds stale districts rather than presenting
+an old forecast as current; the status line under the map says which districts
+were withheld and why. Banding, WMO code labels and the render plan are pure
+functions in `public/shared/weather-bands.js`, tested in
+`test/weather-bands.test.js` and `test/weather-forecast.test.js`. The service
+worker puts `/api/v1/weather` in the map-layer bucket with the other layers.
+
+**Raster basemap: OpenStreetMap under the data layers (ADR-013; supersedes
+ADR-008's basemap decision).** The situation map now draws real OSM/CARTO
+raster tiles beneath its vector data layers. `public/shared/tiles.js` does the
+slippy-map arithmetic (zoom selection, the visible window pulled back through
+the pan/zoom transform, tile enumeration and viewBox placement), asserted in
+`test/tiles.test.js` — including that Turkana is z6/x38/y31, which the
+2026-10-07 half-measure hardcoded as x30/y20, i.e. the North Sea. The browser
+never touches a third-party host: `src/basemap-tiles.js` proxies
+`GET /api/v1/basemap/tiles/{osm|carto}/{z}/{x}/{y}.png` with an in-process LRU,
+in-flight dedupe and a descriptive User-Agent, the pattern `terrain.js` set for
+ Terrarium elevation. Because the console's CSP is `img-src 'self' data:`, a
+browser-direct tile fetch was never renderable — and the selector that would
+have set one was itself never present in the markup. A new Basemap control
+(OpenStreetMap / Carto light / Offline vector) persists in localStorage; the
+SW gained a dedicated immutable-tile bucket (400 entries, 7-day TTL) so a
+panning session cannot evict the poll payloads; attribution is rendered in the
+map, per OSM tile usage policy, and the vector rings remain the offline
+fallback beneath the imagery.
+
 **Quarantine, and the four modules that were only exported.** The ingestion
 layer gained declarative per-source assertions (`src/assertions.js`): data, not
 code, so a test can read the map, count it, and require that nothing is declared

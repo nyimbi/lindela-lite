@@ -274,6 +274,18 @@ async function advanceTo(app, screen) {
 	app.clickButton({ 'data-symptom-type': 'fever' })
 	app.el('symptomTypeNextBtn').click()
 	await wait()
+	if (screen === 'symptomSeverity') return
+	// Severity screen: no selections required to proceed.
+	app.el('severityNextBtn').click()
+	await wait()
+	if (screen === 'symptomExposure') return
+	// Exposure screen: selects must have a value before Next will move.
+	app.el('exposeContactSick').value = 'unknown'
+	app.el('exposeContactDead').value = 'unknown'
+	app.el('exposeVaccination').value = 'unknown'
+	app.el('exposeWater').value = 'clean'
+	app.el('exposureNextBtn').click()
+	await wait()
 	if (screen === 'symptomDuration') return
 	app.el('durationValue').value = '3'
 	app.clickButton({ 'data-symptom-duration': 'days' })
@@ -491,13 +503,13 @@ describe('CW-14 — a blocked control explains itself', () => {
 })
 
 describe('HX-09 — the wizard names the step you are on', () => {
-	it('counts five steps, and the dots agree with the count', async () => {
+	it('counts seven steps, and the dots agree with the count', async () => {
 		const app = await bootChw()
-		assert.equal(app.context.__chw.SYMPTOM_STEPS.length, 5)
+		assert.equal(app.context.__chw.SYMPTOM_STEPS.length, 7)
 		// Reproduced over CDP: the last screen drew five dots and the other four
 		// drew four, so the row could not be read as a position in anything.
 		const html = read('public/chw/index.html')
-		for (const step of [1, 2, 3, 4, 5]) {
+		for (const step of [1, 2, 3, 4, 5, 6, 7]) {
 			assert.ok(html.includes(`data-step="${step}"`), `step ${step} must declare its position`)
 		}
 	})
@@ -509,8 +521,8 @@ describe('HX-09 — the wizard names the step you are on', () => {
 		assert.equal(titles.length, 0, 'per-step titles must be existing keys, not new ones')
 		const wizard = html.slice(html.indexOf('id="symptomScreen"'), html.indexOf('id="incidentScreen"'))
 		const headings = [...wizard.matchAll(/<h2 class="screen-title"[^>]*>([^<]+)</g)].map((m) => m[1].trim())
-		assert.equal(headings.length, 5)
-		assert.equal(new Set(headings).size, 5,
+		assert.equal(headings.length, 7)
+		assert.equal(new Set(headings).size, 7,
 			`every step must say which question it asks, got ${JSON.stringify(headings)}`)
 	})
 
@@ -522,8 +534,8 @@ describe('HX-09 — the wizard names the step you are on', () => {
 			const counter = makeElement('p')
 			el.querySelector = (sel) => (sel === '[data-step]' ? dots : sel === '[data-step-counter]' ? counter : null)
 			app.context.__chw.renderStepProgress()
-			assert.equal(dots.children.length, 5, `${name} must draw one dot per step`)
-			assert.match(counter.textContent, /^Step \d of 5$/, `${name} must count its steps`)
+			assert.equal(dots.children.length, 7, `${name} must draw one dot per step`)
+			assert.match(counter.textContent, /^Step \d of 7$/, `${name} must count its steps`)
 		}
 	})
 
@@ -533,11 +545,11 @@ describe('HX-09 — the wizard names the step you are on', () => {
 		const app = await bootChw()
 		app.el('reportSymptomBtn').click()
 		await wait()
-		assert.equal(app.el('screenAnnouncer').textContent, 'Step 1 of 5. Who has this symptom?')
+		assert.equal(app.el('screenAnnouncer').textContent, 'Step 1 of 7. Who has this symptom?')
 
 		app.clickButton({ 'data-symptom-who': 'self' })
 		app.el('symptomNextBtn').click()
 		await wait()
-		assert.equal(app.el('screenAnnouncer').textContent, 'Step 2 of 5. Which symptom?')
+		assert.equal(app.el('screenAnnouncer').textContent, 'Step 2 of 7. Which symptom?')
 	})
 })

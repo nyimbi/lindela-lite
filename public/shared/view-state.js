@@ -48,6 +48,38 @@ function encodeValue(value) {
   return String(value)
 }
 
+// The interactive handlers clamp scale to this range (`app.js` pan/zoom); a
+// link is held to the same bounds so a hand-edited URL cannot push the scene
+// somewhere the UI itself would never put it.
+export const MAP_SCALE_MIN = 0.3
+export const MAP_SCALE_MAX = 10
+// translate() offsets are in viewBox units on an 800×500 scene; anything this
+// far out puts every layer — basemap tiles included — off-canvas.
+export const MAP_TRANSLATE_MAX = 2000
+
+/**
+ * A `map=x,y,scale` triple is trusted only as far as the UI's own limits. Any
+ * out-of-range part voids the whole triple rather than being repaired piecemeal:
+ * a wrong frame is worse than no frame — it looks like data, and worse, it
+ * re-encodes itself into every link copied from the corrupted view. Scale alone
+ * is clamped, because a slightly eager zoom is recoverable where a lost scene
+ * is not.
+ */
+export function sanitizeMapTransform(map) {
+  if (!map || typeof map !== 'object') return null
+  const { x, y, scale } = map
+  for (const n of [x, y, scale]) {
+    if (n !== undefined && !Number.isFinite(n)) return null
+  }
+  if ((x !== undefined && Math.abs(x) > MAP_TRANSLATE_MAX) ||
+      (y !== undefined && Math.abs(y) > MAP_TRANSLATE_MAX)) return null
+  const out = {}
+  if (x !== undefined) out.x = x
+  if (y !== undefined) out.y = y
+  if (scale !== undefined) out.scale = Math.min(MAP_SCALE_MAX, Math.max(MAP_SCALE_MIN, scale))
+  return Object.keys(out).length ? out : null
+}
+
 /**
  * Encode a view to a query string.
  *
@@ -121,14 +153,18 @@ function decodeKnown(params) {
 
   const map = params.get('map')
   if (map) {
+    // Every segment must be a finite number: a triple with a garbage part is a
+    // corrupted claim, not a partial one, and corrupted claims are dropped
+    // whole rather than guessed at.
     const parts = map.split(',').map(Number)
-    const [x, y, scale] = parts
-    if (parts.some((n) => Number.isFinite(n))) {
-      view.map = {
-        ...(Number.isFinite(x) ? { x } : {}),
-        ...(Number.isFinite(y) ? { y } : {}),
-        ...(Number.isFinite(scale) ? { scale } : {}),
-      }
+    if (parts.length <= 3 && parts.every((n) => Number.isFinite(n))) {
+      const [x, y, scale] = parts
+      const sane = sanitizeMapTransform({
+        ...(x !== undefined ? { x } : {}),
+        ...(y !== undefined ? { y } : {}),
+        ...(scale !== undefined ? { scale } : {}),
+      })
+      if (sane) view.map = sane
     }
   }
   return view

@@ -107,5 +107,20 @@
   "tab.equity": "Sinaan",
   "tab.ingestion": "Soo-xiidh",
   "tab.reports": "Warbixino",
-  "tab.settings": "Tiimaax"
+  "tab.settings": "Tiimaax",
+  "chw.exposure": "Exposure and contact?",
+  "chw.exposure_note": "These help identify outbreak sources.",
+  "chw.reference": "Reference",
+  "chw.reference_note": "Symptom guidance. Works without a connection.",
+  "chw.reference_search": "Search symptoms or danger signs",
+  "chw.sev_bleeding": "Unexplained bleeding (gums, nose, stool, bruising)",
+  "chw.sev_breathing": "Difficulty breathing or very fast breathing",
+  "chw.sev_drinking": "Not drinking or very dry mouth",
+  "chw.sev_other": "Something else serious",
+  "chw.sev_other_desc": "Describe the other serious sign or symptom",
+  "chw.sev_sleepy": "Very sleepy or hard to wake",
+  "chw.sev_weak": "Severe weakness or cannot stand",
+  "chw.severity": "Any danger signs?",
+  "chw.severity_check": "Check any that apply",
+  "chw.severity_note": "Select all that apply. These help triage urgency."
 }

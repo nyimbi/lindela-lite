@@ -147,6 +147,12 @@ export const CADENCE_DAYS = Object.freeze({
   noaa_enso: cadence(35, 1),
   ipc_hdx: cadence(30, 1),
   who_gho: cadence(730, 1),
+  // A short-lived forecast on the regular schedule: quiet means broken, same
+  // as open_meteo.
+  open_meteo_forecast: cadence(1, 1),
+  // Epidemic events publish as they happen (ADR-014); a day of quiet at a
+  // 6-hour interval is meaningful, so it reads like the other live feeds.
+  reliefweb_epidemics: cadence(1, 1),
   // The historical backfills run on demand, never on a schedule, and are not
   // stale for being quiet: a full gdacs_archive walk is a paginated crawl of
   // forty years. Zero new records from one of these usually means the archive

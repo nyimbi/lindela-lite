@@ -1,8 +1,11 @@
 # Lindela Lite Documentation
 
-Start with [platform.md](platform.md) for the complete platform guide.
+Start with [vision.md](vision.md) for what the platform is for and who it serves,
+then [platform.md](platform.md) for the complete platform guide.
 
 ## Guides
+
+- [Vision](vision.md): what the platform is for, who the users are, why they would use it, and what it deliberately is not.
 
 - [Platform Guide](platform.md): architecture, workflows, configuration, deployment, operations, troubleshooting, and verification.
 - [Architecture](architecture.md): runtime modules, request lifecycle, data flow, storage boundary, scheduling model, and extension points.

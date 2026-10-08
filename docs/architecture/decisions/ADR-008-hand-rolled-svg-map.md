@@ -1,6 +1,10 @@
 # ADR-008: Hand-rolled SVG rather than a mapping library
 
-**Status:** Accepted
+**Status:** Superseded (2026-10-07) — the basemap decision itself is reversed by
+[ADR-013](ADR-013-osm-raster-basemap.md), whose decision process this ADR's own
+“Revisit when” clause anticipated. The ADR-013 record is authoritative on the
+basemap; this record survives for the layer stack, the framing decisions, the
+rejected options analysis, and the accessibility work — all of which stand.
 **Applies to:** `public/app.js` (map render and interaction), `public/shared/map-frame.js`,
 `public/shared/basemap.js`, `public/districts/app.js`
 **Deciders:** whoever wants to add a basemap, a layer, or a third-party script tag

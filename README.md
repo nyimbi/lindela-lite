@@ -116,6 +116,8 @@ Built-in source ids:
 | `gdacs_archive` | GDACS historical flood archive (1985 onward) — flood-probability training backfill | yes |
 | `open_meteo_archive` | ERA5 reanalysis daily precipitation (1981 onward) — flood-probability training backfill; not gauge observations | yes — attribution required |
 | `open_meteo_flood` | GloFAS v4 modelled daily river discharge (1984 onward where a reach exists) — discharge-label training backfill; not gauge observations | yes — attribution required |
+| `open_meteo_forecast` | current conditions and 7-day daily forecast per pilot district — feeds the map weather overlay via `GET /api/v1/weather` | yes — attribution required |
+| `reliefweb_epidemics` | ReliefWeb epidemic disaster events for the pilot countries — feeds the outbreak-map layer; keyless RSS (20 latest disasters worldwide, country-centroid placement) or the v2 API with subnational coordinates once a ReliefWeb-approved appname is set (`LINDELA_LITE_RELIEFWEB_APPNAME`) | yes, keyless RSS; v2 API needs a free approved appname |
 | `dhis2` | DHIS2 data-quality aggregate | user-supplied instance |
 | `service_assets` | imported roads, clinics, boreholes | — |
 | `acled_csv` | ACLED-compatible conflict CSV, user-supplied | user licence |

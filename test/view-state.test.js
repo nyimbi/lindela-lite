@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import {
   ROLE_DEFAULTS, VIEW_STATE_VERSION,
   encodeView, decodeView, resolveView, shareUrl, isCustom,
+  sanitizeMapTransform, MAP_SCALE_MIN, MAP_SCALE_MAX, MAP_TRANSLATE_MAX,
 } from '../public/shared/view-state.js'
 
 describe('view state', () => {
@@ -127,5 +128,51 @@ describe('view state', () => {
   it('notices a panned map but not an untouched one', () => {
     assert.equal(isCustom({ map: { x: 0, y: 0, scale: 1 } }, { role: 'operator' }), false)
     assert.equal(isCustom({ map: { x: 40, y: 0, scale: 1 } }, { role: 'operator' }), true)
+  })
+
+  it('drops a map transform that pushes the scene off-canvas', () => {
+    // A translate thousands of viewBox units out puts every layer — basemap
+    // tiles included — beyond the 800×500 scene, and the share-link encoder
+    // then re-writes the broken frame into every copied link.
+    const back = decodeView('?v=v1&tab=alerts&map=-4800,15.875,1.2105')
+    assert.equal(back.tab, 'alerts')
+    assert.equal(back.map, undefined)
+  })
+
+  it('keeps a heavy but on-canvas pan', () => {
+    // Verified in the browser: map=-208.949,15.875,1.2105 looks corrupt but is
+    // a legal pan — the scene and its tiles still render. Dropping it would
+    // silently reframe a view someone deliberately shared.
+    assert.deepEqual(
+      decodeView('?map=-208.949,15.875,1.2105').map,
+      { x: -208.949, y: 15.875, scale: 1.2105 },
+    )
+  })
+
+  it('drops a map transform with any non-finite part', () => {
+    assert.equal(decodeView('?map=NaN,10,1').map, undefined)
+    assert.equal(decodeView('?map=10,Infinity,1').map, undefined)
+  })
+
+  it('clamps an eager zoom instead of dropping the frame', () => {
+    assert.deepEqual(decodeView('?map=10,-20,999').map, { x: 10, y: -20, scale: MAP_SCALE_MAX })
+    assert.deepEqual(decodeView('?map=10,-20,0.01').map, { x: 10, y: -20, scale: MAP_SCALE_MIN })
+  })
+
+  it('keeps a transform at the translate bound and drops one just past it', () => {
+    assert.ok(decodeView(`?map=${MAP_TRANSLATE_MAX},0,1`).map)
+    assert.equal(decodeView(`?map=${MAP_TRANSLATE_MAX + 0.001},0,1`).map, undefined)
+  })
+
+  it('sanitizes a transform handed to it directly', () => {
+    assert.equal(sanitizeMapTransform(null), null)
+    assert.equal(sanitizeMapTransform({}), null)
+    assert.equal(sanitizeMapTransform({ x: -9999 }), null)
+    assert.deepEqual(sanitizeMapTransform({ y: 12, scale: 42 }), { y: 12, scale: MAP_SCALE_MAX })
+  })
+
+  it('still round-trips a legitimate panned view', () => {
+    const back = decodeView(encodeView({ map: { x: -208, y: 15, scale: 1.2105 } }))
+    assert.deepEqual(back.map, { x: -208, y: 15, scale: 1.2105 })
   })
 })

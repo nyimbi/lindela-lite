@@ -294,6 +294,8 @@ Regular sources have default policies in `src/ingestion.js`:
 | `noaa_enso` | 720 min | 20 sec | 2 | 1440 min |
 | `ipc_hdx` | 1440 min | 30 sec | 2 | 2880 min |
 | `who_gho` | 1440 min | 20 sec | 2 | 20160 min |
+| `open_meteo_forecast` | 180 min | 20 sec | 2 | 360 min |
+| `reliefweb_epidemics` | 360 min | 20 sec | 2 | 720 min |
 | `gdacs_archive` | 0 min | 30 sec | 2 | 43200 min |
 | `open_meteo_archive` | 0 min | 60 sec | 2 | 43200 min |
 | `open_meteo_flood` | 0 min | 60 sec | 2 | 43200 min |

@@ -43,6 +43,17 @@ const loadFromDisk = async (url) => {
 }
 
 describe('offline drill-down: routing', () => {
+	it('raster basemap tiles are immutable imagery in their own bucket (ADR-013)', () => {
+		// A panning session issues ~two dozen tiles per repaint — if they shared
+		// the api bucket they would evict the poll payloads it exists to serve,
+		// and if they shared the map bucket they would evict the vector layers.
+		// Their own bucket has the largest cap and the longest TTL of the read
+		// buckets, because a tile never changes meaning once downloaded.
+		assert.equal(classifyApiRequest('/api/v1/basemap/tiles/osm/6/38/31.png'), 'tiles')
+		assert.equal(classifyApiRequest('/api/v1/basemap/tiles/carto/10/300/120.png'), 'tiles')
+		assert.ok(CACHE_POLICIES.tiles.maxEntries >= CACHE_POLICIES.api.maxEntries)
+		assert.ok(CACHE_POLICIES.tiles.ttlMs >= CACHE_POLICIES.map.ttlMs)
+	})
 	it('a named record goes to the detail bucket, the list behind it does not', () => {
 		// The same collection is both a map layer and a drill-down target. One
 		// segment is the layer the map draws; two is the district the user
@@ -83,8 +94,10 @@ describe('offline drill-down: routing', () => {
 		assert.ok(CACHE_POLICIES.detail.maxEntries < CACHE_POLICIES.api.maxEntries)
 		assert.ok(CACHE_POLICIES.detail.ttlMs > CACHE_POLICIES.api.ttlMs)
 		assert.ok(CACHE_POLICIES.map.maxEntries < CACHE_POLICIES.api.maxEntries)
-		// Three distinct caches, not one cache with three comments.
-		assert.equal(new Set(Object.values(CACHE_POLICIES).map((p) => p.name)).size, 3)
+		// Four distinct caches, not one cache with four comments — the tiles
+		// bucket exists so a panning session cannot evict this (ADR-013).
+		assert.ok(CACHE_POLICIES.tiles.maxEntries > CACHE_POLICIES.api.maxEntries)
+		assert.equal(new Set(Object.values(CACHE_POLICIES).map((p) => p.name)).size, 4)
 	})
 })
 

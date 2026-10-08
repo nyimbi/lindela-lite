@@ -258,7 +258,8 @@ roughly 200 lines.
 - **Pan and zoom** mutate a single `transform` attribute on `#mapTransform`.
   Wheel zoom, pointer drag, and a keyboard path (§6).
 - **Layers** are separate `<g>` elements — ocean, land, districts, graticule,
-  hazards — each repainted independently.
+  weather glyphs, risk, food-security, flood, river-discharge, disease
+  outbreak, hazards, route, roads, assets — each repainted independently.
 
 The consequence of a fixed viewBox on a fluid element is stated in the code and is
 worth repeating: `viewBoxUnitsPerPx` exists because the viewBox is 800 units wide
@@ -267,10 +268,39 @@ about 8 px on a phone in the field**. Every radius in the map is computed in vie
 units through this function, because a constant radius would be a five-pixel dot in
 Turkana.
 
-Basemap tiles come from AWS Terrarium, fetched by URL and drawn as `<image>` under
-the hazard layer. That fetch is deliberately unauthenticated — see
-[system-overview.md](system-overview.md) §6 for why an unexpired key matters less
-than a key that dies mid-crisis.
+The situation map's basemap is **OpenStreetMap/CARTO raster tiles** (ADR-013):
+`shared/tiles.js` enumerates the visible web-mercator tile grid — pure
+slippy-map arithmetic, the kind that was eyeballed wrong once (z6/30/20 is the
+North Sea; Turkana is z6/x38/y31) — and each tile is drawn as an `<image>`
+rectangle inside `#mapTiles`, between the vector land rings and the data
+layers, in the same frame projection. The browser never fetches a third-party
+host: the server proxies `/api/v1/basemap/tiles/{source}/{z}/{x}/{y}.png`
+(see `src/basemap-tiles.js`) and caches in-process, the same pattern as the
+AWS Terrarium elevation fetch — which remains the server-side basis of the
+flood depth grid, not of the basemap.
+
+Three data overlays sit on top of that basemap, each fetched ambient (every
+tick), each with its own honest status line under the map, and each one a
+roll-up endpoint the map can draw whole:
+
+- **Weather** (`GET /api/v1/weather`): one current reading plus the 7-day
+  daily forecast per pilot district, issue-time stamped (`as_of`) and
+  flagged `stale` per district. From `weather_forecasts`, deliberately not
+  `climate_observations` — the flood-risk scorer sums that collection, and a
+  second source writing the same atmosphere there would double-count it.
+- **River discharge** (`GET /api/v1/river-discharge`): the latest non-null
+  daily GloFAS v4 value per region, in bands. Modelled, not gauged — every
+  tooltip carries that caveat.
+- **Disease outbreak** (`GET /api/v1/disease-observations?map=1`,
+  [ADR-014](decisions/ADR-014-disease-outbreak-source.md)): ReliefWeb
+  epidemic events, subnational coordinates where the source publishes them,
+  otherwise a country centroid **dashed** and counted separately as a
+  national aggregate — placement honesty travels with the record.
+
+Pure geometry lives in shared, tested modules (`weather-bands.js`,
+`discharge-bands.js`, `outbreak-geocode.js`) — the same discipline as
+`map-frame.js` and `tiles.js`: slippy arithmetic that was eyeballed wrong
+once gets asserted afterwards.
 
 ## 5. A control that does nothing is worse than no control
 

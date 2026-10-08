@@ -17,11 +17,12 @@ comments a home, an option analysis, and a stated cost.
 | [ADR-005](ADR-005-flood-probability-basis.md) | Empirical co-occurrence, not a hydrological model | Accepted |
 | [ADR-006](ADR-006-exclude-gdelt.md) | Exclude GDELT from ingestion | Accepted |
 | [ADR-007](ADR-007-soft-delete.md) | Soft delete rather than hard delete | Accepted |
-| [ADR-008](ADR-008-hand-rolled-svg-map.md) | Hand-rolled SVG map rather than a mapping library | Accepted |
+| [ADR-008](ADR-008-hand-rolled-svg-map.md) | Hand-rolled SVG map rather than a mapping library | Superseded by ADR-013 (basemap imagery); layer stack stands |
 | [ADR-009](ADR-009-external-scheduler.md) | An external scheduler sidecar rather than in-process timers | Accepted |
 | [ADR-010](ADR-010-build-time-claim-guard.md) | Fail the build on a forbidden capability claim | Accepted |
 | [ADR-011](ADR-011-standard-interchange-formats.md) | STAC, OGC Features and CAP over a bespoke export | Accepted |
 | [ADR-012](ADR-012-eight-separate-surfaces.md) | Eight separate applications rather than one routed app | Accepted |
+| [ADR-013](ADR-013-osm-raster-basemap.md) | OpenStreetMap raster tiles under the SVG data layers, proxied by the server | Accepted |
 
 ## Format
 

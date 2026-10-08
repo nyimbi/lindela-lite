@@ -1,10 +1,11 @@
 // Bumped with every release. Cache-first static assets are only safe while
 // this changes: with a fixed name, a deployed fix never reaches an operator
 // who has the app open, because the old app.js is served from cache forever.
-const CACHE_NAME = 'lindela-lite-v5'
+const CACHE_NAME = 'lindela-lite-v6'
 const API_CACHE_NAME = 'lindela-lite-api-v1'
 const DETAIL_CACHE_NAME = 'lindela-lite-detail-v1'
 const MAP_CACHE_NAME = 'lindela-lite-map-v1'
+const TILE_CACHE_NAME = 'lindela-lite-tiles-v1'
 
 // API responses are cached in their own bucket so they can be expired by age
 // without throwing away the app shell, and so the shell stays small enough to
@@ -28,12 +29,18 @@ const API_MAX_ENTRIES = 200
  * opens is among the first evicted — the offline drill-down was available in
  * principle and not in practice.
  *
- * `map` is what the map actually fetches. `shared/basemap.js` is inline polygon
- * data and requests nothing at all: there are no raster tiles in this product,
- * and a tile cache for tiles that are never requested is a cache of nothing.
- * The real payload behind the map is the hazard, flood, food-security and
+ * `map` is what the map actually fetches for its vector payload.
+ * `shared/basemap.js` is inline polygon data and requests nothing at all:
+ * the payload behind the map is the hazard, flood, food-security and
  * road-access layers drawn inside those polygons — the largest responses here
  * and among the least volatile, so the smallest cap.
+ *
+ * Raster basemap tiles are *not* here (ADR-013): they are immutable imagery
+ * served same-origin under `/api/v1/basemap/tiles/`, and they would flood a
+ * 48-entry bucket at about two dozen tiles per pan, evicting the one class
+ * that actually needs the offline lifeline. They read from their own bucket
+ * with a large cap and a week's TTL, and a tile that failed to fetch is
+ * simply not painted — the vector rings underneath show through instead.
  *
  * `api` is everything else: KPI series, summaries, watermarks, ingest status.
  * Short-lived and high-churn, exactly as before.
@@ -43,6 +50,7 @@ export const CACHE_POLICIES = {
 	detail: { name: DETAIL_CACHE_NAME, maxEntries: 60, ttlMs: 7 * 24 * 60 * 60 * 1000 },
 	map:    { name: MAP_CACHE_NAME,   maxEntries: 48, ttlMs: 2 * 24 * 60 * 60 * 1000 },
 	api:    { name: API_CACHE_NAME,   maxEntries: API_MAX_ENTRIES, ttlMs: API_TTL_MS },
+	tiles:  { name: TILE_CACHE_NAME,  maxEntries: 400, ttlMs: 7 * 24 * 60 * 60 * 1000 },
 }
 
 /**
@@ -79,6 +87,12 @@ const MAP_LAYER_COLLECTIONS = new Set([
 	'flood-risk',
 	'food-security',
 	'road-access',
+	'disease-observations',
+	// The weather and river-discharge overlays' roll-ups: same shape as the
+	// other layers (a bare collection the map draws whole), so they share the
+	// 48-entry map bucket and two-day TTL rather than churning in the poll bucket.
+	'weather',
+	'river-discharge',
 ])
 
 /**
@@ -125,6 +139,10 @@ export function classifyApiRequest(pathname, method = 'GET') {
 	if (isNeverCached(pathname)) return null
 	const segments = pathname.slice('/api/v1/'.length).split('/').filter(Boolean)
 	if (!segments.length) return null
+	// Raster basemap tiles (ADR-013): immutable imagery, ~two dozen per paint,
+	// never operator data. Their own bucket keeps a panning session from
+	// evicting the record and poll payloads the offline path exists to serve.
+	if (segments[0] === 'basemap' && segments[1] === 'tiles') return 'tiles'
 	const [collection, id] = segments
 	if (id) return DETAIL_COLLECTIONS.has(collection) ? 'detail' : 'api'
 	return MAP_LAYER_COLLECTIONS.has(collection) ? 'map' : 'api'

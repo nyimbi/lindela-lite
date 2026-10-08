@@ -9,6 +9,7 @@ import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventS
 import {
   TILE_SOURCES, TILE_ATTRIBUTION,
   tileGridKey, tileUrlFor, tilesForRect, svgPlacement, visibleWorldRect, zoomForRect,
+  mapProjection, projectToViewBox,
 } from '/shared/tiles.js'
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState, seasonalCalendar, seasonalCalendarNote } from '/shared/seasonal.js'
 import { decodeView, encodeView, isCustom, resolveView, sanitizeMapTransform, shareUrl } from '/shared/view-state.js'
@@ -1872,9 +1873,13 @@ function svgEl(tag, attrs = {}) {
 
 
 function project(lat, lon, bbox) {
-  const x = ((lon - bbox.minLon) / (bbox.maxLon - bbox.minLon)) * SVG_W
-  const y = ((bbox.maxLat - lat) / (bbox.maxLat - bbox.minLat)) * SVG_H
-  return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 }
+  // Aspect-preserving, so a degree of longitude and a degree of latitude cover
+  // the same number of pixels — the map keeps its true shape at any frame.
+  // Shares mapProjection with the raster tiles (see tiles.js) so vector layers
+  // and imagery cannot drift apart.
+  const p = mapProjection(bbox, SVG_W, SVG_H)
+  const pt = projectToViewBox(p, lat, lon)
+  return { x: Math.round(pt.x * 10) / 10, y: Math.round(pt.y * 10) / 10 }
 }
 
 function renderGraticule(bbox) {
@@ -1912,13 +1917,16 @@ function ringToPath(ring, bbox) {
   }).join(' ') + ' Z'
 }
 
-// Approximate km radius to viewBox units, averaging x/y scale at given latitude.
+// Approximate km radius to viewBox units at a latitude. Uses the shared
+// projection scale so a district ring's pixel radius matches the projection,
+// keeping rings circular rather than stretched with the frame.
 function kmToViewBoxUnits(km, latitude, bbox) {
   const latRad = latitude * Math.PI / 180
   const degLat = km / 111
   const degLon = km / (111 * Math.cos(latRad))
-  const xUnits = degLon * SVG_W / (bbox.maxLon - bbox.minLon)
-  const yUnits = degLat * SVG_H / (bbox.maxLat - bbox.minLat)
+  const scale = mapProjection(bbox, SVG_W, SVG_H).scale
+  const xUnits = degLon * scale
+  const yUnits = degLat * scale
   return (xUnits + yUnits) / 2
 }
 
@@ -2930,12 +2938,36 @@ function zoomAt(cx, cy, factor) {
   applyMapTransform()
 }
 
+/**
+ * The live CSS-px → viewBox mapping.
+ *
+ * The SVG is `xMidYMid meet`, so the drawn map is the *smaller* of the two
+ * axis fits, centred in the element with empty bands on the long axis.
+ * Treating client pixels as viewBox units — the original drag and wheel math —
+ * pans ~30% slower than the cursor on a wide desktop panel and zooms toward a
+ * point that is not the cursor. Returns a safe identity mapping (1 unit per
+ * px, no offset) when there is no layout to measure yet.
+ */
+export function mapClientGeometry() {
+  const rect = mapEl?.getBoundingClientRect?.()
+  if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
+    return { unitsPerPx: 1, originX: 0, originY: 0 }
+  }
+  const pxPerUnit = Math.min(rect.width / SVG_W, rect.height / SVG_H)
+  return {
+    unitsPerPx: 1 / pxPerUnit,
+    originX: (rect.width - SVG_W * pxPerUnit) / 2,
+    originY: (rect.height - SVG_H * pxPerUnit) / 2,
+  }
+}
+
 mapEl?.addEventListener('wheel', (e) => {
   e.preventDefault()
   state.mapTransformUserSet = true
   const rect = mapEl.getBoundingClientRect()
-  const cx = ((e.clientX - rect.left) / rect.width) * SVG_W
-  const cy = ((e.clientY - rect.top) / rect.height) * SVG_H
+  const g = mapClientGeometry()
+  const cx = ((e.clientX - rect.left) - g.originX) * g.unitsPerPx
+  const cy = ((e.clientY - rect.top) - g.originY) * g.unitsPerPx
   zoomAt(cx, cy, e.deltaY > 0 ? 0.86 : 1.16)
 }, { passive: false })
 
@@ -2958,14 +2990,23 @@ mapEl?.addEventListener('pointerdown', (e) => {
   if (e.target.closest('.hazard-marker, .asset-marker, .hazard-hit, .asset-hit, .weather-marker, .weather-hit')) return
   state.mapDragging = true
   state.mapTransformUserSet = true
-  state.mapDragStart = { x: e.clientX - state.mapTransform.x, y: e.clientY - state.mapTransform.y }
+  state.mapDragStart = {
+    clientX: e.clientX,
+    clientY: e.clientY,
+    x: state.mapTransform.x,
+    y: state.mapTransform.y,
+    // Geometry is stable for the gesture; measure once so the map tracks the
+    // cursor 1:1 in CSS px instead of lagging by the meet-fit ratio.
+    unitsPerPx: mapClientGeometry().unitsPerPx,
+  }
   mapEl.setPointerCapture(e.pointerId)
 })
 
 mapEl?.addEventListener('pointermove', (e) => {
   if (!state.mapDragging) return
-  state.mapTransform.x = e.clientX - state.mapDragStart.x
-  state.mapTransform.y = e.clientY - state.mapDragStart.y
+  const k = state.mapDragStart.unitsPerPx
+  state.mapTransform.x = state.mapDragStart.x + (e.clientX - state.mapDragStart.clientX) * k
+  state.mapTransform.y = state.mapDragStart.y + (e.clientY - state.mapDragStart.clientY) * k
   applyMapTransform()
 })
 

@@ -453,7 +453,7 @@ describe('the map itself', () => {
     // An unused kind is dead config: it looks like a check and checks nothing.
     const unused = ASSERTION_KINDS.filter((kind) => !declaredKinds.has(kind))
     assert.deepEqual(unused, [], `assertion kinds no source declares: ${unused.join(', ')}`)
-    assert.equal(ASSERTION_KINDS.length, 5)
+    assert.equal(ASSERTION_KINDS.length, 6)
   })
 
   it('gives every assertion a name and a note, and freezes the map', () => {

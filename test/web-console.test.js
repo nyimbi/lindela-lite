@@ -13,7 +13,7 @@
  * a coincidence: each assertion names the behaviour the defect removed.
  */
 import assert from 'node:assert/strict'
-import { before, describe, it } from 'node:test'
+import { after, before, describe, it } from 'node:test'
 import { installModuleResolution } from './browser-env.mjs'
 
 const PUBLIC_ROOT = new URL('../public/', import.meta.url)
@@ -318,6 +318,42 @@ describe('public/app.js — console frontend', () => {
         const r = app.hitRadiusUnits(vb, css)
         assert.ok(Number.isFinite(r) && r >= 12, `hitRadiusUnits(${vb}, ${css}) = ${r}`)
       }
+    })
+  })
+
+  // ==============================================================
+  // Pan/zoom geometry — client px mapped through the meet fit
+  // ==============================================================
+  describe('map pan/zoom — client px mapped through the meet fit', () => {
+    const setMapRect = (width, height) => {
+      const el = globalThis.document.getElementById('situationMap')
+      el.getBoundingClientRect = () => ({ width, height, left: 0, top: 0 })
+    }
+    after(() => setMapRect(0, 0))
+
+    it('converts both axes with the constraining axis on a wide-and-short panel', () => {
+      // 1039x480 CSS px against an 800x500 viewBox: the height constrains
+      // (0.96 px per unit), the drawn map is 768 CSS px wide, and the leftover
+      // 271 px splits into two 135.5 px bands. Drag math that ignores this
+      // lags the cursor by the full ratio.
+      setMapRect(1039, 480)
+      const g = app.mapClientGeometry()
+      assert.ok(Math.abs(g.unitsPerPx - 1 / 0.96) < 1e-9, `unitsPerPx ${g.unitsPerPx}`)
+      assert.equal(g.originX, 135.5)
+      assert.equal(g.originY, 0)
+    })
+
+    it('letters a tall-and-narrow phone on the vertical axis instead', () => {
+      setMapRect(360, 400)
+      const g = app.mapClientGeometry()
+      assert.ok(Math.abs(g.unitsPerPx - 800 / 360) < 1e-9, `unitsPerPx ${g.unitsPerPx}`)
+      assert.equal(g.originX, 0)
+      assert.equal(g.originY, 87.5)
+    })
+
+    it('falls back to identity when there is no layout to measure', () => {
+      setMapRect(0, 0)
+      assert.deepEqual(app.mapClientGeometry(), { unitsPerPx: 1, originX: 0, originY: 0 })
     })
   })
 

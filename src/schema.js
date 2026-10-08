@@ -11,6 +11,8 @@ export const SOURCE_IDS = Object.freeze([
   'gdacs_archive',
   'open_meteo_archive',
   'open_meteo_flood',
+  'open_meteo_forecast',
+  'reliefweb_epidemics',
   'service_assets',
   'acled_csv',
   'conflict_csv',
@@ -254,6 +256,11 @@ export function emptyStore() {
     food_security_records: [],
     disease_observations: [],
     flood_probability_models: [],
+    // The map weather overlay's own collection. Deliberately not
+    // climate_observations: the flood-risk scorer sums precipitation over that
+    // collection, so a second source writing the same forecast there would
+    // double-count it. See src/connectors/open-meteo-forecast.js.
+    weather_forecasts: [],
     watermark_state: [],
     region_trust: [],
     model_drift: [],
@@ -275,6 +282,7 @@ export function emptyStore() {
     quarantine_service_assets: [],
     quarantine_food_security_records: [],
     quarantine_disease_observations: [],
+    quarantine_weather_forecasts: [],
     // Raw upstream response bodies, for replay and fixture seeding (ENH-12).
     //
     // Declared here because `store.js` SCHEMA now carries it: an `emptyStore`
@@ -423,6 +431,31 @@ export function publicSourceCatalog() {
         requires_credentials: false,
         status_note: 'Modelled hydrology, not gauges; regions without a GloFAS river reach are refused as errors; backfill for discharge-labelled flood-probability training',
         outputs: ['climate_observations'],
+      }
+    }
+    if (id === 'open_meteo_forecast') {
+      return {
+        ...common,
+        name: 'Open-Meteo current conditions and 7-day forecast (pilot districts)',
+        type: 'weather_api',
+        requires_credentials: false,
+        status_note: 'Deterministic point forecast, no ensemble; feeds the map weather overlay and writes weather_forecasts, not climate_observations, so the flood-risk scorer never sums the same atmosphere twice',
+        outputs: ['weather_forecasts'],
+      }
+    }
+    if (id === 'reliefweb_epidemics') {
+      return {
+        ...common,
+        name: 'ReliefWeb epidemic disaster events (pilot countries)',
+        type: 'event_api_rss',
+        // The v2 JSON API needs an approved appname (a registration, free:
+        // apidoc.reliefweb.int/parameters#appname). Without one the connector
+        // falls back to the keyless RSS feed, so `requires_credentials` is
+        // honest the way nasa_firms is: not paid, but human-gated.
+        requires_credentials: true,
+        credential_hint: 'ReliefWeb-approved appname optional (LINDELA_LITE_RELIEFWEB_APPNAME): unlocks the v2 API with subnational coordinates; without it the keyless RSS feed is used (20 latest disasters worldwide, country-centroid geography only)',
+        status_note: 'Epidemic disaster events; subnational coordinates where provided, otherwise national centroid labelled as an aggregate; case/death counts heuristic; silence means no recent epidemic in the feed window, not absence of disease',
+        outputs: ['disease_observations'],
       }
     }
     if (id === 'service_assets') {

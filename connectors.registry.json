@@ -388,11 +388,11 @@
     "description": "DHIS2 bidirectional sync scaffold (configure base_url and api_token to activate)",
     "schemas": {
       "input": {
-        "base_url": "string \u2014 DHIS2 instance root URL",
-        "api_token": "string \u2014 personal access token",
-        "org_units": "array of string \u2014 org unit UIDs",
-        "data_elements": "array of string \u2014 data element UIDs",
-        "period": "string \u2014 DHIS2 period e.g. 2026Q3"
+        "base_url": "string — DHIS2 instance root URL",
+        "api_token": "string — personal access token",
+        "org_units": "array of string — org unit UIDs",
+        "data_elements": "array of string — data element UIDs",
+        "period": "string — DHIS2 period e.g. 2026Q3"
       },
       "output": [
         "climate_observations"
@@ -521,5 +521,77 @@
     "source": "Open-Meteo (GloFAS v4 river discharge)",
     "license": "CC BY 4.0, per open-meteo.com terms",
     "since": "0.2.0"
+  },
+  {
+    "id": "open_meteo_forecast",
+    "module": "src/connectors/open-meteo-forecast.js",
+    "description": "Open-Meteo current conditions and 7-day daily forecast (precipitation, precipitation probability, temperature max, WMO weather code) for the five pilot district centroids. Keyless. Deterministic point forecast — no ensemble members, no percentiles. Writes weather_forecasts, not climate_observations, so the flood-risk scorer never sums the same atmosphere twice. Feeds the map weather overlay via GET /api/v1/weather.",
+    "schemas": {
+      "input": {
+        "regions": "array of {slug, name, country, lat, lon} (default the five pilot districts)",
+        "forecast_days": "number (default 7)",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": [
+        "weather_forecasts"
+      ]
+    },
+    "defaults": {
+      "rateLimit": {
+        "perMinute": 60
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
+      "timeout_ms": 20000
+    },
+    "tags": [
+      "weather",
+      "forecast",
+      "climate",
+      "map-layer"
+    ],
+    "contributor": "core",
+    "source": "Open-Meteo forecast API",
+    "license": "CC BY 4.0, per open-meteo.com terms",
+    "since": "0.3.0"
+  },
+  {
+    "id": "reliefweb_epidemics",
+    "module": "src/connectors/reliefweb-epidemics.js",
+    "description": "ReliefWeb epidemic disaster events for the pilot countries (cholera, measles, meningitis, yellow fever, plague; GLIDE EP- prefix). Keyless RSS of the 20 latest disasters worldwide by default; the v2 Disaster API (subnational coordinates where published) unlocks with a ReliefWeb-approved appname via LINDELA_LITE_RELIEFWEB_APPNAME, with automatic RSS fallback while registration pends. Subnational coordinates where provided, otherwise country centroid labelled granularity:'national'; case/death counts heuristic from glance text.",
+    "schemas": {
+      "input": {
+        "reliefweb_appname": "string — ReliefWeb-approved appname (default env LINDELA_LITE_RELIEFWEB_APPNAME); when set, the v2 Disasters API is used and falls back to RSS on 403",
+        "timeout_ms": "number",
+        "retries": "number"
+      },
+      "output": [
+        "disease_observations"
+      ]
+    },
+    "defaults": {
+      "rateLimit": {
+        "perMinute": 30
+      },
+      "retry": {
+        "max": 2,
+        "backoffMs": 1000
+      },
+      "timeout_ms": 20000
+    },
+    "tags": [
+      "disease",
+      "outbreak",
+      "epidemic",
+      "reliefweb",
+      "map-layer"
+    ],
+    "contributor": "core",
+    "source": "ReliefWeb (UN OCHA)",
+    "license": "ReliefWeb content per ReliefWeb reuse terms, attribution required; GLIDE licence for ids",
+    "since": "0.3.0"
   }
 ]
