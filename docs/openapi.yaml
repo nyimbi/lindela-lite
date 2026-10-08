@@ -568,6 +568,233 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListResponse'
+  /api/v1/trigger-protocols/run:
+    post:
+      summary: Execute the pre-authorised trigger protocols
+      description: >-
+        Evaluates every trigger protocol against the live metric context and
+        executes the playbooks of those that fire. A live protocol whose alert
+        is already open is not re-raised; a shadow protocol records what would
+        have fired and does nothing else. Pass dry_run to receive the full plan
+        without writing anything.
+      operationId: posttrigger-protocols_run
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run:
+                  type: boolean
+                  description: Return the plan and write nothing.
+                  default: false
+                actor:
+                  type: string
+                  description: Claimed actor, recorded as a claim when unauthenticated.
+      responses:
+        '200':
+          description: Dry run — the plan, and nothing was written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  dry_run: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      executions:
+                        type: array
+                        items: { $ref: '#/components/schemas/ProtocolExecution' }
+        '201':
+          description: Executed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  dry_run: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      executions:
+                        type: array
+                        items: { $ref: '#/components/schemas/ProtocolExecution' }
+  /api/v1/school-attendance:
+    get:
+      summary: List school attendance observations
+      description: >-
+        Paged list with an enrolment-weighted attendance rate. The rate is
+        weighted rather than a mean of per-school rates, because averaging
+        rates would let a school of nine children count as much as one of nine
+        hundred.
+      operationId: getschool-attendance
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListResponse'
+                  - type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          overall_rate:
+                            type: number
+                            nullable: true
+                            description: Null when nothing has been ingested.
+                          districts:
+                            type: object
+                            additionalProperties: { type: number, nullable: true }
+                          schools: { type: integer }
+    post:
+      summary: Record a school attendance observation
+      operationId: postschool-attendance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SchoolAttendanceInput' }
+      responses:
+        '201':
+          description: Recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { type: object }
+        '400':
+          description: The observation failed validation and nothing was written.
+  /api/v1/iot-observations:
+    get:
+      summary: List IoT sensor readings
+      description: >-
+        Three shapes on one path. The default is a paged list. `map=1` returns
+        the latest reading per sensor that has coordinates — what the map layer
+        draws. `sensor_type=X` adds a summary of the latest reading per sensor
+        of that type, and `above=N` narrows it to those breaching N.
+      operationId: getiot-observations
+      parameters:
+        - name: map
+          in: query
+          required: false
+          schema: { type: string, enum: ['1'] }
+          description: Latest reading per sensor with coordinates.
+        - name: sensor_type
+          in: query
+          required: false
+          schema: { type: string, enum: [cold_chain, flood_gauge, heat, humidity, water_point] }
+        - name: above
+          in: query
+          required: false
+          schema: { type: number }
+          description: With sensor_type, counts only readings above this value.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListResponse'
+                  - type: object
+                    properties:
+                      summary:
+                        type: object
+                        nullable: true
+                        description: Present only when sensor_type is supplied.
+    post:
+      summary: Record one or many IoT readings
+      description: >-
+        Accepts a single reading or `{ readings: [...] }`. A partial batch is
+        rejected as a unit — a half-written batch is how a gateway and the
+        store come to disagree about what was recorded.
+      operationId: postiot-observations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/IotObservationInput'
+                - type: object
+                  required: [readings]
+                  properties:
+                    readings:
+                      type: array
+                      minItems: 1
+                      items: { $ref: '#/components/schemas/IotObservationInput' }
+      responses:
+        '201':
+          description: Recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  count: { type: integer }
+                  data: { type: object }
+        '400':
+          description: One reading in the batch failed and the whole batch was rejected.
+  /api/v1/protocol-executions:
+    get:
+      summary: List protocol execution records
+      description: >-
+        One row per protocol evaluation that produced something — a fired live
+        protocol or any shadow evaluation. A live protocol whose condition
+        persists while its alert is open writes nothing, so silence here means
+        "the condition persists and the action is already running".
+      operationId: getprotocol-executions
+      parameters:
+        - name: protocol_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/protocol-executions/summary:
+    get:
+      summary: Summarise protocol executions
+      operationId: getprotocol-executions_summary
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  last_24h: { type: integer }
+                  by_status:
+                    type: object
+                    additionalProperties: { type: integer }
+                  latest_per_protocol:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        execution_id: { type: string }
+                        status:
+                          type: string
+                          enum: [executed, partial, refused, shadow]
+                        fired_at: { type: string, format: date-time }
+                        observed_value: { type: number }
+                        would_fire: { type: boolean }
   /api/v1/webhooks:
     get:
       summary: List or create webhook subscriptions
@@ -2351,6 +2578,91 @@ components:
       schema:
         type: string
   schemas:
+    SchoolAttendanceInput:
+      type: object
+      required: [school_id, present, enrolled]
+      properties:
+        school_id: { type: string }
+        school_name: { type: string }
+        district: { type: string }
+        present: { type: integer, minimum: 0 }
+        enrolled:
+          type: integer
+          minimum: 1
+          description: >-
+            Required and at least 1. An attendance rate divides by this, and a
+            zero denominator is a division by zero that would otherwise be
+            reported as a rate of 0 — "nobody attended" rather than "nobody
+            was enrolled".
+        observed_at: { type: string, format: date-time }
+        source: { type: string }
+    IotObservationInput:
+      type: object
+      required: [sensor_id, sensor_type, value]
+      properties:
+        sensor_id: { type: string }
+        sensor_type:
+          type: string
+          enum: [cold_chain, flood_gauge, heat, humidity, water_point]
+        value: { type: number }
+        unit: { type: string }
+        lat: { type: number }
+        lon: { type: number }
+        district: { type: string }
+        observed_at: { type: string, format: date-time }
+        battery_pct: { type: number, minimum: 0, maximum: 100 }
+    ProtocolExecution:
+      type: object
+      description: >-
+        One protocol evaluation that produced something. status is not a
+        success/failure pair: "partial" means the playbook partly ran and
+        "refused" means no step ran at all, which the feed renders differently.
+      required: [id, protocol_id, mode, status, fired_at]
+      properties:
+        id: { type: string }
+        protocol_id: { type: string }
+        protocol_name: { type: string }
+        protocol_version: { type: integer }
+        mode:
+          type: string
+          enum: [live, shadow]
+          description: >-
+            shadow records what would have fired and does nothing else; it is
+            how a protocol is tuned before it is trusted with an action.
+        status:
+          type: string
+          enum: [executed, partial, refused, shadow]
+        metric: { type: string }
+        operator: { type: string }
+        threshold: { type: number }
+        observed_value: { type: number }
+        would_fire:
+          type: boolean
+          description: Present on shadow rows; what a live row would have recorded.
+        alert_id:
+          type: string
+          nullable: true
+          description: Null on a shadow row, which raises no alert.
+        dry_run:
+          type: boolean
+          description: Set on a dry run, which returns the plan and writes nothing.
+        actions:
+          type: array
+          description: >-
+            One entry per playbook step, each executed or refused. A refused
+            step carries a detail saying why, and what a person can still do.
+          items:
+            type: object
+            properties:
+              type: { type: string }
+              status:
+                type: string
+                enum: [executed, refused]
+              record_id: { type: string }
+              detail: { type: string }
+        actor: { type: string }
+        fired_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
     PaginationMeta:
       type: object
       description: >-

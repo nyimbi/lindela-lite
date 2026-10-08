@@ -117,6 +117,15 @@ export const WRITE_SCOPES = Object.freeze([
   ['/api/v1/chw', 'write:incidents'],
   ['/api/v1/community-feedback', 'write:incidents'],
   ['/api/v1/service-assets', 'write:incidents'],
+  // Field signals. A school attendance observation and a sensor reading are both
+  // evidence someone was present somewhere — which is what makes them
+  // `write:incidents`-class writes and not an ingest concern the integrations
+  // scope covers. A cold-chain reading is a trigger input, so a token that can
+  // post one can, by that route, write the evidence a pre-authorised protocol
+  // fires on. Gated as a first-class write rather than left to fail closed to
+  // `admin:*`, which is correct by default and invisible to every caller.
+  ['/api/v1/school-attendance', 'write:incidents'],
+  ['/api/v1/iot-observations', 'write:incidents'],
   // Bulk import. It writes to whichever collection the caller names, so it is
   // gated at the level of the collections it can touch rather than given a scope
   // of its own — an import is not a lesser `write:incidents`, it is a

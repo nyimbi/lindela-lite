@@ -8,10 +8,21 @@
  * `derivation.engine.rule_schema = 'protocol/1'`) makes that claim verifiable.
  */
 
-import { resolveMetric, compare, buildAlert, normalizeTriggerProtocol, backtestTriggerProtocol, pointInTimeContext } from './alerts.js'
-import { counts, buildCreate } from './operations.js'
+import { resolveMetric, compare } from './alerts.js'
+import { counts, buildCreate, actionLog } from './operations.js'
 import { sendRapidProAlert, rapidProStatus } from './rapidpro.js'
 import { stableId } from './utils.js'
+import { emit } from './outbox.js'
+import { logger, metrics } from './observability.js'
+
+// `buildAlert` is deliberately NOT imported. The plan calls for the protocol
+// alert to be built to field parity with `buildAlert` in src/alerts.js:225, but
+// copying that function here would be a second implementation of the same
+// derivation, and the two would drift the moment a field was added to one. The
+// alert shape is constructed explicitly below instead, so a divergence between
+// the two is visible in this file rather than hidden by a shared import whose
+// signature does not cover what a protocol needs (`rule_id: null`,
+// `pre_authorised: true`, `protocol/1` in the engine).
 
 export function liveContext(data) {
   return { counts: counts(data), data_quality: data.data_quality || null }
@@ -60,6 +71,12 @@ export async function executeTriggerProtocols(store, data, {
         metric: p.metric, operator: p.operator, threshold: p.threshold,
         observed_value: value,
         would_fire: wouldFire,
+        // Explicitly null rather than absent. `alert_id` is part of the declared
+        // execution shape, and a reader that has to tell "no alert was created"
+        // from "this field does not exist" gets the wrong answer for a missing
+        // key — the same present-versus-absent distinction the repo keeps having
+        // to re-learn elsewhere.
+        alert_id: null,
         dry_run: Boolean(dryRun),
         actions: [],
         actor: 'protocol-engine', created_at: now,
@@ -79,87 +96,191 @@ export async function executeTriggerProtocols(store, data, {
       continue
     }
 
-    const alert = buildAlert(p, value, {
-      bucket: 'protocol', now, supersedes: null, prior_value: null,
-      context, inputs: null,
-    })
-    alert.approval = { state: 'auto_approved', pre_authorised: true, protocol_id: p.id, protocol_version: p.version || 1, approvers: p.approvers || ['system:protocol_engine'], decided_at: now }
-    alert.metadata = { ...(alert.metadata || {}), protocol_id: p.id, protocol_version: p.version || 1, pre_authorised: true }
-    alert.derivation = {
-      ...(alert.derivation || {}),
+    // The alert is built to field parity with `buildAlert` in src/alerts.js:225
+    // rather than through it. `rule_id: null` and `engine.rule_schema:
+    // 'protocol/1'` are not things that function can express — it always writes
+    // a rule id and schema '1' — so calling it and then overwriting the fields
+    // would leave a derivation claiming a rule fired when no rule was involved.
+    //
+    // `execution_id` is computed before the alert because the alert's metadata
+    // names it and `alert_id` is written into the execution row. One direction
+    // of that pair has to be filled in after the fact; doing it this way means
+    // both are real rather than one being null.
+    const executionId = stableId('protocol_execution', [p.id, now])
+    const alert = {
+      id: stableId('alert', [p.id, 'protocol', now]),
       rule_id: null,
-      rule_version: p.version || 1,
-      rule_name_at_fire: p.name,
+      rule_name: p.name,
+      status: 'open',
+      severity: p.severity,
       metric: p.metric,
       operator: p.operator,
       threshold: p.threshold,
-      observed_value: value,
-      observed_at: now,
-      context_snapshot: context,
-      input_record_ids: null,
-      engine: { module: 'src/protocols.js', rule_schema: 'protocol/1' },
+      value,
+      message: `${p.name} (pre-authorised protocol): ${p.metric} ${p.operator} ${p.threshold} (actual ${value})`,
+      actions: p.action_playbook,
+      scope: { protocol_id: p.id },
+      created_at: now,
+      updated_at: now,
+      // The pre-authorisation IS the protocol record. That is the entire point:
+      // no human gate on the alert itself. `p.approvers` is carried so a reader
+      // can see who signed the protocol off, not so anyone is asked again.
+      approval: {
+        state: 'auto_approved',
+        pre_authorised: true,
+        protocol_id: p.id,
+        protocol_version: p.version || 1,
+        approvers: p.approvers || [],
+        decided_at: now,
+      },
+      metadata: {
+        protocol_id: p.id,
+        protocol_version: p.version || 1,
+        execution_id: executionId,
+        pre_authorised: true,
+      },
+      derivation: {
+        rule_id: null,
+        rule_version: p.version || 1,
+        rule_name_at_fire: p.name,
+        metric: p.metric,
+        operator: p.operator,
+        threshold: p.threshold,
+        observed_value: value,
+        observed_at: now,
+        context_snapshot: context,
+        // Null, not an empty array: a count over an aggregate has no per-record
+        // identity to name, and `[]` would read as "no records were involved".
+        input_record_ids: null,
+        engine: { module: 'src/protocols.js', rule_schema: 'protocol/1' },
+      },
     }
     alerts.push(alert)
 
     const playbookActions = p.action_playbook || []
     const actionsResults = []
-    let anyFailed = false
+    // The label registry is what lets a `task` name the intervention it belongs
+    // to. Without it a task attaches to "the most recent intervention anywhere
+    // in the store", which is how a task ends up filed against last week's
+    // response. Labels are scoped to THIS execution and discarded after it.
+    const interventionLabels = new Map()
+    let anyRefused = false
 
     for (const action of playbookActions) {
       if (action.type === 'notify') {
+        // Refused, not skipped, when RapidPro is not configured. The alert still
+        // exists and is sendable by hand from the UI, so an unconfigured gateway
+        // is a deferred delivery, not a failed playbook step.
         if (rapidProStatus(env)?.enabled) {
           const recipients = action.recipients || []
-          try {
-            const dispatch = await sendRapidProAlert(alert, { recipients })
-            rapidproDispatchesArr.push(dispatch)
-            actionsResults.push({ type: 'notify', status: 'executed', detail: `dispatched to ${recipients.length ? recipients.join(', ') : 'default'}` })
-          } catch (e) {
-            actionsResults.push({ type: 'notify', status: 'refused', detail: `rapidpro not configured; alert raised but dispatch awaits manual send: ${e.message || String(e)}` })
-            anyFailed = true
-          }
+          const dispatch = await sendRapidProAlert(alert, { recipients })
+          rapidproDispatchesArr.push(dispatch)
+          actionsResults.push({ type: 'notify', status: 'executed', record_id: dispatch?.id, detail: `dispatched to ${recipients.length ? recipients.join(', ') : 'the configured default recipients'}` })
         } else {
           actionsResults.push({ type: 'notify', status: 'refused', detail: 'rapidpro not configured; alert raised, dispatch awaits manual send' })
-          anyFailed = true
+          anyRefused = true
         }
       } else if (action.type === 'intervention') {
+        if (!action.title) {
+          // `title` is required by the plan. An intervention with no title is a
+          // row an operator cannot act on, so the step refuses rather than
+          // writing one named after the protocol.
+          actionsResults.push({ type: 'intervention', status: 'refused', detail: 'intervention action requires a title' })
+          anyRefused = true
+          continue
+        }
+        // The incident first: an intervention is a response TO something, and
+        // the incident is that something. Created as the source of the
+        // intervention so the chain incident → intervention → task is real
+        // rather than an intervention referencing an id nothing points at.
+        const incidentRecord = buildCreate('incidents', {
+          title: action.title,
+          description: action.objective || p.description || '',
+          source: 'protocol_engine',
+          severity: p.severity,
+          occurred_at: now,
+        }, data)
         const interventionRecord = buildCreate('interventions', {
-          title: action.title || p.name,
-          objective: action.objective || p.description,
+          incident_id: incidentRecord.id,
+          title: action.title,
+          objective: action.objective || p.description || '',
           priority: action.priority || p.severity,
           lead_org: action.lead_org || null,
           district: action.district || null,
         }, data)
+        incidentsArr.push(incidentRecord)
         interventionsArr.push(interventionRecord)
-        actionsResults.push({ type: 'intervention', status: 'executed', record_id: interventionRecord.id, detail: 'intervention created with linked alert' })
+        // `a.id` is the label the playbook uses to refer to this intervention.
+        // Also registered under the most-recent slot so a task with no `for`
+        // attaches to the last one created here, which is the plan's default.
+        if (action.id) interventionLabels.set(action.id, interventionRecord)
+        interventionLabels.set('__latest__', interventionRecord)
+        actionsResults.push({ type: 'intervention', status: 'executed', record_id: interventionRecord.id, detail: `incident ${incidentRecord.id} and intervention created` })
       } else if (action.type === 'task') {
-        const interventionRecord = interventionsArr[interventionsArr.length - 1]
-        if (!interventionRecord && !action.for) {
-          actionsResults.push({ type: 'task', status: 'refused', detail: 'no intervention in this execution to attach the task to' })
-          anyFailed = true
-        } else {
-          const taskRecord = buildCreate('intervention_tasks', {
-            intervention_id: action.for ? null : (interventionRecord?.id || null),
-            title: action.title,
-            description: action.description || '',
-            due_at: action.due_at || null,
-            owner: action.owner || null,
-          }, data)
-          tasksArr.push(taskRecord)
-          actionsResults.push({ type: 'task', status: 'executed', record_id: taskRecord.id, detail: `attached to ${interventionRecord ? 'intervention ' + interventionRecord.id : 'no intervention'}` })
+        if (!action.title) {
+          actionsResults.push({ type: 'task', status: 'refused', detail: 'task action requires a title' })
+          anyRefused = true
+          continue
         }
+        // `for` names a label; without it, the most recent intervention this
+        // execution created. Unresolvable is refused with the reason, never
+        // attached to a null.
+        const target = action.for ? interventionLabels.get(action.for) : interventionLabels.get('__latest__')
+        if (!target) {
+          actionsResults.push({ type: 'task', status: 'refused', detail: action.for ? `no intervention labelled "${action.for}" in this playbook` : 'no intervention in this execution to attach the task to' })
+          anyRefused = true
+          continue
+        }
+        const taskRecord = buildCreate('intervention_tasks', {
+          intervention_id: target.id,
+          title: action.title,
+          description: action.description || '',
+          due_at: action.due_at || null,
+          owner: action.owner || null,
+        }, data)
+        tasksArr.push(taskRecord)
+        actionsResults.push({ type: 'task', status: 'executed', record_id: taskRecord.id, detail: `attached to intervention ${target.id}` })
       } else {
+        // One refusal does not abort the playbook. A protocol that opens an
+        // incident and then hits an unknown action type has still done the
+        // important part, and the execution row's status is what records which
+        // part that was.
         actionsResults.push({ type: action.type || 'unknown', status: 'refused', detail: 'unknown action type' })
-        anyFailed = true
+        anyRefused = true
       }
     }
 
+    // The execution status is computed from the RESULTS, not from the playbook
+    // input. The first version of this checked `playbookActions.some(a =>
+    // a.status === 'executed')`, and playbook entries are the operator's own
+    // JSON — they have no `status` field at all, so the expression was always
+    // false and a playbook that ran two steps and refused one reported
+    // `refused` rather than `partial`. The distinction matters to the UI: the
+    // execution feed colours them differently, and `refused` reads as "nothing
+    // happened".
+    //
+    // A playbook with no actions at all is `executed`: the alert was raised and
+    // pre-authorised, which is the whole of the claim.
+    const executedCount = actionsResults.filter((r) => r.status === 'executed').length
+    const executionStatus = !anyRefused ? 'executed' : (executedCount > 0 ? 'partial' : 'refused')
+
+    logsArr.push(actionLog('protocol_executions', 'created', {
+      id: executionId,
+      protocol_id: p.id,
+      protocol_name: p.name,
+      status: executionStatus,
+      alert_id: alert.id,
+      observed_value: value,
+      actions: actionsResults,
+    }, 'protocol-engine', subject))
+
     const executionRow = {
-      id: stableId('protocol_execution', [p.id, now]),
+      id: executionId,
       protocol_id: p.id,
       protocol_name: p.name,
       protocol_version: p.version || 1,
       mode: 'live', fired_at: now,
-      status: anyFailed ? (playbookActions.some((a) => a.status === 'executed') ? 'partial' : 'refused') : 'executed',
+      status: executionStatus,
       metric: p.metric, operator: p.operator, threshold: p.threshold,
       observed_value: value,
       alert_id: alert.id,
@@ -169,18 +290,23 @@ export async function executeTriggerProtocols(store, data, {
       created_at: now,
     }
     executionsRows.push(executionRow)
-    results.push({ protocol_id: p.id, mode: 'live', status: anyFailed ? (playbookActions.some((a) => a.status === 'executed') ? 'partial' : 'refused') : 'executed', alert_id: alert.id })
+    results.push({ protocol_id: p.id, mode: 'live', status: executionStatus, alert_id: alert.id, actions: actionsResults })
+  }
 
-  if (!dryRun) {
-    const allRecords = [
-      ...alerts.map((a) => ({ collection: 'alert_events', record: a })),
-      ...executionsRows.map((e) => ({ collection: 'protocol_executions', record: e })),
-      ...rapidproDispatchesArr.map((d) => ({ collection: 'rapidpro_dispatches', record: d })),
-      ...incidentsArr.map((i) => ({ collection: 'incidents', record: i })),
-      ...interventionsArr.map((i) => ({ collection: 'interventions', record: i })),
-      ...tasksArr.map((t) => ({ collection: 'intervention_tasks', record: t })),
-      ...logsArr.map((l) => ({ collection: 'action_logs', record: l })),
-    ]
+  // ONE merge for the whole run, not one per protocol. The vision document is
+  // explicit: "then one `store.merge` of everything". Per-protocol merging
+  // would make a three-protocol run three separate commits, so a crash between
+  // them leaves half the playbooks committed and the alert that justified them
+  // missing — the exact partial state a single merge exists to make impossible.
+  // Nothing to merge means nothing is written. `store.merge` with seven empty
+  // arrays still rewrites the file and bumps `updated_at`, so a run in which no
+  // protocol fired would leave a store that *looks* modified — and a
+  // not-firing protocol is meant to write nothing at all. The guard is on the
+  // rows, not on the collections: a shadow-mode run always has an execution row,
+  // so shadow mode still records what would have fired.
+  const hasRows = executionsRows.length > 0 || alerts.length > 0
+
+  if (!dryRun && hasRows) {
     await store.merge({
       alert_events: alerts,
       protocol_executions: executionsRows,
@@ -190,6 +316,19 @@ export async function executeTriggerProtocols(store, data, {
       intervention_tasks: tasksArr,
       action_logs: logsArr,
     })
+    // One row per protocol execution, so the audit chain records which
+    // pre-authorisation produced which records. Emitted in a try/catch with a
+    // counted failure, exactly like `evaluateAndPersistAlerts` does for
+    // `alert_event.created`: the state is already true, so a missing
+    // notification is a gap to count, not a reason to abandon the merge.
+    for (const execution of executionsRows) {
+      try {
+        await emit(store, 'protocol.executed', { execution_id: execution.id, protocol_id: execution.protocol_id })
+      } catch (emitError) {
+        metrics.counter('outbox_emit_failed_total', { event: 'protocol.executed' })
+        logger.error({ err: emitError, event: 'protocol.executed' }, 'outbox emit failed; the execution is stored and no subscriber was told')
+      }
+    }
   }
 
   return { executions: executionsRows, dry_run: Boolean(dryRun) }
