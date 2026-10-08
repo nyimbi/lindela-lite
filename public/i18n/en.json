@@ -125,6 +125,8 @@
   "co.kpi_reporters": "Community reporters",
   "co.kpi_title": "KPI Summary",
   "co.kpi_warning_to_action": "Signal-to-dispatch median",
+  "co.kpi_field_action": "Warning→field action (median)",
+  "co.kpi_field_action_refused": "below sample floor",
   "co.kpi_warning_to_action_target": "signal matched → SMS sent; not a field action",
   "co.lag_bucket": "Lag",
   "co.month": "Month",

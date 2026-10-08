@@ -432,6 +432,67 @@ describe('a correlated DONE writes both the inbound and the outcome', () => {
   })
 })
 
+describe('the quarterly KPI publishes the figure it previously said did not exist', () => {
+  it('carries both warning-to-action figures, and they are not the same number', async () => {
+    // `warning_to_action_is_field_outcome: false` has always been published
+    // beside the dispatch latency, and the `WARNING_TO_ACTION_LIMIT` sentence
+    // says in words that it is not a field action. This adds the field figure it
+    // was disclaiming, so a reader is given the alternative rather than only the
+    // caveat.
+    const { computeQuarterlyKpi } = await import('../src/kpi.js')
+    const kpi = computeQuarterlyKpi({ alert_events: [], field_outcomes: [] }, { quarter: 'Q1', year: 2026 })
+
+    assert.equal(kpi.warning_to_action_is_field_outcome, false)
+    assert.equal(kpi.warning_to_action_field_median_hours, null)
+    assert.equal(kpi.warning_to_action_field_samples, 0)
+    assert.match(kpi.warning_to_action_field_refusal, /fewer than 5/)
+    // The refusal is also a data gap, so it is counted where every other
+    // unmeasurable figure is counted.
+    assert.ok(
+      kpi.data_gaps.some((gap) => gap.field === 'warning_to_action_field_median_hours'),
+      'a refusal the data_gaps list does not carry will not be counted anywhere',
+    )
+  })
+
+  it('reports the median and the samples once the floor is met', async () => {
+    const { computeQuarterlyKpi } = await import('../src/kpi.js')
+    // Alerts raised inside the quarter, so period_start admits them.
+    // Alerts raised a few days into the quarter, so `period_start` admits them.
+    const from = '2026-01-01'
+    const hours = [2, 3, 4, 5, 6]
+    const raised = new Date(Date.parse(from) + 3 * 86_400_000).toISOString()
+    const data = {
+      alert_events: hours.map((_, i) => ({
+        id: `k${i}`,
+        severity: 'high',
+        created_at: raised,
+      })),
+      field_outcomes: hours.map((h, i) => normalizeFieldOutcome({
+        outcome_code: 'supplies_arrived',
+        confirmed_by: `w${i}`,
+        alert_id: `k${i}`,
+        confirmed_at: new Date(Date.parse(raised) + h * 3_600_000).toISOString(),
+      })),
+    }
+    const kpi = computeQuarterlyKpi(data, { quarter: 'Q1', year: 2026 })
+    assert.equal(kpi.warning_to_action_field_median_hours, 4)
+    assert.equal(kpi.warning_to_action_field_samples, 5)
+    assert.equal(kpi.warning_to_action_field_refusal, null)
+    assert.match(kpi.warning_to_action_field_basis, /not comparable to the SMS-latency figure/)
+  })
+
+  it('the PDF text and Markdown both carry the row, refusal included', async () => {
+    const { renderQuarterlyReportMarkdown } = await import('../src/pdf.js')
+    const { computeQuarterlyKpi } = await import('../src/kpi.js')
+    const kpi = computeQuarterlyKpi({ alert_events: [], field_outcomes: [] }, { quarter: 'Q1', year: 2026 })
+    const md = renderQuarterlyReportMarkdown(kpi)
+    assert.match(md, /Warning-to-field-action median/)
+    // The refusal is printed as the value, not as a dash: a dash reads as "we do
+    // not know" and gets skipped past.
+    assert.match(md, /not reported: only 0 confirmed outcome/)
+  })
+})
+
 describe('the outcomes routes answer with the figure or the refusal', () => {
   it('lists confirmations paged', async () => {
     const res = await get('/api/v1/field-outcomes?limit=10')

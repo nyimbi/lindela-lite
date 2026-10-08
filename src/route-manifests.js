@@ -72,7 +72,7 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/interventions': Object.freeze(["interventions"]),
   'GET /api/v1/interventions/:id': Object.freeze(["interventions"]),
   'GET /api/v1/kpi/monthly-series': Object.freeze(["alert_events", "field_reports", "interventions", "rapidpro_dispatches", "workflow_instances"]),
-  'GET /api/v1/kpi/quarterly': Object.freeze(["alert_events", "field_reports", "hazard_events", "interventions", "rapidpro_dispatches", "report_templates", "workflow_instances"]),
+  'GET /api/v1/kpi/quarterly': Object.freeze(["alert_events", "field_outcomes", "field_reports", "hazard_events", "interventions", "rapidpro_dispatches", "report_templates", "workflow_instances"]),
   'GET /api/v1/kpi/snapshots': Object.freeze(["kpi_snapshots"]),
   'GET /api/v1/model-drift': Object.freeze(["model_drift"]),
   'GET /api/v1/operations/summary': Object.freeze(["field_reports", "incidents", "intervention_tasks", "interventions", "response_resources"]),

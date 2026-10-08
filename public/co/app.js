@@ -305,6 +305,25 @@ function renderKpi(kpi) {
     // not observe at all. Naming it accurately matters more than the comparison
     // looking good next to a bid target.
     { key: 'co.kpi_warning_to_action', label: t('co.kpi_warning_to_action', 'Signal-to-dispatch median'), value: fmtVal(kpi.warning_to_action_median_hours, 'hours'), unit: 'hours', annotation: 'signal matched → SMS sent; not a field action', gap: kpi.warning_to_action_median_hours === null },
+    // The tile the one above says it is not. Same grid, adjacent, so nobody reads
+    // "0.16h to dispatch" as "the response took 0.16h".
+    //
+    // When refused, the refusal IS the value. A dash here would read as "we have
+    // no data" and be skipped, when what is true is that the response has not
+    // yet been confirmed often enough to have a median — which is a finding
+    // about the programme, not about the dashboard.
+    {
+      key: 'co.kpi_field_action',
+      label: t('co.kpi_field_action', 'Warning→field action (median)'),
+      value: kpi.warning_to_action_field_refusal
+        ? t('co.kpi_field_action_refused', 'below sample floor')
+        : fmtVal(kpi.warning_to_action_field_median_hours, 'hours'),
+      unit: kpi.warning_to_action_field_refusal ? '' : 'hours',
+      annotation: kpi.warning_to_action_field_refusal
+        ? kpi.warning_to_action_field_refusal
+        : `alert raised → responder confirmed · ${kpi.warning_to_action_field_samples} confirmations`,
+      gap: !kpi.warning_to_action_field_refusal && kpi.warning_to_action_field_median_hours === null,
+    },
     { key: 'co.kpi_feeding_repositioning', label: t('co.kpi_feeding_repositioning', 'Feeding repositioning rate'), value: fmtVal(kpi.feeding_supply_repositioning_rate, '%'), unit: '%', annotation: '', gap: kpi.feeding_supply_repositioning_rate === null },
     { key: 'co.kpi_cold_chain', label: t('co.kpi_cold_chain', 'Cold-chain protection rate'), value: fmtVal(kpi.cold_chain_protection_rate, '%'), unit: '%', annotation: '', gap: kpi.cold_chain_protection_rate === null },
     // The denominator travels with the number. A proportion computed from one

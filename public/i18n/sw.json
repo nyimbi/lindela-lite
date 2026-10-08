@@ -110,6 +110,8 @@
   "co.kpi_reporters": "Waripoti wa jamii",
   "co.kpi_title": "Muhtasari wa KPI",
   "co.kpi_warning_to_action": "Wakati wa tahadhari hadi hatua",
+  "co.kpi_field_action": "Onyesho→hatua ya uwandani (wastani)",
+  "co.kpi_field_action_refused": "chini ya kizingiti cha sampuli",
   "co.kpi_warning_to_action_target": "lengo: <masaa 24",
   "co.lag_bucket": "Muda",
   "co.month": "Mwezi",

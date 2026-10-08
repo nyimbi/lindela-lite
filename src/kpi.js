@@ -7,6 +7,7 @@ import { median } from './analytics/numeric.js'
 // which is the point: a figure cannot be one thing on screen and another in the file.
 import { equityByDistrict } from './equity.js'
 import { feedbackSummaryByAlert } from './community.js'
+import { fieldActionLatency } from './field-outcomes.js'
 
 
 // In-memory KPI cache: key -> {value, expires}
@@ -167,6 +168,18 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   // so, rather than becoming a different measurement under the same name.
   const warning_to_action_median_hours = signalToDispatchHours(data.rapidpro_dispatches)
 
+  // The figure `warning_to_action_median_hours` is not, published beside it.
+  //
+  // The field above measures when this platform sent a message. The one below
+  // measures when a person confirmed they did something about it. They are named
+  // similarly, sit on the same grid, and answer different questions — which is
+  // why both travel together and each carries its own refusal.
+  //
+  // `period_start` is the quarter's start, not "all time": a quarterly KPI that
+  // quietly answered with every confirmation ever recorded would compare this
+  // quarter against its own history.
+  const fieldLatency = fieldActionLatency(data, { period_start: from })
+
   // Feeding and cold-chain rates, from the registry. Both were `length ? 100 *
   // done / total : null`, which published a rate from a single intervention as
   // confidently as from forty. The floor is inside the computation now, so no
@@ -228,6 +241,7 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   if (cohort_refugees_idps === null) data_gaps.push({ field: 'cohort.refugees_idps', reason: 'no demographics recorded yet' })
   if (!youth_mappers_count) data_gaps.push({ field: 'youth_mappers_count', reason: 'role=mapper flag rarely set on field_reports' })
   if (warning_to_action_median_hours === null) data_gaps.push({ field: 'warning_to_action_median_hours', reason: 'no dispatch carries both matched_signal_at and sent_at, so the signal-to-dispatch interval cannot be measured; returns null rather than substituting a different interval' })
+  if (fieldLatency.refusal) data_gaps.push({ field: 'warning_to_action_field_median_hours', reason: fieldLatency.refusal })
   if (far.value === null) data_gaps.push({ field: 'false_alert_rate', reason: far.refusal })
 
   const result = {
@@ -251,6 +265,14 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
     warning_to_action_measure: WARNING_TO_ACTION_MEASURE,
     warning_to_action_limit: WARNING_TO_ACTION_LIMIT,
     warning_to_action_is_field_outcome: false,
+    // The field-response figure, which `warning_to_action_is_field_outcome`
+    // promised did not exist. Now it does, beside the one that is not it, with
+    // the refusal travelling alongside — so a dashboard renders a sentence
+    // instead of a dash when there is no basis for the number.
+    warning_to_action_field_median_hours: fieldLatency.median_hours ?? null,
+    warning_to_action_field_samples: fieldLatency.samples ?? 0,
+    warning_to_action_field_basis: fieldLatency.basis ?? null,
+    warning_to_action_field_refusal: fieldLatency.refusal ?? null,
     feeding_supply_repositioning_rate: feeding.value,
     feeding_supply_repositioning_refusal: feeding.refusal,
     cold_chain_protection_rate: coldChain.value,
@@ -422,18 +444,18 @@ export function quarterlyPdfSections(data, { quarter, year } = {}) {
 
   // --- Trend: the twelve months ending in the reported quarter ------------
   //
-  // `computeMonthlyKpiSeries` ends at the current month, so on any past quarter
-  // the export would carry a trend that runs past its own period — the exact
-  // defect the dashboard's trend window already fixed. Re-derived here from the
-  // monthly helper's own interval so the window ends where the report does.
-  //
   // `computeMonthlyKpiSeries` always ends at the current month, so calling it
   // would carry a trend that runs past the period this file is about — the same
   // defect the dashboard's trend window fixes client-side. The window is
   // therefore computed here, ending on the report's own quarter.
+  //
+  // The absolute index is 0-based: month M of year Y is Y*12 + (M - 1). The
+  // first version added `endMonth` without the -1, which shifted every export
+  // window one month late — a Q4 file trended 2026-02 → 2027-01 instead of
+  // 2026-01 → 2026-12, carrying two months past the period in its own heading.
   const monthsForQuarter = []
   for (let back = 11; back >= 0; back -= 1) {
-    const idx = (y * 12 + (endMonth || 12)) - back
+    const idx = (y * 12 + (endMonth || 12) - 1) - back
     monthsForQuarter.push({ year: Math.floor(idx / 12), month: (idx % 12) + 1 })
   }
   const trend = monthsForQuarter

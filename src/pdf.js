@@ -83,6 +83,12 @@ function buildTextLines(kpi) {
     ['Youth mappers', fmt(kpi.youth_mappers_count, '')],
     ['OSS releases', fmt(kpi.oss_releases_count, '')],
     ['Signal-to-dispatch median', fmt(kpi.warning_to_action_median_hours, 'h')],
+    // The refusal is printed as the value, not as a dash. A dash in a funder
+    // report reads as "we do not know" and gets skipped; the sentence says the
+    // response is below the sample floor, which is a finding.
+    ['Warning-to-field-action median', kpi.warning_to_action_field_refusal
+      ? `not reported: ${kpi.warning_to_action_field_refusal}`
+      : `${fmt(kpi.warning_to_action_field_median_hours, 'h')} (${kpi.warning_to_action_field_samples} confirmations)`],
     ['Feeding repositioning rate', fmt(kpi.feeding_supply_repositioning_rate, '%')],
     ['Cold-chain protection rate', fmt(kpi.cold_chain_protection_rate, '%')],
     ['False alert rate', fmt(kpi.false_alert_rate, '%')],
@@ -521,4 +527,210 @@ export function renderQuarterlyReportPdf(kpi, options = {}) {
   ))
 
   return Buffer.concat(parts)
+}
+
+
+/**
+ * The Markdown twin of renderQuarterlyReportPdf.
+ *
+ * The /api/v1/kpi/quarterly.md route used to hand renderExportMarkdown a
+ * generic alert digest, so the CO dashboard's "Download as Markdown" button
+ * delivered a report with no quarterly figures in it at all — the right
+ * refusals wrapped around the wrong numbers. This renderer takes the same
+ * kpi/narrative/sections/coverage inputs the PDF takes, from the same
+ * helpers, so the two files cannot disagree about what the quarter said.
+ *
+ * The composition order mirrors the PDF: what the file contains, then the
+ * KPI figures, then the narrative, then the dashboard sections.
+ */
+export function renderQuarterlyReportMarkdown(kpi, options = {}) {
+  const md = []
+  const period = kpi.period || {}
+  const cohort = kpi.cohort || {}
+  const push = (s = '') => md.push(s)
+
+  push('# Lindela Lite - Climate & Health KPI Report')
+  push('')
+  push(`- Period: ${period.quarter || '-'} ${period.year || '-'}  |  ${period.from ? period.from.slice(0, 10) : ''} to ${period.to ? period.to.slice(0, 10) : ''}`)
+  push(`- Generated: ${kpi.generated_at || new Date().toISOString()}`)
+  push('')
+
+  // The same coverage sheet the PDF prints on page 1. A reader of the file
+  // has no dashboard to compare against, so the file says what it is.
+  if (options.coverage) {
+    const cov = typeof options.coverage === 'function' ? options.coverage() : options.coverage
+    push('## What this file contains')
+    push('')
+    push(`- Sections carried: ${cov.carried} of ${cov.total}`)
+    push(`- Also on the dashboard: ${cov.missing.length ? cov.missing.join(', ') : 'nothing — this file is complete'}`)
+    push('- Source: Counts and rates over records that reached this platform. Not validated against field outcomes.')
+    push('- Read first: This sheet, then the KPI figures, then "What this report is".')
+    push('')
+  }
+
+  // KPI Summary — the same rows buildTextLines prints, in the same order.
+  push('## KPI Summary')
+  push('')
+  push('| Metric | Value |')
+  push('| --- | --- |')
+  const kpiRows = [
+    ['People reached', fmt(kpi.people_reached, '')],
+    ['Community reporters', fmt(kpi.community_reporters_count, '')],
+    ['Youth mappers', fmt(kpi.youth_mappers_count, '')],
+    ['OSS releases', fmt(kpi.oss_releases_count, '')],
+    ['Signal-to-dispatch median', fmt(kpi.warning_to_action_median_hours, 'h')],
+    // The refusal is printed as the value, not as a dash. A dash in a funder
+    // report reads as "we do not know" and gets skipped; the sentence says the
+    // response is below the sample floor, which is a finding.
+    ['Warning-to-field-action median', kpi.warning_to_action_field_refusal
+      ? `not reported: ${kpi.warning_to_action_field_refusal}`
+      : `${fmt(kpi.warning_to_action_field_median_hours, 'h')} (${kpi.warning_to_action_field_samples} confirmations)`],
+    ['Feeding repositioning rate', fmt(kpi.feeding_supply_repositioning_rate, '%')],
+    ['Cold-chain protection rate', fmt(kpi.cold_chain_protection_rate, '%')],
+    ['False alert rate', fmt(kpi.false_alert_rate, '%')],
+    ['API uptime', fmt(kpi.api_uptime_pct, '%')],
+    ['% Children U18', fmt(kpi.percent_children_u18, '%')],
+    ['% Women and girls', fmt(kpi.percent_women_and_girls, '%')],
+    ['% PwD', fmt(kpi.percent_pwd, '%')],
+  ]
+  for (const [label, value] of kpiRows) push(`| ${label} | ${value} |`)
+  push('')
+
+  push('### Cohort')
+  push('')
+  push('| Group | Count |')
+  push('| --- | --- |')
+  const cohortRows = [
+    ['Total', cohort.total ?? '-'],
+    ['Under 18', cohort.u18 ?? '-'],
+    ['Women and girls', cohort.women_and_girls ?? '-'],
+    ['PwD', cohort.pwd ?? '-'],
+    ['Refugees/IDPs', cohort.refugees_idps ?? '-'],
+  ]
+  for (const [label, value] of cohortRows) push(`| ${label} | ${value} |`)
+  push('')
+
+  // The bid target caveat travels with the figures, as it does in the PDF —
+  // separated from the number it does not measure, on its own lines.
+  push(`Data gaps: ${(kpi.data_gaps || []).map((g) => g.field).join(', ') || 'none'}`)
+  push('')
+  push('> External target for reference: warning-to-action < 24h. The signal-to-dispatch '
+    + 'median above is this platform\'s own SMS latency, not a field action, and is not '
+    + 'comparable to that target. A low value does not mean the response was fast.')
+  push('')
+
+  const narrative = options.narrative
+  if (narrative && (narrative.measured?.length || narrative.refused?.length || narrative.limits?.length)) {
+    push('## What this report is')
+    push('')
+    push('Read with the KPI figures above. Those figures are counts and rates computed over what '
+      + 'reached this platform during the period. They are not validated against observed outcomes and '
+      + 'none of them is calibrated. Where the system declined to produce a number, it says so below '
+      + 'rather than leaving a blank that reads as a zero.')
+    push('')
+    push('### What was measured')
+    push('')
+    for (const item of narrative.measured || []) {
+      const refs = item.source_refs ? ` (${item.source_refs} source reference(s))` : ' (no source references)'
+      push(`- ${item.claim}${refs}`)
+    }
+    push('')
+    push('### What was refused')
+    push('')
+    if (!(narrative.refused || []).length) {
+      push('- Nothing in scope was refused. That is a statement about sample size, not a clean bill of health.')
+    } else {
+      for (const item of narrative.refused) push(`- ${item.subject}: ${item.reason}`)
+    }
+    push('')
+    push('### What this report does not support')
+    push('')
+    for (const limit of narrative.limits || []) push(`- ${limit}`)
+    push('')
+    if (narrative.provenance) {
+      push('### Provenance')
+      push('')
+      push(`${narrative.provenance.note || ''}${narrative.provenance.origin ? ` Origin: ${narrative.provenance.origin}.` : ''}`)
+      if (narrative.provenance.as_of) push(`Underlying bodies retrieved as of ${narrative.provenance.as_of}.`)
+      push('')
+    }
+    push(`Signature (SHA-256/16): ${signatureHash(narrative)}`)
+    push('')
+  }
+
+  // The dashboard sections — the same arrays buildSectionPages renders.
+  const sections = options.sections
+  if (sections) {
+    const series = sections.trend || []
+    push('## Trend')
+    push('')
+    push(`Monthly series for the twelve months ending ${sections.period?.quarter || ''} ${sections.period?.year || ''}. `
+      + 'Each month is computed over the records that reached this platform in that month; none is a forecast and none is back-filled.')
+    push('')
+    push('| Month | Reached | Reporters | Lag | Feeding repositioning |')
+    push('| --- | --- | --- | --- | --- |')
+    for (const m of series) {
+      push(`| ${m.month} | ${fmt(m.people_reached, '')} | ${fmt(m.community_reporters_count, '')} | `
+        + `${fmt(m.warning_to_action_median_hours, 'h')} | ${fmt(m.feeding_repositioning_rate, '%')} |`)
+    }
+    push('')
+    push('A null figure is a measurement this platform declined to make. It is printed with the reason, not as a zero.')
+    push('')
+
+    const qoq = sections.qoq || []
+    push('## Quarter-over-quarter')
+    push('')
+    push('Change between consecutive quarters over the same three measures. A quarter with no prior comparable quarter is reported as new, not as growth.')
+    push('')
+    push('| Quarter | People reached | Community reporters | Signal-to-dispatch |')
+    push('| --- | --- | --- | --- |')
+    for (const q of qoq) {
+      push(`| ${q.quarter} | ${fmt(q.people_reached, '')} | ${fmt(q.community_reporters_count, '')} | ${fmt(q.warning_to_action_median_hours, 'h')} |`)
+    }
+    push('')
+
+    const equity = sections.equity || []
+    push('## Equity by District')
+    push('')
+    push('Per district: alerts raised, how many had a matching dispatch, and the dispatch precision over alerts whose outcome someone recorded.')
+    push('')
+    push('| District | Alerts | Dispatched | Reviewed | Dispatch precision |')
+    push('| --- | --- | --- | --- | --- |')
+    for (const d of equity) {
+      push(`| ${d.district} | ${d.alerts} | ${d.dispatched} | ${d.false_alert_determined} | ${fmt(d.dispatch_precision_pct, '%')} |`)
+    }
+    push('')
+    push('Dispatch precision is measured only over alerts that were dispatched and then resolved with a note. A district '
+      + 'whose sample is smaller than that has no precision figure, and this page says so rather than printing a percentage '
+      + 'computed from one record.')
+    push('')
+
+    const lag = sections.lag || []
+    push('## Signal-to-Action Lag')
+    push('')
+    if (sections.lag_measure) push(`${sections.lag_measure}`)
+    if (sections.lag_measure) push('')
+    push('| Bucket | Dispatches |')
+    push('| --- | --- |')
+    for (const b of lag) push(`| ${b.label} | ${b.count} |`)
+    if (sections.lag_note) { push(''); push(sections.lag_note) }
+    push('')
+
+    const feedback = sections.feedback || []
+    push('## Community Feedback')
+    push('')
+    push('Feedback received against each alert, with the sentiment recorded by the intake form. Sentiment is the submitter\'s '
+      + 'word; it is not a classification this platform computed.')
+    push('')
+    push('| Alert | Responses | Positive | Negative | Unclear | Action taken |')
+    push('| --- | --- | --- | --- | --- | --- |')
+    for (const f of feedback) {
+      push(`| ${f.alert_event_id || 'not linked to an alert'} | ${f.count} | ${f.sentiment?.positive ?? 0} | `
+        + `${f.sentiment?.negative ?? 0} | ${f.sentiment?.unclear ?? 0} | ${f.action_taken_count ?? 0} |`)
+    }
+    push('')
+  }
+
+  push(`Signature (SHA-256/16): ${signatureHash(kpi)}`)
+  return md.join('\n')
 }
