@@ -109,6 +109,8 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/trigger-protocols/:id': Object.freeze(["trigger_protocols"]),
   'GET /api/v1/protocol-executions': Object.freeze(["protocol_executions"]),
   'GET /api/v1/protocol-executions/summary': Object.freeze(["protocol_executions"]),
+  'GET /api/v1/field-outcomes': Object.freeze(["field_outcomes"]),
+  'GET /api/v1/field-outcomes/summary': Object.freeze(["field_outcomes", "alert_events"]),
   'GET /api/v1/school-attendance': Object.freeze(["school_attendance_observations"]),
   'GET /api/v1/iot-observations': Object.freeze(["iot_observations"]),
   'GET /api/v1/watermarks': Object.freeze(["watermark_state"]),

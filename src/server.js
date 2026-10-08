@@ -67,6 +67,7 @@ import { KNOWN_DISTRICTS, districtOverview } from './districts.js'
 import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from './equity.js'
 import { normalizeCommunityFeedback, feedbackSummaryByAlert } from './community.js'
 import { normalizeSchoolAttendance, normalizeIotObservation, districtAttendanceRate, latestSensorReadings } from './field-signals.js'
+import { normalizeFieldOutcome, fieldActionLatency, outcomeCounts, DONE_OUTCOME_CODES } from './field-outcomes.js'
 import { renderQuarterlyReportPdf, renderQuarterlyReportMarkdown, quarterlyReportCoverage, DASHBOARD_SECTIONS } from './pdf.js'
 import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.js'
 import { normalizeParametricRule, simulateDisbursement } from './parametric.js'
@@ -1833,6 +1834,32 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
     return
   }
 
+  // Field outcomes: the confirmations a responder sends with `DONE`. Served from
+  // here rather than from handleRapidProRoute because the path is not under
+  // /api/v1/rapidpro — a confirmation is a first-class record with its own
+  // collection, its own manifest and its own scopes, not a view of the reply log.
+  if (req.method === 'GET' && url.pathname === '/api/v1/field-outcomes') {
+    jsonResponse(res, 200, {
+      success: true,
+      ...collectionPage(data.field_outcomes || [], url.searchParams, { auth: req.__auth, data, collection: 'field_outcomes' }),
+    })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/field-outcomes/summary') {
+    // The refusal is returned as a 200 alongside the counts, never as a bare
+    // null. A dashboard that receives `null` renders a dash, and a dash reads as
+    // "the response time is zero" or "we have no data" — the sentence below is
+    // what distinguishes them.
+    jsonResponse(res, 200, {
+      success: true,
+      total: (data.field_outcomes || []).length,
+      by_outcome_code: outcomeCounts(data),
+      ...fieldActionLatency(data),
+    })
+    return
+  }
+
   // Parametric disbursement routes
   const parametricRoute = matchParametricRoute(url.pathname)
   if (parametricRoute) {
@@ -2988,11 +3015,25 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
     }
     const body = await readRequestJson(req)
     const parsed = parseRapidProReply(body, data, {
-      correlationWindowMinutes: Number(env.RAPIDPRO_REPLY_WINDOW_MINUTES || 1440),
+      // `process.env`, like every other configuration read in this file.
+      // This said bare `env`, which is not bound in this scope — so the whole
+      // `/api/v1/rapidpro/reply` route threw a ReferenceError and answered 500
+      // before parsing anything. Nothing caught it because no test posted to
+      // this route: the Phase E end-to-end cases are the first thing to reach
+      // this line, which is how an unrunnable endpoint survived.
+      correlationWindowMinutes: Number(process.env.RAPIDPRO_REPLY_WINDOW_MINUTES || 1440),
     })
     if (!parsed.correlated) {
       // Recorded anyway. An unrecognised sender is information — it is what a
       // wrong number looks like — and dropping it makes the gap invisible.
+      //
+      // `policy` is loaded here rather than reusing the `field-report` branch's
+      // binding: that `const` is scoped to its own block, so the reference below
+      // was a ReferenceError — the second half of why this route 500'd on every
+      // request. A PII policy is also not a thing to share across two unrelated
+      // branches by accident; loading it where it is used is both correct and
+      // what makes the scope obvious.
+      const policy = await loadPolicy()
       const orphan = redactPii({
         id: stableId('inbound', ['orphan', body.from, body.text, Date.now()]),
         text: body.text || '',
@@ -3012,9 +3053,93 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
       })
       return
     }
-    const writes = reconcileInbound(data, parsed)
+    // `reconcileInbound` returns a DESCRIPTOR, not a collection map —
+// `{ inbound, duplicate, applied, reason? }`. Passing that to `store.merge` as
+// if the keys were collection names is what the previous line did, and it threw
+// "Undeclared collections: inbound, duplicate, applied" on every reply. Records
+// for an undeclared collection are dropped silently by design, which is why this
+// surfaced as an error rather than as a missing write: the guard caught it.
+//
+// So the writes are built here, and the descriptor is used for what it is: the
+// decision about whether this reply is new.
+const reconciled = reconcileInbound(data, parsed)
+const writes = reconciled.applied
+  ? {
+      rapidpro_inbound_messages: [reconciled.inbound],
+      action_logs: [actionLog('rapidpro_inbound_messages', 'created', reconciled.inbound, 'rapidpro', req.__auth?.subject)],
+    }
+  : {}
+
+    // A correlated `DONE` is the only thing in this system that is evidence a
+    // person acted on the ground, so it writes a `field_outcomes` row as well as
+    // the inbound — and in the SAME merge, because two writes would let the
+    // confirmation be recorded without the outcome, leaving warning-to-action
+    // permanently short while the reply log claims the responder replied.
+    //
+    // An UNCORRELATED `DONE` is an orphan inbound only, exactly as every other
+    // unrecognised reply is: it closes no SLA, confirms no outcome, and its
+    // sender cannot be attributed to an alert, so there is nothing to time it
+    // against. That is the case handled by the branch above.
+    let fieldOutcome = null
+    if (parsed.verb === 'DONE') {
+      // Only a code the outcome set recognises becomes an outcome. A `DONE` with
+      // no code, or with prose where a code was expected, is still a real
+      // confirmation and still stays in the inbound — but recording it under an
+      // invented `other` would manufacture the very aggregation the closed set
+      // exists to keep honest. It is refused here and stays visible as a reply.
+      if (!DONE_OUTCOME_CODES.has(parsed.reason_code)) {
+        writes.field_outcomes = []
+      } else {
+        const now = new Date().toISOString()
+        const linkedAlert = (data.alert_events || []).find((alert) => alert.id === parsed.alert_event_id) || null
+        // The playbook-created intervention, where the alert has one: the
+        // confirmation is about an intervention having been carried out, so the
+        // link is the difference between "someone said done" and "the action we
+        // opened a ticket for was done".
+        const linkedIntervention = linkedAlert?.metadata?.protocol_id
+          ? (data.interventions || []).find((i) => i.alert_id === linkedAlert.id || i.incident_id === linkedAlert.incident_id) || null
+          : null
+        try {
+          fieldOutcome = normalizeFieldOutcome({
+            alert_id: parsed.alert_event_id,
+            dispatch_id: parsed.dispatch_id,
+            intervention_id: linkedIntervention?.id ?? null,
+            outcome_code: parsed.reason_code,
+            note: parsed.note,
+            confirmed_by: parsed.from,
+            confirmed_at: now,
+            channel: parsed.channel,
+            source: 'rapidpro_reply',
+          })
+        } catch (outcomeError) {
+          // The inbound is already built and valid; a confirmation we cannot
+          // categorise must not cost us the reply itself. Refused rather than
+          // thrown, and the reason travels in the response so it is not a
+          // silent gap.
+          fieldOutcome = null
+          logger.error({ err: outcomeError, alert_event_id: parsed.alert_event_id }, 'DONE reply could not be recorded as a field outcome; the inbound is kept')
+        }
+        if (fieldOutcome) {
+          writes.field_outcomes = [fieldOutcome]
+          writes.action_logs = [
+            ...(writes.action_logs || []),
+            actionLog('field_outcomes', 'created', fieldOutcome, 'rapidpro', req.__auth?.subject),
+          ]
+        }
+      }
+    }
+
     await store.merge(writes)
-    jsonResponse(res, 200, { success: true, correlated: true, ...parsed })
+    jsonResponse(res, 200, {
+      success: true,
+      correlated: true,
+      ...parsed,
+      // Named explicitly rather than buried in the spread: a caller confirming a
+      // delivery needs to know whether it became a field outcome, and
+      // "the reply was processed" is not the same answer.
+      field_outcome_id: fieldOutcome?.id ?? null,
+      field_outcome: fieldOutcome ? 'recorded' : (parsed.verb === 'DONE' ? 'refused: no recognised outcome code' : null),
+    })
     return
   }
 

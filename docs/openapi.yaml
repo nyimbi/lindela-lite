@@ -745,6 +745,61 @@ paths:
                   data: { type: object }
         '400':
           description: One reading in the batch failed and the whole batch was rejected.
+  /api/v1/field-outcomes:
+    get:
+      summary: List confirmed field actions
+      description: >-
+        One row per responder confirmation that a requested field action
+        happened — supplies arrived, vaccine safe, clinic triaged, children fed.
+        Distinct from a dispatch: a dispatch is a message the gateway accepted,
+        a field outcome is a person reporting they did the thing. The two are not
+        comparable and neither is a proxy for the other.
+      operationId: getfield-outcomes
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/field-outcomes/summary:
+    get:
+      summary: Warning-to-field-action latency
+      description: >-
+        The median hours from an alert being raised to a responder confirming the
+        action, with the sample count and the basis. Below five confirmations this
+        returns a refusal sentence and NO median — a dashboard that received null
+        would render a dash, and a dash reads as either "zero hours" or "no
+        data". The refusal is the honest answer and it arrives as a sentence.
+      operationId: getfield-outcomes_summary
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  by_outcome_code:
+                    type: object
+                    additionalProperties: { type: integer }
+                  samples:
+                    type: integer
+                    description: Confirmations that could actually be timed.
+                  median_hours:
+                    type: number
+                    description: >-
+                      Absent, with `refusal` present instead, when there are
+                      fewer than five timed confirmations.
+                  basis:
+                    type: string
+                    description: >-
+                      What the figure measured and what it is not. Present only
+                      when a median is reported.
+                  refusal:
+                    type: string
+                    description: Present only when no median is reported.
   /api/v1/protocol-executions:
     get:
       summary: List protocol execution records

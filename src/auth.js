@@ -39,6 +39,11 @@ export const READ_SCOPES = Object.freeze([
   ['/api/v1/response-resources', 'read:incidents'],
   ['/api/v1/action-logs', 'read:incidents'],
   ['/api/v1/rapidpro', 'read:incidents'],
+  // A confirmation of field action is incident-class evidence, and it is joined
+  // against alert_events to be timed — so reading it needs the same scope that
+  // reads the reports it closes out, not a scope of its own that would make the
+  // latency figure unreadable to anyone who cannot already read the alerts.
+  ['/api/v1/field-outcomes', 'read:incidents'],
   ['/api/v1/chw', 'read:incidents'],
   ['/api/v1/community-feedback', 'read:incidents'],
   ['/api/v1/reports', 'read:reports'],

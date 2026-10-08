@@ -621,8 +621,30 @@ function bearerToken(value) {
  *   carrier DLR is a separate signal and is recorded separately.
  * ------------------------------------------------------------------------- */
 
-/** Reply verbs, in the order they appear in the instructions we send. */
-export const REPLY_VERBS = Object.freeze(['ACK', 'ESCALATE', 'RESOLVED', 'NAK'])
+/**
+ * Reply verbs, in the order they appear in the instructions we send.
+ *
+ * `DONE` is appended, never reordered. It means the requested field action is
+ * CONFIRMED done on the ground — supplies arrived, vaccine safe, clinic
+ * triaged — and it is deliberately distinct from `RESOLVED`. Two different
+ * claims are being kept apart:
+ *
+ * - `RESOLVED` says the alert is no longer a concern. That can be settled
+ *   centrally while nothing reached the field, so on its own it is evidence
+ *   about the office, not the village.
+ * - `DONE` says a person did something. It can be sent while the alert is still
+ *   open, which is the normal case: the shipment arrives before anyone closes
+ *   the ticket.
+ *
+ * Collapsing them would make "nobody has done anything yet" indistinguishable
+ * from "it is handled", which is the one distinction the warning-to-action
+ * figure exists to measure.
+ *
+ * The order is load-bearing and append-only. Deployed responders have the
+ * instruction text we sent them, so reordering this list re-labels the verbs
+ * they already know — and the USSD digit map below is asserted against it.
+ */
+export const REPLY_VERBS = Object.freeze(['ACK', 'ESCALATE', 'RESOLVED', 'NAK', 'DONE'])
 
 /**
  * Reason codes. A closed set on purpose: an open one lets a typo or a synonym
@@ -638,11 +660,28 @@ export const REPLY_REASON_CODES = Object.freeze([
   'already_handled',
   'false_alert',
   'unsafe',
+  // The four `DONE` outcomes. They are codes rather than free text because a
+  // confirmation whose content is only in prose cannot be aggregated: "done"
+  // with no code says a person replied, and `supplies_arrived` says the thing
+  // the platform was asked to do actually happened. An unrecognised code is
+  // still preserved in `reason_raw`, so this set being closed costs no evidence.
+  'supplies_arrived',
+  'vaccine_safe',
+  'clinic_triaged',
+  'children_fed',
   'other',
 ])
 
-/** Terminal for the acknowledgement SLA: no further escalation is owed. */
-const ACKNOWLEDGED_STATES = Object.freeze(['acknowledged', 'resolved', 'escalated_by_responder'])
+/**
+ * Terminal for the acknowledgement SLA: no further escalation is owed.
+ *
+ * `confirmed_done` is in this set. It was not, when DONE was added to the
+ * grammar, and that omission had a consequence worth naming: a CHW who replied
+ * "DONE supplies_arrived" would still be escalated by the acknowledgement SLA
+ * for never acknowledging — paging them, and their supervisor, about work they
+ * had already finished. The responder did the most conclusive thing available.
+ */
+const ACKNOWLEDGED_STATES = Object.freeze(['acknowledged', 'resolved', 'escalated_by_responder', 'confirmed_done'])
 
 const DEFAULT_SLA_MINUTES = Object.freeze({ critical: 15, high: 30, medium: 60, low: 120 })
 const DEFAULT_SLA_MINUTES_UNKNOWN_SEVERITY = 60
@@ -652,7 +691,7 @@ const DEFAULT_SLA_MINUTES_UNKNOWN_SEVERITY = 60
 // would silently cancel a real escalation window. Free text after the verb is
 // kept as a note rather than discarded — "ACK need water at Baringo" is the most
 // useful thing a CHW will ever send us.
-const REPLY_PATTERN = /^\s*[>*\-]?\s*(ACK|ESCALATE|RESOLVED|NAK)\b[\s:|-]*(.*)$/i
+const REPLY_PATTERN = /^\s*[>*\-]?\s*(ACK|ESCALATE|RESOLVED|NAK|DONE)\b[\s:|-]*(.*)$/i
 
 /**
  * Parses a structured reply.
@@ -693,17 +732,101 @@ export function parseReplyVerb(text) {
 }
 
 /**
+ * The channel an inbound reply arrived on: 'sms', 'ussd', or 'ivr'.
+ *
+ * SMS is the default and must win ties. A text reply like "see you *soon*"
+ * contains asterisks but it is prose, not a USSD session answer — upgrading it
+ * would feed an ordinary SMS through the digit menu and lose the verb. So the
+ * only things that mark a payload as USSD are fields a text message cannot
+ * carry (`input.ussd`, or a USSD-named channel); and the only thing that marks
+ * one as IVR is a DTMF/digits field (on any channel, voice or tel). A voice
+ * call with no key press is still a response, just not a menu choice, and it
+ * falls through to the text grammar below.
+ */
+export function detectReplyChannel(payload = {}) {
+  const channel = payload.channel || {}
+  const name = String(typeof channel === 'string' ? channel : `${channel.name || ''} ${channel.type || ''}`).toLowerCase()
+  if (payload.dtmf != null || payload.digits != null || payload.input?.digits != null) return 'ivr'
+  if (/ivr|voice/.test(name)) return 'ivr'
+  if (payload.input?.ussd != null || /ussd/.test(name)) return 'ussd'
+  return 'sms'
+}
+
+/**
+ * Digit-menu verbs for USSD and IVR: the same closed set as REPLY_VERBS, in
+ * the same order the outbound instructions list them, so what the responder
+ * was told to press is exactly what pressing it means. Guarded by a test that
+ * diffs this order against REPLY_VERBS — if the two drift, every deployed
+ * menu lies about what 1–4 do.
+ */
+export const USSD_IVR_VERB_KEYS = Object.freeze({ 1: 'ACK', 2: 'ESCALATE', 3: 'RESOLVED', 4: 'NAK', 5: 'DONE' })
+
+/** Raw digit input for a USSD/IVR payload, before any mapping. */
+function channelDigitInput(payload, channel) {
+  if (channel === 'ivr') return payload.dtmf ?? payload.digits ?? payload.input?.digits ?? null
+  if (channel === 'ussd') return payload.input?.ussd ?? payload.text ?? null
+  return null
+}
+
+/**
+ * Parses a USSD session answer or IVR key press into the same verb grammar as
+ * `parseReplyVerb`.
+ *
+ * Returns `null` for SMS payloads (the caller falls through to the text
+ * grammar, which is the only path that must keep working unchanged) and for
+ * USSD/IVR payloads with no digits at all. The last digit wins because USSD
+ * input accumulates: *1*2# is a session that passed 1 and then 2, so the
+ * final digit is the choice that actually answered the alert. An unmapped
+ * digit (0, 5, 9…) is recorded, not invented — it still proves someone
+ * responded, the same discipline as an unrecognised SMS reason code — and a
+ * mapped digit is consumed as the verb with no reason code, because a menu
+ * press carries no free text.
+ */
+export function parseChannelVerb(payload = {}) {
+  const channel = detectReplyChannel(payload)
+  if (channel === 'sms') return null
+  const raw = channelDigitInput(payload, channel)
+  if (raw == null) return null
+  const original = String(raw)
+  const digits = original.replace(/\D/g, '')
+  if (!digits) return null
+  const key = digits.slice(-1)
+  const verb = USSD_IVR_VERB_KEYS[key]
+  if (!verb) {
+    return { verb: null, recognised: false, reason_code: null, reason_raw: key, note: original, channel }
+  }
+  return { verb, recognised: true, reason_code: null, reason_raw: null, note: null, channel }
+}
+
+/**
  * The suffix appended to an outbound alert so the reply grammar is discoverable.
  *
  * A grammar nobody was told about is not a two-way channel, it is a guessing
  * game. Kept short because `formatAlertMessage` truncates at 480 characters and
  * a truncated instruction is no instruction at all.
+ *
+ * Channel variant: a USSD menu or IVR call has no keyboard for free text, so
+ * the SMS suffix — which promises "<reason>" and a reply code — would teach a
+ * grammar the channel cannot answer. Those channels get the digit menu
+ * instead. The escalation sentence stays on every channel: silence closes no
+ * SLA no matter how the alert arrived. Lengths, for the 480-char budget
+ * `withAckInstructions` enforces (30-minute SLA, measured): SMS is 85 chars
+ * without a reply code and 99 with one, USSD/IVR is 87 — all far inside the
+ * room a 480-char body leaves, and `withAckInstructions` slices the body to
+ * fit whatever the suffix needs.
  */
 export function ackInstructions(alert, options = {}, env = process.env) {
   const slaMinutes = ackSlaMinutes(alert.severity, env)
   const code = options.reply_code ? null : stableId('reply', [alert.id, slaMinutes]).slice(-6)
-  return ` Reply ${REPLY_VERBS.join('/')} <reason>${code ? ` (code ${code})` : ''}.`
-    + ` We escalate if we hear nothing for ${slaMinutes} min.`
+  const escalation = ` We escalate if we hear nothing for ${slaMinutes} min.`
+  if (options.channel === 'ussd' || options.channel === 'ivr') {
+    // Built from the map rather than typed, so the digit list cannot drift from
+    // the digits `parseChannelVerb` accepts. A menu that advertises four verbs
+    // while accepting a fifth is not a menu that trains anyone.
+    const menu = Object.keys(USSD_IVR_VERB_KEYS).map((key) => `${key}=${USSD_IVR_VERB_KEYS[key]}`).join(', ')
+    return ` Press ${menu}.${escalation}`
+  }
+  return ` Reply ${REPLY_VERBS.join('/')} <reason>${code ? ` (code ${code})` : ''}.${escalation}`
 }
 
 /** Appends the reply grammar within the 480-character budget `formatAlertMessage` enforces. */
@@ -908,6 +1031,15 @@ function ackStatusForVerb(verb, responded) {
   if (verb === 'RESOLVED') return 'resolved'
   if (verb === 'ESCALATE') return 'escalated_by_responder'
   if (verb === 'NAK') return 'rejected'
+  // `DONE` is its own state, not a synonym for any of the four above, and not
+  // `responded_unparsed` either — that last one would say the platform failed to
+  // understand a reply it has in its own grammar, which is a claim about us
+  // rather than about the responder. It is also terminal for the
+  // acknowledgement SLA (see ACKNOWLEDGED_STATES): a responder who confirms the
+  // action is done owes nobody an escalation. The alert itself stays open,
+  // because confirming delivery is not the same as the situation being resolved
+  // — that distinction is the whole reason DONE is not RESOLVED.
+  if (verb === 'DONE') return 'confirmed_done'
   return 'responded_unparsed'
 }
 
@@ -1274,7 +1406,12 @@ export function formatDeliveryReport(report) {
 }
 
 /**
- * Parses an inbound SMS into a reply record.
+ * Parses an inbound reply — SMS text, USSD session answer, or IVR key press —
+ * into a reply record.
+ *
+ * The channel is detected from the payload and dispatched to the digit menu or
+ * the text grammar, so the webhook route closes the same acknowledgement SLA
+ * no matter which carrier surface carried the answer.
  *
  * The reply webhook sits behind `verifyRapidProWebhook`, unchanged and
  * unweakened: it fails closed on an absent secret, an unverifiable body
@@ -1286,10 +1423,19 @@ export function formatDeliveryReport(report) {
  */
 export function parseRapidProReply(payload = {}, data = null, options = {}) {
   const { env = process.env, now = new Date().toISOString() } = options
-  const text = String(payload.content || payload.text || payload.input?.text || payload.message?.text || '').trim()
+  let text = String(payload.content || payload.text || payload.input?.text || payload.message?.text || '').trim()
   const contact = payload.contact || {}
   const correlation = correlateReply(payload, data, { now, windowHours: Number(env.RAPIDPRO_REPLY_CORRELATION_HOURS) || 24 })
-  const parsed = parseReplyVerb(text)
+  const channel = detectReplyChannel(payload)
+  const channelVerb = parseChannelVerb(payload)
+  // USSD/IVR payloads often carry no `text` at all. Keep the raw session input
+  // on the record rather than an empty string — but never overwrite real text,
+  // and never substitute the mapped verb for what the responder actually sent.
+  if (!text && channel !== 'sms') {
+    const raw = channelDigitInput(payload, channel)
+    if (raw != null) text = String(raw).trim()
+  }
+  const parsed = channelVerb || parseReplyVerb(text)
   const sourceId = payload.id || payload.uuid || payload.message?.uuid || payload.run?.uuid || stableId('rapidpro_reply', [correlation.from, text, payload.received_on || now])
 
   return {
@@ -1302,6 +1448,7 @@ export function parseRapidProReply(payload = {}, data = null, options = {}) {
     contact_uuid: contact.uuid || payload.contact_uuid || null,
     contact_name: contact.name || payload.contact_name || null,
     text,
+    channel,
     verb: parsed.verb,
     reason_code: parsed.reason_code,
     reason_raw: parsed.reason_raw,
