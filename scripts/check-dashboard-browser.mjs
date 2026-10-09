@@ -364,24 +364,35 @@ async function main() {
   await new Promise((r) => setTimeout(r, 5000))
 
   const route = await evaluate(`(() => {
-    const pts = [...document.querySelectorAll('#mapRoute .route-hop-order')]
-      .map(n => [parseFloat(n.getAttribute('x')), parseFloat(n.getAttribute('y'))])
+    // Measured where the markers land on screen, not at their raw viewBox
+    // coordinates. The hops are drawn inside #mapTransform, so their x/y
+    // attributes are in the *projection* frame and do not move when the map
+    // zooms — a corridor that fills the viewport still reports a sub-unit
+    // spread there, and the check read every correctly-framed route as
+    // unframed. The rendered box is what "framed on the route" means.
+    const boxes = [...document.querySelectorAll('#mapRoute .route-hop-order')]
+      .map(n => n.getBoundingClientRect())
+      .map(b => [b.x + b.width / 2, b.y + b.height / 2])
     let spanX = 0, spanY = 0
-    if (pts.length >= 2) {
-      spanX = Math.max(...pts.map(p => p[0])) - Math.min(...pts.map(p => p[0]))
-      spanY = Math.max(...pts.map(p => p[1])) - Math.min(...pts.map(p => p[1]))
+    if (boxes.length >= 2) {
+      spanX = Math.max(...boxes.map(p => p[0])) - Math.min(...boxes.map(p => p[0]))
+      spanY = Math.max(...boxes.map(p => p[1])) - Math.min(...boxes.map(p => p[1]))
     }
+    const frame = document.getElementById('situationMap').getBoundingClientRect()
+    const inside = boxes.every(([x, y]) =>
+      x >= frame.x && x <= frame.x + frame.width && y >= frame.y && y <= frame.y + frame.height)
     return {
       status: document.getElementById('routeStatus').textContent,
       hops: [...document.querySelectorAll('#routeHops li')].map(li => li.querySelector('.route-hop-name')?.textContent),
       markers: document.querySelectorAll('#mapRoute .route-hop').length,
       numbered: document.querySelectorAll('#mapRoute .route-hop-order').length,
-      // How much of the viewBox the hops occupy. Planning a route has to frame
+      // How much of the *frame* the hops occupy. Planning a route has to frame
       // on it: the Lodwar corridor is four roads inside six kilometres, so on a
       // region-wide frame the reroute that is the whole point of the feature
       // collapsed into one unreadable cluster.
       spread: Math.max(spanX, spanY),
-      viewBox: (document.getElementById('situationMap').getAttribute('viewBox') || '').split(' ').map(Number),
+      frameW: frame.width,
+      inside,
     }
   })()`)
 
@@ -392,10 +403,13 @@ async function main() {
     `${route.markers} markers, ${route.numbered} numbers`)
   check('the route avoids the flooded segment',
     !route.hops.some((h) => /floodplain/i.test(h)), route.hops.join(' → '))
-  const routeRefW = route.viewBox[2] || 800
+  // The corridor must be big enough to read on the rendered map. The floor is
+  // a few marker diameters (each hop is drawn at radius 8), not a fraction of
+  // the frame: at the corridor zoom the frame is ~143 km across and the route
+  // is 10 km, so a fraction-of-frame threshold would demand the impossible.
   check('planning a route frames the map on that route',
-    route.spread > routeRefW * 0.2,
-    `hops span ${Math.round(route.spread)} of ${routeRefW} viewBox units`)
+    route.inside && route.spread > 48,
+    `hops span ${Math.round(route.spread)} px of a ${Math.round(route.frameW)} px frame, inside=${route.inside}`)
   check('route status reports distance, mode, and the impassable-segment rule',
     /km/.test(route.status) && /(vehicle|foot)/.test(route.status) && /not penalised/i.test(route.status),
     route.status.trim().slice(0, 130))
@@ -727,10 +741,23 @@ async function main() {
       const text = document.body.innerText;
       const rawKeys = (text.match(/\\b[a-z]+\\.[a-z_]+\\b/g) || []).filter((k) => k.startsWith('chw.'));
       const buttons = [...document.querySelectorAll('#homeScreen button')].map((b) => b.textContent.trim());
-      return { rawKeys: [...new Set(rawKeys)].slice(0, 5), buttons, emptyButtons: buttons.filter((b) => !b).length };
+      // A button whose text is still its i18n key counts as empty, not as
+      // translated: the key is non-empty text, so an empty-string test alone
+      // passes a button that reads "chw.report_symptom" in the field.
+      const keyed = buttons.filter((b) => /^[a-z]+\\.[a-z_]+$/.test(b));
+      return {
+        rawKeys: [...new Set(rawKeys)].slice(0, 5),
+        buttons,
+        emptyButtons: buttons.filter((b) => !b).length,
+        keyedButtons: keyed.length,
+      };
     })()`)
+    // Every home-screen button must be translated and non-empty. The count is
+    // not asserted: the screen gained a "Reference" control after this check
+    // was written, and pinning the number made a correct screen fail — the
+    // check is about the strings, not how many controls the screen has.
     check(`CHW renders fully in "${locale}" with no raw keys`,
-      rendered.rawKeys.length === 0 && rendered.emptyButtons === 0 && rendered.buttons.length === 3,
+      rendered.rawKeys.length === 0 && rendered.emptyButtons === 0 && rendered.keyedButtons === 0 && rendered.buttons.length > 0,
       rendered.rawKeys.length ? `raw keys: ${rendered.rawKeys.join(', ')}` : rendered.buttons.join(' / '))
   }
 

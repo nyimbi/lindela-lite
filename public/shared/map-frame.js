@@ -38,12 +38,43 @@ export const AFRICA_BBOX = Object.freeze({
 })
 
 /**
+ * The live zoom bounds, in one place.
+ *
+ * `applyMapTransform` clamps the scale it renders, so a transform fitted past
+ * these is silently rewritten: the scale is replaced and the translate that was
+ * computed *for* the original scale is kept, which throws the whole frame
+ * hundreds of thousands of pixels off-screen. `fitTransform` therefore clamps
+ * here, at the source, where the translate can be recomputed to match.
+ *
+ * The lower bound is the full Africa frame (a fit at scale 1 with no padding).
+ * The upper is a corridor: the default Horn view fits at ~29, and 96 is 3.4
+ * clicks in — the frame is ~143 km across, which is the scale the Lodwar
+ * routing feature needs to be legible. It was 10, which put 1376 km across the
+ * frame and rendered a 10 km corridor as a single dot, so the reroute the
+ * feature exists to show was invisible.
+ *
+ * The upper bound is not free: geographic strokes (road markers, route rings
+ * and their labels) scale with the transform, so each point layer that must
+ * stay readable at a corridor zoom is counter-scaled by `--map-scale` in
+ * styles.css, the way the hazard and sensor markers already are.
+ */
+export const MIN_MAP_SCALE = 0.3
+export const MAX_MAP_SCALE = 96
+
+/**
  * Fit a target bbox inside a larger projection bbox so it fills an SVG viewBox.
  *
  * Returns a translate/scale transform that, applied to `#mapTransform`, shows
  * `targetBbox` centered in the viewport while using `projectionBbox` as the
  * coordinate system. This lets the map default to a Horn view while remaining
  * zoomable out to the full Africa projection frame.
+ *
+ * A target that cannot fill the frame within `MAX_MAP_SCALE` is framed at that
+ * scale and centred, rather than at its natural scale. The distinction matters:
+ * a 6.8 km road corridor inside the Africa projection asks for scale 774, and
+ * the unclamped answer put its markers half a million pixels outside the
+ * viewport — planning a route blanked the map. Centring is what "frame on this"
+ * means when the fit is capped.
  */
 export function fitTransform(targetBbox, projectionBbox, viewBoxW, viewBoxH, paddingPct = 0.06) {
   if (!targetBbox || !projectionBbox || !(viewBoxW > 0) || !(viewBoxH > 0)) return null
@@ -66,7 +97,7 @@ export function fitTransform(targetBbox, projectionBbox, viewBoxW, viewBoxH, pad
 
   const scaleX = projLonSpan / fitLonSpan
   const scaleY = projLatSpan / fitLatSpan
-  const scale = Math.min(scaleX, scaleY)
+  const scale = Math.max(MIN_MAP_SCALE, Math.min(MAX_MAP_SCALE, Math.min(scaleX, scaleY)))
 
   const targetCxLon = (fitMinLon + fitMaxLon) / 2
   const targetCxLat = (fitMinLat + fitMaxLat) / 2

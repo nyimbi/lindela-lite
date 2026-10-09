@@ -5,7 +5,7 @@ import { REGION_POLYGONS, INDIAN_OCEAN_POLYGON, LAKE_VICTORIA, PILOT_DISTRICTS }
 import { FLOOD_DEPTH_BANDS, floodCellsForGrid, floodCoverage, surveyedAreaKm2 } from '/shared/flood-bands.js'
 import { weatherCodeLabel, weatherLayerView } from '/shared/weather-bands.js'
 import { dischargeBand, DISCHARGE_MODEL_NOTE } from '/shared/discharge-bands.js'
-import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets, withinBbox, NEAR_REGION_MARGIN_DEG, REGION_OF_INTEREST, AFRICA_BBOX, fitTransform } from '/shared/map-frame.js'
+import { globalEventQuery, isFinitePoint, localEventQuery, mapFrame, mergeEventSets, withinBbox, NEAR_REGION_MARGIN_DEG, REGION_OF_INTEREST, AFRICA_BBOX, fitTransform, MIN_MAP_SCALE, MAX_MAP_SCALE } from '/shared/map-frame.js'
 import {
   TILE_SOURCES, TILE_ATTRIBUTION,
   tileGridKey, tileUrlFor, tilesForRect, svgPlacement, visibleWorldRect, zoomForRect,
@@ -353,7 +353,9 @@ function setFloodStatus(message) {
 function renderFloodLayer(grid, bbox) {
   if (!mapFloodEl) return
   mapFloodEl.innerHTML = ''
-  const cells = floodCellsForGrid(grid, (lat, lon) => project(lat, lon, bbox))
+  // projectExact, not project: a flood cell is 0.05 viewBox units across and
+  // `project` rounds to 0.1, which collapses adjacent cells to zero size.
+  const cells = floodCellsForGrid(grid, (lat, lon) => projectExact(lat, lon, bbox))
   for (const cell of cells) {
     const rect = svgEl('rect', {
       x: cell.x,
@@ -416,8 +418,8 @@ function renderFoodSecurityLayer(records, bbox) {
     // No published Phase 3+ figure: coverage is still drawn, as a neutral
     // outline with the fact in the title — shading it green would invent a value.
     if (!Number.isFinite(fraction)) {
-      const nw0 = project(Math.min(box.north, 90), box.west, bbox)
-      const se0 = project(Math.max(box.south, -90), box.east, bbox)
+      const nw0 = projectExact(Math.min(box.north, 90), box.west, bbox)
+      const se0 = projectExact(Math.max(box.south, -90), box.east, bbox)
       const outline = svgEl('rect', {
         x: Math.min(nw0.x, se0.x), y: Math.min(nw0.y, se0.y),
         width: Math.abs(se0.x - nw0.x), height: Math.abs(se0.y - nw0.y),
@@ -430,8 +432,8 @@ function renderFoodSecurityLayer(records, bbox) {
       continue
     }
     const band = IPC_FRACTION_BANDS.find((b) => fraction < b.max) || IPC_FRACTION_BANDS[IPC_FRACTION_BANDS.length - 1]
-    const nw = project(Math.min(box.north, 90), box.west, bbox)
-    const se = project(Math.max(box.south, -90), box.east, bbox)
+    const nw = projectExact(Math.min(box.north, 90), box.west, bbox)
+    const se = projectExact(Math.max(box.south, -90), box.east, bbox)
     const rect = svgEl('rect', {
       x: Math.min(nw.x, se.x),
       y: Math.min(nw.y, se.y),
@@ -2013,13 +2015,28 @@ function svgEl(tag, attrs = {}) {
 }
 
 
-function project(lat, lon, bbox) {
+/**
+ * One point's viewBox position, unrounded.
+ *
+ * Rounding to 0.1 viewBox units is a *point-symbol* policy — it keeps marker
+ * coordinates short and stops sub-pixel jitter — and it is applied by `project`
+ * below, where every caller wants a position. It must not be applied to
+ * geometry: a 500 m flood cell is 0.05 viewBox units across in the Africa
+ * projection, so rounding both its corners collapsed 677 of 1077 cells to zero
+ * width and two thirds of the shading never rendered, while the status line
+ * went on reporting the full 1165 km². A caller that measures an extent uses
+ * this and takes the difference of two unrounded points.
+ */
+function projectExact(lat, lon, bbox) {
   // Aspect-preserving, so a degree of longitude and a degree of latitude cover
   // the same number of pixels — the map keeps its true shape at any frame.
   // Shares mapProjection with the raster tiles (see tiles.js) so vector layers
   // and imagery cannot drift apart.
-  const p = mapProjection(bbox, SVG_W, SVG_H)
-  const pt = projectToViewBox(p, lat, lon)
+  return projectToViewBox(mapProjection(bbox, SVG_W, SVG_H), lat, lon)
+}
+
+function project(lat, lon, bbox) {
+  const pt = projectExact(lat, lon, bbox)
   return { x: Math.round(pt.x * 10) / 10, y: Math.round(pt.y * 10) / 10 }
 }
 
@@ -2592,6 +2609,11 @@ function renderMap(records) {
   // context; the transform is fitted to the target frame (Horn, flood extent,
   // route, etc.) unless the operator has panned or zoomed manually.
   const bbox = AFRICA_BBOX
+  // Set before the transform is applied: `applyMapTransform` updates the scale
+  // bar, which reads the visible window from this bbox. Assigning it after left
+  // the first render with no frame to measure, so the bar read "Scale: —" until
+  // the next pan.
+  state.mapBBox = bbox
   if (!state.mapTransformUserSet) {
     const fitted = fitTransform(targetFrame, bbox, SVG_W, SVG_H)
     if (fitted) {
@@ -2605,7 +2627,6 @@ function renderMap(records) {
   // re-render even when renderStaticLayers early-returns on an unchanged frame,
   // because a transform pan that moved the visible window off the previous
   // grid is invisible to the frame key.
-  state.mapBBox = bbox
   renderMapTiles()
   mapHazardsEl.innerHTML = ''
   mapAssetsEl.innerHTML = ''
@@ -2678,8 +2699,8 @@ function renderMap(records) {
     if (!Number.isFinite(r.latitude) || !Number.isFinite(r.longitude)) {
       const box = r.bbox
       if (box && [box.west, box.south, box.east, box.north].every(Number.isFinite)) {
-        const nw = project(Math.min(box.north, 90), box.west, bbox)
-        const se = project(Math.max(box.south, -90), box.east, bbox)
+        const nw = projectExact(Math.min(box.north, 90), box.west, bbox)
+        const se = projectExact(Math.max(box.south, -90), box.east, bbox)
         let footWidth = 0
         let footHeight = 0
         const foot = svgEl('rect', {
@@ -2725,7 +2746,19 @@ function renderMap(records) {
         // element is not in the document yet, and a detached element reports a
         // zero box, so an earlier attempt measured every footprint at 0% of the
         // viewport and dimmed none of them.
-        const share = (footWidth * footHeight) / (SVG_W * SVG_H)
+        //
+        // Measured *after* the transform, which is the whole point and was
+        // missing. The footprint is drawn inside `#mapTransform`, so its screen
+        // area is its viewBox area times scale squared. Comparing the raw
+        // viewBox area to the viewBox area therefore passed boxes that cover
+        // most of the screen: at the default 4.92x zoom, a footprint at the 15%
+        // threshold covers 363% of the map, and the live demo rendered seven of
+        // them over the pilot districts — the map read as a flat red sheet with
+        // the roads and the basemap underneath it. The threshold is a statement
+        // about what the operator can see, so it has to be measured in what the
+        // operator sees.
+        const zoom = state.mapTransform?.scale || 1
+        const share = ((footWidth * zoom) * (footHeight * zoom)) / (SVG_W * SVG_H)
         if (share > 0.15) {
           tooLargeToLocate += 1
           return
@@ -3049,7 +3082,7 @@ function applyMapTransform() {
   // Clamp everything here too: callers such as the keyboard handlers, URL
   // restore, and the new +/- buttons all converge on one guard, and a corrupt
   // transform cannot escape into the share-link encoder.
-  state.mapTransform.scale = Math.max(0.3, Math.min(10, state.mapTransform.scale))
+  state.mapTransform.scale = Math.max(MIN_MAP_SCALE, Math.min(MAX_MAP_SCALE, state.mapTransform.scale))
   mapTransformEl.setAttribute('transform',
     `translate(${state.mapTransform.x},${state.mapTransform.y}) scale(${state.mapTransform.scale})`)
   // Live zoom scale for CSS: point markers counter-scale by 1/this so they keep
@@ -3066,6 +3099,31 @@ function applyMapTransform() {
 function updateZoomLevel() {
   const el = $('zoomLevel')
   if (el) el.textContent = `${Math.round(state.mapTransform.scale * 100)}%`
+  updateMapScale()
+}
+
+/**
+ * The map's scale bar, in ground distance.
+ *
+ * It was the static string "Scale: ~400 km" — true of no zoom but one, and
+ * wrong at every other, so the moment an operator zoomed to a district the
+ * label was lying about the ground under the cursor. Derived from the visible
+ * window instead: the same `visibleWorldRect` the tile layer uses, converted at
+ * the equatorial degree, which is within a few percent of true across the
+ * region this map covers.
+ */
+function updateMapScale() {
+  const el = $('mapScale')
+  if (!el) return
+  const bbox = state.mapBBox
+  const view = bbox ? visibleWorldRect(bbox, state.mapTransform, SVG_W, SVG_H) : null
+  if (!view || !(view.lonSpan > 0)) {
+    el.textContent = 'Scale: —'
+    return
+  }
+  const KM_PER_DEG = 111
+  const km = view.lonSpan * KM_PER_DEG
+  el.textContent = `Scale: ~${km < 10 ? km.toFixed(1) : Math.round(km)} km across`
 }
 
 /**
@@ -3078,7 +3136,7 @@ function updateZoomLevel() {
  */
 function zoomAt(cx, cy, factor) {
   const { x, y, scale } = state.mapTransform
-  const newScale = Math.max(0.3, Math.min(10, scale * factor))
+  const newScale = Math.max(MIN_MAP_SCALE, Math.min(MAX_MAP_SCALE, scale * factor))
   const px = (cx - x) / scale
   const py = (cy - y) / scale
   state.mapTransform.scale = newScale

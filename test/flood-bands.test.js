@@ -7,6 +7,8 @@ import {
   floodCoverage,
   floodDepthBand,
 } from '../public/shared/flood-bands.js'
+import { AFRICA_BBOX } from '../public/shared/map-frame.js'
+import { mapProjection, projectToViewBox } from '../public/shared/tiles.js'
 
 /**
  * Equirectangular projection onto a fixed viewport, matching the dashboard's
@@ -122,6 +124,56 @@ describe('floodCellsForGrid', () => {
     const cells = floodCellsForGrid(gridOf(depths, size), project)
     assert.equal(cells.length, 3)
     assert.deepEqual(cells.map((c) => c.band.key), ['d2', 'd0', 'd4'])
+  })
+
+  it('keeps every wet cell visible when the projection rounds to a coarse grid', () => {
+    // The dashboard's `project` rounds every coordinate to 0.1 viewBox units,
+    // and it was also what `floodCellsForGrid` was handed. The Africa
+    // projection puts ~6.45 viewBox units on a degree (800 across 124), so the
+    // live demo's 32-cell mesh over 0.3° has cells 0.06 units across — under
+    // the rounding step. Both corners then round onto the same tenth, or onto
+    // adjacent ones, and a cell whose width *or* height rounds to zero draws
+    // nothing: 677 of 1077 cells in the live demo had no area, while the status
+    // line still reported the full 1165 km². `projectExact` is the unrounded
+    // projection the dashboard now passes here; this pins the contract that a
+    // cell's geometry survives it, over the population rather than one cell —
+    // whether a single 0.06-unit cell collapses depends on where it sits
+    // relative to the tenth grid, so a one-cell assertion would be a coin toss.
+    const proj = mapProjection(AFRICA_BBOX, 800, 500)
+    const toViewBox = (lat, lon) => projectToViewBox(proj, lat, lon)
+    const rounded = (lat, lon) => {
+      const p = toViewBox(lat, lon)
+      return { x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }
+    }
+
+    // The Turkana demo mesh: 32×32 over ~0.3°, every cell wet.
+    const size = 32
+    const bounds = { north: 3.6, south: 3.3, east: 35.4, west: 35.1 }
+    const grid = { size, bounds, depth_grid: new Array(size * size).fill(1.5) }
+
+    // Premise: a cell really is finer than the rounding step, so the losses
+    // below are the rounding's doing and not some other collapse.
+    const meshWidth = toViewBox(bounds.north, bounds.east).x - toViewBox(bounds.north, bounds.west).x
+    const cellWidth = meshWidth / size
+    assert.ok(cellWidth < 0.1, `a demo cell spans ${cellWidth.toFixed(4)} units, not under the 0.1 step`)
+
+    // Unrounded: every wet cell is emitted, and every one has area.
+    const exact = floodCellsForGrid(grid, toViewBox)
+    assert.equal(exact.length, size * size, 'every wet cell is emitted')
+    assert.ok(
+      exact.every((c) => c.width > 0 && c.height > 0),
+      'a wet cell must have area',
+    )
+
+    // Rounded: cells are lost — the bug this test exists to rule out. The
+    // fixture reproduces the demo's rate (63% here against 677 of 1077 live),
+    // so the assertion is scaled to it rather than to "at least one".
+    const lossy = floodCellsForGrid(grid, rounded)
+    const invisible = lossy.filter((c) => !(c.width > 0 && c.height > 0))
+    assert.ok(
+      invisible.length > lossy.length / 2,
+      `the coarse rounding must lose most cells, lost ${invisible.length} of ${lossy.length}`,
+    )
   })
 })
 

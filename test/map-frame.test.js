@@ -5,6 +5,8 @@ import {
   AFRICA_BBOX,
   NEAR_REGION_MARGIN_DEG,
   REGION_OF_INTEREST,
+  MAX_MAP_SCALE,
+  MIN_MAP_SCALE,
   computeBbox,
   fitTransform,
   isFinitePoint,
@@ -217,5 +219,55 @@ describe('Africa projection frame and transform fitting', () => {
     assert.equal(fitTransform(AFRICA_BBOX, null, 800, 500), null)
     assert.equal(fitTransform(AFRICA_BBOX, AFRICA_BBOX, 0, 500), null)
     assert.equal(fitTransform({ minLat: 0, maxLat: 0, minLon: 0, maxLon: 10 }, AFRICA_BBOX, 800, 500), null)
+  })
+
+  it('frames a corridor far too small for the projection, instead of throwing it off-screen', () => {
+    // The Lodwar corridor the demo routes through: 6.8 km of road, which is
+    // 0.09 by 0.11 degrees. Inside the Africa projection that asks for scale
+    // ~774 — but applyMapTransform clamps the rendered scale to 10, so the
+    // returned translate (computed for 774) was applied to a scale of 10 and
+    // put every hop marker hundreds of thousands of pixels outside the
+    // viewport. Planning a route blanked the map.
+    const corridor = { minLat: 3.05, maxLat: 3.14, minLon: 35.55, maxLon: 35.66 }
+    const t = fitTransform(corridor, AFRICA_BBOX, 800, 500)
+    assert.ok(t.scale <= MAX_MAP_SCALE, `scale ${t.scale} must be renderable`)
+    assert.ok(t.scale >= MIN_MAP_SCALE, `scale ${t.scale} must be renderable`)
+
+    // Every point of the target must land inside the viewBox once the transform
+    // is applied — that is what "frame on this" promises.
+    const projLonSpan = AFRICA_BBOX.maxLon - AFRICA_BBOX.minLon
+    const projLatSpan = AFRICA_BBOX.maxLat - AFRICA_BBOX.minLat
+    const onScreen = (lat, lon) => {
+      const px = ((lon - AFRICA_BBOX.minLon) / projLonSpan) * 800
+      const py = ((AFRICA_BBOX.maxLat - lat) / projLatSpan) * 500
+      return { x: t.x + t.scale * px, y: t.y + t.scale * py }
+    }
+    for (const [lat, lon] of [[corridor.minLat, corridor.minLon], [corridor.maxLat, corridor.maxLon]]) {
+      const { x, y } = onScreen(lat, lon)
+      assert.ok(x > 0 && x < 800, `x ${x} outside the viewBox`)
+      assert.ok(y > 0 && y < 500, `y ${y} outside the viewBox`)
+    }
+
+    // Inside the frame is not enough — the corridor must be *legible*. The
+    // routing feature exists to show a detour around a cut segment, and at the
+    // old cap of 10 the whole corridor rendered across ~2 px, so the reroute
+    // was a single dot. The requirement is that the hop markers do not collide:
+    // each is drawn at radius 8 (renderRouteLayer) and counter-scaled to a
+    // constant screen size, so the corridor must span several marker diameters.
+    const a = onScreen(corridor.minLat, corridor.minLon)
+    const b = onScreen(corridor.maxLat, corridor.maxLon)
+    const spread = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y))
+    const markerDiameter = 16
+    assert.ok(spread > 3 * markerDiameter,
+      `corridor spans ${spread.toFixed(1)} of 800 viewBox units, under 3 marker diameters (${3 * markerDiameter})`)
+  })
+
+  it('keeps a fit that is already within the zoom bounds unclamped', () => {
+    // The clamp must not move an ordinary fit. The Horn frame is the default
+    // view and the Africa frame is the floor; neither is near a bound.
+    const horn = fitTransform(REGION_OF_INTEREST, AFRICA_BBOX, 800, 500)
+    assert.ok(horn.scale > 1 && horn.scale < MAX_MAP_SCALE)
+    const africa = fitTransform(AFRICA_BBOX, AFRICA_BBOX, 800, 500, 0)
+    assert.ok(Math.abs(africa.scale - 1) < 1e-9)
   })
 })

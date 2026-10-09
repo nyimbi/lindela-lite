@@ -774,6 +774,11 @@ body.app-shell {
 #mapTransform .disease-hit,
 #mapTransform .sensor-marker,
 #mapTransform .sensor-hit,
+#mapTransform .road-marker,
+#mapTransform .route-hop,
+#mapTransform .route-halo,
+#mapTransform .route-hop-order,
+#mapTransform .risk-blob,
 #mapTransform .districts-layer text,
 #mapTransform .graticule text {
   transform-box: fill-box;
