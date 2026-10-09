@@ -177,8 +177,13 @@
             keys to pan, +/- to zoom and 0 to reset, and announces what it is
             showing. The record list below it is the alternative to the picture.
           -->
+          <!-- The map and its chrome share one box. `.map-container` also holds
+               the seasonal strip and the filter rows, so an overlay pinned to it
+               would sit below the map rather than on it; `.map-frame` is exactly
+               the SVG's box, which is what "on the map" means. -->
+          <div class="map-frame">
           <svg id="situationMap" class="situation-map" viewBox="0 0 800 500"
-               preserveAspectRatio="xMidYMid meet" tabindex="0" role="application"
+               preserveAspectRatio="xMidYMid slice" tabindex="0" role="application"
                aria-label="Situation map. Arrow keys pan, plus and minus zoom, 0 resets the view."
                aria-describedby="mapKeyboardHelp">
             <title id="situationMapTitle">Situation map</title>
@@ -240,21 +245,17 @@
               <g id="mapRoads" class="roads-layer"></g>
               <g id="mapAssets" class="assets-layer"></g>
             </g>
-            <g id="mapLegend" class="map-legend"></g>
-            <g id="mapScale" class="map-scale">
-              <text x="720" y="480" font-size="8" fill="var(--ink-faint)" font-family="var(--font-mono)" text-anchor="end">Scale: ~400 km</text>
-            </g>
             <!--
-              Tile attribution (ADR-013). OSM's tile usage policy requires a
-              visible © OpenStreetMap contributors line — and serving tiles
-              through our proxy does not change that, it just delivers it.
-              renderMapTiles keeps the text current with the chosen source and
-              says "Offline vector basemap" when the choice is the fallback.
+              The legend, the scale bar and the tile attribution used to live
+              here as SVG groups anchored to the viewBox. The map is
+              `preserveAspectRatio="xMidYMid slice"` now — the viewBox is a fixed
+              800x500 (1.6:1) coordinate system and the element is fluid, so the
+              only way it fills an element of any aspect is to crop the viewBox
+              to it. Chrome drawn in viewBox units would be cropped with it, and
+              worst on the tall phone element, where `slice` is a vertical crop.
+              They are HTML overlays in `.map-frame` instead, pinned to the
+              visible element rather than to a coordinate space that gets cut.
             -->
-            <g id="mapAttribution">
-              <text id="mapAttributionText" x="8" y="492" font-size="8" fill="var(--ink-faint)"
-                    font-family="var(--font-mono)" pointer-events="none">Basemap © OpenStreetMap contributors</text>
-            </g>
           </svg>
           <!-- The map's own controls, on the map.
                They were in the console toolbar, three rows above the map and
@@ -269,6 +270,21 @@
             <button type="button" id="zoomResetBtn" aria-label="Reset map view">⌂</button>
             <span id="zoomLevel" aria-live="polite">100%</span>
           </div>
+          <!-- Map chrome, over the map. These were SVG groups until the map
+               switched to `slice`, which crops the viewBox — the legend and the
+               scale bar fell outside the crop on the tall phone element. Pinned
+               to the frame instead, they sit at the same corner at every aspect.
+               The legend is built by renderMapLegend; the attribution is kept
+               current by renderMapTiles. -->
+          <div id="mapLegendOverlayHost" class="map-legend-overlay-host">
+            <details id="mapLegendOverlay" class="map-legend-overlay">
+              <summary class="map-legend-summary">Legend</summary>
+              <div id="mapLegend" class="map-legend-rows" aria-label="Map legend"></div>
+            </details>
+          </div>
+          <span id="mapScale" class="map-scale-overlay">Scale: ~400 km</span>
+          <span id="mapAttributionText" class="map-attribution-overlay">Basemap © OpenStreetMap contributors</span>
+          </div><!-- /.map-frame -->
           <div class="map-legend-text" aria-label="Map layer relationships">
             <p>Districts · Routes · Assets · Hazards · Flood simulation · Food security · Risk assessment · Weather · Disease outbreak</p>
           </div>

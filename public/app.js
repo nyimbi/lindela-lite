@@ -3006,62 +3006,41 @@ function renderMapLegend() {
       { cls: 'sensor-low-battery', label: 'Sensor, low battery', shape: 'sensor-low-battery' },
     ] : []),
   ]
-  const pad = 8
-  const rowH = 17
-  const bW = 92
-  const bH = items.length * rowH + pad * 2
-  const bY = SVG_H - bH - 6
-
-  mapLegendEl.append(svgEl('rect', {
-    x: 6, y: bY, width: bW, height: bH,
-    class: 'legend-bg', rx: 5,
-  }))
-
-  items.forEach((item, i) => {
-    const y = bY + pad + i * rowH + rowH / 2
+  // HTML swatches, not SVG ones: the legend is an overlay now (see index.html),
+  // so it cannot reuse the map's viewBox coordinates. Each swatch is the same
+  // geometry the map draws — same class, same shape, same dash — so the key
+  // still matches the marks, which is the whole job of a legend.
+  const swatch = (item) => {
+    const svg = svgEl('svg', { viewBox: '0 0 24 24', class: 'legend-swatch', 'aria-hidden': 'true' })
+    const cx = 12
+    const cy = 12
     if (item.shape === 'footprint') {
-      // Dashed, matching how a regional bbox is drawn on the map, and hollow so
-      // it cannot be mistaken for a point event with a location we actually know.
-      mapLegendEl.append(svgEl('rect', {
-        x: 12, y: y - 5, width: 12, height: 10,
-        class: 'hazard-footprint', fill: 'oklch(62% 0.12 260)', stroke: 'oklch(72% 0.12 260)',
-      }))
+      svg.append(svgEl('rect', { x: 6, y: 8, width: 12, height: 9, rx: 1, class: 'hazard-footprint' }))
+    } else if (item.shape === 'asset') {
+      svg.append(svgEl('rect', { x: 8, y: 8, width: 8, height: 8, class: `asset-marker ${item.cls}` }))
+    } else if (item.shape === 'sensor') {
+      // The real shape and size a sensor is drawn with, so the entry matches a
+      // pin. The low-battery row carries its own class, hollow and dashed for the
+      // same reason the pin is.
+      svg.append(markerEl('square', cx, cy, 5, `sensor-marker ${item.cls}`, { 'pointer-events': 'none' }))
+    } else if (item.shape === 'weather' || item.shape === 'discharge' || item.shape === 'disease') {
+      const dash = item.shape === 'disease' ? '2,2' : severityDash('medium')
+      svg.append(markerEl('circle', cx, cy, 6, `${item.shape}-marker ${item.cls}`, { 'stroke-dasharray': dash }))
     } else {
-      // The legend draws the same shape the map draws. A swatch that differs
-      // from the mark it explains is worse than no legend: the operator reads
-      // the shape, does not find it, and concludes the map is wrong.
-      if (item.shape === 'asset') {
-        mapLegendEl.append(svgEl('rect', { x: 14, y: y - 4, width: 8, height: 8, class: `asset-marker ${item.cls}` }))
-      } else if (item.shape === 'weather') {
-        mapLegendEl.append(markerEl('circle', 18, y, 6, `weather-marker ${item.cls}`, {
-          'stroke-dasharray': severityDash('medium'),
-        }))
-      } else if (item.shape === 'discharge') {
-        mapLegendEl.append(markerEl('circle', 18, y, 6, `discharge-marker ${item.cls}`, {
-          'stroke-dasharray': severityDash('medium'),
-        }))
-      } else if (item.shape === 'disease') {
-        mapLegendEl.append(markerEl('circle', 18, y, 6, `disease-marker ${item.cls}`, {
-          'stroke-dasharray': '2,2',
-        }))
-      } else if (item.shape === 'sensor') {
-        // The real shape and the real size a sensor is drawn with, so the legend
-        // entry is a mark an operator can match to a pin. The low-battery row
-        // passes its own class, which is hollow and dashed for the same reason
-        // the pin is.
-        mapLegendEl.append(markerEl('square', 18, y, 5, `sensor-marker ${item.cls}`, {
-          'pointer-events': 'none',
-        }))
-      } else {
-        mapLegendEl.append(markerEl(item.shape, 18, y, 6, `hazard-marker ${item.cls}`, {
-          'stroke-dasharray': item.dash,
-        }))
-      }
+      svg.append(markerEl(item.shape, cx, cy, 6, `hazard-marker ${item.cls}`, { 'stroke-dasharray': item.dash }))
     }
-    const lbl = svgEl('text', { x: 30, y: y, class: 'legend-label' })
+    return svg
+  }
+  for (const item of items) {
+    const row = document.createElement('div')
+    row.className = 'legend-row'
+    row.append(swatch(item))
+    const lbl = document.createElement('span')
+    lbl.className = 'legend-label'
     lbl.textContent = item.label
-    mapLegendEl.append(lbl)
-  })
+    row.append(lbl)
+    mapLegendEl.append(row)
+  }
 }
 
 // Map zoom / pan
@@ -3111,11 +3090,17 @@ function zoomAt(cx, cy, factor) {
 /**
  * The live CSS-px → viewBox mapping.
  *
- * The SVG is `xMidYMid meet`, so the drawn map is the *smaller* of the two
- * axis fits, centred in the element with empty bands on the long axis.
- * Treating client pixels as viewBox units — the original drag and wheel math —
- * pans ~30% slower than the cursor on a wide desktop panel and zooms toward a
- * point that is not the cursor. Returns a safe identity mapping (1 unit per
+ * The SVG is `xMidYMid slice`, so the viewBox is scaled to *cover* the element —
+ * the larger of the two axis fits — and the overflow is cropped symmetrically
+ * on the long axis. The element's top-left therefore maps to viewBox (0,0) with
+ * no offset, and one CSS px is `1 / max(w/800, h/500)` units on both axes.
+ *
+ * This replaced a `meet` fit, where the drawn map was the smaller fit centred in
+ * the element with empty bands on the long axis; the wheel math needed an
+ * `originX` to skip those bands and zoom toward the cursor. The bands are gone,
+ * so the offset is zero — but the transform is kept in the return shape because
+ * the wheel handler subtracts it, and a future fit change should not have to
+ * rediscover why the offset existed. Returns a safe identity mapping (1 unit per
  * px, no offset) when there is no layout to measure yet.
  */
 export function mapClientGeometry() {
@@ -3123,11 +3108,11 @@ export function mapClientGeometry() {
   if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
     return { unitsPerPx: 1, originX: 0, originY: 0 }
   }
-  const pxPerUnit = Math.min(rect.width / SVG_W, rect.height / SVG_H)
+  const pxPerUnit = Math.max(rect.width / SVG_W, rect.height / SVG_H)
   return {
     unitsPerPx: 1 / pxPerUnit,
-    originX: (rect.width - SVG_W * pxPerUnit) / 2,
-    originY: (rect.height - SVG_H * pxPerUnit) / 2,
+    originX: 0,
+    originY: 0,
   }
 }
 
@@ -3155,6 +3140,21 @@ $('zoomResetBtn')?.addEventListener('click', () => {
   state.mapTransformUserSet = false
   reRenderMapFromState()
 })
+
+// The legend is expanded at desk size and collapsed to its summary where the map
+// is short: as an HTML overlay it keeps its text size, so an open twelve-row
+// legend covers most of a phone's map. The operator's own toggle wins for the
+// session — once they open or close it, a resize stops overruling them.
+{
+  const legendOverlay = $('mapLegendOverlay')
+  if (legendOverlay) {
+    const narrow = () => window.matchMedia('(max-width: 900px), (max-height: 700px)').matches
+    let userSet = false
+    legendOverlay.open = !narrow()
+    legendOverlay.querySelector('summary')?.addEventListener('click', () => { userSet = true })
+    window.addEventListener('resize', () => { if (!userSet) legendOverlay.open = !narrow() })
+  }
+}
 
 mapEl?.addEventListener('pointerdown', (e) => {
   if (e.target.closest('.hazard-marker, .asset-marker, .hazard-hit, .asset-hit, .weather-marker, .weather-hit')) return

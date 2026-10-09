@@ -555,6 +555,19 @@ body.app-shell {
   overflow: hidden;
 }
 
+/* Exactly the SVG's box, so the chrome overlays anchor to the map rather than
+   to the container — which also holds the seasonal strip and the filter rows
+   below it. `min-height` matches `.situation-map`'s floor: the frame is what
+   carries the map's height now, and the SVG fills it. */
+.map-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 480px;
+  min-width: 0;
+}
+
 .situation-map {
   /*
    * min-height is load-bearing, not cosmetic. .map-container is a flex column
@@ -886,16 +899,8 @@ body.app-shell {
 
 .marker-selected { animation: marker-pulse 1.8s var(--ease) infinite; }
 
-.map-legend { pointer-events: none; }
-
-.legend-bg { fill: var(--bg-elevated); fill-opacity: 0.92; }
-
-.legend-label {
-  fill: var(--ink-muted);
-  font-size: 10px;
-  font-family: var(--font-sans);
-  dominant-baseline: middle;
-}
+/* The legend's fill, label and background rules moved to the overlay block near
+   `.map-legend-text` — the legend is HTML now, not an SVG group in the viewBox. */
 
 /* Map filters */
 .map-filters {
@@ -2485,7 +2490,91 @@ label:has(> input[type="radio"]) {
   color: var(--ink-faint);
 }
 
-.map-scale { font-family: var(--font-mono); font-size: 8px; color: var(--ink-faint); }
+/* Map chrome as HTML overlays. The map is `preserveAspectRatio="slice"`, which
+   crops the viewBox to the element; anything anchored in viewBox units can fall
+   outside the crop (the tall phone element crops vertically). Pinned to
+   `.map-frame` instead, these sit at the same corner at every aspect. The legend
+   and the scale bar share the map's bottom-left; the zoom controls take the
+   top-right; the attribution sits bottom-right.
+   The legend is a `<details>`: as SVG it shrank with the map, but an HTML
+   overlay keeps its text size, so on a phone it would cover half the frame.
+   Expanded by default at desk size, and a one-tap summary pill where it cannot
+   be. */
+.map-legend-overlay-host {
+  position: absolute;
+  inset-block-end: 1.25rem;
+  inset-inline-start: var(--sp-2);
+  z-index: var(--z-controls);
+  max-height: calc(100% - 2.5rem);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.map-legend-overlay {
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: color-mix(in oklab, var(--bg-elevated) 88%, transparent);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(4px);
+}
+.map-legend-summary {
+  cursor: pointer;
+  padding: var(--sp-1) var(--sp-2);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  letter-spacing: 0.02em;
+  list-style: none;
+}
+.map-legend-summary::-webkit-details-marker { display: none; }
+.map-legend-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--sp-2) var(--sp-2);
+  overflow: auto;
+  min-height: 0;
+  pointer-events: none;
+}
+.legend-row { display: flex; align-items: center; gap: var(--sp-2); }
+.legend-swatch { width: 18px; height: 18px; flex: none; }
+.legend-label {
+  fill: var(--ink-muted);
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-family: var(--font-sans);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+/* Where the map is short, the open legend would cover most of it — collapse to
+   the summary pill and let the operator open it. */
+@media (max-width: 900px), (max-height: 700px) {
+  .map-legend-overlay:not([open]) .map-legend-rows { display: none; }
+}
+.map-scale-overlay {
+  position: absolute;
+  inset-block-end: var(--sp-1);
+  inset-inline-end: var(--sp-2);
+  z-index: var(--z-controls);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--ink-faint);
+  pointer-events: none;
+}
+.map-attribution-overlay {
+  position: absolute;
+  inset-block-end: var(--sp-1);
+  inset-inline-start: var(--sp-2);
+  z-index: var(--z-controls);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--ink-faint);
+  pointer-events: none;
+}
 .map-legend-text { font-size: 10px; color: var(--ink-muted); padding: 4px 0; line-height: 1.4; }
 .map-legend-text p { margin: 0; font-weight: 600; }
 

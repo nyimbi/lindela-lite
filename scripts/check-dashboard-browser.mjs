@@ -236,23 +236,32 @@ async function main() {
   // It once rendered at 195x122 on a 1440x900 laptop because the SVG shares a
   // flex column with every panel below it, which put the legend text at 2.4px.
   // No assertion caught that: the cells existed, they were simply invisible.
+  //
+  // The legend is an HTML overlay now, so its text is not scaled by the viewBox
+  // fit at all — the old `* scale` on a 10px font was measuring a number the
+  // browser never painted. Measure the rendered font size directly, and check
+  // the legend is actually inside the map box rather than merely styled.
   const mapBox = await evaluate(`(() => {
     const s = document.getElementById('situationMap')
     const r = s.getBoundingClientRect()
-    const vb = s.getAttribute('viewBox').split(' ').map(Number)
-    const scale = Math.min(r.width / vb[2], r.height / vb[3])
+    const legend = document.getElementById('mapLegend')
+    const lr = legend.getBoundingClientRect()
     const label = document.querySelector('#mapLegend .legend-label')
     return {
-      w: r.width, h: r.height, scale,
-      legendPx: label ? parseFloat(getComputedStyle(label).fontSize) * scale : null,
+      w: r.width, h: r.height,
+      legendPx: label ? parseFloat(getComputedStyle(label).fontSize) : null,
+      legendInside: lr.width > 0 && lr.height > 0 &&
+        lr.left >= r.left - 1 && lr.top >= r.top - 1 &&
+        lr.right <= r.right + 1 && lr.bottom <= r.bottom + 1,
+      legendRows: document.querySelectorAll('#mapLegend .legend-row').length,
     }
   })()`)
   check('map renders large enough to read on a laptop',
     mapBox.h >= 300 && mapBox.w >= 600,
     `map ${Math.round(mapBox.w)}x${Math.round(mapBox.h)}`)
-  check('map legend text stays legible after viewBox scaling',
-    mapBox.legendPx !== null && mapBox.legendPx >= 7,
-    `legend text ~${Math.round(mapBox.legendPx * 10) / 10}px on screen`)
+  check('map legend is legible and sits inside the map',
+    mapBox.legendPx !== null && mapBox.legendPx >= 9 && mapBox.legendInside && mapBox.legendRows >= 10,
+    `legend ${mapBox.legendPx}px, ${mapBox.legendRows} rows, inside=${mapBox.legendInside}`)
 
   const sim = await evaluate(`(() => {
     const rects = [...document.querySelectorAll('#mapFlood rect')];

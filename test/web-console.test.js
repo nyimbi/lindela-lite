@@ -322,33 +322,35 @@ describe('public/app.js — console frontend', () => {
   })
 
   // ==============================================================
-  // Pan/zoom geometry — client px mapped through the meet fit
+  // Pan/zoom geometry — client px mapped through the slice fit
   // ==============================================================
-  describe('map pan/zoom — client px mapped through the meet fit', () => {
+  describe('map pan/zoom — client px mapped through the slice fit', () => {
     const setMapRect = (width, height) => {
       const el = globalThis.document.getElementById('situationMap')
       el.getBoundingClientRect = () => ({ width, height, left: 0, top: 0 })
     }
     after(() => setMapRect(0, 0))
 
-    it('converts both axes with the constraining axis on a wide-and-short panel', () => {
-      // 1039x480 CSS px against an 800x500 viewBox: the height constrains
-      // (0.96 px per unit), the drawn map is 768 CSS px wide, and the leftover
-      // 271 px splits into two 135.5 px bands. Drag math that ignores this
-      // lags the cursor by the full ratio.
+    it('covers a wide-and-short panel with the width axis and no offset', () => {
+      // 1039x480 CSS px against an 800x500 viewBox. `slice` scales the viewBox to
+      // cover the element — the larger axis fit, here the width (1.299 px per
+      // unit) — and crops the vertical overflow. The element's top-left is
+      // viewBox (0,0), so there is no centring offset: drag and wheel map 1:1.
       setMapRect(1039, 480)
       const g = app.mapClientGeometry()
-      assert.ok(Math.abs(g.unitsPerPx - 1 / 0.96) < 1e-9, `unitsPerPx ${g.unitsPerPx}`)
-      assert.equal(g.originX, 135.5)
+      assert.ok(Math.abs(g.unitsPerPx - 800 / 1039) < 1e-9, `unitsPerPx ${g.unitsPerPx}`)
+      assert.equal(g.originX, 0)
       assert.equal(g.originY, 0)
     })
 
-    it('letters a tall-and-narrow phone on the vertical axis instead', () => {
+    it('covers a tall-and-narrow phone with the height axis and no offset', () => {
+      // The phone flips which axis binds: 360x400 makes the height the cover fit
+      // (0.8 px per unit), cropping horizontally instead. Still no offset.
       setMapRect(360, 400)
       const g = app.mapClientGeometry()
-      assert.ok(Math.abs(g.unitsPerPx - 800 / 360) < 1e-9, `unitsPerPx ${g.unitsPerPx}`)
+      assert.ok(Math.abs(g.unitsPerPx - 500 / 400) < 1e-9, `unitsPerPx ${g.unitsPerPx}`)
       assert.equal(g.originX, 0)
-      assert.equal(g.originY, 87.5)
+      assert.equal(g.originY, 0)
     })
 
     it('falls back to identity when there is no layout to measure', () => {

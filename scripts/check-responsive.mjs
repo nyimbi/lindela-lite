@@ -213,6 +213,14 @@ function collect(minTap) {
     // top:-100%. Neither is a clipped control; both would fail on every surface
     // forever if they were counted.
     if (el.classList.contains('visually-hidden') || el.closest('[aria-hidden="true"]')) continue
+    // A marker inside the map is not a clipped control. The map is a panning
+    // surface: the viewBox is scaled to `slice` the element and the operator
+    // drags to bring any marker into view, so a mark outside the window right now
+    // is reachable by the map's own gesture. Measured against `meet` (which
+    // letterboxed instead of cropping) the phone elements cropped horizontally
+    // and nine more marks fell outside the window — the gate's job is a control
+    // the reader cannot reach at all, and the map's marks are not that.
+    if (el.closest('#situationMap')) continue
     const rect = el.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) continue
     if (rect.left < -1) {
