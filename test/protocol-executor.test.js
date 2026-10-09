@@ -5,6 +5,7 @@ import path from 'node:path'
 import { describe, it } from 'node:test'
 
 import { executeTriggerProtocols, evaluateTriggerProtocols, liveContext } from '../src/protocols.js'
+import { createServer } from '../src/server.js'
 import { JsonStore } from '../src/store.js'
 
 /**
@@ -490,5 +491,126 @@ describe('the run is one merge, not one per protocol', () => {
     // cannot collide onto one alert row.
     assert.notEqual(data.alert_events[0].id, data.alert_events[1].id)
     await cleanup()
+  })
+})
+
+describe('the trigger-protocols run route', () => {
+  // WHY: every test above calls executeTriggerProtocols directly, so the
+  // HTTP run path has no guard — a missing 404 for an unknown protocol id,
+  // a dry run leaking rows into the store, or the live response shape
+  // drifting would all ship silently. Both tests pass on HEAD; the
+  // pre-fix-red canary for the executor itself is the duplicate-batch drop
+  // test in test/api-substrate.test.js (e4b12c4).
+
+  async function withRunServer(seed, fn) {
+    const { store, cleanup } = await freshStore(seed)
+    const listener = createServer({ store }).listen(0)
+    const base = `http://localhost:${listener.address().port}`
+    try {
+      return await fn(base, store)
+    } finally {
+      listener.close()
+      await cleanup()
+    }
+  }
+
+  async function runProtocol(base, body) {
+    return await fetch(`${base}/api/v1/trigger-protocols/run`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  }
+
+  it('a scoped dry run reports what would fire and persists nothing', async () => {
+    // WHY: the dry-run branch is reachable only through this handler; a
+    // leak here writes execution and alert rows on every preview. Passes on
+    // HEAD — see the describe comment for the canary.
+    await withRunServer({
+      trigger_protocols: [
+        protocol({ id: 'proto_1' }),
+        protocol({ id: 'proto_2', name: 'Flash flood watch' }),
+      ],
+    }, async (base, store) => {
+      const res = await runProtocol(base, { dry_run: true, protocol_id: 'proto_1' })
+      assert.equal(res.status, 200)
+      const body = await res.json()
+      assert.equal(body.success, true)
+      assert.equal(body.dry_run, true)
+      assert.equal(body.data.dry_run, true)
+
+      // Scoped: proto_2 would fire too, but only the requested row comes back.
+      assert.equal(body.data.executions.length, 1)
+      const row = body.data.executions[0]
+      assert.equal(row.protocol_id, 'proto_1')
+      assert.equal(row.protocol_name, 'Flood escalation')
+      assert.equal(row.protocol_version, 2)
+      assert.equal(row.mode, 'live')
+      assert.equal(row.dry_run, true)
+      assert.equal(row.status, 'executed')
+      assert.equal(row.observed_value, 1)
+      // the alert id the run would have used
+      assert.ok(row.alert_id)
+      assert.equal(row.actor, 'protocol-engine')
+      assert.deepEqual(row.actions, [])
+
+      // A dry run persists nothing, not even an action log.
+      const data = await store.read()
+      assert.equal(data.protocol_executions.length, 0)
+      assert.equal(data.alert_events.length, 0)
+      assert.equal(data.action_logs.length, 0)
+
+      // An unknown protocol id is a 404 that names the id.
+      const missing = await runProtocol(base, { dry_run: true, protocol_id: 'proto_missing' })
+      assert.equal(missing.status, 404)
+      const missingBody = await missing.json()
+      assert.equal(missingBody.success, false)
+      assert.equal(missingBody.error, 'No trigger protocol with id proto_missing')
+    })
+  })
+
+  it('a live unscoped run persists one execution, alert, and action log per firing protocol', async () => {
+    // WHY: the live branch (201, and the rows that reach the store the
+    // dashboard reads) is reachable only through this handler. Passes on
+    // HEAD — see the describe comment for the canary.
+    await withRunServer({
+      trigger_protocols: [
+        protocol({ id: 'proto_1' }),
+        protocol({ id: 'proto_2', name: 'Flash flood watch' }),
+      ],
+    }, async (base, store) => {
+      const res = await runProtocol(base, {})
+      assert.equal(res.status, 201)
+      const body = await res.json()
+      assert.equal(body.success, true)
+      assert.equal(body.dry_run, false)
+      assert.equal(body.data.dry_run, false)
+
+      // Both protocols fire against the single seeded hazard event.
+      assert.equal(body.data.executions.length, 2)
+      const byId = Object.fromEntries(body.data.executions.map((e) => [e.protocol_id, e]))
+      assert.deepEqual(Object.keys(byId).sort(), ['proto_1', 'proto_2'])
+      for (const row of Object.values(byId)) {
+        assert.equal(row.status, 'executed')
+        assert.equal(row.dry_run, false)
+        assert.ok(row.alert_id)
+      }
+
+      const data = await store.read()
+      assert.equal(data.protocol_executions.length, 2)
+      assert.equal(data.alert_events.length, 2)
+      // One action log per firing protocol — the executor's single log site.
+      assert.equal(data.action_logs.length, 2)
+
+      // Each execution row points at a persisted alert that names its protocol.
+      for (const row of body.data.executions) {
+        const alert = data.alert_events.find((a) => a.id === row.alert_id)
+        assert.ok(alert)
+        assert.equal(alert.status, 'open')
+        assert.equal(alert.scope.protocol_id, row.protocol_id)
+        assert.equal(alert.approval.protocol_id, row.protocol_id)
+        assert.equal(alert.approval.state, 'auto_approved')
+      }
+    })
   })
 })
