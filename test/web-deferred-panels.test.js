@@ -92,9 +92,15 @@ describe('ENH-46 — the four panels are deferred', () => {
 
   it('the templates are smaller than what they replaced', () => {
     // A guard against the deferral becoming a relocation that grew the payload.
+    // The ceiling is a measured ratchet, not a target: 20000 held while the
+    // settings panel was the old four-field form, and the protocol-definition
+    // UI (parent-plan Phase D, already shipped) legitimately moved the protocol
+    // editor into it — measured 2026-10-09, the four templates total ~21023
+    // bytes, so the ceiling moves to 21600 and stays a ceiling. The next
+    // template that grows has to buy its bytes with a trim.
     const templates = PANELS.reduce((n, p) => n + read(`public/panels/${p}.html`).length, 0)
     assert.ok(templates > 0)
-    assert.ok(templates < 20000, `the four templates total ${templates} bytes`)
+    assert.ok(templates <= 21600, `the four templates total ${templates} bytes`)
   })
 })
 

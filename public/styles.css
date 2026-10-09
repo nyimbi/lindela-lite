@@ -1233,6 +1233,11 @@ body.app-shell {
 .status-never_run    { background: var(--surface);                                       color: var(--ink-faint); }
 .status-active       { background: color-mix(in oklch, var(--ok) 14%, transparent);     color: var(--ok); }
 .status-unknown      { background: var(--surface);                                       color: var(--ink-faint); }
+/* Task 3 — playbook outcome states from the executor's closed set; refused
+   steps keep their detail as text, so colour is never the whole message. */
+.status-executed     { background: color-mix(in oklch, var(--ok) 14%, transparent);     color: var(--ok); }
+.status-partial      { background: color-mix(in oklch, var(--warn) 14%, transparent);   color: var(--warn); }
+.status-refused      { background: color-mix(in oklch, var(--danger) 14%, transparent); color: var(--danger); }
 
 /* --- Report items -------------------------------------------- */
 .report-item {
@@ -2772,6 +2777,49 @@ label:has(> input[type="radio"]) {
 	color: var(--text-muted);
 }
 .alert-blocked-note { margin: 0.35rem 0 0; }
+
+/* Task 2 — where an alert is about: context, not a headline. The "not
+   recorded" variant is fainter — an absence, not a fact. */
+.alert-where {
+	margin: 0.35rem 0 0;
+	font-size: var(--text-xs);
+	line-height: 1.45;
+	color: var(--text-muted);
+}
+.alert-where-label { font-weight: 600; }
+.alert-where-none { color: var(--ink-faint); font-style: italic; }
+
+/* Task 3 — what authorisation did: header names the authorisation, one row
+   per playbook step; refused steps show their reason; ids in mono chips. */
+.alert-auth-block {
+	margin: 0.45rem 0 0.15rem;
+	padding: 0.5rem 0.6rem;
+	background: var(--surface);
+	border: 1px solid var(--stroke);
+	border-radius: var(--r-sm);
+}
+.alert-auth-header { margin: 0 0 0.2rem; }
+.alert-auth-header strong { font-size: var(--text-xs); font-weight: 600; }
+.alert-auth-line {
+	margin: 0.1rem 0;
+	font-size: var(--text-xs);
+	line-height: 1.45;
+	color: var(--text-muted);
+}
+.alert-auth-rows { display: grid; gap: 0.25rem; margin-top: 0.35rem; }
+.alert-auth-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0.4rem;
+	font-size: var(--text-xs);
+}
+.alert-auth-type { font-weight: 600; }
+.alert-auth-detail { color: var(--text-muted); }
+.record-id-chip {
+	font-size: 0.72rem;
+	overflow-wrap: anywhere;
+}
 .filter-scope-note strong { color: var(--text); font-weight: 600; }
 
 /* The breakdown lives behind a summary now: eight tiles were a decomposition of

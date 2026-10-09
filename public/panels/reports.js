@@ -14,7 +14,7 @@
 export function mount(console_) {
   const {
     $, state, escapeHtml, truncate, displayDate, pageWindow, renderPager,
-    setStatus, postJson, refresh,
+    setStatus, postJson, refresh, t, safeClass,
   } = console_
 
   function renderReportsPanel() {

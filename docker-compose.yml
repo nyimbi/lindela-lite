@@ -20,8 +20,19 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # JSON mode keeps the store at /app/data/lindela-lite-store.json — inside
+    # the container filesystem, which a recreate wipes. The demo deployment
+    # runs json (Task 5), so the store is bind-mounted to ./data on the host:
+    # it survives every recreate, and the post-seed backup is one scp. The
+    # deploy transport excludes data/ by design, so nothing on the host is
+    # overwritten by a code deploy. Postgres mode stores nothing here.
+    volumes:
+      - ./data:/app/data
     environment:
-      LINDELA_LITE_DB_MODE: postgres
+      # Parameterized 2026-10-09 (demo-polish Task 5): the demo deployment runs
+      # json so /health reports the required storage shape; the default here
+      # stays postgres for a real deployment. `demo:seed` works in both modes.
+      LINDELA_LITE_DB_MODE: ${LINDELA_LITE_DB_MODE:-postgres}
       LINDELA_LITE_DATABASE_URL: ${LINDELA_LITE_DATABASE_URL}
       LINDELA_LITE_API_KEY: ${LINDELA_LITE_API_KEY}
       LINDELA_LITE_PORT: ${LINDELA_LITE_PORT:-4177}

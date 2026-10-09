@@ -202,6 +202,15 @@ for (const collection of Object.keys(writes)) {
   if (!(collection in emptyStore())) throw new Error(`unknown collection: ${collection}`)
 }
 await store.merge(writes)
+// The analytics pass ends HERE, not back in seed-demo.mjs: this script merge
+// lands after that file's `refreshAnalytics`, so the rows analytics derives
+// (population at risk per hazard, facilities at risk per type) were computed
+// without these records on every fresh deployment — the demo's population
+// figures read as gaps that were never gaps. A fresh pass over the whole
+// merged store is idempotent: the derived collections are replaced, not
+// accumulated.
+const { refreshAnalytics } = await import('../src/analytics.js')
+await refreshAnalytics(store)
 const after = await store.read()
 console.log('Seeded:')
 for (const [collection, records] of Object.entries(writes)) {

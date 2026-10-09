@@ -47,6 +47,10 @@ const LOCALE_DIR = path.join(PUBLIC, 'i18n')
  * up; lowering one is a deliberate act, not a side effect of a merge.
  */
 const COVERAGE_FLOOR = {
+  // Raised 2026-10-09 to the measured count after the alert-where and
+  // playbook-status strings were translated into sw (281 keys). The floors are
+  // a ratchet, not a target: coverage may only go up, and each raise is a
+  // deliberate act recorded here.
   am: 38,
   ar: 54,
   din: 57,
@@ -55,7 +59,7 @@ const COVERAGE_FLOOR = {
   nk: 54,
   pt: 38,
   so: 100,
-  sw: 211,
+  sw: 281,
 }
 
 /**

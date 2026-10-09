@@ -3599,6 +3599,9 @@ async function refresh({ first = false, force = false } = {}) {
     if (alerts) {
       state.data.alerts = alerts
       renderAlertsBadge(alerts.data || [])
+      // Task 3: fill the authorised-action outcome for alerts fired before the
+      // field existed, from the execution row the alert already names.
+      hydrateProtocolOutcomes(alerts.data || [])
     }
 
     if (merged.events) state.data.events = merged.events
@@ -5174,6 +5177,7 @@ function _renderAlertsPanel() {
         <span class="alert-metric">${escapeHtml(metricText)}</span>
         <span class="status-pill status-${safeClass(alert.status || 'unknown')}">${escapeHtml(statusText)}</span>
       </div>
+      ${alertWhereHtml(alert)}
       <div class="item-actions">
         <button class="btn btn-xs btn-approve" data-id="${escapeHtml(alert.id)}" data-action="approve"
                 ${FOCUS_KEY_ATTR}="alert:${escapeHtml(alert.id)}:approve"
@@ -5191,6 +5195,7 @@ function _renderAlertsPanel() {
                 title="${escapeHtml(outcomeButtonTitle(alert))}">${escapeHtml(outcomeButtonLabel(alert))}</button>
       </div>
       ${outcomeBadge(alert)}
+      ${alertAuthorisationBlock(alert)}
       ${canSend ? '' : `<p class="alert-blocked-note">${escapeHtml(
         `Send is off — ${SEND_BLOCKED_REASON}${statusText}.`
       )}</p>`}
@@ -5313,6 +5318,131 @@ function outcomeBadge(alert) {
     + `${determination.reason ? ` — ${escapeHtml(humanReason(determination.reason))}` : ''}</p>`
 }
 
+/**
+ * Task 2 — where an alert is about: (1) `location` (fire-time resolution),
+ * (2) scope/metadata district (seeded rule alerts), (3) first playbook entry
+ * with a district (pre-field protocol alerts). Null means the record says no
+ * place and the caller words that.
+ */
+function alertWhere(alert) {
+  const _loc = alert?.location
+  if (_loc && typeof _loc === 'object') {
+    const parts = [_loc.name, _loc.admin1, _loc.country]
+      .map((p) => (p === null || p === undefined ? '' : String(p).trim()))
+      .filter(Boolean)
+    if (parts.length) return parts.join(', ')
+    const lat = Number(_loc.latitude)
+    const lon = Number(_loc.longitude)
+    if (Number.isFinite(lat) && Number.isFinite(lon)) return `${lat.toFixed(4)}, ${lon.toFixed(4)}`
+  }
+  const district = alert?.scope?.district ?? alert?.metadata?.district
+    ?? (Array.isArray(alert?.actions)
+      ? alert.actions.find((a) => a && typeof a === 'object' && a.district)?.district ?? null
+      : null)
+  return district === null || district === undefined || district === '' ? null : String(district)
+}
+
+function alertWhereHtml(alert) {
+  const where = alertWhere(alert)
+  return `<p class="alert-where${where ? '' : ' alert-where-none'}">`
+    + `<span class="alert-where-label" data-i18n="alert.where">${escapeHtml(t('alert.where'))}</span>: `
+    + escapeHtml(where || t('alert.whereNotRecorded'))
+    + '</p>'
+}
+
+/** Task 3 — what authorisation DID. Primary: metadata.playbook_results;
+ *  fallback for pre-field alerts: the named execution row, hydrated below. */
+function playbookRowsFor(alert) {
+  if (alert?.approval?.pre_authorised !== true) return null
+  const own = alert?.metadata?.playbook_results
+  if (Array.isArray(own)) return { rows: own, source: 'alert', pending: false }
+  const executionId = alert?.metadata?.execution_id
+  if (!executionId) return { rows: [], source: 'alert', pending: false }
+  const cached = _protocolOutcomeCache.get(executionId)
+  if (cached) return { rows: cached, source: 'execution', pending: false }
+  return { rows: [], source: 'execution', pending: true }
+}
+
+function playbookRowHtml(row) {
+  const status = String(row?.status || 'unknown')
+  // Statuses are a closed set from the executor; anything else renders raw
+  // rather than as a raw i18n key.
+  const knownStatus = ['executed', 'partial', 'refused'].includes(status)
+  const statusLabel = knownStatus ? t(`playbook.status.${status}`) : status
+  return `<div class="alert-auth-row">`
+    + `<span class="alert-auth-type">${escapeHtml(String(row?.type || 'unknown'))}</span>`
+    + `<span class="status-pill status-${safeClass(status)}">${escapeHtml(statusLabel)}</span>`
+    + (row?.detail ? `<span class="alert-auth-detail">${escapeHtml(row.detail)}</span>` : '')
+    + (row?.record_id ? `<code class="record-id-chip">${escapeHtml(row.record_id)}</code>` : '')
+    + `</div>`
+}
+
+function alertAuthorisationBlock(alert) {
+  const pre = playbookRowsFor(alert)
+  const approved = alert?.approval?.state === 'approved'
+  if (!pre && !approved) return ''
+  const lines = []
+  if (pre) {
+    const approvers = (alert.approval.approvers || []).length
+      ? alert.approval.approvers.join(', ')
+      : t('alert.noApprovers')
+    lines.push(`<p class="alert-auth-header"><strong data-i18n="alert.authorisedAction">${escapeHtml(t('alert.authorisedAction'))}</strong></p>`)
+    lines.push(`<p class="alert-auth-line">${escapeHtml(t('alert.preAuthorisedBy', {
+      name: alert.rule_name || alert.approval.protocol_id || '',
+      version: alert.approval.protocol_version ?? '',
+      agreed_at: alert.approval.agreed_at || '—',
+    }))} ${escapeHtml(t('alert.approvers'))}: ${escapeHtml(approvers)}</p>`)
+    if (pre.rows.length) {
+      lines.push(`<div class="alert-auth-rows"${pre.source === 'execution' ? ` title="${escapeHtml(t('alert.outcomeFromExecution'))}"` : ''}>`
+        + pre.rows.map(playbookRowHtml).join('')
+        + '</div>')
+    } else if (pre.pending) {
+      lines.push(`<p class="alert-auth-detail">${escapeHtml(t('alert.outcomePending', { execution_id: alert.metadata.execution_id }))}</p>`)
+    } else {
+      lines.push(`<p class="alert-auth-detail">${escapeHtml(t('alert.outcomeUnavailable'))}</p>`)
+    }
+  }
+  if (approved) {
+    // The approved line plus the note is the whole of the human decision.
+    const note = alert.approval.decision_note ? ` — ${escapeHtml(alert.approval.decision_note)}` : ''
+    lines.push(`<p class="alert-auth-line">${escapeHtml(t('alert.approvedBy', {
+      reviewer: alert.approval.reviewer || '',
+      reviewed_at: alert.approval.reviewed_at || '',
+    }))}${note}</p>`)
+  }
+  return `<div class="alert-auth-block">${lines.join('')}</div>`
+}
+
+/**
+ * Hydrate pre-field alerts: one fetch per execution id per session, one
+ * repaint when the cache gained rows; failure keeps the honest note.
+ */
+const _protocolOutcomeCache = new Map()
+const _protocolOutcomeAsked = new Set()
+
+async function hydrateProtocolOutcomes(alerts) {
+  const needing = (alerts || []).filter((a) =>
+    a?.approval?.pre_authorised === true
+    && !Array.isArray(a?.metadata?.playbook_results)
+    && a?.metadata?.execution_id
+    && !_protocolOutcomeAsked.has(a.metadata.execution_id))
+  if (!needing.length) return
+  for (const a of needing) _protocolOutcomeAsked.add(a.metadata.execution_id)
+  try {
+    const body = await fetchJson('/api/v1/protocol-executions')
+    const rows = body?.data?.data || body?.data || []
+    let gained = false
+    for (const row of rows) {
+      if (!row?.id || !Array.isArray(row.actions)) continue
+      if (!_protocolOutcomeCache.has(row.id) && needing.some((a) => a.metadata.execution_id === row.id)) gained = true
+      _protocolOutcomeCache.set(row.id, row.actions)
+    }
+    if (gained) renderAlertsPanel()
+  } catch {
+    // The card keeps the honest unavailable note; nothing else is blanked.
+  }
+}
+
 async function handleAlertAction(id, action) {
   const safeId = encodeURIComponent(id)
   if (action === 'approve') {
@@ -5359,7 +5489,7 @@ async function reportsPanel() {
   const module = await lazy('/panels/reports.js')
   _reports = module.mount({
     $, state, escapeHtml, truncate, displayDate, pageWindow, renderPager,
-    setStatus, postJson, refresh,
+    setStatus, postJson, refresh, t, safeClass,
   })
   return _reports
 }
@@ -5505,6 +5635,7 @@ async function settingsPanel() {
     $, state, escapeHtml, fetchJson, lazy, setStatus, queueRequest, refresh,
     bindApiKeyInput, reportsPanel, postJson,
     patchJson: async (path, body) => apiFetch(path, { method: 'PATCH', body, headers: authHeaders() }),
+    safeClass,
   })
   return _settings
 }

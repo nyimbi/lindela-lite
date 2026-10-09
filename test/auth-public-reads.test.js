@@ -10,7 +10,7 @@
  */
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
-import fs from 'node:fs'
+import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createServer } from '../src/server.js'
@@ -20,8 +20,15 @@ import { isPublicRequest, publicReadsOpen } from '../src/auth.js'
 describe('public paths widen reads only', () => {
   let baseUrl
   let listener
+  let savedTokens
 
   before(async () => {
+    // Hermetic fixture: `parseTokens` consults LINDELA_LITE_API_KEY only when
+    // LINDELA_LITE_TOKENS is unset, so a tokens variable leaking from the
+    // ambient shell would invalidate the fixture below. Save and restore all
+    // three (the ENV_KEYS pattern from auth-deny-by-default.test.js).
+    savedTokens = process.env.LINDELA_LITE_TOKENS
+    delete process.env.LINDELA_LITE_TOKENS
     process.env.LINDELA_LITE_API_KEY = 'test-public-reads-key'
     process.env.LINDELA_LITE_PUBLIC_PATHS = '/api/v1'
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-public-reads-'))
@@ -33,6 +40,8 @@ describe('public paths widen reads only', () => {
   after(() => {
     delete process.env.LINDELA_LITE_API_KEY
     delete process.env.LINDELA_LITE_PUBLIC_PATHS
+    if (savedTokens === undefined) delete process.env.LINDELA_LITE_TOKENS
+    else process.env.LINDELA_LITE_TOKENS = savedTokens
     listener.close()
   })
 

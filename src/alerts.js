@@ -187,7 +187,7 @@ export function evaluateAlertRules(data, context) {
           superseded_at: now,
           updated_at: now,
         })
-        raised.push(buildAlert(rule, value, { bucket, now, supersedes: current.id, prior_value: current.value, context, inputs: inputIdsFor(rule, data) }))
+        raised.push(buildAlert(rule, value, { bucket, now, supersedes: current.id, prior_value: current.value, context, inputs: inputIdsFor(rule, data), data }))
       } else {
         updated.push({
           ...current,
@@ -201,7 +201,7 @@ export function evaluateAlertRules(data, context) {
     }
 
     if (isSuppressed(data, rule, now)) continue
-    raised.push(buildAlert(rule, value, { bucket, now, context, inputs: inputIdsFor(rule, data) }))
+    raised.push(buildAlert(rule, value, { bucket, now, context, inputs: inputIdsFor(rule, data), data }))
   }
 
   return { raised, updated }
@@ -222,7 +222,8 @@ export function evaluateAlertRules(data, context) {
  * which threshold applied), the exact values the context held, and the ids of
  * the records the value was computed from where the context can name them.
  */
-function buildAlert(rule, value, { bucket, now, supersedes = null, prior_value = null, context = null, inputs = null }) {
+function buildAlert(rule, value, { bucket, now, supersedes = null, prior_value = null, context = null, inputs = null, data = null }) {
+  const inputCollection = collectionForMetric(rule, data)
   const approvalState = rule.severity === 'low' ? 'auto_approved' : 'proposed'
   return {
     id: stableId('alert', [rule.id, bucket, value]),
@@ -234,6 +235,10 @@ function buildAlert(rule, value, { bucket, now, supersedes = null, prior_value =
     value,
     threshold: rule.threshold,
     operator: rule.operator,
+    // Where the alert is about, resolved from its own inputs at the moment it
+    // was built — never re-derived later from a store that has moved on. Null
+    // means "not recorded" and the console says so in words.
+    location: locationForAlertInputs(rule, data, inputs),
     message: `${rule.name}: ${rule.metric} ${rule.operator} ${rule.threshold} (actual ${value})`,
     actions: rule.actions,
     scope: rule.scope,
@@ -260,6 +265,13 @@ function buildAlert(rule, value, { bucket, now, supersedes = null, prior_value =
       // per-record identity to name, and an empty array would read as "no
       // records were involved".
       input_record_ids: inputs,
+      // The cap's own facts, stated rather than implied (the comment above
+      // inputIdsFor claims them): the reader can tell a complete id list from
+      // a sample without counting.
+      input_record_ids_total: inputCollection ? inputCollection.length : null,
+      input_record_ids_truncated: Boolean(inputCollection)
+        && Array.isArray(inputs)
+        && inputCollection.length > inputs.length,
       engine: {
         module: 'src/alerts.js',
         rule_schema: '1',
@@ -543,21 +555,83 @@ export function evaluateInShadowMode(protocol, context) {
  */
 const MAX_INPUT_IDS = 50
 
-function inputIdsFor(rule, data) {
-  if (!data) return null
-  // A rule names a metric, and the metric is usually a *count* — so the
-  // collection it counts is named by the last segment of its path, and the
-  // records behind it are the store's collection of that name. Resolving
-  // against `data` rather than against the context is what makes this possible:
-  // the context holds the number, and the number is not the input.
+/** The store collection a rule's metric counts, when the path names one and
+ *  the data holds it. Shared by inputIdsFor and the location walk: the metric
+ *  is a path like `counts.hazard_events` whose last segment names the
+ *  collection counted, so the records behind the count are the store's
+ *  collection of that name. Resolving against `data` rather than the
+ * context is what makes the per-record ids possible: the context holds the
+ * number, and the number is not the input. */
+function collectionForMetric(rule, data) {
   const collection = String(rule.metric || '').split('.').pop()
-  const records = collection ? data[collection] : null
-  if (!Array.isArray(records)) return null
+  return data && collection && Array.isArray(data[collection]) ? data[collection] : null
+}
+
+function inputIdsFor(rule, data) {
+  const records = collectionForMetric(rule, data)
+  if (!records) return null
   return records.slice(0, MAX_INPUT_IDS).map((record) => record?.id).filter(Boolean)
 }
 
 export function resolveMetric(context, path) {
   return String(path).split('.').reduce((value, part) => value?.[part], context)
+}
+
+/**
+ * The place one input record names, or null.
+ *
+ * The named records (climate, hazard, conflict and the field-signal
+ * collections) carry `country`, `admin1`, `district`, `latitude`, `longitude`
+ * in whatever combination the source had. A record qualifies as a place when
+ * any of those is present; coordinates count only as a pair, because one half
+ * of a coordinate is not a place a responder can drive to. The emitted object
+ * says null for each field the record did not carry — absent-vs-null
+ * discipline — rather than omitting the keys and leaving the reader to infer.
+ */
+function placeOf(record) {
+  if (!record || typeof record !== 'object') return null
+  const latitude = toNumber(record.latitude)
+  const longitude = toNumber(record.longitude)
+  const coordsKnown = Number.isFinite(latitude) && Number.isFinite(longitude)
+  const name = record.title || record.admin2 || null
+  const admin1 = record.admin1 || null
+  const country = record.country || null
+  const hasPlace = Boolean(name || admin1 || country || record.district || coordsKnown)
+  if (!hasPlace) return null
+  return {
+    name,
+    admin1,
+    country,
+    latitude: coordsKnown ? latitude : null,
+    longitude: coordsKnown ? longitude : null,
+  }
+}
+
+/**
+ * Where the alert is about, from its own evidence.
+ *
+ * Walk the input records by id; the first one carrying a place wins. A rule
+ * whose `scope` names a district supplies a fallback label when the records
+ * carry no place of their own — the rule was scoped to a place even if the
+ * reading behind the fire was not attached to one. When nothing resolves the
+ * key is still emitted as null: "not recorded" is an answer, an absent key is
+ * a guess.
+ */
+function locationForAlertInputs(rule, data, inputs) {
+  if (data && Array.isArray(inputs) && inputs.length) {
+    const collection = collectionForMetric(rule, data)
+    if (collection) {
+      const byId = new Map(collection.filter((r) => r?.id).map((r) => [r.id, r]))
+      for (const id of inputs) {
+        const place = placeOf(byId.get(id))
+        if (place) return place
+      }
+    }
+  }
+  const district = rule.scope?.district
+  return district
+    ? { name: district, admin1: null, country: null, latitude: null, longitude: null }
+    : null
 }
 
 export function compare(value, operator, threshold) {

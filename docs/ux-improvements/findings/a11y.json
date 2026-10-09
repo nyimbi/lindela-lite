@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-05T19:31:10.775Z",
+  "generatedAt": "2026-10-08T13:20:59.205Z",
   "engine": "axe-core 4.13.0, tags wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa,best-practice",
   "conditions": [
     "dark@1440",
@@ -29,7 +29,36 @@
         "bg": "oklch(15% 0.02 260)",
         "stored": null
       },
-      "violations": []
+      "violations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "help": "Elements must meet minimum color contrast ratio thresholds",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=axeAPI",
+          "tags": [
+            "cat.color",
+            "wcag2aa",
+            "wcag143",
+            "TTv5",
+            "TT13.c",
+            "EN-301-549",
+            "EN-9.1.4.3",
+            "ACT",
+            "RGAAv4",
+            "RGAA-3.2.1"
+          ],
+          "nodes": [
+            {
+              "target": [
+                ".status-refused"
+              ],
+              "failureSummary": "Fix any of the following:   Element has insufficient color contrast of 4.22 (foreground color: #f94144, background color: #352028, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1",
+              "html": "<span class=\"status-pill status-refused\">refused</span>"
+            }
+          ],
+          "nodeCount": 1
+        }
+      ]
     },
     {
       "surface": "dashboard",

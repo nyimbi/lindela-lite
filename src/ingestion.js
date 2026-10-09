@@ -1123,6 +1123,15 @@ async function runConnectorWithRetries(connector, request) {
  *
  * Export it and assert on it. A guard that greps source text for the spelling
  * of a collection name passes with this bug fully present.
+ *
+ * The last two widened with the field-signals work: the DHIS2 connector emits
+ * `school_attendance_observations` and the IoT gateway emits
+ * `iot_observations`, but this list was not widened with them, so runIngestion
+ * accumulated neither — the connectors' outputs were dropped on the floor
+ * while their store quarantine homes (and this file's own "in step, in both
+ * directions" test) sat waiting for them. A quarantine home with no ingestable
+ * collection is dead storage; a connector output with no quarantine home is a
+ * silent hole. Both sides name all nine now.
  */
 export const OUTPUT_COLLECTIONS = [
   'climate_observations',
@@ -1132,6 +1141,8 @@ export const OUTPUT_COLLECTIONS = [
   'food_security_records',
   'disease_observations',
   'weather_forecasts',
+  'school_attendance_observations',
+  'iot_observations',
 ]
 
 function countRecords(output) {

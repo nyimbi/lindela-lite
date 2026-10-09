@@ -4268,7 +4268,21 @@ async function handleProtocolRoute(store, data, req, res, url, route) {
   if (req.method === 'POST' && url.pathname === '/api/v1/trigger-protocols/run') {
     const body = await readRequestJson(req)
     const dryRun = Boolean(body.dry_run)
-    const result = await executeTriggerProtocols(store, await store.read(), { dryRun, actor: body.actor, subject: req.__auth?.subject })
+    // Optional body.protocol_id scopes the run to a single protocol (the ops
+    // action rail's per-row Run control). Unknown ids 404 rather than running
+    // nothing: silently scoping to an empty set would report success and hide
+    // the typo.
+    const data = await store.read()
+    let scoped = data
+    if (body.protocol_id) {
+      const target = data.trigger_protocols.find((p) => p.id === body.protocol_id)
+      if (!target) {
+        jsonResponse(res, 404, { success: false, error: `No trigger protocol with id ${body.protocol_id}` })
+        return
+      }
+      scoped = { ...data, trigger_protocols: [target] }
+    }
+    const result = await executeTriggerProtocols(store, scoped, { dryRun, actor: body.actor, subject: req.__auth?.subject })
     jsonResponse(res, dryRun ? 200 : 201, { success: true, dry_run: dryRun, data: result })
     return
   }

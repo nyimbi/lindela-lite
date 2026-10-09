@@ -171,6 +171,51 @@ describe('a firing live protocol raises an auto-approved alert', () => {
     assert.equal(execution.status, 'executed', 'an empty playbook still executed the alert')
     await cleanup()
   })
+
+  it('the alert carries the playbook district as its place and the outcome as its own', async () => {
+    // Two demo properties in one fixture: where the alert is about comes from
+    // the playbook (protocol metrics are aggregate counts — no per-record
+    // identity to inherit a place from), and what authorisation DID travels on
+    // the alert itself, the same array the execution row records. The alert
+    // was already pushed before the actions loop ran, and the single merge at
+    // the end covers it — no second write exists.
+    const { store, cleanup } = await freshStore({
+      trigger_protocols: [protocol({
+        agreed_at: '2026-10-01',
+        action_playbook: [
+          { type: 'notify', recipients: ['tel:+254700000001'] },
+          { type: 'intervention', id: 'protect', title: 'Protect cold chain ahead of flooding', district: 'turkana' },
+          { type: 'task', for: 'protect', title: 'Relocate vaccines within 6 hours' },
+        ],
+      })],
+    })
+    await executeTriggerProtocols(store, await store.read(), { now: NOW, env: NO_RAPIDPRO })
+    const data = await store.read()
+    const [alert] = data.alert_events
+    const [execution] = data.protocol_executions
+
+    assert.deepEqual(alert.location, { name: 'turkana', admin1: null, country: null, latitude: null, longitude: null })
+    assert.equal(alert.scope.district, 'turkana')
+    assert.deepEqual(alert.metadata.playbook_results, execution.actions,
+      'the alert itself says what authorisation did, row for row')
+    assert.equal(alert.metadata.execution_id, execution.id)
+    assert.equal(alert.approval.agreed_at, '2026-10-01')
+    assert.equal(execution.status, 'partial', 'one step refused (notify) does not make a clean execution')
+    await cleanup()
+  })
+
+  it('a playbook that names no district leaves the alert placeless — null, not a guess', async () => {
+    const { store, cleanup } = await freshStore({
+      trigger_protocols: [protocol({
+        action_playbook: [{ type: 'notify', recipients: ['tel:+254700000001'] }],
+      })],
+    })
+    await executeTriggerProtocols(store, await store.read(), { now: NOW, env: NO_RAPIDPRO })
+    const data = await store.read()
+    assert.equal(data.alert_events[0].location, null)
+    assert.equal(data.alert_events[0].scope.district, undefined)
+    await cleanup()
+  })
 })
 
 describe('a condition that persists does not stack alerts', () => {

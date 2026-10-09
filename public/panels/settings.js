@@ -14,7 +14,7 @@
 export function mount(console_) {
   const {
     $, state, escapeHtml, fetchJson, lazy, setStatus, queueRequest, refresh,
-    bindApiKeyInput, reportsPanel, postJson, patchJson,
+    bindApiKeyInput, reportsPanel, postJson, patchJson, safeClass,
   } = console_
 
   // Captured from the confirm module when it loads (same lazy chain as the

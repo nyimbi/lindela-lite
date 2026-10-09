@@ -186,6 +186,10 @@ function provenanceBlock(provenance, served, refusal) {
  */
 export async function renderExplain(host, record, { load, kind } = {}) {
   if (!host || !record) return null
+  // An alert event is not a score. Its own derivation IS the explanation — the
+  // score path below would only refuse to decompose what was never computed.
+  const alertKind = alertEventKind(record)
+  if (alertKind) return renderAlertExplain(host, record, load, alertKind)
   let explanation
   try {
     explanation = explainRecord(record)
@@ -249,6 +253,232 @@ export async function renderExplain(host, record, { load, kind } = {}) {
     ${provenanceBlock(served?.provenance, served, provedanceRefusal)}
     ${provenanceBits ? `<p class="chart-panel-note">${provenanceBits}${provenance.methodology ? ` · ${esc(provenance.methodology)}` : ''}</p>` : ''}`
   return explanation
+}
+
+// =============================================================
+// Alert events — the explain panel reading a fired alert
+// =============================================================
+// An alert has no score to decompose, and the generic path correctly refuses
+// to invent one. What it CAN answer — from the record alone — is the question
+// the alert card answers too: which conditions were read, whether they held,
+// what authorised the fire, and what authorisation DID. All three travel on
+// the alert (derivation.condition_set, approval, metadata.playbook_results);
+// the two facts that live in other rows — the protocol's agreed date, and a
+// playbook outcome recorded before that field existed — are fetched through
+// the caller's loader and never invented.
+
+/**
+ * Is this record an alert event, and which engine fired it?
+ *
+ * `rule_schema: 'protocol/1'` is the pre-authorised protocol path
+ * (src/protocols.js); `'1'` is a registered scoring rule (src/alerts.js).
+ * Both are written by the alert builders at fire time, so this is a fact
+ * about how the record was made, not a shape guess. Anything else is not an
+ * alert and takes the score path untouched.
+ */
+function alertEventKind(record) {
+  const schema = record?.derivation?.engine?.rule_schema
+  if (schema === 'protocol/1') return 'protocol'
+  if (schema === '1') return 'rule'
+  return null
+}
+
+/** The place an alert names, joined the way the alert card joins it —
+ *  name, admin1, country; coordinates when no name exists. The counterpart
+ *  of `alertWhere` in public/app.js; kept local because the console module
+ *  is not importable from here. */
+function alertWhereText(record) {
+  const parts = [record?.location?.name, record?.location?.admin1, record?.location?.country]
+    .filter((p) => p !== null && p !== undefined && p !== '')
+    .map((p) => String(p))
+  if (parts.length) return parts.join(', ')
+  const lat = Number(record?.location?.latitude)
+  const lon = Number(record?.location?.longitude)
+  if (Number.isFinite(lat) && Number.isFinite(lon)) return `${lat.toFixed(4)}, ${lon.toFixed(4)}`
+  const district = record?.scope?.district ?? record?.metadata?.district
+  return district === null || district === undefined || district === '' ? null : String(district)
+}
+
+/** The condition set, one row per term, plus the combinator and fail-closed
+ *  answer. Satisfied is a three-state answer on purpose: a term that could
+ *  not resolve at all is not "not satisfied" — it is unresolvable, and that
+ *  is exactly what stops the whole set (fail-closed). */
+function conditionSetBlock(conditionSet) {
+  const rows = (conditionSet.terms || []).map((term) => {
+    const observed = term.term_unresolvable || term.observed_value === null || term.observed_value === undefined
+      ? 'unresolvable'
+      : String(term.observed_value)
+    const verdict = term.term_unresolvable
+      ? 'unresolvable'
+      : term.satisfied ? 'satisfied' : 'not satisfied'
+    return `<tr>`
+      + `<th scope="row">${esc(String(term.metric))}</th>`
+      + `<td>${esc(String(term.negate ? `NOT ${term.operator}` : term.operator))} ${esc(String(term.threshold))}</td>`
+      + `<td class="num">${esc(observed)}</td>`
+      + `<td>${esc(verdict)}</td>`
+      + `</tr>`
+  }).join('')
+  const combinator = String(conditionSet.combinator || 'and').toUpperCase()
+  const negateNote = conditionSet.negate
+    ? '<p class="chart-panel-note">The set result is inverted (NOT): the alert fires when the combined conditions together fail.</p>'
+    : ''
+  const evaluableNote = conditionSet.evaluable === false
+    ? '<p class="chart-panel-refused">fail-closed: an unresolvable term never fires</p>'
+    : ''
+  return `<p class="chart-panel-title">Conditions, as the executor read them</p>`
+    + `<p class="chart-panel-note">Combined with ${esc(combinator)}.</p>`
+    + `<div class="chart-table"><table class="data-alt">`
+    + `<thead><tr><th scope="col">Metric</th><th scope="col">Condition</th><th scope="col" class="num">Observed</th><th scope="col">Verdict</th></tr></thead>`
+    + `<tbody>${rows}</tbody></table></div>`
+    + negateNote
+    + evaluableNote
+}
+
+/**
+ * The pre-authorisation block. The alert's own approval fields render
+ * directly; the protocol's `agreed_at` and name live in the protocol record,
+ * fetched by the id the alert already carries — and a fetch that did not
+ * happen says so rather than inventing a date or an approver.
+ */
+function preAuthorisationBlock(alert, protocolRecord, protocolFetchState, protocolId) {
+  const approval = alert.approval || {}
+  let refused = ''
+  if (!protocolRecord) {
+    const reason = protocolFetchState === 'no-loader'
+      ? `The protocol record (${esc(String(protocolId))}) was not fetched: no authenticated loader is available, so its agreed date and name cannot be shown from the store.`
+      : protocolFetchState === 'unreachable'
+        ? `The protocol record (${esc(String(protocolId))}) could not be fetched; its agreed date is not checkable from this record alone.`
+        : `The protocol record (${esc(String(protocolId))}) is not in this store.`
+    refused = `<p class="chart-panel-refused">${reason}</p>`
+  }
+  const name = protocolRecord?.name || alert.rule_name || String(protocolId)
+  const agreedAt = protocolRecord?.agreed_at ?? approval.agreed_at ?? null
+  const approvers = Array.isArray(approval.approvers) && approval.approvers.length
+    ? approval.approvers.map((a) => esc(String(a))).join(', ')
+    : null
+  const lines = [`Pre-authorised by protocol ${esc(String(name))} v${esc(String(approval.protocol_version ?? ''))}`, `protocol id ${esc(String(protocolId))}`, `decided ${esc(String(approval.decided_at ?? ''))}`]
+  if (agreedAt) lines.push(`agreed ${esc(String(agreedAt))}`)
+  const approverLine = approvers
+    ? `<p class="chart-panel-note">Approvers: ${approvers}</p>`
+    : '<p class="chart-panel-refused">No approvers are recorded on this alert; the pre-authorisation cannot be attributed.</p>'
+  return `<p class="chart-panel-title">Pre-authorisation</p>`
+    + `<p class="chart-panel-note">${lines.join(' · ')}</p>`
+    + approverLine
+    + refused
+}
+
+/** One playbook outcome table, or the honest empty when nothing is recorded. */
+function playbookOutcomeBlock(alert, executionActions, outcomeSource) {
+  const rows = Array.isArray(executionActions) ? executionActions : []
+  if (!rows.length) {
+    return '<p class="chart-panel-refused">No playbook outcome is recorded for this alert.</p>'
+  }
+  const body = rows.map((row) => `<tr>`
+    + `<th scope="row">${esc(String(row?.type || 'unknown'))}</th>`
+    + `<td><span class="status-pill status-${esc(String(row?.status || 'unknown'))}">${esc(String(row?.status || 'unknown'))}</span></td>`
+    + `<td>${esc(String(row?.detail || ''))}</td>`
+    + `<td>${row?.record_id ? `<code>${esc(String(row.record_id))}</code>` : ''}</td>`
+    + `</tr>`).join('')
+  const sourceNote = outcomeSource === 'execution'
+    ? '<p class="chart-panel-note">Outcome read from the linked execution record (the alert itself predates the field).</p>'
+    : ''
+  return `<p class="chart-panel-title">Playbook outcome</p>${sourceNote}`
+    + `<div class="chart-table"><table class="data-alt">`
+    + `<thead><tr><th scope="col">Step</th><th scope="col">Status</th><th scope="col">Detail</th><th scope="col">Record</th></tr></thead>`
+    + `<tbody>${body}</tbody></table></div>`
+}
+
+/** The rule derivation, for alerts a registered scoring rule fired. */
+function ruleDerivationBlock(record) {
+  const d = record.derivation || {}
+  const ids = Array.isArray(d.input_record_ids) ? d.input_record_ids : null
+  const countLines = []
+  if (ids) countLines.push(`the reading was computed from ${ids.length} record(s)`)
+  else countLines.push('the reading has no per-record inputs it can name (an aggregate over the store)')
+  if (d.input_record_ids_truncated === true && d.input_record_ids_total != null) {
+    countLines.push(`the id list is a sample of ${String(d.input_record_ids_total)}`)
+  }
+  const where = alertWhereText(record)
+  const whereLine = where
+    ? `<p class="chart-panel-note"><strong>Where:</strong> ${esc(where)}</p>`
+    : '<p class="chart-panel-note"><strong>Where:</strong> <span class="chart-panel-refused">not recorded for this alert</span></p>'
+  const approval = record.approval || {}
+  const approvalLine = approval.state === 'approved'
+    ? `<p class="chart-panel-note"><strong>Approval:</strong> ${esc(String(approval.reviewer || 'unknown'))} at ${esc(String(approval.reviewed_at || ''))}${approval.decision_note ? ` — ${esc(String(approval.decision_note))}` : ''}</p>`
+    : ''
+  return `<p class="chart-panel-note">Rule version at fire: ${esc(String(d.rule_version ?? 'unknown'))} · rule then named “${esc(String(d.rule_name_at_fire || record.rule_name || ''))}”</p>`
+    + `<p class="chart-panel-note"><strong>Fired when:</strong> ${esc(String(d.metric || record.metric || ''))} ${esc(String(d.operator || record.operator || ''))} ${esc(String(d.threshold ?? record.threshold ?? ''))} (observed ${esc(String(d.observed_value ?? record.value ?? ''))} at ${esc(String(d.observed_at || ''))})</p>`
+    + whereLine
+    + countLines.map((l) => `<p class="chart-panel-note">${esc(l)}</p>`).join('')
+    + approvalLine
+}
+
+/**
+ * Render the explanation of an alert event.
+ *
+ * Protocol alerts get the condition set, the pre-authorisation and the
+ * playbook outcome; rule alerts get the rule derivation, the input count and
+ * the where. The protocol record and, for pre-field alerts, the playbook
+ * outcome are fetched through `load` — the console's authenticated fetchJson
+ * — and every fetch that did not happen is named rather than papered over.
+ * Returns null: the alert has no score for a caller to reuse.
+ */
+async function renderAlertExplain(host, record, load, kind) {
+  const isProtocol = kind === 'protocol'
+  const approval = record.approval || {}
+  const protocolId = approval.protocol_id || record.metadata?.protocol_id || record.scope?.protocol_id || null
+  let protocolRecord = null
+  let protocolFetchState = isProtocol && typeof load !== 'function' ? 'no-loader' : null
+  if (isProtocol && protocolId && typeof load === 'function') {
+    try {
+      const body = await load(`/api/v1/trigger-protocols/${encodeURIComponent(String(protocolId))}`)
+      if (body?.success === false) protocolFetchState = 'missing'
+      else protocolRecord = body?.data || null
+    } catch {
+      protocolFetchState = 'unreachable'
+    }
+  }
+
+  let playbookActions = Array.isArray(record.metadata?.playbook_results) ? record.metadata.playbook_results : null
+  let outcomeSource = 'alert'
+  if (playbookActions === null && record.metadata?.execution_id && typeof load === 'function') {
+    // A pre-field alert: what authorisation did lives in the execution row the
+    // alert already names. Fetched once, here, and labelled as the source.
+    try {
+      const body = await load('/api/v1/protocol-executions')
+      const rows = body?.data?.data || body?.data || []
+      const row = rows.find((r) => r?.id === record.metadata.execution_id)
+      if (row && Array.isArray(row.actions)) {
+        playbookActions = row.actions
+        outcomeSource = 'execution'
+      }
+    } catch {
+      // The honest empty below covers the miss.
+    }
+  }
+
+  const parts = []
+  const title = isProtocol
+    ? 'How this alert was pre-authorised'
+    : 'How this alert was produced'
+  const caption = isProtocol
+    ? 'A pre-authorised trigger protocol fired this alert: the protocol IS the authorisation. The conditions below are the set as it was evaluated at fire time.'
+    : 'A registered scoring rule fired this alert. The rule the alert carries is the one that fired — versioned, so a later edit is a different version.'
+  parts.push(`<p class="chart-panel-title">${esc(title)}</p>`)
+  parts.push(`<p class="chart-panel-note">${esc(caption)}</p>`)
+  if (isProtocol && (record.derivation?.condition_set?.terms || []).length) {
+    parts.push(conditionSetBlock(record.derivation.condition_set))
+  } else if (isProtocol) {
+    parts.push('<p class="chart-panel-refused">This alert carries no condition set; what it fired on is recorded only in the metric line below.</p>')
+  }
+  if (isProtocol) {
+    parts.push(preAuthorisationBlock(record, protocolRecord, protocolFetchState, protocolId))
+    parts.push(playbookOutcomeBlock(record, playbookActions, outcomeSource))
+  } else {
+    parts.push(ruleDerivationBlock(record))
+  }
+  host.innerHTML = parts.join('\n')
+  return null
 }
 
 /**
