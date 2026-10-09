@@ -123,12 +123,6 @@
               <option value="none">Offline vector</option>
             </select>
           </label>
-          <span class="filter-label map-zoom-controls" aria-label="Map zoom">
-            <button type="button" id="zoomOutBtn" aria-label="Zoom out">−</button>
-            <span id="zoomLevel" aria-live="polite">100%</span>
-            <button type="button" id="zoomInBtn" aria-label="Zoom in">+</button>
-            <button type="button" id="zoomResetBtn" aria-label="Reset map view">⌂</button>
-          </span>
           <span id="mapRecordCount" class="map-record-count"></span>
           <!-- The map's text alternative. Nothing in the product listed hazards,
                assets, flood extents or road state as text, so on both
@@ -262,6 +256,19 @@
                     font-family="var(--font-mono)" pointer-events="none">Basemap © OpenStreetMap contributors</text>
             </g>
           </svg>
+          <!-- The map's own controls, on the map.
+               They were in the console toolbar, three rows above the map and
+               past the filters, basemap picker and record count — so the control
+               that changes what the map shows was the furthest thing from it on
+               the screen, and at phone width it sat in the clipped row. Floating
+               them over the corner the map leaves empty keeps the control with
+               the thing it controls at every viewport. -->
+          <div class="map-zoom-controls" role="group" aria-label="Map zoom">
+            <button type="button" id="zoomInBtn" aria-label="Zoom in">+</button>
+            <button type="button" id="zoomOutBtn" aria-label="Zoom out">−</button>
+            <button type="button" id="zoomResetBtn" aria-label="Reset map view">⌂</button>
+            <span id="zoomLevel" aria-live="polite">100%</span>
+          </div>
           <div class="map-legend-text" aria-label="Map layer relationships">
             <p>Districts · Routes · Assets · Hazards · Flood simulation · Food security · Risk assessment · Weather · Disease outbreak</p>
           </div>

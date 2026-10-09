@@ -944,13 +944,34 @@ body.app-shell {
      tap-target rule and left the map filters at 24px on a phone. */
 }
 
+/* The map's zoom cluster, floating over the map's corner.
+   Absolute against `.map-container`, which is already `position: relative`.
+   `--z-controls` (10) keeps it over the SVG and under the rail (`--z-rail`,
+   20) so a dialog or a drawer opened later still wins. */
+.map-zoom-controls {
+  position: absolute;
+  top: var(--sp-3);
+  inset-inline-end: var(--sp-3);
+  z-index: var(--z-controls);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  align-items: stretch;
+  background: color-mix(in oklab, var(--bg-elevated) 88%, transparent);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  padding: var(--sp-1);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(4px);
+}
+
 .map-zoom-controls button {
   background: var(--surface);
   color: var(--ink);
   border: 1px solid var(--stroke);
   border-radius: var(--r-sm);
   width: 1.75rem;
-  height: 1.5rem;
+  height: 1.75rem;
   cursor: pointer;
   font-weight: 700;
   font-size: var(--text-sm);
@@ -959,11 +980,11 @@ body.app-shell {
 .map-zoom-controls button:active { transform: translateY(1px); }
 .map-zoom-controls #zoomResetBtn { font-size: 0.85rem; }
 .map-zoom-controls #zoomLevel {
-  display: inline-block;
-  min-width: 2.75rem;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
   text-align: center;
   font-variant-numeric: tabular-nums;
-  font-size: var(--text-xs);
+  min-width: 2.75rem;
 }
 
 .map-record-count {
