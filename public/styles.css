@@ -1238,6 +1238,8 @@ body.app-shell {
 .status-executed     { background: color-mix(in oklch, var(--ok) 14%, transparent);     color: var(--ok); }
 .status-partial      { background: color-mix(in oklch, var(--warn) 14%, transparent);   color: var(--warn); }
 .status-refused      { background: color-mix(in oklch, var(--danger) 14%, transparent); color: var(--danger); }
+/* The narrator: model-written commentary, marked as model text. */
+.status-narrated     { background: color-mix(in oklch, var(--brand) 14%, transparent); color: var(--brand); }
 
 /* --- Report items -------------------------------------------- */
 .report-item {

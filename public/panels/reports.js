@@ -33,15 +33,25 @@ export function mount(console_) {
         // a clause. Shortened for the rail; the full string is on the title, and
         // the exported document carries all of it.
         const title = r.title || r.template_name || 'Untitled report'
+        // The narrator's state, on the row it belongs to — narrated, refused,
+        // or untouched. A narrated row says which model wrote it, because a
+        // reader must know which words were computed and which were written.
+        const narrationChip = r.narrative?.status === 'narrated'
+          ? `<span class="status-pill status-narrated" title="${escapeHtml(t('reports.narratedTitle', { model: r.narrative.model || '' }))}">${escapeHtml(t('reports.narratedChip', { model: r.narrative.model || '' }))}</span>`
+          : r.narrative?.status === 'refused'
+            ? `<span class="status-pill status-refused" title="${escapeHtml(String(r.narrative.reason || ''))}">${escapeHtml(t('reports.narrationRefused'))}</span>`
+            : ''
         return `<div class="report-item" role="listitem">
           <div class="report-item-title" title="${escapeHtml(title)}">${escapeHtml(truncate(title, { max: 64 }))}</div>
           <div class="report-item-meta">
             <span class="status-pill status-${safeClass(r.status || 'draft')}">${escapeHtml(r.status || '')}</span>
+            ${narrationChip}
             <span>${displayDate(r.generated_at)}</span>
           </div>
           <div class="item-actions">
             ${canApprove ? `<button class="btn btn-xs btn-approve" data-id="${escapeHtml(r.id)}" data-action="approve">Approve</button>` : ''}
             ${canDist    ? `<button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="distribute">Distribute</button>` : ''}
+            <button class="btn btn-xs btn-narrate" data-id="${escapeHtml(r.id)}" data-action="narrate" data-i18n="reports.narrate">Narrate</button>
             <button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="export-md">MD</button>
             <button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="export-csv">CSV</button>
             <button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="export-json">JSON</button>
@@ -73,16 +83,25 @@ export function mount(console_) {
 
   async function handleReportAction(id, action) {
     const safeId = encodeURIComponent(id)
-    if (action === 'approve') {
+    if (action === 'narrate') {
+      const payload = await postJson(`/api/v1/reports/${safeId}/narrate`, { actor: 'dashboard' })
+      const narr = payload.data?.narrative
+      if (narr?.status === 'narrated') {
+        setStatus(t('reports.narratedStatus', { model: narr.model || '' }))
+      } else {
+        setStatus(t('reports.narrationFailed', { reason: narr?.reason || payload.error || 'the server gave no reason' }))
+      }
+      await refresh({ force: true })
+    } else if (action === 'approve') {
       const payload = await postJson(`/api/v1/reports/${safeId}/approve`, { actor: 'dashboard' })
-      setStatus(payload.success ? `Report ${report.id} approved. It can now be distributed.`
-        : `Could not approve report ${report.id}: ${payload.error || 'the server gave no reason'}.`)
+      setStatus(payload.success ? `Report ${id} approved. It can now be distributed.`
+        : `Could not approve report ${id}: ${payload.error || 'the server gave no reason'}.`)
       await refresh({ force: true })
     } else if (action === 'distribute') {
       const payload = await postJson(`/api/v1/reports/${safeId}/distribute`, { channels: [{ channel: 'markdown_download' }] })
       if (payload.success || payload.report) {
         window.open(`/api/v1/reports/${safeId}/export.md`, '_blank')
-        setStatus(`Report ${report.id} distributed. Check the delivery record for who received it.`)
+        setStatus(`Report ${id} distributed. Check the delivery record for who received it.`)
       } else {
         setStatus(payload.error || 'Distribute failed')
       }

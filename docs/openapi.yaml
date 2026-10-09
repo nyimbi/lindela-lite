@@ -1996,6 +1996,18 @@ paths:
       responses:
         '200':
           description: Report generated
+  /api/v1/reports/{id}/narrate:
+    post:
+      summary: Generate the report's commentary paragraph with the configured local Qwen narrator (model text; every figure checked against the report's facts)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Narration attached, or the refusal recorded on the report
+        '400':
+          description: Report has no generated sections
+        '409':
+          description: Approved or distributed report is immutable
   /api/v1/reports/{id}/approve:
     post:
       summary: Approve a generated report

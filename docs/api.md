@@ -80,6 +80,7 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 - `GET /api/v1/reports` and `POST /api/v1/reports` list and create report instances.
 - `GET /api/v1/reports/:id` and `PATCH /api/v1/reports/:id` inspect and update draft/ready reports.
 - `POST /api/v1/reports/:id/generate` regenerates deterministic sections for a draft or ready report.
+- `POST /api/v1/reports/:id/narrate` generates one commentary paragraph with the configured local Qwen narrator (`LINDELA_LITE_NARRATOR=1`, default model `qwen3:0.6b` via Ollama). The model text is audited before it is published: every figure must be one the report's own computed sections state, and an invented figure, an empty reply, or an over-length reply is refused and recorded on the report. Off by default; a narrator that is not configured answers the route with a recorded refusal, not an error.
 - `POST /api/v1/reports/:id/approve` approves a generated report.
 - `POST /api/v1/reports/:id/distribute` creates distribution runs for local Markdown/JSON, webhook, or RapidPro SMS-summary channels.
 - `GET /api/v1/reports/:id/export.md`, `/export.json`, `/export.csv`, and `/export.geojson` export a report or its source appendix.

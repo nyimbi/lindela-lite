@@ -95,6 +95,9 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/reports/:id': Object.freeze(["reports"]),
   'GET /api/v1/reports/:id/export.json': Object.freeze(["reports"]),
   'GET /api/v1/reports/:id/export.md': Object.freeze(["reports"]),
+  // The narrator reads the report's own generated sections and nothing else:
+  // commentary audited against the record, not re-derived from the store.
+  'POST /api/v1/reports/:id/narrate': Object.freeze(["reports"]),
   'GET /api/v1/response-resources': Object.freeze(["response_resources"]),
   'GET /api/v1/response-resources/:id': Object.freeze(["response_resources"]),
   'GET /api/v1/road-access': Object.freeze(["road_access"]),

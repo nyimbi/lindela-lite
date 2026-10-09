@@ -72,7 +72,6 @@ basins' cells, and the model basis says so (`MODEL_BASIS` in
   answers "where did this number come from" — terms, observed values,
   self-checks — and renders "not checkable from this record alone" instead of
   inventing a decomposition.
-
 ## 4. Where the boundary is drawn
 
 - **No LLMs, no black-box scoring, no unsupervised anything** anywhere in the
@@ -85,6 +84,28 @@ basins' cells, and the model basis says so (`MODEL_BASIS` in
   what discharges.
 - Anything with insufficient sample stays **null, worded honestly** — the
   failure this repo is built against is a confident number with no denominator.
+
+## 5. The report narrator — generated text, audited like a figure
+
+`src/narrator.js` is the one place a language model writes product text: a
+**commentary paragraph** attached to a generated report via
+`POST /api/v1/reports/:id/narrate`, written by the smallest Qwen served
+locally — Ollama, default `qwen3:0.6b` (0.6B parameters), temperature 0,
+explicitly opt-in via `LINDELA_LITE_NARRATOR=1`.
+
+- **A generated sentence must not generate a fact.** The model sees only the
+  figures the report's own deterministic sections computed. Code audits its
+  output before publication: every digit figure must be among those facts.
+- **Invention is a refusal, not cleanup.** An unlisted figure ("1500
+  households"), an empty reply, an over-length reply, a transport failure and
+  an HTTP error are each refused with the reason recorded on the report
+  (`report.narrative`), where an approver reads it. Nothing is truncated into
+  a partial claim, and an unconfigured narrator answers the route with a
+  recorded refusal rather than an error.
+- **The text is marked.** The section carries `type: 'model_narrative'`; the
+  reports panel labels it "AI narration ({model})"; the count of figures the
+  model restated ships with the text (`numbers_checked`) so the audit is a
+  fact, not an assurance.
 
 **One line**: *statistically grounded models (transparent contingency counts +
 a regularised fit) score flood risk; every score is recomputable and

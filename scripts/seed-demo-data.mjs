@@ -121,8 +121,13 @@ cloneWith('conflict_events', 'demo_seed_conflict_2', {
 })
 
 // Two more ingestion schedules, disabled so the demo does not phone home.
-cloneWith('ingestion_schedules', 'demo_seed_schedule_1', { source: 'kobo', enabled: false, interval_minutes: 360 })
-cloneWith('ingestion_schedules', 'demo_seed_schedule_2', { source: 'iot_gateway', enabled: false, interval_minutes: 60 })
+// `status: 'paused'` is the field the due-check reads — an `enabled` flag is
+// not part of the schedule shape at all, so a schedule paused by that key has
+// always stayed active and its (unregistered) source threw on every driver
+// tick. Paused is also the honest name: these run when an operator enables
+// them, not on a clock.
+cloneWith('ingestion_schedules', 'demo_seed_schedule_1', { source: 'kobo', status: 'paused', interval_minutes: 360 })
+cloneWith('ingestion_schedules', 'demo_seed_schedule_2', { source: 'iot_gateway', status: 'paused', interval_minutes: 60 })
 
 // One more schedule run.
 cloneWith('report_schedule_runs', 'demo_seed_schedule_run_1', { status: 'completed', started_at: '2026-10-05T06:00:00Z', completed_at: '2026-10-05T06:00:41Z' })

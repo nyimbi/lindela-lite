@@ -54,6 +54,16 @@ services:
       RAPIDPRO_ALERT_GROUPS: ${RAPIDPRO_ALERT_GROUPS:-}
       RAPIDPRO_BASE_LANGUAGE: ${RAPIDPRO_BASE_LANGUAGE:-eng}
       RAPIDPRO_WEBHOOK_SECRET: ${RAPIDPRO_WEBHOOK_SECRET:-}
+      # Report narrator (src/narrator.js): off until LINDELA_LITE_NARRATOR=1.
+      # The default OLLAMA_BASE_URL points at loopback, which from inside the
+      # container is the container itself — a deployment opting in points it at
+      # the host's model server (e.g. http://host.docker.internal:11434).
+      # The demo deployment runs with it off; a refused narration is recorded
+      # on the report rather than hidden.
+      LINDELA_LITE_NARRATOR: ${LINDELA_LITE_NARRATOR:-0}
+      LINDELA_LITE_NARRATOR_MODEL: ${LINDELA_LITE_NARRATOR_MODEL:-qwen3:0.6b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434}
+      LINDELA_LITE_NARRATOR_TIMEOUT_MS: ${LINDELA_LITE_NARRATOR_TIMEOUT_MS:-20000}
     ports:
       - "${LINDELA_LITE_PORT:-4177}:4177"
     healthcheck:

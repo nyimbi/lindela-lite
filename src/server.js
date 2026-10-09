@@ -7,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, isPublicRequest, publicReadsOpen, publicPaths } from './auth.js'
 import { logger, metrics, timer } from './observability.js'
+import { narrateReport, NARRATOR_BASIS } from './narrator.js'
 import { refreshAnalytics, calibrationReport } from './analytics.js'
 import { biasCorrectClimate } from './analytics/downscaling.js'
 import { evaluateAlertRules, normalizeAlertRule, updateAlertEvent, approveAlertEvent, normalizeTriggerProtocol, backtestTriggerProtocol, evaluateInShadowMode } from './alerts.js'
@@ -2650,6 +2651,67 @@ async function handleReportRoute(store, data, req, res, url, route) {
     jsonResponse(res, 200, { success: true, data: record, action_log: log })
     return
   }
+  if (req.method === 'POST' && route.action === 'narrate') {
+    // ENH-narrator — generated text, audited like everything else here.
+    // Commentary is a claim, so it rides the same lifecycle as every other
+    // claim the report carries: stored on the record, logged as an action,
+    // and refused by code when the model invents a figure it was not given.
+    const body = await readRequestJson(req)
+    const existing = data.reports.find((item) => item.id === route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Report not found' })
+      return
+    }
+    if (['approved', 'distributed'].includes(existing.status)) {
+      jsonResponse(res, 409, { success: false, error: 'Approved or distributed reports are immutable except archival' })
+      return
+    }
+    if (!(existing.sections || []).length) {
+      jsonResponse(res, 400, { success: false, error: 'Generate the report first: there is nothing computed to narrate' })
+      return
+    }
+    const narration = await narrateReport(existing, { now: new Date().toISOString() })
+    let record
+    let log
+    if (narration.status === 'narrated') {
+      const commentary = {
+        id: 'model_commentary',
+        title: 'Narrator commentary',
+        // A second type in the sections' closed set: the panel renders it as
+        // model text and marks it, because a reader must know which words
+        // were computed and which were written.
+        type: 'model_narrative',
+        content: {
+          summary: narration.text,
+          metrics: { model: narration.model, figures_checked: narration.numbers_checked },
+          items: [],
+          source_refs: [],
+          markdown: `(${narration.model}; every figure checked against the report's facts)\n\n${narration.text}`,
+        },
+        source_refs: [],
+        generated_at: narration.generated_at,
+        warnings: [],
+      }
+      record = normalizeReport({
+        ...existing,
+        sections: [...(existing.sections || []).filter((s) => s.id !== 'model_commentary'), commentary],
+        narrative: { status: 'narrated', text: narration.text, model: narration.model, generated_at: narration.generated_at, basis: NARRATOR_BASIS },
+      }, data, existing)
+      log = actionLog('reports', 'narrated', { report_id: record.id, model: narration.model, figures_checked: narration.numbers_checked }, body.actor, req.__auth?.subject)
+    } else {
+      record = normalizeReport({
+        ...existing,
+        narrative: { status: 'refused', reason: narration.reason, generated_at: narration.generated_at },
+      }, data, existing)
+      const warned = [...new Set([...(record.warnings || []), `Narrator refused: ${narration.reason}`])]
+      log = actionLog('reports', 'narration_refused', { report_id: record.id, reason: narration.reason }, body.actor, req.__auth?.subject)
+      record = normalizeReport({ ...record, warnings: warned }, data, existing)
+    }
+    await store.merge({ reports: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, narration, action_log: log })
+    return
+  }
+
   if (req.method === 'POST' && route.action === 'approve') {
     const body = await readRequestJson(req)
     const existing = data.reports.find((item) => item.id === route.id)
@@ -4154,7 +4216,7 @@ function matchReportingRoute(pathname) {
   if (reportExport) return { kind: 'reports', id: decodeURIComponent(reportExport[1]), exportFormat: reportExport[2] }
   const templateAction = pathname.match(/^\/api\/v1\/report-templates\/([^/]+)\/(copy)$/)
   if (templateAction) return { kind: 'templates', id: decodeURIComponent(templateAction[1]), action: templateAction[2] }
-  const reportAction = pathname.match(/^\/api\/v1\/reports\/([^/]+)\/(generate|approve|distribute)$/)
+  const reportAction = pathname.match(/^\/api\/v1\/reports\/([^/]+)\/(generate|approve|distribute|narrate)$/)
   if (reportAction) return { kind: 'reports', id: decodeURIComponent(reportAction[1]), action: reportAction[2] }
   const distributionAction = pathname.match(/^\/api\/v1\/report-distributions\/([^/]+)\/(retry)$/)
   if (distributionAction) return { kind: 'distributions', id: decodeURIComponent(distributionAction[1]), action: distributionAction[2] }
