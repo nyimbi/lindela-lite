@@ -116,6 +116,10 @@
   --ok:              oklch(72% 0.16 155);
   --warn:            oklch(78% 0.15 75);
   --danger:          oklch(65% 0.22 25);
+  /* Danger as *text* on a danger-tinted surface. The 65% fill colour measured
+     4.07:1 on the 14% tint — under the 4.5:1 floor at 12px, which the a11y gate
+     caught on .status-refused. This is the same hue, lightened until it clears. */
+  --danger-ink:      oklch(74% 0.20 25);
 
   --stroke:          oklch(30% 0.01 260);
   --stroke-strong:   oklch(40% 0.015 260);
@@ -250,6 +254,8 @@
   --ok:              oklch(44% 0.12 155);
   --warn:            oklch(46% 0.12 70);
   --danger:          oklch(45% 0.19 25);
+  /* Already 5.75:1 on its own tint in this theme; text is the fill colour. */
+  --danger-ink:      var(--danger);
 
   --stroke:          oklch(87% 0.008 260);
   --stroke-strong:   oklch(68% 0.012 260);
@@ -320,6 +326,8 @@
   --ok:              oklch(80% 0.16 155);
   --warn:            oklch(88% 0.15 75);
   --danger:          oklch(80% 0.20 25);
+  /* Already 7.27:1 on its own tint; text is the fill colour. */
+  --danger-ink:      var(--danger);
 
   /* 50%, not 55% and not the dark theme's 30%. A hairline is a border until a
      surface paints text on it — co's .chip-data-gap fills with --stroke — and
@@ -390,6 +398,8 @@
     --ok:              oklch(44% 0.12 155);
     --warn:            oklch(46% 0.12 70);
     --danger:          oklch(45% 0.19 25);
+  /* Already 5.75:1 on its own tint in this theme; text is the fill colour. */
+  --danger-ink:      var(--danger);
 
     --stroke:          oklch(87% 0.008 260);
     --stroke-strong:   oklch(68% 0.012 260);
@@ -450,6 +460,8 @@
     --ok:              oklch(80% 0.16 155);
     --warn:            oklch(88% 0.15 75);
     --danger:          oklch(80% 0.20 25);
+  /* Already 7.27:1 on its own tint; text is the fill colour. */
+  --danger-ink:      var(--danger);
 
     --stroke:          oklch(50%  0 0);
     --stroke-strong:   oklch(80%  0 0);

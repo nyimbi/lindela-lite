@@ -1278,7 +1278,11 @@ body.app-shell {
    steps keep their detail as text, so colour is never the whole message. */
 .status-executed     { background: color-mix(in oklch, var(--ok) 14%, transparent);     color: var(--ok); }
 .status-partial      { background: color-mix(in oklch, var(--warn) 14%, transparent);   color: var(--warn); }
-.status-refused      { background: color-mix(in oklch, var(--danger) 14%, transparent); color: var(--danger); }
+/* Refused narration is the one danger pill on a dark tinted surface, where
+   `var(--danger)` at 65% lightness measured 4.2:1 — under the 4.5:1 floor for
+   12px text. `--danger-ink` is the legible-red-for-text token: lighter on the
+   dark theme, `--danger` itself where that already clears the floor. */
+.status-refused      { background: color-mix(in oklch, var(--danger) 14%, transparent); color: var(--danger-ink); }
 /* The narrator: model-written commentary, marked as model text. */
 .status-narrated     { background: color-mix(in oklch, var(--brand) 14%, transparent); color: var(--brand); }
 
@@ -2243,7 +2247,13 @@ label:has(> input[type="radio"]) {
   body.app-shell { height: auto; overflow: auto; }
 
   .console-layout {
-    grid-template-columns: 1fr;
+    /* `minmax(0, 1fr)`, not `1fr`: a grid item defaults to `min-width: auto`,
+       so the column is floored at its widest child's min-content. The map
+       section's floor is 340px, which pushed the whole document 40px past a
+       320px viewport — the WCAG 1.4.10 reflow failure the a11y gate caught.
+       The zero floor lets the column shrink to the viewport and the section
+       scroll inside itself instead. */
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 50vh 1fr;
     height: auto;
   }
