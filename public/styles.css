@@ -363,10 +363,25 @@ body.app-shell {
 .console-layout {
   display: grid;
   grid-template-columns: 1fr 360px;
+  /* Column 1 is the map, with the action rail beneath it; column 2 is the rail,
+     docked the full height. Rows are `1fr auto` so the map takes every pixel
+     the action rail does not — with `auto` on the second row the rail collapses
+     to nothing when it is empty (it starts `hidden`), and the map is the whole
+     column.
+
+     Auto-placement put these in the wrong cells: with the action rail visible
+     it landed at (1,2), which pushed the rail to (2,1) — a full-width strip
+     *below* the map instead of a column beside it, so the map got 323px of a
+     900px viewport. The placement below is explicit for that reason. */
+  grid-template-rows: 1fr auto;
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
+
+.map-section { grid-column: 1; grid-row: 1; }
+.action-rail { grid-column: 1; grid-row: 2; }
+.rail { grid-column: 2; grid-row: 1 / -1; }
 
 /* --- Action rail ------------------------------------------------
    The panel that answers "what did the platform do about it", which the map
@@ -2189,6 +2204,12 @@ label:has(> input[type="radio"]) {
    fix was invisible. */
 @media (min-width: 801px) {
   [dir="rtl"] .console-layout { grid-template-columns: 360px 1fr; }
+  /* Mirrored, so the columns swap with the direction: the rail is first in the
+     source-ordered grid, and the map must not stay pinned to column 1 or the
+     two overlap. */
+  [dir="rtl"] .rail { grid-column: 1; }
+  [dir="rtl"] .map-section,
+  [dir="rtl"] .action-rail { grid-column: 2; }
 }
 
 /* --- Mobile -------------------------------------------------- */
@@ -2200,6 +2221,14 @@ label:has(> input[type="radio"]) {
     grid-template-rows: 50vh 1fr;
     height: auto;
   }
+
+  /* One column, so the explicit desktop placement has to be handed back. Left
+     in place, `.rail { grid-column: 2 }` invents a second implicit column and
+     the "single column" mobile layout lays out as two — 360px of rail off the
+     side of a 360px phone. */
+  .map-section,
+  .action-rail,
+  .rail { grid-column: auto; grid-row: auto; }
 
   /* Below 800px the page itself is the scroller — `body.app-shell` above has
      handed `overflow: hidden` back to the document — so the rail scrolls away
