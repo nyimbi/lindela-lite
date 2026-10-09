@@ -418,3 +418,49 @@ describe('readiness is a different question from health', () => {
     }
   })
 })
+
+describe('a sensor batch is recorded once per batch, not once per batch size', () => {
+  // The outbox event id is `stableId('outbox', [event, JSON.stringify(payload)])`
+  // (outbox.js outboundEventId). The iot route emitted a payload of `{ count }`
+  // alone, so every two-reading batch hashed to the same id. `emit` returns the
+  // existing row untouched when it is already `sent` — so the first delivered
+  // count-2 batch made every later count-2 batch a no-op: the readings and their
+  // action logs were dropped, and the gateway still received a 201.
+  const tokens = JSON.stringify([{ token: 'tok-iot', scopes: ['write:incidents'] }])
+  const reading = (id, value) => ({
+    sensor_id: id, sensor_type: 'cold_chain', value, observed_at: '2026-10-09T06:00:00Z', district: 'Turkana',
+  })
+  const post = (base, readings) => fetch(`${base}/api/v1/iot-observations`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer tok-iot' },
+    body: JSON.stringify({ readings }),
+  })
+
+  it('keeps both batches when two batches happen to hold the same number of readings', async () => {
+    await withServer(async (base, store) => {
+      const first = await post(base, [reading('fridge_a', 4.1), reading('fridge_b', 5.2)])
+      assert.equal(first.status, 201)
+      const second = await post(base, [reading('fridge_c', 6.3), reading('fridge_d', 7.4)])
+      assert.equal(second.status, 201)
+
+      const data = await store.read()
+      const sensors = data.iot_observations.map((r) => r.sensor_id).sort()
+      assert.deepEqual(sensors, ['fridge_a', 'fridge_b', 'fridge_c', 'fridge_d'],
+        'the second same-size batch was swallowed by the first batch\'s outbox id')
+      assert.equal(data.events_outbox.length, 2, 'two batches, two outbox events')
+    }, { tokens })
+  })
+
+  it('still deduplicates a true retry of the identical batch', async () => {
+    // The fix must not trade one bug for the other. A gateway that retries the
+    // same readings after a timeout is sending one batch, and the store must
+    // hold it once.
+    await withServer(async (base, store) => {
+      const batch = [reading('fridge_e', 8.5), reading('fridge_f', 9.6)]
+      assert.equal((await post(base, batch)).status, 201)
+      assert.equal((await post(base, batch)).status, 201)
+      const data = await store.read()
+      assert.equal(data.iot_observations.length, 2, 'a retried batch is one batch')
+    }, { tokens })
+  })
+})

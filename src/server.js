@@ -2255,7 +2255,14 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
       }
       const now = new Date().toISOString()
       const logs = records.map((record) => actionLog('iot_observations', 'created', record, body.actor || 'iot_gateway', req.__auth?.subject))
-      const outboxRecord = await emit(store, 'iot.observations_recorded', { count: records.length }, {
+      // The outbox event id is derived from this payload (outbox.js outboundEventId).
+      // A count-only payload made every same-size batch collide on one id, so once a
+      // count-N event was delivered, every later count-N batch was silently dropped
+      // (records and action logs lost, API still 201). A stable batch id derived
+      // from the record ids keeps true retries of the same batch deduplicated while
+      // making distinct batches distinct.
+      const batchId = stableId('iot_batch', records.map((record) => record.id).sort())
+      const outboxRecord = await emit(store, 'iot.observations_recorded', { count: records.length, batch_id: batchId }, {
         iot_observations: records,
         action_logs: logs,
       })
