@@ -2199,6 +2199,35 @@ label:has(> input[type="radio"]) {
     height: auto;
   }
 
+  /* Below 800px the page itself is the scroller — `body.app-shell` above has
+     handed `overflow: hidden` back to the document — so the rail scrolls away
+     with the map and the tab strip is whatever the reader's scroll position
+     happens to be. It lands under the fixed navbar (48px, z-index 999) for the
+     first screenful and then scrolls off the top entirely, so the other tabs
+     are unreachable: not hidden by a rule, just gone from the viewport with
+     nothing to scroll back to.
+
+     The three `overflow: visible` rules are load-bearing, not tidying. A
+     `position: sticky` element sticks only while every ancestor between it and
+     its scroll container is free to scroll past it; the desktop shell sets
+     `overflow: hidden` on `.console-layout`, `.rail` and `.rail-content` (the
+     rail's own inner scroller), and any one of them leaves the strip unpinned.
+     Verified against a real render: with them the strip holds at y=48 below
+     the navbar at every scroll offset; without them it does not move at all.
+
+     Desktop is untouched — these rules are inside the mobile query, where the
+     rail is a full-width column that does not scroll internally. */
+  .console-layout,
+  .rail,
+  .rail-content { overflow: visible; }
+
+  .rail-tabs {
+    position: sticky;
+    top: var(--size-topbar, 48px);
+    z-index: var(--z-rail);
+    background: var(--bg-elevated);
+  }
+
   .map-section {
     border-right: none;
     border-bottom: 1px solid var(--stroke);

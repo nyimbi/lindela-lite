@@ -241,6 +241,54 @@ function collect(minTap) {
 }
 
 /**
+ * Runs in the page. Are the console's rail tabs still reachable once the page
+ * has been scrolled to the bottom?
+ *
+ * This is the one layout defect in the product that *every* assertion in this
+ * file passes while it is happening. The tab strip is not hidden, not clipped
+ * and not overflowing: it is laid out at a perfectly legal size, and the page
+ * scroller has simply carried it off the top, where `getBoundingClientRect`
+ * still reports a healthy width and height. Measured from a real render at
+ * 414px: the strip sat at y = -230 with all five tabs past the top edge, and
+ * the reader's only way back to another tab was to scroll up and hope.
+
+ * So the check is not "does the strip exist" but "is a tap at the centre of
+ * each tab actually delivered to that tab" — `elementFromPoint`, the same
+ * question the browser asks on a real tap. That catches the two ways this
+ * breaks at once: scrolled out of the viewport (hit test returns null) and
+ * covered by the fixed navbar (hit test returns `.l-navbar`, which is what the
+ * first screenful did before the strip was pinned below it).
+ *
+ * Returns null on any surface without a rail, which is most of them.
+ */
+function collectRailTabs() {
+  const doc = document
+  const tabs = [...doc.querySelectorAll('.rail-tab')]
+  if (tabs.length === 0) return null
+  const nav = doc.querySelector('.l-navbar')
+  const navBottom = nav ? nav.getBoundingClientRect().bottom : 0
+  const atBottom = (() => {
+    const scroller = doc.scrollingElement || doc.documentElement
+    const max = scroller.scrollHeight - scroller.clientHeight
+    if (max > 0) scroller.scrollTop = max
+    return Math.round(scroller.scrollTop)
+  })()
+  const unreachable = tabs.filter((tab) => {
+    const r = tab.getBoundingClientRect()
+    if (r.width === 0 || r.height === 0) return true
+    const hit = doc.elementFromPoint(Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2))
+    return !(hit && (hit === tab || tab.contains(hit)))
+  })
+  return {
+    tabCount: tabs.length,
+    unreachableCount: unreachable.length,
+    unreachable: unreachable.map((t) => t.dataset.tab || t.id || 'unnamed').slice(0, 5),
+    navBottom: Math.round(navBottom),
+    scrolledTo: atBottom,
+  }
+}
+
+/**
  * How many controls a surface currently has laid out.
  *
  * Deliberately cheap — no geometry, no computed styles — because this runs on
@@ -393,7 +441,24 @@ async function main() {
           )
         }
 
+        // The rail tabs, at the bottom of the page. Runs after `collect`, which
+        // is the only probe that leaves the page scrolled where it found it.
+        const railProbe = await session.send('Runtime.evaluate', {
+          expression: `(() => { document.documentElement.setAttribute('dir', ${JSON.stringify(dir)}); return (${collectRailTabs.toString()})(); })()`,
+          returnByValue: true,
+          awaitPromise: false,
+        })
+        const rail = railProbe.result?.value
+        if (rail && rail.unreachableCount > 0) {
+          failures.push(
+            `${label}: ${rail.unreachableCount} of ${rail.tabCount} rail tab(s) unreachable with the page scrolled to the bottom ` +
+            `(${rail.unreachable.join(', ')}) — the strip is off-screen or under the navbar, so the reader cannot switch tabs. `
+            + `scrollTop was ${rail.scrolledTo}, navbar bottom ${rail.navBottom}px.`,
+          )
+        }
+
         const ok = r.overflow <= 1 && r.clippedStartCount === 0 && r.clippedCount === 0 && r.smallTargetCount === 0
+          && !(rail && rail.unreachableCount > 0)
         process.stdout.write(`${ok ? 'PASS' : 'FAIL'}  ${label}\n`)
 
         // Capture through CDP rather than `chrome --headless --screenshot`.
