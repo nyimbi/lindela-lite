@@ -133,12 +133,25 @@ async function main() {
 
   // Collect page errors: an unhandled rejection in app.js would otherwise be
   // invisible while the buttons silently do nothing.
+  //
+  // `Log.entryAdded` reports two unrelated things at level "error": a
+  // `source: "javascript"` entry is the page's own console.error, and a
+  // `source: "network"` entry is Chrome narrating a non-2xx status. A 429 is the
+  // inbound limiter refusing a burst — correct behaviour, and one this harness
+  // provokes: it boots thirteen surfaces in three minutes, where the read budget
+  // is sized for four real consoles polling twelve endpoints every thirty
+  // seconds. The burst drains the bucket and the refusal is the limit working,
+  // not a page error. It is excluded here and nowhere else; every other status
+  // still fails the gate, because a 404 or a 500 is a resource the app asked for
+  // and did not get.
   await send('Log.enable')
   const pageErrors = []
   socket.addEventListener('message', (event) => {
     const msg = JSON.parse(event.data)
     if (msg.method === 'Log.entryAdded' && msg.params?.entry?.level === 'error') {
-      pageErrors.push(msg.params.entry.text)
+      const entry = msg.params.entry
+      if (entry.source === 'network' && /\b429\b/.test(entry.text)) return
+      pageErrors.push(entry.text)
     }
     if (msg.method === 'Runtime.exceptionThrown') {
       pageErrors.push(msg.params?.exceptionDetails?.exception?.description || 'exception')

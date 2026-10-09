@@ -102,6 +102,10 @@ const state = {
   diseaseSummary: null,
   showIpcAreas: false,
   climate: [],
+  // The source-filtered Niño 3.4 series behind the seasonal strip. Separate from
+  // `climate` because the ambient climate page is ordered newest-first and the
+  // unbounded forecast rows crowd the monthly series out of it.
+  seasonal: [],
   // The weather overlay's last good payload from /api/v1/weather. Kept across
   // refreshes like the other map inputs, so one failed poll does not blank the
   // glyphs; staleness is re-derived from each district's as_of at render time,
@@ -3510,7 +3514,7 @@ export function pollDelayMs({ failures = 0, hidden = false, inFlight = false } =
 /** Every endpoint the console knows how to fetch. */
 export const ALL_ENDPOINTS = [
   'health', 'sources', 'ingestionHealth', 'flood', 'conflict', 'events',
-  'assets', 'alerts', 'reports', 'reportTemplates', 'climate', 'dispatches', 'workflows',
+  'assets', 'alerts', 'reports', 'reportTemplates', 'climate', 'seasonal', 'dispatches', 'workflows',
   'weather', 'riverDischarge', 'diseaseObservations', 'iotObservations',
 ]
 
@@ -3529,7 +3533,7 @@ export const AMBIENT_ENDPOINTS = [
 const TAB_ENDPOINTS = {
   alerts: ['alerts', 'workflows', 'dispatches'],
   reports: ['reports', 'reportTemplates'],
-  equity: ['climate', 'reports'],
+  equity: ['climate', 'seasonal', 'reports'],
   ingestion: ['sources', 'ingestionHealth'],
 }
 
@@ -3605,6 +3609,16 @@ async function refresh({ first = false, force = false } = {}) {
       load('reports', '/api/v1/reports?limit=20'),
       load('reportTemplates', '/api/v1/report-templates?limit=20'),
       load('climate', '/api/v1/climate?limit=200'),
+      // The Niño 3.4 series, fetched by source rather than off the ambient
+      // climate page. The ambient page is ordered newest-first and the weather
+      // connector files a forecast row per district-day, so those rows grow
+      // without bound and push the monthly ENSO series past any fixed page —
+      // 232 forecast rows against 19 ENSO rows in the demo store, and the
+      // seasonal strip's own page limit of 200 carried none of them. The panel
+      // then read "not ingested" over a series that was sitting in the store.
+      // Filtering by source is what the endpoint already supports, and it is
+      // the only fetch whose page cannot be crowded out by another connector.
+      load('seasonal', '/api/v1/climate?source=noaa_enso&limit=500'),
       load('weather', '/api/v1/weather'),
       load('riverDischarge', '/api/v1/river-discharge'),
       load('diseaseObservations', '/api/v1/disease-observations?map=1'),
@@ -3700,7 +3714,17 @@ async function refresh({ first = false, force = false } = {}) {
     if (merged.climate) {
       state.data.climate = merged.climate
       state.climate = merged.climate.data || []
-      renderSeasonalStrip(state.climate)
+    }
+
+    // The seasonal strip draws from the source-filtered ENSO page, falling back
+    // to the ambient climate page only when that fetch failed — the two hold
+    // different rows, and the ambient one cannot be relied on to carry the
+    // monthly series (see the fetch above). Rendered once, after both, so a
+    // cold start with no ambient rows still shows the advisory rather than
+    // flashing "not ingested" on the way to it.
+    if (merged.seasonal) state.seasonal = merged.seasonal.data || []
+    if (merged.seasonal || merged.climate) {
+      renderSeasonalStrip(state.seasonal?.length ? state.seasonal : state.climate)
     }
 
     if (merged.weather) state.weather = merged.weather
