@@ -2890,13 +2890,27 @@ function renderMap(records) {
     const parts = [`${placed} on map`]
     if (tooLargeToLocate) parts.push(`${tooLargeToLocate} reported area${tooLargeToLocate === 1 ? '' : 's'} too large to place`)
     if (outsideFrame) parts.push(`${outsideFrame} outside the area this map covers`)
-    if (undetermined.length) parts.push(undetermined.join(', '))
-    countEl.textContent = parts.join(' · ')
+    // The undetermined records are named once, with the reason they are absent.
+    // This used to append them twice — bare in the list and again after "hidden
+    // by the filter" — which read as noise in the band and, now that this string
+    // is the element's accessible name, is read aloud twice.
+    const detail = parts.join(' · ')
       + (undetermined.length ? ` — hidden by the filter: ${undetermined.join(', ')}` : '')
-    countEl.title = undetermined.length
-      ? `The filter is set to a specific value. ${undetermined.join(' and ')} did not match it, so `
-        + 'they are not drawn. Choose "All" to see them.'
-      : ''
+    // The band shows the headline — how many records are drawn — and the full
+    // accounting moves to the tooltip. It was one string, and on a 1440px
+    // command band it ran to "70 on map · 10 reported areas too large to place
+    // · 17 outside the area this map covers", which wrapped the band onto a
+    // second row and pushed the map down: the exact cost the redesign was
+    // undoing. Nothing is dropped — the tail is in the title and the `title`
+    // carries the filter explanation it already did.
+    countEl.textContent = `${placed} on map`
+    countEl.title = detail
+    // The headline is what fits the band; the full accounting — including what
+    // the filter hid — is this element's accessible name, so moving it out of
+    // the visible text does not move it out of reach. `title` alone is not
+    // announced reliably and never on touch, which is why it is not the only
+    // carrier.
+    countEl.setAttribute('aria-label', detail)
   }
 
   // Classify the same way the draw loops above do, so the list says "asset" for
@@ -6059,6 +6073,71 @@ if (locSel) {
 // Button wiring
 // =============================================================
 $('refreshButton')?.addEventListener('click', refresh)
+
+// =============================================================
+// Command band: filter sheet and workflow popovers
+// =============================================================
+// The three controls below all do the same thing — open a floating panel
+// anchored to the command band and close every other one — so they share one
+// closer. A page can only sensibly have one of these open at a time: the filter
+// sheet and the two workflow trays anchor to the same corner of the same row,
+// and two of them open would stack on the same pixels.
+
+/** Close every command-band popover except `keep`. */
+function closeBandPopovers(keep) {
+  const sheet = $('filterSheet')
+  const sheetToggle = $('filterSheetToggle')
+  if (sheet && sheet !== keep) {
+    sheet.hidden = true
+    sheetToggle?.setAttribute('aria-expanded', 'false')
+  }
+  // The two workflow `<details>` are siblings, so nothing closes one when the
+  // other opens. Pairing them here keeps the popover box to one occupant.
+  for (const el of document.querySelectorAll('.workflow-ribbon > details[open]')) {
+    if (el !== keep) el.open = false
+  }
+}
+
+const _filterSheet = $('filterSheet')
+const _filterToggle = $('filterSheetToggle')
+if (_filterSheet && _filterToggle) {
+  const setSheet = (open) => {
+    closeBandPopovers(open ? _filterSheet : null)
+    _filterSheet.hidden = !open
+    _filterToggle.setAttribute('aria-expanded', String(open))
+    if (open) _filterSheet.querySelector('select, input, button')?.focus()
+  }
+  _filterToggle.addEventListener('click', () => setSheet(_filterSheet.hidden))
+  // Escape closes whichever popover is open and returns focus to its trigger,
+  // so a keyboard user is never stranded inside a floating panel.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return
+    if (!_filterSheet.hidden) { setSheet(false); _filterToggle.focus(); return }
+    const open = document.querySelector('.workflow-ribbon > details[open]')
+    if (open) {
+      const summary = open.querySelector('summary')
+      open.open = false
+      summary?.focus()
+    }
+  })
+  // A click outside the band closes the sheet. `pointerdown` rather than
+  // `click` so the panel is gone before the click lands on the map beneath it —
+  // otherwise dismissing the sheet also panned the map.
+  document.addEventListener('pointerdown', (e) => {
+    if (_filterSheet.hidden) return
+    if (e.target.closest('#filterSheet, #filterSheetToggle')) return
+    setSheet(false)
+  })
+}
+
+// The two workflow trays are native `<details>`; nothing closes one when the
+// other opens, so each one closes its sibling. `toggle` fires after the state
+// has flipped, which is why the check is on `open` rather than on the event.
+for (const details of document.querySelectorAll('.workflow-ribbon > details')) {
+  details.addEventListener('toggle', () => {
+    if (details.open) closeBandPopovers(details)
+  })
+}
 
 // =============================================================
 // Dispatch gate dialog handlers

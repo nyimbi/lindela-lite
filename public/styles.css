@@ -547,39 +547,67 @@ body.app-shell {
 }
 
 .map-container {
-  flex: 1;
+  flex: 1 1 auto;
   position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  /* `visible`, not `hidden`. The container is sized to the section, and the
+     map frame plus the panels below it routinely exceed that: with `hidden`
+     the excess was clipped with nothing to scroll to, which is how the routing
+     panel disappeared on short windows. Visible lets the overflow reach
+     `.map-section`, which is the element that scrolls. */
+  overflow: visible;
 }
 
 /* Exactly the SVG's box, so the chrome overlays anchor to the map rather than
    to the container — which also holds the seasonal strip and the filter rows
-   below it. `min-height` matches `.situation-map`'s floor: the frame is what
-   carries the map's height now, and the SVG fills it. */
+   below it.
+
+   The floor was 480px, a fixed guess. The frame is pinned to the section's own
+   height now — `height: 100%` of `.map-container`, which is the grid row — so
+   the map fills the row exactly and the panels below it scroll instead of
+   competing for the same pixels.
+
+   `flex-shrink: 0` is the load-bearing part. Without it the frame is a flex
+   item with siblings that total more than the container, so it shrank to its
+   floor and the map came out *smaller* than the 480px it replaced — the panels
+   below had won the space. Held at the container's height, the map is the row
+   and the overflow belongs to the panels.
+
+   `min-height` stays as the mobile floor: below 800px the container's height is
+   content-driven, `height: 100%` resolves to auto, and this is what keeps the
+   map from collapsing to a sliver. */
 .map-frame {
   position: relative;
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 480px;
+  flex: 0 0 auto;
+  height: 100%;
+  min-height: clamp(260px, 46vh, 640px);
   min-width: 0;
 }
 
+/* The panels under the map keep their natural height and let the section scroll
+   past them. Shrinking them is what squeezed the map in the first place. */
+.map-container > .seasonal-strip,
+.map-container > .map-legend-text,
+.map-container > .map-filters { flex-shrink: 0; }
+
 .situation-map {
   /*
-   * min-height is load-bearing, not cosmetic. .map-container is a flex column
-   * that also holds the seasonal strip, the filters, the flood controls and the
-   * routing panel. With only `flex: 1` the map took whatever those left over:
-   * on a 1440x900 laptop that was 122px, so an 800x500 viewBox scaled to 0.24
-   * and rendered the map at 195x122 with 82% of the width wasted and legend text
-   * at 2.4px. Every DOM check passed, because the cells were present in the
-   * document — they were simply invisible.
+   * The 480px floor is gone with the stacked bands. It was load-bearing when
+   * the map competed with three chrome bars for a 900px viewport: with only
+   * `flex: 1` it took 122px, so an 800x500 viewBox scaled to 0.24 and rendered
+   * at 195x122 with 82% of the width wasted and legend text at 2.4px. Now the
+   * map's row is the whole section, so `flex: 1` gives it the height directly.
+   *
+   * `min-height: 0` rather than a number: on a short landscape window the map
+   * should yield to the panels below it, which scroll, instead of pinning a
+   * floor that pushes them out of reach.
    */
-  flex: 1;
-  min-height: 480px;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
   height: 100%;
   cursor: grab;
@@ -1885,18 +1913,19 @@ dialog { margin: auto; }
 /* Detail dialog */
 .detail-dialog { max-width: min(90vw, 520px); }
 
-/* --- Workflow ribbon (horizontal above the console) ------- */
+/* --- Workflow ribbon (inline in the command band) ------- */
+/* No background, border or horizontal scroll of its own any more: it is a flex
+   cluster inside the band, so those would draw a second bar inside the first.
+   `min-width: 0` stays — a flex child defaults to `min-width: auto`, which is
+   what let the widest of eight cards push the document past a 360px viewport. */
 .workflow-ribbon {
-  background: var(--bg-elevated);
-  border-bottom: 1px solid var(--stroke);
-  overflow-x: auto;
-  overflow-y: hidden;
-  /* A flex child defaults to min-width:auto, so the ribbon sized itself to the
-     widest of eight cards and pushed the whole document 29px past a 360px
-     viewport. The scroll container below could not help, because its parent
-     was already too wide. */
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .workflow-tray {
@@ -2259,7 +2288,13 @@ label:has(> input[type="radio"]) {
        The zero floor lets the column shrink to the viewport and the section
        scroll inside itself instead. */
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 50vh 1fr;
+    /* `auto` for the map row, not `50vh`. With the command band down to one
+       row, a hard 50vh put the map at 422px on an 844px phone and left the
+       bottom half of the screen to the panels — the inverse of what an
+       operator opening this on a phone wants. `auto` lets the frame take its
+       clamp, which is the larger of 42vh and its content, and the page scrolls
+       to the panels below. */
+    grid-template-rows: auto 1fr;
     height: auto;
   }
 
@@ -2303,6 +2338,17 @@ label:has(> input[type="radio"]) {
   .map-section {
     border-right: none;
     border-bottom: 1px solid var(--stroke);
+  }
+
+  /* The map gets a definite height here. `height: 100%` above resolves against
+     `.map-container`, which is only definite on desktop — where the grid row
+     sizes it. Below 800px the container is content-sized, so a percentage
+     height falls back to auto and the frame took the height of every panel
+     beneath it: 1688px of map on a 1024px tablet, 1993px on a phone. A vh
+     clamp is what the desktop row was standing in for. */
+  .map-frame {
+    height: clamp(300px, 54vh, 560px);
+    min-height: 0;
   }
 
   .brand-name { display: none; }
@@ -2695,7 +2741,22 @@ label:has(> input[type="radio"]) {
    The console's own controls. The injected navbar carries the brand and the
    cross-application links, so this row deliberately has no name of its own —
    repeating it is what made the console look like it had two headers. */
+/* The command band. One row carrying the whole console chrome: language,
+   storage mode and connection on the left; the workflow summary in the middle;
+   the filter trigger, record count, list toggle and actions on the right.
+
+   It replaces three stacked bars — a controls row, an inline filter row and a
+   workflow ribbon. Those were 195px on a 1440x900 laptop and 539px on a
+   390x844 phone, so on the phone the map began at y=603: 64% of the viewport
+   spent before the first pixel of the primary decision surface, which sat below
+   the fold on first paint.
+
+   `position: relative` is the anchor for the two popovers that hang off this
+   row — the filter sheet and the workflow breakdown. They are absolute, so
+   opening either one floats over the map instead of reflowing the band and
+   pushing the map down, which is the whole reason for collapsing them. */
 .console-toolbar {
+  position: relative;
   display: flex;
   align-items: center;
   /* Not `flex-end`. A flex container aligns its overflow from the START edge,
@@ -2704,55 +2765,143 @@ label:has(> input[type="radio"]) {
      does not grow, so no overflow check of any kind can see it. At 375px the
      controls sat at x = -69 inside a 375px row: Language, Copy link, Severity,
      Source and Cold-chain, all present, all focusable, all invisible.
-     `.console-toolbar-controls` right-aligns itself with `margin-inline-start`
-     below, which is what the `flex-end` was imitating badly. */
+     The right cluster right-aligns itself with `margin-inline-start: auto`,
+     which is what the `flex-end` was imitating badly. */
   justify-content: flex-start;
-  gap: var(--sp-2);
+  gap: var(--sp-2) var(--sp-3);
   flex-wrap: wrap;
-  padding: var(--sp-1) var(--sp-4);
+  padding: var(--sp-1) var(--sp-3);
   background: var(--bg);
   border-bottom: 1px solid var(--stroke);
+  z-index: var(--z-controls);
 }
 
-.console-toolbar-controls {
+/* A flex item's automatic minimum is its min-content width. Without the zero
+   floor the clusters cannot shrink into a narrow row at all, and the row
+   overflows in whichever direction the alignment chose. */
+.command-band-cluster {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  flex-wrap: wrap;
-  margin-inline-start: auto;
-  /* A flex item's automatic minimum is its min-content width, which for the
-     controls group is 428px. Without this it cannot shrink into a 375px row at
-     all, and the row overflows in whichever direction the alignment chose. */
   min-width: 0;
 }
 
-/* The three declarations below are load-bearing, not tidying. Without them,
-   dropping `flex-end` converts a silent left overflow into a *detectable* right
-   overflow — 444px at a 360px viewport — because the nowrap labels and the
-   nowrap record count hold the group's min-content width open. */
-@media (max-width: 480px) {
-  .console-toolbar-controls .filter-label {
-    white-space: normal;
-    min-width: 0;
-    flex: 1 1 100%;
-  }
-  .console-toolbar-controls .filter-label select {
-    min-width: 0;
-    max-width: 100%;
-    flex: 1 1 8rem;
-  }
-  /* Physical, to match the `margin-left` it overrides, so RTL stays correct. */
-  .console-toolbar-controls .map-record-count {
-    white-space: normal;
-    margin-left: 0;
-  }
-}
+.command-band-left { flex-shrink: 0; }
+.command-band-right { margin-inline-start: auto; flex-shrink: 0; }
 
 /* `select { width: 100% }` is right in a form column and wrong in a toolbar,
-   where it stretched the language picker across the whole row. */
-.console-toolbar-controls select {
+   where it stretched the language picker across the whole row. Capped rather
+   than floored: the language list is the widest control here and an uncapped
+   select let "Ngakarimojong" set the row's min-content width. */
+.console-toolbar select {
   width: auto;
-  min-width: 8rem;
+  min-width: 0;
+  max-width: 9rem;
+  font-size: var(--text-xs);
+}
+
+.console-toolbar .badge { font-size: var(--text-xs); }
+
+/* Below 800px the band is allowed to wrap — but the goal is two rows, not the
+   ten the old inline filter row took. Three things buy that:
+   the record count is the first to go (the map legend already carries it);
+   the workflow summary drops its word labels and keeps the numbers, which are
+   the whole content, with the words restored as an accessible name;
+   and the two workflow chips lose their padding. */
+@media (max-width: 800px) {
+  .console-toolbar { gap: var(--sp-1) var(--sp-2); padding: var(--sp-1) var(--sp-2); }
+  .command-band-right { margin-inline-start: 0; }
+  .console-toolbar .map-record-count { display: none; }
+
+  /* The workflow cluster stays inline between the two control clusters rather
+     than being forced onto its own row. Forced, it measured taller: the two
+     chips and the summary do not fit one 374px line either way, so `100%`
+     bought a full-width row that still wrapped inside itself. */
+  .workflow-ribbon { flex: 1 1 auto; }
+
+  /* "9 open · 4 closed": the words stay, at the smallest type, because a bare
+     "9 · 4" is a number pair with nothing to say what it counts — legible to a
+     screen reader and meaningless to everyone else. They are what costs the
+     row, so they are the first thing shrunk, not the first thing removed. */
+  .workflow-summary { gap: 0 4px; font-size: 0.68rem; }
+  .workflow-summary-count { font-size: var(--text-sm); }
+  .workflow-summary-sep { margin: 0 1px; }
+
+  .workflow-breakdown > summary,
+  .workflow-instances > summary { padding: 0 var(--sp-1); gap: 2px; }
+  /* The chip's word is clipped, not removed: "8 types" already says what it is,
+     and at 390px the word is what pushed the third item onto a second row.
+     Clipped rather than `display: none` so the summary keeps a name in the
+     accessibility tree. */
+  .wf-chip-label {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .workflow-breakdown > summary,
+  .workflow-instances > summary { position: relative; font-size: 0.68rem; }
+}
+
+
+/* --- Filter sheet ------------------------------------------------
+   The filters were an inline row inside the command band: Time, Severity,
+   Source, Cold-chain, Sensors and Basemap, all permanently on screen. They are
+   the controls an operator touches least often — severity is set once for a
+   shift, not per glance — and they cost the map a row it could not spare.
+   They live in a sheet now, off the critical path, behind one labelled button.
+
+   Absolute, anchored under the band, so opening it floats over the map rather
+   than shrinking it. On a phone it becomes a full-width panel under the band,
+   because a floating sheet on a 390px screen covers the map it is filtering. */
+.filter-sheet {
+  position: absolute;
+  top: calc(100% + var(--sp-1));
+  inset-inline-start: var(--sp-3);
+  z-index: var(--z-dropdown);
+  /* `width`, not `min-width`: the sheet is a two-column grid, and its
+     min-content width let it stretch to 945px on a 1440px screen. */
+  width: min(92vw, 440px);
+  padding: var(--sp-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-lg);
+}
+
+.filter-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+.filter-sheet-title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+}
+
+.filter-sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.filter-sheet-grid .filter-label { min-width: 0; }
+.filter-sheet-grid select { min-width: 0; max-width: 100%; width: 100%; }
+
+@media (max-width: 480px) {
+  .filter-sheet {
+    inset-inline: var(--sp-2);
+    width: auto;
+  }
+  .filter-sheet-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* --- Workflow summary --------------------------------------------
@@ -2765,14 +2914,16 @@ label:has(> input[type="radio"]) {
   align-items: baseline;
   gap: var(--sp-1) var(--sp-2);
   flex-wrap: wrap;
-  padding: var(--sp-2) var(--sp-3);
-  border-bottom: 1px solid var(--stroke);
+  /* Inline in the command band now, not a bar of its own: the border and the
+     padding were what made it read as a separate stacked header. */
+  padding: 0;
+  border-bottom: none;
   font-size: var(--text-sm);
   color: var(--ink-muted);
 }
 
 .workflow-summary-count {
-  font-size: var(--text-h2);
+  font-size: var(--text-body);
   font-weight: 700;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
@@ -2787,6 +2938,16 @@ label:has(> input[type="radio"]) {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--ink-faint);
+}
+
+/* Declared here, after the base rule, because it is the same specificity — put
+   before it, the uppercase above would win and the chips would stay wide. */
+@media (max-width: 800px) {
+  .workflow-summary-breakdown {
+    font-size: 0.65rem;
+    text-transform: none;
+    letter-spacing: 0;
+  }
 }
 
 .workflow-metric[tabindex] { cursor: pointer; }
@@ -3009,19 +3170,102 @@ label:has(> input[type="radio"]) {
 
 /* The breakdown lives behind a summary now: eight tiles were a decomposition of
    the number printed directly above them, and they put eight tab stops on the
-   screen before the operator had seen a record. */
-.workflow-breakdown {
-	border-top: 1px solid var(--stroke);
-	padding: var(--sp-1) var(--sp-3) 0;
+   screen before the operator had seen a record.
+
+   It is a popover, not a disclosure that expands in place. Expanded in place it
+   pushed the map down every time it was opened — on the same axis the whole
+   redesign is trying to reclaim — and the tray is a horizontal scroll of eight
+   cards, which is a shape that only fits in a floating box.
+
+   One summary is open at a time by a native mechanism: two `<details>` siblings
+   cannot both be open only if something closes the other, so app.js pairs them.
+   Both are absolutely positioned to the same corner, so if both were open they
+   would stack on the same pixels rather than beside each other. */
+.workflow-breakdown,
+.workflow-instances {
+  position: relative;
+  /* The global `details` rule sets `overflow: hidden`, which is right for a
+     disclosure that expands in place and wrong for these two: their trays are
+     absolutely-positioned popovers, and `hidden` on the ancestor clipped them
+     to a 46px strip. The trays rendered — 460x102, measured — and painted
+     nowhere, which is the failure mode a geometry check cannot see.
+     The border and radius come off for the same reason: these are band chips,
+     not boxes. */
+  overflow: visible;
+  border: none;
+  border-radius: 0;
 }
-.workflow-breakdown > summary {
-	cursor: pointer;
-	font-size: 0.78rem;
-	color: var(--text-muted);
-	min-height: 32px;
-	display: flex;
-	align-items: center;
-	gap: var(--sp-1);
+
+.workflow-breakdown > summary,
+.workflow-instances > summary {
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  min-height: var(--tap-target-min);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-2);
+  background: transparent;
+  border-radius: var(--r-sm);
+  white-space: nowrap;
 }
-.workflow-breakdown > summary:hover { color: var(--text); }
-.workflow-breakdown[open] > summary { margin-bottom: var(--sp-1); }
+.workflow-breakdown > summary:hover,
+.workflow-instances > summary:hover { color: var(--ink); background: var(--surface-hover); }
+.workflow-breakdown[open] > summary,
+.workflow-instances[open] > summary { color: var(--ink); }
+
+/* The base `summary::before` renders a `+` glyph; on a band-height chip it
+   reads as a bullet rather than a disclosure, so these two carry a caret. */
+.workflow-breakdown > summary::before,
+.workflow-instances > summary::before {
+  content: '▸';
+  margin-right: 0;
+  font-size: 0.7em;
+}
+.workflow-breakdown[open] > summary::before,
+.workflow-instances[open] > summary::before { content: '▾'; }
+
+/* Both trays float under the band, in the same box, so opening one never
+   reflows the row it is anchored to.
+
+   `display: none` while closed is load-bearing, not tidying. A closed
+   `<details>` still lays its content out in Chrome — `content-visibility`
+   skips painting, not layout — so the tray's cards, sized to a 207px card in a
+   71px chip, extended past the chip on every render. In LTR that overflow runs
+   off the right edge; under RTL the inline axis flips and it runs off the
+   *start* edge, which is the one direction a browser will not scroll to and
+   `scrollWidth` cannot see. check-responsive caught exactly that: nine
+   source-cards at x = -97 inside a 360px viewport, focusable and invisible.
+   The tray is a popover; closed, it should not be in layout at all. */
+.workflow-breakdown:not([open]) > .workflow-tray,
+.workflow-instances:not([open]) > .list-container {
+  display: none;
+}
+
+/* `width`, not `min-width`. The tray is a grid with `grid-auto-columns:
+   minmax(140px, 1fr)` and eight columns, so its min-content width is the sum of
+   its cards — 1202px measured. `min-width` let it grow to that and the popover
+   ran off the right edge of a 1440px screen; `width` caps it and the grid
+   scrolls inside, which is what `overflow-x: auto` on the tray was always for. */
+.workflow-breakdown[open] > .workflow-tray,
+.workflow-instances[open] > .list-container {
+  position: absolute;
+  top: calc(100% + var(--sp-2));
+  inset-inline-start: 0;
+  z-index: var(--z-dropdown);
+  width: min(92vw, 460px);
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-lg);
+}
+
+/* The tray is a horizontal scroll of cards; in a 460px popover they are wider
+   than the box, so the scroll has to be explicit and the cards narrower. */
+.workflow-breakdown[open] > .workflow-tray {
+  grid-auto-columns: minmax(120px, 1fr);
+  overflow-x: auto;
+}

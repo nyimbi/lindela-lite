@@ -45,38 +45,112 @@
          is what produced two stacked bars with the same name on them. This row is
          console-only: storage mode, connection, refresh, command palette. -->
     <p id="shareViewStatus" class="visually-hidden" role="status" aria-live="polite"></p>
-    <!-- Also a labelled region. Same finding: the row holding the language
-         picker, the storage mode, the connection badge and the refresh button
-         was outside every landmark. `role="toolbar"` would not have helped —
-         a toolbar is a widget, not a landmark. -->
+    <!-- The command band. One row, under the shared navbar, carrying every
+         console-level control at once: the language picker, storage mode, the
+         connection badge, the workflow summary, the filter trigger and the
+         refresh/palette actions.
+
+         It replaces three stacked bars — a controls row, a filter row and a
+         workflow ribbon — that together stood 195px tall on a 1440x900 laptop
+         and 539px on a 390x844 phone. On the phone that was 64% of the viewport
+         spent before the first pixel of map, so the map began at y=603 and the
+         primary decision surface was below the fold on first paint.
+
+         Every control keeps its id, so app.js wiring is untouched. The filters
+         that used to live inline here are in `#filterSheet`, one keystroke away
+         and off the critical path: an operator changes severity far less often
+         than they look at the map, and the map is what paid for the row.
+
+         A labelled region, not `role="toolbar"` — a toolbar is a widget, not a
+         landmark, and the row holding the language picker and the connection
+         badge was outside every landmark. -->
     <section class="console-toolbar" aria-label="Console controls">
-      <div class="console-toolbar-controls">
-      <select id="locale-select" aria-label="Language">
-        <option value="en">English</option>
-        <option value="sw">Swahili</option>
-        <option value="ar">العربية</option>
-        <option value="so">Somali</option>
-        <option value="din">Dinka</option>
-        <option value="km">Karimojong</option>
-        <option value="nk">Ngakarimojong</option>
-        <option value="fr">Français</option>
-        <option value="pt">Português</option>
-        <option value="am">አማርኛ</option>
-      </select>
-      <span id="storageMode" class="badge badge-storage">json</span>
-      <span id="connectionStatus" class="badge badge-connection">online</span>
-      <button id="refreshButton" class="btn btn-icon" type="button" aria-label="Refresh" data-i18n-title="action.refresh" title="Refresh">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          <polyline points="12,2 12.9,4.7 10.2,4.7" fill="currentColor"/>
-        </svg>
-      </button>
-      <button id="shareViewBtn" class="btn btn-xs" type="button" hidden>Copy link to this view</button>
-      <button id="cmdPaletteButton" class="btn btn-icon" type="button" aria-label="Command palette" title="Cmd+K">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M3 8h10M8 3v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-      </button>
+      <div class="command-band-cluster command-band-left">
+        <select id="locale-select" aria-label="Language">
+          <option value="en">English</option>
+          <option value="sw">Swahili</option>
+          <option value="ar">العربية</option>
+          <option value="so">Somali</option>
+          <option value="din">Dinka</option>
+          <option value="km">Karimojong</option>
+          <option value="nk">Ngakarimojong</option>
+          <option value="fr">Français</option>
+          <option value="pt">Português</option>
+          <option value="am">አማርኛ</option>
+        </select>
+        <span id="storageMode" class="badge badge-storage">json</span>
+        <span id="connectionStatus" class="badge badge-connection">online</span>
+      </div>
+
+      <!-- The workflow summary, inline in the band rather than on its own bar.
+           The eight tiles were a breakdown of the number printed beside them
+           and put eight focusable controls on screen before the operator had
+           seen a single record, so the count leads and the breakdown is one
+           keystroke away — as a popover, so opening it never reflows the band
+           and never pushes the map down. -->
+      <section id="workflowOverview" class="workflow-ribbon" aria-label="Workflow overview">
+        <div class="workflow-summary">
+          <span class="workflow-summary-count" id="workflowOpen">—</span>
+          <span class="workflow-summary-label">open</span>
+          <span class="workflow-summary-sep" aria-hidden="true">·</span>
+          <span class="workflow-summary-count" id="workflowClosed">—</span>
+          <span class="workflow-summary-label">closed</span>
+          <span class="workflow-summary-rejected" id="workflowRejectedWrap" hidden>
+            <span class="workflow-summary-sep" aria-hidden="true">·</span>
+            <span id="workflowRejected">0</span> rejected
+          </span>
+        </div>
+        <details class="workflow-breakdown">
+          <summary><span class="wf-chip-label">Breakdown</span> <span class="workflow-summary-breakdown" id="workflowTypeCount"></span></summary>
+          <div id="workflowMetricsGrid" class="workflow-tray" role="list"></div>
+        </details>
+        <details class="workflow-instances" id="workflowInstances">
+          <summary><span class="wf-chip-label">Open</span> <span class="workflow-summary-breakdown" id="workflowInstanceCount"></span></summary>
+          <div id="workflowInstanceList" class="list-container"></div>
+        </details>
+      </section>
+
+      <div class="command-band-cluster command-band-right">
+        <button id="filterSheetToggle" class="btn btn-xs filter-sheet-toggle" type="button"
+                aria-expanded="false" aria-controls="filterSheet">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2 4h12M4 8h8M6 12h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          Filters
+        </button>
+        <span id="mapRecordCount" class="map-record-count"></span>
+        <!-- The map's text alternative. Nothing in the product listed hazards,
+             assets, flood extents or road state as text, so on both
+             officer-facing surfaces the primary decision surface was a picture
+             with no non-visual form. -->
+        <button type="button" class="btn btn-xs map-list-toggle" id="mapListToggle"
+                aria-expanded="false" aria-controls="mapRecordList">Show as list</button>
+        <button id="shareViewBtn" class="btn btn-xs" type="button" hidden>Copy link</button>
+        <button id="refreshButton" class="btn btn-icon" type="button" aria-label="Refresh" data-i18n-title="action.refresh" title="Refresh">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <polyline points="12,2 12.9,4.7 10.2,4.7" fill="currentColor"/>
+          </svg>
+        </button>
+        <button id="cmdPaletteButton" class="btn btn-icon" type="button" aria-label="Command palette" title="Cmd+K">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 8h10M8 3v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- The filter sheet. `hidden` until asked for; a popover on desktop so it
+           floats over the map instead of shrinking it, and a full-width panel
+           under the band on a phone. Every id is the one app.js already wires.
+
+           Inside the band, not after it: the band is `position: relative`, and
+           a sheet declared as its sibling resolved `top: 100%` against the body
+           and opened 754px down the page, below the fold. -->
+      <div class="filter-sheet" id="filterSheet" hidden>
+        <div class="filter-sheet-head">
+          <span class="filter-sheet-title">Map filters</span>
+        </div>
+        <div class="filter-sheet-grid">
           <label class="filter-label">
             <span>Time</span>
             <select id="mapTimeRange">
@@ -103,6 +177,14 @@
             </select>
           </label>
           <label class="filter-label">
+            <span>Basemap</span>
+            <select id="mapTileSource" aria-label="Basemap imagery source">
+              <option value="osm">OpenStreetMap</option>
+              <option value="carto">Carto light</option>
+              <option value="none">Offline vector</option>
+            </select>
+          </label>
+          <label class="filter-label">
             <input type="checkbox" id="coldChainToggle">
             <span data-i18n="filter.cold_chain">Cold-chain nodes</span>
           </label>
@@ -115,47 +197,8 @@
             <input type="checkbox" id="sensorsToggle">
             <span data-i18n="filter.sensors">Sensors</span>
           </label>
-          <label class="filter-label">
-            <span>Basemap</span>
-            <select id="mapTileSource" aria-label="Basemap imagery source">
-              <option value="osm">OpenStreetMap</option>
-              <option value="carto">Carto light</option>
-              <option value="none">Offline vector</option>
-            </select>
-          </label>
-          <span id="mapRecordCount" class="map-record-count"></span>
-          <!-- The map's text alternative. Nothing in the product listed hazards,
-               assets, flood extents or road state as text, so on both
-               officer-facing surfaces the primary decision surface was a
-               picture with no non-visual form. -->
-          <button type="button" class="btn btn-xs map-list-toggle" id="mapListToggle"
-                  aria-expanded="false" aria-controls="mapRecordList">Show as list</button>
         </div>
-    </section>
-    <section id="workflowOverview" class="workflow-ribbon" aria-label="Workflow overview">
-      <div class="workflow-summary">
-        <span class="workflow-summary-count" id="workflowOpen">—</span>
-        <span class="workflow-summary-label">open workflow instances</span>
-        <span class="workflow-summary-sep" aria-hidden="true">·</span>
-        <span class="workflow-summary-count" id="workflowClosed">—</span>
-        <span class="workflow-summary-label">closed</span>
-        <span class="workflow-summary-rejected" id="workflowRejectedWrap" hidden>
-          <span class="workflow-summary-sep" aria-hidden="true">·</span>
-          <span id="workflowRejected">0</span> rejected
-        </span>
       </div>
-      <!-- The eight tiles were a breakdown of the number printed two lines
-           above them, and they put eight focusable controls on the screen
-           before the operator had seen a single record. The count stays; the
-           breakdown is now one keystroke away. -->
-      <details class="workflow-breakdown">
-        <summary>Breakdown by type <span class="workflow-summary-breakdown" id="workflowTypeCount"></span></summary>
-        <div id="workflowMetricsGrid" class="workflow-tray" role="list"></div>
-      </details>
-      <details class="workflow-instances" id="workflowInstances">
-        <summary>Open instances <span class="workflow-summary-breakdown" id="workflowInstanceCount"></span></summary>
-        <div id="workflowInstanceList" class="list-container"></div>
-      </details>
     </section>
 
     <main class="console-layout" id="main" tabindex="-1">

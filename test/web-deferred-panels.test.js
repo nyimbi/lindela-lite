@@ -86,7 +86,13 @@ describe('ENH-46 — the four panels are deferred', () => {
 
   it('the console is materially lighter on first load', () => {
     const controls = (INDEX.match(/<(button|input|select|textarea)\b/g) || []).length
-    assert.ok(controls <= 50,
+    // A ratchet, not a target. 50 was the ceiling after the four panels were
+    // deferred; the command-band restructure adds exactly one — the filter
+    // sheet's trigger, `#filterSheetToggle`. The six filters it governs are not
+    // new: they moved out of the band into the sheet, same ids, same count. One
+    // control buys back the band's third row, which was 384px of the viewport
+    // on a 390x844 phone. Measured 2026-10-10.
+    assert.ok(controls <= 51,
       `index.html still ships ${controls} controls at boot; the deferral targeted ~41`)
   })
 
