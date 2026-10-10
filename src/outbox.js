@@ -61,50 +61,62 @@ function outboundEventId(event, payload) {
  * wrong order gets a store that refuses rather than a store that half-applies.
  */
 export async function emit(store, event, payload, writes = {}) {
-  const data = await store.read()
-  const id = outboundEventId(event, payload)
-  const existing = (data.events_outbox || []).find((row) => row.id === id)
+  // CON-01. The read and the merge were two transactions, so two replicas both
+  // read the row as absent (or as carrying the backoff they are about to
+  // overwrite), both decide, and both write — an event re-emitted mid-dispatch
+  // resurrects a row whose backoff was just set. `withLock` runs the decision
+  // and the write in one transaction, so the second replica reads what the first
+  // committed.
+  return store.withLock(async (locked) => {
+    // A manifest read, not the whole store: these functions read one
+    // collection, and naming it turns the Postgres read into a `WHERE
+    // collection = ANY(...)` instead of materialising every row. The tick's
+    // read-once budget (SCL-02) depends on it too.
+    const data = await locked.read(['events_outbox'])
+    const id = outboundEventId(event, payload)
+    const existing = (data.events_outbox || []).find((row) => row.id === id)
 
-  if (existing && existing.status === 'sent') {
-    // Already delivered. Re-emitting would send a second copy of an event the
-    // subscriber has acted on.
-    return existing
-  }
+    if (existing && existing.status === 'sent') {
+      // Already delivered. Re-emitting would send a second copy of an event the
+      // subscriber has acted on.
+      return existing
+    }
 
-  if (existing && existing.status === 'failed') {
-    // Dead-lettered. Re-emitting is what killed the retry budget in the first
-    // place: the platform's own retry path re-emits the event it is retrying,
-    // so a row that reached `failed` would be resurrected on the very next tick
-    // and never stay dead. Recovery is a deliberate act — `redriveOutbox` —
-    // because an operator clearing a dead letter is a decision, and a silent
-    // reset is not one.
-    return existing
-  }
+    if (existing && existing.status === 'failed') {
+      // Dead-lettered. Re-emitting is what killed the retry budget in the first
+      // place: the platform's own retry path re-emits the event it is retrying,
+      // so a row that reached `failed` would be resurrected on the very next tick
+      // and never stay dead. Recovery is a deliberate act — `redriveOutbox` —
+      // because an operator clearing a dead letter is a decision, and a silent
+      // reset is not one.
+      return existing
+    }
 
-  const record = {
-    ...(existing || {}),
-    id,
-    type: existing?.type || 'outbox_event',
-    event,
-    payload,
-    created_at: existing?.created_at || nowIso(),
-    // R-20. Attempts carried forward. Resetting to zero here is what made
-    // `maxRetries` unreachable: every retry cycle in the platform re-emits the
-    // event it is retrying.
-    attempts: existing?.attempts || 0,
-    status: 'pending',
-    last_attempt_at: existing?.last_attempt_at ?? null,
-    last_error: existing?.last_error ?? null,
-    // Preserved, not cleared. A row waiting out a backoff is still waiting out
-    // that backoff, and re-emitting it — which every retry path in the platform
-    // does — must not hand a permanently failing endpoint a free request per
-    // cycle. That was the other half of R-20: the counter was reset on re-emit,
-    // and the cooldown would have been reset with it.
-    next_attempt_at: existing?.next_attempt_at ?? null,
-    ...(existing?.failed_at ? { failed_at: existing.failed_at } : {}),
-  }
-  await store.merge({ events_outbox: [record], ...writes })
-  return record
+    const record = {
+      ...(existing || {}),
+      id,
+      type: existing?.type || 'outbox_event',
+      event,
+      payload,
+      created_at: existing?.created_at || nowIso(),
+      // R-20. Attempts carried forward. Resetting to zero here is what made
+      // `maxRetries` unreachable: every retry cycle in the platform re-emits the
+      // event it is retrying.
+      attempts: existing?.attempts || 0,
+      status: 'pending',
+      last_attempt_at: existing?.last_attempt_at ?? null,
+      last_error: existing?.last_error ?? null,
+      // Preserved, not cleared. A row waiting out a backoff is still waiting out
+      // that backoff, and re-emitting it — which every retry path in the platform
+      // does — must not hand a permanently failing endpoint a free request per
+      // cycle. That was the other half of R-20: the counter was reset on re-emit,
+      // and the cooldown would have been reset with it.
+      next_attempt_at: existing?.next_attempt_at ?? null,
+      ...(existing?.failed_at ? { failed_at: existing.failed_at } : {}),
+    }
+    await locked.merge({ events_outbox: [record], ...writes })
+    return record
+  })
 }
 
 /**
@@ -129,61 +141,70 @@ export async function emit(store, event, payload, writes = {}) {
 export async function emitMany(store, events = []) {
   const items = (events || []).filter(Boolean)
   if (!items.length) return []
-  const data = await store.read()
-  const outboxById = new Map((data.events_outbox || []).map((row) => [row.id, row]))
+  // CON-01, as in `emit`: the snapshot and the merge are one transaction, so a
+  // second replica cannot land a write between the decision and the write.
+  return store.withLock(async (locked) => {
+    // A manifest read, not the whole store: these functions read one
+    // collection, and naming it turns the Postgres read into a `WHERE
+    // collection = ANY(...)` instead of materialising every row. The tick's
+    // read-once budget (SCL-02) depends on it too.
+    const data = await locked.read(['events_outbox'])
+    const outboxById = new Map((data.events_outbox || []).map((row) => [row.id, row]))
 
-  const records = []
-  const pending = []
-  // Ids already queued in *this* batch. Two items with the same event and
-  // payload hash to the same id, and a single merge holding that id twice would
-  // be a row written over itself — the second item's `writes` would land and the
-  // first's would not. `emit` cannot hit this because each call reads back what
-  // the previous one wrote; here the snapshot is taken once, so it is tracked.
-  const queued = new Map()
-  for (const item of items) {
-    const id = outboundEventId(item.event, item.payload)
-    const existing = queued.get(id) || outboxById.get(id)
-    // Same two short-circuits as `emit`, for the same reasons: a delivered event
-    // is not re-sent, and a dead letter is not resurrected by the platform's own
-    // retry path.
-    if (existing && (existing.status === 'sent' || existing.status === 'failed')) {
-      records.push(existing)
-      continue
+    const records = []
+    const pending = []
+    // Ids already queued in *this* batch. Two items with the same event and
+    // payload hash to the same id, and a single merge holding that id twice would
+    // be a row written over itself — the second item's `writes` would land and the
+    // first's would not. `emit` cannot hit this because each call reads back what
+    // the previous one wrote; here the snapshot is taken once, so it is tracked.
+    const queued = new Map()
+    for (const item of items) {
+      const id = outboundEventId(item.event, item.payload)
+      const existing = queued.get(id) || outboxById.get(id)
+      // Same two short-circuits as `emit`, for the same reasons: a delivered event
+      // is not re-sent, and a dead letter is not resurrected by the platform's own
+      // retry path.
+      if (existing && (existing.status === 'sent' || existing.status === 'failed')) {
+        records.push(existing)
+        continue
+      }
+      const record = {
+        ...(existing || {}),
+        id,
+        type: existing?.type || 'outbox_event',
+        event: item.event,
+        payload: item.payload,
+        created_at: existing?.created_at || nowIso(),
+        attempts: existing?.attempts || 0,
+        status: 'pending',
+        last_attempt_at: existing?.last_attempt_at ?? null,
+        last_error: existing?.last_error ?? null,
+        next_attempt_at: existing?.next_attempt_at ?? null,
+        ...(existing?.failed_at ? { failed_at: existing.failed_at } : {}),
+      }
+      records.push(record)
+      queued.set(id, record)
+      pending.push({ record, writes: item.writes || {} })
     }
-    const record = {
-      ...(existing || {}),
-      id,
-      type: existing?.type || 'outbox_event',
-      event: item.event,
-      payload: item.payload,
-      created_at: existing?.created_at || nowIso(),
-      attempts: existing?.attempts || 0,
-      status: 'pending',
-      last_attempt_at: existing?.last_attempt_at ?? null,
-      last_error: existing?.last_error ?? null,
-      next_attempt_at: existing?.next_attempt_at ?? null,
-      ...(existing?.failed_at ? { failed_at: existing.failed_at } : {}),
-    }
-    records.push(record)
-    queued.set(id, record)
-    pending.push({ record, writes: item.writes || {} })
-  }
 
-  if (!pending.length) return records
+    if (!pending.length) return records
 
-  const merge = { events_outbox: pending.map(({ record }) => record) }
-  for (const { writes } of pending) {
-    for (const [collection, rows] of Object.entries(writes)) {
-      if (!Array.isArray(rows) || !rows.length) continue
-      merge[collection] = [...(merge[collection] || []), ...rows]
+    const merge = { events_outbox: pending.map(({ record }) => record) }
+    for (const { writes } of pending) {
+      for (const [collection, rows] of Object.entries(writes)) {
+        if (!Array.isArray(rows) || !rows.length) continue
+        merge[collection] = [...(merge[collection] || []), ...rows]
+      }
     }
-  }
-  await store.merge(merge)
-  return records
+    await locked.merge(merge)
+    return records
+  })
 }
 
 /**
- * One in-flight dispatch per store, in one process.
+ * One in-flight dispatch per store, in one process — plus a claim that holds
+ * across replicas.
  *
  * R-21: `dispatchPending` read the pending set, delivered to every matched
  * webhook, then merged the outcomes. Two concurrent calls — the driver's tick
@@ -192,16 +213,39 @@ export async function emitMany(store, events = []) {
  * disbursement or an incident is the worst kind of duplicate: idempotent on the
  * wire, twice in the world.
  *
- * A promise chain keyed on the store, so the second caller waits and then reads
- * *fresh* state and finds the rows already sent. It is a lock rather than an
- * in-flight claim because the store has no column to claim into, and a claim
- * added to the row would need the same atomic write this is avoiding.
+ * CON-07: the in-process lock below is per-process, so two *replicas* still both
+ * read the same pending rows and both deliver them. The comment here used to say
+ * the fix was `pg_advisory_lock` and that it was not done because "a claim added
+ * to the row would need the same atomic write this is avoiding". That write
+ * exists now — `store.withLock` — so the claim is the fix rather than a note.
  *
- * Scope, stated: one process. Two replicas sharing a PostgreSQL store still need
- * `pg_advisory_lock` around the read/merge, and that is the honest limit of an
- * in-process mutex.
+ * The shape is claim-deliver-record, not lock-deliver-record:
+ *
+ *  1. under the lock, read the due rows and mark them `dispatching` with a
+ *     timestamp. A second replica's read, taken after this commits, no longer
+ *     sees them as pending, so it does not deliver them. This is the whole of
+ *     the cross-replica guarantee.
+ *  2. outside the lock, deliver. Webhook POSTs are network I/O with a 5 s
+ *     timeout each, and holding a global write lock across them would serialise
+ *     every write in the deployment behind the slowest subscriber — turning a
+ *     delivery problem into a write outage.
+ *  3. under the lock again, write the outcomes.
+ *
+ * The in-process chain is kept and now runs *around* the claim rather than
+ * instead of it: within one process it avoids the pointless claim/rollback of a
+ * batch the other caller is already delivering, and it is what makes the tick
+ * and the button deterministic in the single-replica deployment this project
+ * actually ships.
+ *
+ * A claim that is never recorded — the process died mid-delivery — is reclaimed
+ * by `DISPATCH_CLAIM_TTL_MS`, so a crashed replica does not strand its batch
+ * forever. The window is generous relative to `maxBatch × timeoutMs` so a slow
+ * but live delivery is not stolen and delivered twice.
  */
 const _dispatchLocks = new WeakMap()
+
+/** A claim older than this is treated as abandoned and becomes deliverable again. */
+export const DISPATCH_CLAIM_TTL_MS = 10 * 60 * 1000
 
 async function withDispatchLock(store, fn) {
   const previous = _dispatchLocks.get(store) || Promise.resolve()
@@ -222,28 +266,73 @@ async function withDispatchLock(store, fn) {
 }
 
 export async function dispatchPending(store, options = {}) {
-  // R-21. The whole read-deliver-merge cycle runs under the store's lock.
-  return withDispatchLock(store, () => dispatchPendingUnlocked(store, options))
+  // R-21. Within one process, the tick and the button do not overlap at all.
+  return withDispatchLock(store, () => dispatchPendingClaimed(store, options))
 }
 
-async function dispatchPendingUnlocked(store, options) {
+/**
+ * The claim half: due rows, marked `dispatching`, read and written atomically.
+ *
+ * Returns the rows this caller has claimed and may deliver, in the shape
+ * `dispatchPendingUnlocked` expects — carrying `dispatching_at` so the outcome
+ * write knows what it is completing.
+ */
+async function claimPending(store, { maxBatch, nowMs }) {
+  return store.withLock(async (locked) => {
+    // A manifest read, not the whole store: these functions read one
+    // collection, and naming it turns the Postgres read into a `WHERE
+    // collection = ANY(...)` instead of materialising every row. The tick's
+    // read-once budget (SCL-02) depends on it too.
+    const data = await locked.read(['events_outbox'])
+    const claimedAt = new Date(nowMs).toISOString()
+    const due = (data.events_outbox || [])
+      .filter((e) => e.status === 'pending')
+      // CON-07. A row another replica is mid-delivery on is not pending for this
+      // one. The TTL reclaims a claim whose owner died.
+      .filter((e) => !e.dispatching_at || (nowMs - Date.parse(e.dispatching_at)) > DISPATCH_CLAIM_TTL_MS)
+      // R-20. `next_attempt_at` is consulted here, not only written. A backoff
+      // that is recorded and never read is a comment.
+      .filter((e) => !e.next_attempt_at || Date.parse(e.next_attempt_at) <= nowMs)
+      .slice(0, maxBatch)
+    if (!due.length) return []
+    const claims = due.map((row) => ({ ...row, dispatching_at: claimedAt }))
+    await locked.merge({ events_outbox: claims })
+    return claims
+  })
+}
+
+/** The record half: outcomes written under the lock, so a claim is always resolved. */
+async function recordDispatch(store, updates) {
+  if (!updates.length) return
+  await store.withLock(async (locked) => locked.merge({ events_outbox: updates }))
+}
+
+async function dispatchPendingClaimed(store, options) {
+  const { maxBatch = 50, now = Date.now } = options
+  const nowMs = now()
+  const claimed = await claimPending(store, { maxBatch, nowMs })
+  if (!claimed.length) {
+    return { dispatched: 0, failed: 0, undeliverable: 0, deferred: 0 }
+  }
+  const { updates, counts } = await deliverClaimed(claimed, options)
+  await recordDispatch(store, updates)
+  return counts
+}
+
+/**
+ * Delivers claimed rows and computes their new state. No store access — the
+ * caller owns both the claim and the outcome write.
+ */
+async function deliverClaimed(claimed, options) {
   // checkUrl defaults to the SSRF guard and exists so tests can deliver to a
   // loopback listener; nothing in the request path passes it.
   const {
     webhooks = [],
-    maxBatch = 50,
     timeoutMs = 5000,
     checkUrl = assertSafeWebhookUrl,
     now = Date.now,
   } = options
-  const data = await store.read()
   const nowMs = now()
-  // R-20. `next_attempt_at` is consulted here, not only written. A backoff that
-  // is recorded and never read is a comment.
-  const pending = (data.events_outbox || [])
-    .filter((e) => e.status === 'pending')
-    .filter((e) => !e.next_attempt_at || Date.parse(e.next_attempt_at) <= nowMs)
-    .slice(0, maxBatch)
 
   const updates = []
   let dispatched = 0
@@ -251,7 +340,7 @@ async function dispatchPendingUnlocked(store, options) {
   let undeliverable = 0
   let deferred = 0
 
-  for (const outboxEvent of pending) {
+  for (const outboxEvent of claimed) {
     const matchedWebhooks = webhooks.filter((w) =>
       w.status === 'active' && matchEvent(w, outboxEvent.event)
     )
@@ -260,10 +349,12 @@ async function dispatchPendingUnlocked(store, options) {
       // Not sent. Not a success either — there is nobody to send it to, and an
       // event nobody is subscribed to is a configuration fact, not a delivery.
       // It is left `pending` with no retry floor: a subscription may be created
-      // later, and the event is then still deliverable.
+      // later, and the event is then still deliverable. The claim is cleared so
+      // the next cycle re-examines it.
       updates.push({
         ...outboxEvent,
         status: 'pending',
+        dispatching_at: null,
         undeliverable: true,
         last_error: 'no active webhook is subscribed to this event',
       })
@@ -330,8 +421,9 @@ async function dispatchPendingUnlocked(store, options) {
     const nextAttempts = outboxEvent.attempts + 1
     const attemptedAt = nowIso()
     // Carried forward rather than reset, so a merge of the update cannot erase
-    // the record of how many times this has been tried.
-    const base = { ...outboxEvent, attempts: nextAttempts, last_attempt_at: attemptedAt }
+    // the record of how many times this has been tried. `dispatching_at` is
+    // cleared because this claim is being resolved.
+    const base = { ...outboxEvent, attempts: nextAttempts, last_attempt_at: attemptedAt, dispatching_at: null }
 
     if (isSuccess) {
       updates.push({ ...base, status: 'sent', last_error: null, next_attempt_at: null, undeliverable: false, sent_at: attemptedAt })
@@ -363,11 +455,7 @@ async function dispatchPendingUnlocked(store, options) {
     }
   }
 
-  if (updates.length) {
-    await store.merge({ events_outbox: updates })
-  }
-
-  return { dispatched, failed, undeliverable, deferred }
+  return { updates, counts: { dispatched, failed, undeliverable, deferred } }
 }
 
 /**
@@ -383,28 +471,36 @@ async function dispatchPendingUnlocked(store, options) {
  * Returns the rows it requeued, so a caller can report what it revived.
  */
 export async function redriveOutbox(store, { ids = null, event = null } = {}) {
-  const data = await store.read()
-  const wanted = Array.isArray(ids) && ids.length ? new Set(ids) : null
-  const revived = (data.events_outbox || []).filter((row) => {
-    if (row.status !== 'failed') return false
-    if (wanted) return wanted.has(row.id)
-    if (event) return row.event === event
-    return true
-  })
-  if (!revived.length) return []
+  // CON-01. Read and merge in one transaction, so two operators redriving at
+  // once do not each revive a row from the same stale snapshot.
+  return store.withLock(async (locked) => {
+    // A manifest read, not the whole store: these functions read one
+    // collection, and naming it turns the Postgres read into a `WHERE
+    // collection = ANY(...)` instead of materialising every row. The tick's
+    // read-once budget (SCL-02) depends on it too.
+    const data = await locked.read(['events_outbox'])
+    const wanted = Array.isArray(ids) && ids.length ? new Set(ids) : null
+    const revived = (data.events_outbox || []).filter((row) => {
+      if (row.status !== 'failed') return false
+      if (wanted) return wanted.has(row.id)
+      if (event) return row.event === event
+      return true
+    })
+    if (!revived.length) return []
 
-  const updates = revived.map((row) => ({
-    ...row,
-    status: 'pending',
-    // The counter goes back to zero because this is a fresh attempt at a fresh
-    // situation, and a redrive that started at 5 would have one try left.
-    attempts: 0,
-    next_attempt_at: null,
-    failed_at: null,
-    redriven_at: nowIso(),
-  }))
-  await store.merge({ events_outbox: updates })
-  return updates
+    const updates = revived.map((row) => ({
+      ...row,
+      status: 'pending',
+      // The counter goes back to zero because this is a fresh attempt at a fresh
+      // situation, and a redrive that started at 5 would have one try left.
+      attempts: 0,
+      next_attempt_at: null,
+      failed_at: null,
+      redriven_at: nowIso(),
+    }))
+    await locked.merge({ events_outbox: updates })
+    return updates
+  })
 }
 
 /**

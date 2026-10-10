@@ -318,6 +318,19 @@ export class PostgresStore {
    */
   async read(options = {}) {
     await this.ensureSchema()
+    return this.#readWith(this.pool, options)
+  }
+
+  /**
+   * The read, against a caller-supplied query runner.
+   *
+   * `pool` and a connected `client` both expose `query`, so `read()` passes the
+   * pool and `withLock()` passes its client. That is what lets a read inside a
+   * lock see the transaction's own uncommitted writes — a merge issued inside
+   * the lock and read back inside it must observe itself, or the lock would be
+   * serialising two callers around a snapshot neither of them can see.
+   */
+  async #readWith(runner, options = {}) {
     const { collections, includeHistory, partnerOrg } = normaliseReadOptions(options)
 
     const clauses = ["collection <> '__schema'"]
@@ -379,7 +392,7 @@ export class PostgresStore {
     // is stamped `now()` at write time and so sorts by insertion rather than by
     // when the record describes. All the ordering bought was `rows[0]`, which
     // `#newestWrite()` answers without touching the bodies.
-    const { rows } = await this.pool.query(
+    const { rows } = await runner.query(
       `SELECT collection, body FROM lite_records WHERE ${clauses.join(' AND ')}`,
       params,
     )
@@ -410,7 +423,7 @@ export class PostgresStore {
     for (const collection of COLLECTIONS) {
       if (store[collection].length) store[collection] = sortRecords(store[collection])
     }
-    store.updated_at = (await this.#newestWrite()) || nowIso()
+    store.updated_at = (await this.#newestWrite(runner)) || nowIso()
     return store
   }
 
@@ -424,8 +437,8 @@ export class PostgresStore {
    * rows to one. The flat `SELECT max(updated_at) FROM lite_records` this
    * replaces — as the tail of a 39,715-row sort — had no index to use at all.
    */
-  async #newestWrite() {
-    const { rows } = await this.pool.query(
+  async #newestWrite(runner = this.pool) {
+    const { rows } = await runner.query(
       `SELECT max(per_collection.newest) AS newest FROM (
          SELECT max(updated_at) AS newest
            FROM lite_records
@@ -586,43 +599,7 @@ export class PostgresStore {
     try {
       await client.query('BEGIN')
       await this.#lockWrites(client)
-      for (const { collection, items } of writes) {
-        // ENH-13. Read the predecessors before the upsert overwrites them.
-        // Doing this inside the same transaction as the write is the whole
-        // point: two concurrent merges of the same record must not both read
-        // the same predecessor and each write a history row claiming to be
-        // the sole prior value.
-        //
-        // Deliberately the same helper the JsonStore path uses. Two
-        // implementations of "was this a revision" would disagree on exactly
-        // the boundary cases, and the disagreement would be invisible until
-        // somebody diffed the two stores.
-        if (BITEMPORAL_COLLECTIONS.includes(collection)) {
-          const { rows: predecessors } = await client.query(
-            'SELECT body FROM lite_records WHERE collection = $1 AND id = ANY($2::text[])',
-            [collection, items.map((item) => item.id)],
-          )
-          const superseded = supersededVersions(
-            collection,
-            predecessors.map((row) => row.body),
-            items,
-          )
-          if (superseded.length) {
-            // Bounded on insert. The JSON store prunes in memory because it
-            // holds the whole table; Postgres has to ask, and asking only when
-            // someone remembers is how the demo store reached 37,735 rows.
-            // A collection that is already at the cap contributes no new
-            // versions until something prunes it — which would silently stop
-            // recording history, so the prune runs first.
-            //
-            // R-26: for the records this batch actually revised, and no
-            // others. See `pruneVersions`.
-            await this.pruneVersions(client, superseded.map((row) => row.record_id))
-            await this.insertRecords(client, HISTORY_COLLECTION, superseded)
-          }
-        }
-        await this.upsertCollection(client, collection, items)
-      }
+      await this.#mergeBody(client, writes)
       await client.query('COMMIT')
     } catch (error) {
       await client.query('ROLLBACK')
@@ -636,6 +613,114 @@ export class PostgresStore {
     // `src/ingestion.js:392` still destructures the result into `data` and hands
     // it on; nothing reads it there either, and it is the one call site that
     // has to be edited before this can be described as having no consumers.
+  }
+
+  /**
+   * The statements of a merge, against a caller-supplied client.
+   *
+   * Split out so `withLock()` can run a merge inside the same transaction it
+   * holds the lock in. That is what makes the outbox's read-modify-write
+   * serialised across replicas: without it, the read and the merge are two
+   * transactions, and another replica's merge can land between them — CON-01.
+   *
+   * No BEGIN, COMMIT or lock here; the caller owns the transaction.
+   */
+  async #mergeBody(client, writes) {
+    for (const { collection, items } of writes) {
+      // ENH-13. Read the predecessors before the upsert overwrites them.
+      // Doing this inside the same transaction as the write is the whole
+      // point: two concurrent merges of the same record must not both read
+      // the same predecessor and each write a history row claiming to be
+      // the sole prior value.
+      //
+      // Deliberately the same helper the JsonStore path uses. Two
+      // implementations of "was this a revision" would disagree on exactly
+      // the boundary cases, and the disagreement would be invisible until
+      // somebody diffed the two stores.
+      if (BITEMPORAL_COLLECTIONS.includes(collection)) {
+        const { rows: predecessors } = await client.query(
+          'SELECT body FROM lite_records WHERE collection = $1 AND id = ANY($2::text[])',
+          [collection, items.map((item) => item.id)],
+        )
+        const superseded = supersededVersions(
+          collection,
+          predecessors.map((row) => row.body),
+          items,
+        )
+        if (superseded.length) {
+          // Bounded on insert. The JSON store prunes in memory because it
+          // holds the whole table; Postgres has to ask, and asking only when
+          // someone remembers is how the demo store reached 37,735 rows.
+          // A collection that is already at the cap contributes no new
+          // versions until something prunes it — which would silently stop
+          // recording history, so the prune runs first.
+          //
+          // R-26: for the records this batch actually revised, and no
+          // others. See `pruneVersions`.
+          await this.pruneVersions(client, superseded.map((row) => row.record_id))
+          await this.insertRecords(client, HISTORY_COLLECTION, superseded)
+        }
+      }
+      await this.upsertCollection(client, collection, items)
+    }
+  }
+
+  /**
+   * Runs `fn` with the store's write lock held, handing it a store whose reads
+   * and writes share one transaction.
+   *
+   * ENH-63, and the three defects that hang off it. `emit` and `dispatchPending`
+   * both read the store, decide from that snapshot, and merge — with the read
+   * and the merge in two transactions. In one process the in-process dispatch
+   * lock covers it; across replicas nothing does, so two processes both decide
+   * an event is absent and both insert it, or both deliver the same pending row
+   * (CON-01, CON-07). CON-06 is the same shape for idempotency.
+   *
+   * The locked store's `read` and `merge` run on the transaction's own client,
+   * so the merge is not merely serialised against other replicas — it is
+   * *visible to the read that follows it in the same `fn`*, which is what a
+   * caller doing read-then-write-then-read needs.
+   *
+   * `fn`'s return value is passed through. Errors roll the transaction back and
+   * propagate, and the lock is released by the rollback — there is no path that
+   * leaves it held.
+   */
+  async withLock(fn) {
+    await this.ensureSchema()
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      await this.#lockWrites(client)
+      const locked = {
+        read: (options) => this.#readWith(client, options),
+        merge: (partial) => this.#mergeLocked(client, partial),
+        // A locked caller reads and writes only. `write()` replaces the world
+        // and `remove()` deletes by id; neither is used by the outbox or the
+        // idempotency store, and a locked variant of either would be a new
+        // surface to reason about for no caller. Absent rather than present and
+        // throwing, so reaching for one is a TypeError that names it.
+      }
+      const result = await fn(locked)
+      await client.query('COMMIT')
+      return result
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
+  /** The merge validation `merge()` does, without the transaction it owns. */
+  async #mergeLocked(client, partial) {
+    assertDeclaredCollections(partial)
+    const writes = []
+    for (const collection of COLLECTIONS) {
+      const incoming = (partial[collection] || []).filter((item) => item?.id)
+      if (incoming.length) writes.push({ collection, items: incoming })
+    }
+    if (!writes.length) return
+    await this.#mergeBody(client, writes)
   }
 
   /**

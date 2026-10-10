@@ -282,6 +282,29 @@ function tickStore(store) {
       await refresh(Object.keys(doomed?.collection || {}))
       return result
     },
+    // Delegated rather than emulated. The outbox's dispatch item calls this, and
+    // a locked body must read the *store*, not this tick's snapshot: the point of
+    // the lock is a fresh read of the rows it is about to claim, and a claim
+    // decided from a snapshot taken at the top of the tick would hand the row to
+    // a second replica.
+    //
+    // Only the collections the body wrote are refreshed afterwards, rather than
+    // dropping the snapshot whole. Dropping it costs a full-store read on the
+    // next item, which is exactly the per-item cost SCL-02 removed — and the
+    // outbox writes one collection, so the refresh is a manifest read. The
+    // snapshot stays valid for everything the body did not touch.
+    async withLock(fn) {
+      const touched = new Set()
+      const result = await store.withLock((locked) => fn({
+        read: (options) => locked.read(options),
+        merge: (partial) => {
+          for (const key of Object.keys(partial || {})) touched.add(key)
+          return locked.merge(partial)
+        },
+      }))
+      if (touched.size) await refresh(touched)
+      return result
+    },
   }
   // Deliberately no `write` delegate. No driver item uses one — the seven read
   // and merge — and `write()` replaces the world, so the only honest thing a

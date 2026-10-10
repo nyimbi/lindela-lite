@@ -1,9 +1,21 @@
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { emptyStore } from './schema.js'
 import { nowIso } from './utils.js'
 import { BITEMPORAL_COLLECTIONS, isRevision, pruneVersions, versionRow } from './bitemporal.js'
+
+/**
+ * Names the store whose write chain the current async flow is running inside.
+ *
+ * See `merge()` and `#serialise()`. A per-instance boolean cannot carry this
+ * meaning: it is set for the whole duration of a task, including the awaits
+ * inside it, so a concurrent caller arriving in that window reads it as "I am
+ * inside the chain" and skips serialisation. That is not a theoretical concern —
+ * it collapsed six concurrent ingestion runs into one row.
+ */
+const chainContext = new AsyncLocalStorage()
 
 /**
  * The six collections `replaceAnalytics` owns.
@@ -387,7 +399,15 @@ export class JsonStore {
    * or it would deadlock waiting on its own tail.
    */
   #serialise(task) {
-    const run = this.tail.then(task, task)
+    // The chain body runs inside a context naming this store, so a `merge` from
+    // within it re-enters instead of waiting on the tail it is running in. The
+    // context is per-async-flow, not a flag on the instance, so a concurrent
+    // caller outside the body is unaffected — see `merge()`.
+    const guarded = async () => {
+      chainContext.enterWith(this)
+      return task()
+    }
+    const run = this.tail.then(guarded, guarded)
     // The chain must not absorb a failure, or one rejected write would poison
     // every later one; swallow it here and re-surface it to the caller only.
     this.tail = run.then(() => undefined, () => undefined)
@@ -438,29 +458,74 @@ export class JsonStore {
 
   async merge(partial) {
     assertDeclaredCollections(partial)
-    return this.#serialise(async () => {
-      const current = await this.read()
-      const next = { ...current }
-      const superseded = []
-      for (const collection of COLLECTIONS) {
-        const incoming = partial[collection] || []
-        if (!incoming.length) continue
-        next[collection] = mergeById(current[collection] || [], incoming)
-        if (BITEMPORAL_COLLECTIONS.includes(collection)) {
-          superseded.push(...supersededVersions(collection, current[collection] || [], incoming))
-        }
+    // Re-entrant only for the chain body itself, which is what `AsyncLocalStorage`
+    // expresses and a boolean cannot. A flag set for the duration of a task also
+    // matches an unrelated caller that arrives while that task is awaiting — and
+    // six concurrent merges then all saw the flag set, all took the re-entrant
+    // path, and all wrote from the same snapshot, collapsing six ingestion runs
+    // into one row. The store identity is what distinguishes "inside this
+    // store's chain" from "another caller, right now".
+    //
+    // Re-entrancy is needed because `withLock` runs its body inside the chain,
+    // and that body merges; taking the chain again would wait on the tail it is
+    // itself running in. Routing through this public method rather than an
+    // internal one is deliberate: a subclass that overrides `merge` (the OBS-02
+    // test does) still intercepts a locked write.
+    if (chainContext.getStore() === this) return this.#mergeNow(partial)
+    return this.#serialise(() => this.#mergeNow(partial))
+  }
+
+  /** The merge, assuming the caller already holds the write chain. */
+  async #mergeNow(partial) {
+    const current = await this.read()
+    return this.#writeFile(this.#mergedStore(current, partial))
+  }
+
+  /**
+   * The merge computation, without the serialisation or the write.
+   */
+  #mergedStore(current, partial) {
+    const next = { ...current }
+    const superseded = []
+    for (const collection of COLLECTIONS) {
+      const incoming = partial[collection] || []
+      if (!incoming.length) continue
+      next[collection] = mergeById(current[collection] || [], incoming)
+      if (BITEMPORAL_COLLECTIONS.includes(collection)) {
+        superseded.push(...supersededVersions(collection, current[collection] || [], incoming))
       }
-      if (superseded.length) {
-        // Pruned on every write, not on a retention job. A version table that
-        // is only bounded when someone remembers to run the job is not bounded,
-        // and the failure is a heap exhaustion rather than a stale row — see
-        // `pruneVersions` for the measurement.
-        next.record_versions = pruneVersions(
-          mergeById(current.record_versions || [], superseded),
-        )
-      }
-      return this.#writeFile(next)
-    })
+    }
+    if (superseded.length) {
+      // Pruned on every write, not on a retention job. A version table that
+      // is only bounded when someone remembers to run the job is not bounded,
+      // and the failure is a heap exhaustion rather than a stale row — see
+      // `pruneVersions` for the measurement.
+      next.record_versions = pruneVersions(
+        mergeById(current.record_versions || [], superseded),
+      )
+    }
+    return next
+  }
+
+  /**
+   * Runs `fn` with the store's write chain held, handing it a store whose read
+   * and merge are serialised together.
+   *
+   * ENH-63's JSON half. `PostgresStore.withLock` takes an advisory lock so a
+   * read-modify-write is atomic across replicas; this is the same primitive for
+   * the file store, where the unit is the process. The two must behave the same
+   * way, because a caller cannot tell which one an environment variable gave it
+   * — that is the recurring defect in this codebase.
+   *
+   * The locked store deliberately exposes only `read` and `merge`. A locked
+   * caller doing read-then-write-then-read is the whole use, and neither the
+   * outbox nor the idempotency store reaches for anything else.
+   */
+  async withLock(fn) {
+    return this.#serialise(() => fn({
+      read: (options) => this.read(options),
+      merge: (partial) => this.merge(partial),
+    }))
   }
 
   /**
