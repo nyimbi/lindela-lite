@@ -103,12 +103,34 @@ const STRING_LIMIT = /^(\d+)\s*(?:\/|\s+per\s+)\s*([a-z]+)$/i
  * `tryAcquire`, and everything else waits in FIFO order. Nothing is ever
  * dropped — a dropped waiter is a silently missing country, which is the
  * failure mode this repository keeps paying for.
+ *
+ * SCL-09. `maxQueue` is the one exception, and it refuses rather than drops.
+ * The queue was unbounded, so a connector fanning out over 46 countries while
+ * the provider stalls accumulated a waiter per country and held its promise
+ * resolvers for as long as the stall lasted. A `Promise` per waiting caller is
+ * small; the array, the closures and the fan-out's own state are not, and a
+ * process that grows without bound under sustained overload fails by exhausting
+ * memory, which is a crash rather than a refusal. Past the bound `acquire`
+ * rejects with a `RateLimitQueueFullError` carrying `retryAfterMs`, so a caller
+ * can back off or shed the work knowingly. The default is generous — 1,000 —
+ * because the point is to bound the pathological case, not to ration normal
+ * fan-out.
  */
+export class RateLimitQueueFullError extends Error {
+  constructor(name, maxQueue, retryAfterMs) {
+    super(`${name}: queue is full (${maxQueue} waiting); retry in ${retryAfterMs}ms`)
+    this.name = 'RateLimitQueueFullError'
+    this.statusCode = 503
+    this.retryAfterMs = retryAfterMs
+  }
+}
+
 export function createRateLimiter({
   ratePerWindow = 1,
   windowMs = MINUTE,
   concurrency = 1,
   jitterMs = 0,
+  maxQueue = 1000,
   now = Date.now,
   sleep = defaultSleep,
   jitter = defaultJitter,
@@ -125,6 +147,9 @@ export function createRateLimiter({
   }
   if (!Number.isFinite(jitterMs) || jitterMs < 0) {
     throw new TypeError(`createRateLimiter: jitterMs must be zero or more; got ${jitterMs}`)
+  }
+  if (!Number.isInteger(maxQueue) || maxQueue < 1) {
+    throw new TypeError(`createRateLimiter: maxQueue must be a positive integer; got ${maxQueue}`)
   }
 
   // Tokens as a float. Rounding them to integers here would make a
@@ -209,7 +234,17 @@ export function createRateLimiter({
 
     /** Wait for a token and a free slot. Resolves with the release function. */
     acquire() {
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
+        // SCL-09. Refuse past the bound rather than queueing without limit. The
+        // retry hint is the same honest figure `tryAcquire` reports: the time
+        // until a token exists, or null when the block is a held slot that no
+        // clock will free.
+        if (queue.length >= maxQueue) {
+          refill()
+          const retryAfterMs = inFlight >= concurrency ? null : tokenWaitMs()
+          reject(new RateLimitQueueFullError(name, maxQueue, retryAfterMs))
+          return
+        }
         queue.push({ resolve })
         drain()
       })
@@ -236,6 +271,7 @@ export function createRateLimiter({
 
     inFlight: () => inFlight,
     queued: () => queue.length,
+    maxQueue: () => maxQueue,
     /** Tokens on hand, for a log line or a test. Not a stable public contract. */
     tokens: () => tokens,
 

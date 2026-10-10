@@ -714,7 +714,21 @@ export function jsonResponse(res, status, body, headers = {}, req = res?.req || 
     vary: headers.vary || headers.Vary || 'authorization, x-api-key',
   }
 
-  if (status === 200 && req && !headers.etag && !headers.ETag) {
+  // SCL-05. The ETag is computed only for a response a client can conditionally
+  // re-request.
+  //
+  // `status === 200` alone let a mutation through. A POST that returned 200 —
+  // `/ingest/run`, `/demo/seed`, the scenario and maintenance routes — got a
+  // sha256 over a body nobody will ever send `If-None-Match` for: the client
+  // just asked for the mutation to happen, and asking again is a second
+  // mutation, not a cache hit. Two answers to a POST with the same ETag would
+  // mean the second one did nothing, which is the opposite of what a POST
+  // promises.
+  //
+  // GET and HEAD are the only methods a conditional request is defined for, and
+  // the hash now runs only for them.
+  const conditionable = status === 200 && req && (req.method === 'GET' || req.method === 'HEAD')
+  if (conditionable && !headers.etag && !headers.ETag) {
     const etag = etagFor(payload)
     outgoing.etag = etag
     outgoing['cache-control'] = 'no-cache'

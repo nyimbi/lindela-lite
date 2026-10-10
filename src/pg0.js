@@ -64,6 +64,29 @@ ${result.stderr}`
   }
 }
 
+/**
+ * SCL-08. How much of a child's output to keep.
+ *
+ * `stdout += chunk` accumulated without limit. `initdb`, `pg_ctl` and the
+ * restore paths are the callers, and a `pg_restore` over a large dump prints
+ * every object it restores — hundreds of megabytes of progress lines held as
+ * one string in the parent, to be discarded on the next line anyway. The cap
+ * keeps the head (where the error is) and the tail (where the summary is), and
+ * records how much it dropped rather than silently truncating.
+ */
+const MAX_OUTPUT_CHARS = 256 * 1024
+const TRUNCATION_NOTE = '\n… output truncated by pg0 …\n'
+
+function appendCapped(existing, chunk) {
+  const next = existing + chunk.toString()
+  if (next.length <= MAX_OUTPUT_CHARS) return next
+  // Keep the first half and the last half. The head carries the command's
+  // opening and any early failure; the tail carries the exit summary and the
+  // last error. The middle is progress output nobody reads.
+  const half = Math.floor(MAX_OUTPUT_CHARS / 2)
+  return next.slice(0, half) + TRUNCATION_NOTE + next.slice(next.length - half)
+}
+
 function runCommand(command, args, { timeoutMs, rejectOnExit = true }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -73,9 +96,16 @@ function runCommand(command, args, { timeoutMs, rejectOnExit = true }) {
       child.kill('SIGTERM')
       reject(new Error(`${command} ${args.join(' ')} timed out after ${timeoutMs}ms`))
     }, timeoutMs)
+    // SCL-08. `unref` so the timeout does not hold the event loop open by
+    // itself. `clearTimeout` below covers the normal path, but a child that
+    // exits without emitting `close` — killed by a signal, or a spawn that
+    // never fires `error` — left a live timer pinning the process for the rest
+    // of its timeout, which is the difference between a clean exit and a test
+    // runner that hangs for fifteen seconds.
+    if (typeof timer.unref === 'function') timer.unref()
 
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString() })
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString() })
+    child.stdout.on('data', (chunk) => { stdout = appendCapped(stdout, chunk) })
+    child.stderr.on('data', (chunk) => { stderr = appendCapped(stderr, chunk) })
     child.on('error', (error) => {
       clearTimeout(timer)
       if (error.code === 'ENOENT') {
@@ -93,4 +123,18 @@ function runCommand(command, args, { timeoutMs, rejectOnExit = true }) {
       resolve({ code, stdout, stderr })
     })
   })
+}
+
+/** Test seam: the output cap, so a test does not have to produce 256 KB. */
+export const PG0_MAX_OUTPUT_CHARS = MAX_OUTPUT_CHARS
+
+/**
+ * Test seam: the capping function itself.
+ *
+ * `runCommand` is not exported — it spawns a process and nothing about the cap
+ * needs one. The behaviour worth pinning is the fold, so it is exported rather
+ * than reached through a spawned command.
+ */
+export function capChildOutput(existing, chunk) {
+  return appendCapped(existing, chunk)
 }

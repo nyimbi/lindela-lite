@@ -215,3 +215,32 @@ describe('SCL-06 the terrain tile cache is bounded', () => {
     assert.equal(refetches, 0, 'the tile that was just used was evicted anyway')
   })
 })
+
+describe('SCL-05 an ETag is computed only where a client can act on it', () => {
+  it('answers a GET with an ETag and a matching If-None-Match with 304', async () => {
+    await withServer(async (base) => {
+      const first = await fetch(`${base}/api/v1/service-assets`)
+      const etag = first.headers.get('etag')
+      assert.ok(etag, 'a list route must still carry an ETag')
+      await first.text()
+      const second = await fetch(`${base}/api/v1/service-assets`, { headers: { 'if-none-match': etag } })
+      assert.equal(second.status, 304)
+    })
+  })
+
+  it('does not hand a mutation response an ETag', async () => {
+    // A conditional request is defined for GET and HEAD. Two POSTs answered
+    // with the same ETag would say the second one changed nothing, which is the
+    // opposite of what a POST promises — and the sha256 over a mutation body is
+    // work nobody can act on.
+    await withServer(async (base) => {
+      const res = await fetch(`${base}/api/v1/maintenance/apply-retention`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      assert.equal(res.status, 200, `expected the route to answer 200, got ${res.status}`)
+      assert.equal(res.headers.get('etag'), null, 'a POST response carried an ETag')
+    })
+  })
+})
