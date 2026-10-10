@@ -1035,7 +1035,10 @@ describe('Lindela Lite API', () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-api-'))
     const store = new JsonStore(path.join(tmpDir, 'store.json'))
     store.mode = 'json'
-    server = createServer({ store })
+    // The distribution webhook is delivered to a loopback listener in these
+    // tests, and the SSRF guard correctly refuses loopback. The guard is
+    // injectable for exactly this; nothing in the request path passes it.
+    server = createServer({ store, checkWebhookUrl: async (url) => url })
     await new Promise((resolve) => server.listen(0, resolve))
     baseUrl = `http://127.0.0.1:${server.address().port}`
   })

@@ -84,9 +84,15 @@ function filterForDistrict(district, records) {
   const seen = new Set()
   const out = []
   for (const r of records) {
-    if (seen.has(r.id)) continue
+    // Dedup only when there is an id to dedup on. A record without one is not a
+    // duplicate of the next id-less record — they are distinct rows that happen
+    // to lack a key, and `seen.add(undefined)` used to collapse every one after
+    // the first, so a district with 40 un-keyed field reports showed 1.
+    if (r.id != null) {
+      if (seen.has(r.id)) continue
+    }
     if (inDistrict(district, r)) {
-      seen.add(r.id)
+      if (r.id != null) seen.add(r.id)
       out.push(r)
     }
   }

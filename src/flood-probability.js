@@ -192,8 +192,13 @@ function monthHasFlood(month, events) {
   const monthEnd = month.days[month.days.length - 1]
   const last = Date.parse(`${monthEnd.date}T23:59:59.999Z`)
   return events.some((event) => {
-    const t = Date.parse(event.occurred_at)
-    return t >= monthStart && t <= last
+    // The same field set the pre-filter admits on. Reading only `occurred_at`
+    // here dropped every event dated by `from` (GDACS-style): it survived the
+    // radius/date filter and was counted in events_matched, but never labelled
+    // a month, so the contingency table's flood-positive count was biased low
+    // exactly where the historical record is richest.
+    const t = Date.parse(event.occurred_at || event.from || '')
+    return Number.isFinite(t) && t >= monthStart && t <= last
   })
 }
 

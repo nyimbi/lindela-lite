@@ -67,6 +67,36 @@ export function toNumber(value, fallback = null) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+export const DEFAULT_LIMIT = 500
+export const MAX_LIMIT = 5000
+
+/**
+ * A page size from a query string, or a refusal.
+ *
+ * `Number('abc')` is NaN and `matched.slice(0, NaN)` is `[]`, so `?limit=abc`
+ * answered with an empty page that was byte-for-byte what an empty collection
+ * looks like — a caller who mistyped a parameter was told there was no data.
+ * That is the same silence the `district` and `state` filters used to produce,
+ * one layer down: a parameter that cannot be honoured must say so.
+ *
+ * An absent limit keeps the default, a number is clamped to the ceiling (a
+ * raised limit is a request the server is entitled to decline), and a value
+ * that is not a number is refused.
+ */
+export function parseLimit(raw, { fallback = DEFAULT_LIMIT, max = MAX_LIMIT } = {}) {
+  // `Number('')` and `Number('   ')` are both 0, which would read as "one
+  // record". An empty value is an absent one, the same way it is in `toNumber`.
+  const text = raw === null || raw === undefined ? '' : String(raw).trim()
+  if (text === '') return fallback
+  const value = Number(text)
+  if (!Number.isFinite(value)) {
+    const error = new Error(`limit must be a number; received ${JSON.stringify(String(raw))}`)
+    error.statusCode = 400
+    throw error
+  }
+  return Math.min(Math.max(Math.trunc(value), 1), max)
+}
+
 export function parseBbox(value) {
   if (!value) return null
   const parts = String(value).split(',').map((part) => Number(part.trim()))
@@ -212,7 +242,7 @@ export function filterRecords(records, query, context = {}, { unlimited = false 
   const districtFilter = resolveDistrictFilter(query.get('district') || query.get('region'))
   const from = query.get('from') ? Date.parse(query.get('from')) : null
   const to = query.get('to') ? Date.parse(query.get('to')) : null
-  const limit = Math.min(Math.max(Number(query.get('limit') || 500), 1), 5000)
+  const limit = parseLimit(query.get('limit'))
 
   const matched = (partnerOrg ? records.filter((item) => item?.partner_org === partnerOrg) : records)
     .filter((item) => recordInBbox(item, bbox))
@@ -259,7 +289,7 @@ export function filterRecords(records, query, context = {}, { unlimited = false 
 export function matchedAndPage(records, query, context = {}) {
   const matched = filterRecords(records, query, context, { unlimited: true })
   const cursor = decodeCursor(query.get('cursor'))
-  const limit = Math.min(Math.max(Number(query.get('limit') || 500), 1), 5000)
+  const limit = parseLimit(query.get('limit'))
 
   let start = 0
   if (cursor) {

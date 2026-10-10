@@ -99,7 +99,11 @@ export function computeApiUptime() {
   if (override !== undefined) return parseFloat(override)
   const ringRate = computeShortTermSuccessRate()
   if (ringRate !== null) return Math.round(ringRate * 100) / 100
-  return 100.0
+  // No requests in the ring buffer is not "perfect uptime" — it is no
+  // measurement. Returning 100.0 published a flawless-availability claim from
+  // zero observations on the dashboard an approver reads. `null` is this
+  // module's own convention for "not measured", and the surface renders it so.
+  return null
 }
 
 export function computeQuarterlyKpi(data, { quarter, year } = {}) {

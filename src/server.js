@@ -327,6 +327,12 @@ export function createServer(options = {}) {
   // the process, and a limiter rebuilt per request would have no memory of the
   // last request at all. Injectable so a test can drive it with a fake clock.
   const inboundLimiter = options.inboundLimiter || createInboundLimiter(options.inboundLimiterOptions || {})
+  // The SSRF guard the distribution path applies to a webhook URL. Injectable
+  // for the same reason `dispatchPending` takes one: a test that has to prove
+  // what the delivery path does needs a listener it can reach, and every such
+  // listener is on loopback, which the guard exists to refuse. Nothing in the
+  // request path overrides it.
+  const checkWebhookUrl = options.checkWebhookUrl || assertSafeWebhookUrl
   return http.createServer(async (req, res) => {
     const t = timer()
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
@@ -401,7 +407,7 @@ export function createServer(options = {}) {
         return
       }
       if (url.pathname.startsWith('/api/v1/')) {
-        await handleApi(await storeProvider, req, res, url)
+        await handleApi(await storeProvider, req, res, url, { checkWebhookUrl })
         return
       }
       await handleStatic(req, res, url.pathname)
@@ -660,7 +666,7 @@ function idempotencyKey(req, subject, url) {
   return `${subject || 'anonymous'}\u0000${req.method}\u0000${url.pathname}\u0000${key}`
 }
 
-async function handleApi(store, req, res, url) {
+async function handleApi(store, req, res, url, { checkWebhookUrl } = {}) {
   let key
   try {
     // Resolved here as well as inside handleApiRequest: the key must be scoped
@@ -673,7 +679,7 @@ async function handleApi(store, req, res, url) {
     jsonResponse(res, error.statusCode || 400, { success: false, error: error.message })
     return
   }
-  if (!key) return handleApiRequest(store, req, res, url)
+  if (!key) return handleApiRequest(store, req, res, url, { checkWebhookUrl })
 
   // Buffered before dispatch so a retry can be compared with the attempt it
   // claims to repeat. `readRawBody` memoises, so the handler still reads a
@@ -726,7 +732,7 @@ async function handleApi(store, req, res, url) {
   let captured = null
   res.__capture = (status, body) => { captured = { status, body } }
   try {
-    await handleApiRequest(store, req, res, url)
+    await handleApiRequest(store, req, res, url, { checkWebhookUrl })
   } finally {
     delete res.__capture
   }
@@ -750,17 +756,17 @@ async function handleApi(store, req, res, url) {
  * request's identity by default, so the default is the secure one and a new
  * route cannot forget.
  */
-async function handleApiRequest(store, req, res, url) {
+async function handleApiRequest(store, req, res, url, { checkWebhookUrl } = {}) {
   // Resolve the identity once, here, and publish it for the whole dispatch.
   //
   // `authenticate` was already being called on this path for the idempotency
   // key, so this is not a second authentication — it is the same call, hoisted
   // so the answer is available before any handler runs rather than after.
   const auth = (isAuthConfigured() && !isPublicRequest(req.method, url.pathname) ? authenticate(req) : null) || null
-  return runWithRequestContext(auth, () => handleApiRequestInContext(store, req, res, url, auth))
+  return runWithRequestContext(auth, () => handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl }))
 }
 
-async function handleApiRequestInContext(store, req, res, url, auth) {
+async function handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl } = {}) {
   // An `/api/v1/` path reached dispatch. Cleared again if it matches nothing, so
   // the metric label distinguishes "a route we served" from "a path we did not
   // recognise" — the second is what a scanner produces, one per request.
@@ -1825,7 +1831,7 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
 
   const reportingRoute = matchReportingRoute(url.pathname)
   if (reportingRoute) {
-    await handleReportingRoute(store, data, req, res, url, reportingRoute)
+    await handleReportingRoute(store, data, req, res, url, reportingRoute, { checkWebhookUrl })
     return
   }
 
@@ -2493,25 +2499,25 @@ async function handleIngestionRoute(store, data, req, res, url, route) {
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleReportingRoute(store, data, req, res, url, route) {
+async function handleReportingRoute(store, data, req, res, url, route, { checkWebhookUrl } = {}) {
   if (route.kind === 'templates') {
     await handleReportTemplateRoute(store, data, req, res, url, route)
     return
   }
   if (route.kind === 'reports') {
-    await handleReportRoute(store, data, req, res, url, route)
+    await handleReportRoute(store, data, req, res, url, route, { checkWebhookUrl })
     return
   }
   if (route.kind === 'distributions') {
-    await handleReportDistributionRoute(store, data, req, res, url, route)
+    await handleReportDistributionRoute(store, data, req, res, url, route, { checkWebhookUrl })
     return
   }
   if (route.kind === 'schedules') {
-    await handleReportScheduleRoute(store, data, req, res, url, route)
+    await handleReportScheduleRoute(store, data, req, res, url, route, { checkWebhookUrl })
     return
   }
   if (route.kind === 'schedule-runs') {
-    await handleReportScheduleRunRoute(store, data, req, res, url, route)
+    await handleReportScheduleRunRoute(store, data, req, res, url, route, { checkWebhookUrl })
     return
   }
   jsonResponse(res, 404, { success: false, error: 'Not found' })
@@ -2576,7 +2582,7 @@ async function handleReportTemplateRoute(store, data, req, res, url, route) {
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleReportRoute(store, data, req, res, url, route) {
+async function handleReportRoute(store, data, req, res, url, route, { checkWebhookUrl } = {}) {
   if (req.method === 'GET' && route.exportFormat) {
     const report = data.reports.find((item) => item.id === route.id)
     if (!report) {
@@ -2739,7 +2745,7 @@ async function handleReportRoute(store, data, req, res, url, route) {
       jsonResponse(res, 404, { success: false, error: 'Report not found' })
       return
     }
-    const result = await distributeReport(existing, body, body.actor, data)
+    const result = await distributeReport(existing, body, body.actor, data, { checkWebhookUrl })
     const record = result.report
     const log = actionLog('reports', 'distributed', record, body.actor, req.__auth?.subject)
     await store.merge({
@@ -2755,7 +2761,7 @@ async function handleReportRoute(store, data, req, res, url, route) {
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleReportDistributionRoute(store, data, req, res, url, route) {
+async function handleReportDistributionRoute(store, data, req, res, url, route, { checkWebhookUrl } = {}) {
   if (req.method === 'GET' && !route.id) {
     jsonResponse(res, 200, { success: true, ...collectionPage(data.report_distribution_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_distribution_runs' }) })
     return
@@ -2776,7 +2782,7 @@ async function handleReportDistributionRoute(store, data, req, res, url, route) 
       jsonResponse(res, 404, { success: false, error: 'Report not found' })
       return
     }
-    const result = await distributeReport(report, { channels: [{ ...(run.options || {}), channel: run.channel, recipients: run.recipients }], retry_of: run.id }, body.actor, data)
+    const result = await distributeReport(report, { channels: [{ ...(run.options || {}), channel: run.channel, recipients: run.recipients }], retry_of: run.id }, body.actor, data, { checkWebhookUrl })
     await store.merge({
       reports: [result.report],
       report_distribution_runs: result.runs,
@@ -2789,15 +2795,15 @@ async function handleReportDistributionRoute(store, data, req, res, url, route) 
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleReportScheduleRoute(store, data, req, res, url, route) {
+async function handleReportScheduleRoute(store, data, req, res, url, route, { checkWebhookUrl } = {}) {
   if (route.kind === 'schedule-runs') {
-    await handleReportScheduleRunRoute(store, data, req, res, url, route)
+    await handleReportScheduleRunRoute(store, data, req, res, url, route, { checkWebhookUrl })
     return
   }
 
   if (req.method === 'POST' && route.action === 'run-due') {
     const body = await readRequestJson(req)
-    const result = await runDueReportSchedules(data, body.actor)
+    const result = await runDueReportSchedules(data, body.actor, { checkWebhookUrl })
     await store.merge(result.writes)
     jsonResponse(res, 201, { success: true, data: result.runs, reports: result.reports, distributions: result.distributions })
     return
@@ -2843,7 +2849,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route) {
       jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })
       return
     }
-    const result = await runReportSchedule(data, schedule, body.actor)
+    const result = await runReportSchedule(data, schedule, body.actor, { checkWebhookUrl })
     await store.merge(result.writes)
     jsonResponse(res, 201, { success: true, data: result.scheduleRun, report: result.report, distributions: result.distributions })
     return
@@ -2851,7 +2857,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route) {
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleReportScheduleRunRoute(store, data, req, res, url, route) {
+async function handleReportScheduleRunRoute(store, data, req, res, url, route, { checkWebhookUrl } = {}) {
   if (req.method === 'GET' && !route.id) {
     jsonResponse(res, 200, { success: true, ...collectionPage(data.report_schedule_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_schedule_runs' }) })
     return
@@ -2872,7 +2878,7 @@ async function handleReportScheduleRunRoute(store, data, req, res, url, route) {
       jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })
       return
     }
-    const result = await runReportSchedule(data, schedule, body.actor)
+    const result = await runReportSchedule(data, schedule, body.actor, { checkWebhookUrl })
     await store.merge(result.writes)
     jsonResponse(res, 201, { success: true, data: result.scheduleRun, report: result.report, distributions: result.distributions })
     return
@@ -2880,7 +2886,7 @@ async function handleReportScheduleRunRoute(store, data, req, res, url, route) {
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function distributeReport(report, body = {}, actor = 'operator', data = null) {
+async function distributeReport(report, body = {}, actor = 'operator', data = null, { checkWebhookUrl = assertSafeWebhookUrl } = {}) {
   if (!['ready', 'approved', 'distributed'].includes(report.status)) {
     throw Object.assign(new Error('Report must be ready or approved before distribution'), { statusCode: 400 })
   }
@@ -2913,7 +2919,7 @@ async function distributeReport(report, body = {}, actor = 'operator', data = nu
         // 127.0.0.1 minutes later). Without this the distribution path is an
         // SSRF the webhook path already closed — one token away from the cloud
         // metadata endpoint and the internal network.
-        const target = await assertSafeWebhookUrl(required(channel.url, 'url'))
+        const target = await checkWebhookUrl(required(channel.url, 'url'))
         const response = await fetch(target, {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(channel.headers || {}) },
@@ -2949,11 +2955,11 @@ async function distributeReport(report, body = {}, actor = 'operator', data = nu
   return { report: hasDeliveredArtifact ? markReportDistributed(report) : report, runs, rapidproDispatches, actor }
 }
 
-async function runDueReportSchedules(data, actor = 'operator') {
+async function runDueReportSchedules(data, actor = 'operator', { checkWebhookUrl } = {}) {
   const due = data.report_schedules.filter((schedule) => scheduleIsDue(schedule))
   const aggregate = emptyScheduleResult()
   for (const schedule of due) {
-    const result = await runReportSchedule(data, schedule, actor)
+    const result = await runReportSchedule(data, schedule, actor, { checkWebhookUrl })
     mergeScheduleResult(aggregate, result)
     data = {
       ...data,
@@ -2967,7 +2973,7 @@ async function runDueReportSchedules(data, actor = 'operator') {
   return aggregate
 }
 
-async function runReportSchedule(data, schedule, actor = 'operator') {
+async function runReportSchedule(data, schedule, actor = 'operator', { checkWebhookUrl } = {}) {
   const startedAt = new Date().toISOString()
   const template = data.report_templates.find((item) => item.id === schedule.template_id)
   if (!template) {
@@ -3001,7 +3007,7 @@ async function runReportSchedule(data, schedule, actor = 'operator') {
   const distributions = []
   const rapidproDispatches = []
   if (schedule.auto_distribute) {
-    const distribution = await distributeReport({ ...report, status: 'approved' }, { channels: schedule.distribution_defaults }, actor, data)
+    const distribution = await distributeReport({ ...report, status: 'approved' }, { channels: schedule.distribution_defaults }, actor, data, { checkWebhookUrl })
     report = distribution.report
     distributions.push(...distribution.runs)
     rapidproDispatches.push(...distribution.rapidproDispatches)
