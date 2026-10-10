@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, it } from 'node:test'
-import { ROUTE_MANIFESTS, WIDE_ROUTES, UNMAPPED_COUNT, collectionsForRequest } from '../src/route-manifests.js'
+import { ROUTE_MANIFESTS, WIDE_ROUTES, UNMAPPED_COUNT, collectionsForRequest, needsHistory } from '../src/route-manifests.js'
 import { emptyStore } from '../src/schema.js'
 
 /**
@@ -269,5 +269,41 @@ describe('explain', () => {
       listener.close()
       await fs.rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+/**
+ * ENH-49 and ENH-08 — the history routes have to ask for history.
+ *
+ * ENH-08 keeps `record_versions` off the default read. The two `/history` routes
+ * hand their snapshot to `series.js`, which reads `snapshot.record_versions`, so
+ * they must ask. They did not: they are whole-store readers, and a whole-store
+ * read excludes history like any other, so both routes returned an empty series
+ * — on Postgres. On JSON they worked, because `JsonStore` ignored the flag
+ * (ARC-10), and every test of these routes runs on JSON, so the suite could not
+ * see it.
+ *
+ * This is the decision itself, tested where the adapter cannot hide it: the
+ * predicate that decides, not the route that consumes its result.
+ */
+describe('needsHistory — the routes whose handler reads record_versions', () => {
+  it('names both history routes', () => {
+    assert.equal(needsHistory('GET', '/api/v1/history/hazard_events'), true)
+    assert.equal(needsHistory('GET', '/api/v1/history/hazard_events/record'), true)
+    assert.equal(needsHistory('GET', '/api/v1/history/climate_observations/record'), true)
+  })
+
+  it('is false for every other route, so no read pays for history it does not use', () => {
+    for (const pathname of ['/api/v1/hazards', '/api/v1/incidents', '/api/v1/kpi', '/api/v1/ready', '/api/v1/explain/h1']) {
+      assert.equal(needsHistory('GET', pathname), false, `${pathname} would load 60% of the store for nothing`)
+    }
+  })
+
+  it('does not confuse a collection named history with the history route', () => {
+    // `/api/v1/history/...` is the route; a collection whose *id* contains
+    // "history" is a different thing, and a predicate keyed on a substring
+    // rather than the path shape would load history for it.
+    assert.equal(needsHistory('GET', '/api/v1/field-reports/history-notes'), false)
+    assert.equal(needsHistory('POST', '/api/v1/history/hazard_events'), false)
   })
 })

@@ -48,7 +48,7 @@ import { executeTriggerProtocols } from './protocols.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { normalizeAlertOutcome, determinationFor, projectDetermination, outcomeTally, outcomeReasons } from './outcomes.js'
 import { observationSeries, recordHistory, projectableCollections } from './series.js'
-import { collectionsForRequest } from './route-manifests.js'
+import { collectionsForRequest, needsHistory } from './route-manifests.js'
 import { describeWatermarkState } from './watermarks.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
@@ -1199,8 +1199,15 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   // data, and one that does pass it wrong must not either. `filterRecords`
   // applies the same predicate in JavaScript to what comes back; this keeps the
   // rows the caller may not see off the query in the first place.
+  // ENH-49 and ENH-08 together. The history routes are the only ones that read
+  // `record_versions`, and ENH-08 keeps it off every other read — so a route
+  // whose handler calls `series.js` has to ask for it. Without this the two
+  // `/history` routes returned an empty series on Postgres while working on a
+  // JSON box, because `JsonStore` ignored the flag and `PostgresStore` honoured
+  // it (ARC-10). The adapters agree now, so the request has to be explicit.
   const data = await store.read({
     collections: collectionsForRequest(req.method, url.pathname, url.searchParams),
+    includeHistory: needsHistory(req.method, url.pathname),
     partnerOrg: currentRequestAuth()?.partner_org || null,
   })
   req.__auth = auth

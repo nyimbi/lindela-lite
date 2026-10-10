@@ -243,6 +243,37 @@ export const WIDE_ROUTES = Object.freeze([
 /** How much of the API is still on the whole-store read, as one number. */
 export const UNMAPPED_COUNT = WIDE_ROUTES.length
 
+/**
+ * The routes that read bitemporal history, and so must ask for it.
+ *
+ * ENH-08 keeps `record_versions` off the default read path — 60% of a real
+ * store by bytes, and no request paid for it unless it asked. These routes are
+ * the ones that ask: `/history/:collection` and `/history/:collection/record`
+ * both hand their snapshot to `series.js`, which reads `snapshot.record_versions`
+ * and returns nothing without it.
+ *
+ * The two are in `WIDE_ROUTES` — they were measured as whole-store readers —
+ * and a whole-store read is `includeHistory: false` like every other. That
+ * combination is what made the history feature work on a JSON dev box and
+ * return empty on Postgres: `JsonStore` ignored the flag (ARC-10) while
+ * `PostgresStore` honoured it. With the adapters agreeing, a route that needs
+ * history has to say so, and this is where it says it.
+ *
+ * Keyed on the path with the collection blanked, the same way `ROUTE_MANIFESTS`
+ * is, so it is a property of the route and not of the record.
+ */
+const HISTORY_ROUTES = new Set([
+  'GET /api/v1/history/:id',
+  'GET /api/v1/history/:id/record',
+])
+
+/** True when this request's handler reads `record_versions` and needs it loaded. */
+export function needsHistory(method, pathname) {
+  const bare = String(pathname || '')
+    .replace(/\/api\/v1\/([^/]+)\/[^/]+(?=\/|$)/, '/api/v1/$1/:id')
+  return HISTORY_ROUTES.has(`${String(method || 'GET').toUpperCase()} ${bare}`)
+}
+
 const EXPLAIN_KEY = 'GET /api/v1/explain/:id'
 
 /**

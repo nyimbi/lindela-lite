@@ -235,6 +235,100 @@ export const COLLECTIONS = Object.freeze(SCHEMA.map((entry) => entry.key))
 
 const COLLECTION_SET = new Set(COLLECTIONS)
 
+/**
+ * The collection holding bitemporal history, excluded from the default read.
+ *
+ * ENH-08: it is 60% of a real store by bytes — 85 MB of 143 MB — and the
+ * default read paid for it on every request. One spelling, declared here rather
+ * than in either adapter, because the two disagreeing about it is the defect
+ * (`ARC-10`) this constant exists to end.
+ */
+export const HISTORY_COLLECTION = 'record_versions'
+
+/**
+ * The read contract, in one place, because two adapters implement it.
+ *
+ * `read()` accepts three call shapes — no argument, an options object, and a
+ * bare collection manifest — and three options: `collections`, `includeHistory`
+ * and `partnerOrg`. Each adapter used to normalise these itself, and the two
+ * drifted: PostgresStore excluded history by default and JsonStore did not, so
+ * the same call returned different shapes depending on which backend an
+ * environment variable had selected. A caller cannot know which one it has,
+ * which is the property the storage design rests on.
+ *
+ * `null` for "no manifest" is distinct from `[]` for "an empty manifest": the
+ * first is a whole-store read and the second is a read that returns nothing.
+ * Conflating them would make `read([])` a way to accidentally read everything.
+ */
+export function normaliseReadOptions(options) {
+  if (Array.isArray(options)) return { collections: options, includeHistory: false, partnerOrg: null }
+  const { collections = null, includeHistory = false, partnerOrg = null } = options || {}
+  return {
+    collections: collections === null || collections === undefined ? null : [...collections],
+    includeHistory: Boolean(includeHistory),
+    // ENH-17. Null means "this token is not scoped to a partner organisation",
+    // which is a different statement from "this caller may see everything" and
+    // has to stay distinguishable: `partner_org = $2` with a null parameter
+    // matches nothing, which would blank every partner's view rather than
+    // over-share it.
+    partnerOrg: typeof partnerOrg === 'string' && partnerOrg ? partnerOrg : null,
+  }
+}
+
+/**
+ * The shape a manifest read returns: the whole store with the un-named
+ * collections empty, not only the named keys.
+ *
+ * PostgresStore has always returned this — it builds `emptyStore()` and fills
+ * the collections the WHERE clause matched — while JsonStore returned only the
+ * keys the manifest named. A caller doing `read(['hazard_events']).source_runs`
+ * got `[]` on Postgres and `undefined` on JSON, so a route that read one
+ * collection and then looked up a related one from the same result worked in
+ * production and threw in development. The full shape is the contract: every
+ * declared collection is always present and always an array.
+ */
+export function manifestShape(source, collections) {
+  const wanted = collections === null ? null : new Set(collections)
+  const out = {}
+  for (const collection of COLLECTIONS) {
+    out[collection] = wanted === null || wanted.has(collection) ? (source[collection] || []) : []
+  }
+  out.version = source.version
+  out.updated_at = source.updated_at
+  return out
+}
+
+/** A store with the history collection emptied, without mutating the cache. */
+function withoutHistory(store) {
+  if (!store[HISTORY_COLLECTION]?.length) return store
+  return { ...store, [HISTORY_COLLECTION]: [] }
+}
+
+/**
+ * The partner predicate, applied to every collection.
+ *
+ * Strict equality, deliberately — `filterRecords` uses `===`, so a record with
+ * no partner is invisible to a partner token, and `partner_org ?? null` would
+ * hand every partner token every untagged row in the deployment. This is the
+ * same predicate PostgresStore pushes into SQL as `partner_org = $2`, which is
+ * why it applies to every collection rather than only the partner-bearing ones:
+ * a version row carries no `partner_org` and is therefore excluded under a
+ * partner scope on both adapters.
+ *
+ * Applied to all collections, not a filter over what a route happens to read.
+ * A route that reads with a partner scope and forgets `filterRecords` must not
+ * be the difference between a leak on JSON and no leak on Postgres.
+ */
+function scopeToPartner(store, partnerOrg) {
+  const out = { ...store }
+  for (const collection of COLLECTIONS) {
+    if (Array.isArray(store[collection])) {
+      out[collection] = store[collection].filter((record) => record?.partner_org === partnerOrg)
+    }
+  }
+  return out
+}
+
 /** True when `collection` is one this store can hold. */
 export function isDeclared(collection, declared = COLLECTIONS) {
   return declared.includes(collection)
@@ -291,6 +385,22 @@ export class JsonStore {
   #parsedStamp = null
 
   /**
+   * The default read's view of `#parsed`, memoised on the parsed object.
+   *
+   * R-28 asserts that two consecutive `read()` calls return the *same object* —
+   * reference identity is the only externally observable evidence that the
+   * parse was reused. The default read has to strip `record_versions`, which
+   * builds a new object, so without this the second read would look like a
+   * re-parse and the cache the test exists to prove would read as broken.
+   *
+   * Keyed on identity rather than a stamp: `#parsed` is replaced wholesale
+   * whenever the file changes, so a new object is a new view and a stale
+   * reference can never be served. Holds at most one generation.
+   */
+  #defaultView = null
+  #defaultViewOf = null
+
+  /**
    * The whole store, parsed.
    *
    * This re-read and re-parsed the file on every call, and every API request
@@ -313,24 +423,43 @@ export class JsonStore {
    * left to be discovered.
    */
   /**
-   * `options.collections` narrows what is returned, exactly as the PostgreSQL
-   * store's does.
+   * The read contract, identical to `PostgresStore.read()`.
    *
-   * Honoured here rather than ignored for two reasons. A store that ignores a
-   * manifest cannot be tested against one: the test suite runs on JSON, so a
-   * manifest naming too few collections would pass every test and 500 in
-   * production. And "the two stores behave the same way" is the property the
-   * whole storage design rests on — a caller cannot know which one it has.
+   * All three options are honoured here rather than ignored, because a store
+   * that ignores one cannot be tested against it: the test suite runs on JSON,
+   * so a manifest naming too few collections, a history read that returned
+   * nothing, or a partner scope that leaked would each pass every test and
+   * fail in production. And "the two stores behave the same way" is the
+   * property the whole storage design rests on — a caller cannot know which one
+   * it has.
+   *
+   * `includeHistory` and `partnerOrg` were the two that had drifted (ARC-10):
+   * the default read returned `record_versions` here and not on Postgres, and
+   * a partner-scoped read returned every organisation's rows here and one
+   * organisation's there. Both now go through the same `normaliseReadOptions`
+   * the Postgres adapter uses.
    */
   async read(options = {}) {
-    const manifest = Array.isArray(options) ? options : (options?.collections ?? null)
+    const { collections, includeHistory, partnerOrg } = normaliseReadOptions(options)
     const read = await this.#readAll()
-    if (manifest === null) return read
-    const out = {}
-    for (const collection of manifest) {
-      if (collection in read) out[collection] = read[collection]
+    // A bare read is answered with the cached object itself, not a copy of it.
+    // R-28 asserts the second `read()` returns the same reference as the first —
+    // that identity *is* the observable evidence that the parse was reused
+    // rather than redone — so a whole-store read that built a fresh object every
+    // time would report a re-parse on every call and hide the cache it exists to
+    // prove. The transformations below are only applied when one was asked for.
+    if (collections === null && !includeHistory && !partnerOrg) {
+      if (this.#defaultViewOf !== read) {
+        this.#defaultView = withoutHistory(read)
+        this.#defaultViewOf = read
+      }
+      return this.#defaultView
     }
-    return out
+    const scoped = partnerOrg ? scopeToPartner(read, partnerOrg) : read
+    return manifestShape(
+      includeHistory ? scoped : withoutHistory(scoped),
+      collections,
+    )
   }
 
   async #readAll() {
@@ -480,9 +609,25 @@ export class JsonStore {
     return this.#serialise(() => this.#mergeNow(partial))
   }
 
+  /**
+   * The whole store as it is on disk, for a read-modify-write.
+   *
+   * Every mutator below reads through this, not through `read()`. `read()` is
+   * the *caller's* view and ENH-08 strips `record_versions` from it, so a
+   * read-modify-write built on `read()` would append this write's history to an
+   * empty array and write that back — every merge silently erasing every
+   * revision the store had accumulated. The rule is that a read-modify-write
+   * sees everything it is about to write, and history is part of what a merge
+   * writes. Routing them all through one method means the next mutator cannot
+   * get it wrong by choosing the wrong read.
+   */
+  async #current() {
+    return this.#readAll()
+  }
+
   /** The merge, assuming the caller already holds the write chain. */
   async #mergeNow(partial) {
-    const current = await this.read()
+    const current = await this.#current()
     return this.#writeFile(this.#mergedStore(current, partial))
   }
 
@@ -571,7 +716,7 @@ export class JsonStore {
 
   /** The delete, assuming the caller already holds the write chain. */
   async #removeNow(doomedByCollection) {
-    const current = await this.read()
+    const current = await this.#current()
     const next = { ...current }
     for (const [collection, ids] of Object.entries(doomedByCollection)) {
       assertDeclaredCollection(collection)
@@ -608,7 +753,7 @@ export class JsonStore {
   async replaceCollection(collection, records = []) {
     assertDeclaredCollection(collection)
     return this.#serialise(async () => {
-      const current = await this.read()
+      const current = await this.#current()
       return this.#writeFile({ ...current, [collection]: sortRecords([...records]) })
     })
   }
@@ -619,7 +764,7 @@ export class JsonStore {
       DERIVED_COLLECTIONS.map((collection) => [collection, payload[collection] || []]),
     )
     return this.#serialise(async () => {
-      const current = await this.read()
+      const current = await this.#current()
       return this.#writeFile({ ...current, ...replacement })
     })
   }

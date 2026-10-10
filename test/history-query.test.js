@@ -95,7 +95,7 @@ describe('ENH-49 — the series is over states, not events', () => {
 describe('ENH-49 — what the platform believed, and when it stopped believing it', () => {
   it('assembles superseded values and the live one into one series', async () => {
     await withSeededStore(async (store) => {
-      const series = observationSeries(await store.read(), { collection: 'hazard_events', district: 'Turkana' })
+      const series = observationSeries(await store.read({ includeHistory: true }), { collection: 'hazard_events', district: 'Turkana' })
       assert.equal(series.points.length, 3, 'two superseded values and the current one')
       assert.deepEqual(series.points.map((p) => p.source), ['history', 'history', 'current'])
       assert.equal(series.points[series.points.length - 1].body.fatalities, 7, 'the current value is the last one')
@@ -105,7 +105,7 @@ describe('ENH-49 — what the platform believed, and when it stopped believing i
 
   it('the interval a value was believed for is stated, not implied', async () => {
     await withSeededStore(async (store) => {
-      const series = observationSeries(await store.read(), { collection: 'hazard_events' })
+      const series = observationSeries(await store.read({ includeHistory: true }), { collection: 'hazard_events' })
       for (const point of series.points) {
         assert.ok(point.believed_from, 'a point with no start reads as timeless, which is the misreading this avoids')
       }
@@ -117,7 +117,7 @@ describe('ENH-49 — what the platform believed, and when it stopped believing i
 
   it('says what history it does not have', async () => {
     await withSeededStore(async (store) => {
-      const series = observationSeries(await store.read(), { collection: 'hazard_events' })
+      const series = observationSeries(await store.read({ includeHistory: true }), { collection: 'hazard_events' })
       assert.equal(series.coverage.revisions_kept_per_record, HISTORY_PRUNE_KEEP)
       assert.equal(series.coverage.history_points, 2)
       assert.equal(series.coverage.current_points, 1)

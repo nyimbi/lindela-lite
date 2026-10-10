@@ -312,21 +312,29 @@ describe('the store round-trip', () => {
     await store.merge({ hazard_events: [hazard({ payload_hash: 'h1' })] })
     await store.merge({ hazard_events: [hazard({ payload_hash: 'h2', severity: 'critical' })] })
 
-    const data = await store.read()
-    assert.equal(data.hazard_events[0].severity, 'critical', 'the live record carries the correction')
+    // ENH-08 keeps history off the default read — it is 60% of a real store by
+    // bytes — so a caller that wants it asks. The default read is asserted
+    // empty here rather than left implicit, because "the history is there" and
+    // "the default read does not pay for it" are two claims and this test is
+    // the only place both are cheap to state.
+    const bare = await store.read()
+    assert.equal(bare.hazard_events[0].severity, 'critical', 'the live record carries the correction')
+    assert.deepEqual(bare.record_versions, [], 'the default read materialised history')
+
+    const data = await store.read({ includeHistory: true })
     assert.equal(data.record_versions.length, 1, 'and the value it replaced is still there')
     assert.equal(data.record_versions[0].body.severity, 'high')
   })
 
   it('writes no history for a re-delivery', async () => {
     await store.merge({ hazard_events: [hazard({ payload_hash: 'h2', severity: 'critical' })] })
-    const data = await store.read()
+    const data = await store.read({ includeHistory: true })
     assert.equal(data.record_versions.length, 1, 'an unchanged re-delivery is not a revision')
   })
 
   it('accumulates rather than overwriting across successive corrections', async () => {
     await store.merge({ hazard_events: [hazard({ payload_hash: 'h3', severity: 'low' })] })
-    const data = await store.read()
+    const data = await store.read({ includeHistory: true })
     assert.equal(data.record_versions.length, 2)
     const severities = data.record_versions.map((v) => v.body.severity).sort()
     assert.deepEqual(severities, ['critical', 'high'], 'every prior value survives')

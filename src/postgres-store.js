@@ -1,5 +1,5 @@
 import { emptyStore } from './schema.js'
-import { COLLECTIONS, DERIVED_COLLECTIONS, assertDeclaredCollection, assertDeclaredCollections, sortRecords, supersededVersions } from './store.js'
+import { COLLECTIONS, DERIVED_COLLECTIONS, HISTORY_COLLECTION, assertDeclaredCollection, assertDeclaredCollections, normaliseReadOptions, sortRecords, supersededVersions } from './store.js'
 import { BITEMPORAL_COLLECTIONS, VERSIONS_PER_RECORD } from './bitemporal.js'
 import { nowIso } from './utils.js'
 import { pendingMigrations, targetVersion } from './migrations.js'
@@ -13,13 +13,6 @@ import { pendingMigrations, targetVersion } from './migrations.js'
  * the wrong shape for it.
  */
 const DECLARED_COLLECTIONS = new Set(COLLECTIONS)
-
-/**
- * `record_versions`: 60% of this store by bytes, and no reader in this
- * repository. Named rather than spelled, because the string appears in the
- * read path, the prune and the write of the rows themselves.
- */
-const HISTORY_COLLECTION = 'record_versions'
 
 /**
  * CON-02 and CON-03, one mechanism.
@@ -130,32 +123,6 @@ export async function withWriteRetry(fn, { attempts = WRITE_RETRY_ATTEMPTS } = {
     }
   }
   throw lastError
-}
-
-/**
- * Accepts `read()`, `read({ collections, includeHistory })` and
- * `read(['incidents'])` alike.
- *
- * The array form exists because a collection manifest is a list and reading one
- * is what a caller means by naming it. The object form is where the options go
- * once there is more than one. `null` for "no manifest" is distinct from `[]`
- * for "an empty manifest", because the first is a whole-store read and the
- * second is a read that returns nothing — and conflating them would make
- * `read([])` a way to accidentally read everything.
- */
-function normaliseReadOptions(options) {
-  if (Array.isArray(options)) return { collections: options, includeHistory: false, partnerOrg: null }
-  const { collections = null, includeHistory = false, partnerOrg = null } = options || {}
-  return {
-    collections: collections === null || collections === undefined ? null : [...collections],
-    includeHistory: Boolean(includeHistory),
-    // ENH-17. Null means "this token is not scoped to a partner organisation",
-    // which is a different statement from "this caller may see everything" and
-    // has to stay distinguishable: `partner_org = $2` with a null parameter
-    // matches nothing, which would blank every partner's view rather than
-    // over-share it.
-    partnerOrg: typeof partnerOrg === 'string' && partnerOrg ? partnerOrg : null,
-  }
 }
 
 export class PostgresStore {

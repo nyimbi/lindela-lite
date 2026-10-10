@@ -243,6 +243,28 @@ describe('store conformance — both backends, one contract', () => {
           assert.deepEqual(data[collection].map((r) => r.id), [`${collection}-1`], `${collection} did not round-trip`)
         }
       })
+
+      // ARC-10. The two adapters disagreed on the default read: PostgresStore
+      // left `record_versions` out (ENH-08) while JsonStore returned it
+      // regardless, so the same call returned different shapes depending on
+      // which backend an environment variable had selected. A caller cannot
+      // know which one it has, which is the property the whole storage design
+      // rests on — and the history routes, which read `record_versions` through
+      // `series.js`, worked on a JSON box and returned nothing on Postgres.
+      it('keeps history off the default read and serves it to a caller who asks', async () => {
+        await store.write({})
+        const stamp = { first_seen_at: '2026-01-01T00:00:00.000Z' }
+        await store.merge({ hazard_events: [hazard('hz-hist', { ...stamp, payload_hash: 'hist-1' })] })
+        await store.merge({ hazard_events: [hazard('hz-hist', { ...stamp, payload_hash: 'hist-2', severity: 'critical' })] })
+
+        const bare = await store.read()
+        assert.equal(bare.hazard_events.length, 1)
+        assert.deepEqual(bare.record_versions, [], 'the default read materialised history')
+
+        const withHistory = await store.read({ includeHistory: true })
+        assert.equal(withHistory.record_versions.length, 1,
+          'the history exists but a caller asking for it must receive it')
+      })
     })
   }
 
