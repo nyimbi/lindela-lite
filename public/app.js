@@ -288,8 +288,14 @@ function applyI18n() {
 // runner. While it lived here the pager rendered on no list in any test run,
 // because no demo list ever exceeded a page — untested logic that had never
 // executed. `test/paging.test.js` now covers it directly.
-import { LIST_PAGE_SIZE, pageWindow, setPage, pagerSummary } from '/shared/paging.js'
-export { LIST_PAGE_SIZE, pageWindow, setPage, pagerSummary }
+//
+// Imported, not re-exported (ARC-12): the `export { … } from` that used to sit
+// here made these four names part of app.js's public surface while nothing
+// imported app.js for them — `test/paging.test.js` requires `shared/paging.js`
+// directly, which is the whole point of the move. A re-export nobody calls is a
+// second entry point into the same module, and the next reader has to work out
+// which one is real.
+import { pageWindow, setPage, pagerSummary } from '/shared/paging.js'
 
 function renderPager(host, key, total, onGo) {
   if (!host) return
