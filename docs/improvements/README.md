@@ -5,6 +5,11 @@ make this platform dramatically more useful, and what is currently broken.
 
 Four deliverables, plus the evidence they rest on.
 
+> **This audit has been implemented and superseded by [audit-2026-10/](audit-2026-10/)** —
+> fifty further enhancements (`ENH-31..80`) and sixty-eight defects across eight
+> domains, disjoint from the items below. Read that set for what is still wrong and
+> what the platform cannot yet do; read this one for the foundation it built on.
+
 | Document | What it contains |
 |---|---|
 | [enhancements.md](enhancements.md) | **30 enhancements**, grouped and sequenced, each with evidence, value, and what it does not license |
