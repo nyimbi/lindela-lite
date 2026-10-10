@@ -56,6 +56,32 @@ again in the file. The parametric routes read as if they gate on role but gate o
 on scope. A reviewer trusting these variables assumes an admin/operator distinction
 that is not enforced.
 
+**Fixed 2026-10-10.** The dead variables were the symptom; the defect was that the
+scope vocabulary could not express what `docs/api.md` already promised. Four
+documented routes named an audience the gate refused: `POST /api/v1/chw/report` and
+`/chw/reply` are documented "`role:chw` or `*`", `POST /api/v1/community-feedback`
+"`role:chw`, `write:incidents`, or `*`", and `POST
+/api/v1/parametric-rules/:id/simulate` "`role:operator` or `admin:*`". A CHW token
+holds `role:chw` and no data scope, so the report the whole surface exists to send
+answered 403 to the phone meant to send it — and `/simulate` was unreachable by the
+role its own document names.
+
+Two limits in `src/auth.js` caused it, both fixed:
+
+- The table held **one scope per prefix**, so a documented disjunction could only
+  name one of its audiences. A scope may now be an alternation —
+  `role:chw|write:incidents` — tried left to right, each a complete requirement.
+- The matcher spoke only in **prefixes**, so `/simulate` could not be addressed
+  apart from the collection it lives under. A pattern may now carry a `:name`
+  segment, and the **longest** match wins rather than the first — which removes the
+  order-sensitivity that two comments in the table existed to warn about.
+
+`requireScope` gains one branch: a `role:` requirement is satisfied by `admin:*`
+(an administrator holds every role — `hasRole` always said so and is called by
+nothing in `src/`). Deliberately one-directional: a role does not satisfy a data
+scope, so `role:chw` cannot reach `admin:alerts`. The dead `isAdmin`/`isOperator`
+are removed, with the enforcement point named in their place.
+
 ### VUL-05 — MEDIUM — CI executes unpinned network tooling and tag-pinned actions
 `.github/workflows/ci.yml` runs `npx --yes trivy`, `npx --yes @cyclonedx/cyclonedx-npm`
 and `npx --yes wait-on` with no version pin (resolves `latest` at run time), and

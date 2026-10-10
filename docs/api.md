@@ -969,7 +969,7 @@ Response: `Content-Type: application/geo+json` with a standard OGC Features resp
 
 ### `POST /api/v1/chw/report`
 
-Auth: `role:chw` or `*`. Submits a CHW field report.
+Auth: `role:chw`, `write:incidents`, or `*`. Submits a CHW field report.
 
 Body: `{ description, category, location?: { latitude, longitude }, reporter_phone?, reporter_name?, anonymous? }`
 
@@ -979,7 +979,7 @@ Side effects: creates field_report and rapidpro_inbound_message. PII redacted pe
 
 ### `POST /api/v1/chw/reply`
 
-Auth: `role:chw` or `*`. Submits a CHW reply to an active alert.
+Auth: `role:chw`, `write:incidents`, or `*`. Submits a CHW reply to an active alert.
 
 Body: `{ alert_event_id, message }`
 

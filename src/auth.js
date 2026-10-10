@@ -119,8 +119,24 @@ export const WRITE_SCOPES = Object.freeze([
   ['/api/v1/response-resources', 'write:incidents'],
   ['/api/v1/action-logs', 'write:incidents'],
   ['/api/v1/rapidpro', 'admin:integrations'],
+  // VUL-04. These three carry the roles the API document names, written the way
+  // the document writes them. `POST /api/v1/chw/report` is "`role:chw` or `*`";
+  // `/chw/reply` is "`role:chw` or `*`" as well, and `write:incidents` is added
+  // because the reply closes out an incident and an operator holding that scope
+  // must not lose the route to a narrowing meant for CHWs; community feedback is
+  // "`role:chw`, `write:incidents`, or `*`".
+  //
+  // All three were previously `write:incidents` alone — one audience named and
+  // the other refused. A CHW token holds `role:chw` and no data scope at all,
+  // so the report the whole surface exists to send answered 403 to the phone
+  // that was supposed to send it.
+  //
+  // No longer order-sensitive: `firstMatch` takes the longest pattern, so
+  // `/api/v1/chw/report` wins over `/api/v1/chw` wherever it is written.
+  ['/api/v1/chw/report', 'role:chw|write:incidents'],
+  ['/api/v1/chw/reply', 'role:chw|write:incidents'],
   ['/api/v1/chw', 'write:incidents'],
-  ['/api/v1/community-feedback', 'write:incidents'],
+  ['/api/v1/community-feedback', 'role:chw|write:incidents'],
   ['/api/v1/service-assets', 'write:incidents'],
   // Field signals. A school attendance observation and a sensor reading are both
   // evidence someone was present somewhere — which is what makes them
@@ -168,6 +184,17 @@ export const WRITE_SCOPES = Object.freeze([
   // does *not* cover `/api/v1/parametric-rules`: that is the safe direction, and
   // it is also why a prefix silently fails to apply and nobody finds out.
   ['/api/v1/parametric-rules', 'admin:parametric'],
+  // VUL-04. The one parametric action the document gates on a role: "Simulate a
+  // disbursement against the given rule. Scope: `role:operator` or `admin:*`."
+  // `simulate` writes a `simulated` disbursement and moves no money — a payout
+  // is a separate path — so it is the operator's to run. Creating, editing and
+  // deleting a rule is what moves money and stays `admin:parametric` above.
+  //
+  // This row was unwritable before `matchesPattern` learned `:name`: the table
+  // spoke only in prefixes, so `/simulate` was covered by the collection row and
+  // the operator's role was unreachable. Longer pattern wins, so this is not a
+  // duplicate — it is the more specific answer for one subpath.
+  ['/api/v1/parametric-rules/:id/simulate', 'role:operator|admin:*'],
   ['/api/v1/trigger-protocols', 'admin:alerts'],
   ['/api/v1/report-distributions', 'write:reports'],
   ['/api/v1/report-schedule-runs', 'write:reports'],
@@ -376,32 +403,104 @@ export function requireScope(auth, scope) {
   }
 
   const { scopes } = auth
-  if (scopes.includes('*')) return
-  // `read:self` names a response that can only describe the caller — their own
-  // token subject and organisation. Requiring a scope for it would be
-  // theatre: holding no scopes at all would still be allowed, because the
-  // content is the caller's own.
-  if (scope === 'read:self') return
-  if (scopes.includes(scope)) return
-  // `admin:*` satisfies every admin scope; `read:*` every read scope.
-  const [family] = scope.split(':')
-  if (scopes.includes(`${family}:*`)) return
+  // VUL-04. A route may name more than one way to reach it, separated by `|`,
+  // because the API document does. `POST /api/v1/community-feedback` is
+  // documented as "`role:chw`, `write:incidents`, or `*`" — a CHW filing from a
+  // phone and an operator filing from the console are both legitimate and hold
+  // different things. The table could hold one scope per prefix, so the route
+  // named whichever audience the author happened to type first and the other
+  // was refused by a gate whose own documentation said it should pass.
+  //
+  // The alternatives are tried left to right and the first that holds admits
+  // the caller. Each is a complete requirement, so this is a disjunction and
+  // not a set of partial ones — `role:chw|admin:alerts` admits either, never a
+  // token holding half of each.
+  if (scope.includes('|')) {
+    for (const alternative of scope.split('|')) {
+      try {
+        requireScope(auth, alternative)
+        return
+      } catch {
+        // Try the next alternative; if none holds, the last one's 403 is the
+        // answer, which is the same status every failed alternative produces.
+      }
+    }
+  } else {
+    if (scopes.includes('*')) return
+    // `read:self` names a response that can only describe the caller — their own
+    // token subject and organisation. Requiring a scope for it would be
+    // theatre: holding no scopes at all would still be allowed, because the
+    // content is the caller's own.
+    if (scope === 'read:self') return
+    if (scopes.includes(scope)) return
+    // A `role:` requirement is a role, and an administrator holds every role —
+    // `hasRole` has always said so, and it is called by nothing in `src/`.
+    // Without this, a route the API document promises to `role:chw` answered 403
+    // to a token holding exactly `role:chw`: string equality was the only test.
+    //
+    // Deliberately one-directional. A role does not satisfy a data scope, so
+    // `role:chw` cannot reach `admin:alerts` — naming a role on a route is what
+    // makes it narrower than the table's default, and a gate that let a role
+    // widen into the scope table would be a worse defect than this one.
+    if (scope.startsWith('role:') && scopes.includes('admin:*')) return
+    // `admin:*` satisfies every admin scope; `read:*` every read scope.
+    const [family] = scope.split(':')
+    if (scopes.includes(`${family}:*`)) return
+  }
 
   const error = new Error('Insufficient permissions')
   error.statusCode = 403
   throw error
 }
 
+/**
+ * Does one table pattern cover a path?
+ *
+ * Two shapes. A literal prefix matches the path itself, a path below it, or a
+ * path carrying a file extension — the `.` case matters because several routes
+ * are `export.csv`, `export.geojson`, `kpi/quarterly.pdf`, and a path-segment
+ * test alone would silently fall through them.
+ *
+ * A pattern carrying a `:name` segment matches the same number of segments with
+ * any non-empty segment in its place, so the table can address
+ * `/api/v1/parametric-rules/:id/simulate` — a subpath whose requirement differs
+ * from the collection it lives under. Before this the table could only speak in
+ * prefixes, so `/simulate` was reachable only through
+ * `/api/v1/parametric-rules`, and the one action the API document gates on a
+ * role was indistinguishable from creating a rule. That is the same defect one
+ * layer up: a vocabulary too small to say what the document says.
+ */
+function matchesPattern(pattern, pathname) {
+  if (!pattern.includes(':')) {
+    return pathname === pattern || pathname.startsWith(`${pattern}/`) || pathname.startsWith(`${pattern}.`)
+  }
+  const patternParts = pattern.split('/')
+  const pathParts = pathname.split('/')
+  if (pathParts.length !== patternParts.length) return false
+  return patternParts.every((part, index) => part.startsWith(':') ? pathParts[index].length > 0 : part === pathParts[index])
+}
+
+/**
+ * The most specific pattern covering a path.
+ *
+ * **Longest wins, not first.** The table used to be order-sensitive — the first
+ * matching row took it — which made every general entry a hazard for the
+ * specific ones beneath it: `/api/v1/chw` had to be listed after
+ * `/api/v1/chw/report` or the report row became dead text that still read like
+ * policy. Two rows in this file carried a comment explaining that, which is the
+ * tell that the ordering was doing work the matcher should have done. Now the
+ * rows are a set and their order is presentation.
+ */
 function firstMatch(table, pathname) {
-  for (const [prefix, scope] of table) {
-    // `.` matters because several routes carry a file extension — export.csv,
-    // export.geojson, kpi/quarterly.pdf — and a path-segment test alone would
-    // silently fall through them.
-    if (pathname === prefix || pathname.startsWith(`${prefix}/`) || pathname.startsWith(`${prefix}.`)) {
-      return scope
+  let match = null
+  let longest = -1
+  for (const [pattern, scope] of table) {
+    if (pattern.length > longest && matchesPattern(pattern, pathname)) {
+      match = scope
+      longest = pattern.length
     }
   }
-  return null
+  return match
 }
 
 /**

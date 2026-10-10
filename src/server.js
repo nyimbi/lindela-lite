@@ -4296,8 +4296,17 @@ function matchParametricRoute(pathname) {
 
 async function handleParametricRoute(store, data, req, res, url, route) {
   const auth = req.__auth || {}
-  const isAdmin = auth.scope === 'admin:*' || (Array.isArray(auth.scopes) && auth.scopes.includes('admin:*'))
-  const isOperator = isAdmin || auth.scope === 'role:operator' || (Array.isArray(auth.scopes) && auth.scopes.includes('role:operator'))
+  // VUL-04. `isAdmin` and `isOperator` used to be computed here and read
+  // nowhere — the handler gated on `admin:parametric` for every method, so the
+  // roles these two names promised were not enforced, and a reviewer trusting
+  // them assumed a distinction that did not exist.
+  //
+  // The distinction is real now, and it is enforced one layer up in
+  // `scopeForRoute`, where it can be read as policy rather than as a variable
+  // nothing consults: `POST /api/v1/parametric-rules/:id/simulate` resolves to
+  // `role:operator|admin:*` and the collection's other methods stay
+  // `admin:parametric`. A check inside the handler would have been a second
+  // copy of that decision, and the two would drift.
 
   if (route.kind === 'rules-list') {
     if (req.method === 'GET') {

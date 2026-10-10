@@ -71,11 +71,22 @@ for (const pathMatch of SPEC.matchAll(/^ {2}(\/[^:\n]*):\s*$/gm)) {
 
 const MUTATING = ROUTES.filter((r) => r.method !== 'GET' && r.method !== 'HEAD')
 
-/** The longest scope prefix that covers a path — the same match the gate makes. */
+/**
+ * The scope the gate would require.
+ *
+ * This used to reimplement the match — `table.find(([prefix]) => …)` — with a
+ * comment claiming it was "the same match the gate makes". It was not, and the
+ * two drifted the moment the gate learned `:name` patterns: a duplicate matcher
+ * is a probe that reimplements the thing under test, and it agrees only until
+ * the thing changes. `scopeForRoute` is exported, so the test calls it.
+ */
 function scopeFor(method, pathname) {
-  const table = method === 'GET' || method === 'HEAD' ? READ_SCOPES : WRITE_SCOPES
-  const hit = table.find(([prefix]) => pathname === prefix || pathname.startsWith(`${prefix}/`) || pathname.startsWith(`${prefix}.`))
-  return hit ? hit[1] : null
+  const scope = scopeForRoute(method, pathname)
+  // `scopeForRoute` folds "unmapped" into `admin:*`, which is also a real scope
+  // a row may name. No row does, so the two are distinguishable here — and the
+  // tests below assert on `null` for the unmapped case, which is the one that
+  // matters.
+  return scope === DENIED_SCOPE ? null : scope
 }
 
 describe('the route table is a thing a test can read', () => {
@@ -88,23 +99,36 @@ describe('the route table is a thing a test can read', () => {
     assert.throws(() => { WRITE_SCOPES.push(['/api/v1/anything', 'admin:*']) }, TypeError)
   })
 
-  it('names no prefix twice within a table', () => {
-    // A duplicate is not a wider grant — `firstMatch` stops at the first — so a
-    // second entry for the same prefix is dead text that reads like policy.
+  it('names no pattern twice within a table', () => {
+    // A duplicate is not a wider grant — the matcher takes the longest match and
+    // a tie is resolved by table order — so a second identical row is dead text
+    // that reads like policy.
+    //
+    // Note what this no longer forbids: `/api/v1/parametric-rules` and
+    // `/api/v1/parametric-rules/:id/simulate` are *not* duplicates. They are
+    // different patterns with different lengths, and the longer one wins for the
+    // subpath it names. Before the matcher learned `:name`, the table could not
+    // express that at all and the specific row had to be dropped or shadowed.
     for (const [name, table] of [['READ_SCOPES', READ_SCOPES], ['WRITE_SCOPES', WRITE_SCOPES]]) {
-      const prefixes = table.map(([prefix]) => prefix)
-      const dupes = prefixes.filter((p, i) => prefixes.indexOf(p) !== i)
-      assert.deepEqual(dupes, [], `${name} lists a prefix twice`)
+      const patterns = table.map(([pattern]) => pattern)
+      const dupes = patterns.filter((p, i) => patterns.indexOf(p) !== i)
+      assert.deepEqual(dupes, [], `${name} lists a pattern twice`)
     }
   })
 
   it('gives every entry a scope that looks like a scope', () => {
     // `['/api/v1/x', 'read:incident']` would deny correctly and read as though
     // it granted something. The scope vocabulary is small enough to hold.
+    //
+    // A scope may be a disjunction — `role:chw|write:incidents` — because the
+    // API document writes several routes that way and a table that can hold only
+    // one alternative refuses the audience it did not name.
     const scopes = new Set()
     for (const [, scope] of [...READ_SCOPES, ...WRITE_SCOPES]) {
-      assert.match(scope, /^(read|write|admin|role):[a-z*]+$|^\*$/, `malformed scope '${scope}'`)
-      scopes.add(scope)
+      for (const alternative of scope.split('|')) {
+        assert.match(alternative, /^(read|write|admin|role):[a-z*]+$|^\*$/, `malformed scope '${alternative}' in '${scope}'`)
+        scopes.add(alternative)
+      }
     }
     assert.ok(scopes.size > 5, 'a table with one scope in it is a constant')
   })
@@ -112,9 +136,18 @@ describe('the route table is a thing a test can read', () => {
   it('has no write entry that a read entry already covers more loosely', () => {
     // `/api/v1/alert-events` at `read:alerts` and at `admin:alerts` is
     // deliberate. `/api/v1/analytics` at `read:*` would not be.
-    for (const [prefix, scope] of WRITE_SCOPES) {
-      assert.ok(scope.startsWith('write:') || scope.startsWith('admin:') || scope === '*',
-        `${prefix} is writable with '${scope}', which is not a write or admin scope`)
+    //
+    // `role:` is admitted here, and narrowly: it is how the document names the
+    // audience for the CHW surface and the parametric simulator, and both are
+    // writes. A role is not a data scope, so `requireScope` keeps the widening
+    // one-directional — `role:chw` cannot reach `admin:alerts`.
+    for (const [pattern, scope] of WRITE_SCOPES) {
+      for (const alternative of scope.split('|')) {
+        assert.ok(
+          alternative.startsWith('write:') || alternative.startsWith('admin:') || alternative.startsWith('role:') || alternative === '*',
+          `${pattern} is writable with '${alternative}', which is not a write, admin or role scope`,
+        )
+      }
     }
   })
 })
