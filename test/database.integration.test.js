@@ -2,20 +2,41 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { after, describe, it } from 'node:test'
+import { after, before, describe, it } from 'node:test'
 import { runIngestion } from '../src/ingestion.js'
 import { Pg0Manager } from '../src/pg0.js'
 import { PostgresStore } from '../src/postgres-store.js'
 import { createStoreFromEnv } from '../src/storage.js'
+import { postgresCluster } from './pg-harness.mjs'
 
-const testDatabaseUrl = process.env.LINDELA_LITE_TEST_DATABASE_URL
+// Provisioned through the harness rather than read straight off the environment.
+//
+// This file was the one Postgres test that took `LINDELA_LITE_TEST_DATABASE_URL`
+// directly, so it was the one file the harness's isolation could not reach: it
+// wrote into the shared database while seven other files were running against
+// it, and the two failures that survived the harness fix were both here. The
+// harness gives every caller a private database; a caller that skips it is a
+// caller that shares one.
+let testDatabaseUrl = null
+let cluster = null
 const pg0Enabled = process.env.LINDELA_LITE_TEST_PG0 === '1'
 const pg0Bin = process.env.LINDELA_LITE_TEST_PG0_BIN || process.env.PG0_BIN || 'pg0'
 const pg0Name = process.env.LINDELA_LITE_TEST_PG0_NAME || `lindela-lite-test-${process.pid}`
 const pg0Port = process.env.LINDELA_LITE_TEST_PG0_PORT || '55432'
 
-describe('external PostgreSQL integration', { skip: !testDatabaseUrl }, () => {
-  it('migrates, writes, and persists across store instances', async () => {
+describe('external PostgreSQL integration', () => {
+  before(async () => {
+    cluster = await postgresCluster({ name: 'lindela-integration' })
+    if (cluster.skipped) process.stderr.write(`database.integration: ${cluster.skipped}\n`)
+    testDatabaseUrl = cluster.skipped ? null : cluster.url
+  })
+
+  after(async () => {
+    await cluster?.stop()
+  })
+
+  it('migrates, writes, and persists across store instances', async (t) => {
+    if (!testDatabaseUrl) return t.skip(cluster?.skipped)
     const store = new PostgresStore({ databaseUrl: testDatabaseUrl })
     await store.ensureSchema()
     await store.write({ source_runs: [], climate_observations: [], hazard_events: [], conflict_events: [], service_assets: [], impact_assessments: [], risk_scores: [] })
@@ -32,7 +53,8 @@ describe('external PostgreSQL integration', { skip: !testDatabaseUrl }, () => {
     await restarted.close()
   })
 
-  it('merge() upserts incrementally instead of rewriting every row', async () => {
+  it('merge() upserts incrementally instead of rewriting every row', async (t) => {
+    if (!testDatabaseUrl) return t.skip(cluster?.skipped)
     const store = new PostgresStore({ databaseUrl: testDatabaseUrl })
     await store.ensureSchema()
     await store.write({})
@@ -73,7 +95,8 @@ describe('external PostgreSQL integration', { skip: !testDatabaseUrl }, () => {
     await store.close()
   })
 
-  it('merge() skips records whose payload_hash already exists', async () => {
+  it('merge() skips records whose payload_hash already exists', async (t) => {
+    if (!testDatabaseUrl) return t.skip(cluster?.skipped)
     const store = new PostgresStore({ databaseUrl: testDatabaseUrl })
     await store.ensureSchema()
     await store.write({})
@@ -91,20 +114,42 @@ describe('external PostgreSQL integration', { skip: !testDatabaseUrl }, () => {
     await store.close()
   })
 
-  it('backfills payload_hash from body on upgrade, so old rows still dedupe', async () => {
-    // Simulate a row written by a version predating the payload_hash column:
-    // the hash lives in the body but the column is NULL.
+  it('backfills payload_hash from body on upgrade, so old rows still dedupe', async (t) => {
+    if (!testDatabaseUrl) return t.skip(cluster?.skipped)
+
+    // The upgrade has to start *before* the migration, which is the part this
+    // test used to get wrong: it called `ensureSchema()` first — bringing the
+    // database fully up to date — then inserted a "legacy" row and expected a
+    // second `ensureSchema()` to backfill it. Migrations run once, by design
+    // (that is the version ledger, DATA-11), so the second call was a no-op and
+    // the assertion could only ever pass on a database where some *other* run
+    // had left the column unbackfilled. It passed locally for years by skipping
+    // — no `LINDELA_LITE_TEST_DATABASE_URL`, no Postgres tests — and surfaced
+    // the first time CI had `pg` installed and a cluster to reach.
+    //
+    // So build the pre-migration schema by hand: exactly what an older build
+    // left behind, with the hash in the body and no column to hold it.
     const legacy = new PostgresStore({ databaseUrl: testDatabaseUrl })
     await legacy.ensureSchema()
-    await legacy.write({})
+    await legacy.pool.query(`
+      DROP TABLE IF EXISTS lite_records;
+      CREATE TABLE lite_records (
+        collection TEXT NOT NULL,
+        id TEXT NOT NULL,
+        body JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (collection, id)
+      );
+    `)
     await legacy.pool.query(
-      `INSERT INTO lite_records (collection, id, body, payload_hash)
-       VALUES ($1, $2, $3::jsonb, NULL)`,
+      `INSERT INTO lite_records (collection, id, body)
+       VALUES ($1, $2, $3::jsonb)`,
       ['conflict_events', 'legacy-1', JSON.stringify({ id: 'legacy-1', event_type: 'resource_tension', payload_hash: 'legacy-hash-1' })],
     )
     await legacy.close()
 
-    // A fresh instance re-runs ensureSchema, which backfills the column.
+    // A fresh instance migrates that old schema forward, and migration 1
+    // backfills the column from the body.
     const store = new PostgresStore({ databaseUrl: testDatabaseUrl })
     await store.ensureSchema()
 

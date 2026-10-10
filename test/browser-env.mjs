@@ -29,9 +29,30 @@
  * replaces the property outright.
  */
 
-import { registerHooks } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+
+/**
+ * `registerHooks` is a Node 22.15 API, and `engines` says `>=20` because that is
+ * what the *server* needs — `src/` never imports it. The tests do, so a
+ * developer on Node 20 running `npm test` used to get
+ * `SyntaxError: The requested module 'node:module' does not provide an export
+ * named 'registerHooks'`, which names a module rather than a version and reads
+ * like a broken checkout. The import is dynamic so this can say what is
+ * actually wrong.
+ *
+ * Not expressed as `devEngines` in package.json: that would also be read by
+ * `npm ci --omit=dev` in the Dockerfile, which builds on node:20 on purpose,
+ * and a test-toolchain requirement must not be able to fail a production build.
+ */
+const [major, minor] = process.versions.node.split('.').map(Number)
+if (major < 22 || (major === 22 && minor < 15)) {
+  throw new Error(
+    `the test harness needs Node 22.15+ (running ${process.versions.node}); `
+    + 'the server itself still runs on Node 20 — see "engines" in package.json',
+  )
+}
+const { registerHooks } = await import('node:module')
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 export const PUBLIC_ROOT = pathToFileURL(path.join(ROOT, 'public') + path.sep)

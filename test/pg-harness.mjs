@@ -90,20 +90,93 @@ async function freePort() {
 }
 
 /**
+ * A private database on an externally supplied cluster.
+ *
+ * The name carries the pid and a random suffix so two test files running
+ * concurrently — which is how `node --test test/*.test.js` runs them — cannot
+ * collide, and so a leftover from a killed run is not reused.
+ */
+async function provisionDatabase(baseUrl, name) {
+  const dbName = `lindela_${name}_${process.pid}_${Math.random().toString(36).slice(2, 8)}`
+    .replace(/[^a-z0-9_]/gi, '_')
+    .toLowerCase()
+
+  const adminUrl = new URL(baseUrl)
+  adminUrl.pathname = '/postgres'
+
+  // Through `pg`, not `psql`. The client binary is not guaranteed to exist on a
+  // machine that can reach a database — a CI runner with a Postgres *service
+  // container* has the server behind a port and no client on PATH — and a
+  // harness that fails for want of a CLI reports the same "no database" as a
+  // machine that genuinely has none. `pg` is already the project's one runtime
+  // dependency, so it is always there.
+  const { default: pg } = await import('pg')
+  const admin = new pg.Client({ connectionString: adminUrl.toString() })
+  try {
+    await admin.connect()
+    // `CREATE DATABASE` takes no bind parameters for the name, which is why the
+    // name is built from a sanitised alphabet above rather than passed through.
+    await admin.query(`CREATE DATABASE ${dbName}`)
+  } catch (error) {
+    // Refusing to fall back is the point. Sharing the database again would
+    // restore exactly the cross-test contamination this exists to prevent, and
+    // it would do so silently — the tests would pass or fail depending on which
+    // other files ran. A skip with the reason is the honest outcome.
+    return {
+      skipped: `could not create a private test database on the supplied cluster `
+        + `(needs CREATEDB): ${String(error.message || error).trim().split('\n')[0]}`,
+    }
+  } finally {
+    await admin.end().catch(() => {})
+  }
+
+  const url = new URL(baseUrl)
+  url.pathname = `/${dbName}`
+
+  let stopped = false
+  return {
+    skipped: null,
+    url: url.toString(),
+    stop: async () => {
+      if (stopped) return
+      stopped = true
+      const drop = new pg.Client({ connectionString: adminUrl.toString() })
+      try {
+        await drop.connect()
+        await drop.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`)
+      } catch { /* the cluster may already be gone; nothing to clean up */ } finally {
+        await drop.end().catch(() => {})
+      }
+    },
+  }
+}
+
+/**
  * Starts a cluster and returns a handle with its URL and a `stop()`.
  *
  * Resolves `{ skipped: reason }` if no server binaries are present — never a
  * green pass with nothing behind it. `stop()` is idempotent.
  */
 export async function postgresCluster({ name = 'lindela-test' } = {}) {
-  // An externally supplied database short-circuits provisioning: the same tests
-  // then run against a real cluster the operator chose.
+  // An externally supplied database runs the same tests against a real cluster
+  // the operator chose — but each caller gets its *own* database on it.
+  //
+  // Handing every caller the same database was a silent isolation failure, and
+  // an asymmetric one: with no external URL each caller provisions a private
+  // `initdb` cluster, so on a developer machine the tests are isolated and pass,
+  // while under CI's `LINDELA_LITE_TEST_DATABASE_URL` they all share one
+  // database and read each other's rows — `'asset-1' !== 'seed-asset'`, and a
+  // `read()` that returns six rows where the test wrote one. The failure was
+  // invisible locally by construction, which is the worst shape a test bug can
+  // have.
+  //
+  // A private database rather than a private schema: the store's SQL is
+  // unqualified, so a schema would need `search_path` set on every connection
+  // the pool opens, and a `pg.Pool` gives no hook for that. `CREATE DATABASE` is
+  // one statement, and dropping it in `stop()` takes the whole namespace with
+  // it.
   if (process.env.LINDELA_LITE_TEST_DATABASE_URL) {
-    return {
-      skipped: null,
-      url: process.env.LINDELA_LITE_TEST_DATABASE_URL,
-      stop: async () => {},
-    }
+    return provisionDatabase(process.env.LINDELA_LITE_TEST_DATABASE_URL, name)
   }
 
   const bindir = await findBindir()

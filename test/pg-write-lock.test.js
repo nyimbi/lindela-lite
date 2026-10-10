@@ -64,8 +64,21 @@ describe('CON-02 / CON-03 — every write takes the same advisory lock', () => {
   const holdersOf = async (key) => {
     const db = await client()
     const { rows } = await db.query(
+      // Scoped to *this* database. `pg_locks` is cluster-wide — it lists locks
+      // held against every database on the server — while advisory locks are
+      // database-scoped, so an unfiltered count includes every other test file
+      // holding the same key on its own database. That read as "the fixture
+      // must hold the lock: 3 !== 1" the moment the Postgres tests stopped
+      // sharing one database and started running side by side, which is the
+      // arrangement the harness is for.
+      //
+      // `objsubid = 1` selects the single-bigint form: `pg_advisory_xact_lock(n)`
+      // stores `n` in `objid` with `objsubid` 1, whereas the two-int form uses
+      // `classid` and `objsubid` 2. Matching on `objid` alone would also catch a
+      // two-int lock whose *second* key happened to equal this one.
       `SELECT count(*)::int AS held FROM pg_locks
-        WHERE locktype = 'advisory' AND objid = $1 AND granted`,
+        WHERE locktype = 'advisory' AND objid = $1 AND objsubid = 1 AND granted
+          AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
       [key],
     )
     return rows[0].held

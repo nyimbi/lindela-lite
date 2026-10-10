@@ -6,6 +6,7 @@ import { after, before, describe, it } from 'node:test'
 import { JsonStore, COLLECTIONS } from '../src/store.js'
 import { PostgresStore } from '../src/postgres-store.js'
 import { runIngestion, OUTPUT_COLLECTIONS } from '../src/ingestion.js'
+import { postgresCluster } from './pg-harness.mjs'
 
 /**
  * One contract, run against every storage backend.
@@ -21,7 +22,26 @@ import { runIngestion, OUTPUT_COLLECTIONS } from '../src/ingestion.js'
  * know or care which backend an environment variable selected.
  */
 
-const testDatabaseUrl = process.env.LINDELA_LITE_TEST_DATABASE_URL
+// Provisioned through the harness, like every other Postgres test file.
+//
+// This file used to read `LINDELA_LITE_TEST_DATABASE_URL` directly and hand it
+// to `PostgresStore`, which meant it shared one database with the seven other
+// files that did the same — the `remove()` and round-trip failures were this
+// file reading rows another file had written. The harness gives each caller a
+// private database; the variable is still the trigger, so a machine without one
+// still skips rather than silently covering a single backend.
+//
+// The cluster is provisioned lazily and memoised rather than in a `before`
+// hook: the backend list is built at collection time, which is synchronous and
+// happens before any hook runs, so a backend pushed from `before` would never
+// be registered.
+const wantsPostgres = Boolean(process.env.LINDELA_LITE_TEST_DATABASE_URL)
+let clusterPromise = null
+
+function ensureCluster() {
+  if (!clusterPromise) clusterPromise = postgresCluster({ name: 'lindela-conformance' })
+  return clusterPromise
+}
 
 /** Each backend hands back a store and its own teardown, so no test can
  *  clean up by guessing at a path — os.tmpdir() is shared. */
@@ -31,7 +51,9 @@ async function jsonBackend() {
 }
 
 async function postgresBackend() {
-  const store = new PostgresStore({ databaseUrl: testDatabaseUrl })
+  const cluster = await ensureCluster()
+  if (cluster.skipped) throw new Error(`store-conformance: ${cluster.skipped}`)
+  const store = new PostgresStore({ databaseUrl: cluster.url })
   return {
     store,
     cleanup: async () => {
@@ -43,7 +65,7 @@ async function postgresBackend() {
 }
 
 const backends = [{ name: 'json', make: jsonBackend }]
-if (testDatabaseUrl) backends.push({ name: 'postgres', make: postgresBackend })
+if (wantsPostgres) backends.push({ name: 'postgres', make: postgresBackend })
 
 // A skipped backend is the same failure as a check that measured nothing: the
 // suite reads "store conformance — both backends, one contract" either way, and
@@ -56,20 +78,9 @@ if (testDatabaseUrl) backends.push({ name: 'postgres', make: postgresBackend })
 // So the skip is announced. Locally, one line on stderr. Under CI, where the
 // Postgres service is defined, it is a failure: a green run that never touched
 // Postgres is not the run the job claims to have made.
-if (!testDatabaseUrl && process.env.CI) {
-  throw new Error(
-    'CI has no LINDELA_LITE_TEST_DATABASE_URL, so the store conformance suite ran '
-    + 'against JsonStore alone while reporting that it covers both backends. Add the '
-    + 'postgres service to the job and point this variable at it.',
-  )
-}
-if (!testDatabaseUrl) {
-  process.stderr.write(
-    'store-conformance: PostgresStore NOT exercised — LINDELA_LITE_TEST_DATABASE_URL is unset.\n'
-    + '  The contract below ran against JsonStore only. Any divergence between the two\n'
-    + '  adapters is unmeasured, which is the defect this file exists to find.\n',
-  )
-}
+//
+// Announced from `before` rather than at module load, because whether Postgres
+// is available is only known once the harness has tried to provision it.
 
 const hazard = (id, extra = {}) => ({
   id,
@@ -81,6 +92,33 @@ const hazard = (id, extra = {}) => ({
 })
 
 describe('store conformance — both backends, one contract', () => {
+  before(async () => {
+    if (!wantsPostgres) {
+      process.stderr.write(
+        'store-conformance: PostgresStore NOT exercised — LINDELA_LITE_TEST_DATABASE_URL is unset.\n'
+        + '  The contract below ran against JsonStore only. Any divergence between the two\n'
+        + '  adapters is unmeasured, which is the defect this file exists to find.\n',
+      )
+      return
+    }
+    // Provision now, so a cluster that cannot be reached is reported as a skip
+    // rather than as the first test's error, and so `after` has something to
+    // stop. `ensureCluster` memoises, so the postgres backend's own call reuses
+    // this one.
+    const cluster = await ensureCluster()
+    if (cluster.skipped && process.env.CI) {
+      throw new Error(
+        `CI has a PostgreSQL service but the conformance suite could not use it: ${cluster.skipped}. `
+        + 'The contract below would run against JsonStore alone while reporting that it covers both backends.',
+      )
+    }
+  })
+
+  after(async () => {
+    const cluster = await clusterPromise
+    await cluster?.stop()
+  })
+
   for (const backend of backends) {
     describe(backend.name, () => {
       let store
@@ -196,7 +234,11 @@ describe('store conformance — both backends, one contract', () => {
       it('round-trips every collection in COLLECTIONS', async () => {
         const payload = Object.fromEntries(COLLECTIONS.map((collection) => [collection, [{ id: `${collection}-1` }]]))
         await store.write(payload)
-        const data = await store.read()
+        // `includeHistory`, because this test is about the write/read round trip
+        // for *every* declared collection and `record_versions` is one of them.
+        // ENH-08 keeps history off the default read path, so a bare `read()`
+        // would have been asserting that a deliberate exclusion did not happen.
+        const data = await store.read({ includeHistory: true })
         for (const collection of COLLECTIONS) {
           assert.deepEqual(data[collection].map((r) => r.id), [`${collection}-1`], `${collection} did not round-trip`)
         }

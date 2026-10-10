@@ -83,6 +83,27 @@ const WRITE_RETRY_ATTEMPTS = 3
  */
 export const WRITE_LOCK_KEY = 4_001_001
 
+/**
+ * The advisory lock schema setup takes, distinct from `WRITE_LOCK_KEY`.
+ *
+ * Two replicas starting against one database both run `ensureSchema()`, and
+ * every statement in it is DDL: `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE`,
+ * `CREATE INDEX`. Postgres takes a `ShareLock` on the transaction that created
+ * a relation and a `RowExclusiveLock` on `pg_class` for the next one, so two
+ * concurrent migration runs acquire those in opposite orders and the server
+ * reports `40P01 deadlock detected` — which is what CI hit the first time two
+ * Postgres-backed test files shared one database, and what two containers
+ * coming up together would hit in production.
+ *
+ * A separate key from the write lock, because the two guard different things
+ * and must not be nested: `#lockWrites` is taken inside a transaction that
+ * already holds nothing, and a schema migration that had to wait behind an
+ * in-flight write batch would hold DDL locks for the duration of that batch.
+ * Distinct keys also mean a replica that is merely writing does not block a
+ * replica that is migrating.
+ */
+export const SCHEMA_LOCK_KEY = 4_001_002
+
 function isRetryableWriteError(error) {
   return RETRYABLE_SQLSTATES.has(error?.code)
 }
@@ -158,17 +179,52 @@ export class PostgresStore {
     if (this.ready) return
     const pool = await this.connect()
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS lite_records (
-        collection TEXT NOT NULL,
-        id TEXT NOT NULL,
-        body JSONB NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        PRIMARY KEY (collection, id)
-      );
-      CREATE INDEX IF NOT EXISTS lite_records_collection_updated_idx
-        ON lite_records (collection, updated_at DESC);
-    `)
+    // The whole of setup runs under one advisory lock, so a second process
+    // calling `ensureSchema()` waits rather than racing. Without it the two runs
+    // interleave their DDL — `CREATE TABLE IF NOT EXISTS` and the `ALTER`s below
+    // take conflicting locks on `pg_class` — and Postgres resolves the cycle by
+    // killing one of them: `40P01 deadlock detected`, thrown from this method.
+    // See `SCHEMA_LOCK_KEY`.
+    //
+    // The `IF NOT EXISTS` clauses are not a substitute. They make a *sequential*
+    // second run a no-op; they do nothing about two runs whose statements are
+    // already in flight, because both check for the table before either has
+    // created it.
+    //
+    // Session-scoped (`pg_advisory_lock`), not `pg_advisory_xact_lock`: the work
+    // below spans one transaction per migration by design, so a transaction-
+    // scoped lock would release at the first COMMIT and leave every later
+    // migration unprotected. The unlock is explicit and in a `finally`, so the
+    // failure mode a session lock is normally avoided for — a lock outliving its
+    // work on a pooled connection — cannot happen; and if the process dies, the
+    // connection dies with it and Postgres releases the lock anyway.
+    const lockClient = await pool.connect()
+    try {
+      await lockClient.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_KEY])
+
+      await lockClient.query(`
+        CREATE TABLE IF NOT EXISTS lite_records (
+          collection TEXT NOT NULL,
+          id TEXT NOT NULL,
+          body JSONB NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (collection, id)
+        );
+        CREATE INDEX IF NOT EXISTS lite_records_collection_updated_idx
+          ON lite_records (collection, updated_at DESC);
+      `)
+
+      await this.#runPendingMigrations(lockClient)
+    } finally {
+      await lockClient.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK_KEY]).catch(() => {})
+      lockClient.release()
+    }
+
+    this.ready = true
+  }
+
+  /** Apply every migration this build has and the database has not. */
+  async #runPendingMigrations(pool) {
 
     // ENH-29. The statements below used to be written out here, inline, on
     // every connect: an ALTER, a backfill UPDATE and an index, with nothing
@@ -219,7 +275,6 @@ export class PostgresStore {
         client.release()
       }
     }
-    this.ready = true
   }
 
   /**
@@ -747,7 +802,25 @@ export class PostgresStore {
     return rows[0]?.body ?? null
   }
 
-  /** The delete `remove()` does, on the lock's own transaction. */
+  /**
+   * The delete `remove()` does, on the lock's own transaction.
+   *
+   * Takes the full `{ collection: { id: [ids] } }` argument `remove()` is
+   * called with, which is also what `withLock()`'s `locked.remove` receives
+   * from the idempotency store. `#removeOnce` used to hand it the *inner* map
+   * instead, so the destructuring read `doomedByCollection` as `undefined`,
+   * defaulted to `{}`, and the loop ran zero times: `remove()` returned
+   * successfully and deleted nothing, on every call, since the method was
+   * written.
+   *
+   * The consequence was not subtle. The retention sweep reported
+   * `{success: true, expired: N}` while every expired record stayed in the
+   * table — DAT-07 reintroduced on the Postgres adapter after being fixed on
+   * `JsonStore` — and the audit-trail delete route was a no-op. It survived
+   * because nothing ran the conformance suite against a real database: the
+   * file skipped itself whenever `LINDELA_LITE_TEST_DATABASE_URL` was unset,
+   * which in CI it always was.
+   */
   async #removeLocked(client, { collection: doomedByCollection = {} } = {}) {
     for (const [collection, ids] of Object.entries(doomedByCollection)) {
       assertDeclaredCollection(collection)
@@ -875,7 +948,12 @@ export class PostgresStore {
     try {
       await client.query('BEGIN')
       await this.#lockWrites(client)
-      await this.#removeLocked(client, doomedByCollection)
+      // The full argument, not the inner map: `#removeLocked` destructures
+      // `{ collection }` off it, because that is the shape `withLock()`'s
+      // `locked.remove` is called with too. Passing `doomedByCollection` here
+      // made the destructuring resolve to `{}` and the DELETE loop run zero
+      // times, silently.
+      await this.#removeLocked(client, { collection: doomedByCollection })
       await client.query('COMMIT')
     } catch (error) {
       await client.query('ROLLBACK')
