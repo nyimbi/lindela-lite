@@ -42,11 +42,17 @@ export const logger = {
 
 function logEvent(level, event, fields) {
   if (LOG_LEVELS[level] < LOG_LEVELS[LOG_LEVEL]) return
+  // The envelope is written last, so a payload field cannot overwrite it. With
+  // `...fields` last, a call site that passed `{ event: 'report.created' }` as a
+  // field replaced the event *name* with its own payload value — a log line
+  // whose `event` is the thing being logged about rather than what happened, and
+  // whose real name is gone. `outbox_event` is the field for that; these three
+  // keys belong to the logger.
   const log = {
+    ...fields,
     ts: new Date().toISOString(),
     level,
     event,
-    ...fields,
   }
   console.error(JSON.stringify(log))
 }

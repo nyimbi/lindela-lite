@@ -464,7 +464,11 @@ export async function executeTriggerProtocols(store, data, {
         await emit(store, 'protocol.executed', { execution_id: execution.id, protocol_id: execution.protocol_id })
       } catch (emitError) {
         metrics.counter('outbox_emit_failed_total', { event: 'protocol.executed' })
-        logger.error({ err: emitError, event: 'protocol.executed' }, 'outbox emit failed; the execution is stored and no subscriber was told')
+        logger.error('outbox_emit_failed', {
+          outbox_event: 'protocol.executed',
+          message: 'outbox emit failed; the execution is stored and no subscriber was told',
+          err: { message: emitError.message, stack: emitError.stack },
+        })
       }
     }
   }

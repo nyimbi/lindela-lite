@@ -244,7 +244,7 @@ async function dispatchPendingUnlocked(store, options) {
         logger.error('webhook_delivery_failed', {
           webhook_id: webhook.id,
           url: webhook.url,
-          event: outboxEvent.event,
+          outbox_event: outboxEvent.event,
           attempt: outboxEvent.attempts + 1,
           error: error.message,
         })

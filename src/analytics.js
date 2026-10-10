@@ -414,10 +414,12 @@ export async function reconcileDerivedNumbers(store, data, { previous, now = new
   if (rows.length) {
     await store.merge({ unexpected_changes: rows })
     for (const row of rows) {
-      logger.error(
-        { collection: row.collection, district: row.district, before: row.value_before, after: row.value_after },
-        'derived value moved with unchanged inputs',
-      )
+      logger.error('derived_value_moved_without_input_change', {
+        collection: row.collection,
+        district: row.district,
+        before: row.value_before,
+        after: row.value_after,
+      })
     }
   }
   return { rows }

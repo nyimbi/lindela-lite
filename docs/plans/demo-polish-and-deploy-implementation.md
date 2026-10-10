@@ -923,8 +923,9 @@ Runbook, in order. Do not interrupt the deploy.
   quoted line numbers before editing if the file has moved (`grep -n` on the
   anchors given in each step).
 - Risk: two stale copy files (`scripts/seed-demo copy.mjs`,
-  `scripts/seed-demo-data copy.mjs`) exist in `scripts/`; do not edit them —
-  the live seeders are `scripts/seed-demo.mjs` and `scripts/seed-demo-data.mjs`.
+  `scripts/seed-demo-data copy.mjs`) used to sit in `scripts/`. Both were
+  deleted (ARC-11, `docs/improvements/audit-2026-10/defects.md`); the live
+  seeders are `scripts/seed-demo.mjs` and `scripts/seed-demo-data.mjs`.
 
 Done when: 5/5 auth tests pass; full suite green; gates 7/7; alert cards carry
 the Where line and the authorisation outcome (stored demo alert included);

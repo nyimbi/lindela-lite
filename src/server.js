@@ -171,10 +171,11 @@ export async function reconcileUndeliveredDispatches(store, data, { now = new Da
   const logs = alerts.map((alert) => actionLog('alert_events', 'created', alert, 'delivery-reconciliation', 'system'))
   await store.merge({ alert_events: alerts, action_logs: logs })
   for (const finding of findings) {
-    logger.error(
-      { alert_event_id: finding.original_alert_event_id, workflow_instance_id: finding.workflow_instance_id },
-      'dispatch reconciliation: a chain was entered and no notification was delivered',
-    )
+    logger.error('dispatch_reconciliation_gap', {
+      alert_event_id: finding.original_alert_event_id,
+      workflow_instance_id: finding.workflow_instance_id,
+      message: 'a chain was entered and no notification was delivered',
+    })
   }
   return { raised: alerts.length, findings }
 }
@@ -428,14 +429,14 @@ export function createServer(options = {}) {
         jsonResponse(res, statusCode, { success: false, error: error.message || 'Request failed' })
       } else {
         const incidentId = randomUUID()
-        logger.error({
+        logger.error('request_failed', {
           incident_id: incidentId,
           route,
           method: req.method,
           // Spreading an Error into a JSON payload yields `{}` — its fields are
           // non-enumerable. Log the parts, or the log says nothing at all.
           err: { message: error.message, stack: error.stack },
-        }, 'request_failed')
+        })
         jsonResponse(res, statusCode, {
           success: false,
           error: 'Internal server error',
@@ -1279,7 +1280,9 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       const counts = await summary(store)
       jsonResponse(res, 200, { success: true, counts })
     } catch (e) {
-      logger.error({ err: e }, 'demo seed failed')
+      logger.error('demo_seed_failed', {
+        err: { message: e.message, stack: e.stack },
+      })
       jsonResponse(res, 500, { success: false, error: e.message })
     }
     return
@@ -2634,7 +2637,21 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
     if (body.generate) record = generateReportSections(record, data, body)
     const log = actionLog('reports', 'created', record, body.actor, req.__auth?.subject)
     await store.merge({ reports: [record], action_logs: [log] })
-    try { await emit(store, 'report.created', record) } catch {}
+    // The record is stored either way; a subscriber that was not told is a gap
+    // to count and name, not a reason to abandon the merge. The bare `catch {}`
+    // that used to be here made the gap invisible in both the log and the
+    // metric, which is the one thing an outbox exists to prevent.
+    try {
+      await emit(store, 'report.created', record)
+    } catch (emitError) {
+      metrics.counter('outbox_emit_failed_total', { event: 'report.created' })
+      logger.error('outbox_emit_failed', {
+        outbox_event: 'report.created',
+        report_id: record.id,
+        message: 'outbox emit failed; the report is stored and no subscriber was told',
+        err: { message: emitError.message, stack: emitError.stack },
+      })
+    }
     jsonResponse(res, 201, { success: true, data: record, action_log: log })
     return
   }
@@ -2754,7 +2771,17 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
       rapidpro_dispatches: result.rapidproDispatches,
       action_logs: [log, ...result.runs.map((run) => actionLog('report_distribution_runs', run.status, run, body.actor, req.__auth?.subject))],
     })
-    try { await emit(store, 'report.distributed', record) } catch {}
+    try {
+      await emit(store, 'report.distributed', record)
+    } catch (emitError) {
+      metrics.counter('outbox_emit_failed_total', { event: 'report.distributed' })
+      logger.error('outbox_emit_failed', {
+        outbox_event: 'report.distributed',
+        report_id: record.id,
+        message: 'outbox emit failed; the distribution is stored and no subscriber was told',
+        err: { message: emitError.message, stack: emitError.stack },
+      })
+    }
     jsonResponse(res, 201, { success: result.runs.every((run) => run.status !== 'failed'), data: result.runs, report: record, action_log: log })
     return
   }
@@ -3275,7 +3302,11 @@ const writes = reconciled.applied
           // thrown, and the reason travels in the response so it is not a
           // silent gap.
           fieldOutcome = null
-          logger.error({ err: outcomeError, alert_event_id: parsed.alert_event_id }, 'DONE reply could not be recorded as a field outcome; the inbound is kept')
+          logger.error('field_outcome_write_failed', {
+            alert_event_id: parsed.alert_event_id,
+            message: 'DONE reply could not be recorded as a field outcome; the inbound is kept',
+            err: { message: outcomeError.message, stack: outcomeError.stack },
+          })
         }
         if (fieldOutcome) {
           writes.field_outcomes = [fieldOutcome]
@@ -3510,7 +3541,11 @@ async function handleAlertRoute(store, data, req, res, url, route) {
       // logged, and the request still succeeds: a failed notification is not a
       // reason to abandon a rule that was created.
       metrics.counter('outbox_emit_failed_total', { event: 'alert_rule.created' })
-      logger.error({ err: emitError, event: 'alert_rule.created' }, 'outbox emit failed; the record is stored and no subscriber was told')
+      logger.error('outbox_emit_failed', {
+        outbox_event: 'alert_rule.created',
+        message: 'outbox emit failed; the record is stored and no subscriber was told',
+        err: { message: emitError.message, stack: emitError.stack },
+      })
     }
     jsonResponse(res, 201, { success: true, data: record, action_log: log })
     return
@@ -3701,7 +3736,11 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
         // Counted and logged, not swallowed — see the alert_rule path above for
         // why this direction of the gap is the survivable one.
         metrics.counter('outbox_emit_failed_total', { event: 'incident.created' })
-        logger.error({ err: emitError, event: 'incident.created' }, 'outbox emit failed; the incident is stored and no subscriber was told')
+        logger.error('outbox_emit_failed', {
+          outbox_event: 'incident.created',
+          message: 'outbox emit failed; the incident is stored and no subscriber was told',
+          err: { message: emitError.message, stack: emitError.stack },
+        })
       }
     }
     jsonResponse(res, 201, { success: true, data: record, action_log: log })
