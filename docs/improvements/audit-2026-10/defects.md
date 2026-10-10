@@ -529,7 +529,29 @@ only partially catches it.
 (10,309 bytes), referenced by nothing. 85 KB of duplicated seed logic; the next
 person edits the wrong file.
 
+### ARC-11 — LOW — Two orphaned "copy" seed scripts committed
+
+**Fixed 2026-10-11** (in the demo-polish work that preceded this pass; verified
+absent here). Both `scripts/seed-demo copy.mjs` and `scripts/seed-demo-data
+copy.mjs` are gone from the tree and from git, and nothing references them.
+
+`scripts/seed-demo copy.mjs` (74,920 bytes) and `scripts/seed-demo-data copy.mjs`
+(10,309 bytes), referenced by nothing. 85 KB of duplicated seed logic; the next
+person edits the wrong file.
+
 ### ARC-12 — LOW — Orphaned re-export and orphan entry point
+
+**Fixed 2026-10-11.** `public/app.js`'s `export { … } from '/shared/paging.js'`
+is removed — nothing imported app.js for those four names, and
+`test/paging.test.js` requires `shared/paging.js` directly, so the re-export was
+a second entry point with no caller. The `LIST_PAGE_SIZE` import went with it.
+`src/index.js` is now exercised by `test/package-surface.test.js`: it imports
+the entry point, asserts every name resolves to a value (a stale named
+re-export is a load-time failure in ESM, so this catches a renamed symbol), and
+checks `package.json`'s `main` still names it. The module is deliberately left
+as the public surface rather than deleted: a published `main` is for consumers
+outside the repo, and the defect was that nothing tested it, not that it exists.
+
 `public/app.js` re-exports paging helpers the comment says were moved to
 `public/shared/paging.js`; nothing imports app.js for them. `src/index.js` (8 lines)
 is `package.json` `"main"` but nothing imports `@lindela/lite` — the public API
