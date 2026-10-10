@@ -13,7 +13,7 @@
         "src/server.js:1352",
         "src/server.js:536"
       ],
-      "guarded_by": "test/freshness.test.js, test/ingestion-wiring.test.js"
+      "guarded_by": "test/freshness-verdicts.test.js, test/ingestion-wiring.test.js"
     },
     {
       "id": "ENH-07",
@@ -26,7 +26,7 @@
         "src/schema.js:259-269",
         "src/connectors/uploads.js:177"
       ],
-      "guarded_by": "test/assertions.test.js, test/ingestion-wiring.test.js"
+      "guarded_by": "test/source-assertions.test.js, test/ingestion-wiring.test.js"
     },
     {
       "id": "ENH-08",
@@ -44,7 +44,7 @@
     {
       "id": "ENH-09",
       "title": "Source-agreement cross-validation",
-      "status": "shipped",
+      "status": "partial",
       "detail": "`src/agreement.js` computes what the item asks for — Pearson and Spearman correlation with `minPearson: 0.5`, a paired-month count floor, a sign-disagreement rate capped at 0.25, and a four-value verdict of `agree | marginal | disputed | unavailable` — and it pairs on `period`, never on array index, which is the mistake that makes naive cross-product comparison meaningless. `unavailable` is returned rather than a fabricated verdict when either side is flat (`dx === 0 || dy === 0`), because a flat product carries no ordering information. Two things are missing: there is still no GeoTIFF reader (CHIRPS declines to decode pixels at src/connectors/chirps.js:23), so the two products cannot actually be compared in production; and no route surfaces `agreementReport` — the module is a library with no caller, which is the same defect ENH-16 has.",
       "evidence": [
         "src/agreement.js",
@@ -63,7 +63,7 @@
         "src/circuit.js:67",
         "src/circuit.js:143"
       ],
-      "guarded_by": "test/circuit.test.js, test/ingestion-wiring.test.js",
+      "guarded_by": "test/connector-circuit.test.js, test/ingestion-wiring.test.js",
       "note": "src/circuit.js. closed -> open on three consecutive failures -> half_open after the 30-minute cooldown -> exactly one probe, which closes or re-opens with the cooldown restarted. Recovery is asserted reachable in both directions; `opened_at: null` never probes. scoreConnector scores the breaker from STORED run history via outcomesFromRuns, not the in-memory window runIngestion rebuilds and discards per run — it previously existed only in tests. A breaker skip is not a success. test/connector-circuit.test.js."
     },
     {
@@ -90,7 +90,7 @@
         "scripts/capture-fixtures.mjs",
         "test/fixtures/"
       ],
-      "guarded_by": "test/capture.test.js",
+      "guarded_by": "test/payload-capture.test.js",
       "note": "src/capture.js. RETENTION_POLICY states the window in one place and renders it into log lines, store files and the CLI's own output. Pruning leaves a tombstone that round-trips through the store file, and ReplayPrunedError is distinct from ReplayMissError: 'we captured it and policy took it' and 'we never captured it' are different facts. Every replay carries a provenance stamp with deliberately no `unstamp`. Replay through fetchWithRetry now carries tombstones too. test/capture-retention-replay.test.js, test/capture-cli.test.js."
     },
     {
@@ -116,7 +116,7 @@
         "src/connectors/gdacs-archive.js:51",
         "src/connectors/chirps.js:105"
       ],
-      "guarded_by": "test/completeness.test.js",
+      "guarded_by": "test/completeness-wiring.test.js",
       "note": "The verdict is a run-record field, a scanned flag and a status-route verdict — read BEFORE the assertion pass can replace the output, because a quarantined batch drops every non-collection key, which is exactly when an operator most needs to know. test/pagination-completeness.test.js."
     },
     {
@@ -129,7 +129,7 @@
         "src/provenance.js:112",
         "src/ingestion.js"
       ],
-      "guarded_by": "test/provenance.test.js, test/ingestion-wiring.test.js"
+      "guarded_by": "test/record-provenance.test.js, test/ingestion-wiring.test.js"
     }
   ]
 }

@@ -45,7 +45,7 @@
         "src/equity.js:105",
         "src/equity.js:117"
       ],
-      "guarded_by": null,
+      "guarded_by": "test/calibration-trust.test.js",
       "note": "src/calibration.js, reusing wilsonInterval, MIN_MONTHS, MIN_EVENTS and MODEL_BASIS from flood-probability.js rather than reimplementing the model. Below thirty resolved alerts, or all-one-class, or non-finite, it returns null plus a reason: a score of 12 off four alerts reads as a measurement rather than as an absence of one. Served at GET /api/v1/calibration/by-region, which counts the refusals alongside the scores. test/calibration-trust.test.js."
     },
     {
@@ -76,7 +76,7 @@
         "src/analytics.js:470",
         "docs/improvements/enhancements.md:134"
       ],
-      "guarded_by": null,
+      "guarded_by": "test/drift-monitoring.test.js",
       "note": "src/drift.js: PSI per feature plus predicted-versus-observed divergence, four verdicts. Computed on every refresh and stored in the derived set, served at GET /api/v1/model-drift. Never reported from a single observation, and divergence only when the observed rate's Wilson interval excludes the predicted mean. All seven regions currently refuse with the reason attached — 'input shift needs >= 24 months in each window'. test/drift-monitoring.test.js."
     }
   ]

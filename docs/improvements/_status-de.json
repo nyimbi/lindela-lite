@@ -47,7 +47,7 @@
         "src/utils.js:335",
         "src/server.js:1806"
       ],
-      "guarded_by": null,
+      "guarded_by": "scripts/check-no-flood-probability.mjs",
       "note": "src/reports.js renderExportMarkdown composes with renderReportMarkdown rather than reimplementing it, so the export and export.md cannot drift. Refusal vocabulary is imported from MODEL_BASIS rather than retyped. A withheld figure prints as 'not measured', never a dash in a column of numbers. check-no-flood-probability.mjs gained the rule the term list cannot catch — a null rendered, or a refusal named without its reason beside it — and fails the build on it. Served at GET /api/v1/kpi/quarterly.md; the PDF carries the same narrative page."
     },
     {
