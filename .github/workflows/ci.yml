@@ -102,8 +102,11 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      # Enforced thresholds fail the build if coverage regresses. Current
-      # baseline is ~77.9% line / 63.9% branch / 79.3% function.
+      # Enforced thresholds fail the build if coverage regresses. The gate runs
+      # the whole suite (`scripts/check-coverage.mjs` enumerates test/), not a
+      # hand-picked list: the previous form named six files out of 162, so a
+      # module nothing exercised still passed. Measured full-suite baseline is
+      # ~95.7% line / 81.7% branch / 93.6% function.
       - run: npm run test:coverage
 
   audit:

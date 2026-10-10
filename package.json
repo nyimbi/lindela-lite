@@ -10,7 +10,7 @@
     "deploy:one-click": "deploy/one-click.sh",
     "validate": "node scripts/validate.mjs",
     "test": "node --test test/*.test.js",
-    "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=75 --test-coverage-branches=60 --test-coverage-functions=75 --test-coverage-include='src/**' test/lite.test.js test/fixtures.test.js test/flood-bands.test.js test/map-frame.test.js test/seasonal.test.js test/store-conformance.test.js",
+    "test:coverage": "node scripts/check-coverage.mjs",
     "audit": "npm audit --audit-level=high",
     "gates": "node scripts/run-gates.mjs --tier self-contained",
     "gates:browser": "node scripts/run-gates.mjs --tier needs-browser",
