@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { riskLevel, severityWeight } from './schema.js'
-import { clamp, haversineKm, stableId } from './utils.js'
+import { clamp, haversineKm, stableId, toNumber } from './utils.js'
 import { KNOWN_DISTRICTS } from './districts.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
 import { computeRoadAccess } from './road-access.js'
@@ -725,7 +725,20 @@ export function computeServiceImpacts(data, riskScores) {
     const floodScore = nearestFlood && nearestFlood.distance_km <= 150 ? nearestFlood.item.score : 0
     const conflictScore = nearestConflict && nearestConflict.distance_km <= 150 ? nearestConflict.item.score : 0
     const score = clamp(Math.round(floodScore * 0.55 + conflictScore * 0.45), 0, 100)
-    const confidence = Math.round(((nearestFlood?.item?.confidence || 0) * 0.55) + ((nearestConflict?.item?.confidence || 0) * 0.45))
+    // Only the regions actually inside the borrowing radius have a confidence to
+    // report. `|| 0` turned an absent reading into "certain the risk is zero",
+    // and a hazard nobody scored read as the most confident statement on the
+    // record. Weights renormalise over the terms that contributed, so an asset
+    // with flood cover and no conflict cover reports the flood confidence rather
+    // than that number halved. No contributor at all is null, not 0.
+    const contributors = [
+      { weight: 0.55, confidence: nearestFlood && nearestFlood.distance_km <= 150 ? toNumber(nearestFlood.item.confidence) : null },
+      { weight: 0.45, confidence: nearestConflict && nearestConflict.distance_km <= 150 ? toNumber(nearestConflict.item.confidence) : null },
+    ].filter((term) => term.confidence !== null)
+    const contributorWeight = contributors.reduce((sum, term) => sum + term.weight, 0)
+    const confidence = contributorWeight > 0
+      ? Math.round(contributors.reduce((sum, term) => sum + term.confidence * term.weight, 0) / contributorWeight)
+      : null
     const generated_at = new Date().toISOString()
     assessments.push({
       id: stableId('impact', [asset.id, score]),

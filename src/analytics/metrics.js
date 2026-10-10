@@ -294,7 +294,10 @@ export const METRICS = Object.freeze({
         const n = numericOrNull(d?.recipients_count) ?? numericOrNull(d?.metadata?.recipients_count)
         if (n === null) missingCount += 1
         else recipients += n
-        const dest = d?.destination ?? d?.rapidpro_contact ?? d?.phone ?? d?.recipient_count
+        // `recipient_count` is a head count, not an address. Including it made a
+        // single send to 500 people contribute the string "500" to the
+        // destination set — one destination standing in for a broadcast.
+        const dest = d?.destination ?? d?.rapidpro_contact ?? d?.phone
         if (dest != null) destinations.add(String(dest))
       }
       return {

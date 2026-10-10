@@ -87,8 +87,11 @@ export function spreadSkillIndex(records) {
 /**
  * Ensembles needed before a spread-skill index is reportable.
  *
- * Two is the smallest count at which "how wide is this ensemble relative to its
- * value" is a comparison rather than a single observation described in index
- * language. One record produces a ratio with no distribution behind it.
+ * Three is the smallest count at which "how wide is this ensemble relative to
+ * its value" is a comparison rather than an observation described in index
+ * language. One record produces a ratio with no distribution behind it; two
+ * produce a spread that is the gap between two numbers and nothing more. The
+ * constant and this sentence said two and three respectively until the audit
+ * read both.
  */
 export const MIN_ENSEMBLES_FOR_SPREAD_SKILL = 3

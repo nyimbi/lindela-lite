@@ -170,7 +170,12 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
   // data. The monthly series had no such fallback. Both now use one helper and
   // one interval; where the interval is unavailable the figure is null and says
   // so, rather than becoming a different measurement under the same name.
-  const warning_to_action_median_hours = signalToDispatchHours(data.rapidpro_dispatches)
+  // Over this quarter's dispatches, not the whole store. The monthly series
+  // below already used the period-filtered variable; this line read
+  // `data.rapidpro_dispatches` directly, so a quarter whose dispatches were all
+  // sub-hour reported a median diluted by years of slower history — or, worse,
+  // masked a current-quarter regression behind a good-looking lifetime figure.
+  const warning_to_action_median_hours = signalToDispatchHours(dispatches)
 
   // The figure `warning_to_action_median_hours` is not, published beside it.
   //

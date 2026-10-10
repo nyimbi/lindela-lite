@@ -150,7 +150,10 @@ export function alertOutcomeCalibration(alerts = []) {
       // The share of this region's alerts anyone has determined. A rate computed
       // from 3 of 40 alerts is publishable under a sample floor and still
       // describes a sample nobody chose, so the coverage travels with the rate.
-      outcome_coverage: row.raised ? Number((row.resolved / row.raised).toFixed(4)) : null,
+      //
+      // This key was declared twice in this literal, the first line dead: a
+      // maintainer editing the `Number(...toFixed(4))` spelling above would have
+      // seen no effect and no error. One declaration, the four-decimal form.
       outcome_coverage: row.raised > 0 ? Math.round((row.resolved / row.raised) * 10000) / 10000 : null,
       refusal: refusal?.reason ?? null,
     })

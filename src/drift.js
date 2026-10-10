@@ -148,6 +148,7 @@ export function detectInputShift(referenceSamples = [], currentSamples = [], { f
 
   const measured = {}
   let worst = 0
+  let measurable = 0
   for (const feature of features) {
     const result = populationStabilityIndex(ref.features[feature], cur.features[feature])
     measured[feature] = {
@@ -157,7 +158,28 @@ export function detectInputShift(referenceSamples = [], currentSamples = [], { f
           : result.psi >= PSI_WATCH ? 'watching'
             : 'stable',
     }
-    if (Number.isFinite(result.psi) && result.psi > worst) worst = result.psi
+    if (Number.isFinite(result.psi)) {
+      measurable += 1
+      if (result.psi > worst) worst = result.psi
+    }
+  }
+  // "No feature could be measured" is not "the distribution is stable".
+  //
+  // `worst` starts at 0, so an all-null feature set — every window present but
+  // carrying no values — fell through to `worst >= PSI_WATCH` being false and
+  // reported `verdict: 'stable'` with `worst_psi: 0`. Each per-feature verdict
+  // above already says `not_measurable`; the roll-up contradicted them, and a
+  // reader watching the headline would conclude the inputs had not moved at the
+  // exact moment the platform had stopped being able to see whether they had.
+  if (measurable === 0) {
+    return {
+      verdict: 'not_measurable',
+      reason: `no feature carried a measurable value in both windows; ${features.length} feature(s) checked`,
+      worst_psi: null,
+      reference_months: ref.months,
+      current_months: cur.months,
+      features: measured,
+    }
   }
   return {
     verdict: worst >= PSI_DRIFT ? 'drift' : worst >= PSI_WATCH ? 'watching' : 'stable',
