@@ -224,3 +224,80 @@ describe('QUA-07 — a limit that is not a number is refused, not silently empty
     assert.equal(collectionPage(RECORDS, new URLSearchParams({ limit: '7' })).data.length, 7)
   })
 })
+
+// ---------------------------------------------------------------- SCL-03
+
+describe('SCL-03 filterRecords walks the collection once, not once per filter', () => {
+  /**
+   * An array that counts the passes made over it.
+   *
+   * The old implementation chained eighteen `.filter()` calls, so a 4,517-row
+   * collection was copied into eighteen intermediate arrays and seventeen of
+   * them thrown away, even when a selective early filter left three rows. The
+   * *result* is identical either way, so a behavioural test cannot see the
+   * cost; the instrumentation has to survive the chain, which is what the
+   * `Symbol.species` override is for — `Array.prototype.filter` constructs its
+   * result from `this.constructor[Symbol.species]`, so every intermediate array
+   * is another `Counted` and keeps counting.
+   */
+  class Counted extends Array {
+    static get [Symbol.species]() { return Counted }
+    static stats = { passes: 0, visits: 0 }
+    static reset() { Counted.stats = { passes: 0, visits: 0 } }
+    filter(...args) {
+      Counted.stats.passes += 1
+      Counted.stats.visits += this.length
+      return super.filter(...args)
+    }
+  }
+
+  const fixture = () => Counted.from(Array.from({ length: 200 }, (_, i) => ({
+    id: `r${i}`,
+    district: 'Nairobi',
+    country: i < 10 ? 'KE' : 'UG',
+    source: 'gdacs',
+    status: 'open',
+    created_at: '2026-08-01T00:00:00.000Z',
+  })))
+
+  it('makes one pass over the collection, not one per active filter', () => {
+    Counted.reset()
+    const query = new URLSearchParams({
+      district: 'Nairobi', country: 'KE', source: 'gdacs', status: 'open',
+      from: '2026-07-01', to: '2026-09-01', limit: '10',
+    })
+    const result = filterRecords(fixture(), query, {})
+    assert.equal(result.length, 10)
+    assert.equal(
+      Counted.stats.passes, 0,
+      `${Counted.stats.passes} intermediate arrays were allocated for one request`,
+    )
+    assert.ok(Counted.stats.visits < 200 * 4, `each record was visited ${Counted.stats.visits / 200} times`)
+  })
+
+  it('returns the same records the chain of filters did', () => {
+    const query = new URLSearchParams({ country: 'KE', status: 'open', limit: '5' })
+    const result = filterRecords(fixture(), query, {})
+    assert.deepEqual(result.map((r) => r.id), ['r0', 'r1', 'r2', 'r3', 'r4'])
+
+    const none = filterRecords(fixture(), new URLSearchParams({ country: 'UG', status: 'closed' }), {})
+    assert.deepEqual(none, [], 'a combination with no rows must return none')
+  })
+
+  it('applies every filter, not just the last', () => {
+    // The composition could pass a test that only exercises one predicate and
+    // still drop one silently; this drives them together and removes them one
+    // at a time.
+    const mixed = [
+      { id: 'a', country: 'KE', status: 'open', severity: 'high' },
+      { id: 'b', country: 'KE', status: 'closed', severity: 'high' },
+      { id: 'c', country: 'UG', status: 'open', severity: 'high' },
+      { id: 'd', country: 'KE', status: 'open', severity: 'low' },
+    ]
+    const ids = (params) => filterRecords(mixed, new URLSearchParams(params), {}).map((r) => r.id)
+    assert.deepEqual(ids({ country: 'KE' }), ['a', 'b', 'd'])
+    assert.deepEqual(ids({ country: 'KE', status: 'open' }), ['a', 'd'])
+    assert.deepEqual(ids({ country: 'KE', status: 'open', severity: 'high' }), ['a'])
+    assert.deepEqual(ids({ severity: 'high' }), ['a', 'b', 'c'])
+  })
+})

@@ -244,30 +244,59 @@ export function filterRecords(records, query, context = {}, { unlimited = false 
   const to = query.get('to') ? Date.parse(query.get('to')) : null
   const limit = parseLimit(query.get('limit'))
 
-  const matched = (partnerOrg ? records.filter((item) => item?.partner_org === partnerOrg) : records)
-    .filter((item) => recordInBbox(item, bbox))
-    .filter((item) => !country || item.country === country || item.scope?.country === country)
-    .filter((item) => !source || item.source === source || item.source_name === source)
-    .filter((item) => !eventType || item.event_type === eventType || item.type === eventType)
-    .filter((item) => !reportType || item.report_type === reportType || item.type === reportType)
-    .filter((item) => !severity || item.severity === severity || item.risk_level === severity)
-    .filter((item) => !status || item.status === status)
-    .filter((item) => !workflowState || item.state === workflowState)
-    .filter((item) => !priority || item.priority === priority)
-    .filter((item) => !incidentId || item.incident_id === incidentId || item.scope?.incident_id === incidentId || item.id === incidentId)
-    .filter((item) => !interventionId || item.intervention_id === interventionId || item.scope?.intervention_id === interventionId || item.id === interventionId)
-    .filter((item) => !serviceType || item.service_type === serviceType || item.scope?.service_type === serviceType)
-    .filter((item) => !owner || item.owner === owner)
-    .filter((item) => !templateId || item.template_id === templateId)
-    .filter((item) => !scheduleId || item.schedule_id === scheduleId)
-    .filter((item) => !districtFilter || recordInDistrict(item, districtFilter, districtRelations))
-    .filter((item) => {
+  // SCL-03. One pass, not eighteen.
+  //
+  // This was a chain of `.filter()` calls, each allocating a new array over the
+  // full collection before the next one looked at it, and then a `.slice()` at
+  // the end. A request that named a district with three matching rows out of
+  // 4,517 still walked all 4,517 rows eighteen times and allocated eighteen
+  // arrays to throw away seventeen of them. Each predicate is independent, so
+  // they compose into one conjunction and the loop exits as soon as one fails.
+  //
+  // The order matters for cost, not for the answer: the cheap field comparisons
+  // run before the date parse, which is the most expensive test here.
+  const predicates = []
+  if (partnerOrg) predicates.push((item) => item?.partner_org === partnerOrg)
+  if (bbox) predicates.push((item) => recordInBbox(item, bbox))
+  if (country) predicates.push((item) => item.country === country || item.scope?.country === country)
+  if (source) predicates.push((item) => item.source === source || item.source_name === source)
+  if (eventType) predicates.push((item) => item.event_type === eventType || item.type === eventType)
+  if (reportType) predicates.push((item) => item.report_type === reportType || item.type === reportType)
+  if (severity) predicates.push((item) => item.severity === severity || item.risk_level === severity)
+  if (status) predicates.push((item) => item.status === status)
+  if (workflowState) predicates.push((item) => item.state === workflowState)
+  if (priority) predicates.push((item) => item.priority === priority)
+  if (incidentId) {
+    predicates.push((item) => item.incident_id === incidentId
+      || item.scope?.incident_id === incidentId || item.id === incidentId)
+  }
+  if (interventionId) {
+    predicates.push((item) => item.intervention_id === interventionId
+      || item.scope?.intervention_id === interventionId || item.id === interventionId)
+  }
+  if (serviceType) predicates.push((item) => item.service_type === serviceType || item.scope?.service_type === serviceType)
+  if (owner) predicates.push((item) => item.owner === owner)
+  if (templateId) predicates.push((item) => item.template_id === templateId)
+  if (scheduleId) predicates.push((item) => item.schedule_id === scheduleId)
+  if (districtFilter) predicates.push((item) => recordInDistrict(item, districtFilter, districtRelations))
+  if (from || to) {
+    predicates.push((item) => {
       const timestamp = Date.parse(item.observed_at || item.occurred_at || item.event_date || item.generated_at || item.approved_at || item.distributed_at || item.updated_at || item.created_at || '')
       if (!Number.isFinite(timestamp)) return true
       if (from && timestamp < from) return false
       if (to && timestamp > to) return false
       return true
     })
+  }
+
+  const matched = []
+  for (const item of records) {
+    let keep = true
+    for (const predicate of predicates) {
+      if (!predicate(item)) { keep = false; break }
+    }
+    if (keep) matched.push(item)
+  }
   return unlimited ? matched : matched.slice(0, limit)
 }
 
