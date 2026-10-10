@@ -708,10 +708,17 @@ export function jsonResponse(res, status, body, headers = {}, req = res?.req || 
   // Both credential headers are named because both are accepted (auth.js reads
   // `authorization` and falls back to `x-api-key`); a Vary naming only one of
   // them protects the path nobody uses.
+  //
+  // CAP-06. The response's own `vary` is read first. `dispatch` sets
+  // `Vary: origin` on a cross-origin response before the handler runs, and
+  // `writeHead` would otherwise overwrite it with this default — dropping the
+  // protection that keeps a shared cache from serving one origin's grant to
+  // another, on exactly the responses that have a grant to leak.
+  const vary = headers.vary || headers.Vary || res.getHeader?.('vary') || 'authorization, x-api-key'
   const outgoing = {
     'content-type': 'application/json; charset=utf-8',
     ...headers,
-    vary: headers.vary || headers.Vary || 'authorization, x-api-key',
+    vary,
   }
 
   // SCL-05. The ETag is computed only for a response a client can conditionally
@@ -770,18 +777,20 @@ export function jsonResponse(res, status, body, headers = {}, req = res?.req || 
       // Sent either way. A receipt that could not be written is a lost
       // optimisation, not a failed request, and turning it into a 500 would
       // report a completed write as a failed one.
-      commit.then(() => {
+      const send = () => {
         res.writeHead(status, outgoing)
-        res.end(payload)
-      }, () => {
-        res.writeHead(status, outgoing)
-        res.end(payload)
-      })
+        res.end(res.locals?.suppressBody ? undefined : payload)
+      }
+      commit.then(send, send)
       return
     }
   }
   res.writeHead(status, outgoing)
-  res.end(payload)
+  // CAP-06. A HEAD is routed to its GET sibling and the body is dropped here,
+  // at the single place a body is written. `http` would strip it anyway; doing
+  // it here means the payload is never handed to the socket, and it is one line
+  // rather than a second routing table.
+  res.end(res.locals?.suppressBody ? undefined : payload)
 }
 
 /**

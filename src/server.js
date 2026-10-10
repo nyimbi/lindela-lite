@@ -6,6 +6,7 @@ import { gzipSync } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, isPublicRequest, publicReadsOpen, publicPaths } from './auth.js'
+import { corsResponseHeaders, isPreflight, preflightResponse } from './cors.js'
 import { logger, metrics, metricsOverflow, timer, runWithRequestId, uptimeStats } from './observability.js'
 import { narrateReport, NARRATOR_BASIS } from './narrator.js'
 import { refreshAnalytics, calibrationReport } from './analytics.js'
@@ -462,6 +463,19 @@ export function createServer(options = {}) {
     return idempotencyFor
   }
   const handleRequest = async (req, res) => {
+    // CAP-06. A HEAD is answered by the same code path as its GET sibling, with
+    // the body suppressed at the one place a body is written. `http` strips the
+    // body for HEAD anyway, so a fall-through "worked" while doing all the work
+    // and then discarding it — and a HEAD to a path no GET route serves 404'd,
+    // which is the opposite of what a client probing a documented endpoint
+    // expects. The method is rewritten rather than threaded through, so every
+    // existing `req.method === 'GET'` condition in the router keeps its meaning
+    // and there is no second table to keep in step.
+    const isHead = req.method === 'HEAD'
+    if (isHead) req.method = 'GET'
+    res.locals = res.locals || {}
+    res.locals.suppressBody = isHead
+
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
     const route = normalizeRoute(url.pathname)
 
@@ -475,7 +489,6 @@ export function createServer(options = {}) {
     // response-splitting primitive.
     const requestId = sanitizeRequestId(req.headers['x-request-id']) || randomUUID()
     res.setHeader('x-request-id', requestId)
-    res.locals = res.locals || {}
     res.locals.requestId = requestId
     // OBS-04 reads the pipeline's start grace from here. On the response rather
     // than in a module variable so two servers in one test process keep their
@@ -493,6 +506,45 @@ export function createServer(options = {}) {
       // with innerHTML, so this is the backstop that keeps a missed escape from
       // being a full script injection.
       securityHeaders(res)
+
+      // CAP-06. CORS, before the traversal check and before the rate limiter.
+      //
+      // A preflight is the browser asking permission to make a request it has
+      // not made yet; it carries no credentials, and refusing it for that reason
+      // is what makes a browser client unusable — the browser never sends the
+      // credentialed request whose token would have passed. So the preflight is
+      // answered here, and the *actual* request still goes through the auth gate
+      // below. Answering the preflight is not a grant of access; it is a grant
+      // to ask.
+      //
+      // It runs before the limiter because a preflight is one round trip the
+      // browser makes on the caller's behalf, and charging it against the same
+      // budget as the request it precedes halves every cross-origin caller's
+      // allowance for no security benefit.
+      if (isPreflight(req)) {
+        const preflight = preflightResponse(req.headers.origin)
+        res.writeHead(preflight.status, {
+          ...preflight.headers,
+          'cache-control': 'no-store',
+        })
+        res.end()
+        return
+      }
+
+      // The grant itself, on every response. `jsonResponse` carries the rest of
+      // the headers; this one has to be set on the response object because the
+      // static and streaming paths write their own heads.
+      for (const [name, value] of Object.entries(corsResponseHeaders(req.headers.origin))) {
+        if (name.toLowerCase() === 'vary') {
+          // Merged, not overwritten: `jsonResponse` sets `vary` to the credential
+          // headers, and replacing it would drop the protection that keeps a
+          // shared cache from serving one caller's body to another.
+          const existing = res.getHeader('vary')
+          res.setHeader('vary', existing ? `${existing}, ${value}` : value)
+        } else {
+          res.setHeader(name, value)
+        }
+      }
 
       if (hasTraversalSegment(req.url || '')) {
         jsonResponse(res, 404, { success: false, error: 'Not found' })

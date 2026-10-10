@@ -635,6 +635,38 @@ no taxonomy registry, no per-deployment field definition. A partner cannot add a
 question to a field report without a code change.
 
 ### CAP-06 — MEDIUM — No CORS / preflight; no HEAD on API routes
+
+**Fixed 2026-10-11.** Both halves, in `src/cors.js` and the dispatch head.
+
+*HEAD.* It fell through to the GET handler, which meant a HEAD to a path no GET
+route serves 404'd — a client probing a documented endpoint got "gone" — and a
+HEAD to one that does 404'd too, because the router matched on `req.method ===
+'GET'`. `http` strips the body, so the fall-through looked correct while doing a
+full store read and JSON serialisation to discard both. The method is now
+rewritten to `GET` at ingress and the body is dropped at the one place a body is
+written (`jsonResponse`), so every existing GET condition in the router keeps its
+meaning and there is no second routing table to keep in step. A HEAD is subject
+to the same auth gate as GET: it carries the ETag and Content-Length of the
+record, which is a probe of whether the record exists.
+
+*CORS.* Opt-in and off by default, because the API serves partner-scoped rows and
+`Access-Control-Allow-Origin: *` on a data route is a standing grant to every
+origin to read with the visitor's ambient credentials. The operator names trusted
+origins in `LINDELA_LITE_CORS_ORIGINS`. When the list contains `*` the concrete
+request origin is *echoed* rather than the literal `*` — a browser refuses the
+literal wildcard together with credentials, so a literal wildcard would work
+uncredentialed and silently fail credentialed. `Vary: origin` travels with every
+grant, merged into the `vary` `jsonResponse` already sets rather than replacing
+it. The preflight is answered before the rate limiter (it is one round trip the
+browser makes on the caller's behalf, and charging it halves every cross-origin
+caller's allowance for no security benefit) and without a token — the preflight
+is the browser asking permission to ask, and the request it precedes still goes
+through the auth gate. A preflight from a disallowed origin is a 403, not a 204
+with no grant.
+
+Guarded by `test/cors-preflight.test.js` (11 cases), canaried in both directions:
+restoring the HEAD fall-through fails 2, removing the preflight handler fails 3.
+
 No `OPTIONS` handler and no `Access-Control-Allow-*` in `src/` — no browser-based
 third-party client can call the API. `HEAD /api/v1/…` falls through to the GET
 handler and writes a body (only `sendFile` and the tile route special-case HEAD).
