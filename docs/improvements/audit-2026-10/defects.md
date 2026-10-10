@@ -445,6 +445,22 @@ The 75 KB seed script is bundled into the runtime path; an import error there is
 runtime 500 on a live route, and the script cannot be moved without touching the server.
 
 ### ARC-04 — HIGH — `normalizeSeverity`/`severityWeight` implemented three times with three mappings
+
+**Fixed 2026-10-11.** Both server-side copies were wrong, each internally
+consistent with its own table so neither wrongness was visible. `alerts.js`
+validated against `PRIORITY_LEVELS` — the four level names, none of the synonyms
+— so `'red'`, `'orange'` and `'green'`, every word the alert connectors emit,
+fell to the `'medium'` default; a rule declared `severity: 'red'` was stored as
+`'medium'` and routed to `proposed` rather than `auto_approved`. `road-access.js`
+had its own 3/2/1 ladder that folded `medium` with `green` and returned **0** for
+`'severe'`, `'extreme'`, `'minor'` and a bare `'low'` — below a green advisory —
+so the `severity_weight >= 2` blocking rule refused a GDACS `'severe'` flood
+while admitting a `'medium'` one. Both now call `src/schema.js`; the threshold is
+`severityWeight('high')` rather than the literal 2. The fourth transcription,
+`SEVERITY_WEIGHT` in `public/shared/viz-explain.js`, is left as-is: the browser
+cannot import from `src/`, and its test reads the schema's numbers back. Guarded
+by `test/severity-vocabulary.test.js`.
+
 `src/schema.js` `{critical:1, high:0.78, medium:0.52, low:0.25, unknown:0.18}`;
 `src/alerts.js` defaults `'medium'` and validates against `PRIORITY_LEVELS`;
 `src/road-access.js` `severityWeight` returns **3/2/1** and folds `medium` with
