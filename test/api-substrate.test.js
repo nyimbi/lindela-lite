@@ -398,6 +398,74 @@ describe('readiness is a different question from health', () => {
     }
   })
 
+  it('reads the store once per probe, not twice', async () => {
+    // SCL-07. The defect is invisible from outside — a probe that reads twice
+    // answers exactly what a probe that reads once answers — so the seam is the
+    // read itself. On Postgres each whole-store read is every row's body,
+    // `record_versions` included, and this endpoint is the most-polled surface
+    // in the deployment.
+    await withServer(async (base, store) => {
+      const reads = []
+      const real = store.read.bind(store)
+      store.read = async (options) => { reads.push(options ?? null); return real(options) }
+      const res = await fetch(`${base}/api/v1/ready`)
+      assert.equal(res.status, 200)
+      assert.equal(reads.length, 1, `a probe read the store ${reads.length} times`)
+    })
+  })
+
+  it('names the collections it wants rather than materialising the whole table', async () => {
+    await withServer(async (base, store) => {
+      let asked = null
+      const real = store.read.bind(store)
+      store.read = async (options) => { asked = options ?? null; return real(options) }
+      await fetch(`${base}/api/v1/ready`)
+      const manifest = Array.isArray(asked) ? asked : asked?.collections
+      assert.ok(Array.isArray(manifest),
+        'the readiness probe asked for the whole store; on Postgres that transfers every body including record_versions')
+      assert.deepEqual([...manifest].sort(), ['action_logs', 'events_outbox'],
+        'the manifest must be exactly the inputs of the two rollups the route computes')
+    })
+  })
+
+  it('says which chain check it performed, rather than implying the stronger one', async () => {
+    // SCL-07, the half that is not about cost. `auditRollup` stamped a fresh
+    // chain over the stored rows, so `valid` was true for *any* content: an
+    // edited `action_logs` row produced a different head and the same verdict.
+    // Measured against a live server before the fix — tamper, probe, `valid:
+    // true`, only the head moved.
+    await withServer(async (base, store) => {
+      const body = await (await fetch(`${base}/api/v1/ready`)).json()
+      assert.ok(body.audit, 'the audit rollup must be reported')
+      assert.equal(body.audit.linked, false,
+        'action_logs rows carry no entry_hash, so the check performed is content-consistency and the rollup must say so')
+    })
+  })
+
+  it('verifies the stored linkage when the rows carry one', async () => {
+    // The other branch: a store whose action_logs have been through
+    // `chainEntries` carries seq and entry_hash, so the rollup verifies *those*
+    // rather than re-stamping them. An edit then genuinely fails.
+    const { chainEntries } = await import('../src/audit-chain.js')
+    const { auditRollup } = await import('../src/audit-chain.js')
+    const logs = [
+      { id: 'l1', collection: 'reports', record_id: 'r1', action: 'created', actor: 'a', subject: null, created_at: '2026-01-01T00:00:00Z', summary: 'created report r1', metadata: {} },
+      { id: 'l2', collection: 'reports', record_id: 'r2', action: 'created', actor: 'a', subject: null, created_at: '2026-01-02T00:00:00Z', summary: 'created report r2', metadata: {} },
+    ]
+    const { entries } = chainEntries(logs)
+    const clean = auditRollup(entries)
+    assert.equal(clean.linked, true)
+    assert.equal(clean.valid, true)
+
+    const edited = entries.map((entry) => ({ ...entry }))
+    edited[0].actor = 'token_operator_forged'
+    const tampered = auditRollup(edited)
+    assert.equal(tampered.linked, true)
+    assert.equal(tampered.valid, false,
+      'an edit to a linked entry must fail: entry_hash no longer matches its content')
+    assert.ok(tampered.fatal_types.includes('entry_hash_mismatch'))
+  })
+
   it('still answers health while the store is unreachable', async () => {
     // The two endpoints are separate because they answer separate questions. If
     // this ever fails, the distinction has collapsed and one of them is a lie.

@@ -27,6 +27,15 @@ import { JsonStore } from '../src/store.js'
  * schedules moved into the driver first, so removing the sidecar costs nothing.
  */
 
+const DAY = 24 * 60 * 60 * 1000
+const feedback = (id, ageDays) => ({
+  id,
+  type: 'community_feedback',
+  reporter_urn_hash: 'sha256:abc',
+  message: 'the borehole at Kilima has been dry',
+  created_at: new Date(Date.now() - ageDays * DAY).toISOString(),
+})
+
 async function withStore(fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-driver-'))
   const store = new JsonStore(path.join(dir, 'store.json'))
@@ -95,6 +104,75 @@ describe('the periodic driver owns the periodic work', () => {
       const heartbeat = await runPeriodicTick(store)
       assert.equal(heartbeat.attempted, heartbeat.items.length,
         'every item reports an outcome, successful or not')
+    })
+  })
+})
+
+describe('SCL-02 a tick reads the store once, not once per item', () => {
+  /**
+   * A store that counts how many times its whole table was materialised.
+   *
+   * The defect is invisible from outside: a tick that reads seven times returns
+   * exactly what a tick that reads once returns, and the only evidence is the
+   * cost. So the seam is the read itself — a full read is one with no manifest,
+   * which is the shape every item used to call.
+   */
+  class CountingStore extends JsonStore {
+    fullReads = 0
+    manifestReads = 0
+    // `JsonStore.merge` reads the whole file for itself, so a counter that did
+    // not exclude the reads inside a mutation would measure the JSON store's
+    // merge implementation rather than the tick. A read that happens while a
+    // mutation is in flight is part of that mutation.
+    #mutating = false
+
+    async read(options) {
+      if (!this.#mutating) {
+        const manifest = Array.isArray(options) ? options : (options?.collections ?? null)
+        if (manifest === null) this.fullReads += 1
+        else this.manifestReads += 1
+      }
+      return super.read(options)
+    }
+
+    async #mutate(fn) {
+      this.#mutating = true
+      try {
+        return await fn()
+      } finally {
+        this.#mutating = false
+      }
+    }
+
+    merge(partial) { return this.#mutate(() => super.merge(partial)) }
+    remove(doomed) { return this.#mutate(() => super.remove(doomed)) }
+    write(data) { return this.#mutate(() => super.write(data)) }
+  }
+
+  it('materialises the whole store once for a tick of seven items', async () => {
+    await withStore(async (store) => {
+      await store.merge({ community_feedback: [feedback('one', 0)] })
+      const counting = new CountingStore(store.filePath)
+      await runPeriodicTick(counting)
+      assert.equal(counting.fullReads, 1,
+        `a tick of ${7} items materialised the whole store ${counting.fullReads} times`)
+    })
+  })
+
+  it('still shows an item what the item before it wrote', async () => {
+    // The reason this is a refreshed snapshot rather than one frozen object:
+    // ingestion writes `source_runs`, and the reconcile item reads them. A tick
+    // that handed every item the same object would answer from state that
+    // predates its own writes, which is the failure the per-item read was there
+    // to avoid.
+    await withStore(async (store) => {
+      await store.merge({ community_feedback: [feedback('ancient', 900)] })
+      const heartbeat = await runPeriodicTick(store)
+      const retention = heartbeat.items.find((item) => item.id === 'retention')
+      assert.equal(retention.summary.expired, 1)
+      const after = await store.read()
+      assert.equal(after.community_feedback.length, 0,
+        'the retention item reported an expiry the store never saw')
     })
   })
 })

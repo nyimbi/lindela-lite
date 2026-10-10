@@ -491,11 +491,31 @@ export function auditChainWarning(event, result) {
  * log read as valid, which is the case the whole module exists to close.
  */
 export function auditRollup(actionLogs = [], { expectedHead = null } = {}) {
-  const { entries } = chainEntries(Array.isArray(actionLogs) ? actionLogs : [])
+  const logs = Array.isArray(actionLogs) ? actionLogs : []
+  // SCL-07. What was actually verified.
+  //
+  // `chainEntries(logs)` stamps a fresh chain over whatever it is handed, so
+  // `verifyChain` on the result is a tautology: edit a stored row's `actor` and
+  // the recomputation produces a *different* head that still verifies cleanly.
+  // Measured, not reasoned — a tampered `action_logs` row reported `valid: true`
+  // on `/ready`, before and after the edit, with only the head changing.
+  //
+  // The rollup therefore verifies the stored linkage when the rows carry one,
+  // and otherwise says so. `linked: false` is not a break in the log; it is the
+  // statement that the check performed here is content-consistency, which
+  // cannot detect an edit made before this call. A reader that cannot tell
+  // those apart is being told their proof is stronger than it is, which is the
+  // same failure `anchored` exists to prevent one level up.
+  const linked = logs.length > 0 && logs.every((row) => row?.entry_hash && row?.seq !== undefined)
+  const entries = linked ? logs : chainEntries(logs).entries
   const result = verifyChain(entries, { expectedHead })
   const fatal = result.defects.filter((defect) => defect.severity === 'fatal')
   return {
     valid: result.verified,
+    // Whether the rows carried their own linkage, and so whether `valid` means
+    // "the stored chain recomputes" or only "the content is internally
+    // consistent". See the note above; the two are not the same claim.
+    linked,
     // True when the chain recomputes but nothing outside it says it should.
     // A readiness probe that reports `valid: true` for an unanchored chain is
     // telling a donor their proof is stronger than it is.

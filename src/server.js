@@ -226,14 +226,83 @@ export async function runDueReportSchedulesAndPersist(store, data, { actor = 'pe
 let _driverTimer = null
 let _driverInFlight = false
 
+/**
+ * SCL-02. A store view that reads the whole store once and keeps up with its own
+ * writes.
+ *
+ * The tick used to call `store.read()` inside the loop, once per item: seven
+ * items, seven full materialisations of every row, plus the reads each item does
+ * for itself (`runIngestion` reads once at the start of a run, `dispatchPending`
+ * once per dispatch). On the Postgres store that is a `SELECT` of every row's
+ * body per item — 143 MB by the audit's own measurement — for a tick whose whole
+ * job is to look at a handful of schedules.
+ *
+ * The fix is not "read once and hand the same object to everyone", which would
+ * be wrong: `ingestion` writes `source_runs` and the outbox item reads
+ * `events_outbox`, and an item that ran after a write must see it. So the
+ * snapshot is *refreshed per written collection* — `merge` delegates to the real
+ * store and then re-reads exactly the collections it wrote. A tick does one full
+ * read plus one bounded read per write, instead of one full read per item.
+ *
+ * What this deliberately does not fix: a second process writing mid-tick. That
+ * race exists with or without this change — the previous code's per-item read
+ * was just as stale by the time the item used it — and closing it needs a
+ * transaction, which is CON-01/ENH-63, not a read-cache.
+ */
+function tickStore(store) {
+  let snapshot = null
+  const refresh = async (collections) => {
+    const keys = [...new Set(collections)].filter((key) => key !== 'updated_at')
+    if (!keys.length) return
+    const fresh = await store.read(keys)
+    for (const key of keys) snapshot[key] = fresh[key]
+  }
+  return {
+    async read(options) {
+      if (snapshot === null) snapshot = await store.read()
+      if (options == null) return snapshot
+      // A manifest read is answered from the snapshot rather than going back to
+      // the store: the snapshot is what this tick believes, and a caller that
+      // reads a stale collection from disk mid-tick is the bug this replaces.
+      const manifest = Array.isArray(options) ? options : options?.collections
+      if (manifest == null) return snapshot
+      const out = {}
+      for (const collection of manifest) {
+        if (collection in snapshot) out[collection] = snapshot[collection]
+      }
+      return out
+    },
+    async merge(partial) {
+      const result = await store.merge(partial)
+      await refresh(Object.keys(partial || {}))
+      return result
+    },
+    async remove(doomed) {
+      const result = await store.remove(doomed)
+      await refresh(Object.keys(doomed?.collection || {}))
+      return result
+    },
+  }
+  // Deliberately no `write` delegate. No driver item uses one — the seven read
+  // and merge — and `write()` replaces the world, so the only honest thing a
+  // delegate could do is drop the snapshot. A future item that reaches for it
+  // gets `not a function` inside the tick's own try/catch, which reports a
+  // failed item by name; a delegate that quietly rewrote the store mid-tick
+  // would not.
+}
+
 /** Run every periodic item once and record the outcome. Exported for tests. */
 export async function runPeriodicTick(store, { at = new Date().toISOString() } = {}) {
   const results = []
+  // SCL-02. One read for the tick, refreshed per written collection, rather than
+  // one full read per item. The heartbeat merge below goes through the raw store
+  // — it is the tick's own record, not an item's, and nothing reads it back.
+  const scoped = tickStore(store)
   for (const item of DRIVER_ITEMS) {
     const started = Date.now()
     try {
-      const data = await store.read()
-      const value = await item.run(store, data)
+      const data = await scoped.read()
+      const value = await item.run(scoped, data)
       results.push({ id: item.id, label: item.label, ok: true, ms: Date.now() - started, summary: summarise(item.id, value) })
     } catch (error) {
       // One item failing must not stop the rest: a dead webhook registry should
@@ -903,9 +972,28 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     // every user a 500 it could have routed around.
     const started = Date.now()
     const timeoutMs = Number(url.searchParams.get('timeout_ms') || 2000)
+    // SCL-07. One read, and it names what it wants.
+    //
+    // This endpoint is the most-polled surface in the deployment — a load
+    // balancer asks every few seconds — and it read the whole store twice per
+    // probe. On the Postgres store a whole-store read is every row's body,
+    // including `record_versions`, which is 60% of the table by bytes and which
+    // nothing here reads. Two of those per probe, on the endpoint designed to be
+    // polled most, is amplification in the wrong direction.
+    //
+    // The second read also meant a *failing* store cost two timeouts, not one:
+    // the probe read timed out, and then the rollup read timed out behind it. A
+    // readiness check that takes 2× its own timeout to say "unready" holds the
+    // load balancer open twice as long as it needs to.
+    //
+    // The two rollups are the only thing this route computes, so the manifest is
+    // exactly their inputs. Reachability is still genuinely tested: a scoped read
+    // opens the same connection and runs the same query shape.
+    const READY_COLLECTIONS = ['action_logs', 'events_outbox']
     let probe = { ok: true, error: null }
+    let snapshot = null
     try {
-      await withTimeout(store.read(), timeoutMs)
+      snapshot = await withTimeout(store.read({ collections: READY_COLLECTIONS }), timeoutMs)
     } catch (error) {
       probe = { ok: false, error: error?.name === 'TimeoutError' ? `store did not respond within ${timeoutMs}ms` : String(error?.message || error) }
     }
@@ -918,21 +1006,30 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     // proof or not at all — which is not evidence. `outboxRollup` says how many
     // deliveries are dead-lettered, and nothing surfaced it.
     //
-    // Guarded, and reading once. A probe that hangs is worse than one that
-    // answers "unready": this endpoint exists to be polled, and a probe that
-    // never returns holds the caller open — which is how a readiness check stops
-    // being a signal and becomes an outage. The store has already been probed
-    // above inside a timeout; if that succeeded, this read is the one place it
-    // can still fail, so it is bounded the same way.
+    // Guarded. A probe that hangs is worse than one that answers "unready": this
+    // endpoint exists to be polled, and a probe that never returns holds the
+    // caller open — which is how a readiness check stops being a signal and
+    // becomes an outage.
+    //
+    // SCL-07. This used to be a second whole-store read behind its own timeout.
+    // The read above now carries both collections, so the rollups are computed
+    // from what it returned and there is no second round-trip to fail. A store
+    // that could not answer leaves `snapshot` null and both rollups report that
+    // honestly rather than by timing out twice.
     let audit = null
     let outbox = null
-    try {
-      const snapshot = await withTimeout(store.read(), timeoutMs)
-      audit = auditRollup(snapshot.action_logs || [])
-      outbox = outboxRollup(snapshot)
-    } catch (rollupError) {
-      audit = { valid: null, error: String(rollupError?.message || rollupError) }
-      outbox = { degraded: null, error: String(rollupError?.message || rollupError) }
+    if (snapshot === null) {
+      const reason = probe.error || 'the store could not be read'
+      audit = { valid: null, error: reason }
+      outbox = { degraded: null, error: reason }
+    } else {
+      try {
+        audit = auditRollup(snapshot.action_logs || [])
+        outbox = outboxRollup(snapshot)
+      } catch (rollupError) {
+        audit = { valid: null, error: String(rollupError?.message || rollupError) }
+        outbox = { degraded: null, error: String(rollupError?.message || rollupError) }
+      }
     }
     const degraded = audit?.valid === false || outbox?.degraded === true
 

@@ -604,6 +604,15 @@ export function mergeById(existing, incoming) {
  * the same records in different orders — a divergence invisible to any test
  * that sorted before comparing.
  */
+/**
+ * SCL-02. Every collection a caller could name, as the manifest `read()` takes.
+ *
+ * Exported so a caller that wants the whole store has one name for "everything"
+ * rather than `null`, which reads as "I forgot to say" at a call site. The
+ * periodic driver uses it to ask for the whole store once.
+ */
+export const ALL_COLLECTIONS = COLLECTIONS
+
 export function sortRecords(records) {
   return [...records].sort((a, b) => {
     const byTime = recordTimestamp(b).localeCompare(recordTimestamp(a))

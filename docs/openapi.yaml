@@ -2807,9 +2807,26 @@ components:
           type: object
           nullable: true
           description: >-
-            Roll-up of the action-log hash chain. `valid: false` means a
-            tampered or truncated chain, and degrades readiness. `valid: null`
-            means the roll-up itself could not be computed.
+            Roll-up of the action-log hash chain. `valid: false` means the chain
+            does not recompute, and degrades readiness. `valid: null` means the
+            roll-up itself could not be computed. Read `linked` alongside it:
+            `linked: true` means the stored rows carry their own `seq` and
+            `entry_hash`, so `valid` is a statement about the stored chain;
+            `linked: false` means the rows carry no linkage and `valid` is only
+            content-consistency, which cannot detect an edit made before the
+            probe. `anchored: true` additionally means a published head was
+            supplied out of band.
+          properties:
+            valid:
+              type: boolean
+              nullable: true
+            linked:
+              type: boolean
+              description: >-
+                Whether the stored rows carried `seq` and `entry_hash`. When
+                false, `valid` is not tamper-evidence.
+            anchored:
+              type: boolean
         outbox:
           type: object
           nullable: true
