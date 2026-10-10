@@ -621,6 +621,16 @@ lines of console logic are exercised via `test/browser-env.mjs` stubs. No unit t
 of any render function; the console is only as tested as the stub's fidelity.
 
 ### QUA-04 — HIGH — `test:coverage` is vacuous
+
+**Fixed 2026-10-11.** `scripts/check-coverage.mjs` runs the whole suite —
+enumerating `test/` with the same glob `npm test` uses, so the list cannot
+drift — and enforces floors set from the measured full-suite numbers: 95.7% line
+/ 81.7% branch / 93.6% function over all 182 files, against 75/60/75 over six.
+The parser reads the `all files` totals row and nothing else, and returns `null`
+rather than a number for a report it cannot read, so a gate that cannot measure
+fails instead of passing. Guarded by `test/coverage-gate.test.js`; canaried
+against a floor it cannot meet and against a per-file row.
+
 `package.json:13` runs `--test-coverage-lines=75 --test-coverage-include='src/**'`
 against **6 test files** (`lite`, `fixtures`, `flood-bands`, `map-frame`, `seasonal`,
 `store-conformance`) out of 162. The 75% threshold measures those six files' reach.
