@@ -1,4 +1,4 @@
-import { ACCESS_BLOCKING_HAZARDS, ROAD_CLASSES, ROAD_PASSABILITY } from './schema.js'
+import { ACCESS_BLOCKING_HAZARDS, ROAD_CLASSES, ROAD_PASSABILITY, severityWeight } from './schema.js'
 import { clamp, haversineKm, stableId } from './utils.js'
 
 /**
@@ -84,6 +84,17 @@ const TEMPORAL_CONFIDENCE = Object.freeze({ active: 100, forecast: 85, stale: 80
  * the box centre.
  */
 const MAX_BLOCKING_BBOX_SPAN_DEG = 5
+
+/**
+ * How serious a hazard has to be before it blocks a road on severity alone.
+ *
+ * `severityWeight` is the schema's, on the schema's scale — critical 1, high
+ * 0.78, medium 0.52, low 0.25, unknown 0.18. The threshold is the schema's
+ * weight for `high`, named as a call rather than a literal so that a change to
+ * the ladder moves the rule with it instead of silently redefining which
+ * severities block.
+ */
+const BLOCKING_SEVERITY_WEIGHT = severityWeight('high')
 
 /**
  * Computes passage status for every road asset against current hazards.
@@ -265,7 +276,7 @@ function buildObstruction(hazard, distanceKm, matchedBy, roadPoint, now, activeW
   // passing through. Same verdict, correct grounds, and the payload no longer
   // carries the fabricated number that produced it.
   const blocking = temporal.status !== 'stale'
-    && (matchedBy === 'bbox' || hazard.severity_weight >= 2 || (distanceKm !== null && distanceKm <= 1))
+    && (matchedBy === 'bbox' || hazard.severity_weight >= BLOCKING_SEVERITY_WEIGHT || (distanceKm !== null && distanceKm <= 1))
   return {
     hazard_id: hazard.hazard_id,
     event_type: hazard.event_type,
@@ -389,22 +400,6 @@ function confidenceFor(obstructions, worst) {
     (lowest, item) => Math.min(lowest, TEMPORAL_CONFIDENCE[item.temporal_status] ?? 65),
     100,
   )
-}
-
-function severityWeight(severity) {
-  switch (String(severity || '').toLowerCase()) {
-    case 'critical':
-    case 'red':
-      return 3
-    case 'high':
-    case 'orange':
-      return 2
-    case 'medium':
-    case 'green':
-      return 1
-    default:
-      return 0
-  }
 }
 
 /**

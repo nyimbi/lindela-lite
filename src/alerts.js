@@ -1,4 +1,20 @@
-import { ALERT_EVENT_STATUSES, ALERT_RULE_STATUSES, PRIORITY_LEVELS } from './schema.js'
+/**
+ * The severity vocabulary comes from `src/schema.js` (ARC-04).
+ *
+ * This module had its own `normalizeSeverity`, validating the input against
+ * `PRIORITY_LEVELS`. The schema reads twelve severity words and maps them onto
+ * four levels; `PRIORITY_LEVELS` names the four and none of the synonyms, so
+ * `'red'`, `'orange'` and `'green'` — every word the alert connectors actually
+ * emit — missed the list and fell to `'medium'`. A rule declared `severity:
+ * 'red'` was stored as `'medium'`, and `approvalState` then routed it to
+ * `proposed` rather than `auto_approved` for the wrong reason.
+ *
+ * The default is applied at the call site, not by the normaliser: an absent
+ * severity is `'medium'` because `normalizeAlertRule` says so, and the schema
+ * returns `'unknown'` for an empty value — the honest answer to "what severity
+ * is this?", not an answer to "what should it default to?".
+ */
+import { ALERT_EVENT_STATUSES, ALERT_RULE_STATUSES, normalizeSeverity } from './schema.js'
 import { stableId, toNumber } from './utils.js'
 import { counts } from './operations.js'
 
@@ -741,11 +757,6 @@ function enumValue(value, allowed, field) {
     throw Object.assign(new Error(`${field} must be one of ${allowed.join(', ')}`), { statusCode: 400 })
   }
   return normalized
-}
-
-function normalizeSeverity(value) {
-  const normalized = String(value || 'medium').toLowerCase()
-  return PRIORITY_LEVELS.includes(normalized) ? normalized : 'medium'
 }
 
 function arrayValue(value) {
