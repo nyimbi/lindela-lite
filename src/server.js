@@ -75,7 +75,7 @@ import { normalizeParametricRule, simulateDisbursement } from './parametric.js'
 import { screenNames } from './sanctions.js'
 import { normalizeWorkflowInstance, transitionWorkflow, workflowMetrics } from './workflows.js'
 import { recordRequestOutcome } from './observability.js'
-import { auditRollup } from './audit-chain.js'
+import { auditRollup, auditChainWarning } from './audit-chain.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
@@ -1025,6 +1025,12 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     } else {
       try {
         audit = auditRollup(snapshot.action_logs || [])
+        // CON-08 / R-51. Loud once per broken head, quiet after. `auditChainWarning`
+        // existed for exactly this and had no callers, so a broken chain was
+        // reported on the readiness body and nowhere else — an operator watching
+        // logs during an incident would not have seen it. Called with the rollup,
+        // which is the shape this path has; the set it dedupes against is bounded.
+        auditChainWarning('ready', audit)
         outbox = outboxRollup(snapshot)
       } catch (rollupError) {
         audit = { valid: null, error: String(rollupError?.message || rollupError) }

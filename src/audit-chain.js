@@ -455,19 +455,54 @@ export function renderAuditProof(entries = [], options = {}) {
  * `rapidpro.js`. Without this the operator learns about a break from a donor,
  * which is the worst possible ordering.
  */
+/**
+ * CON-08. Bounded, because the key is a head and a head changes on every append.
+ *
+ * The set was unbounded and its key is `event:head`, so *every* action-log write
+ * produced a new key and the set grew for the process lifetime. It is a dedupe
+ * cache, not a record — the point is to stop one persistent break from filling
+ * the log every request, not to remember every head ever seen. A FIFO bound does
+ * that; the cost of eviction is that a break old enough to have been evicted can
+ * warn again, which is the direction that fails safe.
+ *
+ * A thousand is far more than the number of distinct heads that can be relevant
+ * at once — a chain with a thousand new entries between two reads of the same
+ * break is not a chain anybody is watching — and bounded at roughly 80 KB rather
+ * than at whatever the deployment happens to write.
+ */
+const REPORTED_HEAD_LIMIT = 1000
 const reportedHeads = new Set()
 
+function rememberHead(key) {
+  reportedHeads.add(key)
+  while (reportedHeads.size > REPORTED_HEAD_LIMIT) {
+    // Insertion order, so this is the oldest key. `Set` has no `shift`, and
+    // iterating to find the first is O(1) amortised across the eviction.
+    reportedHeads.delete(reportedHeads.values().next().value)
+  }
+}
+
+/**
+ * Takes either shape — the `verifyChain` result or the `auditRollup` the read
+ * path actually has. The rollup is the reduced form, and requiring callers to
+ * reach past it for the full result is how this function ended up with no
+ * callers at all.
+ */
 export function auditChainWarning(event, result) {
+  const verified = result.verified ?? result.valid
   const key = `${event}:${result.head}`
   if (reportedHeads.has(key)) return null
-  reportedHeads.add(key)
+  rememberHead(key)
+  const defects = Array.isArray(result.defects)
+    ? result.defects.filter((defect) => defect.severity === 'fatal').map((defect) => defect.type)
+    : (result.fatal_types || [])
   logger.error('audit_chain_broken', {
-    message: result.verified
+    message: verified
       ? 'audit chain verified without a published head to anchor it'
       : 'audit chain does not recompute; action_logs have been edited, removed, or rewritten',
     head: result.head,
     entry_count: result.entry_count,
-    defects: result.defects.filter((defect) => defect.severity === 'fatal').map((defect) => defect.type),
+    defects,
   })
   return key
 }
@@ -534,6 +569,11 @@ export function auditRollup(actionLogs = [], { expectedHead = null } = {}) {
 /** Test seam: the "already warned" set is process state, not audit state. */
 export function resetAuditChainWarnings() {
   reportedHeads.clear()
+}
+
+/** Test seam: CON-08, how many heads are being remembered. */
+export function auditChainWarningStats() {
+  return { size: reportedHeads.size, limit: REPORTED_HEAD_LIMIT }
 }
 
 export { CHAIN_FIELDS, GENESIS_HASH }
