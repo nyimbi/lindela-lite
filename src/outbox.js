@@ -108,6 +108,81 @@ export async function emit(store, event, payload, writes = {}) {
 }
 
 /**
+ * CON-04. Many events, one read and one merge.
+ *
+ * `emit` reads the whole store to look up one row and merges once to write it.
+ * A caller emitting in a loop therefore pays `O(raised)` whole-store reads and
+ * `O(raised)` merges — and `evaluateAndPersistAlerts` does exactly that, so an
+ * alert storm that raises 200 alerts is 200 sequential full reads of every row
+ * in the store plus 200 full merges, on the request path *and* on the periodic
+ * tick. The alert itself is `O(1)`; the fan-out is `O(raised × N)`.
+ *
+ * This is the same computation as `emit` per item — the lookup, the sent/failed
+ * short-circuit, the carried-forward attempts and backoff — over one snapshot
+ * and one merge. `writes` from each item are folded into the single merge, which
+ * is the whole reason `emit` takes them: a caller that needs the state and the
+ * event in one commit still gets that, for the batch rather than per event.
+ *
+ * Returns one entry per input, in order, each either the new record or the
+ * existing row the short-circuit returned.
+ */
+export async function emitMany(store, events = []) {
+  const items = (events || []).filter(Boolean)
+  if (!items.length) return []
+  const data = await store.read()
+  const outboxById = new Map((data.events_outbox || []).map((row) => [row.id, row]))
+
+  const records = []
+  const pending = []
+  // Ids already queued in *this* batch. Two items with the same event and
+  // payload hash to the same id, and a single merge holding that id twice would
+  // be a row written over itself — the second item's `writes` would land and the
+  // first's would not. `emit` cannot hit this because each call reads back what
+  // the previous one wrote; here the snapshot is taken once, so it is tracked.
+  const queued = new Map()
+  for (const item of items) {
+    const id = outboundEventId(item.event, item.payload)
+    const existing = queued.get(id) || outboxById.get(id)
+    // Same two short-circuits as `emit`, for the same reasons: a delivered event
+    // is not re-sent, and a dead letter is not resurrected by the platform's own
+    // retry path.
+    if (existing && (existing.status === 'sent' || existing.status === 'failed')) {
+      records.push(existing)
+      continue
+    }
+    const record = {
+      ...(existing || {}),
+      id,
+      type: existing?.type || 'outbox_event',
+      event: item.event,
+      payload: item.payload,
+      created_at: existing?.created_at || nowIso(),
+      attempts: existing?.attempts || 0,
+      status: 'pending',
+      last_attempt_at: existing?.last_attempt_at ?? null,
+      last_error: existing?.last_error ?? null,
+      next_attempt_at: existing?.next_attempt_at ?? null,
+      ...(existing?.failed_at ? { failed_at: existing.failed_at } : {}),
+    }
+    records.push(record)
+    queued.set(id, record)
+    pending.push({ record, writes: item.writes || {} })
+  }
+
+  if (!pending.length) return records
+
+  const merge = { events_outbox: pending.map(({ record }) => record) }
+  for (const { writes } of pending) {
+    for (const [collection, rows] of Object.entries(writes)) {
+      if (!Array.isArray(rows) || !rows.length) continue
+      merge[collection] = [...(merge[collection] || []), ...rows]
+    }
+  }
+  await store.merge(merge)
+  return records
+}
+
+/**
  * One in-flight dispatch per store, in one process.
  *
  * R-21: `dispatchPending` read the pending set, delivered to every matched

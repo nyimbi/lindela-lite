@@ -52,7 +52,7 @@ import { describeWatermarkState } from './watermarks.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
 import { renderCapXml } from './cap.js'
-import { emit, dispatchPending, outboxRollup } from './outbox.js'
+import { emit, emitMany, dispatchPending, outboxRollup } from './outbox.js'
 import { summarizeRoadAccess } from './road-access.js'
 import { summarizeFoodSecurity } from './connectors/ipc-hdx.js'
 import { districtWeatherReport } from './connectors/open-meteo-forecast.js'
@@ -3592,22 +3592,33 @@ export async function evaluateAndPersistAlerts(store, data, { actor = null, subj
     ...updated.map((event) => actionLog('alert_events', event.status, event, actor, subject)),
   ]
   if (raised.length || updated.length) await store.merge({ alert_events: [...raised, ...updated], action_logs: logs })
+  // CON-04. One emit for the batch, not one per raised alert.
+  //
   // Only a raised alert is a new fact. An updated one is the same alert with a
   // newer reading, or one that has just been closed, and neither is something
   // a subscriber asked to be told about.
-  for (const event of raised) {
+  //
+  // The loop this replaces called `emit` per alert, and `emit` reads the whole
+  // store before it merges — so an alert storm raising 200 alerts was 200
+  // sequential full reads of every row in the store, plus 200 merges, on the
+  // request path and on the periodic tick. `emitMany` does the same per-event
+  // work over one snapshot and one merge.
+  if (raised.length) {
     try {
-      await emit(store, 'alert_event.created', event)
+      await emitMany(store, raised.map((event) => ({ event: 'alert_event.created', payload: event })))
     } catch (emitError) {
       // A subscriber that cannot be reached is not a reason to abandon the
-      // alert, which is already persisted above. Recorded rather than dropped.
-      metrics.counter('outbox_emit_failed_total', { event: 'alert_event.created' })
-      logger.error('outbox_emit_failed', {
-        outbox_event: 'alert_event.created',
-        alert_event_id: event.id,
-        message: 'outbox emit failed; the alert is stored and no subscriber was told',
-        err: { message: emitError.message, stack: emitError.stack },
-      })
+      // alerts, which are already persisted above. Recorded rather than dropped,
+      // and per alert, so a scrape can still see how many were lost.
+      for (const event of raised) {
+        metrics.counter('outbox_emit_failed_total', { event: 'alert_event.created' })
+        logger.error('outbox_emit_failed', {
+          outbox_event: 'alert_event.created',
+          alert_event_id: event.id,
+          message: 'outbox emit failed; the alert is stored and no subscriber was told',
+          err: { message: emitError.message, stack: emitError.stack },
+        })
+      }
     }
   }
   return { raised, updated }
