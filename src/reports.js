@@ -8,6 +8,7 @@ import {
 } from './schema.js'
 import { filterRecords, stableId, toNumber, haversineKm } from './utils.js'
 import { resolveDistrict } from './districts.js'
+import { payloadHashFor } from './provenance.js'
 import {
   MATCH_RADIUS_KM,
   MIN_EVENTS,
@@ -1021,12 +1022,28 @@ export function buildExportNarrative({ report = null, data = {}, flood = null, c
  * come from and is this the same thing I saw last quarter": which source, when
  * it was observed rather than when it was ingested, and whether the bytes
  * behind it are the same bytes.
+ *
+ * ARC-09. The hash comes from `payloadHashFor` in `src/provenance.js`, not from
+ * a fallback chain spelled out here. That chain (`payload_hash || content_hash
+ * || 'none recorded'`) made this renderer a third owner of the record's storage
+ * shape alongside the store and the ingestion writer, and it read the shape
+ * differently from both: a row whose hash had not been stamped yet printed
+ * `none recorded` here while the lineage table, computing the same row's hash,
+ * named a value. The report and the lineage table now agree by construction.
+ *
+ * `none recorded` survives, but it means something narrower than it did: not
+ * "no stored hash" but "no row to hash". `payloadHashFor` always returns a
+ * digest — `{}` hashes to a real value — so a truthiness test on its result
+ * would be dead code. The emptiness check is about whether there is a record at
+ * all, which is a question the renderer may ask; which column holds the hash is
+ * not.
  */
 export function rowProvenanceLine(record = {}) {
+  const hasPayload = record && typeof record === 'object' && Object.keys(record).length > 0
   const parts = [
     `source_id=${record.source_id || record.source || 'unattributed'}`,
     `observed_at=${record.observed_at || record.event_date || record.occurred_at || 'unstated'}`,
-    `payload_hash=${record.payload_hash || record.content_hash || 'none recorded'}`,
+    `payload_hash=${hasPayload ? payloadHashFor(record) : 'none recorded'}`,
   ]
   if (record.provenance?.origin) {
     parts.push(`origin=${record.provenance.origin}`)

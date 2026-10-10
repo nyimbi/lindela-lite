@@ -40,6 +40,7 @@ import { renderQuarterlyReportPdf, renderQuarterlyReportMarkdown } from '../src/
 import { quarterlyPdfSections } from '../src/kpi.js'
 import { MIN_EVENTS, MIN_MONTHS, MODEL_BASIS } from '../src/flood-probability.js'
 import { isReplayDerived, stampReplayProvenance } from '../src/capture.js'
+import { payloadHashFor } from '../src/provenance.js'
 
 const NOW = '2026-10-01T12:00:00.000Z'
 
@@ -293,6 +294,46 @@ describe('every exported row carries its own provenance', () => {
     const annotated = provenanceAnnotatedRows(records)
     assert.equal(records[0].provenance_line, undefined)
     assert.match(annotated[0].provenance_line, /source_id=gdacs/)
+  })
+})
+
+/**
+ * ARC-09 — the report renderer must not own the record's storage shape.
+ *
+ * `rowProvenanceLine` used to spell out `record.payload_hash || record.content_hash`,
+ * a fallback chain it had no business knowing: `payload_hash` is a *store* column
+ * that `src/ingestion.js` writes and `src/provenance.js` owns. Three modules
+ * reading one shape means a change to it breaks report output silently — nothing
+ * throws, the line just prints `none recorded` for a row that has a hash.
+ *
+ * The fix routes the renderer through `payloadHashFor`, so the same record
+ * produces the same hash string in the report as in the lineage table. These
+ * tests pin the two behaviours the fallback chain was guessing at: a stored hash
+ * is used verbatim, and an unstored one is *derived*, not dropped.
+ */
+describe('ARC-09 — the report renderer derives the hash the way provenance does', () => {
+  it('prints the stored hash verbatim, without recomputing it', () => {
+    const line = rowProvenanceLine({ source: 'gdacs', payload_hash: 'deadbeef' })
+    assert.match(line, /payload_hash=deadbeef/)
+  })
+
+  it('derives a hash for a row that has none, rather than printing "none recorded"', () => {
+    // The defect this replaces: `record.payload_hash || record.content_hash`
+    // is falsy for an un-stored row, so the export claimed the row had no
+    // payload hash while `payloadHashFor` could name one. The report and the
+    // lineage table disagreed about the same record.
+    const row = { id: 'evt-1', source: 'gdacs', title: 'Flood — Turkana' }
+    const line = rowProvenanceLine(row)
+    assert.equal(line.includes('payload_hash=none recorded'), false,
+      'a row with a computable hash must not report that none was recorded')
+    assert.equal(line.includes(`payload_hash=${payloadHashFor(row)}`), true,
+      'the report must print the same hash the provenance layer computes')
+  })
+
+  it('still says "none recorded" for input that is not a record', () => {
+    // The sentinel stays for the genuinely hashless case — a caller passing
+    // nothing — so the honest-gap behaviour the export depends on survives.
+    assert.match(rowProvenanceLine(), /payload_hash=none recorded/)
   })
 })
 
