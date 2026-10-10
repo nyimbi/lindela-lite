@@ -4765,15 +4765,63 @@ export function fillAppVersionMarker(html, version = APP_VERSION) {
   return html.replace(VERSION_MARKER, (_m, open, _body, close) => `${open}v${version}${close}`)
 }
 
-async function sendFile(req, res, filePath) {
+/**
+ * SCL-04. Static assets, prepared once per (path, mtime, size).
+ *
+ * `sendFile` read the file, sha1-hashed the whole body for its ETag and
+ * `gzipSync`-compressed it — synchronously, on the request path — for every
+ * request, including every conditional revalidation that was going to answer
+ * 304 and send none of it. `gzipSync` blocks the event loop, so a page pulling
+ * twenty modules serialised twenty compressions of bytes that had not changed
+ * since the last release.
+ *
+ * Keyed on mtime and size rather than the path alone: the process runs for
+ * weeks and a deploy rewrites these files underneath it, so a path-keyed cache
+ * would serve the previous build forever. A `stat` per request is the cheap
+ * thing that keeps the expensive things correct.
+ */
+const staticCache = new Map()
+const STATIC_CACHE_MAX = 256
+// How much compression work the process has done. The cache makes `gzipSync`
+// run once per file per build rather than once per request, and nothing a client
+// can see distinguishes the two — a gzip body is a gzip body. The counter is the
+// seam that lets a test watch it, for the same reason `kpiCacheStats` exists.
+const staticCompressions = { gzip: 0, files: 0 }
+
+/** Test seam: how the static cache is doing. Not read on the request path. */
+export function staticCacheStats() {
+  return {
+    entries: staticCache.size,
+    max: STATIC_CACHE_MAX,
+    gzip_compressions: staticCompressions.gzip,
+    files_prepared: staticCompressions.files,
+  }
+}
+
+/** Test seam: process-level file state must not leak between tests. */
+export function resetStaticCache() {
+  staticCache.clear()
+  staticCompressions.gzip = 0
+  staticCompressions.files = 0
+}
+
+async function preparedStatic(filePath) {
+  let stat
+  try {
+    stat = await fs.stat(filePath)
+  } catch {
+    return null
+  }
+  const cached = staticCache.get(filePath)
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached
+
   let content
   try {
     content = await fs.readFile(filePath)
   } catch {
-    return false
+    return null
   }
-
-  // ENH: the build version, filled in on the way out.
+  // The build version, filled in on the way out.
   //
   // Every surface carried a hand-written fallback — `v0.1.0` in three files while
   // the package was at 0.2.0 — and `/shared/app-version.js` only replaced it
@@ -4786,12 +4834,38 @@ async function sendFile(req, res, filePath) {
   // module was written to end, reintroduced one layer down. The ETag is computed
   // from the injected bytes, so a revalidated client gets the new ETag too.
   if (/\.html$/.test(filePath)) content = Buffer.from(fillAppVersionMarker(content.toString('utf8')))
-  const type = contentType(filePath)
-  const etag = etagFor(content)
+  const entry = {
+    content,
+    type: contentType(filePath),
+    etag: etagFor(content),
+    // SCL-04. The real modification time. This was `new Date().toUTCString()` —
+    // *now* on every response — so `If-Modified-Since` could never match and
+    // every revalidating client got the full body back. Only the ETag path could
+    // ever 304, and a client that sends only `If-Modified-Since` (a proxy, a
+    // plain `curl -z`) never did.
+    lastModified: new Date(stat.mtimeMs).toUTCString(),
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    // Filled on the first request that accepts gzip. A file nobody requests
+    // compressed is never compressed.
+    gzip: null,
+  }
+  staticCompressions.files += 1
+  if (staticCache.size >= STATIC_CACHE_MAX) {
+    staticCache.delete(staticCache.keys().next().value)
+  }
+  staticCache.set(filePath, entry)
+  return entry
+}
+
+async function sendFile(req, res, filePath) {
+  const entry = await preparedStatic(filePath)
+  if (!entry) return false
+
   const headers = {
-    'content-type': type,
-    etag,
-    'last-modified': new Date().toUTCString(),
+    'content-type': entry.type,
+    etag: entry.etag,
+    'last-modified': entry.lastModified,
   }
 
   if (/\.(html|webmanifest)$/.test(filePath) || filePath.endsWith('sw.js')) {
@@ -4810,18 +4884,22 @@ async function sendFile(req, res, filePath) {
     headers['cache-control'] = 'public, max-age=3600, must-revalidate'
   }
 
-  if (req?.headers?.['if-none-match'] === etag) {
+  if (req?.headers?.['if-none-match'] === entry.etag || ifModifiedSinceMatches(req, entry.mtimeMs)) {
     res.writeHead(304, headers)
     res.end()
     return true
   }
 
-  if (COMPRESSIBLE.test(type) && acceptsGzip(req) && content.length > 512) {
-    const gzipped = gzipSync(content)
+  const content = entry.content
+  if (COMPRESSIBLE.test(entry.type) && acceptsGzip(req) && content.length > 512) {
+    if (!entry.gzip) {
+      entry.gzip = gzipSync(content)
+      staticCompressions.gzip += 1
+    }
     headers['content-encoding'] = 'gzip'
     headers['vary'] = 'accept-encoding'
     res.writeHead(200, headers)
-    res.end(req.method === 'HEAD' ? undefined : gzipped)
+    res.end(req.method === 'HEAD' ? undefined : entry.gzip)
     return true
   }
 
@@ -4829,6 +4907,22 @@ async function sendFile(req, res, filePath) {
   res.writeHead(200, headers)
   res.end(req.method === 'HEAD' ? undefined : content)
   return true
+}
+
+/**
+ * Whether `If-Modified-Since` covers this file.
+ *
+ * Second granularity on both sides, because HTTP dates carry no milliseconds: a
+ * file written 400 ms after the client's stored date is "not modified" by the
+ * header's own resolution, and comparing raw epoch milliseconds would answer 200
+ * for every file written in the same second as the request that cached it.
+ */
+function ifModifiedSinceMatches(req, mtimeMs) {
+  const raw = req?.headers?.['if-modified-since']
+  if (!raw) return false
+  const since = Date.parse(raw)
+  if (!Number.isFinite(since)) return false
+  return Math.floor(mtimeMs / 1000) <= Math.floor(since / 1000)
 }
 
 /**

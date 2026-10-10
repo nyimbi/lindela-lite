@@ -140,13 +140,25 @@ export function evaluateAlertRules(data, context) {
   const raised = []
   const updated = []
 
+  // CON-05. `isSuppressed` filtered the whole `alert_events` collection once per
+  // rule and the open-event filter did it again, so a single evaluation walked
+  // every event once per active rule — O(active_rules × alert_events), and the
+  // collection only grows. Both filters ask the same question, "which events
+  // belong to this rule", so the grouping is built once and both read it.
+  const eventsByRule = new Map()
+  for (const event of data.alert_events || []) {
+    const bucket = eventsByRule.get(event.rule_id)
+    if (bucket) bucket.push(event)
+    else eventsByRule.set(event.rule_id, [event])
+  }
+  const eventsFor = (rule) => eventsByRule.get(rule.id) || []
+
   for (const rule of active) {
     const value = resolveMetric(context, rule.metric)
     if (!Number.isFinite(value)) continue
     const firing = compare(value, rule.operator, rule.threshold)
-    const open = (data.alert_events || []).filter(
-      (event) => event.rule_id === rule.id && event.status === 'open'
-    )
+    const prior = eventsFor(rule)
+    const open = prior.filter((event) => event.status === 'open')
 
     if (!firing) {
       // The condition no longer holds. With hysteresis configured, an alert
@@ -176,7 +188,7 @@ export function evaluateAlertRules(data, context) {
       // against the rule's threshold: the threshold is what the rule asks for,
       // the recorded value is what last happened.
       const escalates = isWorseThan(value, current.value, rule)
-      const windowElapsed = !isSuppressed(data, rule, now)
+      const windowElapsed = !isSuppressed(prior, rule, now)
 
       if (escalates && windowElapsed) {
         updated.push({
@@ -200,7 +212,7 @@ export function evaluateAlertRules(data, context) {
       continue
     }
 
-    if (isSuppressed(data, rule, now)) continue
+    if (isSuppressed(prior, rule, now)) continue
     raised.push(buildAlert(rule, value, { bucket, now, context, inputs: inputIdsFor(rule, data), data }))
   }
 
@@ -701,21 +713,26 @@ function suppressionBucket(now, minutes) {
  * The rule is what a person means by "do not re-alert for two hours": at most
  * one alert per rule per elapsed window, measured from the last one.
  */
-function isSuppressed(data, rule, now) {
+function isSuppressed(prior, rule, now) {
   const windowMs = Math.max(1, rule.suppression_minutes) * 60000
-  const prior = data.alert_events.filter((event) => event.rule_id === rule.id)
   if (prior.length === 0) return false
 
-  const seen = prior.map((event) => Date.parse(event.created_at)).filter(Number.isFinite)
-  if (seen.length === 0) {
+  // CON-05. `Math.max(...seen)` passes one argument per prior event, so a rule
+  // with a long history throws `RangeError: Maximum call stack size exceeded`
+  // rather than answering — and the rule with the longest history is the one an
+  // operator most wants an answer about. A fold has no argument limit.
+  let latest = -Infinity
+  for (const event of prior) {
+    const at = Date.parse(event.created_at)
+    if (Number.isFinite(at) && at > latest) latest = at
+  }
+  if (latest === -Infinity) {
     // Records written before created_at was carried: fall back to the bucket
     // they do have, so old data still suppresses rather than alerting on top
     // of itself.
     return prior.some((event) => event.suppression_bucket === suppressionBucket(now, rule.suppression_minutes))
   }
-  // Math.max over parse failures included would yield NaN; the filter above
-  // guarantees at least one finite value.
-  return Date.parse(now) - Math.max(...seen) < windowMs
+  return Date.parse(now) - latest < windowMs
 }
 
 function enumValue(value, allowed, field) {

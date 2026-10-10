@@ -312,3 +312,81 @@ describe('hysteresis', () => {
     assert.equal(r.suppression_minutes, 120)
   })
 })
+describe('CON-05 evaluation groups events once and folds without an argument limit', () => {
+  const context = { counts: { hazard_events: 3 } }
+
+  it('answers for a rule with a history longer than the argument limit', () => {
+    // `Math.max(...seen)` passes one argument per prior event. At roughly
+    // 125,000 arguments V8 throws `RangeError: Maximum call stack size
+    // exceeded`, so the rule an operator most needs an answer about — the one
+    // that has fired most — was the one that crashed the evaluation.
+    const r = rule({ suppression_minutes: 120 })
+    const history = Array.from({ length: 200000 }, (_, i) => closed(r, {
+      id: `a-${i}`,
+      created_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+    }))
+    const result = evaluateAlertRules(withAlerts([r], history), context)
+    assert.equal(result.raised.length, 0, 'the window has not elapsed, so nothing should raise')
+  })
+
+  it('still reads the newest event when the history is out of order', () => {
+    // The fold must take the maximum, not the last element: events are not
+    // guaranteed to arrive sorted, and the whole window check hangs off which
+    // one is most recent.
+    const r = rule({ suppression_minutes: 120 })
+    const old = closed(r, { id: 'a-old', created_at: new Date(Date.now() - 10 * HOUR).toISOString() })
+    const recent = closed(r, { id: 'a-new', created_at: new Date(Date.now() - 5 * 60 * 1000).toISOString() })
+    // Newest first, so a `prior[prior.length - 1]` shortcut would read the old one.
+    const { raised } = evaluateAlertRules(withAlerts([r], [recent, old]), context)
+    assert.equal(raised.length, 0, 'the most recent event is five minutes old, inside the window')
+  })
+
+  it('groups by rule, so one rule does not suppress another', () => {
+    const a = rule({ name: 'A', suppression_minutes: 120 })
+    const b = rule({ name: 'B', suppression_minutes: 120 })
+    const events = [closed(a, { id: 'a-1', rule_id: a.id })]
+    const { raised } = evaluateAlertRules(withAlerts([a, b], events), context)
+    assert.deepEqual(raised.map((e) => e.rule_id), [b.id], 'rule B has no history and must raise')
+  })
+})
+
+describe('CON-05 the collection is walked once per evaluation, not once per rule', () => {
+  const context = { counts: { hazard_events: 3 } }
+
+  /** An array that counts how many times it is filtered or iterated. */
+  const counting = (items) => {
+    const stats = { filters: 0, iterations: 0 }
+    const target = [...items]
+    target[Symbol.iterator] = function* countingIterator() {
+      stats.iterations += 1
+      yield* items
+    }
+    const proxy = new Proxy(target, {
+      get(obj, prop, receiver) {
+        if (prop === 'filter') {
+          return (...args) => {
+            stats.filters += 1
+            return obj.filter(...args)
+          }
+        }
+        return Reflect.get(obj, prop, receiver)
+      },
+    })
+    return { proxy, stats }
+  }
+
+  it('does not walk every event once per active rule', () => {
+    // Ten rules over one shared history. The old code ran `filter` twice per
+    // rule — once for the open set, once inside `isSuppressed` — so the cost of
+    // evaluation grew with the product of the two collections, and both only
+    // grow. The grouping makes it independent of the rule count.
+    const rules = Array.from({ length: 10 }, (_, i) => rule({ name: `Rule ${i}` }))
+    const events = Array.from({ length: 50 }, (_, i) => closed(rules[0], { id: `e-${i}` }))
+    const { proxy, stats } = counting(events)
+
+    evaluateAlertRules({ ...emptyStore(), alert_rules: rules, alert_events: proxy }, context)
+
+    assert.equal(stats.filters, 0, `${stats.filters} full-collection filters ran; the grouping should have removed them all`)
+    assert.equal(stats.iterations, 1, `the collection was walked ${stats.iterations} times, expected once`)
+  })
+})

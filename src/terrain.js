@@ -32,6 +32,15 @@ const DEFAULT_TIMEOUT_MS = 15000
 export const MAX_ZOOM = 13
 export const MIN_ZOOM = 5
 
+// SCL-06. Bounded, like `basemap-tiles.js`.
+//
+// This was an uncapped Map. Each value is a decoded elevation raster — 256×256
+// Float64 elevations is half a megabyte per tile — and the key is every
+// `z/x/y` the process has ever been asked for. Panning a map at z13 accumulates
+// tens to hundreds of megabytes for the lifetime of the process, on the same
+// box that is serving the request. `basemap-tiles.js` bounds its raster cache
+// with `TILE_CACHE_LIMIT`; this one had no cap at all.
+const TILE_CACHE_LIMIT = 64
 const tileCache = new Map()
 
 /** Slippy-map tile coordinates for a point at a given zoom. */
@@ -148,13 +157,26 @@ function paeth(a, b, c) {
 
 /**
  * Fetches (and caches) one decoded tile.
+ *
+ * `options.fetch` is a test seam, like `createServer`'s `store`: the cache is a
+ * property of this module and proving it works should not require a network.
+ * Nothing in the request path passes it.
  */
 export async function loadTile(x, y, zoom, options = {}) {
   const key = `${zoom}/${x}/${y}`
-  if (!options.noCache && tileCache.has(key)) return tileCache.get(key)
+  const hit = tileCache.get(key)
+  if (!options.noCache && hit) {
+    // Re-insert so the oldest key is the least recently *used*, not the least
+    // recently fetched: panning back and forth between two views would
+    // otherwise evict the tile the operator keeps returning to.
+    tileCache.delete(key)
+    tileCache.set(key, hit)
+    return hit
+  }
 
   const url = TILE_URL.replace('{z}', String(zoom)).replace('{x}', String(x)).replace('{y}', String(y))
-  const response = await fetchWithRetry(url, {
+  const fetchTile = options.fetch || fetchWithRetry
+  const response = await fetchTile(url, {
     retries: options.retries ?? 2,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     parse: 'buffer',
@@ -163,6 +185,7 @@ export async function loadTile(x, y, zoom, options = {}) {
   const buffer = Buffer.isBuffer(response) ? response : Buffer.from(String(response), 'binary')
   const decoded = decodeTerrarium(buffer)
   tileCache.set(key, decoded)
+  if (tileCache.size > TILE_CACHE_LIMIT) tileCache.delete(tileCache.keys().next().value)
   return decoded
 }
 
@@ -268,5 +291,8 @@ export async function elevationWindow(lat, lon, options = {}) {
 }
 
 export function elevationAtCacheInfo() {
-  return { tiles: tileCache.size, url_template: TILE_URL }
+  // `limit` travels with the count: a caller reading `tiles: 64` cannot tell a
+  // cache at its bound from one that has not warmed up, and that distinction is
+  // the whole question SCL-06 asks.
+  return { tiles: tileCache.size, limit: TILE_CACHE_LIMIT, url_template: TILE_URL }
 }
