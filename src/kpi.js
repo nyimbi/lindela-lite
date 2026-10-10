@@ -15,6 +15,23 @@ const _cache = new Map()
 const CACHE_TTL_MS = 5 * 60 * 1000
 const CACHE_MAX_SIZE = 32
 
+/**
+ * The cache's own size, live and total.
+ *
+ * OBS-07. The sweep below is a memory bound, not a correctness fix, so no
+ * behaviour distinguishes a swept cache from an unswept one: the read path
+ * checks `expires` either way, and FIFO eviction happens to take the dead
+ * entries first when they are the oldest. That makes the claim unfalsifiable
+ * from outside, which is the thing this file's other guards exist to avoid. The
+ * counter is the seam that lets a test watch the sweep work.
+ */
+export function kpiCacheStats() {
+  const now = Date.now()
+  let live = 0
+  for (const entry of _cache.values()) if (entry.expires > now) live += 1
+  return { size: _cache.size, live, expired: _cache.size - live, max: CACHE_MAX_SIZE }
+}
+
 function _cacheKey(quarter, year, data) {
   const counts = [
     data.rapidpro_dispatches?.length ?? 0,
@@ -106,7 +123,7 @@ export function computeApiUptime() {
   return null
 }
 
-export function computeQuarterlyKpi(data, { quarter, year } = {}) {
+export function computeQuarterlyKpi(data, { quarter, year, now = Date.now() } = {}) {
   const q = quarter || _currentQuarter()
   const y = year || _currentYear()
 
@@ -117,7 +134,7 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
 
   const cacheKey = _cacheKey(q, y, data)
   const cached = _cache.get(cacheKey)
-  if (cached && cached.expires > Date.now()) return cached.value
+  if (cached && cached.expires > now) return cached.value
 
   const [from, to] = _quarterDateRange(q, y)
 
@@ -310,12 +327,22 @@ export function computeQuarterlyKpi(data, { quarter, year } = {}) {
     generated_at: new Date().toISOString(),
   }
 
-  // Prune cache if at limit
+  // OBS-07. Sweep what has expired before evicting what has not.
+  //
+  // The read path checks `expires`, so a stale entry never produced a wrong
+  // answer — but it still held a slot, and eviction took the oldest key
+  // regardless of whether it was dead. With 32 slots and a 5-minute TTL, a
+  // quarter nobody asked about again sat in the cache forever, and the entry it
+  // displaced was one that could still have been served. Dropping the dead
+  // first makes the bound a bound on live entries, which is what it reads as.
+  for (const [key, entry] of _cache) {
+    if (entry.expires <= now) _cache.delete(key)
+  }
   if (_cache.size >= CACHE_MAX_SIZE) {
     const firstKey = _cache.keys().next().value
     _cache.delete(firstKey)
   }
-  _cache.set(cacheKey, { value: result, expires: Date.now() + CACHE_TTL_MS })
+  _cache.set(cacheKey, { value: result, expires: now + CACHE_TTL_MS })
 
   return result
 }

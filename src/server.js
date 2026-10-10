@@ -6,7 +6,7 @@ import { gzipSync } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, isPublicRequest, publicReadsOpen, publicPaths } from './auth.js'
-import { logger, metrics, timer } from './observability.js'
+import { logger, metrics, metricsOverflow, timer, runWithRequestId, uptimeStats } from './observability.js'
 import { narrateReport, NARRATOR_BASIS } from './narrator.js'
 import { refreshAnalytics, calibrationReport } from './analytics.js'
 import { biasCorrectClimate } from './analytics/downscaling.js'
@@ -41,7 +41,7 @@ import {
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
 import { collectionPage, createIdempotencyStore, currentRequestAuth, filterRecords, jsonResponse, matchedAndPage, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
-import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor } from './pii.js'
+import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor, piiSaltStatus } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
 import { executeTriggerProtocols } from './protocols.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
@@ -239,7 +239,15 @@ export async function runPeriodicTick(store, { at = new Date().toISOString() } =
       // One item failing must not stop the rest: a dead webhook registry should
       // not also stop ingestion, and a bad schedule should not stop retention.
       results.push({ id: item.id, label: item.label, ok: false, ms: Date.now() - started, error: String(error?.message || error) })
-      console.error(`periodic: ${item.id} failed`, error)
+      // OBS-06. Plain text on stderr bypassed `LINDELA_LITE_LOG_LEVEL` and every
+      // JSON pipeline: a failing tick was exactly the message an operator most
+      // needed and the one message the aggregator could not read.
+      logger.error('periodic_item_failed', {
+        item: item.id,
+        label: item.label,
+        message: 'a periodic item failed; the tick continues with the rest',
+        err: { message: error?.message, stack: error?.stack },
+      })
     }
   }
   const succeeded = results.filter((r) => r.ok).length
@@ -258,7 +266,10 @@ export async function runPeriodicTick(store, { at = new Date().toISOString() } =
   } catch (error) {
     // The heartbeat is how a dead pipeline is noticed. Failing to write it is
     // the one failure worth shouting about, because nothing else will say so.
-    console.error('periodic: could not record the heartbeat', error)
+    logger.error('periodic_heartbeat_write_failed', {
+      message: 'the heartbeat could not be recorded; /health will report the pipeline as stale',
+      err: { message: error?.message, stack: error?.stack },
+    })
   }
   return heartbeat
 }
@@ -334,10 +345,36 @@ export function createServer(options = {}) {
   // listener is on loopback, which the guard exists to refuse. Nothing in the
   // request path overrides it.
   const checkWebhookUrl = options.checkWebhookUrl || assertSafeWebhookUrl
-  return http.createServer(async (req, res) => {
-    const t = timer()
+  // When this server began serving. OBS-04 measures the pipeline's start grace
+  // from here rather than from process start, so two servers in one test process
+  // do not share an uptime and a test can place the clock where it needs it.
+  const serverStartedAt = options.startedAt ?? Date.now()
+  const handleRequest = async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
     const route = normalizeRoute(url.pathname)
+
+    // ENH-64/OBS-03. One id per request, minted here and visible for the whole
+    // dispatch. A caller that already carries one — a gateway, an upstream
+    // service, another Lindela instance — keeps it, because the whole point of a
+    // correlation id is to join two systems' logs and minting a fresh one here
+    // breaks exactly that join. Sanitised and length-bounded first: an
+    // attacker-controlled header written verbatim into a log line is a
+    // log-injection primitive, and one that reaches a response header is a
+    // response-splitting primitive.
+    const requestId = sanitizeRequestId(req.headers['x-request-id']) || randomUUID()
+    res.setHeader('x-request-id', requestId)
+    res.locals = res.locals || {}
+    res.locals.requestId = requestId
+    // OBS-04 reads the pipeline's start grace from here. On the response rather
+    // than in a module variable so two servers in one test process keep their
+    // own uptimes, which is what makes the grace period testable at all.
+    res.locals.serverStartedAt = serverStartedAt
+
+    await runWithRequestId(requestId, () => dispatch(req, res, url, route))
+  }
+
+  const dispatch = async (req, res, url, route) => {
+    const t = timer()
 
     try {
       // Set on every response, API and static alike. The pages build markup
@@ -428,7 +465,13 @@ export function createServer(options = {}) {
       if (exposeMessage) {
         jsonResponse(res, statusCode, { success: false, error: error.message || 'Request failed' })
       } else {
-        const incidentId = randomUUID()
+        // The id the client is handed is the request's own id, not a second one
+        // minted here. They used to be different: the response carried an
+        // `incident_id` that appeared on no log line, and the log line for that
+        // request carried a `request_id`-less entry naming nothing. "Here is the
+        // id we showed the user, find the request" was unanswerable, which is
+        // the one question a correlation id exists to answer.
+        const incidentId = res.locals?.requestId || randomUUID()
         logger.error('request_failed', {
           incident_id: incidentId,
           route,
@@ -463,7 +506,8 @@ export function createServer(options = {}) {
       recordRequestOutcome(statusCode < 500)
       logger.info('http_request', { method: req.method, route, status: statusCode, elapsed_ms: elapsed })
     }
-  })
+  }
+  return http.createServer(handleRequest)
 }
 
 function normalizeRoute(pathname) {
@@ -471,6 +515,24 @@ function normalizeRoute(pathname) {
     .replace(/\/[a-f0-9-]{36}/g, '/:id')
     .replace(/\/[a-f0-9_]{32,}/g, '/:id')
     .replace(/\/\d+/g, '/:id')
+}
+
+/**
+ * ENH-64. An inbound correlation id, or null to mint one.
+ *
+ * Accepts only the characters a request id is made of and caps the length. The
+ * header arrives from the network: written verbatim into a log line it can carry
+ * a newline and forge a second record; written verbatim into a response header
+ * it can carry CRLF and split the response. Neither is theoretical for a header
+ * that exists precisely to be echoed. Anything that does not match is dropped
+ * and the caller gets a fresh id — a wrong id is worse than a new one, because
+ * it joins two unrelated requests.
+ */
+export function sanitizeRequestId(raw) {
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  if (trimmed.length === 0 || trimmed.length > 128) return null
+  return /^[A-Za-z0-9._:-]+$/.test(trimmed) ? trimmed : null
 }
 
 /**
@@ -886,6 +948,25 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       // load balancer and an operator already poll.
       audit,
       outbox,
+      // OBS-05. Three more values that were computed and had no reader.
+      // `metricsOverflow()` counts what the metric bounds in
+      // `src/observability.js` refused — dropped label keys, folded values,
+      // evicted series — and nothing surfaced it, so the cardinality guard could
+      // have been discarding every second series for a month with no way to
+      // know. `uptimeStats()` answers "how long has this instance been up",
+      // which is the first question asked of a suspect instance and was only
+      // answerable from the process table. `piiSaltStatus()` says whether
+      // pseudonyms survive a restart: a generated salt means every pseudonym
+      // this deployment has ever written becomes unlinkable at the next
+      // restart, and nothing said so outside a startup log line.
+      //
+      // `/ready` rather than a new route: it is already the operator surface
+      // that carries `audit`, `outbox` and `idempotency`, it is public, and it
+      // already returns no records. A fourth endpoint would be a fourth thing to
+      // authenticate and a fourth place to forget.
+      metrics: metricsOverflow(),
+      uptime: uptimeStats(),
+      pii: piiSaltStatus(),
       checked_at: new Date().toISOString(),
     })
     return
@@ -952,7 +1033,20 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     //
     // Red is reserved for the case that matters: a heartbeat exists and has gone
     // stale. That is a pipeline that ran and stopped.
-    const starting = !heartbeat
+    //
+    // OBS-04. "Has never written a heartbeat" was `starting` forever, whatever
+    // the uptime. If `startPeriodicDriver` fails — it logs and the process stays
+    // up — no heartbeat is ever merged, `/health` answers 200/`starting`
+    // indefinitely, and `Dockerfile`/compose poll exactly this endpoint. The
+    // container is reported healthy while the pipeline never ran once. The
+    // distinction is this server's own age, measured from `createServer` rather
+    // than from the process: a deployment four seconds old has not had its
+    // chance, one that has been serving for two intervals and still written
+    // nothing has failed to start, and that is a different finding.
+    const uptimeSeconds = Math.floor((Date.now() - (res.locals?.serverStartedAt ?? Date.now())) / 1000)
+    const startGraceSeconds = driverIntervalSeconds() * 2
+    const starting = !heartbeat && uptimeSeconds <= startGraceSeconds
+    const neverStarted = !heartbeat && !starting
     jsonResponse(res, pipeline.healthy || starting ? 200 : 503, {
       success: pipeline.healthy || starting,
       status: starting ? 'starting' : pipeline.healthy ? 'ok' : 'degraded',
@@ -961,7 +1055,17 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
         last_success_age_seconds: pipeline.ageSeconds,
         interval_seconds: heartbeat?.interval_seconds ?? null,
         last_failure: pipeline.lastFailure || null,
-        note: pipeline.healthy ? null : 'The pipeline has not completed a cycle recently. Nothing below has been refreshed since the last one that did.',
+        // The two ways to be unhealthy read the same in `healthy: false` and
+        // call for different fixes: one is a pipeline that stopped, the other a
+        // pipeline that never began. Named here so the operator does not have to
+        // infer it from a null age.
+        never_started: neverStarted,
+        process_uptime_seconds: uptimeSeconds,
+        note: pipeline.healthy
+          ? null
+          : neverStarted
+            ? `No heartbeat has been recorded in ${uptimeSeconds}s of uptime, more than two ${driverIntervalSeconds()}s intervals. The periodic driver has not completed a cycle since this process started.`
+            : 'The pipeline has not completed a cycle recently. Nothing below has been refreshed since the last one that did.',
       },
       // One version, from package.json. The UI used to hardcode it in two HTML
       // files and one translation file and it drifted behind the package, so a
@@ -3401,7 +3505,12 @@ export async function evaluateAndPersistAlerts(store, data, { actor = null, subj
       // A subscriber that cannot be reached is not a reason to abandon the
       // alert, which is already persisted above. Recorded rather than dropped.
       metrics.counter('outbox_emit_failed_total', { event: 'alert_event.created' })
-      console.error('alert_event.created emit failed', emitError)
+      logger.error('outbox_emit_failed', {
+        outbox_event: 'alert_event.created',
+        alert_event_id: event.id,
+        message: 'outbox emit failed; the alert is stored and no subscriber was told',
+        err: { message: emitError.message, stack: emitError.stack },
+      })
     }
   }
   return { raised, updated }
@@ -4832,7 +4941,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     // happen. Both may run — the tick is idempotent and the heartbeat records
     // which came last.
     getDefaultStore().then(startPeriodicDriver).catch((error) => {
-      console.error('periodic driver did not start; /health will report the pipeline as degraded', error)
+      logger.error('periodic_driver_start_failed', {
+        message: 'the periodic driver did not start; /health will report the pipeline as degraded',
+        err: { message: error?.message, stack: error?.stack },
+      })
     })
     const shown = host === '0.0.0.0' || host === '::' ? '127.0.0.1 (bound to every interface)' : host
     console.log(`Lindela Lite listening on http://${shown}:${port}`)

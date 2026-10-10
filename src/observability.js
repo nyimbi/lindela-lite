@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+
 const processStartAt = Date.now()
 
 export function uptimeStats() {
@@ -5,6 +7,33 @@ export function uptimeStats() {
     started_at: new Date(processStartAt).toISOString(),
     uptime_seconds: Math.floor((Date.now() - processStartAt) / 1000),
   }
+}
+
+/**
+ * ENH-64/OBS-03 — the request a log line belongs to.
+ *
+ * There was no correlation id anywhere: a 500 returned an `incident_id` to the
+ * client and the log entry for that same request carried a *different* one,
+ * because the id was minted inside the error branch. Nothing joined the two, so
+ * "here is the id we showed the user, find the request" was unanswerable, and a
+ * structured-log pipeline could not group the four lines one request produces.
+ *
+ * Ambient rather than an argument. The dispatch path already threads a context
+ * for the caller's identity, and the alternative here is the same failure that
+ * `filterRecords` paid for: an opt-in parameter omitted at 60 call sites, where
+ * an omission is invisible because a log line with no id looks like a log line
+ * from a process with no id.
+ */
+const requestScope = new AsyncLocalStorage()
+
+/** Run `fn` with `id` attached to every log line written underneath it. */
+export function runWithRequestId(id, fn) {
+  return requestScope.run(id ?? null, fn)
+}
+
+/** The id of the request being served, or null outside one. */
+export function currentRequestId() {
+  return requestScope.getStore() ?? null
 }
 
 // Ring buffer of last 100 request outcomes for short-term success rate
@@ -42,6 +71,7 @@ export const logger = {
 
 function logEvent(level, event, fields) {
   if (LOG_LEVELS[level] < LOG_LEVELS[LOG_LEVEL]) return
+  const requestId = currentRequestId()
   // The envelope is written last, so a payload field cannot overwrite it. With
   // `...fields` last, a call site that passed `{ event: 'report.created' }` as a
   // field replaced the event *name* with its own payload value — a log line
@@ -53,6 +83,11 @@ function logEvent(level, event, fields) {
     ts: new Date().toISOString(),
     level,
     event,
+    // Omitted entirely outside a request rather than written as null: a startup
+    // line has no request to correlate with, and `request_id: null` on every one
+    // of them would read as "this request had no id" instead of "this is not a
+    // request".
+    ...(requestId ? { request_id: requestId } : {}),
   }
   console.error(JSON.stringify(log))
 }

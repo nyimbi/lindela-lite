@@ -2775,7 +2775,7 @@ components:
               nullable: true
     ReadinessResponse:
       type: object
-      required: [success, ready, store, idempotency, checked_at]
+      required: [success, ready, store, idempotency, metrics, uptime, pii, checked_at]
       properties:
         success:
           type: boolean
@@ -2802,6 +2802,62 @@ components:
             in_process:
               type: boolean
             ttl_hours:
+              type: integer
+        audit:
+          type: object
+          nullable: true
+          description: >-
+            Roll-up of the action-log hash chain. `valid: false` means a
+            tampered or truncated chain, and degrades readiness. `valid: null`
+            means the roll-up itself could not be computed.
+        outbox:
+          type: object
+          nullable: true
+          description: >-
+            Roll-up of the outbox. `degraded: true` means at least one delivery
+            is dead-lettered, and degrades readiness.
+        metrics:
+          type: object
+          description: >-
+            What the metric cardinality bounds refused. Counts, never a silent
+            discard: a series cap that discards without reporting is
+            indistinguishable from a metric that is simply not being written.
+          properties:
+            droppedKeys:
+              type: integer
+              description: Label keys not in the metric's allowlist.
+            bucketedValues:
+              type: integer
+              description: Label values folded into `/unmatched` past their budget.
+            evictedSeries:
+              type: integer
+              description: Series evicted to stay under the per-family cap.
+            max_series:
+              type: integer
+            series:
+              type: integer
+        uptime:
+          type: object
+          description: How long this instance has been up, from process start.
+          properties:
+            started_at:
+              type: string
+            uptime_seconds:
+              type: integer
+        pii:
+          type: object
+          description: >-
+            Whether the pseudonym salt is deployment-scoped or generated. A
+            generated salt means every pseudonym written so far becomes
+            unlinkable at the next restart. Never echoes the salt.
+          properties:
+            source:
+              type: string
+              enum: [configured, generated]
+            saltId:
+              type: string
+              description: Short public fingerprint, not the salt.
+            digestBits:
               type: integer
         checked_at:
           type: string
