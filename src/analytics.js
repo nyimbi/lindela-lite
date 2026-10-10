@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { riskLevel, severityWeight } from './schema.js'
 import { clamp, haversineKm, stableId } from './utils.js'
+import { KNOWN_DISTRICTS } from './districts.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
 import { computeRoadAccess } from './road-access.js'
 import { logger } from './observability.js'
@@ -451,7 +452,19 @@ export function computeFloodRisk(data, options = {}) {
     })
     const usablePrecip = precipValues.filter((v) => v !== null)
     const missingPrecip = precipValues.length - usablePrecip.length
-    const precipitation = usablePrecip.reduce((sum, v) => sum + v, 0)
+    // The mean of the readings, not their sum.
+    //
+    // Every observation here is a *point* total: `nearby` collects each station
+    // within 125 km, and each reports the rainfall at its own location. Adding
+    // them adds the same storm once per station, so the score rose with sensor
+    // density — five stations reporting 20 mm scored 3x one station reporting
+    // the identical 20 mm, and a coordinator pre-positioned assets in the
+    // well-instrumented district while starving the identical under-instrumented
+    // one. The score was a map of where the stations are. A spatial mean is the
+    // quantity the term is named for.
+    const precipitation = usablePrecip.length
+      ? usablePrecip.reduce((sum, v) => sum + v, 0) / usablePrecip.length
+      : null
     // Only a percentile from a genuine probabilistic forecast counts as ensemble
     // coverage. Percentiles previously synthesized from a point value would
     // otherwise always satisfy this and report uncertainty the data does not have.
@@ -465,7 +478,20 @@ export function computeFloodRisk(data, options = {}) {
     const missingProbability = climate.length - probabilities.length
     const maxProbability = probabilities.length ? Math.max(0, ...probabilities) : null
     const hazardPressure = hazards.reduce((sum, event) => sum + severityWeight(event.severity) * 30, 0)
-    const score = clamp(Math.round(precipitation * 1.5 + (maxProbability ?? 0) * 0.35 + hazardPressure), 0, 100)
+    // An absent probability contributes nothing, and the score says so.
+    //
+    // `(maxProbability ?? 0) * 0.35` folded a missing forecast in as a 0% chance
+    // of rain, which is the opposite of what the comment above it promises: a
+    // district whose forecast feed dropped scored identically to one with a
+    // genuine dry forecast and lower than one with a wet forecast, so an outage
+    // read as lower risk. Omitting the term arithmetically is the same number —
+    // the fix is that the omission is now named on the payload, with its
+    // direction, so a consumer cannot read the shortfall as a finding. Dividing
+    // the remaining terms by their weight sum would change the scale of every
+    // published score, which is a decision for the aggregation-kind registry
+    // (ENH-46) and a domain read, not a silent edit here.
+    const probabilityTermOmitted = maxProbability === null
+    const score = clamp(Math.round((precipitation ?? 0) * 1.5 + (maxProbability ?? 0) * 0.35 + hazardPressure), 0, 100)
     // Confidence counts readings actually used, not records present. A region
     // whose observations arrived without precipitation gets a lower confidence,
     // so an absent input lowers how sure the score is rather than lowering the
@@ -498,14 +524,23 @@ export function computeFloodRisk(data, options = {}) {
     const generated_at = new Date().toISOString()
 
     const drivers = {
-      precipitation_mm: Math.round(precipitation * 10) / 10,
+      // The mean of the in-scope readings. Named `precipitation_mm` for
+      // compatibility with stored records and existing consumers; the basis
+      // string below says "mean" so a reader is not left to guess which of the
+      // two it is.
+      precipitation_mm: precipitation === null ? null : Math.round(precipitation * 10) / 10,
       precipitation_probability_pct: maxProbability,
       // Exposed so a caller can see how much of the input was missing rather than
       // inferring completeness from a plausible-looking total.
       climate_observations_in_scope: climate.length,
+      precipitation_readings_used: usablePrecip.length,
       missing_precipitation_records: missingPrecip,
       missing_probability_records: missingProbability,
       flood_hazard_events: hazards.length,
+      // A score computed without the probability term is a different quantity
+      // from one computed with it, and the difference is 0.35 of weight in the
+      // unsafe direction. Named so it cannot be read as a dry forecast.
+      probability_term_omitted: probabilityTermOmitted,
     }
     if (hasBiasCorrection) drivers.bias_corrected = true
     if (hasEnsemble) drivers.ensemble_used = true
@@ -548,7 +583,7 @@ export function computeFloodRisk(data, options = {}) {
       honesty: honestyEnvelope('flood_risk_score', {
         value: score,
         basis: {
-          description: `precipitation total x 1.5 + max rain probability x 0.35 + sum of severity-weighted flood/storm/disaster alerts within 250 km, over ${climate.length} climate observation(s) and ${hazards.length} hazard event(s)`,
+          description: `mean precipitation across in-scope observations x 1.5 + max rain probability x 0.35 + sum of severity-weighted flood/storm/disaster alerts within 250 km, over ${climate.length} climate observation(s) and ${hazards.length} hazard event(s)`,
           sample: {
             climate_observations_in_scope: climate.length,
             missing_precipitation_records: missingPrecip,
@@ -570,8 +605,11 @@ export function computeFloodRisk(data, options = {}) {
         missingPrecip || missingProbability
           ? `Incomplete input: ${missingPrecip} of ${climate.length} in-scope climate observation(s) carry no precipitation reading and ${missingProbability} carry no probability forecast. Those contribute nothing to the score, so a low score here may reflect missing data rather than low risk.`
           : 'All in-scope climate observations carried a precipitation reading.',
+        probabilityTermOmitted
+          ? 'No in-scope observation carried a probability forecast, so the rain-probability term contributed nothing. That omission lowers this score by up to 35 points, so a low score here may be a missing forecast rather than a dry one.'
+          : null,
         'Rainfall intensity/duration to flood probability is not modelled: that needs an agreed hydrological model basis and a validated record.',
-      ].join(' '),
+      ].filter(Boolean).join(' '),
     }
   })
 }
@@ -979,14 +1017,52 @@ function collectRegions(data, options = {}) {
 
   const byKey = new Map()
   for (const point of points) {
-    const roundedLat = Math.round(point.latitude)
-    const roundedLon = Math.round(point.longitude)
-    const key = `${point.country || 'unknown'}:${roundedLat}:${roundedLon}`
+    // Group by the district the point falls in, falling back to a half-degree
+    // cell (~55 km) where no district claims it.
+    //
+    // The key used to be `${Math.round(lat)}:${Math.round(lon)}` — a 1°x1° bucket
+    // about 111 km on a side. Two counties 100 km apart collapsed into one region
+    // whose coordinate was whichever point arrived first, and a district
+    // straddling a boundary split into two half-regions each scored against part
+    // of its data. `resolveDistrict` already carries the curated centroids and
+    // radii; the fallback cell is a half-degree because that is the finest
+    // bucket that still groups a cluster of stations around one town.
+    // `KNOWN_DISTRICTS` centres are `{lat, lon}`; `haversineKm` reads
+    // `.latitude`/`.longitude`, so the centre is normalised rather than passed
+    // through. Handing it the raw centre yields NaN and every point silently
+    // falls through to the fallback cell.
+    // The nearest district whose radius covers the point, not the first one in
+    // the list. The radii overlap — Turkana's and Karamoja's 200 km circles
+    // share a wide band, and the district page already reports 17 of 34 assets
+    // falling inside both — so "first match" handed a point to whichever district
+    // happened to be declared first, which is arbitrary. Nearest is a rule a
+    // reader can predict.
+    //
+    // `KNOWN_DISTRICTS` centres are `{lat, lon}`; `haversineKm` reads
+    // `.latitude`/`.longitude`, so the centre is normalised rather than passed
+    // through. Handing it the raw centre yields NaN and every point silently
+    // falls through to the fallback cell.
+    let known = null
+    let knownKm = Infinity
+    for (const district of KNOWN_DISTRICTS) {
+      const km = haversineKm({ latitude: district.center.lat, longitude: district.center.lon }, point)
+      if (km <= district.radius_km && km < knownKm) {
+        known = district
+        knownKm = km
+      }
+    }
+    const roundedLat = Math.round(point.latitude * 2) / 2
+    const roundedLon = Math.round(point.longitude * 2) / 2
+    const key = known
+      ? `district:${known.slug}`
+      : `${point.country || 'unknown'}:${roundedLat}:${roundedLon}`
     if (!byKey.has(key)) {
       byKey.set(key, {
         key,
-        name: point.region_name || point.admin1 || point.country || `${roundedLat},${roundedLon}`,
-        country: point.country || null,
+        name: known
+          ? known.name
+          : (point.region_name || point.admin1 || point.country || `${roundedLat},${roundedLon}`),
+        country: known ? known.country : (point.country || null),
         latitude: point.latitude,
         longitude: point.longitude,
       })

@@ -82,10 +82,10 @@ const round = (v, dp = 4) => {
 export const SCORING_RULES = Object.freeze({
   flood_risk: Object.freeze({
     title: 'Flood risk',
-    source: 'Math.round(precipitation * 1.5 + (maxProbability ?? 0) * 0.35 + hazardPressure)',
-    formula: 'precipitation_mm x 1.5 + precipitation_probability_pct x 0.35 + sum(severityWeight x 30 per hazard event)',
+    source: 'Math.round((precipitation ?? 0) * 1.5 + (maxProbability ?? 0) * 0.35 + hazardPressure)',
+    formula: 'mean precipitation_mm x 1.5 + precipitation_probability_pct x 0.35 + sum(severityWeight x 30 per hazard event)',
     terms: [
-      { name: 'Precipitation', shape: 'linear', driver: 'precipitation_mm', weight: 1.5, unit: 'mm', driverLabel: 'total forecast rainfall across in-scope observations' },
+      { name: 'Precipitation', shape: 'linear', driver: 'precipitation_mm', weight: 1.5, unit: 'mm', driverLabel: 'mean forecast rainfall across in-scope observations' },
       { name: 'Rain probability', shape: 'linear', driver: 'precipitation_probability_pct', weight: 0.35, unit: '%', driverLabel: 'highest in-scope daily rain probability' },
       { name: 'Hazard pressure', shape: 'sumOf', driver: 'flood_hazard_events', unit: 'events', driverLabel: 'count of in-scope hazard events', needs: 'the severity of each event', perEvent: 'severityWeight x 30' },
     ],

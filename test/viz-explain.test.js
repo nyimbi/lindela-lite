@@ -72,7 +72,7 @@ describe('the rules have not drifted from the code that computes the score', () 
   })
 
   it('reports drift when an expression moves', () => {
-    const drifts = checkRuleDrift(analyticsSource.replace('precipitation * 1.5', 'precipitation * 2.5'))
+    const drifts = checkRuleDrift(analyticsSource.replace('(precipitation ?? 0) * 1.5', '(precipitation ?? 0) * 2.5'))
     assert.equal(drifts.length, 1)
     assert.match(drifts[0], /flood_risk/)
   })
