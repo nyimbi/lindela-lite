@@ -481,6 +481,27 @@ readers are the un-migrated ones.
 owners of the record shape; a storage-schema change breaks report output silently.
 
 ### ARC-10 — MEDIUM — The two store adapters diverge on the default read
+
+**Fixed 2026-10-11.** Larger than registered: three axes, not one, and the third
+was a partner-isolation leak. *`includeHistory`* — as recorded. *Manifest shape* —
+a manifest read returned the whole store with un-named collections empty on
+Postgres and only the named keys on JSON, so `read(['hazard_events']).source_runs`
+was `[]` in production and `undefined` in development. *`partnerOrg`* — the
+Postgres adapter pushed `partner_org = $2` into SQL while `JsonStore` ignored the
+option and returned every organisation's rows; a partner-scoped read leaked across
+partners on JSON, and the suite runs on JSON, so no test could see it.
+
+Both adapters now share `normaliseReadOptions`, `manifestShape` and
+`scopeToPartner` from `src/store.js`, Postgres canonical. Two further bugs
+surfaced on the way: `#mergeNow` read through `read()` — which now strips history —
+so every merge wrote this write's revisions over an empty array and erased all
+bitemporal history; all read-modify-write mutators now go through one `#current()`.
+And the two `/history` routes never passed `includeHistory`, so they returned an
+empty series on Postgres while working on a JSON box. Guarded by
+`test/store-conformance.test.js` (the adapter-parity cases run on both backends),
+`test/bitemporal-history.test.js` and `test/route-manifests.test.js`
+(`needsHistory`).
+
 `JsonStore.read()` returns the whole store regardless of the manifest's
 `includeHistory` (`src/store.js:308`), while `PostgresStore.read()` excludes
 `record_versions` by default (`src/postgres-store.js:213`). A JSON dev box and a
