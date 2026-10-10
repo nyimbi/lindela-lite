@@ -343,6 +343,27 @@ export const MIGRATIONS = Object.freeze([
        WHERE partner_org IS NOT NULL`,
     ],
   }),
+  // CON-03 is *not* a migration, and the reason is worth recording where the
+  // obvious migration would have gone.
+  //
+  // The defect is that `upsertCollection` asks which of a batch's
+  // `payload_hash` values are already present and then inserts the rest, so two
+  // concurrent merges both run the SELECT before either commits, both see the
+  // hash absent, and both insert — with *different ids* and the same content,
+  // which `ON CONFLICT (collection, id)` does not catch.
+  //
+  // The obvious repair is a unique index on `(collection, payload_hash)` and
+  // `ON CONFLICT DO NOTHING`. It is the wrong repair for this database:
+  // `CREATE UNIQUE INDEX` fails outright on any deployment that already holds
+  // the duplicate rows this defect has been producing, and the only way to make
+  // it succeed is to delete records inside a migration — silently, on a
+  // database whose contents the migration cannot see. A repair that has to
+  // destroy data to apply is not a repair.
+  //
+  // The window is closed instead by serialising the write transactions on a
+  // transaction-scoped advisory lock (`#lockWrites` in `postgres-store.js`),
+  // which is also what removes CON-02's lock inversion. No schema change, so it
+  // applies to every existing database on the next connect.
 ])
 
 

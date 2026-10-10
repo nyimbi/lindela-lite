@@ -22,6 +22,96 @@ const DECLARED_COLLECTIONS = new Set(COLLECTIONS)
 const HISTORY_COLLECTION = 'record_versions'
 
 /**
+ * CON-02 and CON-03, one mechanism.
+ *
+ * `write()` deletes every row outside `__schema` and reinserts the whole store
+ * inside one transaction; `merge()` upserts rows in that same table. The two
+ * take row locks in opposite orders — a full-table DELETE against an upsert —
+ * so they can deadlock, and nothing here set an isolation level, took an
+ * advisory lock, or retried. A `write()` racing a `merge()` handed the caller a
+ * raw `40P01` with no backoff: a 500 on whatever route lost the race, for a
+ * condition the database resolves by itself in milliseconds.
+ *
+ * CON-03 is the same race seen from the other side. `upsertCollection` asks
+ * which of a batch's `payload_hash` values are already present and inserts the
+ * rest, so two concurrent merges both run the SELECT before either commits,
+ * both see the hash absent, and both insert — with different ids and the same
+ * content, which `ON CONFLICT (collection, id)` does not catch.
+ *
+ * Both are fixed by taking one transaction-scoped advisory lock as the first
+ * statement of every write transaction (`#lockWrites`). Writers then queue, so
+ * no two are ever holding rows in opposite orders — there is no inversion left
+ * to deadlock on — and a merge's SELECT cannot run until the merge before it
+ * has committed, which is exactly the serialisation the dedupe needs.
+ *
+ * Serialising *all* writes rather than retrying deadlocks is the deliberate
+ * choice, and `JsonStore` is why: it already runs every write through one
+ * promise chain (`#serialise`). A lock here gives the two backends the same
+ * concurrency contract instead of leaving them to differ, and the recurring
+ * defect in this codebase is precisely the two stores disagreeing about
+ * semantics an environment variable selects between.
+ *
+ * The retry below is still here, and is not the primary mechanism. It covers
+ * what the lock cannot: a `40001` serialization failure under a stricter
+ * isolation level, and contention with a writer outside this process that does
+ * not take the lock. Both codes are the ones Postgres names as retryable.
+ * Anything else propagates immediately — retrying a syntax error or a
+ * constraint violation would only pay the timeout three times before reporting
+ * the same thing.
+ *
+ * The retry is safe because every write in this class is idempotent by
+ * construction: an upsert keyed on `(collection, id)`, or a full-table rewrite
+ * from a snapshot. Re-running one whose transaction rolled back cannot
+ * double-apply.
+ */
+const RETRYABLE_SQLSTATES = new Set(['40001', '40P01'])
+const WRITE_RETRY_ATTEMPTS = 3
+
+/**
+ * The advisory lock every write transaction takes.
+ *
+ * A constant, not a hash of anything: the point is that every writer in every
+ * process on this database contends on the same key, and advisory locks are
+ * already scoped to one database, so two deployments sharing a cluster do not
+ * queue behind each other. `pg_advisory_xact_lock` releases at COMMIT or
+ * ROLLBACK, so a crashed writer cannot leave it held.
+ *
+ * Exported because it is a contract rather than an implementation detail: a
+ * second process — another replica, a maintenance script, a test — has to take
+ * the *same* key to be serialised against this store, and a copy of the number
+ * in another file is a copy that can drift into a lock nobody else holds.
+ */
+export const WRITE_LOCK_KEY = 4_001_001
+
+function isRetryableWriteError(error) {
+  return RETRYABLE_SQLSTATES.has(error?.code)
+}
+
+/** Full jitter, so three writers that collide do not collide again in lockstep. */
+function retryDelayMs(attempt) {
+  return Math.floor(Math.random() * (25 * 2 ** attempt))
+}
+
+export async function withWriteRetry(fn, { attempts = WRITE_RETRY_ATTEMPTS } = {}) {
+  let lastError
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await fn()
+    } catch (error) {
+      if (!isRetryableWriteError(error)) throw error
+      lastError = error
+      if (attempt < attempts - 1) {
+        // Not unref'd: the caller is awaiting this, and an unref'd timer that
+        // nothing else keeps alive lets the process exit mid-retry with the
+        // promise unresolved.
+        await new Promise((resolve) => { setTimeout(resolve, retryDelayMs(attempt)) })
+      }
+    }
+  }
+  throw lastError
+}
+
+/**
  * Accepts `read()`, `read({ collections, includeHistory })` and
  * `read(['incidents'])` alike.
  *
@@ -130,6 +220,32 @@ export class PostgresStore {
       }
     }
     this.ready = true
+  }
+
+  /**
+   * Takes the write lock, and must be the first statement in a transaction.
+   *
+   * See `WRITE_LOCK_KEY` for why every writer takes one lock rather than
+   * retrying deadlocks. This is the whole of CON-02 and the concurrency half of
+   * CON-03: once it has returned, no other write transaction in any process is
+   * in flight against this database, so a merge's dedupe SELECT cannot run
+   * before the merge that would have made it a duplicate has committed.
+   *
+   * `pg_advisory_xact_lock` rather than the session-scoped form: it is released
+   * by COMMIT or ROLLBACK, so there is no path — including a thrown error, a
+   * released client, or a killed connection — on which the lock outlives the
+   * transaction that took it. A session lock would need an explicit unlock on
+   * every exit, and the one that was missed would be a store that accepts no
+   * writes until the pool connection is recycled.
+   *
+   * The wait is unbounded. `pg_advisory_xact_lock` has no timeout, which is
+   * correct here: the transactions it guards are a single upsert batch, and a
+   * bounded wait would convert a slow write into a failed one for a caller that
+   * has no better answer than waiting. A genuinely stuck writer is a
+   * `pg_locks` question, not one to paper over with a timeout that returns 500.
+   */
+  async #lockWrites(client) {
+    await client.query('SELECT pg_advisory_xact_lock($1)', [WRITE_LOCK_KEY])
   }
 
   /**
@@ -324,9 +440,17 @@ export class PostgresStore {
     assertDeclaredCollections(data)
     await this.ensureSchema()
     const next = { ...emptyStore(), ...data, updated_at: nowIso() }
+    // CON-02. This is the transaction that takes a row lock across essentially
+    // the whole table (`DELETE … WHERE collection <> '__schema'`), so it is the
+    // one most likely to be the deadlock victim when it races a merge.
+    return withWriteRetry(() => this.#writeOnce(next))
+  }
+
+  async #writeOnce(next) {
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
+      await this.#lockWrites(client)
       // NOT the whole table. `__schema` holds the migration ledger, and a
       // blanket DELETE would drop it — which is survivable only because every
       // migration is idempotent, so the cost of getting it wrong is a full
@@ -418,9 +542,16 @@ export class PostgresStore {
   async replaceCollection(collection, records = []) {
     assertDeclaredCollection(collection)
     await this.ensureSchema()
+    // CON-02. A full-collection DELETE racing a merge is the same inversion the
+    // retry was written for; the lock removes it rather than surviving it.
+    return withWriteRetry(() => this.#replaceCollectionOnce(collection, records))
+  }
+
+  async #replaceCollectionOnce(collection, records) {
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
+      await this.#lockWrites(client)
       await client.query('DELETE FROM lite_records WHERE collection = $1', [collection])
       await this.insertRecords(client, collection, records.filter((item) => item?.id))
       await client.query('COMMIT')
@@ -445,9 +576,16 @@ export class PostgresStore {
     // expensively.
     if (!writes.length) return
 
+    // CON-02. The whole transaction is retried, not the statement: a deadlock
+    // aborts the transaction, so the only correct retry starts a new one.
+    await withWriteRetry(() => this.#mergeOnce(writes))
+  }
+
+  async #mergeOnce(writes) {
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
+      await this.#lockWrites(client)
       for (const { collection, items } of writes) {
         // ENH-13. Read the predecessors before the upsert overwrites them.
         // Doing this inside the same transaction as the write is the whole
@@ -606,9 +744,16 @@ export class PostgresStore {
    */
   async remove({ collection: doomedByCollection = {} } = {}) {
     await this.ensureSchema()
+    // CON-02. Same inversion as `write()`: a multi-collection DELETE against a
+    // merge. Serialised with every other writer rather than retried.
+    return withWriteRetry(() => this.#removeOnce(doomedByCollection))
+  }
+
+  async #removeOnce(doomedByCollection) {
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
+      await this.#lockWrites(client)
       for (const [collection, ids] of Object.entries(doomedByCollection)) {
         assertDeclaredCollection(collection)
         if (!ids?.length) continue
@@ -646,9 +791,16 @@ export class PostgresStore {
     const replacement = Object.fromEntries(
       DERIVED_COLLECTIONS.map((collection) => [collection, payload[collection] || []]),
     )
+    // CON-02. Six DELETEs across the derived collections, racing every merge
+    // that writes them.
+    return withWriteRetry(() => this.#replaceAnalyticsOnce(replacement))
+  }
+
+  async #replaceAnalyticsOnce(replacement) {
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
+      await this.#lockWrites(client)
       for (const [collection, items] of Object.entries(replacement)) {
         await client.query('DELETE FROM lite_records WHERE collection = $1', [collection])
         await this.insertRecords(client, collection, items.filter((item) => item?.id))
