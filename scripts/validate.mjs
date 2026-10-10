@@ -262,5 +262,15 @@ await import('./check-doc-links.mjs')
 // tests a hand-written list, which is why nine live routes went undocumented;
 // this reads the served routes out of the server and requires the two to agree.
 await import('./check-openapi.mjs')
+// The workflow files. Every CI run for the repository's history failed in 0s
+// with no jobs because two defects made GitHub reject the file outright, and a
+// parse-time rejection reports the same red X for every commit — so it read as
+// "the tests are broken" and was never investigated. Validating the workflow is
+// the only check that can fail when no gate ever ran.
+await import('./check-workflows.mjs')
+// The CSP's inline-script hashes against the shipped markup. A stale hash is
+// silent — the browser blocks the script and nothing is logged — so the check
+// regenerates from the markup rather than trusting a maintained list.
+await import('./check-csp.mjs')
 
 console.log('validation ok')

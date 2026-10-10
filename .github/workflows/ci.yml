@@ -1,11 +1,46 @@
 name: CI
 
+# VUL-05. This file had never run. Every push for the repository's whole history
+# reported failure in 0s with no jobs, because two independent defects each made
+# GitHub reject the whole workflow before it started — and a workflow rejected at
+# parse time reports the same "failure" for every commit, so nothing about the
+# red X said which commit was bad or that the gates had never executed at all.
+#
+#   1. `live-sources` carried `schedule:` and `workflow_dispatch:` at *job*
+#      level. They are top-level keys; at job level they are unexpected keys and
+#      invalidate the file. (The `dashboard` job's `if: github.event_name ==
+#      'workflow_dispatch'` could never be true for the same reason.)
+#   2. `provenance` invoked `slsa-framework/slsa-github-generator@v1.10.0` as a
+#      *step*. That repository publishes a reusable *workflow* and actions under
+#      `actions/`; it has no root `action.yml`, so the step is unresolvable and
+#      the file is invalid — and validity is checked before `if:`, so the job
+#      being tag-gated never protected it.
+#
+# `actionlint` catches (1) and not (2); (2) needs the remote to be resolved.
+# Both are fixed below, and `scripts/check-workflows.mjs` runs actionlint in the
+# self-contained gate tier so a third defect of the same class fails locally
+# rather than in a run nobody reads.
+#
+# Everything below is pinned to a commit SHA or an exact version. A mutable tag
+# (`@v4`) is a promise the upstream can change after review; these jobs hold
+# `contents: write` and `id-token: write`, so a moved tag is arbitrary code with
+# a signing identity.
+
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
     branches: [main]
+  # Moved up from the `live-sources` job, where it was invalid. Third parties
+  # being unreachable should not gate a commit, so this is a separate schedule
+  # rather than a per-push job.
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -31,8 +66,8 @@ jobs:
     env:
       LINDELA_LITE_TEST_DATABASE_URL: postgres://postgres:lindela@localhost:5432/lindela_test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
       - run: npm test
@@ -61,8 +96,8 @@ jobs:
     env:
       LINDELA_LITE_TEST_DATABASE_URL: postgres://postgres:lindela@localhost:5432/lindela_test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
       # Enforced thresholds fail the build if coverage regresses. Current
@@ -72,23 +107,45 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
       - run: npm audit --audit-level=high
+      # `npx --yes trivy` was not a command: Trivy is not published to npm, so
+      # `npx` exited 1 on every run. The scan never happened. The official
+      # action is the supported path and is pinned to a commit like everything
+      # else here.
       - name: Scan source for known vulnerabilities
-        run: npx --yes trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --no-progress .
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: '1'
 
   sbom:
     runs-on: ubuntu-latest
+    # Consumed by `provenance`, which attests exactly these bytes. Without an
+    # output the generator would receive an empty subject list — the defect this
+    # replaces, in a different place.
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
-      - run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.cdx.json
-      - uses: actions/upload-artifact@v4
+      # Exact version, not `latest`. The SBOM is an attestation of what the tree
+      # contains, so the tool that produces it is part of the claim.
+      - run: npx --yes @cyclonedx/cyclonedx-npm@6.0.1 --output-file sbom.cdx.json
+      - name: Hash the artifacts the provenance will attest
+        id: hash
+        # `sha256sum` output, base64-encoded — the format the SLSA generator
+        # documents for `base64-subjects`.
+        run: echo "hashes=$(sha256sum sbom.cdx.json | base64 -w0)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sbom
           path: sbom.cdx.json
@@ -98,12 +155,10 @@ jobs:
     # reachable and on their rate limits, so a flaky upstream should not block
     # a commit. Non-strict, so it reports rather than fails the build.
     runs-on: ubuntu-latest
-    schedule:
-      - cron: '17 6 * * *'
-    workflow_dispatch:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
       # Fixtures describe what the code expects, not what upstream serves.
@@ -113,7 +168,7 @@ jobs:
         run: node scripts/check-live-sources.mjs
       - name: Upload live source report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: live-source-report
           path: |
@@ -127,8 +182,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
       - name: Seed a demo store
@@ -137,25 +192,29 @@ jobs:
       - name: Start the server
         run: |
           LINDELA_LITE_STORE="$RUNNER_TEMP/store.json" npm start &
-          npx --yes wait-on http://127.0.0.1:4177/api/v1/health --timeout 60000
+          npx --yes wait-on@9.5.1 http://127.0.0.1:4177/api/v1/health --timeout 60000
       - name: Drive the dashboard in a headless browser
         run: |
           google-chrome --headless --disable-gpu --no-sandbox \
             --remote-debugging-port=9222 --user-data-dir="$RUNNER_TEMP/cdp" about:blank &
-          npx --yes wait-on http://127.0.0.1:9222/json/version --timeout 60000
+          npx --yes wait-on@9.5.1 http://127.0.0.1:9222/json/version --timeout 60000
           node scripts/check-dashboard-browser.mjs
 
+  # The SLSA generator is a *reusable workflow*, so it is invoked at job level
+  # with `uses:`. The previous form put it in `steps:`, where it resolved to
+  # nothing — that repository has no root `action.yml` — and invalidated the
+  # entire file. `base64-subjects: ''` was also an attestation of zero
+  # artifacts: it now names the release tarball, which is what a consumer
+  # verifies against.
   provenance:
     needs: [test, coverage, audit, sbom]
     if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
       id-token: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: slsa-framework/slsa-github-generator@v1.10.0
-        with:
-          base64-subjects: ''
-          upload-assets: true
-          compile-generator: true
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@c747fe7769adf3656dc7d588b161cb614d7abfee # v1.10.0
+    with:
+      base64-subjects: ${{ needs.sbom.outputs.hashes }}
+      upload-assets: true
+      compile-generator: true

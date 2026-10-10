@@ -90,14 +90,76 @@ pins actions by mutable tag (`checkout@v4`, `setup-node@v4`, `upload-artifact@v4
 publish runs arbitrary code in CI with `id-token: write` and `contents: write` on
 the provenance job.
 
+**Fixed 2026-10-10 — and the pins were not the worst of it. CI had never run.**
+
+`gh run list` across the repository's whole history: 264 failures, one success
+(2026-05-18, before the file was rewritten). Every failure after that completed in
+**0s with zero jobs** — GitHub rejected the workflow file before starting it. Two
+independent defects, each sufficient on its own:
+
+1. `schedule:` and `workflow_dispatch:` sat at **job** level on `live-sources`.
+   They are top-level keys; at job level they are unexpected and invalidate the
+   file. (The `dashboard` job's `if: github.event_name == 'workflow_dispatch'`
+   could therefore never be true either.)
+2. `provenance` invoked `slsa-framework/slsa-github-generator@v1.10.0` as a
+   **step**. That repository publishes a reusable *workflow* and actions under
+   `actions/`; it has no root `action.yml`, so the step is unresolvable and the
+   file is rejected — and validity is checked before `if:`, so the tag gate on the
+   job never protected it.
+
+Both are fixed. `npx --yes trivy` was also not a command at all — Trivy is not
+published to npm, so that step exited 1 on every run and never scanned anything;
+it is replaced by the official `aquasecurity/trivy-action` pinned to a commit.
+`base64-subjects: ''` attested zero artifacts and now names the SBOM's hash, with
+`sbom` exporting it. Every action is pinned to a commit SHA and every `npx`
+tool to an exact version.
+
+`scripts/check-workflows.mjs` is added to the self-contained gate tier and to
+`validate.mjs`. It covers both defects — `actionlint` catches (1) and not (2), and
+(2) is the one that broke every run — without needing a Go toolchain or the
+network. It carries three canaries that must be rejected, and it was canaried
+against the two real defective revisions (`16c7c05`, `037b1dd`), each of which it
+catches.
+
 ### VUL-06 — LOW — Base image not pinned by digest
 `Dockerfile:1` `FROM node:20-bookworm-slim` tracks a mutable tag; a rebuild can pull
 a different base than the one the SBOM attests.
+
+**Fixed 2026-10-10.** Pinned to
+`node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0`,
+with the tag kept in the comment and the one-liner that resolves a new digest.
 
 ### VUL-07 — LOW — CSP permits inline scripts
 `src/server.js:4702` `script-src 'self' 'unsafe-inline'`. The surfaces are static
 today, so this is latent, not live — but it removes the primary XSS mitigation for
 any future dynamic content.
+
+**Fixed 2026-10-10.** `'unsafe-inline'` is gone from `script-src`; the header now
+names the sha256 of each inline script the surfaces ship (nine of them).
+
+A nonce was the obvious mechanism and the wrong one: the service worker caches
+HTML for offline use, so a per-request nonce would be stale in every cached page
+and every script would be blocked offline — on the surfaces whose purpose is
+working without a connection. The inline scripts are byte-static per file (the
+one per-request substitution, the app-version marker, is in a `<span>` outside
+them), so hashes survive caching.
+
+The one thing a hash cannot cover is an inline event handler, and there was
+exactly one — `onclick` on the portal's sign-in button — which is why
+`'unsafe-inline'` had been needed at all. It is wired in `portal/app.js` now.
+
+`scripts/check-csp.mjs` generates the hash list into `src/server.js` and fails
+when the two disagree; a stale hash does not throw, the browser blocks the script
+silently, so a hand-maintained list would go stale unnoticed. Wired into the
+self-contained gate tier and `validate.mjs`.
+
+The first version of this fix shipped the hashes **unquoted** in the header —
+`sha256-…` instead of `'sha256-…'`, because the quotes were JavaScript string
+delimiters in the array and vanished from the value. An unquoted hash-source is
+not a hash-source: the browser ignores it and blocks all nine scripts. The test
+that caught it hashes the **served** response rather than the file on disk, which
+is the only thing the browser ever sees, and asserts against the header rather
+than the exported array.
 
 ---
 

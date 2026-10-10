@@ -91,6 +91,18 @@ const GATES = [
     why: 'Reads the route table and the served spec out of the server module in-process. Imported by validate.mjs.',
   },
   {
+    name: 'check-workflows',
+    script: 'scripts/check-workflows.mjs',
+    tier: 'self-contained',
+    why: 'Validates .github/workflows/*.yml. Every run for the repository history failed in 0s with no jobs because two defects invalidated the file — and a workflow that fails to parse reports the same red X for every commit, so it read as "tests are broken" for months. Carries its own canaries, because a validator never watched failing is not evidence.',
+  },
+  {
+    name: 'check-csp',
+    script: 'scripts/check-csp.mjs',
+    tier: 'self-contained',
+    why: 'Regenerates the inline-script hashes from the shipped markup and fails when src/server.js disagrees. A stale hash does not throw — the browser blocks the script silently — so this is the check that a human-maintained list would eventually fail. Reads files only.',
+  },
+  {
     name: 'check-budget-and-surface-contract',
     script: 'test/web-hidden-display.test.js',
     tier: 'self-contained',

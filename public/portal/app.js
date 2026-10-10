@@ -90,6 +90,16 @@ async function init() {
     window.location.href = '/'
   })
 
+  // The sign-in button used to carry `onclick="window.location.href='/'"` in the
+  // markup. An inline handler is a string the CSP cannot distinguish from an
+  // injected one, so keeping even a single one forces `script-src` to allow
+  // 'unsafe-inline' — which is the primary XSS mitigation, given the pages build
+  // markup with innerHTML. Wiring it here is what lets the policy name script
+  // hashes instead.
+  $('signInBtn')?.addEventListener('click', () => {
+    window.location.href = '/'
+  })
+
   // The organisation comes from the server, which is the only party that knows
   // which token was presented. This used to be read from localStorage, so the
   // header displayed whatever a previous session on a shared machine had

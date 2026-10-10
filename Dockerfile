@@ -1,4 +1,16 @@
-FROM node:20-bookworm-slim
+# VUL-06. Pinned by digest, not tag. `node:20-bookworm-slim` is a mutable tag: a
+# rebuild can pull a different base than the one the SBOM and the SLSA
+# provenance attest, so the attestation describes bytes the image no longer
+# contains. The tag is kept in the comment because a digest alone is unreadable
+# and someone has to know what to update.
+#
+# To move it: resolve the new digest for the tag and change both lines.
+#   TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull" | jq -r .token)
+#   curl -sI -H "Authorization: Bearer $TOKEN" \
+#     -H "Accept: application/vnd.oci.image.index.v1+json" \
+#     "https://registry-1.docker.io/v2/library/node/manifests/20-bookworm-slim" \
+#     | grep -i docker-content-digest
+FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
 
 WORKDIR /app
 
