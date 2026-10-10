@@ -121,12 +121,39 @@ describe('the scoping is wired to the request, not to the call site', () => {
     const postStart = source.indexOf("if (req.method === 'POST' && !route.id)", fnStart)
     assert.ok(getStart > fnStart && postStart > getStart, 'both branches must exist')
     const branch = source.slice(getStart, postStart)
-    assert.match(branch, /filterRecords\(/,
+    // VUL-03. This used to require `filterRecords(` inline in the branch. It now
+    // requires `findVisible(`, because the predicate moved into one resolver
+    // that all thirty-one by-id branches call — an inline call in this branch
+    // and a raw `.find()` in the thirty next to it was the actual state of the
+    // code, and the defect was the thirty, not this one.
+    //
+    // The chain is asserted rather than the spelling: the branch must go
+    // through the resolver, and the resolver must apply the predicate. A
+    // `findVisible` that stopped filtering would satisfy the first assertion
+    // alone, so the second is what keeps this honest.
+    assert.match(branch, /findVisible\(/,
       'a by-id read must carry the same partner predicate as the list form')
     assert.ok(
       !/data\[route\.collection\]\.find\(/.test(branch),
       'a raw `.find()` over the collection bypasses every predicate by construction',
     )
+    const resolverStart = source.indexOf('function findVisible(')
+    assert.ok(resolverStart > 0, 'findVisible must exist')
+    const resolver = source.slice(resolverStart, source.indexOf('\nasync function handleApiRequestInContext', resolverStart))
+    assert.match(resolver, /filterRecords\(/,
+      'the by-id resolver must apply the same predicate as the list form; a passthrough '
+      + 'here would satisfy the call-site check while scoping nothing')
+  })
+
+  it('the by-id resolver is the only way a by-id branch reaches a record', () => {
+    // The structural half of VUL-03: thirty-one branches had a raw `.find()`
+    // over a collection, and fixing one of them would have left thirty. Any
+    // future branch that reaches for the collection directly fails here rather
+    // than in an audit.
+    const source = code()
+    const raw = [...source.matchAll(/data(?:\[[^\]]+\]|\.[a-z_]+)\.find\(\(item\) => item\.id === route\.id\)/g)]
+    assert.deepEqual(raw.map((m) => m[0]), [],
+      'a by-id branch resolved a record without the partner predicate')
   })
 
   it('no call site is required to pass a context for scoping to apply', () => {

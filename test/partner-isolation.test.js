@@ -34,6 +34,11 @@ const TOKENS = JSON.stringify([
   { token: 'tok-a', scopes: ['read:*'], partner_org: 'orgA' },
   { token: 'tok-b', scopes: ['read:*'], partner_org: 'orgB' },
   { token: 'tok-plain', scopes: ['read:*'] },
+  // The by-id write tests need a token that can reach the route at all. A
+  // 403 from the scope gate would prove nothing about partner scoping, so the
+  // writer carries the scope the route requires and the partner claim under
+  // test.
+  { token: 'tok-a-writer', scopes: ['read:*', 'write:reports'], partner_org: 'orgA' },
 ])
 
 async function withServer(fn) {
@@ -261,6 +266,104 @@ describe('the calibration figures are scoped like the records beside them', () =
 			const { data } = await (await get(base, '/api/v1/assessments', 'tok-a')).json()
 			assert.ok(!data.calibration.some((r) => r.type === 'climate_conflict_risk'),
 				'a type with no visible scores is absent, not zero')
+		})
+	})
+})
+
+describe('a partner claim is enforced on the by-id read too', () => {
+	// VUL-03. The list form was scoped and the by-id form was not. `GET
+	// /api/v1/reports` returned only orgA's reports while `GET
+	// /api/v1/reports/<orgB-id>` returned orgB's, because the by-id branch was
+	// `data.reports.find((item) => item.id === route.id)` — a lookup with no
+	// predicate at all. An id is not a secret: every listing, every export and
+	// every link in a report the two organisations share carries one.
+	//
+	// Thirty-one call sites had that shape across nine handlers. Fixing one of
+	// them would have been the bug again one route over, so the fix is a single
+	// resolver every by-id branch goes through, and these tests drive the routes
+	// rather than the resolver — a test of the helper would pass while a handler
+	// still called `.find()`.
+	const reports = [
+		{ id: 'rep_a', title: 'A situation report', partner_org: 'orgA', status: 'draft' },
+		{ id: 'rep_b', title: 'B situation report', partner_org: 'orgB', status: 'draft' },
+		{ id: 'rep_untagged', title: 'Untagged report', status: 'draft' },
+	]
+
+	it('refuses another organisation\'s report by id', async () => {
+		await withServer(async (base, store) => {
+			await store.merge({ reports })
+			const res = await get(base, '/api/v1/reports/rep_b', 'tok-a')
+			assert.equal(res.status, 404, 'orgA read orgB\'s report by id')
+		})
+	})
+
+	it('still serves the caller\'s own report by id', async () => {
+		// The scoping must not be a blanket refusal: a partner that cannot read
+		// its own record by id has lost a working feature, not a leak.
+		await withServer(async (base, store) => {
+			await store.merge({ reports })
+			const res = await get(base, '/api/v1/reports/rep_a', 'tok-a')
+			assert.equal(res.status, 200)
+			assert.equal((await res.json()).data.id, 'rep_a')
+		})
+	})
+
+	it('hides an untagged report by id, the same as in the listing', async () => {
+		await withServer(async (base, store) => {
+			await store.merge({ reports })
+			const res = await get(base, '/api/v1/reports/rep_untagged', 'tok-a')
+			assert.equal(res.status, 404, 'an untagged record is not this partner\'s')
+		})
+	})
+
+	it('leaves an unscoped token the whole platform by id', async () => {
+		await withServer(async (base, store) => {
+			await store.merge({ reports })
+			for (const id of ['rep_a', 'rep_b', 'rep_untagged']) {
+				const res = await get(base, `/api/v1/reports/${id}`, 'tok-plain')
+				assert.equal(res.status, 200, `${id} was hidden from a platform token`)
+			}
+		})
+	})
+
+	it('refuses another organisation\'s record on the export by id', async () => {
+		await withServer(async (base, store) => {
+			await store.merge({ reports })
+			const res = await get(base, '/api/v1/reports/rep_b/export.md', 'tok-a')
+			assert.equal(res.status, 404, 'orgB\'s report was rendered for orgA')
+		})
+	})
+
+	it('refuses another organisation\'s record on a mutating by-id route', async () => {
+		// The write side matters more than the read side: a PATCH is how orgA
+		// would change a record it must not see, and a 200 here is worse than a
+		// leaked body because the change persists.
+		await withServer(async (base, store) => {
+			await store.merge({ reports })
+			const res = await fetch(`${base}/api/v1/reports/rep_b`, {
+				method: 'PATCH',
+				headers: { authorization: 'Bearer tok-a-writer', 'content-type': 'application/json' },
+				body: JSON.stringify({ title: 'rewritten by orgA' }),
+			})
+			assert.equal(res.status, 404, 'orgA patched orgB\'s report')
+			const after = await store.read()
+			assert.equal(after.reports.find((r) => r.id === 'rep_b').title, 'B situation report')
+		})
+	})
+
+	it('agrees with the listing about a record that carries no partner claim', async () => {
+		// `webhook_subscriptions` are platform configuration, not partner data:
+		// they carry no `partner_org` and never will. Whatever a deployment
+		// decides about a partner token reading them, the by-id form must give
+		// the same answer as the list form — a by-id read that is more
+		// permissive than the listing is the leak, and one that is stricter is a
+		// feature that works in the console and 404s on refresh.
+		await withServer(async (base, store) => {
+			await store.merge({ webhook_subscriptions: [{ id: 'wh_1', url: 'https://example.test/hook', events: ['alert.created'] }] })
+			const listed = await (await get(base, '/api/v1/webhooks', 'tok-a')).json()
+			const byId = await get(base, '/api/v1/webhooks/wh_1', 'tok-a')
+			assert.equal(byId.status, listed.data.length ? 200 : 404,
+				'the by-id read disagreed with the listing about the same record')
 		})
 	})
 })

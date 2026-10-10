@@ -959,6 +959,46 @@ async function handleApiRequest(store, req, res, url, { checkWebhookUrl, idempot
   return runWithRequestContext(auth, () => handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl, idempotency }))
 }
 
+/**
+ * VUL-03. The one way a by-id route resolves a record.
+ *
+ * The list form of every collection was scoped and the by-id form was not.
+ * `GET /api/v1/reports` returned only the caller's organisation's reports while
+ * `GET /api/v1/reports/<someone-else's-id>` returned the other organisation's,
+ * because the by-id branch was
+ *
+ *     data.reports.find((item) => item.id === route.id)
+ *
+ * — a lookup with no predicate at all. Thirty-one branches across nine handlers
+ * had that shape. An id is not a secret: it appears in every listing, in every
+ * export and in every link, so this is a per-object authorization gap that holds
+ * for an authenticated, scoped caller.
+ *
+ * The fix is not thirty-one predicates. Thirty-one copies of a predicate is
+ * thirty-two chances to write it wrong, and the three `filterRecords` call sites
+ * that omitted their context are the proof: scoping that is opt-in is scoping
+ * that gets missed. So the predicate lives here once and every by-id branch
+ * calls this, which also means a route added later cannot have a by-id form
+ * that disagrees with its own listing.
+ *
+ * `isDeleted` is applied for the caller that asks, not unconditionally: the
+ * operational routes accept `?include_deleted=true` and their by-id form has to
+ * honour the same switch, or a record the console shows in the archive would
+ * 404 on refresh.
+ *
+ * Returns `null` for "not there, or not yours". The two are the same answer on
+ * purpose: a 403 on another organisation's id confirms the id exists, which
+ * turns a scoped listing into an id oracle.
+ */
+function findVisible(records, id, { includeDeleted = false } = {}) {
+  if (!id) return null
+  const [record] = filterRecords(records || [], new URLSearchParams(''), {}, { unlimited: true })
+    .filter((item) => item.id === id)
+  if (!record) return null
+  if (!includeDeleted && isDeleted(record)) return null
+  return record
+}
+
 async function handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl, idempotency } = {}) {
   // An `/api/v1/` path reached dispatch. Cleared again if it matches nothing, so
   // the metric label distinguishes "a route we served" from "a path we did not
@@ -2658,7 +2698,7 @@ async function handleIngestionRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.kind === 'schedules' && route.id) {
-    const record = data.ingestion_schedules.find((item) => item.id === route.id)
+    const record = findVisible(data.ingestion_schedules, route.id)
     if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Ingestion schedule not found' })
       return
@@ -2687,7 +2727,7 @@ async function handleIngestionRoute(store, data, req, res, url, route) {
 
   if (req.method === 'PATCH' && route.kind === 'schedules' && route.id) {
     const body = await readRequestJson(req)
-    const existing = data.ingestion_schedules.find((item) => item.id === route.id)
+    const existing = findVisible(data.ingestion_schedules, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Ingestion schedule not found' })
       return
@@ -2735,7 +2775,7 @@ async function handleIngestionRoute(store, data, req, res, url, route) {
 
   if (req.method === 'POST' && route.kind === 'run-one' && route.id) {
     const body = await readRequestJson(req)
-    const schedule = data.ingestion_schedules.find((item) => item.id === route.id)
+    const schedule = findVisible(data.ingestion_schedules, route.id)
     if (!schedule) {
       jsonResponse(res, 404, { success: false, error: 'Ingestion schedule not found' })
       return
@@ -2808,7 +2848,7 @@ async function handleReportingRoute(store, data, req, res, url, route, { checkWe
 async function handleReportTemplateRoute(store, data, req, res, url, route) {
   if (req.method === 'POST' && route.action === 'copy') {
     const body = await readRequestJson(req)
-    const existing = data.report_templates.find((item) => item.id === route.id)
+    const existing = findVisible(data.report_templates, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Report template not found' })
       return
@@ -2832,7 +2872,7 @@ async function handleReportTemplateRoute(store, data, req, res, url, route) {
     return
   }
   if (req.method === 'GET' && route.id) {
-    const record = data.report_templates.find((item) => item.id === route.id)
+    const record = findVisible(data.report_templates, route.id)
     if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Report template not found' })
       return
@@ -2850,7 +2890,7 @@ async function handleReportTemplateRoute(store, data, req, res, url, route) {
   }
   if (req.method === 'PATCH' && route.id) {
     const body = await readRequestJson(req)
-    const existing = data.report_templates.find((item) => item.id === route.id)
+    const existing = findVisible(data.report_templates, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Report template not found' })
       return
@@ -2866,7 +2906,7 @@ async function handleReportTemplateRoute(store, data, req, res, url, route) {
 
 async function handleReportRoute(store, data, req, res, url, route, { checkWebhookUrl } = {}) {
   if (req.method === 'GET' && route.exportFormat) {
-    const report = data.reports.find((item) => item.id === route.id)
+    const report = findVisible(data.reports, route.id)
     if (!report) {
       jsonResponse(res, 404, { success: false, error: 'Report not found' })
       return
@@ -2902,7 +2942,7 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
     return
   }
   if (req.method === 'GET' && route.id) {
-    const record = data.reports.find((item) => item.id === route.id)
+    const record = findVisible(data.reports, route.id)
     if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Report not found' })
       return
@@ -2936,7 +2976,7 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
   }
   if (req.method === 'PATCH' && route.id && !route.action) {
     const body = await readRequestJson(req)
-    const existing = data.reports.find((item) => item.id === route.id)
+    const existing = findVisible(data.reports, route.id)
     const record = updateReport(existing, body, data)
     const log = actionLog('reports', 'updated', record, body.actor, req.__auth?.subject)
     await store.merge({ reports: [record], action_logs: [log] })
@@ -2945,7 +2985,7 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
   }
   if (req.method === 'POST' && route.action === 'generate') {
     const body = await readRequestJson(req)
-    const existing = data.reports.find((item) => item.id === route.id)
+    const existing = findVisible(data.reports, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Report not found' })
       return
@@ -2966,7 +3006,7 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
     // claim the report carries: stored on the record, logged as an action,
     // and refused by code when the model invents a figure it was not given.
     const body = await readRequestJson(req)
-    const existing = data.reports.find((item) => item.id === route.id)
+    const existing = findVisible(data.reports, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Report not found' })
       return
@@ -3023,7 +3063,7 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
 
   if (req.method === 'POST' && route.action === 'approve') {
     const body = await readRequestJson(req)
-    const existing = data.reports.find((item) => item.id === route.id)
+    const existing = findVisible(data.reports, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Report not found' })
       return
@@ -3036,7 +3076,7 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
   }
   if (req.method === 'POST' && route.action === 'distribute') {
     const body = await readRequestJson(req)
-    const existing = data.reports.find((item) => item.id === route.id)
+    const existing = findVisible(data.reports, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Report not found' })
       return
@@ -3072,7 +3112,7 @@ async function handleReportDistributionRoute(store, data, req, res, url, route, 
     jsonResponse(res, 200, { success: true, ...collectionPage(data.report_distribution_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_distribution_runs' }) })
     return
   }
-  const run = data.report_distribution_runs.find((item) => item.id === route.id)
+  const run = findVisible(data.report_distribution_runs, route.id)
   if (!run) {
     jsonResponse(res, 404, { success: false, error: 'Report distribution not found' })
     return
@@ -3119,7 +3159,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route, { ch
     return
   }
   if (req.method === 'GET' && route.id) {
-    const record = data.report_schedules.find((item) => item.id === route.id)
+    const record = findVisible(data.report_schedules, route.id)
     if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })
       return
@@ -3137,7 +3177,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route, { ch
   }
   if (req.method === 'PATCH' && route.id) {
     const body = await readRequestJson(req)
-    const existing = data.report_schedules.find((item) => item.id === route.id)
+    const existing = findVisible(data.report_schedules, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })
       return
@@ -3150,7 +3190,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route, { ch
   }
   if (req.method === 'POST' && route.action === 'run') {
     const body = await readRequestJson(req)
-    const schedule = data.report_schedules.find((item) => item.id === route.id)
+    const schedule = findVisible(data.report_schedules, route.id)
     if (!schedule) {
       jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })
       return
@@ -3168,7 +3208,7 @@ async function handleReportScheduleRunRoute(store, data, req, res, url, route, {
     jsonResponse(res, 200, { success: true, ...collectionPage(data.report_schedule_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_schedule_runs' }) })
     return
   }
-  const run = data.report_schedule_runs.find((item) => item.id === route.id)
+  const run = findVisible(data.report_schedule_runs, route.id)
   if (!run) {
     jsonResponse(res, 404, { success: false, error: 'Report schedule run not found' })
     return
@@ -3422,7 +3462,7 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
 
   if (req.method === 'POST' && route.kind === 'send-alert') {
     const body = await readRequestJson(req)
-    const alert = data.alert_events.find((item) => item.id === route.id)
+    const alert = findVisible(data.alert_events, route.id)
     if (!alert) {
       jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
       return
@@ -3771,6 +3811,11 @@ async function handleAlertRoute(store, data, req, res, url, route) {
   // The generic collection branches below read `data[route.collection]`, and a
   // route that is a *view* rather than a collection has no such key — so these
   // are answered before they are reached.
+  //
+  // Read here for the same reason the generic collection route reads it: the
+  // by-id form has to answer with what the list form answered with, and the
+  // list form honours this switch.
+  const includeDeleted = url.searchParams.get('include_deleted') === 'true'
   if (req.method === 'GET' && route.kind === 'outcome-reasons') {
     // The closed set, served rather than duplicated in a client. A determination
     // UI with its own copy of these lists is a fourth definition of what a false
@@ -3788,7 +3833,7 @@ async function handleAlertRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.format === 'cap') {
-    const record = data[route.collection].find((item) => item.id === route.id)
+    const record = findVisible(data[route.collection], route.id, { includeDeleted })
     if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
       return
@@ -3810,7 +3855,7 @@ async function handleAlertRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.id) {
-    const record = data[route.collection].find((item) => item.id === route.id)
+    const record = findVisible(data[route.collection], route.id, { includeDeleted })
     if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Record not found' })
       return
@@ -3848,7 +3893,7 @@ async function handleAlertRoute(store, data, req, res, url, route) {
 
   if (req.method === 'PATCH' && route.id && !route.action) {
     const body = await readRequestJson(req)
-    const existing = data[route.collection].find((item) => item.id === route.id)
+    const existing = findVisible(data[route.collection], route.id, { includeDeleted })
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Record not found' })
       return
@@ -3864,7 +3909,7 @@ async function handleAlertRoute(store, data, req, res, url, route) {
 
   if (req.method === 'POST' && route.action === 'outcome') {
     const body = await readRequestJson(req)
-    const alert = data.alert_events.find((item) => item.id === route.id)
+    const alert = findVisible(data.alert_events, route.id)
     if (!alert) {
       jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
       return
@@ -3887,7 +3932,7 @@ async function handleAlertRoute(store, data, req, res, url, route) {
 
   if (req.method === 'POST' && route.id && route.action && route.collection === 'alert_events') {
     const body = await readRequestJson(req)
-    const existing = data.alert_events.find((item) => item.id === route.id)
+    const existing = findVisible(data.alert_events, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
       return
@@ -3919,7 +3964,7 @@ async function handleTriggerRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.id) {
-    const record = (data.trigger_protocols || []).find((item) => item.id === route.id)
+    const record = findVisible(data.trigger_protocols, route.id)
     if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
       return
@@ -3939,7 +3984,7 @@ async function handleTriggerRoute(store, data, req, res, url, route) {
 
   if (req.method === 'PATCH' && route.id && !route.action) {
     const body = await readRequestJson(req)
-    const existing = (data.trigger_protocols || []).find((item) => item.id === route.id)
+    const existing = findVisible(data.trigger_protocols, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
       return
@@ -3952,7 +3997,7 @@ async function handleTriggerRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'POST' && route.id && route.action === 'backtest') {
-    const existing = (data.trigger_protocols || []).find((item) => item.id === route.id)
+    const existing = findVisible(data.trigger_protocols, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
       return
@@ -3966,7 +4011,7 @@ async function handleTriggerRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'POST' && route.id && route.action === 'shadow-run') {
-    const existing = (data.trigger_protocols || []).find((item) => item.id === route.id)
+    const existing = findVisible(data.trigger_protocols, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
       return
@@ -3993,21 +4038,11 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.id) {
-    // Through `filterRecords`, so a by-id read carries the same
-    // partner-organisation predicate as the list form.
-    //
-    // This was `data[route.collection].find((item) => item.id === route.id)` with
-    // no scoping expression at all — so given an id from any listing, partner A
-    // read partner B's single record directly. There was nothing to bypass
-    // because there was nothing there: the list form's missing context was a
-    // bug, and this was the same bug with no predicate to remove.
-    //
-    // Routed through the list helper rather than reimplementing the predicate,
-    // so the two forms cannot diverge again. `unlimited` because there is at
-    // most one match.
-    const [record] = filterRecords(data[route.collection], new URLSearchParams(''), {}, { unlimited: true })
-      .filter((item) => item.id === route.id)
-    if (!record || (isDeleted(record) && !includeDeleted)) {
+    // Through `findVisible`, so a by-id read carries the same
+    // partner-organisation predicate as the list form. This branch was the one
+    // the earlier fix reached; VUL-03 is the other thirty.
+    const record = findVisible(data[route.collection], route.id, { includeDeleted })
+    if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Record not found' })
       return
     }
@@ -4048,7 +4083,13 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
       return
     }
     const body = await readRequestJson(req)
-    const existing = data[route.collection].find((item) => item.id === route.id)
+    // `includeDeleted` unconditionally here, unlike the read branch. A write
+    // has to see the soft-deleted record to answer 409 rather than 404: the
+    // record exists, the caller may not change it, and those are different
+    // answers. Whether a caller may mutate a record is a separate question from
+    // whether it may read one, and the partner predicate still applies either
+    // way — `findVisible` is what carries it.
+    const existing = findVisible(data[route.collection], route.id, { includeDeleted: true })
     if (isDeleted(existing)) {
       jsonResponse(res, 409, { success: false, error: 'Record is deleted' })
       return
@@ -4066,7 +4107,9 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
       return
     }
     const body = await readRequestJson(req)
-    const existing = data[route.collection].find((item) => item.id === route.id)
+    // Same reason as PATCH above: a second DELETE answers 409, which needs the
+    // already-deleted record in hand.
+    const existing = findVisible(data[route.collection], route.id, { includeDeleted: true })
     const record = buildSoftDelete(route.collection, existing, body.actor || req.__auth?.subject, data)
     const log = actionLog(route.collection, 'deleted', record, body.actor || req.__auth?.subject)
     await store.merge({ [route.collection]: [record], action_logs: [log] })
@@ -4185,7 +4228,7 @@ async function handleWebhookRoute(store, data, req, res, url, route) {
   }
 
   if (req.method === 'GET' && route.id) {
-    const record = (data.webhook_subscriptions || []).find((item) => item.id === route.id)
+    const record = findVisible(data.webhook_subscriptions, route.id)
     if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Webhook subscription not found' })
       return
@@ -4209,7 +4252,7 @@ async function handleWebhookRoute(store, data, req, res, url, route) {
 
   if (req.method === 'PATCH' && route.id) {
     const body = await readRequestJson(req)
-    const existing = (data.webhook_subscriptions || []).find((item) => item.id === route.id)
+    const existing = findVisible(data.webhook_subscriptions, route.id)
     if (!existing) {
       jsonResponse(res, 404, { success: false, error: 'Webhook subscription not found' })
       return
