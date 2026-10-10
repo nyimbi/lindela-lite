@@ -51,7 +51,7 @@ import { observationSeries, recordHistory, projectableCollections } from './seri
 import { collectionsForRequest, needsHistory } from './route-manifests.js'
 import { describeWatermarkState } from './watermarks.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
-import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection } from './stac.js'
+import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection, STAC_READ_COLLECTIONS } from './stac.js'
 import { renderCapXml } from './cap.js'
 import { emit, emitMany, dispatchPending, outboxRollup } from './outbox.js'
 import { summarizeRoadAccess } from './road-access.js'
@@ -529,13 +529,21 @@ export function createServer(options = {}) {
         // open catalogue adds `/stac` to LINDELA_LITE_PUBLIC_PATHS, which is the
         // same switch `/ready` and `/health` go through, so the decision is
         // recorded in one place rather than inferred from a code path.
-        if (isAuthConfigured() && !isPublicPath(url.pathname)) {
-          if (!authenticate(req)) {
-            jsonResponse(res, 401, { success: false, error: 'Unauthorized' })
-            return
-          }
+        const stacAuth = isAuthConfigured() && !isPublicPath(url.pathname) ? authenticate(req) : null
+        if (isAuthConfigured() && !isPublicPath(url.pathname) && !stacAuth) {
+          jsonResponse(res, 401, { success: false, error: 'Unauthorized' })
+          return
         }
-        await handleStacRoute(await storeProvider, req, res, url)
+        // ARC-08. The context, not just the gate. `authenticate` proves *a*
+        // caller; it says nothing about *which* partner, and this route returns
+        // before `handleApi` publishes the identity. So `handleStacRoute` read
+        // the whole store with no partner filter and served every organisation's
+        // clinic and water-point locations to a token scoped to one — the auth
+        // gate answered 401 correctly and the isolation was still absent.
+        // Publishing the context is what lets the read below apply it, and it is
+        // also what `filterRecords` reads if a future handler forgets to pass it.
+        const stacStore = await storeProvider
+        await runWithRequestContext(stacAuth, () => handleStacRoute(stacStore, req, res, url))
         return
       }
 
@@ -669,7 +677,18 @@ function validateRouteEndpoints(endpoints) {
 }
 
 async function handleStacRoute(store, req, res, url) {
-  const data = await store.read()
+  // ARC-08. A manifest read, scoped to the caller — not `store.read()`.
+  //
+  // Two defects in one line. The whole-store read materialised all 63
+  // collections to answer a request that touches four, on the one surface many
+  // deployments deliberately leave open. And it ran with no partner scope, so a
+  // token for one organisation was served another's service assets. Both come
+  // from the same omission: this route is not an `/api/v1/` route, so it never
+  // went through the manifest-and-scope read every other route uses.
+  const data = await store.read({
+    collections: STAC_READ_COLLECTIONS,
+    partnerOrg: currentRequestAuth()?.partner_org || null,
+  })
   const baseUrl = `http://${req.headers.host || 'localhost'}`
 
   if (req.method === 'GET' && url.pathname === '/stac/catalog.json') {

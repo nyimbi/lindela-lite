@@ -484,6 +484,37 @@ max 5,000). A paging bug is fixed in one and persists in the other.
 field. Clients string-match `error` text. One 422, five 409, twenty-three 405.
 
 ### ARC-08 — MEDIUM — The collection manifest is applied at one call site; nine others bypass it
+
+**Fixed 2026-10-11, partially.** The `/stac/*` and `/ogc/*` half is fixed and it
+was worse than registered. Those routes return from `dispatch` *before*
+`handleApi` calls `runWithRequestContext`, so `handleStacRoute`'s `store.read()`
+had no partner scope — a token scoped to `org-a` was served `org-b`'s service
+assets, which are clinic, water-point and road locations. The R-13 auth gate was
+present and correct the whole time: it proves *a* caller, never *which* partner,
+and an authenticated-but-unscoped catalogue is the leak. The route now publishes
+the request context and reads through a manifest, so the read is both narrower
+(4 collections, not 63) and scoped. `STAC_COLLECTIONS` gained a `collections`
+field beside each resolver — a resolver that can disagree with the read list is
+the defect again — and `STAC_READ_COLLECTIONS` is the union. Canaried in both
+directions: reverting the read fails 3 cases, dropping only the context fails 2.
+Guarded by four cases in `test/stac-authz.test.js`.
+
+The remaining whole-store reads are **not** this defect and are left as they
+are, each for a reason the code now states:
+
+- `src/ingestion.js:177` — the run needs the whole store: it seeds per-source
+  watermarks and writes nine output collections.
+- `src/analytics.js:227`, `:286` — `refreshAnalytics` reads every input
+  collection; `readDerived` reads exactly the two it compares against, which is
+  already a manifest and needs no helper.
+- `src/kpi.js:431` — `computeMonthlyKpiSeries` reads five collections, and the
+  route is already mapped to the wider of the two KPI surfaces.
+- `src/server.js` `/api/v1/health`, `/metrics`, and the trigger-protocol run —
+  all three call `counts()`, which reads 22 collections by construction.
+- `src/server.js:2759` — a deliberate re-read after ingestion and
+  `refreshAnalytics` have written, so a narrow manifest would be answering from
+  a snapshot the route knows is stale.
+
 `store.read({collections: collectionsForRequest(…)})` is used once
 (`src/server.js:900`); direct whole-store reads remain at `src/server.js:234, 490,
 839, 861, 2424, 4344`, `src/kpi.js:395`, `src/analytics.js:226, 285`,
@@ -492,6 +523,20 @@ materialise the entire store. ENH-07's optimisation is half-applied; the widest
 readers are the un-migrated ones.
 
 ### ARC-09 — MEDIUM — Storage-format knowledge leaks outside the store layer
+
+**Fixed 2026-10-11.** `rowProvenanceLine` now calls `payloadHashFor` from
+`src/provenance.js` instead of spelling out `payload_hash || content_hash ||
+'none recorded'`. The chain was worse than a leak: it read the record shape
+*differently* from the two modules that own it, so an export could print
+`none recorded` for a row whose hash the lineage table named from the same
+object. `payloadHashFor` is presence-based and derives the hash when none is
+stored, so report output and lineage output now agree by construction. The
+`none recorded` sentinel survives with a narrower meaning — "no row to hash"
+rather than "no stored hash" — because `payloadHashFor` always returns a digest
+(`{}` hashes to a real value) and a truthiness test on its result is dead code.
+Guarded by three cases in `test/export-narrative.test.js`, canaried against the
+old implementation.
+
 `src/reports.js:1029` prints `record.payload_hash || record.content_hash || 'none recorded'`
 — the report renderer knows the dedup column; `src/ingestion.js:392` sets it. Three
 owners of the record shape; a storage-schema change breaks report output silently.

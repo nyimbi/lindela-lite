@@ -20,21 +20,43 @@ export const STAC_COLLECTIONS = Object.freeze([
     id: 'hazard-events',
     title: 'Hazard Events',
     description: 'Hazard events from disaster monitoring systems',
+    // ARC-08. Which store collections the resolver reads, declared beside it.
+    // The catalogue used to `store.read()` the whole store — 63 collections to
+    // answer a request that touches four — and it did so *outside* the request
+    // context, so no partner scope was applied either. Both halves of the fix
+    // need this list, and a list a resolver can disagree with is the defect
+    // again: a new STAC collection added without its `collections` would be
+    // silently empty on the narrow read.
+    collections: Object.freeze(['hazard_events', 'conflict_events']),
     resolve: (data) => [...(data.hazard_events || []), ...(data.conflict_events || [])],
   },
   {
     id: 'service-assets',
     title: 'Service Assets',
     description: 'Critical service assets and infrastructure',
+    collections: Object.freeze(['service_assets']),
     resolve: (data) => data.service_assets || [],
   },
   {
     id: 'risk-scores',
     title: 'Risk Scores',
     description: 'Computed flood and conflict risk scores',
+    collections: Object.freeze(['risk_scores']),
     resolve: (data) => data.risk_scores || [],
   },
 ])
+
+/**
+ * Every store collection the catalogue reads, deduplicated.
+ *
+ * The union rather than a per-collection lookup, because one read serves the
+ * whole request and the request names its collection in the path — deciding
+ * after the read which collection to ask for would be a second round trip for a
+ * saving of three arrays.
+ */
+export const STAC_READ_COLLECTIONS = Object.freeze(
+  [...new Set(STAC_COLLECTIONS.flatMap((c) => c.collections))],
+)
 
 /** The records behind a collection id, or null when the id is not one of ours. */
 export function resolveStacCollection(data, collectionId) {
