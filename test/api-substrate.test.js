@@ -356,7 +356,11 @@ describe('readiness is a different question from health', () => {
       assert.equal(body.store.error, null)
       assert.ok(Number.isFinite(body.store.latency_ms))
       assert.ok(body.store.mode)
-      assert.equal(body.idempotency.in_process, true, 'the guarantee is bounded, and the bound is stated')
+      assert.equal(body.idempotency.durable, true,
+        'a JsonStore can lock, so the guarantee is durable, and the bound is stated')
+      assert.equal(body.idempotency.mode, 'durable')
+      assert.equal(body.idempotency.collection, 'idempotency_keys')
+      assert.equal(body.idempotency.ttl_hours, 24)
     })
   })
 

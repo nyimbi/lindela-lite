@@ -743,13 +743,41 @@ export function jsonResponse(res, status, body, headers = {}, req = res?.req || 
     }
   }
   if (!outgoing['cache-control']) outgoing['cache-control'] = 'no-store'
-  // Idempotency replay needs the body that was actually sent. Captured here,
-  // where every response passes, rather than at the call sites.
+  // Idempotency replay needs the body that was actually sent, and it needs the
+  // receipt committed *before* that body reaches the client.
+  //
+  // The hook used to be called synchronously with its result discarded, which
+  // made the guarantee a race: the response flushed as soon as `res.end` ran, so
+  // a crash or a deploy between the handler returning and the receipt landing
+  // left a client holding a 201 for work no retry would recognise — the write
+  // re-runs, which is exactly what CON-06 is. The hook now returns the commit,
+  // and when it does, the response is sent after it rather than before.
+  //
+  // The function stays synchronous for every other caller, which is all of
+  // them: only the idempotency path installs a hook, and only that path takes
+  // the deferred branch below. Making this `async` would change the return type
+  // of a function called from several hundred sites, most of which do not await
+  // it, and the failure that produces is a response written after its own
+  // handler returned.
   if (res.__capture) {
+    let commit = null
     try {
-      res.__capture(status, JSON.parse(payload))
+      commit = res.__capture(status, JSON.parse(payload))
     } catch {
       // A non-JSON body is not replayable; the first attempt still succeeded.
+    }
+    if (commit && typeof commit.then === 'function') {
+      // Sent either way. A receipt that could not be written is a lost
+      // optimisation, not a failed request, and turning it into a 500 would
+      // report a completed write as a failed one.
+      commit.then(() => {
+        res.writeHead(status, outgoing)
+        res.end(payload)
+      }, () => {
+        res.writeHead(status, outgoing)
+        res.end(payload)
+      })
+      return
     }
   }
   res.writeHead(status, outgoing)

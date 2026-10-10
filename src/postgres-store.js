@@ -694,11 +694,17 @@ export class PostgresStore {
       const locked = {
         read: (options) => this.#readWith(client, options),
         merge: (partial) => this.#mergeLocked(client, partial),
-        // A locked caller reads and writes only. `write()` replaces the world
-        // and `remove()` deletes by id; neither is used by the outbox or the
-        // idempotency store, and a locked variant of either would be a new
-        // surface to reason about for no caller. Absent rather than present and
-        // throwing, so reaching for one is a TypeError that names it.
+        // CON-06. The idempotency store fetches one row by id and deletes the
+        // rows its sweep found expired, and both must be on this transaction:
+        // a `readOne` that went to the pool would read outside the lock, and a
+        // `remove` that took its own transaction would try to acquire the same
+        // advisory lock the caller is already holding — a self-deadlock, not a
+        // wait, because a transaction-scoped lock is not re-entrant.
+        readOne: (collection, id) => this.#readOneLocked(client, collection, id),
+        remove: (doomed) => this.#removeLocked(client, doomed),
+        // `write()` is absent deliberately: it replaces the world, and no
+        // locked body has any business doing that. Absent rather than present
+        // and throwing, so reaching for one is a TypeError that names it.
       }
       const result = await fn(locked)
       await client.query('COMMIT')
@@ -721,6 +727,36 @@ export class PostgresStore {
     }
     if (!writes.length) return
     await this.#mergeBody(client, writes)
+  }
+
+  /**
+   * One row by id, on the lock's own transaction.
+   *
+   * A `WHERE id = $1` rather than a read of the collection: the idempotency
+   * store looks a key up on every mutating request, and materialising the
+   * collection to find one row would make the durable path cost more than the
+   * in-process one it replaces by exactly the margin that made the old one
+   * attractive.
+   */
+  async #readOneLocked(client, collection, id) {
+    assertDeclaredCollection(collection)
+    const { rows } = await client.query(
+      'SELECT body FROM lite_records WHERE collection = $1 AND id = $2',
+      [collection, id],
+    )
+    return rows[0]?.body ?? null
+  }
+
+  /** The delete `remove()` does, on the lock's own transaction. */
+  async #removeLocked(client, { collection: doomedByCollection = {} } = {}) {
+    for (const [collection, ids] of Object.entries(doomedByCollection)) {
+      assertDeclaredCollection(collection)
+      if (!ids?.length) continue
+      await client.query(
+        'DELETE FROM lite_records WHERE collection = $1 AND id = ANY($2::text[])',
+        [collection, ids],
+      )
+    }
   }
 
   /**
@@ -839,14 +875,7 @@ export class PostgresStore {
     try {
       await client.query('BEGIN')
       await this.#lockWrites(client)
-      for (const [collection, ids] of Object.entries(doomedByCollection)) {
-        assertDeclaredCollection(collection)
-        if (!ids?.length) continue
-        await client.query(
-          'DELETE FROM lite_records WHERE collection = $1 AND id = ANY($2::text[])',
-          [collection, ids],
-        )
-      }
+      await this.#removeLocked(client, doomedByCollection)
       await client.query('COMMIT')
     } catch (error) {
       await client.query('ROLLBACK')

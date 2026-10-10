@@ -2797,10 +2797,21 @@ components:
           type: object
           description: >-
             The bound on the idempotency guarantee, reported rather than
-            implied. In-process, 24 hours, 1000 entries.
+            implied. `durable: true` means a retry survives a restart and is
+            seen by a second replica: the outcome is a row in the store, written
+            under the same cross-replica lock the outbox uses. `mode` is
+            `in-process` only for a store that cannot lock, which is a test
+            double — nothing in the environment selects it.
           properties:
-            in_process:
+            mode:
+              type: string
+              enum: [durable, in-process]
+            durable:
               type: boolean
+            collection:
+              type: string
+              nullable: true
+              description: The collection the outcomes live in. Null when in-process.
             ttl_hours:
               type: integer
         audit:

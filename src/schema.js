@@ -321,6 +321,9 @@ export function emptyStore() {
     // the breaker could not open. `/ingest/status` reported a health score for a
     // breaker that did not exist.
     connector_circuit: [],
+    // CON-06. Idempotency keys, durable rather than in-process. Must match
+    // COLLECTIONS in store.js — see record_versions above.
+    idempotency_keys: [],
   }
 }
 

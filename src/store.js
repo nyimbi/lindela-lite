@@ -215,6 +215,11 @@ export const SCHEMA = Object.freeze([
   // Circuit state that outlives the run that observed it — see the note in
   // `schema.js` for why a per-run object could never trip.
   { key: 'connector_circuit' },
+  // CON-06. Durable idempotency keys. The in-process store forgot a key on a
+  // restart, so a retry after a deploy re-ran the write it was retrying, and a
+  // queue drain of more than `maxEntries` mutations evicted keys still inside
+  // their window. One row per key, holding the outcome to replay.
+  { key: 'idempotency_keys' },
   // ENH-07. Quarantine homes are declared, not hand-named: one per
   // QUARANTINE_SOURCES entry, appended below.
 ].map((entry) => Object.freeze({ kind: 'records', ...entry })).concat(
@@ -517,14 +522,29 @@ export class JsonStore {
    * way, because a caller cannot tell which one an environment variable gave it
    * — that is the recurring defect in this codebase.
    *
-   * The locked store deliberately exposes only `read` and `merge`. A locked
-   * caller doing read-then-write-then-read is the whole use, and neither the
-   * outbox nor the idempotency store reaches for anything else.
+   * The locked store deliberately exposes only `read`, `readOne`, `merge` and
+   * `remove`. That is the whole vocabulary of a read-modify-write: the outbox
+   * needs read/merge, and the idempotency store additionally needs to fetch one
+   * row by id and to delete the rows its sweep found expired. `write()` is
+   * absent because it replaces the world, which is not something a locked body
+   * has any business doing.
+   *
+   * `readOne` is a filter over the same `read()` rather than a second read path,
+   * so a store that overrides `read` — the tests do — is still intercepted.
    */
   async withLock(fn) {
     return this.#serialise(() => fn({
       read: (options) => this.read(options),
+      readOne: async (collection, id) => {
+        const rows = (await this.read([collection]))[collection] || []
+        return rows.find((row) => row.id === id) || null
+      },
       merge: (partial) => this.merge(partial),
+      // The public shape — `{ collection: { name: [ids] } }` — passed straight
+      // through, so a locked body does not have to know which adapter it holds.
+      // That is the two-stores-disagree bug, and it showed up here first as an
+      // "Unknown collection: collection" from Postgres on a call JsonStore took.
+      remove: (doomed) => this.remove(doomed),
     }))
   }
 
@@ -540,17 +560,26 @@ export class JsonStore {
    * than being ignored — the same reasoning as COLLECTIONS itself.
    */
   async remove({ collection: doomedByCollection = {} } = {}) {
-    return this.#serialise(async () => {
-      const current = await this.read()
-      const next = { ...current }
-      for (const [collection, ids] of Object.entries(doomedByCollection)) {
-        assertDeclaredCollection(collection)
-        const doomed = new Set(ids || [])
-        if (!doomed.size) continue
-        next[collection] = (current[collection] || []).filter((record) => !doomed.has(record.id))
-      }
-      return this.#writeFile(next)
-    })
+    // Re-entrant for the same reason `merge()` is: `withLock` runs its body
+    // inside the chain and the idempotency store deletes an expired row from
+    // within one, so taking the chain again would wait on the tail it is
+    // running in. Routed through the public method rather than an internal one
+    // so a subclass that overrides `remove` still intercepts a locked delete.
+    if (chainContext.getStore() === this) return this.#removeNow(doomedByCollection)
+    return this.#serialise(() => this.#removeNow(doomedByCollection))
+  }
+
+  /** The delete, assuming the caller already holds the write chain. */
+  async #removeNow(doomedByCollection) {
+    const current = await this.read()
+    const next = { ...current }
+    for (const [collection, ids] of Object.entries(doomedByCollection)) {
+      assertDeclaredCollection(collection)
+      const doomed = new Set(ids || [])
+      if (!doomed.size) continue
+      next[collection] = (current[collection] || []).filter((record) => !doomed.has(record.id))
+    }
+    return this.#writeFile(next)
   }
 
   /**

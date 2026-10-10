@@ -40,7 +40,8 @@ import {
 } from './reports.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
-import { collectionPage, createIdempotencyStore, currentRequestAuth, filterRecords, jsonResponse, matchedAndPage, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
+import { collectionPage, currentRequestAuth, filterRecords, jsonResponse, matchedAndPage, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
+import { createIdempotencyFor } from './idempotency.js'
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor, piiSaltStatus } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
 import { executeTriggerProtocols } from './protocols.js'
@@ -441,6 +442,25 @@ export function createServer(options = {}) {
   // from here rather than from process start, so two servers in one test process
   // do not share an uptime and a test can place the clock where it needs it.
   const serverStartedAt = options.startedAt ?? Date.now()
+  // CON-06 / ENH-65. Per server, built from the store this server resolved, and
+  // not a module global. Two servers in one test process used to share one
+  // idempotency Map, which made the tests order-dependent — and a module global
+  // is a claim that there is one store, which stopped being true the moment the
+  // outbox needed a lock across replicas.
+  //
+  // Cached per store instance rather than rebuilt per request, because the
+  // in-process half holds promises that concurrent requests await: a store
+  // rebuilt per request would have no memory of the attempt in flight and would
+  // run the work twice, which is the defect this file exists to prevent.
+  let idempotencyOf = null
+  let idempotencyFor = null
+  const idempotency = (store) => {
+    if (idempotencyOf !== store) {
+      idempotencyFor = createIdempotencyFor(store, options.idempotencyOptions || {})
+      idempotencyOf = store
+    }
+    return idempotencyFor
+  }
   const handleRequest = async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
     const route = normalizeRoute(url.pathname)
@@ -537,7 +557,8 @@ export function createServer(options = {}) {
         return
       }
       if (url.pathname.startsWith('/api/v1/')) {
-        await handleApi(await storeProvider, req, res, url, { checkWebhookUrl })
+        const resolved = await storeProvider
+        await handleApi(resolved, req, res, url, { checkWebhookUrl, idempotency: idempotency(resolved) })
         return
       }
       await handleStatic(req, res, url.pathname)
@@ -790,14 +811,6 @@ function contingencyByFeature(rows) {
 }
 
 /**
- * One process, one store: the memory of an in-flight retry is the whole of the
- * problem idempotency keys solve here, so it lives in this process's memory.
- * A retry inside the window replays the original response byte for byte; a
- * retry after it writes again. The bound is reported, never implied.
- */
-const idempotency = createIdempotencyStore({ ttlMs: 24 * 60 * 60 * 1000, maxEntries: 1000 })
-
-/**
  * Scoped by caller, method and path before use.
  *
  * An unscoped key would let one caller name another's response: two partners
@@ -821,7 +834,7 @@ function idempotencyKey(req, subject, url) {
   return `${subject || 'anonymous'}\u0000${req.method}\u0000${url.pathname}\u0000${key}`
 }
 
-async function handleApi(store, req, res, url, { checkWebhookUrl } = {}) {
+async function handleApi(store, req, res, url, { checkWebhookUrl, idempotency } = {}) {
   let key
   try {
     // Resolved here as well as inside handleApiRequest: the key must be scoped
@@ -834,7 +847,7 @@ async function handleApi(store, req, res, url, { checkWebhookUrl } = {}) {
     jsonResponse(res, error.statusCode || 400, { success: false, error: error.message })
     return
   }
-  if (!key) return handleApiRequest(store, req, res, url, { checkWebhookUrl })
+  if (!key) return handleApiRequest(store, req, res, url, { checkWebhookUrl, idempotency })
 
   // Buffered before dispatch so a retry can be compared with the attempt it
   // claims to repeat. `readRawBody` memoises, so the handler still reads a
@@ -859,7 +872,7 @@ async function handleApi(store, req, res, url, { checkWebhookUrl } = {}) {
   // both executed. The window was the whole handler: a client that timed out on
   // `POST /api/v1/ingest/run-due` and retried re-ran the entire ingestion, and
   // the duplicate was only prevented downstream by the content hash.
-  const replay = idempotency.claim(key, fingerprint)
+  const replay = await idempotency.claim(key, fingerprint)
   if (replay.conflict) {
     jsonResponse(res, replay.status, replay.body, { 'idempotency-conflict': 'true' })
     return
@@ -868,6 +881,18 @@ async function handleApi(store, req, res, url, { checkWebhookUrl } = {}) {
     // Someone else is already doing this exact work. Wait for their answer
     // rather than doing it twice — and answer 409 if they fail, so a caller can
     // tell "not done" from "not done yet".
+    //
+    // A claim with no promise is one another *replica* holds: the durable store
+    // records that the key is claimed, and a promise cannot cross a process
+    // boundary. There is nothing here to await, so the caller is told to retry
+    // rather than being answered from an attempt this process cannot see.
+    if (!replay.promise) {
+      jsonResponse(res, 409, {
+        success: false,
+        error: 'A request with this Idempotency-Key is already being processed and has not completed. Retry shortly.',
+      }, { 'idempotency-in-flight': 'true' })
+      return
+    }
     const settled = await replay.promise
     if (settled?.error) {
       jsonResponse(res, 409, {
@@ -884,21 +909,34 @@ async function handleApi(store, req, res, url, { checkWebhookUrl } = {}) {
     return
   }
 
-  let captured = null
-  res.__capture = (status, body) => { captured = { status, body } }
+  // The claim is resolved from inside the response, not after it.
+  //
+  // Both branches return a commit that `jsonResponse` holds the response for:
+  // the receipt on success, the release on failure. Settling after the handler
+  // returned was the race CON-06 describes — the client already had its status
+  // line, so a crash in the gap left either a write no retry would recognise, or
+  // a key wedged in a claim that no later request could clear.
+  //
+  // The `finally` below is the backstop, not the mechanism. A handler that
+  // throws before writing any JSON leaves the claim unresolved, and a claim
+  // nothing ever clears is a key that can never be retried — so it is released
+  // there. `resolved` is what keeps that from releasing a key the hook already
+  // settled: a release after a settle would delete the receipt it just wrote.
+  let resolved = false
+  res.__capture = (status, body) => {
+    resolved = true
+    // Only a success is worth replaying. Caching a 500 would convert a
+    // transient failure into a permanent one for the length of the window.
+    if (status < 400) return idempotency.settle(key, status, body, fingerprint)
+    return idempotency.release(key)
+  }
   try {
-    await handleApiRequest(store, req, res, url, { checkWebhookUrl })
+    await handleApiRequest(store, req, res, url, { checkWebhookUrl, idempotency })
   } finally {
     delete res.__capture
-  }
-  // Only a success is worth replaying. Caching a 500 would convert a transient
-  // failure into a permanent one for the length of the window — and a failed
-  // claim is *released* rather than recorded, so the caller can retry at once
-  // instead of waiting out the TTL.
-  if (captured && captured.status < 400) {
-    idempotency.settle(key, captured.status, captured.body, fingerprint)
-  } else {
-    idempotency.release(key)
+    // Nothing wrote a JSON response, so the hook never ran. Released so the key
+    // is retryable at once rather than standing as a claim for its whole TTL.
+    if (!resolved) await idempotency.release(key)
   }
 }
 
@@ -911,17 +949,17 @@ async function handleApi(store, req, res, url, { checkWebhookUrl } = {}) {
  * request's identity by default, so the default is the secure one and a new
  * route cannot forget.
  */
-async function handleApiRequest(store, req, res, url, { checkWebhookUrl } = {}) {
+async function handleApiRequest(store, req, res, url, { checkWebhookUrl, idempotency } = {}) {
   // Resolve the identity once, here, and publish it for the whole dispatch.
   //
   // `authenticate` was already being called on this path for the idempotency
   // key, so this is not a second authentication — it is the same call, hoisted
   // so the answer is available before any handler runs rather than after.
   const auth = (isAuthConfigured() && !isPublicRequest(req.method, url.pathname) ? authenticate(req) : null) || null
-  return runWithRequestContext(auth, () => handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl }))
+  return runWithRequestContext(auth, () => handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl, idempotency }))
 }
 
-async function handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl } = {}) {
+async function handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl, idempotency } = {}) {
   // An `/api/v1/` path reached dispatch. Cleared again if it matches nothing, so
   // the metric label distinguishes "a route we served" from "a path we did not
   // recognise" — the second is what a scanner produces, one per request.
@@ -1068,7 +1106,18 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       ready,
       store: { mode: store.mode || 'custom', reachable: probe.ok, latency_ms: latency, error: probe.error },
       // Reported, not implied: the whole bound on the idempotency guarantee.
-      idempotency: { in_process: true, ttl_hours: 24 },
+      //
+      // `in_process` is gone rather than set to false, because it was never the
+      // right question. What a caller needs to know is whether a retry survives
+      // a restart, and that is `durable`. A store that cannot lock — a test
+      // double — gets the in-process implementation and reports it, which is the
+      // one case where the weaker guarantee is the honest answer.
+      idempotency: {
+        mode: idempotency?.mode || 'in-process',
+        durable: idempotency?.mode === 'durable',
+        collection: idempotency?.collection || null,
+        ttl_hours: Math.round((idempotency?.ttlMs ?? 0) / (60 * 60 * 1000)),
+      },
       // Two rollups that were computed and never read. A tampered action log
       // and a dead-lettered webhook were both invisible on the one endpoint a
       // load balancer and an operator already poll.
