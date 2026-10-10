@@ -21,6 +21,7 @@
  * skipped.
  */
 
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -67,6 +68,18 @@ function documentsIn(relative) {
 const broken = []
 let checked = 0
 
+/**
+ * Is this path excluded from the repository by `.gitignore`?
+ *
+ * Asked of git rather than reimplemented: a hand-rolled matcher is a second
+ * copy of `.gitignore`'s rules and drifts from it. When git is unavailable the
+ * answer is "no", because a check that cannot run must not invent failures.
+ */
+function isIgnored(absolute) {
+	const r = spawnSync('git', ['check-ignore', '-q', absolute], { cwd: root })
+	return r.status === 0
+}
+
 for (const rootEntry of ROOTS) {
 	for (const relative of documentsIn(rootEntry)) {
 		if (EXCLUDED.has(relative)) continue
@@ -88,6 +101,15 @@ for (const rootEntry of ROOTS) {
 			const resolved = path.resolve(path.dirname(file), target)
 			if (!fs.existsSync(resolved)) {
 				broken.push(`${relative} → ${raw}`)
+			} else if (isIgnored(resolved)) {
+				// It exists on this workstation and nowhere else. `docs/vision.md`
+				// linked four times to an internal tender document that
+				// `.gitignore` deliberately keeps out of the repository: every
+				// local run passed, and CI failed on a clean checkout, because
+				// this check asked the filesystem instead of the repository. A
+				// link to a file the repository does not contain is broken for
+				// every reader, so it is broken here too.
+				broken.push(`${relative} → ${raw} (exists locally but is not in the repository)`)
 			}
 		}
 	}

@@ -166,7 +166,9 @@ PURGE="${PURGE:-0}"
 case "$PORT" in
   ''|*[!0-9]*) die "port must be numeric (got: $PORT)" ;;
 esac
-[ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "port out of range: $PORT"
+if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  die "port out of range: $PORT"
+fi
 
 if [ -n "$API_KEY" ]; then
   # sed below is line-based; a key with a newline in it could not round-trip.

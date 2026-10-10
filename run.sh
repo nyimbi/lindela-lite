@@ -150,7 +150,9 @@ case "$PORT" in
   ''|*[!0-9]*) [ "$PORT" = "" ] || die "port must be numeric (got: $PORT)" ;;
 esac
 if [ "$PORT" != "" ]; then
-  [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "port out of range (1–65535): $PORT"
+  if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+    die "port out of range (1–65535): $PORT"
+  fi
 fi
 if [ "$PORT_EXPLICIT" = 0 ]; then
   PORT="${LINDELA_LITE_PORT:-4177}"
@@ -169,7 +171,9 @@ if [ "$PORT_EXPLICIT" = 0 ]; then
     PORT="$candidate"
   fi
 fi
-[ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "port out of range (1–65535): $PORT"
+if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  die "port out of range (1–65535): $PORT"
+fi
 
 step "Configuration"
 info "mode     $STORE_MODE"

@@ -15,7 +15,6 @@
  */
 
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, it } from 'node:test'
@@ -36,15 +35,30 @@ const METHODS = 'error|warn|info|debug'
  * describes it.
  */
 function sourceFiles() {
-  const out = execFileSync('rg', [
-    '-l',
-    '--glob', 'src/**/*.js',
-    '--glob', 'public/**/*.js',
-    '--glob', 'scripts/**/*.mjs',
-    `logger\\.(${METHODS})\\(`,
-    'src', 'public', 'scripts',
-  ], { cwd: ROOT, encoding: 'utf8' })
-  return out.split('\n').filter(Boolean)
+  const pattern = new RegExp(`logger\\.(${METHODS})\\(`)
+  const found = []
+  const walk = (dir, rel) => {
+    let entries
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue
+      const childRel = `${rel}/${entry.name}`
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) walk(full, childRel)
+      else if (/\.(js|mjs)$/.test(entry.name) && pattern.test(fs.readFileSync(full, 'utf8'))) {
+        found.push(childRel)
+      }
+    }
+  }
+  // The same three directories the `rg` invocation named, walked in Node so the
+  // check does not depend on ripgrep being on the runner's PATH — where its
+  // absence made this gate die `ENOENT` rather than scan.
+  for (const dir of ['src', 'public', 'scripts']) walk(path.join(ROOT, dir), dir)
+  return found.sort()
 }
 
 /**

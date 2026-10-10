@@ -297,8 +297,9 @@ Plus four non-human actors from the
 [JTBD catalogue](platform-jtbd-catalogue.md): schedulers hitting
 `POST /api/v1/ingest/run-due`, RapidPro SMS flows, webhook consumers on the
 outbox, and developers using the [connector SDK](connectors-sdk.md).
-Institutional context: UNICEF Innovation Fund
-([traceability](unicef-requirements-traceability.md)).
+Institutional context: UNICEF Innovation Fund (traceability: the internal
+requirements-traceability record, which is deliberately not published here —
+it carries bid requirements and scoring).
 
 ### Why
 
@@ -360,7 +361,7 @@ third party can reproduce every heuristic from the public fixtures and this
 repository itself.
 
 **Because institutional funders require it.** The UNICEF Venture Fund bid
-([traceability](unicef-requirements-traceability.md)) is the live example:
+(traceability: the internal requirements-traceability record) is the live example:
 openness and UNICEF-aligned KPIs (`src/kpi.js` — people reached, children U18,
 warning-to-action latency) rendered on `/co` are procurement conditions, not
 decoration.
@@ -443,9 +444,9 @@ mitigations are real but partial: pure Node with one runtime dependency, no
 build step, hermetic tests, and [llms.txt](../llms.txt) written so an agent
 or a stranger can navigate 28k lines — a takeover-ready codebase rather than
 a takeover-ready team. The honest answer is that maintainer continuity is an
-org-level risk in the [UNICEF traceability](unicef-requirements-traceability.md)
-sense: not a code question, and the highest-risk item in the pack is the same
-one the traceability doc flags for the financial statement (§3.11).
+org-level risk in the UNICEF traceability sense: not a code question, and the
+highest-risk item in the pack is the same one the internal traceability record
+flags for the financial statement (§3.11).
 
 ### 2. "What stops a competitor from forking everything — including the complement?"
 
@@ -546,7 +547,7 @@ to be unbounded.
 **Counts as:** the inventory printed on the surface, with the unknowables
 named.
 **Today:** one is already flagged in the
-[traceability doc](unicef-requirements-traceability.md): warning-to-action
+internal traceability record: warning-to-action
 latency is rendered as *signal-to-dispatch median*, with the divergence
 explained in the interface, because the platform observes its own SMS
 latency and not the field action that follows (§1.5). "People reached" is a

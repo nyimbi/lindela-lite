@@ -1,6 +1,5 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
 // Everything below the tables used to be prose typed into this file: a frozen
@@ -51,14 +50,65 @@ export function verifyRef(ref, root) {
  */
 export function callers(modulePath, root) {
   const stem = path.basename(modulePath, path.extname(modulePath))
-  const pattern = `(from|import\\(|lazy\\(|require\\()\\s*['"][^'"]*${stem}(\\.js)?['"]`
-  const r = spawnSync('rg', ['-l', '--glob', '!node_modules', '--glob', '!test/**', '-e', pattern, '.'],
-    { encoding: 'utf8', cwd: root })
-  if (r.status === 1) return []            // no matches is a real answer, not a failure
-  if (r.status !== 0) throw new Error(`rg failed (${r.status}): ${r.stderr}`)
-  return r.stdout.split('\n').filter(Boolean)
-    .map((f) => f.replace(/^\.\//, ''))
-    .filter((f) => f !== modulePath && !f.startsWith('test/'))
+  const pattern = new RegExp(`(from|import\\(|lazy\\(|require\\()\\s*['"][^'"]*${stem}(\\.js)?['"]`)
+  const found = []
+  for (const file of walkFiles(root)) {
+    if (file === modulePath || file.startsWith('test/')) continue
+    if (pattern.test(fs.readFileSync(path.join(root, file), 'utf8'))) found.push(file)
+  }
+  return found
+}
+
+/**
+ * Every tracked file under `root`, as paths relative to it.
+ *
+ * `rg` was the original implementation and it worked, but only where ripgrep is
+ * installed — on the GitHub runner the whole generator died `rg failed (null)`,
+ * so `status.md` could not be regenerated and its currency test failed for a
+ * reason that had nothing to do with the ledger. A tree walk is not a search
+ * engine; this one is.
+ *
+ * It reproduces the two behaviours the call relied on: `.gitignore` is honoured
+ * (so `node_modules/`, `data/` and the internal tender documents stay out), and
+ * dot-directories are skipped as `rg` skips hidden paths. Directories are pruned
+ * rather than filtered after the fact, so a vendored tree is never descended.
+ */
+function walkFiles(root) {
+  const ignore = gitignorePatterns(root)
+  const found = []
+  const walk = (dir, rel) => {
+    let entries
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return // unreadable directory: skip rather than fail the whole build
+    }
+    for (const entry of entries) {
+      const childRel = rel ? `${rel}/${entry.name}` : entry.name
+      if (entry.name.startsWith('.')) continue
+      if (ignore.some((re) => re.test(childRel) || re.test(`${childRel}/`))) continue
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) walk(full, childRel)
+      else if (entry.isFile()) found.push(childRel)
+    }
+  }
+  walk(root, '')
+  return found.sort()
+}
+
+/** `.gitignore` patterns as anchored regexes. Enough for this tree's rules. */
+function gitignorePatterns(root) {
+  const file = path.join(root, '.gitignore')
+  if (!fs.existsSync(file)) return []
+  return fs.readFileSync(file, 'utf8').split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && !line.startsWith('!'))
+    .map((line) => {
+      const bare = line.replace(/^\//, '').replace(/\/$/, '')
+      const escaped = bare.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*')
+      // A pattern with no slash matches at any depth, which is how git reads it.
+      return bare.includes('/') ? new RegExp(`^${escaped}$`) : new RegExp(`(^|/)${escaped}$`)
+    })
 }
 
 /**

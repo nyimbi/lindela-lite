@@ -16,7 +16,6 @@
  */
 
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, it } from 'node:test'
@@ -24,10 +23,24 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-/** Files in the jurisdiction: shipped source, not the corpus that describes it. */
-function sourceFiles() {
-  const out = execFileSync('rg', ['-l', '--glob', '*.js', '', 'src'], { cwd: ROOT, encoding: 'utf8' })
-  return out.split('\n').filter(Boolean)
+/**
+ * Files in the jurisdiction: shipped source, not the corpus that describes it.
+ *
+ * Walked in Node rather than shelled out to `rg`. The call was `rg -l '' src`
+ * with a glob — a file listing wearing a search's clothes — and it made this
+ * gate depend on a binary nothing provisions: on the GitHub runner it died
+ * `spawnSync rg ENOENT`, so VER-11 never actually scanned anything in CI while
+ * passing locally where ripgrep happens to be installed. A gate whose reach
+ * depends on the runner's PATH is not a gate.
+ */
+function sourceFiles(dir = path.join(ROOT, 'src')) {
+  const found = []
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) found.push(...sourceFiles(full))
+    else if (entry.name.endsWith('.js')) found.push(path.relative(ROOT, full))
+  }
+  return found.sort()
 }
 
 /**

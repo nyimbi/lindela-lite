@@ -174,8 +174,9 @@ case "$ENDPOINT" in
     case "$ssh_port" in
       ''|*[!0-9]*) die "port must be numeric (got: $ssh_port)" ;;
     esac
-    [ "$ssh_port" -ge 1 ] && [ "$ssh_port" -le 65535 ] \
-      || die "ssh port out of range: $ssh_port"
+    if [ "$ssh_port" -lt 1 ] || [ "$ssh_port" -gt 65535 ]; then
+      die "ssh port out of range: $ssh_port"
+    fi
     ;;
 esac
 
@@ -186,7 +187,9 @@ fi
 case "$REMOTE_PORT" in
   ''|*[!0-9]*) die "port must be numeric (got: $REMOTE_PORT)" ;;
 esac
-[ "$REMOTE_PORT" -ge 1 ] && [ "$REMOTE_PORT" -le 65535 ] || die "port out of range: $REMOTE_PORT"
+if [ "$REMOTE_PORT" -lt 1 ] || [ "$REMOTE_PORT" -gt 65535 ]; then
+  die "port out of range: $REMOTE_PORT"
+fi
 
 case "$TRANSPORT" in
   auto|git|rsync) ;;
