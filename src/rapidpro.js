@@ -339,7 +339,7 @@ export function responseMetrics(data) {
  * Every rejection returns the same false so the caller cannot leak which of
  * "no signature", "malformed signature" and "wrong signature" applied.
  */
-export function verifyRapidProWebhook(req, url, env = process.env) {
+export function verifyRapidProWebhook(req, env = process.env) {
   const secret = env.RAPIDPRO_WEBHOOK_SECRET
   if (!secret) {
     if (allowUnsignedInbound(env)) return true
@@ -357,10 +357,13 @@ export function verifyRapidProWebhook(req, url, env = process.env) {
   const signature = signatureHeader(req.headers)
   if (signature !== null) return verifyBodySignature(signature, req.rawBody, secret)
 
+  // A shared secret is accepted only from a header, never from the query
+  // string. A secret in a URL is written to access logs, proxy logs, the
+  // Referer of any downstream request, and browser history — and the value
+  // leaked is the same secret that authenticates every other inbound webhook.
   const provided = req.headers['x-rapidpro-secret']
     || req.headers['x-lindela-rapidpro-secret']
     || bearerToken(req.headers.authorization)
-    || url.searchParams.get('secret')
   return constantTimeEquals(provided, secret)
 }
 

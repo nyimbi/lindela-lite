@@ -33,14 +33,13 @@ function json(res, status, body) {
 function startWebhookServer() {
   const state = { env: {} }
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
     req.rawBody = Buffer.concat(chunks).toString('utf8')
 
     let verified
     try {
-      verified = verifyRapidProWebhook(req, url, state.env)
+      verified = verifyRapidProWebhook(req, state.env)
     } catch (error) {
       json(res, error.statusCode || 500, { success: false, error: error.message })
       return
@@ -150,7 +149,15 @@ describe('rapidpro field-report webhook auth', () => {
     assert.equal((await post('/api/v1/rapidpro/field-report', PAYLOAD, { 'x-rapidpro-secret': SECRET })).status, 201)
     assert.equal((await post('/api/v1/rapidpro/field-report', PAYLOAD, { 'x-lindela-rapidpro-secret': SECRET })).status, 201)
     assert.equal((await post('/api/v1/rapidpro/field-report', PAYLOAD, { authorization: `Bearer ${SECRET}` })).status, 201)
-    assert.equal((await post(`/api/v1/rapidpro/field-report?secret=${SECRET}`, PAYLOAD)).status, 201)
+  })
+
+  it('never accepts the shared secret from the query string', async () => {
+    // A secret in a URL is written to access logs, proxy logs, the Referer of
+    // downstream requests and browser history — and it is the same secret that
+    // authenticates every other inbound webhook. The correct value in the query
+    // string must fail exactly as the wrong one does.
+    webhook.state.env = { RAPIDPRO_WEBHOOK_SECRET: SECRET }
+    assert.equal((await post(`/api/v1/rapidpro/field-report?secret=${SECRET}`, PAYLOAD)).status, 401)
     assert.equal((await post(`/api/v1/rapidpro/field-report?secret=wrong`, PAYLOAD)).status, 401)
   })
 })

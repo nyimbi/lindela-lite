@@ -62,7 +62,7 @@ import { planDelivery } from './routing.js'
 import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { upstreamTileUrl, loadRasterTile } from './basemap-tiles.js'
 import { trainDistrictModels, predict } from './flood-probability.js'
-import { normalizeWebhookSubscription } from './webhooks.js'
+import { normalizeWebhookSubscription, assertSafeWebhookUrl } from './webhooks.js'
 import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots, quarterlyPdfSections } from './kpi.js'
 import { KNOWN_DISTRICTS, districtOverview } from './districts.js'
 import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from './equity.js'
@@ -773,7 +773,7 @@ async function handleApiRequestInContext(store, req, res, url, auth) {
       // request failed closed against the real route while passing in tests
       // that buffered the body themselves.
       req.rawBody = await readRawBody(req)
-      if (!verifyRapidProWebhook(req, url)) {
+      if (!verifyRapidProWebhook(req)) {
         jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook' })
         return
       }
@@ -2906,7 +2906,15 @@ async function distributeReport(report, body = {}, actor = 'operator', data = nu
         }[channel.channel]
         runs.push(normalizeDistributionRun({ ...runInput, status: 'prepared', response_body: responseBody }, report))
       } else if (channel.channel === 'webhook') {
-        const response = await fetch(required(channel.url, 'url'), {
+        // The URL comes from the request body, so it is attacker-controlled and
+        // must clear the same guard the outbox applies to a subscription URL:
+        // shape, scheme, credentials, and a DNS re-resolution at the point of
+        // use (a host that resolved publicly at registration can resolve to
+        // 127.0.0.1 minutes later). Without this the distribution path is an
+        // SSRF the webhook path already closed — one token away from the cloud
+        // metadata endpoint and the internal network.
+        const target = await assertSafeWebhookUrl(required(channel.url, 'url'))
+        const response = await fetch(target, {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(channel.headers || {}) },
           body: JSON.stringify({ report, markdown: renderReportMarkdown(report) }),
@@ -3121,7 +3129,7 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
 
   if (req.method === 'POST' && route.kind === 'field-report') {
     req.rawBody = await readRawBody(req)
-    if (!verifyRapidProWebhook(req, url)) {
+    if (!verifyRapidProWebhook(req)) {
       jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook secret' })
       return
     }
@@ -3153,7 +3161,7 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
   // attacker-controlled input, so correlation is by sender address within a
   // bounded window, never by a payload-supplied alert_event_id.
   if (req.method === 'POST' && route.kind === 'rapidpro-reply') {
-    if (!verifyRapidProWebhook(req, url)) {
+    if (!verifyRapidProWebhook(req)) {
       jsonResponse(res, 401, { success: false, error: 'Invalid webhook signature' })
       return
     }
