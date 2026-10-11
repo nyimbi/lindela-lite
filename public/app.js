@@ -2441,6 +2441,42 @@ function barScopeNote(bar, undetermined = 0) {
 }
 
 /**
+ * What the map does not show. ENH-70.
+ *
+ * The accounting was always computed; it went into the record count's `title`
+ * and `aria-label` and nowhere else. A tooltip is not a report — it needs a
+ * hover, a touch device has none — so a map drawn from 40 of 67 records looked
+ * exactly like one drawn from 67.
+ *
+ * Pure, DOM-free and exported for the same reason `evaluateMapFilters` is.
+ *
+ * Two sets, kept apart because they are not the same claim. `unplaced` is a
+ * record the map *holds* and could not draw. `filtered` is a record it never
+ * held, because a filter excluded it and could not tell whether it matched.
+ * Adding them would report "not on the map" for a record that is not the map's
+ * to show — a wrong number in the direction of alarm. `placed + unplaced ===
+ * total` by construction, so a caller can check the accounting closes.
+ */
+export function mapCoverage({ total = 0, placed = 0, tooLarge = 0, outsideFrame = 0, undetermined = {} } = {}) {
+  const reasons = [
+    { kind: 'outside_frame', count: outsideFrame },
+    { kind: 'too_large', count: tooLarge },
+    ...Object.entries(undetermined).map(([field, count]) => ({ kind: 'undetermined', field, count })),
+  ].filter((r) => r.count > 0)
+  return {
+    total,
+    placed,
+    unplaced: tooLarge + outsideFrame,
+    filtered: Object.values(undetermined).reduce((sum, n) => sum + n, 0),
+    // A map with nothing to declare is not annotated: a permanent "all clear"
+    // strip is one an operator learns to skip, and then skips on the day it
+    // says something.
+    complete: reasons.length === 0,
+    reasons,
+  }
+}
+
+/**
  * The filter bar, read once.
  *
  * The bar sat directly above the map, so every field on it read as a map
@@ -2926,40 +2962,33 @@ function renderMap(records) {
 
   renderMapLegend()
 
+  // The accounting is built once and used twice: the band's headline and the
+  // coverage panel below are two views of one computation, not two computations
+  // that could disagree.
+  const placed = visible.length - tooLargeToLocate - outsideFrame
+  const coverage = mapCoverage({
+    total: visible.length,
+    placed,
+    tooLarge: tooLargeToLocate,
+    outsideFrame,
+    undetermined: { severity: undeterminedSeverity, source: undeterminedSource },
+  })
+
   const countEl = $('mapRecordCount')
   if (countEl) {
-    const undetermined = []
-    if (undeterminedSeverity) undetermined.push(`${undeterminedSeverity} with no severity`)
-    if (undeterminedSource) undetermined.push(`${undeterminedSource} with no source`)
-    // Anything not drawn is counted rather than dropped, so it is named here
-    // instead of vanishing. It remains in the record list and opens the same
-    // detail dialog — losing it from the map is not losing it from the product.
-    const placed = visible.length - tooLargeToLocate - outsideFrame
-    const parts = [`${placed} on map`]
-    if (tooLargeToLocate) parts.push(`${tooLargeToLocate} reported area${tooLargeToLocate === 1 ? '' : 's'} too large to place`)
-    if (outsideFrame) parts.push(`${outsideFrame} outside the area this map covers`)
-    // The undetermined records are named once, with the reason they are absent.
-    // This used to append them twice — bare in the list and again after "hidden
-    // by the filter" — which read as noise in the band and, now that this string
-    // is the element's accessible name, is read aloud twice.
-    const detail = parts.join(' · ')
-      + (undetermined.length ? ` — hidden by the filter: ${undetermined.join(', ')}` : '')
-    // The band shows the headline — how many records are drawn — and the full
-    // accounting moves to the tooltip. It was one string, and on a 1440px
-    // command band it ran to "70 on map · 10 reported areas too large to place
-    // · 17 outside the area this map covers", which wrapped the band onto a
-    // second row and pushed the map down: the exact cost the redesign was
-    // undoing. Nothing is dropped — the tail is in the title and the `title`
-    // carries the filter explanation it already did.
+    // The band shows the headline — how many records are drawn — and nothing
+    // else. It was one string, and on a 1440px command band it ran to "70 on map
+    // · 10 reported areas too large to place · 17 outside the area this map
+    // covers", which wrapped the band onto a second row and pushed the map down:
+    // the exact cost the redesign was undoing. The tail is not lost: ENH-70 puts
+    // it in the coverage panel on the map, where a reader of the map sees it,
+    // rather than in a tooltip they would have to hunt for.
     countEl.textContent = `${placed} on map`
-    countEl.title = detail
-    // The headline is what fits the band; the full accounting — including what
-    // the filter hid — is this element's accessible name, so moving it out of
-    // the visible text does not move it out of reach. `title` alone is not
-    // announced reliably and never on touch, which is why it is not the only
-    // carrier.
-    countEl.setAttribute('aria-label', detail)
   }
+
+  // The gaps the map is not showing, on the map, where a reader of the map will
+  // actually see them.
+  renderMapCoverage(coverage)
 
   // Classify the same way the draw loops above do, so the list says "asset" for
   // exactly the records drawn as squares. Classifying twice with two predicates
@@ -2970,6 +2999,48 @@ function renderMap(records) {
     return 'hazard'
   }
   renderMapRecordList(visible.map((r) => ({ record: r, kind: kindOf(r) })))
+}
+
+/**
+ * Put the coverage accounting on the map. ENH-70.
+ *
+ * The summary is the count that matters — how many records the map holds are
+ * not on it — so it reads with the panel closed, which is its default. The rows
+ * behind it say why, each in its own words, because each reason has its own fix.
+ */
+function renderMapCoverage(coverage) {
+  const panel = $('mapCoverageOverlay')
+  if (!panel) return
+  if (coverage.complete) {
+    panel.hidden = true
+    return
+  }
+  panel.hidden = false
+  const summaryEl = $('mapCoverageSummary')
+  if (summaryEl) {
+    summaryEl.textContent = t('map.coverage_summary', { placed: coverage.placed, total: coverage.total })
+    summaryEl.setAttribute('title', t('map.coverage_note'))
+  }
+  const rowsEl = $('mapCoverageRows')
+  if (!rowsEl) return
+  rowsEl.replaceChildren()
+  const addRow = (text, cls = '') => {
+    const row = document.createElement('div')
+    row.className = `map-coverage-row${cls ? ` ${cls}` : ''}`
+    row.textContent = text
+    rowsEl.append(row)
+  }
+  // The rows say why, each in its own words, because each reason has its own
+  // fix. The drawn count is not repeated here: the summary above already names
+  // both numbers, and `total − unplaced` is the one it does not spell out.
+  for (const reason of coverage.reasons) {
+    if (reason.kind === 'undetermined') {
+      addRow(t('map.undetermined', { n: reason.count, field: t(`map.field_${reason.field}`, reason.field) }), 'is-filtered')
+    } else {
+      addRow(t(reason.kind === 'too_large' ? 'map.too_large' : 'map.outside_frame', { n: reason.count }), 'is-unplaced')
+    }
+  }
+  if (coverage.filtered) addRow(t('map.filtered_note'), 'is-note')
 }
 
 /**

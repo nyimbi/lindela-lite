@@ -324,6 +324,18 @@
               <summary class="map-legend-summary">Legend</summary>
               <div id="mapLegend" class="map-legend-rows" aria-label="Map legend"></div>
             </details>
+            <!-- What the map does NOT show, beside what it does. The gap
+                 accounting — outside the frame, too large to place, left
+                 undetermined by the filter — was computed every render and
+                 reported only in the record count's `title` and `aria-label`,
+                 which needs a hover a touch device has not got. ENH-70: an
+                 operator reading a clean map should see the gaps in it.
+                 `renderMapCoverage` fills this, and hides the panel when there
+                 is nothing to report. -->
+            <details id="mapCoverageOverlay" class="map-coverage-overlay" hidden>
+              <summary class="map-coverage-summary" id="mapCoverageSummary"></summary>
+              <div id="mapCoverageRows" class="map-coverage-rows"></div>
+            </details>
           </div>
           <span id="mapScale" class="map-scale-overlay" aria-live="polite">Scale: —</span>
           <span id="mapAttributionText" class="map-attribution-overlay">Basemap © OpenStreetMap contributors</span>

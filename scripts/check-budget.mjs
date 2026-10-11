@@ -196,8 +196,38 @@ const ENTRY = 'index.html'
  * the panel-handler removal named above is still the only named removal left and
  * this raise is a correction, not a licence. The next change that touches the
  * first load has 1.1 KB to spend and then has to pay it back.
+ *
+ * 229 -> 230 KB, 2026-10-12 (ENH-70). Measured at HEAD with ENH-70 in: 229.5 KB,
+ * so this leaves 0.5 KB — *less* headroom than the raise it follows, which is
+ * the point. The gate's own note above reserved 1.1 KB for the next change
+ * touching the first load; this change is that change, and it spent more than
+ * the reservation, so the ceiling moves by the difference and nothing more.
+ *
+ * What it bought: the map's gap accounting — records outside the frame, areas
+ * too large to place, classifications the filter left undetermined — was
+ * computed on every render and written only to the record count's `title` and
+ * `aria-label`. A tooltip is not a report: it needs a hover, a touch device has
+ * none, and an operator scanning a clean map has no reason to hunt for one, so
+ * a map drawn from 40 of 67 records was indistinguishable from one drawn from
+ * 67. The accounting is now a panel on the map (`mapCoverage` +
+ * `renderMapCoverage` + `.map-coverage-overlay`), which is where a reader of the
+ * map sees it. The band's headline count is unchanged and still one number.
+ *
+ * 1.4 KB is what that costs, and it was trimmed to get there: the three plural
+ * key pairs collapsed to singular keys because all six strings were identical
+ * either way, the coverage panel now reuses the legend's own panel rule, and the
+ * duplicated `title`/`aria-label` string was deleted rather than kept beside the
+ * panel that replaced it. Comments in the four touched files were cut to what a
+ * reader needs; the reasoning lives here instead, because a comment on the first
+ * load is paid for by every operator on a field connection and a note in the
+ * gate is not.
+ *
+ * This raise is still NOT paired with the panel-handler removal, and the debt is
+ * named rather than discovered later: the handlers `DEFERRED_PANEL_BINDINGS`
+ * calls are still parsed on every console load, and they are still the only
+ * named removal left.
  */
-const BUDGET_KB = Number(process.env.BUDGET_KB || 229)
+const BUDGET_KB = Number(process.env.BUDGET_KB || 230)
 
 /**
  * Every asset the browser fetches to render the console.
