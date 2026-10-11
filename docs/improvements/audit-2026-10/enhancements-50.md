@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 20 | 31, 34, 35, 36, 37, 40, 44, 45, 46, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
+| IMPLEMENTED | 21 | 31, 34, 35, 36, 37, 39, 40, 44, 45, 46, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
 | PARTIAL | 11 | 32, 33, 42, 50, 51, 52, 55, 57, 59, 70, 78 |
-| ABSENT | 20 | 38, 39, 41, 43, 47, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
+| ABSENT | 19 | 38, 41, 43, 47, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
@@ -274,6 +274,46 @@ web wizard share one schema.
 form version it was filled against. The server merges on that key, so two versions
 in the field reconcile instead of overwriting. This is ODK's instanceID primitive
 and the reason offline submissions are safe to sync.
+
+**Shipped 2026-10-11.** `public/shared/submission-id.js` mints the identity on the
+device, `src/submission-id.js` derives the record id from it, and both doors into
+`field_reports` use it. The form version half already existed (CAP-01:
+`form_id`/`form_version` on the record and validated against the version the
+client named), so this item was the identity.
+
+*The defect was live, and measured before it was fixed.* A submission delivered
+three times wrote **three** records: the field-report id hashed the content
+together with the server's arrival time, so it was stable for one request and
+different for the next. The sharper instance is the sequence `submitOrQueue`
+actually performs — POST with no key, lose the response to a timeout, queue,
+retry — which wrote **two** for one report. Both reproduced against a live server
+in `test/submission-id.test.js`'s own terms.
+
+*A key minted per attempt is a nonce, not an idempotency key.* CON-06's fix made
+the server's idempotency store durable and had the queue mint a key — but it
+minted it when it *queued*, and the first attempt went out with no key at all. The
+server had nothing to match the retry against, so a durable store bought exactly
+nothing on this path. An idempotency key has to be minted per *submission* and
+carried through every attempt, which is why the fix is in `submitOrQueue` rather
+than in `enqueue`, and why `enqueue` now keeps a key it was handed instead of
+replacing it. Two files, one rule: the identity is minted where the act happens.
+
+*Content cannot identify an act.* The obvious repair — drop the timestamp from the
+content hash — is wrong, and the test that says so is `still files two genuinely
+separate reports with identical content`. A health worker filing for a second
+child in the same household writes an identical body, same symptom, same
+coordinates, same day. Content cannot distinguish "the same submission twice" from
+"two identical submissions" because the difference is not in the content; it is in
+the act. So the identity is random, and it is minted on the device.
+
+Three canaries, each watched failing: the two server doors reverted to the content
+hash (3 tests), the client stamp removed (2), and `enqueue` overwriting the
+caller's key (1). The third was found *by* the canary discipline in a way worth
+recording — the first client canary passed, because the existing offline tests
+assert only that a queued record carries *an* `idempotency-key`, which was true
+while the duplicate was live. The test was written against a stub that echoed its
+argument back, and the stub could not see that `enqueue` replaced the key. Driving
+the real `enqueue` over a fake IndexedDB is what made that test able to fail.
 
 **ENH-40 — Durable outbox with client idempotency keys.** `src/server.js`
 idempotency requires a client `Idempotency-Key` the service worker does not

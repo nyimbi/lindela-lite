@@ -442,6 +442,24 @@ drain of >1,000 mutations evicts earlier keys. `/ready` honestly reports
 **Fixed 2026-10-11.** `in_process` is gone from the readiness answer rather than
 set to false (`src/server.js:1238`), and the idempotency store is durable.
 
+**Half of it was still open, and the half that remained was the whole defect.**
+The durable store and the client key are two different things, and only the first
+was fixed: the queue minted a key when it *queued*, and `submitOrQueue` sends its
+first attempt with no key at all. So the sequence the client actually performs —
+POST, lose the response to a timeout, queue, retry — had the server holding a
+record the retry could not be matched against, and the queued key was a key the
+first attempt never used. Measured against a live server on 2026-10-11: **two
+rows for one report**, and three rows for three POSTs of one body, because the
+field-report id hashed the submission's content together with the server's
+arrival time.
+
+Closed by ENH-39. `public/shared/submission-id.js` mints one identity per act of
+filing, before the first attempt; `submitOrQueue` puts it in the body *and* in
+the `Idempotency-Key`; `enqueue` keeps a key it was handed rather than replacing
+it; and both doors into `field_reports` derive the record id from it
+(`src/submission-id.js`). A durable store cannot dedupe a pair it was never given
+the same key for — that is the lesson, and it is why the fix is at the client.
+
 ### CON-07 — MEDIUM — In-process-only dispatch lock, acknowledged but not enforced across replicas
 `src/outbox.js:129` `_dispatchLocks = new WeakMap()` keyed on the `store` object;
 the comment states two replicas need `pg_advisory_lock`. With >1 process,
