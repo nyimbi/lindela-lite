@@ -1066,6 +1066,33 @@ erode trust in the suite.
 lines of console logic are exercised via `test/browser-env.mjs` stubs. No unit test
 of any render function; the console is only as tested as the stub's fidelity.
 
+**Partly stale; the residue fixed 2026-10-11.** The first half is false: the
+module *is* imported. `test/web-console.test.js`'s `loadConsole()` installs
+`browser-env.mjs`'s module resolution, builds a DOM stub and `await import()`s
+`public/app.js` — which succeeds, because the boot sequence is tolerant of a
+stub that answers `getElementById` with an element and `fetch` with an empty
+success. 45 tests then call the module's exports directly.
+
+What was true is narrower and measurable. Of the 26 exports in `app.js`, seven
+were named by no test anywhere: `autoFitBox`, `currentFilters`,
+`AMBIENT_ENDPOINTS`, `FOCUS_KEY_ATTR`, `MIN_AUTO_FIT_SPAN_DEG`,
+`preserveUiAroundRebuild`. `autoFitBox` is the one carrying load-bearing
+decisions — four documented guards, one of which (`isFinitePoint`) exists
+because fitting on GDACS bbox-only alerts drew the Indian Ocean at a larger
+scale.
+
+Nine tests now drive them, in `test/web-console.test.js` under "QUA-03 — the
+framing and filter decisions are unit-tested, not stubbed". Each drives a
+function with plain objects rather than asserting on what a stub rendered: the
+whole point is that a stub answering `getBoundingClientRect` with zeros cannot
+tell whether the map framed on the data or on the ocean. Canaried three ways,
+each firing only its own test — removing the span floor (53/54), removing the
+`isFinitePoint` guard (53/54), and making the frame near-region-only (53/54).
+
+Still open: the module has no entry point that can be imported *without* the DOM
+stub, so nothing can assert on a render function's output. Extracting one is the
+remaining work and is a 6,373-line refactor, not a test change.
+
 ### QUA-04 — HIGH — `test:coverage` is vacuous
 
 **Fixed 2026-10-11.** `scripts/check-coverage.mjs` runs the whole suite —

@@ -533,4 +533,105 @@ describe('public/app.js — console frontend', () => {
         'a hidden tab must cancel the pending poll, not just skip the next one')
     })
   })
+
+  // ==============================================================
+  // QUA-03 — the console's own exported decisions, asserted
+  // ==============================================================
+  describe('QUA-03 — the framing and filter decisions are unit-tested, not stubbed', () => {
+    // The defect said `public/app.js` cannot be imported and is exercised only
+    // through a DOM stub. The first half is false — `loadConsole()` above
+    // imports it and 19 of its 26 exports are named by a test. What was true is
+    // the residue: seven exports had no test at all, and `autoFitBox` is the one
+    // carrying load-bearing decisions (four documented guards). A stub that
+    // returns `undefined` for `getBoundingClientRect` cannot tell whether the
+    // map frames on the data or on the ocean, so these drive the functions
+    // directly rather than asserting on what a stub rendered.
+
+    const point = (latitude, longitude) => ({ latitude, longitude })
+
+    it('frames on the records when they are spread enough to frame', () => {
+      // Two points 4° apart in both axes, inside the region of interest.
+      const box = app.autoFitBox([point(3, 35), point(7, 39)], null)
+      assert.ok(box, 'a spread of records must produce a frame rather than fall through')
+      assert.ok(box.minLat < 3 && box.maxLat > 7, 'the frame must contain both points with margin')
+      assert.ok(box.minLon < 35 && box.maxLon > 39)
+      // Padding is an eighth of the longer edge, never under half a degree.
+      assert.ok(Math.abs((3 - box.minLat) - 0.5) < 1e-9, 'padding floors at half a degree')
+    })
+
+    it('falls back rather than pinpricking the viewport onto a tight cluster', () => {
+      // Under MIN_AUTO_FIT_SPAN_DEG in BOTH axes: two overlapping markers with
+      // no ground between them. The operator is entitled to the data, not to a
+      // district-sized window of empty basemap.
+      const fallback = { minLat: -6, maxLat: 15, minLon: 27, maxLon: 52 }
+      const box = app.autoFitBox([point(3, 35), point(3.2, 35.2)], fallback)
+      assert.equal(box, fallback, 'a cluster under the span floor must fall back')
+    })
+
+    it('still frames when one axis is under the floor and the other is not', () => {
+      // The rule is both-axes, not either. A north-south line of stations is a
+      // real extent even though its longitude span is zero.
+      const box = app.autoFitBox([point(2, 35), point(9, 35)], null)
+      assert.ok(box, 'a line is a frame in the axis that varies')
+      assert.ok(box.maxLat - box.minLat > 1.5)
+    })
+
+    it('refuses to frame on a bbox-only hazard, which is how the ocean got drawn', () => {
+      // GDACS is a worldwide feed whose alerts carry forty-degree boxes, some
+      // with a south edge below the pole. Fitting on them reproduced the Indian
+      // Ocean at a larger scale — `mapFrame` already refuses a record with no
+      // point, and this keeps one rule rather than two that disagree.
+      const fallback = { minLat: -6, maxLat: 15, minLon: 27, maxLon: 52 }
+      const box = app.autoFitBox([{ bbox: [-90, -180, 90, 180] }, { bbox: [0, 0, 40, 40] }], fallback)
+      assert.equal(box, fallback, 'records with no point must not shape the frame')
+    })
+
+    it('falls through to every point when none is near the region', () => {
+      // A deployment whose data is elsewhere still has to draw that data
+      // somewhere, rather than collapsing to an empty frame.
+      const box = app.autoFitBox([point(-30, -60), point(-20, -50)], null)
+      assert.ok(box, 'distant data must still be framed')
+      assert.ok(box.minLat < -30 && box.maxLat > -20)
+    })
+
+    it('returns the fallback for a single record', () => {
+      const fallback = { minLat: -6, maxLat: 15, minLon: 27, maxLon: 52 }
+      assert.equal(app.autoFitBox([point(3, 35)], fallback), fallback)
+      assert.equal(app.autoFitBox([], fallback), fallback)
+      assert.equal(app.autoFitBox(null, fallback), fallback, 'a null set is not a frame')
+    })
+
+    it('reads the filter controls through the root it is given', () => {
+      // `currentFilters` took `document` as a parameter so it could be driven;
+      // nothing drove it. A root that answers by id is enough.
+      const values = { mapSeverity: 'critical', mapSource: 'gdacs', mapTimeRange: '24h' }
+      const root = {
+        getElementById: (id) => (id in values
+          ? { value: values[id] }
+          : id === 'coldChainToggle' ? { checked: true } : null),
+      }
+      const filters = app.currentFilters(root)
+      assert.equal(filters.severity, 'critical')
+      assert.equal(filters.source, 'gdacs')
+      assert.equal(filters.coldChainOnly, true)
+    })
+
+    it('reads a missing control as empty rather than throwing', () => {
+      const filters = app.currentFilters({ getElementById: () => null })
+      assert.equal(filters.severity, '')
+      assert.equal(filters.coldChainOnly, false,
+        'a missing toggle is off, not a crash on the boot path')
+    })
+
+    it('names every ambient endpoint it polls on a tab that is not the first', () => {
+      // AMBIENT_ENDPOINTS is the set fetched on every tab, so a name added to
+      // ALL_ENDPOINTS but not here is a surface that stops updating when the
+      // operator leaves the alerts tab — silent, because the tab still renders.
+      assert.ok(Array.isArray(app.AMBIENT_ENDPOINTS))
+      for (const name of app.AMBIENT_ENDPOINTS) {
+        assert.ok(app.ALL_ENDPOINTS.includes(name),
+          `${name} is ambient but is not in ALL_ENDPOINTS`)
+      }
+    })
+  })
 })
