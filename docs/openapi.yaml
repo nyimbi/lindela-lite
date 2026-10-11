@@ -253,9 +253,23 @@ paths:
     post:
       summary: Create a field report from a community health worker
       operationId: postchw_report
+      description: |
+        A report delivered more than once is one record, provided the body names
+        a `submission_id` (ENH-39). The client mints it once, before its first
+        attempt, and carries it through every retry — so a response lost to a
+        timeout, a queue drain that ran twice, or a phone that regained signal
+        mid-flight all resolve to the id the first delivery wrote.
+
+        Without a `submission_id` the record id is derived from the content and
+        the server's arrival time, which is stable for one request and different
+        for the next: a client that has not been updated still files, and its
+        record says `submission_id: null` rather than claiming an identity it did
+        not have. An `Idempotency-Key` is honoured as well, but it is scoped to a
+        single request, so a client that mints a fresh key per *attempt* gets no
+        protection from it — which is what `submission_id` is for.
       responses:
-        '200':
-          description: Success
+        '201':
+          description: The field report, carrying the `submission_id` it was filed under
           content:
             application/json:
               schema:

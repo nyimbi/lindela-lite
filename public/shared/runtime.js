@@ -1,4 +1,5 @@
 import { applyLocaleToDocument } from './fmt.js'
+import { stampSubmissionId } from './submission-id.js'
 import {
   openQueueDb, put, del, readAll, listRecords, clearRecords, drainQueue, requestPersistence,
   MAX_QUEUE_ATTEMPTS as CORE_MAX_QUEUE_ATTEMPTS,
@@ -147,7 +148,17 @@ export async function initOfflineQueue() {
         throw new Error('This browser has no storage available, so the report was not saved. '
           + 'Copy it somewhere before closing this page.')
       }
-      const id = options?.idempotencyKey || globalThis.crypto?.randomUUID?.()
+      // ENH-39. A key the caller already put on the headers is the submission's
+      // identity and is kept. Overwriting it here was the second half of the
+      // duplicate defect: `submitOrQueue` stamps one identity for both attempts,
+      // and a fresh key minted at queue time replaced it, so the retry named a
+      // submission the server had never seen and the record was written twice.
+      //
+      // The fallback order is unchanged for a caller that sends no key — the
+      // direct enqueue path, where this is the only place an identity can be
+      // minted.
+      const supplied = options?.headers?.['idempotency-key'] || options?.idempotencyKey
+      const id = supplied || globalThis.crypto?.randomUUID?.()
         || `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
       const headers = { ...(options?.headers || {}), 'idempotency-key': id }
       const record = {
@@ -405,6 +416,23 @@ export async function apiSettled(path, options) {
  * caller has a report in hand that has not been filed and must be told so.
  */
 export async function submitOrQueue(path, body, { headers, what = null } = {}) {
+  // ENH-39. One identity for one act of filing, minted here — before the first
+  // attempt — and carried through every retry.
+  //
+  // This is the whole fix for the duplicate-submission defect, and the reason it
+  // is minted here rather than in `enqueue` is the sequence this function
+  // performs. It POSTs without a key, and if that attempt fails it hands the
+  // body to the queue, where a key is minted *then*. A response lost to a
+  // timeout is indistinguishable from a request that never arrived, so the
+  // server had already written the record and the queued retry — carrying a
+  // key the first attempt never used — wrote it again. Measured: two rows for
+  // one report. An identity minted per *attempt* is a nonce, not an idempotency
+  // key, and the server can only dedupe on an identity it has seen before.
+  //
+  // The stamp is the same value in the body and in the `Idempotency-Key`, so
+  // whichever door the server reads, it reads the same submission.
+  const { body: stamped, submission_id } = stampSubmissionId(body)
+  const withKey = { ...(headers || {}), 'idempotency-key': headers?.['idempotency-key'] || submission_id }
   // Try first; queue on failure.
   //
   // This was `if (navigator.onLine) return apiFetch(...)` else queue. That reads
@@ -419,12 +447,12 @@ export async function submitOrQueue(path, body, { headers, what = null } = {}) {
   // reliable in the direction it is used for here, and unreliable in the other,
   // which is why it never decides anything about whether to save.
   if (navigator.onLine === false) {
-    return queueTheReport(path, body, headers, what, 'the device reports no connection')
+    return queueTheReport(path, stamped, withKey, what, 'the device reports no connection')
   }
   try {
-    return await apiFetch(path, { method: 'POST', body, headers, timeout: QUEUE_TRY_TIMEOUT_MS })
+    return await apiFetch(path, { method: 'POST', body: stamped, headers: withKey, timeout: QUEUE_TRY_TIMEOUT_MS })
   } catch (error) {
-    return queueTheReport(path, body, headers, what, error?.message || 'the request did not get through')
+    return queueTheReport(path, stamped, withKey, what, error?.message || 'the request did not get through')
   }
 }
 

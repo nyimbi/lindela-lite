@@ -12,6 +12,7 @@ import { assertCategory } from './taxonomy.js'
 import { ERROR_CODES } from './errors.js'
 import { computeMetric } from './analytics/metrics.js'
 import { stampQuality } from './quality.js'
+import { recordIdForSubmission } from './submission-id.js'
 
 const OPERATIONAL_COLLECTIONS = Object.freeze({
   incidents: 'incident',
@@ -257,7 +258,16 @@ function normalizeFieldReport(input, data, existing = null) {
     : existing?.demographics
 
   const record = stripUndefined({
-    id: input.id || stableId('report', [input.incident_id, input.intervention_id, input.summary, input.observed_at || now]),
+    // ENH-39. A submission that names itself gets an id derived from that name,
+    // so a second delivery of one submission updates the row the first delivery
+    // wrote instead of appending a near-copy. The content hash below is the
+    // fallback and stays as it was: it cannot tell a retry from two genuinely
+    // identical reports, and an operator entering the same summary twice is
+    // filing twice.
+    id: input.id
+      || recordIdForSubmission('report', input.submission_id)
+      || stableId('report', [input.incident_id, input.intervention_id, input.summary, input.observed_at || now]),
+    submission_id: input.submission_id || existing?.submission_id || null,
     incident_id: input.incident_id || intervention?.incident_id || null,
     intervention_id: input.intervention_id || null,
     summary: input.summary || required(input.description, 'summary'),

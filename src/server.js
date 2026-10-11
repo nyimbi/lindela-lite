@@ -42,6 +42,7 @@ import {
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
 import { collectionPage, currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
+import { recordIdForSubmission } from './submission-id.js'
 import { createIdempotencyFor } from './idempotency.js'
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor, piiSaltStatus } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
@@ -4086,7 +4087,14 @@ async function handleChwRoute(store, data, req, res, url, route) {
     const hasFix = Number.isFinite(reportedLat) && Number.isFinite(reportedLon)
       && !(reportedLat === 0 && reportedLon === 0)
     const record = {
-      id: stableId('report', [body.description, body.location?.latitude, body.location?.longitude, now]),
+      // ENH-39. The device mints a submission id once, before its first attempt,
+      // and carries it through every retry — so a report delivered twice is one
+      // record. Without it the id hashed the server's `now` and a lost response
+      // followed by a queue drain wrote the same report twice, which was
+      // measured against a live server before this changed.
+      id: recordIdForSubmission('report', body.submission_id)
+        || stableId('report', [body.description, body.location?.latitude, body.location?.longitude, now]),
+      submission_id: typeof body.submission_id === 'string' && body.submission_id ? body.submission_id : null,
       summary: body.description,
       // CAP-05. `body.category || body.kind` stored free text, and it stored
       // `symptom` or `incident` — the *form* — whenever a client sent no
