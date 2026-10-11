@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 31 | 31, 33, 34, 35, 36, 37, 39, 40, 43, 44, 45, 46, 47, 48, 49, 53, 54, 58, 61, 63, 64, 65, 66, 69, 70, 72, 73, 75, 78, 79, 81 |
-| PARTIAL | 11 | 32, 38, 42, 50, 51, 52, 55, 56, 57, 59, 62 |
-| ABSENT | 9 | 41, 60, 67, 68, 71, 74, 76, 77, 80 |
+| IMPLEMENTED | 35 | 31, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 53, 54, 58, 61, 62, 63, 64, 65, 66, 69, 70, 72, 73, 74, 75, 78, 79, 81 |
+| PARTIAL | 10 | 32, 38, 42, 51, 52, 55, 56, 57, 59, 71 |
+| ABSENT | 6 | 60, 67, 68, 76, 77, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-59 has three tables checked against each
@@ -389,6 +389,30 @@ so an edit made offline on a phone and an edit made online in the console conver
 without one clobbering the other. The hard version of ENH-39; the payoff is a
 genuinely collaborative record.
 
+**Shipped 2026-10-12.** `public/shared/field-merge.js` — a vector clock per record,
+field-level merge on the partial order, each field keeping the set of its maximal
+writes and `merge = normalise(union)`.
+
+*A vector clock, and the reason is the whole entry.* A Lamport counter is a total
+order, so it cannot tell "B saw A" from "B never saw A": two concurrent writes both
+bump it, one is declared older, the merge picks it, and nothing is reported. That
+is the silent clobber the entry exists to prevent, and an actor-id tiebreak makes
+the *choice* deterministic without making the *concurrency* visible.
+`compareClocks` returns a fourth answer — concurrent — and the merge keeps both
+values, reports the conflict with both actors, and asks. A merge that decides when
+it cannot know is the bug wearing the feature's clothes.
+
+*Convergence is asserted rather than claimed.* Commutativity, associativity and
+idempotence are each a named test, plus a seeded `mulberry32` property test over
+500 random record triples and all six arrival orders of a three-replica merge. Two
+canaries watched it fail first: replacing the field merge with last-writer-wins
+gave 6 failures including commutativity; removing head dedup in `maximalHeads`
+gave 3 including idempotence.
+
+No `src/` twin, deliberately: ENH-39's split exists because the server needs a
+sha256 the browser cannot compute, and a merge function needs nothing server-only.
+A second copy would be the drift the split is meant to avoid.
+
 **ENH-42 — Offline map tile packs.** `basemap.js` is inline polygons and fetches
 nothing, so the offline map is a fixed asset. Let an operator define a bbox and
 generate a downloadable pack (PMTiles) so a CHW's phone has the terrain for their
@@ -646,6 +670,34 @@ sample floors and its refusal vocabulary in one machine-readable place
 registry lets every surface render "not measured" from the same declaration the
 model refuses with.
 
+**Shipped 2026-10-12.** `src/model-registry.js` — a card per published model, with
+`modelCard`, `floorsMissed`, `refusalSentence` and `refusalCodes`.
+
+*The floors are imported bindings, not restated numbers, and that is the whole
+design.* `months` **is** `MIN_MONTHS` — the same binding the model refuses with.
+`gate.py` existed twice in `infra`, production ran the second, a checker read the
+first, and four correct slugs were reported as phantoms. A registry that retyped
+`60` would be that bug respelled: it passes `value === 60` while the model moves
+to 72. So the test asserts each floor is its declared binding, and a second test
+fails outright if any floor is written as a numeric literal. Canaried — retyping
+`MIN_MONTHS` as `60` fails it.
+
+*The refusal vocabularies are declared as they are, not as they ought to be.* The
+first draft gave every model a code list. Only counterfactual has one; the other
+five refuse in prose (`{ psi: null, reason }`, `{ score: null, reason }`,
+`skipped_reason`). Inventing codes would have made the registry match nothing —
+the failure the module's own header warns about — so those cards carry
+`codes: null` and a note naming how the model actually refuses. `null` rather than
+`[]`, because "no vocabulary" and "an empty vocabulary" are different claims.
+`COUNTERFACTUAL_REFUSALS` is now exported from the model and imported here, and a
+canary that copied the list instead failed the identity assertion.
+
+*An absent observation is unverified, not met.* `floorsMissed` refuses to call a
+floor satisfied when the caller did not supply the count, which is the house rule
+applied to a registry: a check that measures nothing must not report success. Two
+floors (`baseline_imbalance`, `radius_ratio`) refuse when the value is too
+**large**, which a single `<` comparison would wave through.
+
 **ENH-51 — Reconciliation ledger.** Join the bitemporal history and the provenance
 layer so every published number traces to the inputs and the run that produced it,
 and a number that changed with unchanged inputs (already logged at
@@ -845,6 +897,30 @@ derived collections on every run and reads the store twice
 (`src/analytics.js:226`, `:283`). Key each derived value by the digest of its
 inputs (`inputDigestFor` exists) and skip recomputation when nothing changed.
 
+**Shipped 2026-10-12.** Each derived collection is keyed on the digest of its own
+inputs, computed with `canonicalHash` rather than `inputDigestFor` — the latter
+counts thirteen collections and would miss every non-count input. Only the
+collections whose digest moved are recomputed.
+
+*Two collections are always recomputed, and naming them is the point.*
+`road_access` reads `new Date()` for hazard recency and `data_quality` reads
+`Date.now()` through the freshness penalty. Hashing a clock would miss on every
+run anyway; saying so in `CLOCK_DEPENDENT` is the honest version, and the
+alternative — a hole a reader takes for a hit — is how a cache silently serves
+stale numbers.
+
+*The cache cannot hit across a changed engine.* It is a `WeakMap` keyed by store
+identity and the digest is recomputed from a fresh read each run, so a hit means
+the inputs are *currently* identical rather than that they once were. A persisted
+digest could outlive the code that reads the inputs. An undigestible input
+(`BigInt`, a cycle) throws inside `canonicalHash`, which returns `null` and forces
+a miss — never a false hit. `planDerivedRefresh` also recomputes when a matching
+digest has no rows behind it, which is the guard against "skipped 8, recomputed 0
+on a cold cache": a skip that measures nothing must not report success.
+
+14 tests, including stale-hit impossibility — a covered field changes while the row
+count does not, and the digest must catch it.
+
 **ENH-63 — Durable cross-replica idempotency and outbox lock.** The dispatch lock
 is an in-process `WeakMap` (`src/outbox.js:129`) and the idempotency store is
 in-process (`src/server.js:637`). Two replicas both POST the same outbox row.
@@ -950,6 +1026,35 @@ the fold; the command band reclaimed the pixels. The deeper fix is to show contr
 for the task the operator is doing, not all controls at once — a role-and-intent
 driven surface rather than a layout one.
 
+**Shipped 2026-10-12, as the model — not yet wired to the console.** HX-05 counted
+144 controls above the fold; the command band reclaimed the pixels, and this is the
+deeper fix. `public/shared/intent.js` maps a (role, intent) pair to the controls a
+surface shows, over the 39 interactive elements `public/index.html` actually
+declares rather than an invented set. Roles borrow `shared/view-state.js`'s
+`ROLE_DEFAULTS` vocabulary so a shared link and this model agree on who an operator
+is.
+
+*Reachability is structural, which is deliberate.* `manage` shows every group,
+excludes nothing and is not role-gated, so every control is shown for every role by
+construction. `reachability()` then checks the whole 5 × 7 matrix anyway, and two
+tests assert both result lists are empty — one over the registry, one over the ids
+read from `index.html`, so a registry that drifted from the console cannot satisfy
+it. A disclosure model whose failure mode is "the control is unreachable for
+everyone" is a bug wearing the feature's clothes; the canary — dropping `palette`
+from `manage.show` — fired that assertion.
+
+*An unknown input shows everything.* An unrecognised role or intent returns
+`mode: 'fallback'` with every control shown and a header saying so. Hiding on an
+input the model does not recognise is how a control disappears for the one operator
+who needed it, and the failure is invisible to everyone else. A hidden control
+carries the reason it is hidden and, when it is the only route to a capability, the
+way back.
+
+**PARTIAL:** the module is pure and nothing imports it, so it costs no first-load
+bytes and changes no surface. Wiring it needs an importer in `app.js`, a role
+source, and a renderer that toggles `hidden` and shows the reasons — named in the
+module's report rather than guessed at here.
+
 **ENH-72 — Explainable ranking everywhere.** `viz-explain.js` explains a record's
 score. Every ranked list — alerts, districts, assets — should state its arithmetic
 and its gaps, so a ranking is an argument rather than an assertion.
@@ -1012,6 +1117,31 @@ a median an operator cannot decompose is not the only thing on offer.
 **ENH-74 — Collaborative annotation threads.** A coordination platform's users need
 to talk to each other on a record. Threaded annotations with the same provenance
 discipline as the record itself.
+
+**Shipped 2026-10-12.** `src/annotations.js` — annotations with `parent_id` forming
+a tree, a flat ordered read, and provenance built by `src/provenance.js`'s own
+`buildProvenance`, so the field list is that module's rather than a parallel one.
+`ANNOTATION_PROVENANCE_FIELDS` re-exports the same frozen array and a test asserts
+identity, because a copied field list is one that drifts.
+
+*An edit is a new version, not an overwrite.* The bitemporal model says an edited
+annotation closes its interval and opens a new one; `editAnnotation` returns a new
+object and never mutates its input, so the prior text survives in the caller's
+array. Versions are first-class annotations linked by `supersedes`/`superseded_by`
+rather than a side history table — a thread whose edits live in a side table is one
+a reader has to join before reading it.
+
+*The cycle guard is the one that bites.* An edit can make an annotation its own
+ancestor, directly or at any depth, and a thread containing a cycle reads as a hang
+rather than an error. `assertNoCycle` walks the ancestors bounded by the set length
+so pre-existing bad data cannot hang the guard, and `flattenThread` carries its own
+`seen` set so a hand-built cycle still reads. The canary — returning early from the
+guard — dropped it to 19/21, so the walk fires on the case it exists for.
+
+Retraction follows ADR-007: it stamps `retracted_at`, closes the interval and keeps
+the body, because deleting the row would create the orphan the module otherwise
+refuses. Orphan replies, blank authors, empty bodies and edits to a retracted
+annotation each refuse with a named code. 21 tests.
 
 ---
 
