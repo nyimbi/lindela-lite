@@ -67,7 +67,7 @@
  */
 
 import { redactPii } from './pii.js'
-import { orgUnitByCode, orgUnitFor } from './org-units.js'
+import { orgUnitFor } from './org-units.js'
 
 /**
  * Every action a decision can carry. Frozen and exhaustive, because a store
