@@ -24,13 +24,34 @@ import { clearTileCache, elevationAtCacheInfo, loadTile } from '../src/terrain.j
 
 const PUBLIC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public')
 
-async function withServer(fn) {
+/**
+ * A server over a private copy of the static tree.
+ *
+ * The copy is the point. One test below asserts that a file changing on disk is
+ * re-prepared rather than served stale, and it used to prove that by writing a
+ * `// cache-buster` line into the real `public/shared/app-version.js` and
+ * restoring it afterwards. That file is tracked, and `node --test` runs test
+ * files in parallel workers: two copies of this file overlapped there, one
+ * reading while the other wrote, and the suite went non-deterministic in a way
+ * that had nothing to do with the cache under test — "compressed 2 times for
+ * five requests", or an ETag that should have changed comparing equal. Ten
+ * sequential runs passed; ten concurrent ones failed nine times.
+ *
+ * So the server takes a `publicDir`, and this helper hands it a copy. The
+ * mutation now lands in a temp directory that no other worker can see.
+ */
+async function withServer(fn, { copy = false } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-static-'))
   const store = new JsonStore(path.join(dir, 'store.json'))
-  const listener = createServer({ store }).listen(0)
+  let root = PUBLIC
+  if (copy) {
+    root = path.join(dir, 'public')
+    await fs.cp(PUBLIC, root, { recursive: true })
+  }
+  const listener = createServer({ store, publicDir: root }).listen(0)
   const base = `http://localhost:${listener.address().port}`
   try {
-    return await fn(base)
+    return await fn(base, root)
   } finally {
     listener.close()
     await fs.rm(dir, { recursive: true, force: true })
@@ -90,22 +111,25 @@ describe('SCL-04 static assets are prepared once and revalidate honestly', () =>
     // The cache is keyed on mtime and size, so a deploy that rewrites an asset
     // underneath a running process is picked up rather than served stale for
     // the lifetime of the process.
+    //
+    // The rewrite lands in a private copy of the tree, never in `public/`. It
+    // used to land in `public/shared/app-version.js` — a tracked file — and be
+    // restored in a `finally`; see the note on `withServer` for what that did
+    // to the suite when two workers overlapped.
     resetStaticCache()
-    await withServer(async (base) => {
+    await withServer(async (base, root) => {
       const first = await fetch(`${base}/shared/app-version.js`)
       const before = first.headers.get('etag')
       await first.text()
-      const file = path.join(PUBLIC, 'shared/app-version.js')
+      const file = path.join(root, 'shared/app-version.js')
       const original = await fs.readFile(file)
-      try {
-        await fs.writeFile(file, `${original.toString('utf8')}\n// cache-buster\n`)
-        const after = await fetch(`${base}/shared/app-version.js`)
-        await after.text()
-        assert.notEqual(after.headers.get('etag'), before, 'the changed file kept its old ETag')
-      } finally {
-        await fs.writeFile(file, original)
-      }
-    })
+      // The size changes too, so this does not depend on the filesystem's mtime
+      // resolution: a same-millisecond rewrite is still caught by `size`.
+      await fs.writeFile(file, `${original.toString('utf8')}\n// cache-buster\n`)
+      const after = await fetch(`${base}/shared/app-version.js`)
+      await after.text()
+      assert.notEqual(after.headers.get('etag'), before, 'the changed file kept its old ETag')
+    }, { copy: true })
   })
 
   it('still answers a matching If-None-Match with 304', async () => {

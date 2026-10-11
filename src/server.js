@@ -445,6 +445,9 @@ export function createServer(options = {}) {
   // from here rather than from process start, so two servers in one test process
   // do not share an uptime and a test can place the clock where it needs it.
   const serverStartedAt = options.startedAt ?? Date.now()
+  // Resolved once per server. See `handleStatic`: this is the seam that lets a
+  // test exercise a file changing on disk without writing into `public/`.
+  const staticRoot = options.publicDir || publicDir
   // CON-06 / ENH-65. Per server, built from the store this server resolved, and
   // not a module global. Two servers in one test process used to share one
   // idempotency Map, which made the tests order-dependent — and a module global
@@ -623,7 +626,7 @@ export function createServer(options = {}) {
         await handleApi(resolved, req, res, url, { checkWebhookUrl, idempotency: idempotency(resolved) })
         return
       }
-      await handleStatic(req, res, url.pathname)
+      await handleStatic(req, res, url.pathname, staticRoot)
     } catch (error) {
       // A thrown value's message used to reach the client verbatim. In this
       // codebase that includes failures from `pg` — which carry the connection
@@ -4972,7 +4975,24 @@ async function handleWorkflowRoute(store, data, req, res, url, route) {
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleStatic(req, res, pathname) {
+/**
+ * The static root is a parameter, not the module constant, so a test can serve
+ * a fixture tree.
+ *
+ * It was read from the closure, which meant the only way to test a file that
+ * changes on disk was to change a file in `public/` — and `test/static-and-tile-caches.test.js`
+ * did exactly that, writing a `// cache-buster` line into the tracked
+ * `public/shared/app-version.js` and restoring it in a `finally`. Under
+ * `node --test`'s file-level parallelism two workers overlap there: one reads
+ * the file mid-write and sees an mtime/size the other is about to change, so
+ * the "compressed once" counter reads 2 or 3 and an ETag comparison that should
+ * differ compares equal. The test was 10/10 green run alone and failed 9/10 run
+ * ten ways at once, which is the signature of a shared file, not a shared cache.
+ *
+ * A suite whose result depends on how many workers overlap cannot be evidence
+ * for anything, so the seam is worth more than the test it fixes.
+ */
+async function handleStatic(req, res, pathname, publicDir) {
   if (pathname === '/docs' || pathname.startsWith('/docs/')) {
     // The deployment documentation is served from the image, and it was served
     // to anyone who could reach the port: an unauthenticated map of how this
