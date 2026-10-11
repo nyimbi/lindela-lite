@@ -4,6 +4,7 @@ import { ERROR, EMPTY, LOADING, OK, createLoadSequence, describeState, distingui
 import { readApiKey, clearApiKey, hydrateFromSecureStore } from '/shared/secret.js'
 import { esc as escapeHtml, formatTimestamp, num, pct, sevChipHtml, truncate, applyLocaleToDocument } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
+import { verifyChainInBrowser } from '/shared/audit-chain-core.js'
 mountNavbar({ activePath: '/portal' })
 
 /** The four collections this portal shows. One list: the loader, the per-table
@@ -171,6 +172,10 @@ function setupTabs() {
       const tab = e.target.dataset.tab
       state.currentTab = tab
       $(`${tab}Tab`).classList.add('active')
+      // ENH-75. The chain is verified the first time the tab is opened, not on
+      // every portal load: an operator who never opens it pays nothing, and the
+      // verification is of the entries as fetched now rather than as cached.
+      if (tab === 'audit') verifyAuditTrail()
     })
   })
 
@@ -181,6 +186,63 @@ function setupTabs() {
       exportData(tab, format)
     })
   })
+}
+
+/**
+ * ENH-75 — verify the audit chain here, in this browser.
+ *
+ * The route already answers `verified`, and that number is the server's own
+ * word about the server's own log. A donor checking an export is not supposed
+ * to have to take it. So the entries are re-walked here with `crypto.subtle`,
+ * and the browser's verdict is what is shown — with the server's beside it, so
+ * a disagreement is visible rather than papered over by whichever ran last.
+ *
+ * This is the property a tamper-evident log is for: the check runs somewhere
+ * the operator does not control.
+ */
+async function verifyAuditTrail() {
+  const verdict = $('auditVerdict')
+  const proofEl = $('auditProof')
+  if (!verdict) return
+  verdict.dataset.state = 'loading'
+  verdict.textContent = describeState(LOADING, { noun: 'the audit chain' }).title
+
+  let body
+  try {
+    body = await apiFetch('/api/v1/audit/verify', { token: apiKey() })
+  } catch (error) {
+    // A dead endpoint is not a broken chain, and saying "verification failed"
+    // for both is the exact confusion this panel exists to avoid.
+    verdict.dataset.state = 'error'
+    verdict.textContent = describeState(ERROR, { subject: 'The audit chain' }).title
+    proofEl.textContent = String(error?.message || error)
+    return
+  }
+
+  const entries = body?.entries_data || []
+  // The route sends a count and a head but not the entries themselves — a
+  // partner verifying an export supplies their own. When the server did send
+  // entries (a future export route), verify them; otherwise say plainly that
+  // this surface has nothing to walk rather than claim a check that did not run.
+  const serverSays = body?.verified
+  if (!entries.length) {
+    verdict.dataset.state = 'ok'
+    verdict.textContent = serverSays === true
+      ? 'The server reports the chain intact. This page has no entries to re-check — ask the operator for the export to verify it yourself.'
+      : 'The server reports a problem with the chain. See the proof below.'
+    proofEl.textContent = body?.proof || ''
+    return
+  }
+
+  const local = await verifyChainInBrowser(entries, { expectedHead: body?.head || null })
+  const agrees = local.available && local.verified === serverSays
+  verdict.dataset.state = agrees && local.verified ? 'ok' : 'error'
+  verdict.textContent = !local.available
+    ? 'This browser cannot verify the chain: a secure context (https or localhost) is required for crypto.subtle.'
+    : local.verified
+      ? `Verified here, in this browser: ${local.entry_count} entries recompute to the published head.`
+      : `Disagreement or break: this browser recomputed ${local.defects.filter((d) => d.severity === 'fatal').length} defect(s). The entries are what you should believe, not the server's verdict.`
+  proofEl.textContent = body?.proof || ''
 }
 
 async function loadData() {

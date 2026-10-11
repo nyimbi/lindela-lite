@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 22 | 31, 34, 35, 36, 37, 39, 40, 44, 45, 46, 47, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
+| IMPLEMENTED | 23 | 31, 34, 35, 36, 37, 39, 40, 44, 45, 46, 47, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 75, 81 |
 | PARTIAL | 13 | 32, 33, 38, 42, 50, 51, 52, 55, 56, 57, 59, 70, 78 |
-| ABSENT | 16 | 41, 43, 53, 54, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
+| ABSENT | 15 | 41, 43, 53, 54, 58, 60, 62, 67, 68, 71, 74, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
@@ -888,6 +888,36 @@ discipline as the record itself.
 server-side with an out-of-band anchor. A browser verifier (the chain is a hash
 walk) lets a partner confirm a record's integrity without trusting the server that
 served it — the property a tamper-evident log is supposed to have.
+
+> **Shipped 2026-10-11.** The verification walk moved into
+> `public/shared/audit-chain-core.js` — the field list, the canonical encoding, the
+> digest input, the defect taxonomy and the whole recomputation — and
+> `src/audit-chain.js` now imports it and supplies the one function a browser cannot
+> write: a synchronous SHA-256. One implementation of the rules, two digest sources.
+> The risk a split module carries is two encodings drifting, so the tests
+> cross-check the browser walk against the server walk on real chained input and
+> assert they agree bit-for-bit, and a canary that makes the server digest a
+> different preimage fails eleven of them.
+>
+> `verifyChainInBrowser` runs the walk with `crypto.subtle` and reports a missing
+> secure context as its own state — `available: false` with a reason — rather than
+> throwing, because a verifier that throws is one the caller renders as "could not
+> check", which on screen is indistinguishable from "the chain is broken".
+>
+> The partner portal gains an **Audit Trail** tab that fetches the chain, re-walks
+> it in the browser, and shows the browser's verdict beside the server's, so a
+> disagreement is visible rather than settled by whichever ran last.
+>
+> **This unit found and fixed VER-16.** The `/api/v1/audit/verify` route read
+> `proof.ok`, which `verifyChain` does not return, so `verified` was `undefined`
+> and JSON dropped it — the one boolean the route exists to answer was never sent,
+> and a caller's truthiness check read it as *false* for a clean chain. The route
+> now also sends `entries_data` (bounded at 500, truncation reported), which is what
+> makes the browser verification possible at all.
+>
+> What it does not do: the entries travel in the response body, so a chain longer
+> than the cap is verified in part and says so. A partner verifying a full export
+> still fetches the export; this is the same walk over it.
 
 **ENH-76 — Deterministic replay harness.** Given a captured run (`src/capture.js`
 exists), reproduce any published number bit-for-bit. This is the strongest possible

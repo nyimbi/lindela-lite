@@ -326,6 +326,7 @@
         <button class="tab-button" data-tab="hazards" data-i18n="portal.tab_hazards">Hazard Events</button>
         <button class="tab-button" data-tab="assets" data-i18n="portal.tab_assets">Service Assets</button>
         <button class="tab-button" data-tab="alerts" data-i18n="portal.tab_alerts">Alerts Sent to Me</button>
+        <button class="tab-button" data-tab="audit" data-i18n="portal.tab_audit">Audit Trail</button>
       </div>
 
         <!-- Risk Overview Tab -->
@@ -427,6 +428,20 @@
               </tbody>
             </table>
           </div>
+        </div>
+
+        <!-- Audit Trail Tab — ENH-75. The chain is verified in this browser. -->
+        <div id="auditTab" class="tab-content">
+          <div class="content-header">
+            <h2 data-i18n="portal.tab_audit">Audit Trail</h2>
+          </div>
+          <p class="audit-intro" data-i18n="portal.audit_intro">
+            This chain is recomputed here, in your browser, from the entries the
+            server sent. The server's own verdict is shown beside it — if the two
+            disagree, the entries are what you should believe.
+          </p>
+          <div id="auditVerdict" class="audit-verdict" role="status" aria-live="polite"></div>
+          <pre id="auditProof" class="audit-proof"></pre>
         </div>
       </main>
     </div>

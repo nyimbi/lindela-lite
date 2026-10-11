@@ -818,6 +818,35 @@ find it. The exemption is gone and the canary that caught it is kept.
 
 ---
 
+### VER-16 — MEDIUM — The audit-verify route reports `verified: undefined`, and files an advisory among the fatal defects
+
+`GET /api/v1/audit/verify` is the one route a donor or a partner reads to check the
+audit chain, and its `verified` field was absent from the response. The handler
+read `proof.ok`, and `verifyChain` returns `verified`, not `ok` — so the value was
+`undefined` and `JSON.stringify` dropped the key. A caller checking `body.verified`
+got `undefined` on every response: the single boolean the route exists to answer
+was never sent, and a truthiness check on it reads as *false*, i.e. "the chain is
+broken", for a chain that recomputes cleanly.
+
+The same handler passed `proof.advisories` (also absent — `verifyChain` returns one
+`defects` array) and so published `advisories: []` always, while the *unanchored*
+advisory — the one that says "a full re-chain of this log cannot be ruled out" —
+sat inside the fatal `defects` array beside real breaks. A reader who filters
+`defects` by presence rather than by severity sees an advisory and a broken entry
+as the same class of finding.
+
+**Fixed** with ENH-75: the handler splits `defects` by severity, publishes
+`verified: proof.verified`, and the response now also carries `entries_data` so a
+browser can recompute the head itself rather than take the server's word — which is
+the property the route's own doc comment claims and did not have.
+
+**Why no test caught it.** `test/provenance-route-module.test.js` asserted
+`body.unanchored === true` and that `body.proof` exists, on an *empty* chain — the
+two fields that were correct. Nothing asserted `verified`, so a field that was
+never serialised passed for as long as the route existed.
+
+---
+
 ### ARC-02 — HIGH — Five parallel route tables, no single source of truth
 `src/server.js` (68 conditions + 16 helpers), `src/route-manifests.js` (183 entries),
 `docs/openapi.yaml` (150 paths), `src/auth.js:431` scopes (91 entries), and the

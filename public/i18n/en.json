@@ -383,6 +383,8 @@
   "portal.sign_in": "Sign in",
   "portal.tab_alerts": "Alerts Sent to Me",
   "portal.tab_assets": "Service Assets",
+  "portal.tab_audit": "Audit Trail",
+  "portal.audit_intro": "This chain is recomputed here, in your browser, from the entries the server sent. The server's own verdict is shown beside it — if the two disagree, the entries are what you should believe.",
   "portal.tab_hazards": "Hazard Events",
   "portal.tab_risk": "Risk Overview",
   "portal.title": "Lindela Partner Portal",

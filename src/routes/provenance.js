@@ -30,10 +30,18 @@
  * that reads as "wrong address".
  */
 
-import { chainEntries, renderAuditProof, verifyChain } from '../audit-chain.js'
+import { CHAINED_FIELDS, GENESIS_HASH, chainEntries, renderAuditProof, verifyChain } from '../audit-chain.js'
 import { ERROR_CODES } from '../errors.js'
 import { observationSeries, projectableCollections, recordHistory } from '../series.js'
 import { describeWatermarkState } from '../watermarks.js'
+
+/**
+ * ENH-75. How many entries ride with an audit-verify response so a browser can
+ * re-walk them. A full action log is unbounded; a partner verifying an export
+ * fetches that export rather than this body. Bounded and named, so a truncated
+ * set is reported as truncated rather than read as the whole chain.
+ */
+export const AUDIT_VERIFY_ENTRY_LIMIT = 500
 
 /**
  * Which provenance route a request is, or null.
@@ -139,16 +147,42 @@ function auditProof(route, { data, res, url, jsonResponse }) {
   const { entries } = chainEntries(data.action_logs || [])
   const publishedHead = url.searchParams.get('head') || null
   const proof = verifyChain(entries, { expectedHead: publishedHead })
+  // `proof.ok` and `proof.advisories` do not exist on what `verifyChain` returns,
+  // so `verified` was `undefined` and JSON dropped the field entirely — the one
+  // boolean a caller checks was absent from the body, and an advisory sat in the
+  // fatal `defects` array beside the real breaks. Split by severity, which is
+  // what the verifier already computes and what the field names promise.
+  const fatal = (proof.defects || []).filter((defect) => defect.severity === 'fatal')
+  const advisories = (proof.defects || []).filter((defect) => defect.severity !== 'fatal')
   jsonResponse(res, 200, {
     success: true,
     entries: entries.length,
     head: entries.length ? entries[entries.length - 1].entry_hash : null,
-    verified: proof.ok,
+    verified: proof.verified,
     // Present so a reader is not left to infer it from a missing field: a chain
     // nobody anchored is internally consistent and still not proof.
     unanchored: !publishedHead,
-    defects: proof.defects || [],
-    advisories: proof.advisories || [],
+    // ENH-75. The entries travel, not just the verdict. A `verified: true` the
+    // client cannot re-derive is the server's word about its own log — the one
+    // thing a tamper-evident chain is supposed to make unnecessary. The browser
+    // re-walks these with crypto.subtle and shows its own answer beside the
+    // server's. Bounded like every other list on this surface: a partner
+    // verifying a full export asks for it directly rather than through a JSON
+    // body, and this cap is named rather than silent.
+    entries_data: entries.slice(-AUDIT_VERIFY_ENTRY_LIMIT),
+    entries_truncated: entries.length > AUDIT_VERIFY_ENTRY_LIMIT,
+    defects: fatal,
+    advisories,
+    // ENH-75. The browser-verifiable core travels with the export: a partner
+    // recomputes the head from the entries with the same walk the server ran,
+    // rather than trusting the `verified` above, which is the server's own word.
+    verifier: {
+      module: '/shared/audit-chain-core.js',
+      function: 'verifyChainInBrowser',
+      fields: CHAINED_FIELDS,
+      genesis_prev_hash: GENESIS_HASH,
+      note: 'Load the module and call verifyChainInBrowser(entries, { expectedHead: publishedHead }). It recomputes the head with crypto.subtle and reports the same defect taxonomy; the server\'s `verified` above is not needed to check it.',
+    },
     // renderAuditProof re-verifies from the entries itself and renders the
     // human-readable document a non-engineer reads. Passing it the proof object
     // instead is what made this route 500 on its third attempt.

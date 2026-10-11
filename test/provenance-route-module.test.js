@@ -165,6 +165,39 @@ describe('ARC-01 — audit verifies the chain, and says when it is unanchored', 
     const { res } = await call({ kind: 'audit', action: 'head' }, { data: { action_logs: [] } })
     assert.equal(res.json().unanchored, true)
   })
+
+  it('reports `verified` as a boolean on a real chain — VER-16', async () => {
+    // The field the route exists to answer was `proof.ok`, which is not what
+    // `verifyChain` returns, so `verified` was undefined and JSON dropped the
+    // key. A caller's truthiness check read it as false — "the chain is broken"
+    // for a chain that recomputes cleanly. Nothing asserted it, so it passed for
+    // as long as the route existed.
+    const { chainEntries } = await import('../src/audit-chain.js')
+    const { entries } = chainEntries([{
+      id: 'log_1', collection: 'hazard_events', record_id: 'hazard_1', action: 'create',
+      actor: 'user:alice', subject: null, summary: 's', created_at: '2026-01-01T00:00:00.000Z', metadata: {},
+    }])
+    const { res } = await call({ kind: 'audit', action: 'verify' }, {
+      data: { action_logs: entries },
+      search: `?head=${entries[0].entry_hash}`,
+    })
+    const body = res.json()
+    assert.equal(typeof body.verified, 'boolean', 'verified must be present and boolean, not undefined')
+    assert.equal(body.verified, true)
+    assert.equal(body.unanchored, false)
+    // The browser re-walks these; without them the client verifier has nothing.
+    assert.equal(body.entries_data.length, 1)
+    assert.equal(body.entries_data[0].entry_hash, entries[0].entry_hash)
+  })
+
+  it('files the unanchored advisory outside the fatal defects — VER-16', async () => {
+    // The advisory sat in `defects` beside real breaks, so a reader filtering by
+    // presence rather than severity read "cannot rule out a rewrite" as a break.
+    const { res } = await call({ kind: 'audit', action: 'verify' }, { data: { action_logs: [] } })
+    const body = res.json()
+    assert.deepEqual(body.defects, [], 'an unanchored chain has no fatal defect')
+    assert.ok(body.advisories.some((d) => d.type === 'unanchored'))
+  })
 })
 
 describe('ARC-01 — history answers a series, a record, and refuses a write', () => {

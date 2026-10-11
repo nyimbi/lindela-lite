@@ -67,9 +67,6 @@ import { stableId } from './utils.js'
  * half and is deliberately never on the write path.
  */
 
-const GENESIS_HASH = '0'.repeat(64)
-const HEX64 = /^[0-9a-f]{64}$/
-
 /**
  * Exactly the fields a hash commits to.
  *
@@ -83,51 +80,43 @@ const HEX64 = /^[0-9a-f]{64}$/
  * `created_at` is included even though `canonicalHash` in utils drops it. The
  * chain commits to *when* something was claimed as well as *what* was claimed;
  * re-dating an entry is as much a forgery as rewriting its body.
+ *
+ * ENH-75. The field list, the canonical encoding, the digest input and the whole
+ * verification walk live in `public/shared/audit-chain-core.js`, because a
+ * browser has to run the same walk and may not import `node:crypto`. This module
+ * supplies the one function that file cannot write — a synchronous SHA-256 — and
+ * re-exports the rest so every existing import path keeps working.
  */
-export const CHAINED_FIELDS = Object.freeze([
-  'seq',
-  'collection',
-  'record_id',
-  'action',
-  'actor',
-  'subject',
-  'summary',
-  'created_at',
-  'metadata',
-])
+export {
+  CHAINED_FIELDS,
+  GENESIS_HASH,
+  HEX64,
+  canonicalise,
+  chainDigestInput,
+  chainPreimage,
+  verifyChainWith,
+  withdrawalIndex,
+} from '../public/shared/audit-chain-core.js'
+
+import {
+  GENESIS_HASH,
+  chainDigestInput,
+  chainPreimage,
+  verifyChainWith,
+} from '../public/shared/audit-chain-core.js'
 
 const CHAIN_FIELDS = Object.freeze(['seq', 'prev_hash', 'entry_hash'])
-
-/** Deterministic JSON with object keys sorted at every depth. Array order is content. */
-function canonicalise(value) {
-  if (Array.isArray(value)) return value.map(canonicalise)
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.keys(value).sort().map((key) => [key, canonicalise(value[key])]),
-    )
-  }
-  return value
-}
-
-/** What the hash is taken over: content fields only, in a stable encoding. */
-export function chainPreimage(entry) {
-  const content = {}
-  for (const field of CHAINED_FIELDS) content[field] = entry?.[field] ?? null
-  return JSON.stringify(canonicalise(content))
-}
 
 /**
  * The hash of one entry, given the predecessor's hash.
  *
  * A pure function of (content, prevHash) with no reference to the entry's own
- * stored hash — that is what makes the recomputation independent.
+ * stored hash — that is what makes the recomputation independent. The encoding
+ * it hashes is `chainDigestInput` in the shared core, so the browser verifier and
+ * this one digest the same bytes; only the digest implementation differs.
  */
 export function computeEntryHash(entry, prevHash) {
-  return createHash('sha256')
-    .update(prevHash)
-    .update('\n')
-    .update(chainPreimage(entry))
-    .digest('hex')
+  return createHash('sha256').update(chainDigestInput(entry, prevHash)).digest('hex')
 }
 
 /**
@@ -241,25 +230,6 @@ export function actorFor(input) {
   return { actor: 'anonymous', unattributed: true }
 }
 
-/** Ids of entries a withdrawal names, minus the ones that name nothing in the chain. */
-function withdrawalIndex(entries) {
-  const withdrawn = new Map()
-  const dangling = []
-  for (const entry of entries) {
-    if (entry.action !== 'withdraw') continue
-    const target = entry.metadata?.withdraws
-    if (typeof target !== 'string' || !target) continue
-    if (!entries.some((candidate) => candidate.id === target)) {
-      // A withdrawal naming an absent entry is either a chain that lost rows or
-      // a withdrawal of something that never existed. Both need a human.
-      dangling.push({ withdraws: target, by_seq: entry.seq ?? null, by_entry: entry.id })
-      continue
-    }
-    withdrawn.set(target, entry.id)
-  }
-  return { withdrawn, dangling }
-}
-
 /**
  * Verifies a chain by recomputation.
  *
@@ -279,126 +249,9 @@ function withdrawalIndex(entries) {
  * checked against an external claim.
  */
 export function verifyChain(entries = [], options = {}) {
-  const { expectedHead = null, expectedCount = null } = options
-  const defects = []
-  const ordered = [...entries].sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0))
-
-  const { withdrawn, dangling } = withdrawalIndex(ordered)
-  for (const item of dangling) {
-    defects.push({
-      type: 'unknown_withdrawal',
-      severity: 'fatal',
-      detail: `withdrawal at seq ${item.by_seq} names entry ${item.withdraws}, which is not in the chain`,
-      entry_id: item.by_entry,
-    })
-  }
-
-  const seenSeq = new Set()
-  const seenId = new Set()
-  let running = chainGenesis()
-  let recomputedHead = null
-
-  for (const entry of ordered) {
-    const seq = Number(entry.seq)
-    const label = { seq: Number.isFinite(seq) ? seq : null, entry_id: entry.id || null }
-
-    if (!Number.isFinite(seq)) {
-      defects.push({ type: 'missing_seq', severity: 'fatal', detail: 'entry carries no sequence number', ...label })
-    } else if (seenSeq.has(seq)) {
-      defects.push({ type: 'duplicate_seq', severity: 'fatal', detail: `seq ${seq} appears more than once`, ...label })
-    } else if (seq !== running.seq + 1) {
-      // Either rows were removed from the middle, or the chain was restarted.
-      // Both are the same observable fact: this entry does not follow the last.
-      defects.push({
-        type: 'seq_gap',
-        severity: 'fatal',
-        detail: `expected seq ${running.seq + 1}, found ${seq} — an entry was removed or reordered`,
-        ...label,
-      })
-    }
-    seenSeq.add(seq)
-
-    if (seenId.has(entry.id)) {
-      defects.push({ type: 'duplicate_id', severity: 'fatal', detail: `entry id ${entry.id} appears more than once`, ...label })
-    }
-    seenId.add(entry.id)
-
-    // The recomputed hash is what the *next* entry must reference. Reading
-    // `prev_hash` here instead would let a consistent re-chain pass, which is
-    // the whole failure mode this module exists to close.
-    const recomputed = computeEntryHash(entry, running.hash)
-    if (entry.entry_hash !== recomputed) {
-      defects.push({
-        type: 'entry_hash_mismatch',
-        severity: 'fatal',
-        detail: 'entry content does not hash to its recorded entry_hash — the entry was edited',
-        expected: recomputed,
-        found: entry.entry_hash ?? null,
-        ...label,
-      })
-    }
-    if (entry.prev_hash !== running.hash) {
-      defects.push({
-        type: 'prev_hash_mismatch',
-        severity: 'fatal',
-        detail: 'prev_hash does not match the recomputed hash of the preceding entry',
-        expected: running.hash,
-        found: entry.prev_hash ?? null,
-        ...label,
-      })
-    }
-    if (!HEX64.test(String(entry.entry_hash))) {
-      defects.push({ type: 'malformed_hash', severity: 'fatal', detail: 'entry_hash is not a 64-character hex digest', ...label })
-    }
-
-    running = { seq: Number.isFinite(seq) ? seq : running.seq, hash: recomputed }
-    recomputedHead = recomputed
-  }
-
-  if (expectedHead !== null && expectedHead !== undefined) {
-    if (expectedHead !== recomputedHead) {
-      // The signature of a rewrite: every row agrees with every other row, and
-      // none of them agrees with the hash the operator published or the donor
-      // witnessed at the time.
-      defects.push({
-        type: 'head_mismatch',
-        severity: 'fatal',
-        detail: 'recomputed head does not match the published head — the log was rewritten, or entries were removed from the end',
-        expected: expectedHead,
-        found: recomputedHead ?? null,
-        seq: running.seq,
-      })
-    }
-  } else {
-    defects.push({
-      type: 'unanchored',
-      severity: 'advisory',
-      detail: 'no published head was supplied; a consistent re-chain of the whole log cannot be detected without one',
-      seq: running.seq,
-    })
-  }
-
-  if (expectedCount !== null && expectedCount !== undefined && expectedCount !== ordered.length) {
-    defects.push({
-      type: 'count_mismatch',
-      severity: 'fatal',
-      detail: `published entry count ${expectedCount} does not match ${ordered.length} entries`,
-      expected: expectedCount,
-      found: ordered.length,
-    })
-  }
-
-  return {
-    // Advisory defects never flip the verdict: they describe the limit of what
-    // was checked, not a break in the log.
-    verified: defects.every((defect) => defect.severity !== 'fatal'),
-    anchored: expectedHead !== null && expectedHead !== undefined,
-    entry_count: ordered.length,
-    head: recomputedHead,
-    seq: running.seq,
-    withdrawn: [...withdrawn.entries()].map(([target, by]) => ({ entry_id: target, withdrawn_by: by })),
-    defects,
-  }
+  // ENH-75. The walk lives in the shared core so a browser runs the same rules.
+  // The only thing this half supplies is the synchronous digest.
+  return verifyChainWith(entries, (text) => createHash('sha256').update(text).digest('hex'), options)
 }
 
 /**
@@ -576,4 +429,4 @@ export function auditChainWarningStats() {
   return { size: reportedHeads.size, limit: REPORTED_HEAD_LIMIT }
 }
 
-export { CHAIN_FIELDS, GENESIS_HASH }
+export { CHAIN_FIELDS }
