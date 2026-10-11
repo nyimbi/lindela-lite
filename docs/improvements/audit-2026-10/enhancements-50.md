@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 19 | 31, 34, 35, 37, 40, 44, 45, 46, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
+| IMPLEMENTED | 20 | 31, 34, 35, 36, 37, 40, 44, 45, 46, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
 | PARTIAL | 11 | 32, 33, 42, 50, 51, 52, 55, 57, 59, 70, 78 |
-| ABSENT | 21 | 36, 38, 39, 41, 43, 47, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
+| ABSENT | 20 | 38, 39, 41, 43, 47, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
@@ -157,6 +157,54 @@ discoverable by QGIS, GDAL and any geospatial client without custom code.
 XML. Add strict 1.2 profile validation (so a consumer's parser does not reject it)
 and a stable `/feed` permalink per alert, which is how GDACS and FEWS NET are
 consumed in practice.
+
+**Shipped 2026-10-11.** `src/cap-profile.js` is the profile and `sources/CAP-v1.2-os.html`
+is the archived standard it was transcribed from — element order, required sets and
+every enumerated vocabulary. The route now validates each rendered document before
+serving it and answers **500** rather than 200 when it does not conform;
+`GET /api/v1/alert-events/cap-feed` is the Atom feed, and every `.cap` response
+carries its permalink in a `Link` header.
+
+*The failure direction is the whole point.* A malformed CAP document served as
+valid is a national system that silently drops this platform's warnings — the
+subscriber's parser rejects it, the subscriber logs nothing, and the alert does
+not exist. An endpoint that is plainly down is a better answer than an endpoint
+that is confidently wrong, so the gate refuses rather than warns. `<sent>` is
+stamped at render, so the same alert rendered twice is not byte-identical; the
+permalink is keyed on `identifier`, which is stable, not on the document.
+
+*Null Island is valid CAP, so it is a warning and not an error.* The renderer's
+worst historical defect was `<circle>0,0 50</circle>` — a 50 km circle in the Gulf
+of Guinea for an alert about Bor — and a profile that rejected it would be wrong
+about the standard: `0,0` is a legal coordinate. The profile warns, and `cap.js`'s
+district resolution is what actually prevents it. A validator that refuses
+conforming documents is a validator that gets deleted.
+
+*Deprecated is not invalid.* CAP 1.2 deprecates `Very Likely` and directs readers
+to treat it as `Likely`. Refusing it would fail a feed that works today, so it
+warns.
+
+Four scanner bugs, each caught only by a test feeding the validator a document
+known to be wrong — which is why those tests exist and the valid-document test
+does not carry the weight. The scanner could not see the root element; it read
+each element's value as the *previous* element's text; it ordered elements by
+close rather than open, so block grouping was wrong; and it let a close tag match
+any element on its stack, so removing `</description>` still parsed as
+well-formed. Every one of the four passes a "valid document" test written against
+its own output.
+
+One canary, watched failing: emitting `<severity>Catastrophic</severity>` from
+`cap.js` turned 6 tests red, with the 500 body naming
+`<severity> is 'Catastrophic', which is not one of Extreme, Severe, Moderate,
+Minor, Unknown`. Reverted from a file backup.
+
+Two defects found while wiring it, both the same shape as ENH-44's. The first:
+`check-openapi.mjs` fired on `cap-feed` the moment it was served — a route the
+gate is right about, and the reason it is a gate. The second is the register's
+recurring finding: the feed was matched *after* the collection pattern in
+`matchAlertingRoute`, which would have taken `cap-feed` as an alert-events record
+id and 404'd a route that plainly exists. Ordering was doing work the matcher
+should do, and the fix was to match the literal path first.
 
 **ENH-37 — Streaming bulk export.** `collectionPage` materialises the full result
 set in memory before serialising (see SCL-03). A chunked NDJSON/Arrow export that
