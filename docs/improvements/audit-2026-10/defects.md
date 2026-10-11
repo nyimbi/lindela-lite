@@ -775,6 +775,36 @@ generalises to this.
 codebase is otherwise scrupulous about exactly this falsy-zero class — this is an
 inconsistency, not a philosophy.
 
+### QUA-08 — HIGH — A test writes into a tracked repo file, so the suite's result depends on worker count
+`test/static-and-tile-caches.test.js` proves "a changed file is re-prepared" by
+writing `// cache-buster` into `public/shared/app-version.js` — a tracked file —
+and restoring it in a `finally`. `node --test` runs test files in parallel
+workers, so two workers overlap on that path and one caches an mtime/size the
+other is about to change. `publicDir` was a module constant
+(`src/server.js:85`), so there was no other way to point a server at a file the
+test was allowed to mutate.
+
+Not found by the audit; found while running the suite for ENH-31. It presented
+as three unrelated failures in three files that each passed alone — a socket
+closed with no bytes read, a 301-second headers timeout, an ETag that should
+have differed comparing equal. Full detail under **Fixed**.
+
+**Fixed 2026-10-11.** `createServer` takes `publicDir`, `handleStatic` takes it
+as a parameter, and the test serves a private copy of the tree. Measured before
+the fix: the file alone, ten sequential runs, 10/10 pass; ten concurrent runs,
+9/10 fail. Three implicated files run six ways concurrently: 4/6 fail. After:
+10/10 and 6/6, and `git status` clean — where the failing runs had left
+`// cache-buster` appended twice to a tracked, served asset.
+
+The seam is canaried: a server pointed at a fixture root serves the fixture's
+body, not `public/`'s, so it cannot be ignored without the canary failing.
+
+The class this belongs to is worth stating, because the instance is small: a
+test that mutates the repository is a test that can corrupt the artifact it is
+checking, and under file-level parallelism it makes every other test's result a
+function of scheduling. A suite whose verdict depends on how many workers
+overlap is evidence for nothing — including the things it says are fine.
+
 ---
 
 ## What is done right (calibration)
