@@ -935,6 +935,13 @@ reports its own traffic, that an empty injected ring does not fall through to th
 process ring, and that two drivers tick their own stores. Canaried: removing the
 `options.requestRing` seam fails two of the five.
 
+The first commit of this fix shipped a `ReferenceError` on both KPI document
+routes: the `ringRate` parameter was added to `computeQuarterlyKpi` and the
+quarter-over-quarter call inside it, but the `qoq` loop actually lives in
+`quarterlyPdfSections`, which had no such parameter. `test/lite.test.js` caught
+it as a 500 on `/kpi/quarterly.md` and `.pdf`. The `quarterlyPdfSections`
+signature now takes `ringRate` too, and both call sites pass it.
+
 ### QUA-02 — HIGH — 44 of 162 test files assert on source text, not behaviour
 `readFileSync` into a string then `.includes`/`.match`. `test/partner-sql-predicate.test.js:244`
 strips comments from `src/server.js` and asserts a *regex* is present — it passes

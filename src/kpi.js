@@ -498,7 +498,7 @@ function _quarterEndMonth(quarter) {
  * prints the reason. Nothing is defaulted to zero to make a table look
  * complete.
  */
-export function quarterlyPdfSections(data, { quarter, year } = {}) {
+export function quarterlyPdfSections(data, { quarter, year, ringRate } = {}) {
   const q = quarter || _currentQuarter()
   const y = Number(year || _currentYear())
   const endMonth = _quarterEndMonth(q)

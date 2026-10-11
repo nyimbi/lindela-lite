@@ -2532,7 +2532,7 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     // to hand renderExportMarkdown a generic alert digest, so the download
     // button on the CO dashboard delivered a report with no quarterly figures
     // in it at all — the right refusals wrapped around the wrong numbers.
-    const sections = quarterlyPdfSections(data, { quarter: kpi.period.quarter, year: kpi.period.year })
+    const sections = quarterlyPdfSections(data, { quarter: kpi.period.quarter, year: kpi.period.year, ringRate: requestRing?.successRate() })
     const narrative = buildQuarterlyExportNarrative(data, { quarter: kpi.period.quarter, year: kpi.period.year })
     const markdown = renderQuarterlyReportMarkdown(kpi, {
       narrative,
@@ -2575,7 +2575,7 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     // The dashboard's other four sections ride with it too. They are computed
     // from the same collections and the same helpers the page renders from, so a
     // figure cannot be one thing on screen and another in the file.
-    const sections = quarterlyPdfSections(data, { quarter: kpi.period.quarter, year: kpi.period.year })
+    const sections = quarterlyPdfSections(data, { quarter: kpi.period.quarter, year: kpi.period.year, ringRate: requestRing?.successRate() })
 
     // The narrative, built by the same helper the Markdown export uses, so the
     // two files carry the same reasoning. A report that cannot be built still
