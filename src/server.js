@@ -66,6 +66,7 @@ import { summarizeFoodSecurity } from './connectors/ipc-hdx.js'
 import { districtWeatherReport } from './connectors/open-meteo-forecast.js'
 import { summarizeDiseaseObservations } from './connectors/who-gho.js'
 import { pushDataValueSet } from './connectors/dhis2-push.js'
+import { vintageOf, createVintageIndex } from './vintage.js'
 import { dischargeBand, DISCHARGE_BANDS, DISCHARGE_MODEL_NOTE } from '../public/shared/discharge-bands.js'
 // ARC-05. The operational banding the browser draws with, applied on the server
 // too. These modules are pure and DOM-free by construction, so importing them
@@ -488,6 +489,13 @@ export function createPeriodicDriver() {
 }
 
 const processDriver = createPeriodicDriver()
+
+/**
+ * CAP-04. The vintages this process has served, so a partner can be told what
+ * the exports they hold actually were. In-process, like the idempotency store,
+ * because the question is about this process's responses.
+ */
+const processVintageIndex = createVintageIndex()
 
 export function startPeriodicDriver(store, options) {
   return processDriver.start(store, options)
@@ -1454,6 +1462,14 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       // guessed one is worse than none. Chunked transfer is the honest encoding
       // for a body the server cannot measure.
       'cache-control': 'no-store',
+      // CAP-04. The vintage is a hash over the whole set, and this route's set
+      // is not known until the last record arrives — after the headers are on
+      // the wire. So the header says so rather than carrying a value computed
+      // from a partial read, which would be a vintage that names a dataset the
+      // caller does not hold. A caller who needs a citable vintage uses
+      // `export.csv` or `export.geojson`, which materialise the set and can
+      // hash it before responding.
+      'x-lindela-vintage': 'unavailable: this route streams, so the set is not known before the headers are sent; use export.csv or export.geojson for a citable vintage',
     })
 
     let sent = 0
@@ -1843,6 +1859,15 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       },
       action_logs: logs,
     })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/exports') {
+    // CAP-04. What partners hold. Each entry is a vintage this process has
+    // served, with the hash a consumer can compare against. It is an index of
+    // responses, not a store of datasets: nothing here can be fetched again,
+    // and `?vintage=` on an export is refused for that reason.
+    jsonResponse(res, 200, { success: true, ...processVintageIndex.list() })
     return
   }
 
@@ -3107,7 +3132,15 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     // disagreement with no marker, and a GIS client cannot tell a truncated
     // collection from a small one.
     ], url.searchParams, {}, { unlimited: true })
-    jsonResponse(res, 200, toGeoJson(records), { 'content-type': 'application/geo+json; charset=utf-8' })
+    // CAP-04. The same vintage discipline as the CSV: a FeatureCollection is a
+    // dataset too, and a GIS layer with no vintage cannot be cited either.
+    const vintage = vintageOf(records, { store: data })
+    processVintageIndex.record(vintage)
+    jsonResponse(res, 200, toGeoJson(records), {
+      'content-type': 'application/geo+json; charset=utf-8',
+      'x-lindela-vintage': vintage.vintage,
+      'x-lindela-record-count': String(vintage.record_count),
+    })
     return
   }
 
@@ -3152,9 +3185,30 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       })
       return
     }
+    // CAP-04. `?vintage=` is refused rather than ignored. The store keeps no
+    // snapshots, so a vintage can be *reported* but not *requested* — and a
+    // report that names a vintage it did not actually read is a citation that
+    // lies. Refusing says so; ignoring the parameter would let a caller believe
+    // they had pinned a vintage they had not.
+    const requestedVintage = url.searchParams.get('vintage')
+    if (requestedVintage !== null) {
+      jsonResponse(res, 400, {
+        success: false,
+        error: 'vintage is not a requestable parameter: this deployment stores no snapshots, so an export cannot be pinned to an earlier vintage. Read `vintage` from the response header and cite it; the manifest at /api/v1/exports lists what has been served.',
+      })
+      return
+    }
+    const vintage = vintageOf(records, { store: data })
+    processVintageIndex.record(vintage)
     res.writeHead(200, {
       'content-type': 'text/csv; charset=utf-8',
-      'content-disposition': `attachment; filename="lindela-lite-export${hxl ? '-hxl' : ''}.csv"`,
+      'content-disposition': `attachment; filename="lindela-lite-export-${vintage.vintage.slice(0, 12)}${hxl ? '-hxl' : ''}.csv"`,
+      // The vintage, on the response, so a report can name what it read without
+      // a second request. The filename carries the short form too, so a file
+      // saved from a browser is self-identifying on a disk where the header is
+      // long gone.
+      'x-lindela-vintage': vintage.vintage,
+      'x-lindela-record-count': String(vintage.record_count),
     })
     res.end(toCsv(records, { hxl: Boolean(hxl) }))
     return

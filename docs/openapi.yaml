@@ -2168,6 +2168,24 @@ paths:
             application/geo+json:
               schema:
                 type: object
+  /api/v1/exports:
+    get:
+      summary: The vintages this process has served
+      description: >-
+        An index of what partners hold, not a store of datasets. Each entry is a
+        vintage — a content hash over the records an export returned — with the
+        record count and when it was served. Nothing here can be fetched again:
+        the store keeps no snapshots, so `?vintage=` on an export is a 400
+        rather than a parameter that is accepted and ignored.
+
+        The hash is over record contents, not response bytes, so two reads of
+        identical data agree on the vintage however the store ordered them —
+        which is the property an ETag lacks and the reason a vintage exists.
+        Bounded by a ring; `dropped` says how many older entries were evicted
+        rather than showing a truncated history as if it were complete.
+      responses:
+        '200':
+          description: The vintage index, newest first
   /api/v1/export/dhis2:
     post:
       summary: Push observations to a DHIS2 instance as a dataValueSet

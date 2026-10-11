@@ -1090,6 +1090,37 @@ table (seven fail, across `org-units` and `lite`).
 `/api/v1/export.*` returns a live query with an ETag. A report citing "the
 flood-risk dataset" cannot name which vintage it read. ENH-34.
 
+**Fixed 2026-10-11.** `src/vintage.js`. Every export now carries
+`x-lindela-vintage` — a **content hash** over the records it returned — and
+`GET /api/v1/exports` lists the vintages this process has served, so a partner
+can be told what the exports they hold actually were.
+
+A content hash rather than the ETag, because an ETag identifies a *response* and
+a vintage identifies a *dataset*. The ETag made the gap worse than leaving it
+open: it changes when any byte changes, so two reads of identical data with
+different key order were different ETags and the same dataset. `contentHash`
+canonicalises before hashing, so two reads an hour apart of unchanged data agree
+— which the tests pin, and which is the property a consumer comparing vintages
+actually needs.
+
+**What a vintage is not.** It is not a snapshot: the store keeps no copy, so
+`?vintage=` on an export is a **400**, not a parameter accepted and ignored. A
+report naming a vintage it did not read is a citation that lies, and offering a
+parameter that cannot be honoured is how that happens. The streaming NDJSON route
+says `unavailable:` in the header rather than carrying a hash computed from a
+partial read — its set is not known until the last record, after the headers are
+on the wire.
+
+Fixing this exposed a defect in a gate. `test/route-manifests.test.js` proxies a
+store read and treats every property a handler touches as a collection, so
+`data.updated_at` — which both adapters set and which cannot 500 on either — was
+reported as an undeclared collection read. The gate is now scoped to
+`STORE_METADATA_KEYS`' complement, canaried both ways: a planted undeclared read
+on a narrow route is still caught (`reads community_feedback`), and removing the
+exemption reproduces the false positive. The first canary attempt picked a route
+already in `WIDE_ROUTES`, which the gate skips by design, so it proved nothing
+until it was moved to a narrow one.
+
 ### CAP-05 — MEDIUM — No impact/needs-assessment taxonomy
 `community_feedback` and `field_reports` are flat records with a `category` string;
 no taxonomy registry, no per-deployment field definition. A partner cannot add a

@@ -6,6 +6,7 @@ import path from 'node:path'
 import { describe, it } from 'node:test'
 import { ROUTE_MANIFESTS, WIDE_ROUTES, UNMAPPED_COUNT, collectionsForRequest, needsHistory } from '../src/route-manifests.js'
 import { emptyStore } from '../src/schema.js'
+import { STORE_METADATA_KEYS } from '../src/store.js'
 
 /**
  * ENH-07 — a manifest that nobody keeps honest decays into the thing it replaced.
@@ -199,7 +200,12 @@ describe('ENH-07 — the measurement still reproduces', () => {
           continue
         }
         const declared = new Set(ROUTE_MANIFESTS[key])
-        const undeclared = [...touched].filter((c) => !declared.has(c))
+        // Scoped to collections: `version` and `updated_at` are store metadata
+        // both adapters set on every read, so they are not an undeclared read
+        // and cannot 500. Without this the gate flags a handler for touching
+        // `data.updated_at`, which is a fact about the store rather than a
+        // collection the manifest should have named.
+        const undeclared = [...touched].filter((c) => !declared.has(c) && !STORE_METADATA_KEYS.includes(c))
         if (undeclared.length) drifted.push(`${key}: reads ${undeclared.join(', ')}`)
       }
     } finally {

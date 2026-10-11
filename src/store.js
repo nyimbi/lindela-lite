@@ -86,7 +86,18 @@ export const SORT_FIELDS = Object.freeze([
 ])
 
 /** Metadata keys that live alongside collections in a write payload. */
-const STORE_METADATA_KEYS = Object.freeze(['version', 'updated_at'])
+/**
+ * The keys a store read carries that are *not* collections.
+ *
+ * Exported because the manifest drift gate needs the same set. That gate
+ * proxies the read and records every property a handler touches, then checks
+ * each against the route's declared collections — so `data.updated_at`, which
+ * both adapters set (`src/postgres-store.js:482`) and which cannot 500 on
+ * either, was reported as an undeclared collection read. A gate wider than its
+ * jurisdiction fails for reasons its operator cannot act on, and the pressure
+ * that creates is to disable it.
+ */
+export const STORE_METADATA_KEYS = Object.freeze(['version', 'updated_at'])
 
 /**
  * The one declaration every storage adapter is checked against.

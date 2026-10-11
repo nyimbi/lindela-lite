@@ -68,6 +68,8 @@ export const READ_SCOPES = Object.freeze([
   ['/api/v1/model-drift', 'read:analytics'],
   ['/api/v1/data-lineage', 'read:analytics'],
   ['/api/v1/data-quality', 'read:analytics'],
+  // CAP-04. The vintage manifest is an inventory of this deployment's exports.
+  ['/api/v1/exports', 'read:analytics'],
   ['/api/v1/flood-probability', 'read:analytics'],
   ['/api/v1/scenarios', 'read:scenarios'],
   // The audit chain, and the caller's own identity. `read:self` is not a
