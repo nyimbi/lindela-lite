@@ -13,7 +13,7 @@ import { logger, metrics, metricsOverflow, timer, runWithRequestId, uptimeStats 
 import { narrateReport, NARRATOR_BASIS } from './narrator.js'
 import { refreshAnalytics, calibrationReport } from './analytics.js'
 import { biasCorrectClimate } from './analytics/downscaling.js'
-import { evaluateAlertRules, normalizeAlertRule, updateAlertEvent, approveAlertEvent, normalizeTriggerProtocol, backtestTriggerProtocol, evaluateInShadowMode } from './alerts.js'
+import { evaluateAlertRules } from './alerts.js'
 import {
   defaultIngestionSchedules,
   ingestionStatus,
@@ -47,13 +47,9 @@ import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWi
 import { createInboundLimiter } from './inbound-rate-limit.js'
 import { executeTriggerProtocols } from './protocols.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
-import { normalizeAlertOutcome, determinationFor, projectDetermination, outcomeTally, outcomeReasons } from './outcomes.js'
-import { rankAlerts } from './triage.js'
-import { decisionLatency } from './decision-latency.js'
 import { collectionsForRequest, needsHistory } from './route-manifests.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection, STAC_READ_COLLECTIONS } from './stac.js'
-import { renderCapXml } from './cap.js'
 import { emit, emitMany, dispatchPending, outboxRollup } from './outbox.js'
 import { districtWeatherReport } from './connectors/open-meteo-forecast.js'
 import { createVintageIndex } from './vintage.js'
@@ -66,6 +62,7 @@ import { matchDerivedRoute, handleDerivedRoute } from './routes/derived.js'
 import { matchOperationalRoute, handleOperationalRoute } from './routes/operational.js'
 import { matchSnapshotRoute, handleSnapshotRoute } from './routes/snapshots.js'
 import { matchProvenanceRoute, handleProvenanceRoute } from './routes/provenance.js'
+import { matchAlertingRoute, handleAlertingRoute } from './routes/alerting.js'
 import { findVisible } from './visibility.js'
 import {
   formCatalogue, formFor, latestForm, mergeForms, validateAnswers, validateFormDefinition,
@@ -2380,23 +2377,12 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  const alertRoute = matchAlertRoute(url.pathname)
-  if (alertRoute) {
-    await handleAlertRoute(store, data, req, res, url, alertRoute)
-    return
-  }
-
-  const triggerRoute = matchTriggerRoute(url.pathname)
-  if (triggerRoute) {
-    await handleTriggerRoute(store, data, req, res, url, triggerRoute)
-    return
-  }
-
-  const protocolRoute = matchProtocolRoute(url.pathname)
-  if (protocolRoute) {
-    await handleProtocolRoute(store, data, req, res, url, protocolRoute)
-    return
-  }
+  // ARC-01. The alerting family: rules, events, determinations, triage, the CAP
+  // feed, and the trigger protocols whose executions record one firing.
+  const alertingRoute = matchAlertingRoute(url.pathname)
+  if (alertingRoute && await handleAlertingRoute(alertingRoute, {
+    data, req, res, url, jsonResponse, store,
+  })) return
 
   // Which connectors this deployment can actually run, and why not.
   //
@@ -3637,242 +3623,6 @@ async function handleAlertEvaluation(store, data, req, res) {
   })
 }
 
-async function handleAlertRoute(store, data, req, res, url, route) {
-  // The generic collection branches below read `data[route.collection]`, and a
-  // route that is a *view* rather than a collection has no such key — so these
-  // are answered before they are reached.
-  //
-  // Read here for the same reason the generic collection route reads it: the
-  // by-id form has to answer with what the list form answered with, and the
-  // list form honours this switch.
-  const includeDeleted = url.searchParams.get('include_deleted') === 'true'
-  if (req.method === 'GET' && route.kind === 'outcome-reasons') {
-    // The closed set, served rather than duplicated in a client. A determination
-    // UI with its own copy of these lists is a fourth definition of what a false
-    // alert is, and the two would drift.
-    jsonResponse(res, 200, { success: true, data: outcomeReasons() })
-    return
-  }
-
-  if (req.method === 'GET' && route.kind === 'triage') {
-    // ENH-69. Ranked by expected-loss proxy, not by recency. The ordering is
-    // the triage policy, and "newest first" was a policy nobody chose: it put a
-    // low-severity alert raised a minute ago above a critical one over a
-    // district with ten times the exposure. `src/triage.js` states what the
-    // quantity is and what it is not.
-    jsonResponse(res, 200, { success: true, data: rankAlerts(data) })
-    return
-  }
-
-  if (req.method === 'GET' && route.kind === 'decision-latency') {
-    jsonResponse(res, 200, { success: true, data: decisionLatency(data) })
-    return
-  }
-
-  if (req.method === 'GET' && route.kind === 'outcome-tally') {
-    // "How much do we actually know" is a number an operator needs before any
-    // rate: 400 alerts with 12 determinations is unmeasured, and a false-alert
-    // rate computed from those twelve describes a sample nobody chose.
-    jsonResponse(res, 200, { success: true, data: outcomeTally(data.alert_events, data.alert_outcomes) })
-    return
-  }
-
-  if (req.method === 'GET' && route.format === 'cap') {
-    const record = findVisible(data[route.collection], route.id, { includeDeleted })
-    if (!record) {
-      jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
-      return
-    }
-    const xml = renderCapXml(record)
-    res.writeHead(200, { 'content-type': 'application/xml; charset=utf-8' })
-    res.end(xml)
-    return
-  }
-
-  if (req.method === 'GET' && !route.id) {
-    // The collection and store are passed so a district filter can attribute
-    // records that carry no location of their own — interventions through their
-    // incident, tasks through the intervention, dispatches through the alert
-    // event — the same way districtOverview does. Without it those collections
-    // matched nothing and a district reported no activity it plainly had.
-    jsonResponse(res, 200, { success: true, ...collectionPage(data[route.collection], url.searchParams, { data, collection: route.collection }) })
-    return
-  }
-
-  if (req.method === 'GET' && route.id) {
-    const record = findVisible(data[route.collection], route.id, { includeDeleted })
-    if (!record) {
-      jsonResponse(res, 404, { success: false, error: 'Record not found' })
-      return
-    }
-    jsonResponse(res, 200, { success: true, data: record })
-    return
-  }
-
-  if (req.method === 'POST' && !route.id && route.collection === 'alert_rules') {
-    const body = await readRequestJson(req)
-    const record = normalizeAlertRule(body)
-    const log = actionLog(route.collection, 'created', record, body.actor, req.__auth?.subject)
-    await store.merge({ alert_rules: [record], action_logs: [log] })
-    try {
-      await emit(store, 'alert_rule.created', record)
-    } catch (emitError) {
-      // R-22. The record is already persisted above, so this gap runs the other
-      // way from the one the atomic call sites closed: the state is true and the
-      // notification is missing. That is the survivable direction — a subscriber
-      // that never hears is a gap; a subscriber that hears about a transition
-      // that did not happen is a false statement about the world — but a gap
-      // that is swallowed is a gap nobody can count. So it is counted and
-      // logged, and the request still succeeds: a failed notification is not a
-      // reason to abandon a rule that was created.
-      metrics.counter('outbox_emit_failed_total', { event: 'alert_rule.created' })
-      logger.error('outbox_emit_failed', {
-        outbox_event: 'alert_rule.created',
-        message: 'outbox emit failed; the record is stored and no subscriber was told',
-        err: { message: emitError.message, stack: emitError.stack },
-      })
-    }
-    jsonResponse(res, 201, { success: true, data: record, action_log: log })
-    return
-  }
-
-  if (req.method === 'PATCH' && route.id && !route.action) {
-    const body = await readRequestJson(req)
-    const existing = findVisible(data[route.collection], route.id, { includeDeleted })
-    if (!existing) {
-      jsonResponse(res, 404, { success: false, error: 'Record not found' })
-      return
-    }
-    const record = route.collection === 'alert_rules'
-      ? normalizeAlertRule({ ...existing, ...body, id: route.id }, existing)
-      : updateAlertEvent(existing, body)
-    const log = actionLog(route.collection, 'updated', record, body.actor, req.__auth?.subject)
-    await store.merge({ [route.collection]: [record], action_logs: [log] })
-    jsonResponse(res, 200, { success: true, data: record, action_log: log })
-    return
-  }
-
-  if (req.method === 'POST' && route.action === 'outcome') {
-    const body = await readRequestJson(req)
-    const alert = findVisible(data.alert_events, route.id)
-    if (!alert) {
-      jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
-      return
-    }
-    const prior = determinationFor(route.id, data.alert_outcomes)
-    const outcome = normalizeAlertOutcome(
-      { ...body, alert_event_id: route.id, supersedes: prior?.id ?? null },
-      { existing: prior },
-    )
-    // The alert carries the determination as a projection, so every existing
-    // consumer keeps reading one field while the outcome stays the record. A
-    // later determination supersedes rather than overwrites, so the sequence is
-    // still readable.
-    const projected = projectDetermination(alert, outcome)
-    const log = actionLog('alert_outcomes', 'created', outcome, body.actor, req.__auth?.subject)
-    await store.merge({ alert_outcomes: [outcome], alert_events: [projected], action_logs: [log] })
-    jsonResponse(res, 201, { success: true, data: outcome, alert: projected, action_log: log })
-    return
-  }
-
-  if (req.method === 'POST' && route.id && route.action && route.collection === 'alert_events') {
-    const body = await readRequestJson(req)
-    const existing = findVisible(data.alert_events, route.id)
-    if (!existing) {
-      jsonResponse(res, 404, { success: false, error: 'Alert event not found' })
-      return
-    }
-    const actor = body.actor || (req.__auth?.subject)
-    if (!actor) {
-      jsonResponse(res, 400, { success: false, error: 'actor is required' })
-      return
-    }
-    const decision = route.action === 'approve' ? 'approved' : route.action === 'reject' ? 'rejected' : null
-    if (!decision) {
-      jsonResponse(res, 400, { success: false, error: 'Invalid approval action' })
-      return
-    }
-    const record = approveAlertEvent(existing, actor, decision, body.note || '')
-    const log = actionLog('alert_events', route.action, record, body.actor, req.__auth?.subject)
-    await store.merge({ alert_events: [record], action_logs: [log] })
-    jsonResponse(res, 200, { success: true, data: record, action_log: log })
-    return
-  }
-
-  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
-}
-
-async function handleTriggerRoute(store, data, req, res, url, route) {
-  if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.trigger_protocols || [], url.searchParams, { auth: req.__auth, data, collection: 'trigger_protocols' }) })
-    return
-  }
-
-  if (req.method === 'GET' && route.id) {
-    const record = findVisible(data.trigger_protocols, route.id)
-    if (!record) {
-      jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
-      return
-    }
-    jsonResponse(res, 200, { success: true, data: record })
-    return
-  }
-
-  if (req.method === 'POST' && !route.id && !route.action) {
-    const body = await readRequestJson(req)
-    const record = normalizeTriggerProtocol(body)
-    const log = actionLog('trigger_protocols', 'created', record, body.actor, req.__auth?.subject)
-    await store.merge({ trigger_protocols: [record], action_logs: [log] })
-    jsonResponse(res, 201, { success: true, data: record, action_log: log })
-    return
-  }
-
-  if (req.method === 'PATCH' && route.id && !route.action) {
-    const body = await readRequestJson(req)
-    const existing = findVisible(data.trigger_protocols, route.id)
-    if (!existing) {
-      jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
-      return
-    }
-    const record = normalizeTriggerProtocol({ ...existing, ...body, id: route.id }, existing)
-    const log = actionLog('trigger_protocols', 'updated', record, body.actor, req.__auth?.subject)
-    await store.merge({ trigger_protocols: [record], action_logs: [log] })
-    jsonResponse(res, 200, { success: true, data: record, action_log: log })
-    return
-  }
-
-  if (req.method === 'POST' && route.id && route.action === 'backtest') {
-    const existing = findVisible(data.trigger_protocols, route.id)
-    if (!existing) {
-      jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
-      return
-    }
-    const result = backtestTriggerProtocol(existing, data)
-    const updated = { ...existing, backtest: { ...result, last_run_at: new Date().toISOString() } }
-    const log = actionLog('trigger_protocols', 'backtest_run', updated, null, req.__auth?.subject)
-    await store.merge({ trigger_protocols: [updated], action_logs: [log] })
-    jsonResponse(res, 200, { success: true, data: updated, backtest_result: result, action_log: log })
-    return
-  }
-
-  if (req.method === 'POST' && route.id && route.action === 'shadow-run') {
-    const existing = findVisible(data.trigger_protocols, route.id)
-    if (!existing) {
-      jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
-      return
-    }
-    const context = {
-      counts: counts(data),
-      data_quality: data.data_quality,
-    }
-    const result = evaluateInShadowMode(existing, context)
-    jsonResponse(res, 200, { success: true, data: result })
-    return
-  }
-
-  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
-}
-
 /**
  * GET /api/v1/flood-depth
  *
@@ -4509,59 +4259,6 @@ function matchReportingRoute(pathname, method = 'GET') {
 
 /** R-52. The watermark state, which had no route at all. */
 /** ENH-49. A named matcher rather than an inline prefix test, so the spec gate can see it. */
-function matchAlertRoute(pathname) {
-  const capMatch = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\.cap$/)
-  if (capMatch) return { collection: 'alert_events', id: decodeURIComponent(capMatch[1]), format: 'cap' }
-  const actionMatch = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\/(approve|reject)$/)
-  if (actionMatch) return { collection: 'alert_events', id: decodeURIComponent(actionMatch[1]), action: actionMatch[2] }
-  // ENH-19. The outcome channel, addressed through the alert it is about: a
-  // determination filed against an id is about that alert, and a body carrying a
-  // different id is a mistake worth making impossible.
-  const outcomeMatch = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\/outcome$/)
-  if (outcomeMatch) return { collection: 'alert_events', id: decodeURIComponent(outcomeMatch[1]), action: 'outcome' }
-  // ENH-69. The triage order, as a view rather than a collection: it is a
-  // ranking over the open alerts, not a stored list, and serving it means the
-  // console does not carry a second implementation of the arithmetic.
-  if (pathname === '/api/v1/alert-events/triage') return { kind: 'triage' }
-  if (pathname === '/api/v1/alert-outcomes/reasons') return { kind: 'outcome-reasons' }
-  if (pathname === '/api/v1/alert-outcomes/tally') return { kind: 'outcome-tally' }
-  // ENH-73. The redesign's premise is a cognitive-cost hypothesis that nothing
-  // measured. This is the one decision the platform records with both of its
-  // endpoints.
-  if (pathname === '/api/v1/alert-outcomes/decision-latency') return { kind: 'decision-latency' }
-  if (pathname === '/api/v1/alert-outcomes') return { collection: 'alert_outcomes', id: null }
-  const routes = {
-    'alert-rules': 'alert_rules',
-    'alert-events': 'alert_events',
-  }
-  const match = pathname.match(/^\/api\/v1\/([^/]+)(?:\/([^/]+))?$/)
-  if (!match || !routes[match[1]]) return null
-  return { collection: routes[match[1]], id: match[2] ? decodeURIComponent(match[2]) : null }
-}
-
-function matchTriggerRoute(pathname) {
-  const backtest = pathname.match(/^\/api\/v1\/trigger-protocols\/([^/]+)\/backtest$/)
-  if (backtest) return { id: decodeURIComponent(backtest[1]), action: 'backtest' }
-  const shadowRun = pathname.match(/^\/api\/v1\/trigger-protocols\/([^/]+)\/shadow-run$/)
-  if (shadowRun) return { id: decodeURIComponent(shadowRun[1]), action: 'shadow-run' }
-  const match = pathname.match(/^\/api\/v1\/trigger-protocols(?:\/([^/]+))?$/)
-  if (!match) return null
-  // `/run` executes every protocol and belongs to the protocol-execution
-  // route, not to a record id. The generic pattern swallows it as id 'run',
-  // and the record handler then 405s a route that exists one matcher later.
-  if (match[1] === 'run') return null
-  return { id: match[1] ? decodeURIComponent(match[1]) : null }
-}
-
-function matchProtocolRoute(pathname) {
-  if (pathname === '/api/v1/protocol-executions') return { kind: 'protocol-executions', id: null }
-  const summary = pathname.match(/^\/api\/v1\/protocol-executions\/summary$/)
-  if (summary) return { kind: 'protocol-executions-summary' }
-  const run = pathname.match(/^\/api\/v1\/trigger-protocols\/run$/)
-  if (run) return { action: 'run' }
-  return null
-}
-
 function matchRapidProRoute(pathname) {
   if (pathname === '/api/v1/rapidpro/status') return { kind: 'status' }
   if (pathname === '/api/v1/rapidpro/response-metrics') return { kind: 'response-metrics' }
@@ -4577,47 +4274,6 @@ function matchRapidProRoute(pathname) {
   const sendAlert = pathname.match(/^\/api\/v1\/rapidpro\/alert-events\/([^/]+)\/send$/)
   if (sendAlert) return { kind: 'send-alert', id: decodeURIComponent(sendAlert[1]) }
   return null
-}
-
-async function handleProtocolRoute(store, data, req, res, url, route) {
-  if (req.method === 'GET' && url.pathname === '/api/v1/protocol-executions') {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.protocol_executions || [], url.searchParams, { auth: req.__auth, data, collection: 'protocol_executions' }) })
-    return
-  }
-  if (req.method === 'GET' && url.pathname === '/api/v1/protocol-executions/summary') {
-    const rows = data.protocol_executions || []
-    const last24hStr = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-    const recent = rows.filter((r) => r.fired_at > last24hStr)
-    const byStatus = rows.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc }, {})
-    const latestPer = {}
-    for (const r of [...rows].sort((a, b) => new Date(b.fired_at) - new Date(a.fired_at))) {
-      if (!latestPer[r.protocol_id]) latestPer[r.protocol_id] = { execution_id: r.id, status: r.status, fired_at: r.fired_at, observed_value: r.observed_value, would_fire: r.would_fire }
-    }
-    jsonResponse(res, 200, { success: true, total: rows.length, by_status: byStatus, last_24h: recent.length, latest_per_protocol: latestPer })
-    return
-  }
-  if (req.method === 'POST' && url.pathname === '/api/v1/trigger-protocols/run') {
-    const body = await readRequestJson(req)
-    const dryRun = Boolean(body.dry_run)
-    // Optional body.protocol_id scopes the run to a single protocol (the ops
-    // action rail's per-row Run control). Unknown ids 404 rather than running
-    // nothing: silently scoping to an empty set would report success and hide
-    // the typo.
-    const data = await store.read()
-    let scoped = data
-    if (body.protocol_id) {
-      const target = data.trigger_protocols.find((p) => p.id === body.protocol_id)
-      if (!target) {
-        jsonResponse(res, 404, { success: false, error: `No trigger protocol with id ${body.protocol_id}` })
-        return
-      }
-      scoped = { ...data, trigger_protocols: [target] }
-    }
-    const result = await executeTriggerProtocols(store, scoped, { dryRun, actor: body.actor, subject: req.__auth?.subject })
-    jsonResponse(res, dryRun ? 200 : 201, { success: true, dry_run: dryRun, data: result })
-    return
-  }
-  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
 /**
