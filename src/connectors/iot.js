@@ -1,4 +1,5 @@
 import { normalizeIotObservation } from '../field-signals.js'
+import { assertConnectorUrl } from '../webhooks.js'
 import { defineConnector } from './spec.js'
 
 /**
@@ -28,6 +29,11 @@ import { defineConnector } from './spec.js'
 const DEFAULT_TIMEOUT_MS = 20000
 
 async function fetchReadings(url, apiToken, timeoutMs) {
+  // ENH-78. The gateway endpoint is `request.base_url`, so a caller who can set
+  // it reaches the metadata service. Refused synchronously — the caller catches
+  // into `errors`. A field gateway on the operator LAN is a normal deployment
+  // and stays permitted; only the metadata ranges are refused.
+  assertConnectorUrl(url)
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {

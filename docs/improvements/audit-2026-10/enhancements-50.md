@@ -28,8 +28,8 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 23 | 31, 34, 35, 36, 37, 39, 40, 44, 45, 46, 47, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 75, 81 |
-| PARTIAL | 13 | 32, 33, 38, 42, 50, 51, 52, 55, 56, 57, 59, 70, 78 |
+| IMPLEMENTED | 24 | 31, 34, 35, 36, 37, 39, 40, 44, 45, 46, 47, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 75, 78, 81 |
+| PARTIAL | 12 | 32, 33, 38, 42, 50, 51, 52, 55, 56, 57, 59, 70 |
 | ABSENT | 15 | 41, 43, 53, 54, 58, 60, 62, 67, 68, 71, 74, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
@@ -932,6 +932,57 @@ capacity ceiling before a flood season does.
 (VUL-03) and authz (VUL-04) as specs that fail the build, modelled on the existing
 `assertSafeWebhookUrl` guard. A guard that exists for webhooks and not for
 distribution is a guard that was never generalised.
+
+**Shipped 2026-10-11 — IMPLEMENTED, for the SSRF class.** The three named defects
+(VUL-01/03/04) were already closed by the time this was written, so the deliverable
+is the generalisation the entry asks for: `scripts/check-outbound-fetch.mjs`, a
+gate over the *class* rather than the instance. It asserts what decides whether the
+SSRF tests could ever cover the next path — every `fetch(` in `src/` is guarded, or
+carries a `caller-url-ok: <reason>` marker stating why its URL is not
+caller-supplied.
+
+The jurisdiction call is the substance. `assertSafeOutboundUrl` refuses every
+non-public address, which is right for a webhook and wrong for a connector: a
+self-hosted DHIS2 instance, KoboToolbox deployment or IoT field gateway is
+routinely RFC-1918, and refusing those would break real deployments and teach
+operators to disable the check. So the connectors name a narrower guard,
+`assertConnectorUrl`, which refuses only what no connector instance can be — the
+cloud metadata ranges (`169.254.0.0/16`, `100.100.100.200`, the metadata
+hostnames) and `0.0.0.0/8` — and permits RFC-1918, loopback and unique-local. The
+split is asserted, not assumed: a test refuses a LAN address through the webhook
+guard and accepts the same address through the connector guard.
+
+Four sites took the guard (`dhis2.js`, `iot.js`, `kobo.js`, the `dhis2-push.js`
+write path — each reaching `request.base_url`); two took a marker with a reason
+(the `http.js` funnel, whose sixteen feed callers pass literals or their own
+constants, and `rapidpro.js`, whose root is `RAPIDPRO_BASE_URL` operator config,
+never a request field).
+
+Two gate defects were found and fixed while canarying it, both the same shape —
+a check scoped to the instance rather than the class:
+
+- The marker `guarded-by-caller` claims the caller guards the URL. A plain marker
+  would be unfalsifiable at a helper defined *above* its guarded caller, so the
+  claim is honoured only when the same file calls a guard. The first canary of
+  that rule passed against a real file whose guard had been deleted, because the
+  `import` line still named the guard — an import is a name, not a call. Import
+  lines are now blanked from the code view.
+- A JSDoc block above a helper named the guard it documents, and stripping only
+  `//` comments left that name visible, so a fetch with its real guard removed
+  still passed. Canary G covered line comments; the block-comment case was the
+  hole. Comments of both forms are now stripped.
+
+Fourteen canaries, including four that plant a defect in the real tree and
+require the gate to exit non-zero. Every guard and both markers were deleted in
+turn and the gate failed on each; all restored from a file backup, never
+`git checkout`.
+
+The tenant-isolation (VUL-03) and authz (VUL-04) halves of the entry were already
+build-failing specs before this: `test/partner-isolation.test.js` (27 tests) and
+`test/role-scope-honoured.test.js` assert the scope predicate on the listing, the
+by-id read and the alternation grammar. They are specs in the same sense the
+entry means — a regression fails the build — and they are what the SSRF gate is
+modelled on. What was missing was the SSRF class, and that is what shipped.
 
 **ENH-79 — Jurisdiction-aware data residency.** Field data is PII-adjacent
 (`src/pii.js` already HMAC-pseudonymises). Route and retain per jurisdiction so a

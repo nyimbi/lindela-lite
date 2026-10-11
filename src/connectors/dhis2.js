@@ -1,3 +1,4 @@
+import { assertConnectorUrl } from '../webhooks.js'
 import { stableId } from '../utils.js'
 import { normalizeSchoolAttendance } from '../field-signals.js'
 import { defineConnector } from './spec.js'
@@ -85,7 +86,21 @@ function authHeader(request) {
  * just burns time against an HMIS that has already answered. Transient
  * handling lives in the ingestion retry policy.
  */
+/**
+ * ENH-78. `url` arrives from `request.base_url`, so the metadata endpoint is
+ * reachable from a caller who can set it — the privilege jump from "configure a
+ * connector" to "hold the instance role". Refused here, at the top of the
+ * helper, because a throw is a synchronous refusal and this is reached from a
+ * try/catch that records it in `errors`.
+ *
+ * The rest of RFC-1918 is *permitted*: a national DHIS2 instance is routinely
+ * self-hosted on the operator's own network, and a guard that refused that
+ * would be scoped wider than its jurisdiction. `assertConnectorUrl` is the
+ * narrow half, and it is the reason this file names a guard rather than a bare
+ * marker.
+ */
 async function fetchDataValueSet(url, headers, timeoutMs) {
+  assertConnectorUrl(url)
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {

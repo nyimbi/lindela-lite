@@ -1,3 +1,4 @@
+import { assertConnectorUrl } from '../webhooks.js'
 import { stableId } from '../utils.js'
 import { normalizeSchoolAttendance } from '../field-signals.js'
 import { defineConnector } from './spec.js'
@@ -59,6 +60,11 @@ function koboDisabledReason(request) {
 }
 
 async function fetchSubmissions(url, apiToken, timeoutMs) {
+  // ENH-78. `url` is built from `request.base_url`, so a self-hosted
+  // KoboToolbox deployment on the operator LAN is expected and permitted, while
+  // the metadata ranges are refused before the request is made. Synchronous, so
+  // the caller's catch records it rather than hanging on a DNS lookup.
+  assertConnectorUrl(url)
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {

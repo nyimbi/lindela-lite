@@ -423,6 +423,11 @@ async function dispatchToRapidPro(url, config, body, env) {
   }, timeoutMs)
   timer.unref?.()
   try {
+    // caller-url-ok: `url` is `${config.baseUrl}/flow_starts.json`, and
+    // `config.baseUrl` comes from `RAPIDPRO_BASE_URL` — operator configuration
+    // read once at startup, never a request field. No caller can steer this
+    // fetch. It is not `guarded-by-caller` because no guard is involved: the
+    // origin is the environment, which is the stronger fact.
     const response = await fetch(url, {
       method: 'POST',
       headers: {

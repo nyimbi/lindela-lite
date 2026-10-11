@@ -138,6 +138,12 @@ const GATES = [
     tier: 'self-contained',
     why: 'Resolves the CSS cascade over eight surfaces in Node. The `[hidden]` class, closed without a browser.',
   },
+  {
+    name: 'check-outbound-fetch',
+    script: 'scripts/check-outbound-fetch.mjs',
+    tier: 'self-contained',
+    why: 'ENH-78. VUL-01 was one SSRF site; the class is any URL the server fetches whose origin is the caller. This asserts what decides whether the SSRF tests could cover the next path: every `fetch(` in src/ is guarded or carries a `caller-url-ok: <reason>` marker. The connectors are the jurisdiction case — a self-hosted DHIS2 or field gateway is legitimately on the operator LAN, so those name the narrow `assertConnectorUrl` (metadata ranges refused, RFC-1918 permitted) rather than the webhook guard. Reads files only, and carries fourteen canaries; the `guarded-by-caller` marker is honoured only when the file actually calls a guard, so a marker cannot outlive the guard it describes.',
+  },
 
   // --- needs-server: the app on :4177, no browser ------------------------
   {

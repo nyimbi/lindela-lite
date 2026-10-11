@@ -27,6 +27,10 @@
  * failure, not a success with a zero.
  */
 
+// ENH-78. The push target is `request.base_url` — a caller-supplied URL the
+// server fetches, which is the VUL-01 shape on the write path.
+import { assertConnectorUrl } from '../webhooks.js'
+
 const DEFAULT_TIMEOUT_MS = 30_000
 
 /**
@@ -144,6 +148,15 @@ export async function pushDataValueSet(request = {}) {
   }
 
   const url = `${String(request.base_url).replace(/\/+$/, '')}/api/dataValueSets`
+  // ENH-78. Refused in this function's own idiom — an `outcome`, not a throw —
+  // so an operator sees it beside the other three refusals rather than as a
+  // stack trace. A DHIS2 instance on the operator LAN stays permitted; only the
+  // metadata ranges are refused, because no instance is ever one of those.
+  try {
+    assertConnectorUrl(url)
+  } catch (error) {
+    return { ...base, outcome: 'refused', error: error.message }
+  }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), request.timeout_ms || DEFAULT_TIMEOUT_MS)
   try {

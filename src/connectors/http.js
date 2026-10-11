@@ -369,6 +369,12 @@ function retryDelayMs(error, attempt, limiter) {
 }
 
 async function performFetch(target, { timeoutMs, headers }) {
+  // caller-url-ok: this is the shared funnel for sixteen feed connectors whose
+  // URLs are literals or built from their own constants (open-meteo, GDACS,
+  // CHIRPS, IPC, NOAA) — the caller-supplied connector paths (DHIS2, Kobo, IoT,
+  // the DHIS2 push) do not come through here and each guard its own URL. A
+  // blanket guard at the funnel would refuse nothing real today and would sit
+  // over every future feed, which is a gate scoped wider than its jurisdiction.
   const init = { signal: AbortSignal.timeout(timeoutMs), headers }
   if (activeCapture?.replayFetch) return activeCapture.replayFetch(target, init)
   return fetch(target, init)

@@ -149,11 +149,80 @@ function stripBrackets(hostname) {
 
 // Structural half of the check: scheme, credentials, and any address literal.
 // Used synchronously at subscription time, where DNS has not been consulted yet.
-function assertWebhookUrlShape(raw) {
+//
+// ENH-78. Exported as `assertSafeOutboundUrl` because it is not a webhook rule —
+// it is the rule for *any* URL a caller supplies that the server will fetch.
+// VUL-01 was the distribution path fetching `channel.url` unguarded; the same
+// shape sat in four connectors fetching a request-body `base_url`, which is what
+// a guard confined to webhooks misses. This is the synchronous half those paths
+// can call without doing DNS on a host that may never be reached.
+export function assertSafeOutboundUrl(raw) {
   const parsed = parseWebhookUrl(raw)
   const hostname = stripBrackets(parsed.hostname)
   if (net.isIP(hostname) && !isPublicAddress(hostname)) {
     throw badRequest(`url points at a non-public address: ${hostname}`)
+  }
+  return parsed
+}
+
+// The webhook-specific name, kept so existing call sites read as what they are.
+const assertWebhookUrlShape = assertSafeOutboundUrl
+
+/**
+ * ENH-78 — the guard for a connector endpoint a caller configures.
+ *
+ * `assertSafeOutboundUrl` refuses every non-public address, which is right for a
+ * webhook: a subscriber has no business pointing the platform at its own LAN. It
+ * is wrong for a connector. A DHIS2 instance, a KoboToolbox deployment or an IoT
+ * gateway is self-hosted, and self-hosted routinely means RFC-1918 or a
+ * co-located `127.0.0.1:8080`. Refusing those would break real deployments and
+ * teach operators to disable the check — the "gate scoped wider than its
+ * jurisdiction" failure this repository keeps finding.
+ *
+ * So this refuses only the addresses **no** connector instance can legitimately
+ * be, and it names them:
+ *
+ *   - link-local `169.254.0.0/16` — the AWS/GCP/Azure instance-metadata service.
+ *     An admin who can set `request.base_url` could otherwise read the host's own
+ *     IAM credentials, which is privilege escalation from "configure a connector"
+ *     to "hold the instance role".
+ *   - `100.100.100.200` — Alibaba's metadata service, outside link-local.
+ *   - "this network" `0.0.0.0/8` — never a destination.
+ *   - the well-known metadata hostnames, which resolve to the above.
+ *
+ * RFC-1918, loopback and IPv6 unique-local are deliberately permitted, and that
+ * permission is the whole difference between this and the webhook guard. A site
+ * that must reach one of the refused ranges has a deployment problem, not a
+ * configuration one.
+ *
+ * Synchronous and DNS-free on purpose: this runs at the point of use on a path
+ * that already has a timeout, and a DNS lookup here would add one more way for a
+ * connector run to hang. A hostname that resolves to the metadata address later
+ * is the DNS-rebinding case, which matters far less for an `admin:schedules`
+ * caller than for an unauthenticated webhook subscriber.
+ */
+const METADATA_HOSTNAMES = Object.freeze([
+  'metadata.google.internal',
+  'metadata.goog',
+  'instance-data',
+])
+
+export function assertConnectorUrl(raw) {
+  const parsed = parseWebhookUrl(raw)
+  const hostname = stripBrackets(parsed.hostname).toLowerCase()
+
+  if (METADATA_HOSTNAMES.includes(hostname)) {
+    throw badRequest(`url host ${hostname} is a cloud instance-metadata service, which no connector instance is`)
+  }
+  const bytes = addressBytes(hostname)
+  if (!bytes) return parsed // a hostname; DNS is not consulted here
+  const refused = [
+    ['169.254.0.0', 16, 'link-local — the cloud instance-metadata service'],
+    ['100.100.100.200', 32, 'the Alibaba instance-metadata service'],
+    ['0.0.0.0', 8, '"this network", which is never a destination'],
+  ]
+  for (const [base, bits, why] of refused) {
+    if (inCidr(bytes, base, bits)) throw badRequest(`url points at ${hostname}: ${why}`)
   }
   return parsed
 }
