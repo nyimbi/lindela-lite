@@ -133,3 +133,49 @@ describe('administrative hierarchy (CAP-03)', () => {
     assert.equal(KNOWN_DISTRICTS.some((d) => d.slug === 'juba'), false)
   })
 })
+
+describe('ENH-33 — one registry, so the map and the district page cannot disagree', () => {
+  it('derives the map districts from the registry rather than typing them beside it', async () => {
+    // `public/shared/basemap.js` carried `PILOT_DISTRICTS`, a hand-typed list of
+    // the same five districts whose only guarantee was a comment reading
+    // "matching src/districts.js". The map frame, the outbreak geocoder and the
+    // district overlay all place units by it, so a centre corrected on the
+    // server and not here put a district in two places depending on the surface.
+    // The list is now the registry's own answer to `publishes_page`.
+    const { PILOT_DISTRICTS } = await import('../public/shared/basemap.js')
+    const published = ORG_UNITS.filter((unit) => unit.publishes_page)
+    assert.equal(PILOT_DISTRICTS.length, published.length)
+    for (const unit of published) {
+      const mapped = PILOT_DISTRICTS.find((d) => d.slug === unit.slug)
+      assert.ok(mapped, `${unit.slug} is published but the map does not carry it`)
+      // The map reads `center` as [lon, lat]; the registry stores { lat, lon }.
+      // Asserted rather than assumed, because a silent swap draws a district in
+      // the ocean and no test would notice.
+      assert.equal(mapped.center[0], unit.center.lon, `${unit.slug} longitude`)
+      assert.equal(mapped.center[1], unit.center.lat, `${unit.slug} latitude`)
+      assert.equal(mapped.radius_km, unit.radius_km, `${unit.slug} radius`)
+      assert.equal(mapped.name, unit.name)
+      assert.equal(mapped.country, unit.country)
+    }
+  })
+
+  it('serves the registry the browser reads from the same file the server reads', async () => {
+    // The whole point of the split: `src/org-units.js` re-exports
+    // `public/shared/org-units.js` rather than restating it. If these ever
+    // diverge, the module is a second copy and the defect is back.
+    const shared = await import('../public/shared/org-units.js')
+    const server = await import('../src/org-units.js')
+    assert.equal(server.ORG_UNITS, shared.ORG_UNITS, 'the two registry modules are not one object')
+  })
+
+  it('still resolves the hierarchy through the re-export', () => {
+    // A re-export that dropped a name would break a caller at import time, not
+    // here, so the walk is exercised to prove the names arrive working.
+    assert.equal(orgUnitByCode('KE').name, 'Kenya')
+    assert.deepEqual(rollupSlugsFor('KE').sort(), ['mandera', 'turkana'])
+    assert.equal(descendantsOf('KE').length, 3)
+    assert.equal(ancestorsOf('KE-TURKANA').map((u) => u.code).join('>'), 'KE>KE-TURKANA')
+    assert.equal(parentOf('KE-TURKANA').code, 'KE')
+    assert.equal(orgUnitTree().length, 4)
+  })
+})

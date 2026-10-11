@@ -28,14 +28,14 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 24 | 31, 34, 35, 36, 37, 39, 40, 44, 45, 46, 47, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 75, 78, 81 |
-| PARTIAL | 12 | 32, 33, 38, 42, 50, 51, 52, 55, 56, 57, 59, 70 |
+| IMPLEMENTED | 25 | 31, 33, 34, 35, 36, 37, 39, 40, 44, 45, 46, 47, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 75, 78, 81 |
+| PARTIAL | 11 | 32, 38, 42, 50, 51, 52, 55, 56, 57, 59, 70 |
 | ABSENT | 15 | 41, 43, 53, 54, 58, 60, 62, 67, 68, 71, 74, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
-pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
-or parents, ENH-59 has three tables checked against each other and no single
-declaration they are generated from. Reading a PARTIAL as done is the error this
+pulls from DHIS2 and does not push, ENH-59 has three tables checked against each
+other and no single declaration they are generated from. Reading a PARTIAL as
+done is the error this
 table exists to prevent.
 
 ---
@@ -100,6 +100,41 @@ across `src/districts.js`, `src/utils.js`, `src/kpi.js`, `src/analytics/metrics.
 re-deriving the hierarchy. A registry with codes, a parent pointer and boundaries
 turns a district split from a data migration into a config change, and gives every
 aggregation one source. This is the DHIS2 org-unit primitive the platform lacks.
+
+**Shipped 2026-10-11 — IMPLEMENTED.** CAP-03 (`e8fcc54`, same day) built the
+registry the entry names: `ORG_UNITS` with a code, a level, a parent pointer and a
+declared boundary kind, and `rollupSlugsFor` so a parent aggregates its
+descendants without a per-module list. Twelve tests in `test/org-units.test.js`.
+
+What CAP-03 left was the second copy, and it was in the browser. The registry was
+under `src/`, which the browser may not import, so the map kept its own:
+`PILOT_DISTRICTS` in `public/shared/basemap.js`, five hand-typed districts with the
+same centres and radii, kept in step by a comment reading "matching
+src/districts.js". The map frame, the outbreak geocoder and the district overlay all
+place units by that list, so a centre corrected on one side and not the other put a
+district in two places depending on which surface drew it — the same
+second-source-of-truth shape the entry is about, moved rather than closed.
+
+The registry data now lives in `public/shared/org-units.js`; `src/org-units.js`
+holds the traversal helpers and reads the data rather than restating it, so the
+export surface is unchanged and a server caller has one import. The split is the
+ENH-75 pattern (`public/shared/submission-id.js` → `src/submission-id.js`), and the
+helpers stay out of the browser's copy because the browser walks no hierarchy.
+`basemap.js` derives `PILOT_DISTRICTS` from the registry, projecting the stored
+`{lat, lon}` to the `[lon, lat]` the map reads. The agreement is asserted, not
+commented: a test refuses a hand-typed drift, and a canary proved it does.
+
+**The gate defect this surfaced.** `scripts/check-budget.mjs` measured first load
+by walking the module graph, and its import regex matched `from '/shared/x.js'` and
+not `from './x.js'` — the relative form is how *every* module inside
+`public/shared/` names its neighbour. The walk stopped at the first relative hop, so
+`runtime.js → ./fmt.js`, `map-frame.js → ./basemap.js`, `secret.js → ./native.js`
+and three more were never counted. Measured at HEAD with the walker fixed: **225.0
+KB, already 9.0 KB over the 216 KB ceiling** the gate reported 210.7 KB against,
+with 5.3 KB of "headroom" that did not exist. The ceiling was raised to 229 KB — a
+correction of the measurement, not a licence: the tree was over before ENH-33 and
+the walker could not see it. `test/budget-walker.test.js` pins both spellings, with
+a canary that plants a relative-only dependency and requires the total to move.
 
 **ENH-34 — Versioned datasets with citable handles.** `/api/v1/export.*` returns a
 live query with an ETag. A report citing "the flood-risk dataset" cannot name which

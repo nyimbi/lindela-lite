@@ -66,14 +66,30 @@ export const REGION_POLYGONS = {
   },
 }
 
-// Pilot districts matching src/districts.js, center as [lon, lat].
-export const PILOT_DISTRICTS = [
-  { slug: 'turkana',  name: 'Turkana',  country: 'KE', center: [35.6,    3.1167], radius_km: 200 },
-  { slug: 'aweil',    name: 'Aweil',    country: 'SS', center: [27.4,    8.767 ], radius_km: 150 },
-  { slug: 'bor',      name: 'Bor',      country: 'SS', center: [31.548,  6.207 ], radius_km: 150 },
-  { slug: 'karamoja', name: 'Karamoja', country: 'UG', center: [34.6667, 2.5333], radius_km: 200 },
-  { slug: 'mandera',  name: 'Mandera',  country: 'KE', center: [41.8569, 3.9366], radius_km: 150 },
-]
+import { ORG_UNITS } from './org-units.js'
+
+// The pilot districts, derived from the administrative registry.
+//
+// ENH-33. This was a hand-typed list of five districts whose only guarantee was
+// the comment "matching src/districts.js" — the same centres and radii as the
+// server, kept in step by hand. The map frame, the outbreak geocoder and the
+// district overlay all read it, so a centre corrected on one side and not the
+// other would place a district in two different spots depending on which
+// surface drew it. It is now the registry's own answer to "which units have a
+// page", with the axis order the map reads.
+//
+// The registry stores `center` as `{ lat, lon }`; every consumer here indexes
+// `center[0]` as longitude and `center[1]` as latitude, so the projection
+// happens once, here, rather than at each call site.
+export const PILOT_DISTRICTS = ORG_UNITS
+  .filter((unit) => unit.publishes_page)
+  .map((unit) => ({
+    slug: unit.slug,
+    name: unit.name,
+    country: unit.country,
+    center: [unit.center.lon, unit.center.lat],
+    radius_km: unit.radius_km,
+  }))
 
 // The Indian Ocean east of Somalia, Kenya and Tanzania.
 //

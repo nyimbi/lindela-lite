@@ -170,8 +170,34 @@ const ENTRY = 'index.html'
  * 216 KB is 210.7 measured with 5.3 KB of headroom — deliberately less than the
  * 5.5 KB this raise absorbed, so the next change that touches the first load has
  * almost nothing to spend and has to pay the panel handlers back instead.
+ *
+ * 216 -> 229 KB, 2026-10-11 (ENH-33). This is the first raise that corrects the
+ * *measurement* rather than the budget. Every figure above was taken by a walker
+ * that followed `from '/shared/x.js'` and not `from './x.js'` — and a relative
+ * specifier is how every module inside `public/shared/` names its neighbour. So
+ * the walk stopped at the first relative hop: `runtime.js` → `./fmt.js`,
+ * `map-frame.js` → `./basemap.js`, `secret.js` → `./native.js`, and three more,
+ * were never in the total. The tree has been 9.0 KB over the 216 ceiling since
+ * before this change and the gate reported 210.7 with 5.3 KB of headroom. A gate
+ * that under-measures its own subject cannot be raised to fit it, only
+ * corrected.
+ *
+ * Measured at HEAD with the walker fixed: 225.0 KB. The 216 ceiling was set
+ * against 210.7, a number that was 14.3 KB low, so the debt the "pay the panel
+ * handlers back" clause was written to collect had already been spent — on the
+ * map-redesign series, which the walker could not see either.
+ *
+ * ENH-33 adds 2.9 KB: `public/shared/org-units.js`, the registry data the map
+ * now derives its district centres from instead of a hand-typed copy. The
+ * traversal helpers are in `src/org-units.js` and are not on this path, because
+ * the browser walks no hierarchy.
+ *
+ * 229 KB is 227.9 measured with 1.1 KB of headroom — deliberately thin, because
+ * the panel-handler removal named above is still the only named removal left and
+ * this raise is a correction, not a licence. The next change that touches the
+ * first load has 1.1 KB to spend and then has to pay it back.
  */
-const BUDGET_KB = Number(process.env.BUDGET_KB || 216)
+const BUDGET_KB = Number(process.env.BUDGET_KB || 229)
 
 /**
  * Every asset the browser fetches to render the console.
@@ -180,12 +206,32 @@ const BUDGET_KB = Number(process.env.BUDGET_KB || 216)
  * `src=`/`href=`, an ES module's `from '…'`, and a stylesheet's `@import url('…')`.
  * The first version followed only the latter two and reported a 15 KB first load
  * for a console whose HTML alone references a 154 KB script.
+ *
+ * **ENH-33.** The import form has *two* spellings and this followed one. An
+ * absolute `/shared/x.js` was resolved; a relative `./x.js`, which is how every
+ * module inside `public/shared/` refers to its neighbour, was not — so the walk
+ * stopped at the first relative hop and every transitively-imported module was
+ * missing from the total. The number was an under-count that looked like a
+ * measurement: `basemap.js` → `./org-units.js` added 3.5 KB the gate could not
+ * see, and it took a 0.1 KB overage from a *different* path to surface it.
+ *
+ * A relative specifier is resolved against the importing file's directory, the
+ * way the browser resolves it, and normalised back to a public-root path so
+ * `seen` dedupes the two spellings of one file.
  */
 function moduleGraph(entry) {
   const seen = new Set()
   const queue = [entry]
   const HTML_RE = /(?:src|href)=["'](\/[^"'?]+\.(?:js|css))["']/g
-  const IMPORT_RE = /(?:from|import)\s*['"](\/[^'"]+\.js)['"]|@import\s+url\(['"](\/[^'"]+\.css)['"]\)/g
+  const IMPORT_RE = /(?:from|import)\s*['"](\.{1,2}\/[^'"]+\.js|\/[^'"]+\.js)['"]|@import\s+url\(['"](\/[^'"]+\.css)['"]\)/g
+
+  const resolve = (dep, from) => {
+    const raw = dep.replace(/^\//, '')
+    if (!dep.startsWith('.')) return raw
+    const joined = path.posix.join(path.posix.dirname(from), dep)
+    // A relative hop that escapes the public root is not a public asset.
+    return joined.startsWith('..') ? null : joined
+  }
 
   while (queue.length) {
     const file = queue.pop()
@@ -194,7 +240,8 @@ function moduleGraph(entry) {
     const source = readFileSync(path.join(publicDir, file), 'utf8')
     for (const match of source.matchAll(file.endsWith('.html') ? HTML_RE : IMPORT_RE)) {
       const dep = match[1] || match[2]
-      if (dep) queue.push(dep.replace(/^\//, ''))
+      const resolved = dep && resolve(dep, file)
+      if (resolved) queue.push(resolved)
     }
   }
   return [...seen]
