@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 43 | 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
+| IMPLEMENTED | 44 | 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
 | PARTIAL | 4 | 38, 59, 67, 71 |
-| ABSENT | 4 | 42, 60, 68, 80 |
+| ABSENT | 3 | 42, 60, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
@@ -1111,6 +1111,30 @@ threshold last week and have no dispatch?" answered over the store, grounded in 
 same fact set `narrator.js` audits against, refusing when it cannot ground. The
 console's 144 controls exist because the operator must assemble the query by hand;
 this collapses that.
+
+> **Shipped 2026-10-12 — IMPLEMENTED.** `src/nl-query.js`, 15 tests. Grounding is
+> enforced in three separate places. The **parse**: a declared vocabulary, never
+> stemmed or fuzzy-matched — an unknown subject, an ambiguous region naming two
+> districts, and an empty question each refuse and name the term, and a country
+> two-letter code is deliberately not a region because `so` is a word. The
+> **resolution**: `no_data`, `unknown_field`, and `unmeasured` — a "no dispatch"
+> question against a store that records no dispatches at all is refused rather
+> than answered "undispatched", because an absence that cannot be told from a gap
+> is not a finding. And **the answer itself**: every value read goes into a fact
+> set and narrator.js's `allowedNumbers` rule is applied to the rendered sentence,
+> so a digit the facts do not state is an `invented_figure` refusal naming the
+> number. A `flood_probability` question with no trained fit returns the model
+> registry's own `refusalSentence` verbatim plus `floorsMissed` against the store's
+> archive months, the two floors this layer cannot observe reported as unverified
+> rather than met, and the test asserts the sentence is identical to the
+> registry's so it cannot drift into a paraphrase.
+>
+> **One honest limit, stated in the module rather than papered over:** the store
+> holds the latest value per district, not a history, so "crossed the threshold
+> last week" is answered as "is above the threshold now" and the answer says so.
+> The window genuinely scopes the event collections, whose records carry
+> timestamps. A per-record history was not invented to make the question's wording
+> come true.
 
 **ENH-69 — Expected-value alert triage.** Rank alerts by cost-weighted expected
 loss, not recency. The alert engine raises events; the triage surface should order
