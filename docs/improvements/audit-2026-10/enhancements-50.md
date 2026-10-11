@@ -1201,6 +1201,23 @@ bytes and changes no surface. Wiring it needs an importer in `app.js`, a role
 source, and a renderer that toggles `hidden` and shows the reasons — named in the
 module's report rather than guessed at here.
 
+**Two measured blockers, 2026-10-12.** Neither is a guess.
+
+1. **The budget has no room.** `public/shared/intent.js` is **4.8 KB gzipped**;
+   `scripts/check-budget.mjs` sits at **229.5 KB of 230.0**, so there is 0.5 KB of
+   headroom. Wiring this means paying down the panel-handler debt in `public/app.js`
+   first (89.3 KB gzipped of the first load on its own). That extraction is a
+   precondition for wiring anything else into the console, not merely a debt.
+2. **The default intent would gut the console.** `ROLES.operator.defaultIntent` is
+   `triage`, whose `show` is `['rail']` — so `decideSurface('operator','triage')`
+   hides **30 of 39 controls**, including all six map filters (`mapTimeRange`,
+   `mapSeverity`, `mapSource`, `mapTileSource`, `mapLegendOverlay`,
+   `mapCoverageOverlay`). A console that opens with its map filters gone is the
+   failure this feature is supposed to prevent. Intent must therefore come from an
+   explicit control, not default to the role's; the model's own "unknown input shows
+   everything" rule is the right shape and should extend to "no intent chosen yet".
+
+
 **ENH-72 — Explainable ranking everywhere.** `viz-explain.js` explains a record's
 score. Every ranked list — alerts, districts, assets — should state its arithmetic
 and its gaps, so a ranking is an argument rather than an assertion.
