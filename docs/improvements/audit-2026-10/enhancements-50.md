@@ -29,8 +29,8 @@ shipped and unmarked, and the register was the last place anyone looked.
 | Verdict | Count | Items |
 |---|---|---|
 | IMPLEMENTED | 22 | 31, 34, 35, 36, 37, 39, 40, 44, 45, 46, 47, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
-| PARTIAL | 12 | 32, 33, 38, 42, 50, 51, 52, 55, 57, 59, 70, 78 |
-| ABSENT | 17 | 41, 43, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
+| PARTIAL | 13 | 32, 33, 38, 42, 50, 51, 52, 55, 56, 57, 59, 70, 78 |
+| ABSENT | 16 | 41, 43, 53, 54, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
@@ -634,6 +634,43 @@ than reads one number at a time.
 **ENH-56 — Compound-hazard risk model.** Flood, conflict and disease interact
 (`computeClimateConflictRisk` exists in isolation). A joint model with explicit
 dependence beats three independent scores a planner must combine by hand.
+
+> **Shipped 2026-10-11, for two of the three hazards — PARTIAL.** `src/compound-hazard.js`
+> counts the joint contingency over calendar months: flood-months, conflict-months,
+> and the months that are both, in one radius. Dependence is stated as a **lift**
+> — the joint rate over the product of the marginals — which is the number the two
+> independent scorers discard. Two regions with identical marginals but different
+> lift get different scores, and a test asserts exactly that, because a joint model
+> that agrees with the marginals is a weighted sum wearing a joint model's name.
+>
+> **The refusals are the substance.** A window shorter than `MIN_COMPOUND_MONTHS`
+> (12) returns `score: null` and a sentence naming the count, not a modelled number:
+> a copula fitted to eight months is a curve drawn through noise and it would carry
+> the authority of a probability. A window in which one hazard never occurred also
+> refuses, because the joint rate is then undefined rather than zero, and a zero
+> would read as "safe" when it means "this window contains no instance of one of
+> the two". Lift is null rather than a number when a marginal is zero — `0/0` is no
+> denominator, not "no dependence".
+>
+> Three things the entry does not get, recorded rather than glossed:
+>
+> 1. **Disease is not in it.** The entry names three hazards; this counts two. The
+>    disease observations are not scored in this shape and no dependence between
+>    them and the other two is measured. The module's joint rate is flood × conflict.
+> 2. **Consecutive months are not independent draws.** They share a season, so the
+>    window is named on every record rather than assumed representative. The
+>    envelope says so under `notIncluded`.
+> 3. **The hazard family is a judgment, stated.** GDACS emits flood, storm,
+>    landslide, drought, earthquake, fire, volcano and a `disaster` bucket for codes
+>    it cannot map. `FLOOD_FAMILY` counts flood, storm and disaster. A drought-month
+>    is the opposite of a flood-month and a fire has no water in it, so counting
+>    either would inflate the joint rate with months that share nothing but a
+>    calendar.
+>
+> Served at `GET /api/v1/compound-risk` beside `/api/v1/conflict-risk` and
+> `/api/v1/flood-risk`, not in place of them — the marginals answer "how bad is the
+> flood", the joint answers "how bad is the convoy that cannot move", and a planner
+> needs both. 15 tests; the full suite is 3591 passing.
 
 **ENH-57 — Scheduled multi-audience briefing.** `src/narrator.js` audits its own
 output against the fact set. Extend it to scheduled generation of role-specific

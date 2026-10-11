@@ -99,6 +99,7 @@ export const READ_SCOPES = Object.freeze([
   // without any of them ever having been classified.
   ['/api/v1/climate', 'read:hazards'],
   ['/api/v1/conflict-risk', 'read:hazards'],
+  ['/api/v1/compound-risk', 'read:hazards'],
   ['/api/v1/flood-risk', 'read:hazards'],
   ['/api/v1/flood-depth', 'read:hazards'],
   ['/api/v1/food-security', 'read:hazards'],

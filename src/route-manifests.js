@@ -57,6 +57,9 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/climate': Object.freeze(["climate_observations"]),
   'GET /api/v1/community-feedback': Object.freeze(["community_feedback"]),
   'GET /api/v1/community-feedback/summary': Object.freeze(["community_feedback"]),
+  // ENH-56. The joint score reads the two event collections and the hazard
+  // table the two marginals already read; it writes only `risk_scores`.
+  'GET /api/v1/compound-risk': Object.freeze(["risk_scores"]),
   'GET /api/v1/conflict-risk': Object.freeze(["risk_scores"]),
   'GET /api/v1/connectors': Object.freeze(["source_runs"]),
   'GET /api/v1/data-lineage': Object.freeze(["data_lineage"]),

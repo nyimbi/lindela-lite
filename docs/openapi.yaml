@@ -1650,6 +1650,17 @@ paths:
                     $ref: '#/components/schemas/RoutingPlan'
         '400':
           description: Missing endpoints, endpoints that are not road asset ids, or an unsatisfiable request
+  /api/v1/compound-risk:
+    get:
+      summary: Compound flood-conflict risk scores
+      description: |
+        The joint score for regions where a flood-month and a conflict-month
+        coincide, counted over calendar months. A region whose window holds fewer
+        than twelve months answers with `score: null` and a reason rather than a
+        modelled number.
+      responses:
+        '200':
+          description: Compound hazard risk scores
   /api/v1/conflict-risk:
     get:
       summary: Climate-conflict risk scores

@@ -5,6 +5,7 @@ import { clamp, haversineKm, stableId, toNumber } from './utils.js'
 import { KNOWN_DISTRICTS } from './districts.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
 import { meanMeasured } from '../public/shared/units.js'
+import { compoundHazardScore, MIN_COMPOUND_MONTHS } from './compound-hazard.js'
 import { computeRoadAccess } from './road-access.js'
 import { logger } from './observability.js'
 import { calibrationByRegion } from './calibration.js'
@@ -41,6 +42,11 @@ export const ENVELOPE_KINDS = Object.freeze({
   calibration_summary: 'an average over stored risk-score records — not a validation of the model behind them',
   trust_score: 'a weighted composite of measured alert outcome agreement, outcome sample size and outcome recording coverage — not a statement that alerts will be correct',
   drift_verdict: 'a comparison of two windows of the same series — not a diagnosis of the cause of a change',
+  // ENH-56. The one kind whose claim is *stronger* than the others, and the one
+  // whose limits are therefore spelled out harder: a joint rate over counted
+  // months is a frequency, not a fitted dependence model, and consecutive months
+  // share a season rather than being independent draws.
+  compound_hazard_risk_score: 'a joint rate of a flood-month and a conflict-month meeting, counted over calendar months in one radius — not a fitted dependence model, not a probability of either hazard, and not independent of the season the window covers',
 })
 
 const BASIS_DOC = 'docs/flood-probability-model-basis.md'
@@ -229,6 +235,10 @@ export async function refreshAnalytics(store) {
   const risk_scores = [
     ...computeFloodRisk(data),
     ...computeClimateConflictRisk(data),
+    // ENH-56. The joint score, stored beside the two marginals rather than
+    // instead of them: a compound score answers a question neither asks, and
+    // replacing one of them with it would lose the marginal.
+    ...computeCompoundHazardRisk(data),
   ]
   const impact_assessments = computeServiceImpacts(data, risk_scores)
   const data_quality = computeDataQuality(data)
@@ -762,6 +772,63 @@ export function computeClimateConflictRisk(data, options = {}) {
         refused: climate.length > climateWithRainfall
           ? [`${climate.length - climateWithRainfall} of ${climate.length} in-scope climate observations carry no rainfall figure and contributed nothing to the climate term`]
           : [],
+      }),
+    }
+  })
+}
+
+/**
+ * ENH-56 — the joint risk of flood and conflict meeting in one region.
+ *
+ * The two independent scorers answer "how wet" and "how tense" separately, and a
+ * planner combining them by adding or maximising assumes they are independent.
+ * This is the same two hazards over the same region, counted jointly over
+ * calendar months, with the lift over independence stated. See
+ * `src/compound-hazard.js` for why the dependence is empirical and what the
+ * module refuses to do when the record is too thin.
+ *
+ * It is deliberately a *separate* risk type rather than folded into either
+ * scorer: a compound score answers a question neither of them asks, and
+ * replacing one of them with it would lose the marginal a reader may want.
+ */
+export function computeCompoundHazardRisk(data, options = {}) {
+  const regions = collectRegions(data, options)
+  const generated_at = new Date().toISOString()
+  return regions.map((region) => {
+    // Both hazards within the same radius, so "the region had a flood-month and
+    // a conflict-month" is about one place rather than two ends of a country.
+    const hazards = nearby(data.hazard_events, region, 250)
+    const conflicts = nearby(data.conflict_events, region, 125)
+    const result = compoundHazardScore({ hazardEvents: hazards, conflictEvents: conflicts, region: region.name })
+    return {
+      id: stableId('risk', ['compound_hazard_risk', region.key]),
+      type: 'compound_hazard_risk',
+      region_name: region.name,
+      country: region.country,
+      latitude: region.latitude,
+      longitude: region.longitude,
+      score: result.score,
+      level: result.level,
+      generated_at,
+      drivers: {
+        flood_months: result.contingency.flood_months,
+        conflict_months: result.contingency.conflict_months,
+        both_months: result.contingency.both_months,
+        months_of_record: result.contingency.months,
+        lift_over_independence: result.contingency.lift,
+      },
+      honesty: honestyEnvelope('compound_hazard_risk', {
+        value: result.score,
+        basis: result.basis || {
+          description: `a joint rate needs at least ${MIN_COMPOUND_MONTHS} months of record in this region`,
+          sample: { months_of_record: result.contingency.months },
+        },
+        refused: result.reason ? [result.reason] : [],
+        notIncluded: [
+          'a fitted dependence model — the joint rate is counted, not estimated, so it carries no probabilistic interval',
+          'consecutive months treated as independent draws; they share a season, so the window is stated rather than assumed representative',
+        ],
+        evidence: { retrieved_at: generated_at },
       }),
     }
   })

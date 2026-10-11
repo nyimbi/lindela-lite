@@ -2146,6 +2146,14 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
+  // ENH-56. The joint score, served beside the two marginals rather than
+  // replacing them. A region whose record is too thin answers with `score: null`
+  // and a `honesty.refused` sentence, not with a number.
+  if (req.method === 'GET' && url.pathname === '/api/v1/compound-risk') {
+    jsonResponse(res, 200, { success: true, ranking: explainRanking('risk-scores'), ...collectionPage(data.risk_scores.filter((risk) => risk.type === 'compound_hazard_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
+    return
+  }
+
 
   if (req.method === 'GET' && url.pathname === '/api/v1/flood-probability/models') {
     jsonResponse(res, 200, {
