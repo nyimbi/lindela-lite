@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 25 | 31, 33, 34, 35, 36, 37, 39, 40, 44, 45, 46, 47, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 75, 78, 81 |
-| PARTIAL | 11 | 32, 38, 42, 50, 51, 52, 55, 56, 57, 59, 70 |
-| ABSENT | 15 | 41, 43, 53, 54, 58, 60, 62, 67, 68, 71, 74, 76, 77, 79, 80 |
+| IMPLEMENTED | 31 | 31, 33, 34, 35, 36, 37, 39, 40, 43, 44, 45, 46, 47, 48, 49, 53, 54, 58, 61, 63, 64, 65, 66, 69, 70, 72, 73, 75, 78, 79, 81 |
+| PARTIAL | 11 | 32, 38, 42, 50, 51, 52, 55, 56, 57, 59, 62 |
+| ABSENT | 9 | 41, 60, 67, 68, 71, 74, 76, 77, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-59 has three tables checked against each
@@ -399,6 +399,29 @@ report subset, and USSD for feature phones. The RapidPro two-way layer
 (`src/rapidpro.js`) already exists; this extends the inbound verb grammar to
 submissions so the platform reaches the last mile it claims to serve.
 
+**Shipped 2026-10-12.** `src/sms-grammar.js` adds one verb to `REPLY_VERBS` —
+`SUBMIT`, with `REPORT` as a synonym — and a USSD session reducer
+(`startUssdSession`, `ussdAdvance`, `menuFor`) for a phone with no message editor.
+
+*The grammar validates against the form, not against a shape of its own.* A
+submission names `(form_id, form_version)` and its answers are checked by
+`src/forms.js`'s existing `validateAnswers` against that exact version. Inventing
+a second validator here would have let a value pass SMS that the console refuses,
+which is a difference in the platform's answer depending on the handset.
+
+*Six refusals, and the district one is the load-bearing case.* `missing_district`,
+`unknown_district`, `unknown_field`, `missing_answers`, `invalid_value`,
+`no_form`. A report attributed to the wrong district is a real number in the wrong
+place, which is worse than no report; the district is therefore required, and it
+is resolved against the org-unit registry rather than accepted as free text.
+
+*182 characters is a carrier budget, not a style preference.* A GSM-7 concatenated
+SMS is billed per 153-character segment, so the grammar is measured against the
+single-segment limit and a reply that would split is a test failure. USSD is a
+pure reducer — `ussdAdvance(state, key)` returns `{session, reply, done}` with no
+I/O — because a session that holds server state across a dropped connection is a
+session that cannot be resumed, and feature-phone networks drop connections.
+
 **ENH-44 — Submission quality gates.** GPS accuracy, timestamp skew versus receipt
 time, and near-duplicate detection at submission, carried on the record rather than
 silently dropped. The field-report path has a coordinate guard; generalise it to a
@@ -657,10 +680,47 @@ and the road network (`src/road-access.js`), compute where to stage stock to
 minimise expected unmet demand. A stochastic allocation over the uncertainty the
 platform already carries, not a point estimate.
 
+**Shipped 2026-10-12.** `src/prepositioning.js` — `planPrepositioning({ demandSites,
+stagingSites, budget, data, now, scenarios, seed, draws, steps })`, greedy marginal
+allocation on `E[unmet] = Σ_k E[max(0, G_k − r_k·A_k)]` over the forecast
+distribution rather than its mean.
+
+*The road network is a reliability, not a distance.* Transport comes from
+`computeRoadAccess` plus the nearest road inside `ROAD_LINK_RADIUS_KM` (50), and
+`ROUTE_RELIABILITY_BY_LEVEL` scales the delivered quantity: open 1.0, constrained
+0.6, severely_constrained 0.3, cut_off **0**. That last value is the point of the
+item — a route the flood has cut delivers nothing, and an optimiser that treats it
+as a slow route stages stock behind a severed road. A point-estimate allocator
+cannot represent this, because the loss is in the tail of the access distribution
+and the mean access is a number no single dispatch ever experiences.
+
+*Measured, not asserted:* the optimised plan leaves `expected_unmet` 75 against the
+naive allocation's 87.5 — 12.5 units, 14.29%. Nine refusals, including a staging
+site that cannot reach any demand site and a budget that buys nothing.
+
 **ENH-54 — Value-of-information estimator.** Rank the *data gaps* by how much
 closing each would reduce decision loss. Turns the honesty about what is not
 measured (all seven regions currently refuse drift with a reason) into a
 procurement priority.
+
+**Shipped 2026-10-12.** `src/value-of-information.js` — EVPI over entropy. A gap's
+value is the expected loss its closure removes, in closed form
+`loss·(high−threshold)²/(2·(high−low))` for a uniform posterior, so a gap is ranked
+by a number with a unit rather than by how alarming its name sounds.
+
+*The gaps are read off the refusals that already exist, not enumerated anew.*
+`driftGaps` consumes the structured `input_shift` / `outcome_divergence` verdict
+objects `src/drift.js` produces; `freshnessGaps` enumerates `never_run`, `broken`
+and `empty_response` from `freshnessReport`. This is the item's whole leverage:
+the platform already refuses to model seven regions for want of data, and those
+refusals were a dead end. They are now a ranked list, and the ranking cannot drift
+from the refusals because it is computed from them — the thresholds come from
+`MIN_DRIFT_WINDOW_MONTHS` and `MIN_DRIFT_EVENTS`, the same constants that fire the
+refusal.
+
+*A gap with no threshold has no value, and that is a refusal.* EVPI needs a
+decision boundary; without one there is nothing to be uncertain *about*, and
+reporting a large number for it would rank a gap that closing cannot change.
 
 **ENH-55 — Scenario comparison workbench.** Side-by-side interventions with their
 uncertainty, over the same region and window, so a coordinator compares rather
@@ -715,6 +775,28 @@ fact set, so the narrative cannot invent a figure for any audience.
 **ENH-58 — Counterfactual impact evaluation.** Given a dispatch and a matched
 comparison set, estimate what the intervention changed. This is what turns the
 platform from a reporting tool into an accountability one.
+
+**Shipped 2026-10-12.** `src/counterfactual.js` — pooled difference-in-differences,
+`ATT = (mean_after − mean_before)_treated − (mean_after − mean_before)_comparison`,
+with a unit bootstrap (2000 seeded `mulberry32` draws, default seed `0x9e3779b9`)
+for the interval.
+
+*The counterfactual is the comparison arm's own change, which is the whole
+method.* Subtracting the comparison arm's before-and-after removes whatever moved
+both arms — a seasonal flood peak, a reporting change, a national campaign — that
+a before-and-after of the treated arm alone would attribute to the dispatch. The
+entry's claim that this is what makes the platform accountable is exactly this
+distinction: an unadjusted difference is a number that flatters every
+intervention.
+
+*Five refusals, and each names a way the estimate would be an artefact.*
+`thin_comparison_arm` and `thin_treated_arm` (`MIN_ARM_UNITS` 3) — a difference of
+means over two units is noise with a sign. `mismatched_comparison_set` — the arms
+must cover the same period or the difference includes the mismatch.
+`baseline_imbalance` (`BASELINE_TOLERANCE` 0.5) — arms that did not start
+comparable cannot be differenced. `no_variation` — a field that never moved
+cannot carry an effect. A sixth condition, `RADIUS_RATIO_MAX` 1.5, rejects a
+comparison set drawn from a materially different catchment.
 
 ---
 
@@ -837,6 +919,31 @@ what "high" means (ARC-04).
 known (records outside the frame, areas too large to place, undetermined
 classifications — already computed in `public/app.js`) should be as prominent as
 the data. An operator reading a clean map should see the gaps in it.
+
+**Shipped 2026-10-12.** The accounting was already computed on every render and
+written only to the record count's `title` and `aria-label` — a tooltip, which
+needs a hover a touch device does not have, so a map drawn from 40 of 67 records
+was indistinguishable from one drawn from 67. It is now a `<details>` panel on the
+map itself: `mapCoverage` (pure, exported) plus `renderMapCoverage` and
+`.map-coverage-overlay` in `public/index.html` / `public/styles.css`.
+
+*Two numbers the module's shape exists to keep apart.* `unplaced` is a record the
+map **holds** and could not draw; `filtered` is a record the map never held because
+a filter excluded it. Adding them reports "not on the map" for a record that is not
+the map's to show — a wrong number in the direction of alarm, which is worse than a
+missing one. The panel keeps them in separate rows for the same reason: each has a
+different fix, so a lumped total is a number nobody can act on.
+
+*Zero is a count, not an absent reason.* A reason with `count: 0` is dropped rather
+than rendered as "0 areas too large to place" — a strip the operator learns to skip,
+which is how a panel that reports gaps stops being read. Two canaries watched the
+tests fail before they were believed: conflating `unplaced` with `filtered` → 1
+failure; dropping the zero filter → 3.
+
+The first-load budget moved 229 → 230 KB for this (`scripts/check-budget.mjs`),
+leaving 0.5 KB — deliberately less headroom than the raise it follows. 1.4 KB was
+trimmed first: the duplicated tooltip string was deleted rather than kept beside
+the panel that replaced it, and the coverage panel reuses the legend's own rule.
 
 **ENH-71 — Intent-driven progressive disclosure.** HX-05 counted 144 controls above
 the fold; the command band reclaimed the pixels. The deeper fix is to show controls
@@ -1022,6 +1129,30 @@ modelled on. What was missing was the SSRF class, and that is what shipped.
 **ENH-79 — Jurisdiction-aware data residency.** Field data is PII-adjacent
 (`src/pii.js` already HMAC-pseudonymises). Route and retain per jurisdiction so a
 deployment can honour a residency requirement without a fork.
+
+**Shipped 2026-10-12.** `src/residency.js` — a declarative policy (loaded through
+`data/residency-policy.json`, overridable by `LINDELA_LITE_RESIDENCY_POLICY`),
+exporting `recordJurisdiction`, `residencyDecision`, `isStorable`,
+`applyResidency`, `retentionLimitFor`, `loadResidencyPolicy`, `mergeResidencyPolicy`
+and `describeDecision`.
+
+*The policy is data because the requirement is jurisdiction-specific, and a fork
+per jurisdiction is the failure mode.* A deployment in one country needs a rule
+the codebase cannot know at author time. What the module fixes is the *shape* of a
+decision — store, route, drop, with a retention limit — and the policy fills in the
+particulars. `mergeResidencyPolicy` exists so a deployment can add a jurisdiction
+without restating the defaults.
+
+*It fails closed on eight conditions, and that is the item.* Unknown jurisdiction,
+a silent policy, an empty policy, a missing retention limit, an unroutable route,
+and "not here" with no route or no drop action all refuse. The alternative —
+defaulting an unrecognised jurisdiction to "store locally" — is the one behaviour a
+residency control may not have, because it stores precisely the data the policy was
+written to keep out. `describeDecision` returns the sentence, so a refusal is
+explainable to the operator who hit it rather than a bare rejection.
+
+28 tests, including one per refusal and one asserting that an absent retention
+limit is not treated as unlimited retention.
 
 **ENH-80 — Federated multi-node deployment.** Multiple Lindela nodes (national,
 regional, partner) that peer-sync with the store layer's own conformance contract,
