@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 18 | 31, 34, 35, 37, 40, 45, 46, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
+| IMPLEMENTED | 19 | 31, 34, 35, 37, 40, 44, 45, 46, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
 | PARTIAL | 11 | 32, 33, 42, 50, 51, 52, 55, 57, 59, 70, 78 |
-| ABSENT | 22 | 36, 38, 39, 41, 43, 44, 47, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
+| ABSENT | 21 | 36, 38, 39, 41, 43, 47, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
@@ -252,6 +252,50 @@ submissions so the platform reaches the last mile it claims to serve.
 time, and near-duplicate detection at submission, carried on the record rather than
 silently dropped. The field-report path has a coordinate guard; generalise it to a
 quality verdict so a coordinator can weight a report by how much to trust it.
+
+**Shipped 2026-10-11.** `src/quality.js` bands the fix radius, signs the skew, and
+finds near-duplicates; the verdict is stamped on the record at both doors into
+`field_reports` and rolled up at `GET /api/v1/field-reports/quality`. Three
+decisions worth stating.
+
+*The gate carries, it does not act.* Nothing in this item refuses or drops a
+submission. A health worker who filed a report has filed it, and a gate that
+silently discards a disease signal is worse than the noise it removes — so the
+doubt travels with the record instead. The test `still files the duplicate rather
+than refusing it` is the one that would fail if a later change made the gate
+destructive.
+
+*Skew is signed, and the sign is the finding.* `captured_at - received_at` is
+negative for a report that sat in the offline queue, which is the normal case for
+the population this platform serves. A check written as `Math.abs(skew) >
+tolerance` flags every queued report as a broken clock and trains an operator to
+ignore the field. Only a *positive* skew is a defect: it claims a capture time
+that has not happened. The client now stamps `captured_at` at filing rather than
+at sending, because the offline queue transmits the body it was handed and a
+stamp taken at send time would measure the queue, not the clock.
+
+*An unmeasured axis is not a passing one.* The grade is the weakest **measured**
+axis, and a report with nothing measurable grades `unassessable` rather than
+`high`. Duplicates are a penalty on that minimum rather than an axis in it:
+finding none is the absence of a bad sign, not evidence of a good one, and
+counting an empty duplicate list as a `high` axis is how an empty store hands an
+unmeasured report a clean bill of health.
+
+Six canaries, each watched failing on the property it removes: removing the CHW
+stamp (7 tests), removing the operational stamp (2), folding a missing accuracy
+into a 0 m fix (3), an unsigned skew (2), duplicate-freedom as a `high` axis (1),
+and dropping pre-gate records from the tally (1). The last was re-run after a
+first patch broke the file syntactically — 12/12 failing is a parse error, not
+evidence that the canary fired.
+
+Two defects found while wiring it. The first is the one the register's own
+premise predicts: `field_reports` has **two** doors — the CHW route writes the
+collection directly, the operational API goes through `normalizeFieldReport` —
+and a gate at one of them leaves half the store unmeasured. The second was found
+by the tally's own test: a record with no verdict was dropped from `by_grade`
+while still counted in `reports`, so one payload carried two numbers counting
+different sets. It is now folded in as `unassessable` and named in
+`pre_gate_records`, which keeps the two facts inside that band separable.
 
 ---
 
