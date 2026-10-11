@@ -477,6 +477,24 @@ bitemporal model is the substrate; this is the topology it enables.
 
 ---
 
+## Filed after the audit
+
+**ENH-81 — The console follows `next_cursor`.** Found while fixing ARC-06.
+Every list route already pages properly — `matchedAndPage` returns
+`next_cursor` and refuses a cursor that names no record — and no client reads
+it. The console fetches one page (`/api/v1/alert-events?limit=30`) and pages
+inside that window with `pageWindow`, so on a set larger than the fetch the
+rows past it are unreachable. ARC-06 stopped the *count* from claiming
+completeness; it did not make the rows reachable. This is the paging
+implementation the client never had: walk the cursor, or fetch a page sized to
+the operator's actual viewport and page the server rather than the array.
+
+Order-of-magnitude claim: a deployment with more alerts than its fetch limit
+currently cannot reach them at all, from any surface. That is unbounded rows
+unreachable against a fixed number reachable.
+
+---
+
 ## Scoring matrix (all fifty, ranked)
 
 | Rank | ID | Impact | Effort | Score | Group |

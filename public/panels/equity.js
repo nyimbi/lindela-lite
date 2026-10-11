@@ -12,7 +12,7 @@
  * dependency surface without opening anything else.
  */
 export function render(console_) {
-  const { $, state, escapeHtml, truncate, pageWindow, renderPager } = console_
+  const { $, state, escapeHtml, truncate, pageWindow, renderPager, listScope } = console_
 
   const alerts = state.data.alerts?.data || []
   const dispatches = state.data.dispatches?.data || []
@@ -52,7 +52,11 @@ export function render(console_) {
 
   emptyState.hidden = true
   table.hidden = false
-  const slice = pageWindow('equity', districts.length)
+  // ARC-06. `districts` is grouped here from the alerts the console holds, so
+  // it is a complete set for this page and its own length is the honest total —
+  // `listScope` with no envelope says exactly that, and keeps the panel reading
+  // the same way as the two lists that do have one.
+  const slice = pageWindow('equity', listScope(districts).total)
   const tbody = table.querySelector('tbody')
   if (tbody) {
     tbody.innerHTML = districts.slice(slice.start, slice.end).map(([district, data]) => {

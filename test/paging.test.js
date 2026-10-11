@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it, beforeEach } from 'node:test'
 
 import {
-  LIST_PAGE_SIZE, pageWindow, setPage, resetPages, pagerSummary,
+  LIST_PAGE_SIZE, pageWindow, setPage, resetPages, listScope,
 } from '../public/shared/paging.js'
 
 beforeEach(() => resetPages())
@@ -57,11 +57,64 @@ describe('paging', () => {
     }
   })
 
-  it('says how much of the list is not on screen', () => {
-    assert.equal(pagerSummary({ shown: 25, total: 60 }), 'Showing 25 of 60 records.')
-    assert.equal(pagerSummary({ shown: 60, total: 60 }), 'Showing all 60 records.')
-    assert.equal(pagerSummary({ shown: 1, total: 1 }), 'Showing all 1 record.')
-    assert.equal(pagerSummary({ shown: 0, total: 0 }), '')
+  describe('listScope — what a fetched page may claim about the set', () => {
+    // ARC-06. Every list route answers with `{data, returned, total, has_more,
+    // next_cursor}` and the console read only `data`, so `data.length` was
+    // handed to the pager as the size of the set. On `/api/v1/alert-events`
+    // against a store of 61 alerts with `?limit=30` that rendered "Showing all
+    // 30" and stopped — the other 31 unreachable, because the client pages
+    // inside the window it already holds and never follows `next_cursor`.
+
+    const envelope = (over) => ({ data: Array.from({ length: 30 }, (_, i) => ({ id: i })), returned: 30, limit: 30, total: 61, has_more: true, next_cursor: 'x', ...over })
+
+    it('takes the total from the envelope, not the page it was handed', () => {
+      const scope = listScope(envelope())
+      assert.equal(scope.total, 61, 'the page is 30 rows; the set is 61')
+      assert.equal(scope.held, 30)
+      assert.equal(scope.truncated, true)
+    })
+
+    it('will not call a page complete unless the server said so', () => {
+      // `has_more` absent is not `has_more: false`. An envelope that never
+      // answered the question has not answered it, and defaulting to complete
+      // is precisely the claim this exists to withhold.
+      assert.equal(listScope(envelope({ has_more: undefined })).complete, false)
+      assert.equal(listScope({ data: [] }).complete, false)
+      assert.equal(listScope(envelope({ has_more: false, total: 30 })).complete, true)
+    })
+
+    it('reads a bare array as the complete set it is', () => {
+      // The equity panel groups districts client-side, so its list really is
+      // whole and its own length is the honest total.
+      const scope = listScope([1, 2, 3])
+      assert.equal(scope.total, 3)
+      assert.equal(scope.complete, true)
+      assert.equal(scope.truncated, false)
+    })
+
+    it('never reports a total smaller than the rows in hand', () => {
+      // A filtered list is shorter than the page it came from. Reporting the
+      // page's length there would be a second wrong number, and reporting a
+      // total below `held` would make the pager render fewer rows than exist.
+      const scope = listScope(envelope({ total: 61, has_more: false }), [1, 2, 3, 4, 5])
+      assert.equal(scope.held, 5)
+      assert.equal(scope.total, 61)
+      assert.ok(scope.total >= scope.held)
+    })
+
+    it('falls back to the page length when the envelope carries no count', () => {
+      assert.equal(listScope({ data: [1, 2, 3] }).total, 3)
+      assert.equal(listScope({}).total, 0)
+      assert.equal(listScope(null).total, 0)
+    })
+
+    it('survives a count that is not a number', () => {
+      // The falsy-zero class: a `total` of null must not become NaN pages.
+      for (const bad of [null, undefined, NaN, 'many']) {
+        assert.equal(listScope(envelope({ total: bad })).total, 30, `total for ${bad}`)
+      }
+      assert.equal(listScope(envelope({ total: 0 })).total, 30, 'a zero total must not undercut the rows held')
+    })
   })
 
   it('keeps separate lists on separate pages', () => {

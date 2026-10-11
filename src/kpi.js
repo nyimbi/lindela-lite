@@ -156,7 +156,17 @@ export function computeQuarterlyKpi(data, { quarter, year, now = Date.now(), rin
   // `_cacheKey`, and replaying it would hand one server the traffic of whichever
   // server last filled the entry. Everything else here is derived from `data`
   // and the period, which is what the key covers.
-  if (cached && cached.expires > now) return { ...cached.value, api_uptime_pct: computeApiUptime(ringRate) }
+  //
+  // Restamped in place, and the cached object returned as-is. Spreading it into
+  // a fresh object recomputes correctly but hands back a different reference
+  // every call, which is indistinguishable from a cache that stores nothing —
+  // and identity is the only observable evidence a cache has
+  // (`test/observability-substrate.test.js` asserts exactly that). The sharing
+  // is not new: before this the cached object was returned directly.
+  if (cached && cached.expires > now) {
+    cached.value.api_uptime_pct = computeApiUptime(ringRate)
+    return cached.value
+  }
 
   const [from, to] = _quarterDateRange(q, y)
 

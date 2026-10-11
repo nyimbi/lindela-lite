@@ -52,13 +52,39 @@ export function resetPages() {
 }
 
 /**
- * What the pager says, in words.
+ * What the pager may *claim*, given what the server actually sent.
  *
- * "25 rows" and "all 25 rows" are different facts, and the row count is the
- * only place either appears. A silent cap reads as completeness.
+ * ARC-06. The list endpoints answer with `{data, returned, total, has_more,
+ * next_cursor}`, and the console read only `data`. Everything downstream —
+ * `pageWindow`, `renderPager`, `renderAlertsBadge` — was then handed
+ * `data.length` as though it were the size of the set. On a feed longer than the
+ * fetched page that is two wrong answers at once: the rows past the page are
+ * unreachable, because the client pages within a window it already holds and
+ * never follows `next_cursor`, and the count reads "Showing all 30" over a set
+ * the server says is 61.
+ *
+ * The distinction this draws is the one the panel copy has to make: a page the
+ * server says is complete may be described with its own length, and a page it
+ * says is truncated may not. `total` comes from the
+ * envelope when present and falls back to the page length — the fallback is for
+ * a caller holding a bare array, not a licence to guess.
+ *
+ * `complete` is deliberately `has_more === false` rather than a truthiness test:
+ * an envelope that omits the field has not said the page is complete, and
+ * defaulting to "complete" is the exact claim this exists to withhold.
  */
-export function pagerSummary({ shown, total }, { noun = 'record' } = {}) {
-  if (!total) return ''
-  if (shown >= total) return `Showing all ${total} ${total === 1 ? noun : `${noun}s`}.`
-  return `Showing ${shown} of ${total} ${noun}${total === 1 ? '' : 's'}.`
+export function listScope(envelope, rows = null) {
+  const items = Array.isArray(envelope) ? envelope : (envelope?.data || [])
+  const held = Array.isArray(rows) ? rows.length : items.length
+  const reported = Array.isArray(envelope) ? undefined : envelope?.total
+  const total = Number.isFinite(reported) ? Math.max(reported, held) : held
+  // `held`, not `total`, is what the server said this page carries — a filtered
+  // list is shorter than the page it was filtered from, and calling that "30 of
+  // 61" would be a third wrong number.
+  return {
+    total,
+    held,
+    complete: Array.isArray(envelope) ? true : envelope?.has_more === false,
+    truncated: Array.isArray(envelope) ? false : envelope?.has_more === true,
+  }
 }

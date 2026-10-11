@@ -13,7 +13,7 @@
 
 export function mount(console_) {
   const {
-    $, state, escapeHtml, truncate, displayDate, pageWindow, renderPager,
+    $, state, escapeHtml, truncate, displayDate, pageWindow, renderPager, listScope,
     setStatus, postJson, refresh, t, safeClass,
   } = console_
 
@@ -21,11 +21,18 @@ export function mount(console_) {
     const container = $('reportsList')
     if (!container) return
     const reports = state.reports
+    // ARC-06. What the envelope says about the set, so the pager below and the
+    // slice above both describe it rather than the fetched page. Declared before
+    // the empty branch because the pager renders on that path too.
+    const scope = listScope(state.data?.reports, reports)
 
     if (!reports.length) {
       container.innerHTML = `<div class="empty-state"><p>${escapeHtml(t('state.empty_reports'))}</p></div>`
     } else {
-      const slice = pageWindow('reports', reports.length)
+      // ARC-06. `pageWindow` is given the server's total, not `reports.length`.
+      // `/api/v1/reports?limit=20` against a store holding 40 used to render one
+      // page of 20 and call it the whole list.
+      const slice = pageWindow('reports', scope.total)
       container.innerHTML = reports.slice(slice.start, slice.end).map((r) => {
         const canApprove = r.status === 'ready' || r.status === 'draft'
         const canDist    = r.status === 'approved' || r.status === 'ready'
@@ -68,7 +75,7 @@ export function mount(console_) {
       })
     }
 
-    renderPager($('reportsPager'), 'reports', reports.length, renderReportsPanel)
+    renderPager($('reportsPager'), 'reports', scope.total, renderReportsPanel)
 
     // Populate template select
     const sel = $('reportTemplateIdInput')

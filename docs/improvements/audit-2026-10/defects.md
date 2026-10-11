@@ -718,6 +718,48 @@ counts exactly the surveyed cells it summarises. Canaried: short-circuiting
 `public/shared/paging.js` client-side (`LIST_PAGE_SIZE=25` vs server default 500 /
 max 5,000). A paging bug is fixed in one and persists in the other.
 
+**Fixed 2026-10-11.** The registered concern — two clamp algorithms drifting —
+is not what the two implementations do, and measuring first is what found the
+real defect. They cannot disagree by arithmetic because the client's numbers
+were never the server's. Every list route answers `{data, returned, limit,
+total, has_more, next_cursor}`, and the console read `data` and handed
+`data.length` to `pageWindow` and `renderPager` as the size of the set.
+
+Measured on the demo store with `alert_events` grown to 61:
+`/api/v1/alert-events?limit=30` answers `returned: 30, total: 61,
+has_more: true`. The console rendered "Showing 1–25 of 30" and stopped. Two
+wrong answers at once — rows 31–61 unreachable, because the client pages inside
+the window it already holds and no code anywhere reads `next_cursor`, and a row
+count that reads as a complete list of 30 over a set of 61. `pagerSummary`,
+the function written to say "showing 25 of 60", was exported, tested, imported
+by `app.js` — and called from nowhere. A silent cap reading as completeness is
+exactly what it existed to prevent.
+
+`listScope(envelope, rows)` is the seam: it takes the envelope and returns what
+may honestly be claimed — `total` from the server, `held` from the page,
+`complete` only when the server said `has_more === false`. The console's alerts
+and reports pagers now count `scope.total`, and a new `renderPagerScope` line
+names the shortfall in words ("Showing the 30 alerts most recent of 61 alerts;
+31 are not loaded"). The equity panel groups its districts client-side and
+passes a bare array, which `listScope` reads as the complete set it is.
+
+`pagerSummary` is removed rather than left beside `renderPagerScope`: two
+functions that both write a count line, one of them dead, is the drift this
+row was about.
+
+Canaried in both directions. Dropping the envelope `total` fails 2 cases;
+defaulting `complete` to a truthiness test on `has_more` fails 1; reverting the
+alerts pager to `filtered.length` fails 1; reverting the reports pager fails 1.
+7 cases in `test/paging.test.js` and 11 in `test/paging-scope-wiring.test.js`,
+the latter reading the call sites as source because a correct `listScope` that
+nothing calls is the same defect with better tests.
+
+Not fixed here, and now stated rather than implied: the console still does not
+follow `next_cursor`, so a set larger than the fetched page is *reported* as
+truncated rather than *reachable*. The count no longer lies; the rows are still
+one fetch away. That is a paging implementation, not a clamp fix, and it is
+filed as ENH-81.
+
 ### ARC-07 — MEDIUM — Error-envelope shape hand-written 128 times; no error taxonomy
 `{success:false, error:…}` is written at every `jsonResponse` site. Zero `code`
 field. Clients string-match `error` text. One 422, five 409, twenty-three 405.

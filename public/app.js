@@ -295,7 +295,7 @@ function applyI18n() {
 // directly, which is the whole point of the move. A re-export nobody calls is a
 // second entry point into the same module, and the next reader has to work out
 // which one is real.
-import { pageWindow, setPage, pagerSummary } from '/shared/paging.js'
+import { pageWindow, setPage, listScope } from '/shared/paging.js'
 
 function renderPager(host, key, total, onGo) {
   if (!host) return
@@ -338,6 +338,36 @@ function renderPager(host, key, total, onGo) {
 
 /** Jump back to page 1 when the filter that produced the list changes. */
 function resetListPage(key) { setPage(key, 1, 0) }
+
+/**
+ * The line that says what the pager is *not* showing.
+ *
+ * ARC-06. `renderPager` counts within the page the console holds, which is
+ * honest about the window and silent about the fetch behind it. Where the server
+ * said there is more, this says so in words — "Showing the 30 most recent of 61
+ * alerts; 31 are not loaded" — because a page control that stops at the fetched
+ * page reads as the end of the list. Where a filter has narrowed the fetched
+ * page, it names both numbers, so "30 fetched" is never mistaken for "30 exist".
+ *
+ * Written as text, not innerHTML: the numbers are the only content and one of
+ * them comes from an envelope.
+ */
+export function renderPagerScope(host, scope, noun, { filtered, fetched } = {}) {
+  if (!host) return
+  const plural = (n) => `${n} ${noun}${n === 1 ? '' : 's'}`
+  const parts = []
+  if (scope.complete) {
+    parts.push(`All ${plural(scope.total)} loaded.`)
+  } else {
+    parts.push(`Showing the ${plural(fetched)} most recent of ${plural(scope.total)}; `
+      + `${scope.total - fetched} are not loaded.`)
+  }
+  if (Number.isFinite(filtered) && Number.isFinite(fetched) && filtered !== fetched) {
+    parts.push(`${plural(filtered)} match the current filter.`)
+  }
+  host.textContent = parts.join(' ')
+  host.hidden = false
+}
 
 // =============================================================
 // Flood depth overlay
@@ -3710,6 +3740,7 @@ async function refresh({ first = false, force = false } = {}) {
     if (merged.reports) {
       state.data.reports = merged.reports
       state.reports = merged.reports.data || []
+      state.reportsScope = listScope(merged.reports)
     }
     if (merged.reportTemplates) {
       state.data.reportTemplates = merged.reportTemplates
@@ -4122,7 +4153,7 @@ function renderWorkflowInstanceList() {
 function renderEquityTab() {
   lazy('/panels/equity.js')
     .then((module) => module.render({
-      $, state, escapeHtml, truncate, pageWindow, renderPager,
+      $, state, escapeHtml, truncate, pageWindow, renderPager, listScope,
     }))
     .catch((error) => {
       // Said rather than blank: an empty equity table reads as "no district has
@@ -5308,7 +5339,15 @@ function _renderAlertsPanel() {
     </div>`
   }).join('')
 
-  renderPager($('alertsPager'), 'alerts', filtered.length, () => _renderAlertsPanel())
+  // ARC-06. The pager and the count describe what the server sent, not what
+  // this page happens to hold. `filtered.length` was the fetched page, so on a
+  // feed longer than the fetch the console said "Showing all 30" over a set the
+  // envelope reports as 61, and the 31 rows past the fetch were unreachable —
+  // the client pages inside a window it already has and never follows the
+  // server's `next_cursor`. `listScope` says which of those is true.
+  const scope = listScope(state.data.alerts, filtered)
+  renderPager($('alertsPager'), 'alerts', scope.total, () => _renderAlertsPanel())
+  renderPagerScope($('alertsScope'), scope, 'alert', { filtered: filtered.length, fetched: state.data.alerts?.data?.length || 0 })
 
   container.querySelectorAll('[data-action]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -5594,7 +5633,7 @@ async function reportsPanel() {
   if (_reports) return _reports
   const module = await lazy('/panels/reports.js')
   _reports = module.mount({
-    $, state, escapeHtml, truncate, displayDate, pageWindow, renderPager,
+    $, state, escapeHtml, truncate, displayDate, pageWindow, renderPager, listScope,
     setStatus, postJson, refresh, t, safeClass,
   })
   return _reports
