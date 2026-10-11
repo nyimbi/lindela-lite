@@ -35,6 +35,13 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/alert-events': Object.freeze(["alert_events"]),
   'GET /api/v1/alert-events/:id': Object.freeze(["alert_events"]),
   'GET /api/v1/alert-events/:id.cap': Object.freeze(["alert_events"]),
+  // ENH-69. A ranking over the open alerts, but it also reads hazard_events and
+  // service_assets: the expected-loss proxy is severity x exposure, and exposure
+  // comes from the impact model's population-at-risk rows.
+  'GET /api/v1/alert-events/triage': Object.freeze(["alert_events", "hazard_events", "service_assets"]),
+  // ENH-73. The decision interval, from the alerts and the determinations
+  // filed against them.
+  'GET /api/v1/alert-outcomes/decision-latency': Object.freeze(["alert_events", "alert_outcomes"]),
   'GET /api/v1/alert-outcomes': Object.freeze(["alert_outcomes"]),
   'GET /api/v1/alert-outcomes/tally': Object.freeze(["alert_events", "alert_outcomes"]),
   'GET /api/v1/alert-rules': Object.freeze(["alert_rules"]),

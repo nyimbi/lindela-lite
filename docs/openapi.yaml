@@ -2537,6 +2537,49 @@ paths:
       responses:
         '200':
           description: Determined, justified, false, undetermined, coverage
+  /api/v1/alert-outcomes/decision-latency:
+    get:
+      summary: How long operators take to reach a decision, measured not assumed
+      description: >-
+        The interval from an alert being raised (created_at) to a determination
+        being filed against it (determined_at). The console redesign's premise is
+        a cognitive-cost hypothesis — a 195px command band cut to 55px, controls
+        above the fold — and nothing measured whether it worked. This is the one
+        decision the platform records with both of its endpoints.
+
+        It is not time-to-action, and it is not comparable to
+        `warning_to_action_median_hours`, which measures when a dispatch was
+        sent. It measures only alerts someone determined: `undetermined` is the
+        size of the sample nobody chose, and an alert determined before it was
+        raised is excluded and counted rather than becoming a negative duration.
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: >-
+            median_hours, samples, alerts, undetermined, excluded_non_positive,
+            by_severity, rows, measure, limit, refusal
+  /api/v1/alert-events/triage:
+    get:
+      summary: Open alerts ranked by an expected-loss proxy, not by recency
+      description: >-
+        The list ordering is the triage policy, and newest-first was a policy
+        nobody chose: it placed a low-severity alert raised a minute ago above a
+        critical one raised an hour ago over a district with ten times the
+        exposure. This ranks by `severity_weight x population_exposed`.
+
+        It is a proxy and the payload says so in `method`: no hazard probability
+        and no cost per person enters it, so it ranks alerts against each other
+        and does not price them. An alert whose exposure cannot be measured is
+        ranked after the measured set with `expected_loss: null` rather than
+        zero — a zero would place an unmeasured alert below a measured trivial
+        one. Populations are per hazard and overlap, so they must not be summed
+        across entries; `exposure_overlap` states this and no total is offered.
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: >-
+            ranked, total, measured_exposure, unmeasured_exposure, method,
+            exposure_attribution, exposure_overlap, limits, generated_at
   /api/v1/alert-events/{id}/outcome:
     post:
       summary: Record whether an alert was justified

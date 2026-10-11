@@ -52,6 +52,8 @@ import { createInboundLimiter } from './inbound-rate-limit.js'
 import { executeTriggerProtocols } from './protocols.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { normalizeAlertOutcome, determinationFor, projectDetermination, outcomeTally, outcomeReasons } from './outcomes.js'
+import { rankAlerts } from './triage.js'
+import { decisionLatency } from './decision-latency.js'
 import { observationSeries, recordHistory, projectableCollections } from './series.js'
 import { collectionsForRequest, needsHistory } from './route-manifests.js'
 import { describeWatermarkState } from './watermarks.js'
@@ -72,6 +74,7 @@ import { dischargeBand, DISCHARGE_BANDS, DISCHARGE_MODEL_NOTE } from '../public/
 // movement") is then enforced only for browser users.
 import { FLOOD_DEPTH_BANDS, floodDepthBand } from '../public/shared/flood-bands.js'
 import { precipBand, tempBand, weatherCodeLabel, PRECIP_BANDS, TEMP_BANDS } from '../public/shared/weather-bands.js'
+import { explainRanking } from '../public/shared/rank-explain.js'
 import { planDelivery } from './routing.js'
 import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { upstreamTileUrl, loadRasterTile } from './basemap-tiles.js'
@@ -2112,12 +2115,15 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/flood-risk') {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
+    // ENH-72. The ordering declared, not implied: these are ordered by `score`,
+    // which is a weighted index and not a probability, and a reader who assumes
+    // otherwise reads the ranking as a forecast.
+    jsonResponse(res, 200, { success: true, ranking: explainRanking('risk-scores'), ...collectionPage(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/conflict-risk') {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.risk_scores.filter((risk) => risk.type === 'climate_conflict_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
+    jsonResponse(res, 200, { success: true, ranking: explainRanking('risk-scores'), ...collectionPage(data.risk_scores.filter((risk) => risk.type === 'climate_conflict_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
     return
   }
 
@@ -2435,7 +2441,12 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/data-quality') {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.data_quality, url.searchParams, { auth: req.__auth, data, collection: 'data_quality' }) })
+    // ENH-72. The ordering is confidence descending, and the confidence is a
+    // completeness heuristic rather than an accuracy measurement — both facts
+    // travel with the payload so a reader is not left to infer the second from
+    // the field's name.
+    const ranking = explainRanking('data-quality', { entries: data.data_quality })
+    jsonResponse(res, 200, { success: true, ranking, ...collectionPage(data.data_quality, url.searchParams, { auth: req.__auth, data, collection: 'data_quality' }) })
     return
   }
 
@@ -4278,6 +4289,21 @@ async function handleAlertRoute(store, data, req, res, url, route) {
     return
   }
 
+  if (req.method === 'GET' && route.kind === 'triage') {
+    // ENH-69. Ranked by expected-loss proxy, not by recency. The ordering is
+    // the triage policy, and "newest first" was a policy nobody chose: it put a
+    // low-severity alert raised a minute ago above a critical one over a
+    // district with ten times the exposure. `src/triage.js` states what the
+    // quantity is and what it is not.
+    jsonResponse(res, 200, { success: true, data: rankAlerts(data) })
+    return
+  }
+
+  if (req.method === 'GET' && route.kind === 'decision-latency') {
+    jsonResponse(res, 200, { success: true, data: decisionLatency(data) })
+    return
+  }
+
   if (req.method === 'GET' && route.kind === 'outcome-tally') {
     // "How much do we actually know" is a number an operator needs before any
     // rate: 400 alerts with 12 determinations is unmeasured, and a false-alert
@@ -5195,8 +5221,16 @@ function matchAlertRoute(pathname) {
   // different id is a mistake worth making impossible.
   const outcomeMatch = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\/outcome$/)
   if (outcomeMatch) return { collection: 'alert_events', id: decodeURIComponent(outcomeMatch[1]), action: 'outcome' }
+  // ENH-69. The triage order, as a view rather than a collection: it is a
+  // ranking over the open alerts, not a stored list, and serving it means the
+  // console does not carry a second implementation of the arithmetic.
+  if (pathname === '/api/v1/alert-events/triage') return { kind: 'triage' }
   if (pathname === '/api/v1/alert-outcomes/reasons') return { kind: 'outcome-reasons' }
   if (pathname === '/api/v1/alert-outcomes/tally') return { kind: 'outcome-tally' }
+  // ENH-73. The redesign's premise is a cognitive-cost hypothesis that nothing
+  // measured. This is the one decision the platform records with both of its
+  // endpoints.
+  if (pathname === '/api/v1/alert-outcomes/decision-latency') return { kind: 'decision-latency' }
   if (pathname === '/api/v1/alert-outcomes') return { collection: 'alert_outcomes', id: null }
   const routes = {
     'alert-rules': 'alert_rules',

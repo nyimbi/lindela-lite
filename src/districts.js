@@ -1,5 +1,6 @@
 import { METRICS, computeMetric } from './analytics/metrics.js'
 import { median } from './analytics/numeric.js'
+import { explainRanking } from '../public/shared/rank-explain.js'
 
 // The payload quotes the declared basis verbatim, so a reader comparing this
 // page with the CO tile or the equity table sees the same sentence and knows
@@ -306,6 +307,14 @@ export function districtOverview(data, districtSlug) {
       alert_events: sampleBlock(allAlertEvents.length, alertEvents.length),
     },
     active_hazards: activeHazards,
+    // ENH-72. Two orderings on this page, and neither is visible from the
+    // arrays themselves: `active_hazards` is graded by severity, `field_reports`
+    // by a clock. A reader who assumes the second is an importance ranking
+    // reads the newest report as the most important one.
+    rankings: {
+      active_hazards: explainRanking('district-hazards', { entries: activeHazards }),
+      field_reports: explainRanking('district-field-reports', { entries: fieldReports }),
+    },
     risk_scores: riskScores,
     service_assets: serviceAssets,
     incidents,

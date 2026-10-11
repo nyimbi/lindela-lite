@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 14 | 31, 35, 37, 40, 45, 46, 48, 49, 61, 63, 64, 65, 66, 81 |
-| PARTIAL | 12 | 32, 33, 42, 50, 51, 52, 55, 57, 59, 70, 72, 78 |
-| ABSENT | 25 | 34, 36, 38, 39, 41, 43, 44, 47, 53, 54, 56, 58, 60, 62, 67, 68, 69, 71, 73, 74, 75, 76, 77, 79, 80 |
+| IMPLEMENTED | 17 | 31, 35, 37, 40, 45, 46, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
+| PARTIAL | 11 | 32, 33, 42, 50, 51, 52, 55, 57, 59, 70, 78 |
+| ABSENT | 23 | 34, 36, 38, 39, 41, 43, 44, 47, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
@@ -504,6 +504,26 @@ loss, not recency. The alert engine raises events; the triage surface should ord
 them by what acting now is worth, using the severity weights (currently three
 inconsistent implementations — ARC-04) and the exposure of what is downstream.
 
+**Shipped 2026-10-11.** `src/triage.js`, served at `GET /api/v1/alert-events/triage`.
+The quantity is `severity_weight × population_exposed`, and the payload calls it a
+*proxy* in `method` rather than an expected value: no hazard probability and no
+cost per person enters it, so it ranks alerts against each other and does not
+price them. Calling it an expected value without that sentence is the overclaim
+this audit spent its length removing.
+
+Exposure comes from the hazard the alert's own derivation names, or failing that
+from the nearest scored hazard within 250 km, and `exposure_basis` says which —
+an attribution must be labelled as one. An alert with no measurable exposure is
+ranked after the measured set with `expected_loss: null`, never 0: a zero would
+place an unmeasured alert below a measured trivial one.
+
+Two properties stated on the payload rather than left for a reader to discover.
+The populations are **per hazard and overlap** — a facility within the radius of
+two hazards is counted in both — so no total is offered and `exposure_overlap`
+says why. And the severity weight is read from `src/schema.js`, the one the
+engine stamps onto the event, so the ranking and the event cannot disagree about
+what "high" means (ARC-04).
+
 **ENH-70 — Uncertainty-first map.** The map shows what is known; what is *not*
 known (records outside the frame, areas too large to place, undetermined
 classifications — already computed in `public/app.js`) should be as prominent as
@@ -518,10 +538,60 @@ driven surface rather than a layout one.
 score. Every ranked list — alerts, districts, assets — should state its arithmetic
 and its gaps, so a ranking is an argument rather than an assertion.
 
+**Shipped 2026-10-11.** `public/shared/rank-explain.js` holds `RANKINGS`, one
+frozen declaration per ranked surface, and `explainRanking(key)` returns the
+block a payload attaches. Five are registered: `alert-events/triage` and
+`risk-scores` (proxies), `data-quality` (a completeness heuristic), and the two
+on the district page — `district-hazards` (severity) and `district-field-reports`
+(**recency**).
+
+The one that matters is the last. A list sorted by `created_at` looks exactly
+like one sorted by severity: both are descending, both are plausible, and
+nothing on the surface distinguishes them. An operator who assumes severity and
+gets recency reads the newest report as the most important one, and no test
+catches it because both orderings are correct implementations of *something*.
+So `kind: 'recency'` carries a `not` field that says it in words — "not a
+ranking by importance … the ordering is a clock and should be read as one".
+
+**A registry rather than a helper.** The ordering is a property of each list,
+not of sorting in general, and a helper that inferred it from the comparator
+would be a second implementation of the comparator, drifting the moment either
+changed. A list nobody declared gets `known: false` and a reason rather than an
+invented rationale — a fabricated one is the exact defect the module exists to
+prevent.
+
+`isOrderedBy(entries, key, {direction})` is the machine-checkable half, since
+prose cannot be checked: a surface that claims descending `expected_loss` is
+held to it against its live payload. Two contracts it enforces. An **unmeasured
+value sorts last** — a `null` is not a low one, so a list that put it first is
+claiming it is the most important thing on the page; this is why the triage
+payload's unmeasured alerts sit after the measured set rather than scoring 0.
+And a **timestamp is a comparable** — the recency orderings are over
+`created_at` strings, and without that the module could not check the very case
+its header uses to motivate it. Three canaries pin the three branches; the third
+was initially blind (the district assertion expected `true`, which is also what
+a non-comparing implementation returns) and only a two-direction assertion
+caught it.
+
 **ENH-73 — Time-to-decision instrumentation.** Measure how long it takes an
 operator to reach a decision from a surface, not clicks. The redesign's whole
 premise (band 195px → 55px) is a hypothesis about cognitive cost that nothing
 currently measures.
+
+**Shipped 2026-10-11.** `src/decision-latency.js`, served at
+`GET /api/v1/alert-outcomes/decision-latency`. The interval is alert raised
+(`created_at`) to determination filed (`determined_at`) — the one decision the
+platform records with both endpoints. Click telemetry would measure the layout;
+this measures the decision.
+
+The refusals are half the module. An undetermined alert contributes no interval
+and its count travels with the median, because a median over determined alerts
+describes a sample nobody chose. A determination timestamped *before* its alert
+is excluded and counted rather than becoming a negative duration that reads as a
+very fast decision. The even-length median averages the two middle values — the
+`sorted[Math.floor(n/2)]` bias `src/kpi.js:88` records would otherwise be
+reintroduced one file over, so a canary pins it. Per-alert rows are returned, so
+a median an operator cannot decompose is not the only thing on offer.
 
 **ENH-74 — Collaborative annotation threads.** A coordination platform's users need
 to talk to each other on a record. Threaded annotations with the same provenance
