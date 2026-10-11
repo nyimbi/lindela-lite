@@ -39,6 +39,9 @@ afterEach(() => {
 })
 
 const ROOT = path.join(import.meta.dirname, '..')
+// ENH-38. The shared form vocabulary, for the cases that assert the wizard
+// adopts a served definition rather than the one it was compiled with.
+const forms = await import(path.join(ROOT, 'public/shared/forms.js'))
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8')
 
 // ---------------------------------------------------------------
@@ -89,10 +92,11 @@ function makeElement(tag = 'div', id = '') {
  * Boot the real module against a DOM whose buttons carry the same
  * `data-*` hooks the real index.html puts on them.
  */
-async function bootChw({ geolocation = null } = {}) {
+async function bootChw({ geolocation = null, servedForm } = {}) {
 	const en = JSON.parse(read('public/i18n/en.json'))
 	const runtime = await import(path.join(ROOT, 'public/shared/runtime.js'))
 	const states = await import(path.join(ROOT, 'public/shared/states.js'))
+	const forms = await import(path.join(ROOT, 'public/shared/forms.js'))
 
 	const HEADINGS = {
 		home: 'Health Report',
@@ -172,6 +176,13 @@ async function bootChw({ geolocation = null } = {}) {
 	const fakeFetch = async (path_, options) => {
 		fetchCalls.push({ path: path_, options })
 		if (String(path_).endsWith('/i18n/en.json')) return { ok: true, status: 200, json: async () => en }
+		// ENH-38. The served form definition, when a test supplies one. Absent,
+		// the route answers the shape a deployment that serves only the built-in
+		// would: the built-in itself.
+		if (/^\/api\/v1\/forms\//.test(String(path_))) {
+			if (servedForm === null) return { ok: false, status: 404, json: async () => ({ success: false, error: 'no form' }) }
+			return { ok: true, status: 200, json: async () => ({ success: true, data: servedForm ?? forms.CHW_SYMPTOM_FORM }) }
+		}
 		return { ok: true, status: 201, headers: new Headers(), json: async () => ({ data: { id: 'r-1' } }) }
 	}
 
@@ -200,6 +211,9 @@ async function bootChw({ geolocation = null } = {}) {
 		// The state vocabulary the app imports by name. It is pure and DOM-free,
 		// so the real module runs in the vm untouched.
 		...states,
+		// ENH-38. The shared form vocabulary the app imports by name — the
+		// built-in definition and the validator. Also pure and DOM-free.
+		...forms,
 		mountNavbar() {},
 	}
 	context.window = { addEventListener() {}, dispatchEvent: () => true, __i18n: null }
@@ -223,7 +237,7 @@ async function bootChw({ geolocation = null } = {}) {
 	define('setInterval', () => 0)
 
 	await vm.runInContext(
-		`(async () => {${source}\nglobalThis.__chw = { state, showScreen, requestUserLocation, setHint, describeLocation, submitSymptomReport, renderStepProgress, SYMPTOM_STEPS }\n})()`,
+		`(async () => {${source}\nglobalThis.__chw = { state, showScreen, requestUserLocation, setHint, describeLocation, submitSymptomReport, renderStepProgress, SYMPTOM_STEPS, adoptableForm, loadServedForm, getActiveForm: () => activeForm }\n})()`,
 		context,
 	)
 	await new Promise((r) => setTimeout(r, 20))
@@ -551,5 +565,88 @@ describe('HX-09 — the wizard names the step you are on', () => {
 		app.el('symptomNextBtn').click()
 		await wait()
 		assert.equal(app.el('screenAnnouncer').textContent, 'Step 2 of 7. Which symptom?')
+	})
+})
+
+describe('ENH-38 — the wizard files the version the deployment serves', () => {
+	it('files version 1 when the deployment serves only the built-in', async () => {
+		const app = await bootChw()
+		await wait(30)
+		await advanceTo(app, 'symptomLocation')
+		app.el('symptomLocationNextBtn').click()
+		await wait()
+		app.el('symptomSubmitBtn').click()
+		await wait(40)
+
+		const body = JSON.parse(app.fetchCalls.find((c) => c.path === '/api/v1/chw/report').options.body)
+		assert.equal(body.form_id, 'chw_symptom_report')
+		assert.equal(body.form_version, 1)
+	})
+
+	it('files the served version, not the one it was compiled with', async () => {
+		// The defect: the version was a `const 1`. A district publishes v2, the
+		// server serves it immutably, and the wizard goes on filing v1 forever —
+		// answering the previous question and stamping a version the district has
+		// moved past, with nothing failing to say so.
+		const servedForm = { ...forms.CHW_SYMPTOM_FORM, version: 2 }
+		const app = await bootChw({ servedForm })
+		await wait(30)
+		assert.equal(app.context.__chw.getActiveForm().version, 2,
+			'the wizard did not adopt the served version')
+
+		await advanceTo(app, 'symptomLocation')
+		app.el('symptomLocationNextBtn').click()
+		await wait()
+		app.el('symptomSubmitBtn').click()
+		await wait(40)
+
+		const body = JSON.parse(app.fetchCalls.find((c) => c.path === '/api/v1/chw/report').options.body)
+		assert.equal(body.form_version, 2, 'the wizard filed a version it did not render')
+	})
+
+	it('refuses a served version that asks a question this app cannot show', async () => {
+		// Adopting a definition with a field the static screens do not render
+		// would drop the new question silently and file a subset under a version
+		// number that claims the whole. Refusing is the honest failure.
+		const servedForm = {
+			...forms.CHW_SYMPTOM_FORM,
+			version: 2,
+			fields: [...forms.CHW_SYMPTOM_FORM.fields, { name: 'muac_mm', label: 'MUAC (mm)', type: 'integer' }],
+		}
+		const app = await bootChw({ servedForm })
+		await wait(30)
+
+		assert.equal(app.context.__chw.getActiveForm().version, 1,
+			'the wizard adopted a definition it cannot render')
+		assert.match(app.context.__chw.state.formNotice, /muac_mm/,
+			'the refusal must name the question the app cannot show')
+	})
+
+	it('starts from the built-in when the form route cannot be reached', async () => {
+		// The field app is offline-first. A health worker with no signal must
+		// still open the wizard, and the built-in is what lets it.
+		const app = await bootChw({ servedForm: null })
+		await wait(30)
+		assert.equal(app.context.__chw.getActiveForm().version, 1)
+		assert.equal(app.context.__chw.state.formNotice, null, 'a missing route is not a notice')
+	})
+
+	it('adoptableForm accepts the built-in and names what it cannot render', async () => {
+		const app = await bootChw()
+		const { adoptableForm } = app.context.__chw
+		const { form, reason } = adoptableForm(forms.CHW_SYMPTOM_FORM)
+		assert.ok(form, 'the built-in must be adoptable')
+		assert.equal(reason, null)
+
+		const bad = adoptableForm({ id: 'x', version: 0, fields: [] })
+		assert.equal(bad.form, null)
+		assert.match(bad.reason, /version/)
+
+		const extra = adoptableForm({
+			...forms.CHW_SYMPTOM_FORM, version: 2,
+			fields: [...forms.CHW_SYMPTOM_FORM.fields, { name: 'new_q', label: 'New', type: 'text' }],
+		})
+		assert.equal(extra.form, null)
+		assert.match(extra.reason, /new_q/)
 	})
 })

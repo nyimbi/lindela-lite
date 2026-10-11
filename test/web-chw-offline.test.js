@@ -7,6 +7,7 @@ import { describe, it } from 'node:test'
 
 import { submitOrQueue } from '../public/shared/runtime.js'
 import * as states from '../public/shared/states.js'
+import * as forms from '../public/shared/forms.js'
 
 // Imported dynamically and tolerated as an empty object: a service worker that
 // reaches for `self` at module scope cannot be imported at all under Node, and
@@ -262,6 +263,8 @@ async function bootChw({ online = false, indexedDB = null, appJs = null } = {}) 
 		// The state vocabulary the app imports by name. It is pure and DOM-free,
 		// so the real module runs in the vm untouched.
 		...states,
+		// ENH-38. The shared form vocabulary the app imports by name too.
+		...forms,
 		mountNavbar() {},
 	}
 	context.globalThis = context

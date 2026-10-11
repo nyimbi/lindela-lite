@@ -29,8 +29,8 @@ shipped and unmarked, and the register was the last place anyone looked.
 | Verdict | Count | Items |
 |---|---|---|
 | IMPLEMENTED | 22 | 31, 34, 35, 36, 37, 39, 40, 44, 45, 46, 47, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
-| PARTIAL | 11 | 32, 33, 42, 50, 51, 52, 55, 57, 59, 70, 78 |
-| ABSENT | 18 | 38, 41, 43, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
+| PARTIAL | 12 | 32, 33, 38, 42, 50, 51, 52, 55, 57, 59, 70, 78 |
+| ABSENT | 17 | 41, 43, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
@@ -269,6 +269,34 @@ question without a redeploy.
 (question, type, constraint, skip logic) stored server-side and served to the
 client. A district changes a question without a redeploy; the mobile app and the
 web wizard share one schema.
+
+**Shipped 2026-10-11, as the half the entry's harm was in.** The server substrate
+already existed (CAP-01: `src/forms.js`, `/api/v1/forms`, immutable versions). The
+gap was that the wizard never consumed it: it carried
+`const CHW_SYMPTOM_FORM_VERSION = 1` and filed version 1 forever. The server keeps
+every version immutable, so publishing v2 never broke v1 — the wizard went on
+asking the old question and stamping a version the district had moved past, and
+nothing failed. What landed:
+
+- **The vocabulary is shared, not duplicated.** `public/shared/forms.js` holds the
+  field types, the skip-grammar evaluator, the answer coercion and the built-in
+  definition; `src/forms.js` re-exports them, so the browser and the server run
+  one implementation rather than two that agree until they do not. This is the
+  `public/shared/submission-id.js` shape.
+- **The wizard files the version it rendered.** `activeForm` starts at the
+  built-in (the field app is offline-first — a health worker with no signal must
+  still open the wizard) and upgrades to the served definition when
+  `/api/v1/forms` answers. Every submission names `activeForm.version`.
+- **A served version the static screens cannot render is refused, not truncated.**
+  The screens are hand-written markup; adopting a definition that adds a field
+  would drop the new question silently and file a subset under a version number
+  claiming the whole. `adoptableForm` refuses and `state.formNotice` names the
+  question the app cannot show.
+- **What is not done.** The wizard still renders its hand-written screens; the
+  registry's `renderForm` exists and is tested but the field app does not call it
+  yet, so a district's v2 must stay within the questions the screens render to be
+  adopted. Full schema-driven rendering is the remaining half — it is what makes
+  *any* published definition renderable, not only a re-titled v1.
 
 **ENH-39 — Conflict-free submission merge.** Each submission carries a UUID and the
 form version it was filled against. The server merges on that key, so two versions

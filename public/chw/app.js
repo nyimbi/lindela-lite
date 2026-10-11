@@ -2,24 +2,77 @@ import { initI18n, t, apiFetch, initOfflineBanner, initOfflineQueue, initService
 import { mountNavbar } from '/shared/navbar.js'
 import { esc as escapeHtml } from '/shared/fmt.js'
 import { ERROR, LOADING, QUEUED, createLoadSequence, describeActionFailure, describeState, distinguishFailure, staleReadNote } from '/shared/states.js'
+import { CHW_SYMPTOM_FORM, validateFormDefinition } from '/shared/forms.js'
 mountNavbar({ activePath: '/chw' })
 
 /**
- * CAP-01. The form version this wizard fills.
+ * CAP-01 / ENH-38. The form version this wizard fills, resolved from what the
+ * deployment actually serves.
  *
- * The wizard renders these questions, so it names them on every submission —
- * the server validates the answers against exactly this `(id, version)` and
- * refuses a report that does not fit. The pair is asserted against
- * `src/forms.js` by `test/forms.test.js`, so the client and the server cannot
- * disagree about which version of the form is in the field: changing the
- * wizard's questions without publishing a new version fails the suite.
+ * It used to be two `const`s — `CHW_SYMPTOM_FORM_VERSION = 1` — so the wizard
+ * filed version 1 forever. The server keeps every version immutable, which means
+ * publishing version 2 never broke version 1: the wizard kept answering the old
+ * question and stamped the record with a version the district had moved past,
+ * and nothing failed. A district could change a question and the field app would
+ * go on asking the previous one indefinitely.
+ *
+ * So the version is a live value. `activeForm` starts as the built-in the client
+ * ships (the field app is offline-first — a health worker with no signal must
+ * still open the wizard), and `loadServedForm` upgrades it to the version
+ * `/api/v1/forms` serves. Every submission names `activeForm.version`, so the
+ * record says which version was actually rendered.
  */
-const CHW_SYMPTOM_FORM_ID = 'chw_symptom_report'
-const CHW_SYMPTOM_FORM_VERSION = 1
+let activeForm = CHW_SYMPTOM_FORM
+
+/**
+ * The fields the static wizard renders. The screens are hand-written markup, so
+ * a served definition is adoptable only while it asks exactly these questions.
+ *
+ * A served version that adds a field is **not** adopted: the wizard would render
+ * the questions it knows and silently drop the new one, filing an answer set the
+ * definition marks required-and-missing — or worse, a record missing a question
+ * the district added. Refusing to adopt is the honest failure: the wizard keeps
+ * filling the version it can render, and `state.formNotice` says why, rather
+ * than filing a subset under a version number that claims the whole.
+ */
+const RENDERED_FIELDS = Object.freeze(CHW_SYMPTOM_FORM.fields.map((f) => f.name))
+
+/** Adopt a served definition, or return the reason it cannot be rendered. */
+function adoptableForm(definition, rendered = RENDERED_FIELDS) {
+  const problems = validateFormDefinition(definition)
+  if (problems.length) return { form: null, reason: problems.join('; ') }
+  const names = definition.fields.map((f) => f.name)
+  const unrendered = names.filter((name) => !rendered.includes(name))
+  if (unrendered.length) {
+    return { form: null, reason: `this deployment serves ${definition.id} v${definition.version}, which asks ${unrendered.join(', ')} — questions this app cannot show yet` }
+  }
+  return { form: definition, reason: null }
+}
+
+async function loadServedForm() {
+  try {
+    const payload = await apiFetch(`/api/v1/forms/${CHW_SYMPTOM_FORM.id}`)
+    const definition = payload?.data
+    const { form, reason } = adoptableForm(definition)
+    if (!form) {
+      // Only a *newer* version is worth a notice. The built-in is version 1, and
+      // being told the app cannot render the version it already renders would be
+      // noise on every launch.
+      if (definition && Number(definition.version) > activeForm.version) state.formNotice = reason
+      return
+    }
+    activeForm = form
+    state.formNotice = null
+  } catch {
+    // Offline, or the route is gone. The built-in stands — this is the case the
+    // field app exists for, and it is not an error worth showing.
+  }
+}
 
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
   currentScreen: 'home',
+  formNotice: null,
   symptom: { who: null, type: null, duration: null, durationUnit: 'days', durationValue: null, location: null, severity: { dangerSigns: [], verySleepy: null, breathing: null, drinking: null, bleeding: null, other: null }, exposure: { contactSick: null, contactDead: null, vaccinationStatus: null, waterSource: 'clean', otherExposure: null } },
   incident: { category: null, description: null, location: null },
   anonymous: true,
@@ -191,6 +244,10 @@ async function init() {
   // health worker had tapped anything, and on a screen that might not even be
   // the location step. The phone is asked when someone asks for it.
   renderStepProgress()
+  // ENH-38. Resolve the version the deployment serves, after the first paint and
+  // without blocking it. Not awaited: an offline launch must reach a usable
+  // wizard, and the built-in definition already draws one.
+  loadServedForm()
 }
 
 function updateStatus() {
@@ -750,8 +807,8 @@ async function submitSymptomReport() {
     // answers against exactly this version and refuses a report that does not
     // fit, so a client sending a version the deployment does not serve is told
     // rather than silently filing under a version it guessed.
-    form_id: CHW_SYMPTOM_FORM_ID,
-    form_version: CHW_SYMPTOM_FORM_VERSION,
+    form_id: activeForm.id,
+    form_version: activeForm.version,
     answers: {
       who: state.symptom.who,
       symptom: state.symptom.type,

@@ -203,13 +203,26 @@ describe('versioned form definitions (CAP-01)', () => {
     // The wizard renders these questions, so it names the version on every
     // submission and the server validates against exactly that pair. If the
     // client and the server disagree, every report from the field is refused —
-    // and the disagreement is invisible until someone files one. So the two are
-    // asserted against each other here rather than kept in step by hand.
+    // and the disagreement is invisible until someone files one.
+    //
+    // ENH-38 changed what "agrees" means. The wizard used to carry its own
+    // `const CHW_SYMPTOM_FORM_ID` and `const CHW_SYMPTOM_FORM_VERSION = 1`, kept
+    // in step with this file by hand — and the hand-kept pair was the defect: a
+    // district could publish version 2 and the wizard would file version 1
+    // forever. The wizard now imports the shared definition and resolves the
+    // served version at runtime, so the invariant is that its *default* is the
+    // shared built-in and that it files `activeForm`, not a constant.
     const src = await fs.readFile(new URL('../public/chw/app.js', import.meta.url), 'utf8')
-    const id = src.match(/const CHW_SYMPTOM_FORM_ID = '([^']+)'/)?.[1]
-    const version = Number(src.match(/const CHW_SYMPTOM_FORM_VERSION = (\d+)/)?.[1])
-    assert.equal(id, CHW_SYMPTOM_FORM.id, 'the wizard files against a form id the server does not serve')
-    assert.equal(version, CHW_SYMPTOM_FORM.version, 'the wizard files against a version the server does not serve')
+    assert.match(src, /import \{[^}]*CHW_SYMPTOM_FORM[^}]*\} from '\/shared\/forms\.js'/,
+      'the wizard no longer imports the shared definition; the client and server can drift again')
+    assert.match(src, /let activeForm = CHW_SYMPTOM_FORM/,
+      'the wizard no longer starts from the shared built-in definition')
+    assert.match(src, /form_id: activeForm\.id/,
+      'the wizard files a form id that is not the definition it rendered')
+    assert.match(src, /form_version: activeForm\.version/,
+      'the wizard files a version that is not the definition it rendered — the ENH-38 defect')
+    assert.ok(!/const CHW_SYMPTOM_FORM_VERSION/.test(src),
+      'a hard-coded version is back; it is the defect ENH-38 removed')
   })
 
   it('names only declared fields in the answers the wizard sends', async () => {
