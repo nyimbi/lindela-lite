@@ -145,17 +145,37 @@ describe('ARC-01 — the roll-up describes the matched set, not the page', () =>
   })
 
   it('summarises every matching food-security record, not the page', async () => {
+    // Two countries, each with an area record, so a roll-up over the *page*
+    // (limit 4) drops one country entirely while a roll-up over the matched set
+    // keeps both. The fixture has to be big enough for the page to lose
+    // something, or the assertion cannot tell the two apart.
     const data = {
-      food_security_records: Array.from({ length: 30 }, (_, i) => ({
-        id: `f${i + 1}`, ipc_phase: i < 7 ? 4 : 2, country: 'KE',
-      })),
+      food_security_records: [
+        ...Array.from({ length: 3 }, (_, i) => ({
+          id: `ke-nat-${i}`, country: 'KE', scope: 'national',
+          validity_period: 'current', valid_from: `2026-0${i + 1}-01`, phase3plus_number: 100 + i,
+        })),
+        ...Array.from({ length: 3 }, (_, i) => ({
+          id: `so-nat-${i}`, country: 'SO', scope: 'national',
+          validity_period: 'current', valid_from: `2026-0${i + 1}-01`, phase3plus_number: 200 + i,
+        })),
+      ],
     }
     const { res } = await call({ kind: 'food-security' }, { data, search: '?limit=4' })
     const body = res.json()
     assert.equal(body.data.length, 4)
-    assert.equal(body.total, 30, 'the listing did not report the matched total')
-    const summarised = JSON.stringify(body.summary)
-    assert.ok(/30|7/.test(summarised), `the roll-up does not describe the matched set: ${summarised}`)
+    assert.equal(body.total, 6, 'the listing did not report the matched total')
+    // A page of four cannot hold both countries' nationals *and* the newest of
+    // each; the roll-up over the matched set names both. Read the field, not a
+    // stringified blob — `generated_at` is a timestamp and matches `/30|7/` on
+    // a good fraction of clock readings, which is how this assertion passed
+    // while the roll-up it describes was wrong.
+    assert.deepEqual(
+      body.summary.countries.map((c) => c.country),
+      ['KE', 'SO'],
+      'the roll-up described the page, not the matched set',
+    )
+    assert.deepEqual(body.summary.countries.map((c) => c.phase3plus_number), [102, 202], 'the roll-up did not keep the latest validity window')
   })
 })
 

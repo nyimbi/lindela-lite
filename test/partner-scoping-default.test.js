@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { currentRequestAuth, filterRecords, runWithRequestContext } from '../src/utils.js'
@@ -41,6 +41,29 @@ const read = (p) => readFileSync(path.join(root, p), 'utf8')
 const code = (p = 'src/server.js') => read(p)
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '')
+
+/**
+ * Every module that can serve a route, concatenated.
+ *
+ * These assertions used to read `src/server.js` alone, and that was correct
+ * while the whole surface lived in it. ARC-01 moved the route families out —
+ * `handleOperationalRoute` is `src/routes/operational.js` now, and the resolver
+ * is `src/visibility.js` — so a check pointed at one file stopped measuring the
+ * class the moment the class moved. This is the same failure CLAUDE.md records
+ * for the collateral linker and the design-system applier: discovery by a fixed
+ * path loses coverage *without failing*, and it loses it exactly when the tree
+ * is reorganised, which is when the check is most needed.
+ *
+ * A `src/routes/*.js` that a future extraction adds is picked up here with no
+ * edit, so the check follows the surface rather than a file list.
+ */
+const routeSurface = () => [
+  code('src/server.js'),
+  code('src/visibility.js'),
+  ...readdirSync(path.join(root, 'src', 'routes'))
+    .filter((f) => f.endsWith('.js'))
+    .map((f) => code(path.join('src', 'routes', f))),
+].join('\n')
 
 const query = new URLSearchParams('')
 const records = [
@@ -105,7 +128,7 @@ describe('the scoping is wired to the request, not to the call site', () => {
   })
 
   it('the by-id branch goes through the same predicate as the list form', () => {
-    const source = code()
+    const source = code('src/routes/operational.js')
     // It was the worst of the three: `.find()` over the raw collection with no
     // scoping expression, so a leaked id from any listing read one record
     // directly. There was nothing to bypass because nothing was there.
@@ -137,9 +160,14 @@ describe('the scoping is wired to the request, not to the call site', () => {
       !/data\[route\.collection\]\.find\(/.test(branch),
       'a raw `.find()` over the collection bypasses every predicate by construction',
     )
-    const resolverStart = source.indexOf('function findVisible(')
-    assert.ok(resolverStart > 0, 'findVisible must exist')
-    const resolver = source.slice(resolverStart, source.indexOf('\nasync function handleApiRequestInContext', resolverStart))
+    // Both halves, and the second is the one that keeps this honest: a
+    // `findVisible` that stopped filtering satisfies the call-site check while
+    // scoping nothing at all. The first run of this canary proved the point —
+    // replacing `filterRecords` in the resolver left the suite green, because
+    // the assertion had been narrowed to "the function exists".
+    const resolver = code('src/visibility.js')
+    assert.match(resolver, /export function findVisible\(/,
+      'the by-id resolver must exist and be reachable from the route modules')
     assert.match(resolver, /filterRecords\(/,
       'the by-id resolver must apply the same predicate as the list form; a passthrough '
       + 'here would satisfy the call-site check while scoping nothing')
@@ -150,14 +178,14 @@ describe('the scoping is wired to the request, not to the call site', () => {
     // over a collection, and fixing one of them would have left thirty. Any
     // future branch that reaches for the collection directly fails here rather
     // than in an audit.
-    const source = code()
+    const source = routeSurface()
     const raw = [...source.matchAll(/data(?:\[[^\]]+\]|\.[a-z_]+)\.find\(\(item\) => item\.id === route\.id\)/g)]
     assert.deepEqual(raw.map((m) => m[0]), [],
       'a by-id branch resolved a record without the partner predicate')
   })
 
   it('no call site is required to pass a context for scoping to apply', () => {
-    const source = code()
+    const source = routeSurface()
     // The two handlers the audit named still pass none, and that is now correct
     // rather than a bug: `filterRecords` reads the request's identity by
     // default. Asserting they pass one would re-implement the opt-in design

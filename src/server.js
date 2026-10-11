@@ -21,7 +21,7 @@ import {
   runDueIngestionSchedules,
   runIngestion,
 } from './ingestion.js'
-import { actionLog, buildCreate, buildSoftDelete, buildUpdate, counts, isDeleted, operationalSummary } from './operations.js'
+import { actionLog, buildCreate, counts, operationalSummary } from './operations.js'
 import { parseRapidProFieldReport, rapidProStatus, responseMetrics, sendRapidProAlert, sendRapidProReportSummary, verifyRapidProWebhook, parseRapidProReply, reconcileInbound, deliveryReport, dueEscalations, formatDeliveryReport } from './rapidpro.js'
 import { chainEntries, verifyChain, renderAuditProof } from './audit-chain.js'
 import {
@@ -66,6 +66,8 @@ import { matchKpiRoute, handleKpiRoute } from './routes/kpi.js'
 import { matchFieldSignalRoute, handleFieldSignalRoute } from './routes/field-signals.js'
 import { matchExposureRoute, handleExposureRoute } from './routes/exposure.js'
 import { matchDerivedRoute, handleDerivedRoute } from './routes/derived.js'
+import { matchOperationalRoute, handleOperationalRoute } from './routes/operational.js'
+import { findVisible } from './visibility.js'
 import {
   formCatalogue, formFor, latestForm, mergeForms, validateAnswers, validateFormDefinition,
 } from './forms.js'
@@ -1149,46 +1151,6 @@ async function handleApiRequest(store, req, res, url, { checkWebhookUrl, idempot
   // so the answer is available before any handler runs rather than after.
   const auth = (isAuthConfigured() && !isPublicRequest(req.method, url.pathname) ? authenticate(req) : null) || null
   return runWithRequestContext(auth, () => handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl, idempotency, requestRing }))
-}
-
-/**
- * VUL-03. The one way a by-id route resolves a record.
- *
- * The list form of every collection was scoped and the by-id form was not.
- * `GET /api/v1/reports` returned only the caller's organisation's reports while
- * `GET /api/v1/reports/<someone-else's-id>` returned the other organisation's,
- * because the by-id branch was
- *
- *     data.reports.find((item) => item.id === route.id)
- *
- * — a lookup with no predicate at all. Thirty-one branches across nine handlers
- * had that shape. An id is not a secret: it appears in every listing, in every
- * export and in every link, so this is a per-object authorization gap that holds
- * for an authenticated, scoped caller.
- *
- * The fix is not thirty-one predicates. Thirty-one copies of a predicate is
- * thirty-two chances to write it wrong, and the three `filterRecords` call sites
- * that omitted their context are the proof: scoping that is opt-in is scoping
- * that gets missed. So the predicate lives here once and every by-id branch
- * calls this, which also means a route added later cannot have a by-id form
- * that disagrees with its own listing.
- *
- * `isDeleted` is applied for the caller that asks, not unconditionally: the
- * operational routes accept `?include_deleted=true` and their by-id form has to
- * honour the same switch, or a record the console shows in the archive would
- * 404 on refresh.
- *
- * Returns `null` for "not there, or not yours". The two are the same answer on
- * purpose: a 403 on another organisation's id confirms the id exists, which
- * turns a scoped listing into an id oracle.
- */
-function findVisible(records, id, { includeDeleted = false } = {}) {
-  if (!id) return null
-  const [record] = filterRecords(records || [], new URLSearchParams(''), {}, { unlimited: true })
-    .filter((item) => item.id === id)
-  if (!record) return null
-  if (!includeDeleted && isDeleted(record)) return null
-  return record
 }
 
 async function handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl, idempotency, requestRing } = {}) {
@@ -2574,10 +2536,7 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   }
 
   const operationalRoute = matchOperationalRoute(url.pathname)
-  if (operationalRoute) {
-    await handleOperationalRoute(store, data, req, res, url, operationalRoute)
-    return
-  }
+  if (operationalRoute && await handleOperationalRoute(operationalRoute, { data, req, res, url, jsonResponse, store })) return
 
   const chwRoute = matchChwRoute(url.pathname)
   if (chwRoute) {
@@ -4030,98 +3989,6 @@ async function handleTriggerRoute(store, data, req, res, url, route) {
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleOperationalRoute(store, data, req, res, url, route) {
-  const includeDeleted = url.searchParams.get('include_deleted') === 'true'
-
-  if (req.method === 'GET' && !route.id) {
-    const records = includeDeleted ? data[route.collection] : data[route.collection].filter((item) => !isDeleted(item))
-    jsonResponse(res, 200, { success: true, ...collectionPage(records, url.searchParams, { data, collection: route.collection }) })
-    return
-  }
-
-  if (req.method === 'GET' && route.id) {
-    // Through `findVisible`, so a by-id read carries the same
-    // partner-organisation predicate as the list form. This branch was the one
-    // the earlier fix reached; VUL-03 is the other thirty.
-    const record = findVisible(data[route.collection], route.id, { includeDeleted })
-    if (!record) {
-      jsonResponse(res, 404, { success: false, error: 'Record not found' })
-      return
-    }
-    jsonResponse(res, 200, { success: true, data: record })
-    return
-  }
-
-  if (req.method === 'POST' && !route.id) {
-    if (route.collection === 'action_logs') {
-      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only', code: ERROR_CODES.READ_ONLY })
-      return
-    }
-    const body = await readRequestJson(req)
-    const record = buildCreate(route.collection, body, data)
-    const log = actionLog(route.collection, 'created', record, body.actor, req.__auth?.subject)
-    await store.merge({ [route.collection]: [record], action_logs: [log] })
-    if (route.collection === 'incidents') {
-      try {
-        await emit(store, 'incident.created', record)
-      } catch (emitError) {
-        // Counted and logged, not swallowed — see the alert_rule path above for
-        // why this direction of the gap is the survivable one.
-        metrics.counter('outbox_emit_failed_total', { event: 'incident.created' })
-        logger.error('outbox_emit_failed', {
-          outbox_event: 'incident.created',
-          message: 'outbox emit failed; the incident is stored and no subscriber was told',
-          err: { message: emitError.message, stack: emitError.stack },
-        })
-      }
-    }
-    jsonResponse(res, 201, { success: true, data: record, action_log: log })
-    return
-  }
-
-  if (req.method === 'PATCH' && route.id) {
-    if (route.collection === 'action_logs') {
-      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only', code: ERROR_CODES.READ_ONLY })
-      return
-    }
-    const body = await readRequestJson(req)
-    // `includeDeleted` unconditionally here, unlike the read branch. A write
-    // has to see the soft-deleted record to answer 409 rather than 404: the
-    // record exists, the caller may not change it, and those are different
-    // answers. Whether a caller may mutate a record is a separate question from
-    // whether it may read one, and the partner predicate still applies either
-    // way — `findVisible` is what carries it.
-    const existing = findVisible(data[route.collection], route.id, { includeDeleted: true })
-    if (isDeleted(existing)) {
-      jsonResponse(res, 409, { success: false, error: 'Record is deleted', code: ERROR_CODES.RECORD_DELETED })
-      return
-    }
-    const record = buildUpdate(route.collection, existing, { ...body, id: route.id }, data)
-    const log = actionLog(route.collection, 'updated', record, body.actor, req.__auth?.subject)
-    await store.merge({ [route.collection]: [record], action_logs: [log] })
-    jsonResponse(res, 200, { success: true, data: record, action_log: log })
-    return
-  }
-
-  if (req.method === 'DELETE' && route.id) {
-    if (route.collection === 'action_logs') {
-      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only', code: ERROR_CODES.READ_ONLY })
-      return
-    }
-    const body = await readRequestJson(req)
-    // Same reason as PATCH above: a second DELETE answers 409, which needs the
-    // already-deleted record in hand.
-    const existing = findVisible(data[route.collection], route.id, { includeDeleted: true })
-    const record = buildSoftDelete(route.collection, existing, body.actor || req.__auth?.subject, data)
-    const log = actionLog(route.collection, 'deleted', record, body.actor || req.__auth?.subject)
-    await store.merge({ [route.collection]: [record], action_logs: [log] })
-    jsonResponse(res, 200, { success: true, data: record, action_log: log })
-    return
-  }
-
-  jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
-}
-
 /**
  * GET /api/v1/flood-depth
  *
@@ -4706,25 +4573,6 @@ async function handleChwRoute(store, data, req, res, url, route) {
   }
 
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
-}
-
-function matchOperationalRoute(pathname) {
-  const routes = {
-    incidents: 'incidents',
-    interventions: 'interventions',
-    tasks: 'intervention_tasks',
-    'field-reports': 'field_reports',
-    'response-resources': 'response_resources',
-    'action-logs': 'action_logs',
-    // Absent here, so `GET /api/v1/service-assets/<id>` matched nothing and 404'd
-    // while the collection itself served fine. A caller holding an asset id —
-    // the subject panel, the routing endpoint's own error message — had no way
-    // to resolve one record.
-    'service-assets': 'service_assets',
-  }
-  const match = pathname.match(/^\/api\/v1\/([^/]+)(?:\/([^/]+))?$/)
-  if (!match || !routes[match[1]]) return null
-  return { collection: routes[match[1]], id: match[2] ? decodeURIComponent(match[2]) : null }
 }
 
 function matchIngestionRoute(pathname) {
