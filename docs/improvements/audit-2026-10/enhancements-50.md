@@ -99,6 +99,33 @@ set in memory before serialising (see SCL-03). A chunked NDJSON/Arrow export tha
 streams from the store keeps memory bounded regardless of table size and lets a
 partner pull millions of rows. This is the substrate ENH-31/32/34 all ride on.
 
+**Fixed 2026-10-11.** `/api/v1/export.ndjson` streams via `store.iterateRecords`.
+Measured on the demo store before the fix: `export.csv` returned **501 lines — 500
+data rows — against 12,929** non-history records, and `?limit=5000` returned 1,343.
+The cap is `parseLimit`'s `DEFAULT_LIMIT`, applied to a route that never says it is
+paged, in a `text/csv` body with no marker — a silent truncation of 12,429 records
+on the surface a partner is most likely to treat as the record of truth. The
+streamed route returns all 12,937 records (the extra 8 arrive after the CSV read),
+`?collection=field_reports` returns 168, an unknown collection is a 400, and
+`?limit=`/`?cursor=` are refused rather than honoured or ignored — `filterRecords`
+reads both, so honouring `limit` would reintroduce the cap through a second door
+and ignoring it would be the `?district=` defect. NDJSON rather than streamed CSV
+because a CSV header is the union of every record's flattened keys and is not known
+until the last record; each NDJSON line is self-describing. Arrow was not built —
+it needs a schema before the first row, the same problem, and adds a dependency
+this package does not carry. Tests: `test/streaming-export.test.js` (11).
+
+The route first shipped dispatched *below* the line that reads the whole store,
+so it streamed its output while holding its input: on a store past SCL-01's
+read-row budget — the one store this route exists for — it answered 503 before
+the first byte, and below the budget it materialised everything anyway. Probed,
+not reasoned: a 100-row store with a 10-row budget returned 503, and now returns
+200 with 100 lines. The route moved above that read, and takes the district
+parent collections it needs (`districtRelationCollections`) through a narrow read
+rather than being handed the whole store. Both halves are canaried — reverting
+the move fails the budget test, dropping the narrow read fails the attribution
+test, and neither canary touches the other's test.
+
 ---
 
 ## Group H — Offline-first field system (ODK/KoboToolbox class)
@@ -355,6 +382,16 @@ testable in isolation. This unblocks every other substrate item.
 `SELECT collection, body FROM lite_records WHERE …` with no `LIMIT`
 (`src/postgres-store.js:267`) and materialises every row into the heap. A cursor
 API bounded by request keeps memory flat and makes ENH-37 possible.
+
+**Fixed 2026-10-11.** `iterateRecords(options, { batchSize })` on both adapters:
+`DECLARE lindela_stream NO SCROLL CURSOR` → repeated `FETCH n` → `CLOSE` in a
+`finally` that also releases the client, so an abandoned stream (the ordinary
+case — a partner closes the socket mid-export) does not bleed a pool connection
+per export. `readPredicate(options)` was extracted and is now shared by `#readWith`
+and the cursor, because the partner clause is a visibility boundary and a second
+copy would be a second answer to "which rows may this caller see". The batch
+default is 1,000 and the walk is verified at 2,500 rows in batches of 1,000.
+Tests: `test/streaming-export.test.js` (3 of the 9).
 
 **ENH-62 — Content-addressed derived cache.** `refreshAnalytics` recomputes eight
 derived collections on every run and reads the store twice

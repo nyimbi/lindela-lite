@@ -97,6 +97,52 @@ export const WRITE_LOCK_KEY = 4_001_001
  */
 export const SCHEMA_LOCK_KEY = 4_001_002
 
+/**
+ * The `WHERE` every read of `lite_records` shares.
+ *
+ * ENH-37 / ENH-61. There are now two readers — the materialising `#readWith`
+ * and the streaming `iterateRecords` — and a second copy of this clause list is
+ * a second answer to "which rows may this caller see". The partner predicate in
+ * particular is a visibility boundary: a cursor built without it would stream
+ * another organisation's field reports one batch at a time, which is the same
+ * leak with a smaller peak heap. One builder, two consumers.
+ *
+ * Returns `clauses` and `params` in positional order, so `$${n}` in a clause is
+ * `params[n - 1]` for either consumer.
+ */
+export function readPredicate(options = {}) {
+  const { collections, includeHistory, partnerOrg } = normaliseReadOptions(options)
+
+  const clauses = ["collection <> '__schema'"]
+  const params = []
+  if (collections !== null) {
+    params.push(collections)
+    clauses.push(`collection = ANY($${params.length}::text[])`)
+  }
+  if (!includeHistory) clauses.push(`collection <> '${HISTORY_COLLECTION}'`)
+  // ENH-17: the partner-organisation predicate in the WHERE clause, not in a
+  // filter over what was already fetched. An index lookup on (collection,
+  // partner_org) instead of an O(N) scan over rows the caller may not see.
+  //
+  // This is one deployment serving one country programme, and this predicate
+  // keeps one partner organisation out of another's field reports. It is not a
+  // tenancy boundary, and it is not the only thing standing between two NGOs:
+  // `filterRecords` still applies the same predicate in JavaScript over what
+  // comes back. This clause removes rows the caller may not see from the
+  // result rather than replacing that check.
+  //
+  // Strict equality, deliberately — `filterRecords` uses `===`, so a record
+  // with no partner is invisible to a partner token, and
+  // `partner_org IS NULL OR partner_org = $2` would hand every partner token
+  // every untagged row in the deployment. Verified against PostgreSQL 18: the
+  // strict form returns 1 of 4 seeded rows, the nullable form returns 3.
+  if (partnerOrg) {
+    params.push(partnerOrg)
+    clauses.push(`partner_org = $${params.length}`)
+  }
+  return { clauses, params }
+}
+
 function isRetryableWriteError(error) {
   return RETRYABLE_SQLSTATES.has(error?.code)
 }
@@ -357,35 +403,8 @@ export class PostgresStore {
    * serialising two callers around a snapshot neither of them can see.
    */
   async #readWith(runner, options = {}) {
-    const { collections, includeHistory, partnerOrg } = normaliseReadOptions(options)
-
-    const clauses = ["collection <> '__schema'"]
-    const params = []
-    if (collections !== null) {
-      params.push(collections)
-      clauses.push(`collection = ANY($${params.length}::text[])`)
-    }
-    if (!includeHistory) clauses.push(`collection <> '${HISTORY_COLLECTION}'`)
-    // ENH-17: the partner-organisation predicate in the WHERE clause, not in a
-    // filter over what was already fetched. An index lookup on (collection,
-    // partner_org) instead of an O(N) scan over rows the caller may not see.
-    //
-    // This is one deployment serving one country programme, and this predicate
-    // keeps one partner organisation out of another's field reports. It is not a
-    // tenancy boundary, and it is not the only thing standing between two NGOs:
-    // `filterRecords` still applies the same predicate in JavaScript over what
-    // comes back. This clause removes rows the caller may not see from the
-    // result rather than replacing that check.
-    //
-    // Strict equality, deliberately — `filterRecords` uses `===`, so a record
-    // with no partner is invisible to a partner token, and
-    // `partner_org IS NULL OR partner_org = $2` would hand every partner token
-    // every untagged row in the deployment. Verified against PostgreSQL 18: the
-    // strict form returns 1 of 4 seeded rows, the nullable form returns 3.
-    if (partnerOrg) {
-      params.push(partnerOrg)
-      clauses.push(`partner_org = $${params.length}`)
-    }
+    const { collections } = normaliseReadOptions(options)
+    const { clauses, params } = readPredicate(options)
 
     // ENH-07 / ENH-08. This used to be
     //
@@ -987,6 +1006,78 @@ export class PostgresStore {
       client.release()
     }
     // ENH-11 / R-24. See `merge()` — no consumer, so no read-back.
+  }
+
+  /**
+   * The same read as `read()`, one batch at a time, without holding the set.
+   *
+   * ENH-61 / ENH-37. `read()` builds a JS object of every row it matched, so a
+   * 12,929-record export allocates all of it to serialise all of it. This walks
+   * a PostgreSQL server-side cursor instead: the statement is evaluated in the
+   * server, `FETCH` pulls `batchSize` rows at a time, and the peak heap is one
+   * batch rather than the table. `read()` stays as it is — most routes want the
+   * whole set and its sort — and this is for the ones that only ever stream it
+   * out again.
+   *
+   * Three things a cursor has to get right, and each is why the code is shaped
+   * the way it is:
+   *
+   *  - **The predicate is `readPredicate`, the same one `read()` uses.** A
+   *    cursor with its own `WHERE` is a second answer to "which rows may this
+   *    caller see", and the partner clause is a visibility boundary. One
+   *    builder, two consumers.
+   *  - **It holds a pooled connection for its whole life.** A cursor is scoped
+   *    to a session, so the client cannot be returned between batches. That is
+   *    a real cost — this is not for a route that streams slowly — and it is
+   *    why `batchSize` defaults to something substantial rather than to a
+   *    convenience value.
+   *  - **It is released on every path, including a consumer that throws.** The
+   *    `finally` closes the cursor, ends the transaction and returns the client,
+   *    so a generator abandoned half-way (a client that disconnects mid-export)
+   *    cannot leak the connection.
+   *
+   * No ordering, matching `read()`: the return order of a store read is
+   * `sortRecords` on the materialised set, and a stream has no set to sort.
+   * `ORDER BY collection, id` would be stable but is not the same order, so a
+   * caller needing `read()`'s order must use `read()`. Stated here rather than
+   * discovered by a diff between two exports.
+   *
+   * Not bounded by `readRowBudget`: the budget exists to stop a *materialising*
+   * read from allocating unboundedly, and streaming is the answer to that
+   * problem rather than an instance of it. `rows` still counts what went out, so
+   * a caller can report the size.
+   */
+  async *iterateRecords(options = {}, { batchSize = 1000 } = {}) {
+    await this.ensureSchema()
+    const { clauses, params } = readPredicate(options)
+    const size = Number.isFinite(batchSize) && batchSize > 0 ? Math.floor(batchSize) : 1000
+    const client = await this.pool.connect()
+    let opened = false
+    try {
+      await client.query('BEGIN')
+      // `NO SCROLL`, because the walk is forward-only and a scrollable cursor
+      // makes PostgreSQL materialise the whole result to allow backward fetches
+      // — the exact allocation this exists to avoid.
+      await client.query(
+        `DECLARE lindela_stream NO SCROLL CURSOR FOR
+           SELECT collection, body FROM lite_records WHERE ${clauses.join(' AND ')}`,
+        params,
+      )
+      opened = true
+      for (;;) {
+        const { rows } = await client.query(`FETCH ${size} FROM lindela_stream`)
+        if (!rows.length) return
+        for (const row of rows) yield { collection: row.collection, body: row.body }
+      }
+    } finally {
+      // Each step is guarded: a consumer that threw has already poisoned the
+      // transaction, and `CLOSE` on an aborted transaction raises rather than
+      // closing. The client must reach `release()` regardless, or the pool
+      // leaks a connection per abandoned export.
+      if (opened) await client.query('CLOSE lindela_stream').catch(() => {})
+      await client.query('COMMIT').catch(() => {})
+      client.release()
+    }
   }
 
   async close() {

@@ -2168,6 +2168,37 @@ paths:
             application/geo+json:
               schema:
                 type: object
+  /api/v1/export.ndjson:
+    get:
+      summary: Stream every matching record as newline-delimited JSON
+      description: >-
+        The whole matched set, streamed from a store cursor rather than
+        materialised. `export.csv` and `export.geojson` apply the default page
+        limit, so against a store of 12,929 records they return 500 and say
+        nothing about the rest; this route has no page. Each line is a JSON
+        object carrying a `collection` key beside the record's own fields, since
+        a stream of fifteen collections concatenated with no provenance cannot
+        be split. Not paged, so `limit` and `cursor` are refused rather than
+        honoured or ignored. A failure after the first bytes are written appears
+        as a final `{"error":"export_failed"}` line, because a truncated stream
+        that ends cleanly is indistinguishable from a complete one.
+      parameters:
+        - name: collection
+          in: query
+          description: >-
+            Narrow the stream to one declared collection. A name that is not
+            declared is a 400, not an empty file.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Newline-delimited JSON, one record per line
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+        '400':
+          description: collection is not a declared collection, or limit/cursor was supplied
   /api/v1/export.csv:
     get:
       summary: Export records as CSV

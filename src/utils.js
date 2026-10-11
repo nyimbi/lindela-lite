@@ -988,6 +988,29 @@ const DISTRICT_PARENT_CHAINS = {
 }
 
 /**
+ * The collections `buildDistrictRelations` needs in order to filter `collection`
+ * by district, or `[]` when it needs none.
+ *
+ * ENH-37. A streaming export applies `filterRecords` one record at a time, and
+ * `filterRecords` reaches for `context.data` only to attribute a record that
+ * carries no location of its own through its parent — interventions, their
+ * tasks, and the two RapidPro message collections. Everything else filters on
+ * its own fields, so `context.data` is never read.
+ *
+ * Without this, the only way to give the stream the relations it needs is to
+ * hand it the whole store, which is the materialisation the route exists to
+ * avoid — and on a store past SCL-01's row budget it is a 503 before the first
+ * byte, on the one route built for exactly that store.
+ *
+ * The last entry of a chain is the collection being filtered and is excluded,
+ * for the same reason `buildDistrictRelations` stops there: it maps *parents*,
+ * and the record's own id is not looked up in it.
+ */
+export function districtRelationCollections(collection) {
+  return (DISTRICT_PARENT_CHAINS[collection] || []).slice(0, -1)
+}
+
+/**
  * Map each record id in the chain's last collection to whether it falls in the
  * district, so children with no location of their own are attributed through the
  * nearest ancestor that has one.

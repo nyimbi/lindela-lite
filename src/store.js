@@ -537,6 +537,43 @@ export class JsonStore {
     )
   }
 
+  /**
+   * The same read as `read()`, one batch at a time.
+   *
+   * ENH-61 / ENH-37. The contract `PostgresStore.iterateRecords` implements:
+   * yield `{collection, body}` records without materialising a second copy of
+   * the set. Here the whole file is already parsed and held, so this bounds
+   * what the *consumer* holds rather than what the store does — which is the
+   * property the export path needs, and the reason both adapters can share one
+   * caller. A JSON deployment cannot stream from disk without giving up the
+   * parse cache that keeps a 364 MB store from re-parsing per request, and that
+   * trade is not worth making for an export.
+   *
+   * Same predicate, same order, same batching as the Postgres side, so a test
+   * can drive both and compare. No `readRowBudget`: streaming is the answer to
+   * the unbounded allocation the budget guards, not an instance of it.
+   */
+  async *iterateRecords(options = {}, { batchSize = 1000 } = {}) {
+    const { collections, includeHistory, partnerOrg } = normaliseReadOptions(options)
+    const read = await this.#readAll()
+    const scoped = partnerOrg ? scopeToPartner(read, partnerOrg) : read
+    const source = includeHistory ? scoped : withoutHistory(scoped)
+    const wanted = collections === null ? null : new Set(collections)
+    const size = Number.isFinite(batchSize) && batchSize > 0 ? Math.floor(batchSize) : 1000
+    let batch = []
+    for (const collection of COLLECTIONS) {
+      if (wanted !== null && !wanted.has(collection)) continue
+      for (const body of source[collection] || []) {
+        batch.push({ collection, body })
+        if (batch.length >= size) {
+          yield* batch
+          batch = []
+        }
+      }
+    }
+    if (batch.length) yield* batch
+  }
+
   async #readAll() {
     let stamp
     try {

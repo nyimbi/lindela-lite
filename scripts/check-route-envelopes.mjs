@@ -135,10 +135,23 @@ async function seedProbe(store, emptyStore) {
   await store.merge(seeded)
 }
 
+/**
+ * Line-delimited JSON framings: a stream of documents, not a document.
+ *
+ * `includes('json')` is true for all three, so a gate that tested only that
+ * parsed a whole export as one value — `res.json()` throws on the second line,
+ * the body arrives as `null`, and the gate reported "JSON body is object, not an
+ * object" against a route whose framing is the point. A stream is exempt by the
+ * same rule as GeoJSON: its shape is a published standard, and it is not this
+ * API's envelope.
+ */
+const NDJSON_MEDIA = /^application\/(x-ndjson|ndjson|jsonl|json-seq|jsonlines)\b/i
+
 /** One violation, in the shape the CLI prints and the canaries assert on. */
 export function checkEnvelope({ route, method, status, contentType, body }) {
   const findings = []
-  const isJson = String(contentType || '').includes('json')
+  const media = String(contentType || '')
+  const isJson = media.includes('json') && !NDJSON_MEDIA.test(media)
   if (!isJson) return findings
   // Exempt by media type: a document in its own schema is not this envelope.
   if (NOT_OUR_ENVELOPE.has(route)) return findings
@@ -239,6 +252,15 @@ export const CANARIES = [
   { name: 'flags total below returned', input: { route: '/api/v1/x', method: 'GET', status: 200, contentType: 'application/json', body: { success: true, data: [1, 2], returned: 2, limit: 500, total: 1, has_more: false, next_cursor: null } }, expect: 1 },
   { name: 'exempts GeoJSON by media type, not by shape', input: { route: '/api/v1/export.geojson', method: 'GET', status: 200, contentType: 'application/geo+json', body: { type: 'FeatureCollection', features: [] } }, expect: 0 },
   { name: 'does not flag a non-JSON body', input: { route: '/api/v1/x', method: 'GET', status: 200, contentType: 'text/csv', body: null }, expect: 0 },
+  // ENH-37. `includes('json')` matches `application/x-ndjson`, so a stream of
+  // documents was being read as one and reported as a malformed envelope. The
+  // canary is the exact shape the gate saw: `res.json()` threw on the second
+  // line, so `body` arrived `null`.
+  { name: 'exempts a line-delimited JSON stream, which is many documents not one', input: { route: '/api/v1/export.ndjson', method: 'GET', status: 200, contentType: 'application/x-ndjson; charset=utf-8', body: null }, expect: 0 },
+  { name: 'exempts every ndjson spelling a server might use', input: { route: '/api/v1/x', method: 'GET', status: 200, contentType: 'application/jsonl', body: null }, expect: 0 },
+  // The other direction: the exemption must be the framing, not the route. A
+  // route serving an ordinary JSON envelope is still checked.
+  { name: 'still flags an object body on an unrelated JSON route', input: { route: '/api/v1/y', method: 'GET', status: 200, contentType: 'application/json', body: { data: {} } }, expect: 1 },
   { name: 'exempts a named complete array', input: { route: '/api/v1/districts', method: 'GET', status: 200, contentType: 'application/json', body: { success: true, data: [1, 2] } }, expect: 0 },
 ]
 

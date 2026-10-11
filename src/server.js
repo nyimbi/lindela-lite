@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { once } from 'node:events'
 import fs from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
@@ -40,9 +41,10 @@ import {
   scheduleIsDue,
   updateReport,
 } from './reports.js'
+import { COLLECTIONS } from './store.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
-import { collectionPage, currentRequestAuth, filterRecords, jsonResponse, matchedAndPage, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
+import { collectionPage, currentRequestAuth, districtRelationCollections, filterRecords, jsonResponse, matchedAndPage, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
 import { parseHxlFlag } from './hxl.js'
 import { createIdempotencyFor } from './idempotency.js'
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor, piiSaltStatus } from './pii.js'
@@ -1340,6 +1342,137 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/export.ndjson') {
+    // ENH-37. The same records as `export.csv` and `export.geojson`, streamed.
+    //
+    // Those two call `filterRecords` over a spread of fifteen collections, which
+    // materialises the whole matched set and then serialises it into one string
+    // held in memory before `res.end()` writes a byte. Measured on the demo
+    // store, `export.csv` at the default limit returns 500 of 12,929 records and
+    // says nothing about the other 12,429 — a silent truncation in a
+    // `text/csv` body, which is the failure SCL-01 chose a refusal over. A
+    // partner pulling a flood season's field reports cannot do it at all.
+    //
+    // This walks the store with `iterateRecords` and writes each record as it
+    // arrives, so the peak heap is one batch regardless of table size, and the
+    // backpressure is real: `write()` returning false pauses the generator
+    // until the socket drains.
+    //
+    // NDJSON, not CSV. A streamed CSV needs its header row complete before the
+    // first record, and a flat header cannot be known until every record has
+    // been flattened — the union of keys is only visible after the last row.
+    // NDJSON has no header: each line is a self-describing JSON object, which is
+    // what a stream can honestly produce. HXL (ENH-31) is a CSV convention and
+    // stays on the CSV route.
+    //
+    // `?collection=` narrows the stream to one collection, which is how a
+    // partner pulls field reports without the rest of the store. It is validated
+    // against the declared list, so a typo is a 400 rather than an empty file
+    // that reads as "no records".
+    const requested = url.searchParams.get('collection')
+    if (requested !== null && !COLLECTIONS.includes(requested)) {
+      jsonResponse(res, 400, {
+        success: false,
+        error: `collection must be one of the ${COLLECTIONS.length} declared collections; received ${JSON.stringify(requested)}`,
+      })
+      return
+    }
+    // `?limit=` and `?cursor=` are paging parameters, and this route does not
+    // page. `filterRecords` reads both, so honouring them is the easy path and
+    // the wrong one: a stream that stops at 500 for a caller who never asked for
+    // 500 is the truncation this route was built to remove, arriving by a
+    // different door. A caller who wants a page has the list routes; a caller
+    // who wants to stop early closes the connection, which the cursor handles.
+    // Refused rather than ignored, because an ignored parameter is
+    // indistinguishable from an honoured one — the `?district=` lesson, again.
+    for (const paged of ['limit', 'cursor']) {
+      if (url.searchParams.has(paged)) {
+        jsonResponse(res, 400, {
+          success: false,
+          error: `${paged} is not a parameter of this route: the export is not paged, and a stream that stopped early would be indistinguishable from a complete one`,
+        })
+        return
+      }
+    }
+    // A manifest of exactly what was asked for, so the Postgres predicate is an
+    // index lookup on the named collections rather than a scan of the table.
+    // `null` — every collection — is the default and the honest meaning of an
+    // export with no filter.
+    const collections = requested === null ? null : [requested]
+    const partnerOrg = currentRequestAuth()?.partner_org || null
+
+    // ENH-37. The district-relation lookups, read narrowly.
+    //
+    // `filterRecords` reaches for `context.data` for exactly one thing: to
+    // attribute a record that carries no location of its own through its parent
+    // — interventions, their tasks, and the two RapidPro message collections.
+    // Every other record filters on its own fields and never touches it. So this
+    // reads only the parent collections some record in the stream might need,
+    // and only when a district filter is actually present, rather than handing
+    // the filter the whole store to look one parent up in.
+    //
+    // Without this the route would be streaming its *output* while holding its
+    // *input*: the whole store read above would still run, and on a store past
+    // the read-row budget the one route built for large stores would 503 before
+    // the first byte. That is not a hypothetical — it is what the route did
+    // until this line existed.
+    let relations = null
+    const districtRequested = url.searchParams.get('district') || url.searchParams.get('region')
+    if (districtRequested) {
+      const needed = new Set()
+      for (const name of (collections === null ? COLLECTIONS : collections)) {
+        for (const parent of districtRelationCollections(name)) needed.add(parent)
+      }
+      if (needed.size) {
+        relations = await store.read({ collections: [...needed], partnerOrg })
+      }
+    }
+
+    res.writeHead(200, {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'content-disposition': `attachment; filename="lindela-lite-export${requested ? `-${requested}` : ''}.ndjson"`,
+      // No `content-length`: the size is not known before the stream ends, and a
+      // guessed one is worse than none. Chunked transfer is the honest encoding
+      // for a body the server cannot measure.
+      'cache-control': 'no-store',
+    })
+
+    let sent = 0
+    try {
+      for await (const { collection, body } of store.iterateRecords({ collections, partnerOrg })) {
+        // The caller's filters, applied per record rather than to a materialised
+        // array. `filterRecords` takes one record at a time here, so `?district=`
+        // and `?from=`/`?to=` narrow the stream the same way they narrow
+        // `export.csv` — a filter that worked on one export and not the other is
+        // the same silent-ignore class this codebase refuses elsewhere.
+        // No `unlimited` flag, and that is deliberate rather than an oversight:
+        // `filterRecords` caps by slicing the array it is handed, and this array
+        // is always one record long, so the cap cannot bite. The parameters that
+        // *would* make it bite — `limit` and `cursor` — are refused above rather
+        // than silently neutralised here.
+        //
+        // `auth` is not passed explicitly: this route runs above the line that
+        // stamps `req.__auth`, and `filterRecords` defaults to the caller on the
+        // request context — which is the same identity, resolved one frame up.
+        const [kept] = filterRecords([body], url.searchParams, { data: relations, collection })
+        if (!kept) continue
+        if (!res.write(`${JSON.stringify({ collection, ...kept })}\n`)) {
+          await once(res, 'drain')
+        }
+        sent += 1
+      }
+      res.end()
+    } catch (error) {
+      // Mid-stream there is no status code left to send — the 200 and the body
+      // are already on the wire. The only honest ending is a final line naming
+      // the failure, so a consumer reading NDJSON sees an incomplete stream
+      // rather than a clean EOF that reads as a complete export.
+      res.write(`${JSON.stringify({ error: 'export_failed', message: error.expose ? error.message : 'the export could not be completed', sent })}\n`)
+      res.end()
+    }
+    return
+  }
 
   // ENH-07. The manifest is what the route reads, measured rather than guessed
   // (`src/route-manifests.js`). `null` — a whole-store read — is the answer for

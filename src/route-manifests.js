@@ -129,8 +129,16 @@ export const ROUTE_MANIFESTS = Object.freeze({
 /**
  * Routes left on the whole-store read, and why.
  *
- * Two groups, both deliberate and both measured:
+ * Three groups, all deliberate:
  *
+ *   - **Streaming.** `/api/v1/export.ndjson` does not use the dispatcher's read
+ *     at all: it returns above it and walks a store cursor in batches, so it is
+ *     not on the whole-store path. It is listed here because `collectionsForRequest`
+ *     has to answer *something* for it, and the safe answer is `null` — if the
+ *     route ever fell back to the dispatcher read, reading everything is
+ *     recoverable and reading nothing is a silent empty export. It is not a
+ *     manifest entry because its read is caller-chosen (`?collection=`) and a
+ *     fixed list would be wrong for every caller but one.
  *   - **Wide.** Reading more than twelve collections: the export, rollup and
  *     health surfaces, which genuinely are that wide. A manifest of most of the
  *     store is not a manifest.
@@ -154,6 +162,7 @@ export const WIDE_ROUTES = Object.freeze([
   'GET /api/v1/auth-info',
   'GET /api/v1/districts',
   'GET /api/v1/export.csv',
+  'GET /api/v1/export.ndjson',
   'GET /api/v1/flood-depth',
   'GET /api/v1/flood-probability/score',
   'GET /api/v1/health',

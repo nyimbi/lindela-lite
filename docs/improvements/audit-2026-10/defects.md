@@ -436,6 +436,22 @@ request naming a large collection transfers the whole table into the Node heap p
 request, O(total rows) bytes + O(N log N) sort, unbounded. `food_security_records`
 is 4,517 rows by the code's own comment; history collections are larger. ENH-61.
 
+**Streamed 2026-10-11 (ENH-61).** `read()` still materialises, and still refuses
+past the row budget — but the read path is no longer the only one. `iterateRecords`
+walks a `NO SCROLL CURSOR` and hands records back in batches, so a caller that
+does not need the set in the heap is no longer forced to hold it. The budget
+stays on `read()`: a caller that asked for an array is owed an array or a
+refusal, never a short one. `test/streaming-export.test.js` covers the walk, the
+batch boundary at 2,500 rows, and three abandoned cursors not leaking the pool.
+
+The budget is also what makes the escape hatch load-bearing. Every `/api/v1`
+request reads the whole store before dispatch, so on a store past the budget
+*every* route refuses — including `/api/v1/export.ndjson`, whose cursor exists to
+avoid exactly that read. It returned 503 until it was moved above the read
+(probed: 100 rows, 10-row budget, 503 → 200). The budget is honest; the
+dispatcher's unconditional read in front of a streaming route was the bug, and
+the route is now the first one that does not pay it.
+
 **Fixed 2026-10-11.** A row budget on `read()`, enforced identically in both
 adapters. The query is `LIMIT budget + 1` — the extra row is what makes the
 overrun exact without a second `count(*)` over the same predicate, since
