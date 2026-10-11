@@ -26,7 +26,6 @@ import { parseRapidProFieldReport, rapidProStatus, responseMetrics, sendRapidPro
 import { chainEntries, verifyChain, renderAuditProof } from './audit-chain.js'
 import {
   approveReport,
-  buildExportNarrative,
   computeNextRunAt,
   formatReportSmsSummary,
   generateReportSections,
@@ -66,6 +65,7 @@ import { summarizeDiseaseObservations } from './connectors/who-gho.js'
 import { createVintageIndex } from './vintage.js'
 import { assertCategory, taxonomyDocument } from './taxonomy.js'
 import { matchExportRoute, handleExportRoute } from './routes/exports.js'
+import { matchKpiRoute, handleKpiRoute } from './routes/kpi.js'
 import {
   formCatalogue, formFor, latestForm, mergeForms, validateAnswers, validateFormDefinition,
 } from './forms.js'
@@ -84,13 +84,11 @@ import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { upstreamTileUrl, loadRasterTile } from './basemap-tiles.js'
 import { trainDistrictModels, predict } from './flood-probability.js'
 import { normalizeWebhookSubscription, assertSafeWebhookUrl } from './webhooks.js'
-import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots, quarterlyPdfSections } from './kpi.js'
 import { KNOWN_DISTRICTS, districtOverview } from './districts.js'
 import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from './equity.js'
 import { normalizeCommunityFeedback, feedbackSummaryByAlert } from './community.js'
 import { normalizeSchoolAttendance, normalizeIotObservation, districtAttendanceRate, latestSensorReadings } from './field-signals.js'
 import { normalizeFieldOutcome, fieldActionLatency, outcomeCounts, DONE_OUTCOME_CODES } from './field-outcomes.js'
-import { renderQuarterlyReportPdf, renderQuarterlyReportMarkdown, quarterlyReportCoverage, DASHBOARD_SECTIONS } from './pdf.js'
 import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.js'
 import { normalizeParametricRule, simulateDisbursement } from './parametric.js'
 import { screenNames } from './sanctions.js'
@@ -1442,6 +1440,15 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
 
   const data = await store.read(readRequest)
 
+  // ARC-01. The KPI family, extracted to `src/routes/kpi.js`. Dispatched here,
+  // after the store read, because these are ordinary reads — none of them is the
+  // reason the read order was reworked above, and `export.ndjson` is the only
+  // route in the surface that has to precede the read.
+  const kpiRoute = matchKpiRoute(url.pathname, req.method)
+  if (kpiRoute && await handleKpiRoute(kpiRoute, {
+    store, data, req, res, url, jsonResponse, requestRing,
+  })) return
+
   if (req.method === 'GET' && url.pathname === '/api/v1/auth-info') {
     // What this token is, as the server understands it. The partner portal
     // rendered its organisation from localStorage — a value the user typed,
@@ -2763,139 +2770,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       return
     }
     jsonResponse(res, 200, { success: true, data: overview })
-    return
-  }
-
-  // KPI routes
-  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/monthly-series') {
-    const monthsBack = Number(url.searchParams.get('monthsBack')) || 12
-    jsonResponse(res, 200, { success: true, data: computeMonthlyKpiSeries(data, { monthsBack }) })
-    return
-  }
-  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/snapshots') {
-    jsonResponse(res, 200, { success: true, data: data.kpi_snapshots || [] })
-    return
-  }
-  if (req.method === 'POST' && url.pathname === '/api/v1/kpi/refresh-snapshots') {
-    const snapshots = await refreshKpiSnapshots(store)
-    jsonResponse(res, 200, { success: true, count: snapshots.length })
-    return
-  }
-
-  // The narrative both quarterly exports ride with. A report that cannot be
-  // built still yields an export — one that says the narrative could not be
-  // produced, because a missing page reads as "there was nothing to refuse".
-  function buildQuarterlyExportNarrative(data, period) {
-    try {
-      const templates = data.report_templates || []
-      const template = templates[0] || normalizeReportTemplate({ id: 'quarterly-export', name: 'Quarterly export' }, data)
-      const report = generateReportSections(
-        normalizeReport({ template_id: template.id, period }, data),
-        data,
-      )
-      return buildExportNarrative({ report, data })
-    } catch (err) {
-      return {
-        measured: [],
-        refused: [{
-          subject: 'Narrative',
-          reason: `the report could not be generated for this period: ${err.message}`,
-        }],
-        limits: ['This file carries the figures only. Nothing below the KPI page is a claim about what was measured.'],
-      }
-    }
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly.md') {
-    const quarter = url.searchParams.get('quarter') || undefined
-    const year = url.searchParams.get('year') || undefined
-    let kpi
-    try {
-      kpi = computeQuarterlyKpi(data, { quarter, year, ringRate: requestRing?.successRate() })
-    } catch (err) {
-      jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
-      return
-    }
-    // The same composition the PDF renders: the dashboard sections computed by
-    // the same helpers, the narrative, and the coverage sheet. This route used
-    // to hand renderExportMarkdown a generic alert digest, so the download
-    // button on the CO dashboard delivered a report with no quarterly figures
-    // in it at all — the right refusals wrapped around the wrong numbers.
-    const sections = quarterlyPdfSections(data, { quarter: kpi.period.quarter, year: kpi.period.year, ringRate: requestRing?.successRate() })
-    const narrative = buildQuarterlyExportNarrative(data, { quarter: kpi.period.quarter, year: kpi.period.year })
-    const markdown = renderQuarterlyReportMarkdown(kpi, {
-      narrative,
-      sections,
-      coverage: quarterlyReportCoverage,
-    })
-    res.writeHead(200, {
-      'content-type': 'text/markdown; charset=utf-8',
-      'content-disposition': `attachment; filename="lindela-kpi-${kpi.period.year}-${kpi.period.quarter}.md"`,
-    })
-    res.end(markdown)
-    return
-  }
-
-  // What the PDF carries, before anyone downloads it.
-  //
-  // The dashboard exported a two-section file from a seven-section page with no
-  // note on either side, so a funder receiving the PDF had no way to know that
-  // Equity by District — the section they most often ask for by name — was not
-  // in it. The list is generated from the same declaration the renderer uses, so
-  // the preview cannot drift from the file.
-  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly/coverage') {
-    jsonResponse(res, 200, { success: true, data: { sections: DASHBOARD_SECTIONS, ...quarterlyReportCoverage() } })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly.pdf') {
-    const quarter = url.searchParams.get('quarter') || undefined
-    const year = url.searchParams.get('year') || undefined
-    let kpi
-    try {
-      kpi = computeQuarterlyKpi(data, { quarter, year, ringRate: requestRing?.successRate() })
-    } catch (err) {
-      jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
-      return
-    }
-    // The narrative page rides in the same PDF, so the refusals travel with the
-    // numbers a donor reads rather than living only in a Markdown export.
-    //
-    // The dashboard's other four sections ride with it too. They are computed
-    // from the same collections and the same helpers the page renders from, so a
-    // figure cannot be one thing on screen and another in the file.
-    const sections = quarterlyPdfSections(data, { quarter: kpi.period.quarter, year: kpi.period.year, ringRate: requestRing?.successRate() })
-
-    // The narrative, built by the same helper the Markdown export uses, so the
-    // two files carry the same reasoning. A report that cannot be built still
-    // yields a PDF — one that says the narrative could not be produced,
-    // because a missing page reads as "there was nothing to refuse".
-    const narrative = buildQuarterlyExportNarrative(data, { quarter: kpi.period.quarter, year: kpi.period.year })
-
-    const buf = renderQuarterlyReportPdf(kpi, {
-      narrative,
-      sections,
-      coverage: quarterlyReportCoverage,
-    })
-    const filename = `lindela-kpi-${kpi.period.year}-${kpi.period.quarter}.pdf`
-    res.writeHead(200, {
-      'content-type': 'application/pdf',
-      'content-disposition': `attachment; filename="${filename}"`,
-      'content-length': buf.length,
-    })
-    res.end(buf)
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/kpi/quarterly') {
-    const quarter = url.searchParams.get('quarter') || undefined
-    const year = url.searchParams.get('year') || undefined
-    try {
-      const kpi = computeQuarterlyKpi(data, { quarter, year, ringRate: requestRing?.successRate() })
-      jsonResponse(res, 200, { success: true, data: kpi })
-    } catch (err) {
-      jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
-    }
     return
   }
 

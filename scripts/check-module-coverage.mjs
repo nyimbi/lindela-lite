@@ -63,10 +63,25 @@ export const SERVER_SURFACE_MODULES = Object.freeze({
  * the ARC-03 test asserts on, which is the failure mode QUA-05's own hand count
  * made.
  *
- * `src/x.js` and `./x.js` both resolve to `x.js`. A bare specifier (`node:fs`,
- * `pg`) resolves to nothing and is dropped.
+ * `src/routes/kpi.js` and `./routes/kpi.js` both resolve to `routes/kpi.js`. A
+ * bare specifier (`node:fs`, `pg`) resolves to nothing and is dropped.
+ *
+ * **The path, not the basename.** The first version keyed on `path.basename`,
+ * which made two different modules the same module. It was invisible while
+ * `src/` was flat and became a false pass the moment ARC-01 created
+ * `src/routes/`: `src/routes/kpi.js` had no test of its own, and the check
+ * called it reached because `src/kpi.js` — a different file, importing nothing
+ * from it — is imported by nine test files. The gate was reporting coverage of
+ * a module by reading a different one, which is the same failure as a checker
+ * that names a file by path rather than by identity: the answer is right about
+ * the wrong object, and it looks clean.
+ *
+ * So a specifier resolves against the *importing file's* directory to a
+ * `src/`-relative path, and that path is the identity. `fromDir` is the
+ * directory of the file the source came from; for a test in `test/` importing
+ * `../src/routes/kpi.js` it is `<root>/test`.
  */
-export function referencedModules(source) {
+export function referencedModules(source, fromDir = null) {
   const found = new Set()
   const patterns = [
     /\bfrom\s+['"]([^'"]+)['"]/g,
@@ -82,23 +97,41 @@ export function referencedModules(source) {
     for (const match of source.matchAll(pattern)) {
       const specifier = match[1]
       if (!specifier.startsWith('.') && !specifier.startsWith('/')) continue
-      const name = specifier.split('/').pop()
-      if (name.endsWith('.js')) found.add(name)
+      if (!specifier.endsWith('.js')) continue
+      if (fromDir === null) {
+        // No directory to resolve against — a canary's bare string. Fall back to
+        // the basename, which is unambiguous for a tree with no subdirectories
+        // and is what the canaries drive.
+        found.add(specifier.split('/').pop())
+        continue
+      }
+      const resolved = path.resolve(fromDir, specifier)
+      const relative = path.relative(path.join(ROOT, 'src'), resolved)
+      // `..` means the specifier points outside `src/` — a script, a fixture, a
+      // test helper. Not this check's jurisdiction.
+      if (relative.startsWith('..')) continue
+      found.add(relative)
     }
   }
   return found
 }
 
 /**
- * The finding list for a set of module names against a set of test sources.
+ * The finding list for a set of module paths against a set of test sources.
  *
- * Pure, so the canaries below drive it with strings rather than a tree on disk —
- * a canary that has to write files can fail for a reason the rule does not name.
+ * `modules` are `src/`-relative paths (`kpi.js`, `routes/kpi.js`). `testFiles`
+ * are `{ dir, source }` — the directory is what a relative specifier resolves
+ * against, and without it two modules of the same basename collapse into one.
+ * `testSources` (bare strings) is still accepted for the canaries, which drive
+ * strings rather than a tree on disk.
+ *
+ * Pure, so a canary can fail only for a reason the rule names.
  */
-export function moduleFindings({ modules, testSources, allowlist = SERVER_SURFACE_MODULES }) {
+export function moduleFindings({ modules, testSources = [], testFiles = null, allowlist = SERVER_SURFACE_MODULES }) {
   const reached = new Set()
-  for (const source of testSources) {
-    for (const name of referencedModules(source)) reached.add(name)
+  const sources = testFiles ?? testSources.map((source) => ({ dir: null, source }))
+  for (const { dir, source } of sources) {
+    for (const name of referencedModules(source, dir)) reached.add(name)
   }
 
   const findings = []
@@ -141,9 +174,14 @@ async function scan() {
     .filter((f) => !f.endsWith('.test.js'))
   const testFiles = await walk(path.join(ROOT, 'test'), '.js')
 
-  const testSources = await Promise.all(testFiles.map((f) => fs.readFile(f, 'utf8')))
-  const modules = srcFiles.map((f) => path.basename(f))
-  const findings = moduleFindings({ modules, testSources })
+  const testSources = await Promise.all(testFiles.map(async (f) => ({
+    dir: path.dirname(f),
+    source: await fs.readFile(f, 'utf8'),
+  })))
+  // `src/`-relative, not the basename. `routes/kpi.js` and `kpi.js` are two
+  // modules, and keying on the basename made them one.
+  const modules = srcFiles.map((f) => path.relative(path.join(ROOT, 'src'), f).split(path.sep).join('/'))
+  const findings = moduleFindings({ modules, testFiles: testSources })
   return { findings, checked: modules.length, testFiles: testFiles.length }
 }
 
@@ -195,9 +233,40 @@ export const CANARIES = [
     expect: 1,
   },
   {
-    name: 'resolves a deeper path to the same module name',
-    input: { modules: ['utils.js'], testSources: ["import { x } from '../src/lib/utils.js'"] },
+    name: 'resolves a specifier against the importing file, to a src-relative path',
+    input: {
+      modules: ['lib/utils.js'],
+      testFiles: [{ dir: path.join(ROOT, 'test'), source: "import { x } from '../src/lib/utils.js'" }],
+    },
     expect: 0,
+  },
+  {
+    // The false pass ARC-01 walked into. Two modules share a basename; a test
+    // imports one of them. Keyed on the basename the check calls both reached,
+    // and reports coverage of a module by reading a different one.
+    name: 'does not let a module of the same basename cover another — routes/kpi.js vs kpi.js',
+    input: {
+      modules: ['kpi.js', 'routes/kpi.js'],
+      testFiles: [{ dir: path.join(ROOT, 'test'), source: "import { x } from '../src/kpi.js'" }],
+    },
+    expect: 1,
+  },
+  {
+    // The same collision, both imported. Neither may be reported.
+    name: 'passes two modules of the same basename when a test imports each',
+    input: {
+      modules: ['kpi.js', 'routes/kpi.js'],
+      testFiles: [{ dir: path.join(ROOT, 'test'), source: "import { x } from '../src/kpi.js'\nimport { y } from '../src/routes/kpi.js'" }],
+    },
+    expect: 0,
+  },
+  {
+    name: 'ignores a specifier that points outside src/, which is not its jurisdiction',
+    input: {
+      modules: ['helper.js'],
+      testFiles: [{ dir: path.join(ROOT, 'test'), source: "import { h } from './helpers/helper.js'" }],
+    },
+    expect: 1,
   },
 ]
 
