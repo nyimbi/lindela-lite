@@ -184,6 +184,45 @@ nullable field are the repository's named defect class. A static gate over `src/
 that flags a numeric fallback on a field the schema marks nullable turns each
 instance (VER-02, VER-12) from a bug found by audit into a build failure.
 
+**Shipped 2026-10-11.** `scripts/check-absent-values.mjs`, registered
+`self-contained` in `scripts/run-gates.mjs`.
+
+One deviation from the note above, and it is the whole design. The gate does not
+read nullability from the schema, because the schema does not carry it — `SCHEMA`
+in `src/store.js` lists collections, not field types, and inventing a parallel
+field-type table would be a second source of truth for a fact the code already
+states. **It reads the declaration the tree makes instead**: a field is nullable
+when the same module publishes a `<subject>_refusal` beside it. That is this
+codebase's own convention for "the number is absent, and here is why" —
+`src/kpi.js:301`, `src/equity.js:105`, `src/calibration.js:363` — and a module
+that has adopted it has said in code that the number can be missing. A
+hand-written field list was the alternative and it is the worse one: it goes
+stale silently, and the field that gets added next is exactly the one nobody
+remembers to add to it.
+
+That decision is what makes the scope defensible in both directions, which is
+the only thing a gate of this kind is judged on. Too broad and it flags the
+`?? 0` in `data.field_reports?.length ?? 0` — a count of an array with no third
+state — and it is turned off within a week, correctly. Too narrow and it stops
+matching the fields that matter while still reporting a number that looks like
+coverage. Twelve canaries pin both edges, and the test file asserts the canary
+expectations are not uniform, so a scanner returning a constant cannot satisfy
+them.
+
+The refusal is per *site*, not per field, because the same expression is right
+in one place and wrong in another: `total += row.false_alert_rate ?? 0` inside an
+accumulator whose divisor is the count of measured rows is not the same act as
+publishing that field in a payload. Telling those apart needs a type system; the
+gate takes the conservative reading and gives the accumulator an escape hatch —
+`absent-ok: <reason>`, with the reason required, so a judgement call becomes a
+line a reviewer reads. It found one site in the tree, `warning_to_action_field_samples`,
+which is a genuine count returned on both branches of `fieldActionLatency` and now
+carries its marker.
+
+Canaried in both directions against the real tree: injecting `?? 0` into
+`src/kpi.js`'s `false_alert_rate` makes the gate exit 1 and name the site;
+restoring it exits 0.
+
 **ENH-47 — Unit and dimension registry.** Millimetres, metres, hours, people,
 percent — declared with dimensions, and checked at the boundary where a number
 enters or leaves. `src/analytics/numeric.js` is the absent-value gate; this is its

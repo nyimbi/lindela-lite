@@ -296,6 +296,10 @@ export function computeQuarterlyKpi(data, { quarter, year, now = Date.now() } = 
     // the refusal travelling alongside — so a dashboard renders a sentence
     // instead of a dash when there is no basis for the number.
     warning_to_action_field_median_hours: fieldLatency.median_hours ?? null,
+    // absent-ok: `samples` is the count of confirmations that could be timed, and
+    // `fieldActionLatency` returns it on both branches — the refusal carries the
+    // count it refused on. A count of zero measured cases is a real answer, not
+    // an absence rendered as one, and the refusal beside it says so in words.
     warning_to_action_field_samples: fieldLatency.samples ?? 0,
     warning_to_action_field_basis: fieldLatency.basis ?? null,
     warning_to_action_field_refusal: fieldLatency.refusal ?? null,

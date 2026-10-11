@@ -103,6 +103,12 @@ const GATES = [
     why: 'Regenerates the inline-script hashes from the shipped markup and fails when src/server.js disagrees. A stale hash does not throw — the browser blocks the script silently — so this is the check that a human-maintained list would eventually fail. Reads files only.',
   },
   {
+    name: 'check-absent-values',
+    script: 'scripts/check-absent-values.mjs',
+    tier: 'self-contained',
+    why: 'ENH-46. Flags a numeric fallback on a field the module itself declares nullable — decided by the `<subject>_refusal` convention in the tree, not by a hand-written field list that goes stale. Reads files only, and carries eleven canaries plus a self-test, because the class it checks (VER-02, VER-09, VER-12) shipped four times and was found by audit each time.',
+  },
+  {
     name: 'check-budget-and-surface-contract',
     script: 'test/web-hidden-display.test.js',
     tier: 'self-contained',
