@@ -38,21 +38,58 @@ export function currentRequestId() {
 
 // Ring buffer of last 100 request outcomes for short-term success rate
 const REQUEST_RING_SIZE = 100
-const _requestRing = []
+
+/**
+ * QUA-01. A request-outcome ring, owned by whoever creates it.
+ *
+ * This was a module global — `const _requestRing = []` at file scope, written
+ * by `recordRequestOutcome` and read by `computeApiUptime`. A module global is
+ * a claim that there is one server in the process, and that claim is false in
+ * exactly the place it matters: `createServer()` is called many times in one
+ * test process, and the KPI routes of every one of those servers answered from
+ * the same ring. A test that drove 500s through its own server saw another
+ * test's 200s in the success rate, so the number was neither the server's nor
+ * reproducible — it depended on which tests ran first.
+ *
+ * A factory rather than a class because the ring is three functions over an
+ * array, and because `createServer` should be able to hold one in a closure the
+ * same way it already holds its idempotency store and its inbound limiter.
+ *
+ * The default export below keeps the module-global instance for the callers
+ * that have no server to belong to — a script, a CLI, a one-off probe — where
+ * process scope is the honest scope. The server does not use it.
+ */
+export function createRequestRing(size = REQUEST_RING_SIZE) {
+  const ring = []
+  return {
+    record(ok) {
+      ring.push({ ts: Date.now(), ok: Boolean(ok) })
+      if (ring.length > size) ring.shift()
+    },
+    recent() {
+      return [...ring]
+    },
+    /** Percentage of the last `size` requests that were not 5xx, or null if none. */
+    successRate() {
+      if (!ring.length) return null
+      const successful = ring.filter((r) => r.ok).length
+      return (successful / ring.length) * 100
+    },
+  }
+}
+
+const processRing = createRequestRing()
 
 export function recordRequestOutcome(ok) {
-  _requestRing.push({ ts: Date.now(), ok: Boolean(ok) })
-  if (_requestRing.length > REQUEST_RING_SIZE) _requestRing.shift()
+  processRing.record(ok)
 }
 
 export function recentRequestOutcomes() {
-  return [..._requestRing]
+  return processRing.recent()
 }
 
 export function computeShortTermSuccessRate() {
-  if (!_requestRing.length) return null
-  const successful = _requestRing.filter((r) => r.ok).length
-  return (successful / _requestRing.length) * 100
+  return processRing.successRate()
 }
 
 const LOG_LEVEL = process.env.LINDELA_LITE_LOG_LEVEL || 'info'

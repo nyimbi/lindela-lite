@@ -111,11 +111,26 @@ export function kpiSnapshotForPeriod(records, from, to, dateField = null) {
   })
 }
 
-export function computeApiUptime() {
+/**
+ * QUA-01. The short-term uptime figure, from a caller-supplied ring rate.
+ *
+ * `ringRate` is the argument the server passes: the success rate of *its own*
+ * request ring, not the process-wide one. The parameter is optional because
+ * this module is also called from scripts and from tests that have no server,
+ * and for those the process ring is the honest scope. What the parameter buys
+ * is that a server can no longer report another server's traffic — before it,
+ * two `createServer()` calls in one test process answered the KPI routes from
+ * one shared ring, and the number depended on test order.
+ *
+ * `undefined` means "no ring supplied, use the process one". `null` means "a
+ * ring was supplied and it is empty", which is a measurement of nothing and
+ * must not silently fall through to the process ring's traffic.
+ */
+export function computeApiUptime(ringRate) {
   const override = process.env.LINDELA_LITE_UPTIME_OVERRIDE
   if (override !== undefined) return parseFloat(override)
-  const ringRate = computeShortTermSuccessRate()
-  if (ringRate !== null) return Math.round(ringRate * 100) / 100
+  const rate = ringRate === undefined ? computeShortTermSuccessRate() : ringRate
+  if (rate !== null) return Math.round(rate * 100) / 100
   // No requests in the ring buffer is not "perfect uptime" — it is no
   // measurement. Returning 100.0 published a flawless-availability claim from
   // zero observations on the dashboard an approver reads. `null` is this
@@ -123,7 +138,7 @@ export function computeApiUptime() {
   return null
 }
 
-export function computeQuarterlyKpi(data, { quarter, year, now = Date.now() } = {}) {
+export function computeQuarterlyKpi(data, { quarter, year, now = Date.now(), ringRate } = {}) {
   const q = quarter || _currentQuarter()
   const y = year || _currentYear()
 
@@ -134,7 +149,14 @@ export function computeQuarterlyKpi(data, { quarter, year, now = Date.now() } = 
 
   const cacheKey = _cacheKey(q, y, data)
   const cached = _cache.get(cacheKey)
-  if (cached && cached.expires > now) return cached.value
+  // QUA-01. The uptime is recomputed on the cached path rather than replayed.
+  //
+  // It is the one field in this payload that is not a function of the data —
+  // it is the caller's own recent request outcomes — so it is not part of
+  // `_cacheKey`, and replaying it would hand one server the traffic of whichever
+  // server last filled the entry. Everything else here is derived from `data`
+  // and the period, which is what the key covers.
+  if (cached && cached.expires > now) return { ...cached.value, api_uptime_pct: computeApiUptime(ringRate) }
 
   const [from, to] = _quarterDateRange(q, y)
 
@@ -317,7 +339,7 @@ export function computeQuarterlyKpi(data, { quarter, year, now = Date.now() } = 
     false_alert_sample_floor: METRICS.false_alert_rate.sample_floor,
     false_alert_method: METRICS.false_alert_rate.basis,
     false_alert_refusal: far.refusal,
-    api_uptime_pct: computeApiUptime(),
+    api_uptime_pct: computeApiUptime(ringRate),
     cohort: {
       total: demoTotal,
       u18: cohort_u18,
@@ -525,7 +547,7 @@ export function quarterlyPdfSections(data, { quarter, year } = {}) {
     let qy = y
     while (qq < 1) { qq += 12; qy -= 1 }
     if (endMonth === null) break
-    qoq.push({ quarter: `Q${Math.ceil(qq / 3)} ${qy}`, ...computeQuarterlyKpi(data, { quarter: `Q${Math.ceil(qq / 3)}`, year: qy }) })
+    qoq.push({ quarter: `Q${Math.ceil(qq / 3)} ${qy}`, ...computeQuarterlyKpi(data, { quarter: `Q${Math.ceil(qq / 3)}`, year: qy, ringRate }) })
   }
 
   // --- Equity by district -------------------------------------------------

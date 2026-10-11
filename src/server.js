@@ -78,7 +78,7 @@ import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.j
 import { normalizeParametricRule, simulateDisbursement } from './parametric.js'
 import { screenNames } from './sanctions.js'
 import { normalizeWorkflowInstance, transitionWorkflow, workflowMetrics } from './workflows.js'
-import { recordRequestOutcome } from './observability.js'
+import { createRequestRing } from './observability.js'
 import { auditRollup, auditChainWarning } from './audit-chain.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -102,8 +102,16 @@ const GATE_ENV = Object.freeze({
   iot: 'LINDELA_LITE_IOT_ENABLED',
 })
 
+/**
+ * QUA-01. The store a bare `createServer()` resolves, memoised per process.
+ *
+ * A server that was handed a store never reads this. It exists for the entry
+ * point and for the tests that construct a server with no store at all, where
+ * "the store this process configured" is the honest answer — and it is one
+ * promise, so concurrent first requests share one connection rather than
+ * racing to open two.
+ */
 let defaultStorePromise
-let connectorRegistry = null
 
 /** The released version, read once so it cannot drift from package.json. */
 export const APP_VERSION = (() => {
@@ -226,9 +234,6 @@ export async function runDueReportSchedulesAndPersist(store, data, { actor = 'pe
   await store.merge(result.writes)
   return result
 }
-
-let _driverTimer = null
-let _driverInFlight = false
 
 /**
  * SCL-02. A store view that reads the whole store once and keeps up with its own
@@ -401,32 +406,67 @@ export function pipelineIsHealthy(heartbeat, intervalSeconds = driverIntervalSec
   }
 }
 
-/** Start the driver. Idempotent — a second call returns the same timer. */
-export function startPeriodicDriver(store, { intervalSeconds = driverIntervalSeconds() } = {}) {
-  if (_driverTimer) return _driverTimer
-  const tick = async () => {
-    if (_driverInFlight) return
-    _driverInFlight = true
-    try {
-      await runPeriodicTick(store)
-    } finally {
-      _driverInFlight = false
-    }
+/**
+ * QUA-01. A periodic driver, owned by whoever creates it.
+ *
+ * The timer and the in-flight flag were module globals, so `startPeriodicDriver`
+ * called twice in one process returned the first caller's timer and the second
+ * caller's store was never ticked — a silent no-op, because "the driver is
+ * already running" and "your driver is running" are the same return value. Two
+ * servers in one test process therefore shared one heartbeat over one store, and
+ * which store that was depended on test order.
+ *
+ * A factory because the state is a timer plus a boolean, and because a caller
+ * that wants its own driver should get one rather than coordinate over a global.
+ * The process-level exports below keep a default instance for the entry point,
+ * where one driver over one store is the honest scope.
+ */
+export function createPeriodicDriver() {
+  let timer = null
+  let inFlight = false
+  const driver = {
+    /** Idempotent — a second call returns the same timer without restarting it. */
+    start(store, { intervalSeconds = driverIntervalSeconds() } = {}) {
+      if (timer) return timer
+      const tick = async () => {
+        if (inFlight) return
+        inFlight = true
+        try {
+          await runPeriodicTick(store)
+        } finally {
+          inFlight = false
+        }
+      }
+      timer = setInterval(tick, intervalSeconds * 1000)
+      // Do not hold the process open for the timer alone; the HTTP server decides.
+      timer.unref?.()
+      // One immediately, so a fresh deployment has a heartbeat before the first
+      // interval elapses — otherwise a health check in the first 15 minutes sees a
+      // process that has never run anything and cannot tell that from a broken one.
+      tick()
+      return timer
+    },
+    stop() {
+      if (timer) clearInterval(timer)
+      timer = null
+      inFlight = false
+    },
+    /** True while this driver's interval is armed. */
+    get running() {
+      return timer !== null
+    },
   }
-  _driverTimer = setInterval(tick, intervalSeconds * 1000)
-  // Do not hold the process open for the timer alone; the HTTP server decides.
-  _driverTimer.unref?.()
-  // One immediately, so a fresh deployment has a heartbeat before the first
-  // interval elapses — otherwise a health check in the first 15 minutes sees a
-  // process that has never run anything and cannot tell that from a broken one.
-  tick()
-  return _driverTimer
+  return driver
+}
+
+const processDriver = createPeriodicDriver()
+
+export function startPeriodicDriver(store, options) {
+  return processDriver.start(store, options)
 }
 
 export function stopPeriodicDriver() {
-  if (_driverTimer) clearInterval(_driverTimer)
-  _driverTimer = null
-  _driverInFlight = false
+  processDriver.stop()
 }
 
 export function createServer(options = {}) {
@@ -467,6 +507,15 @@ export function createServer(options = {}) {
     }
     return idempotencyFor
   }
+  // QUA-01. This server's own request-outcome ring, not the process-wide one.
+  //
+  // It feeds `api_uptime_pct` on the KPI routes, and it used to be a module
+  // global: `createServer()` is called many times in one test process, so every
+  // one of those servers answered its uptime from the same ring and a test that
+  // drove 500s through its own server read another test's 200s back. Injectable
+  // so a test can seed the window it means to measure instead of issuing a
+  // hundred requests to fill it.
+  const requestRing = options.requestRing || createRequestRing()
   const handleRequest = async (req, res) => {
     // CAP-06. A HEAD is answered by the same code path as its GET sibling, with
     // the body suppressed at the one place a body is written. `http` strips the
@@ -623,7 +672,7 @@ export function createServer(options = {}) {
       }
       if (url.pathname.startsWith('/api/v1/')) {
         const resolved = await storeProvider
-        await handleApi(resolved, req, res, url, { checkWebhookUrl, idempotency: idempotency(resolved) })
+        await handleApi(resolved, req, res, url, { checkWebhookUrl, idempotency: idempotency(resolved), requestRing })
         return
       }
       await handleStatic(req, res, url.pathname, staticRoot)
@@ -691,7 +740,7 @@ export function createServer(options = {}) {
         : (res.locals?.matchedRoute || route)
       metrics.counter('http_requests_total', { method: req.method, route: metricRoute, status: String(statusCode) })
       metrics.histogram('http_request_duration_ms', elapsed, { method: req.method, route: metricRoute, status: String(statusCode) })
-      recordRequestOutcome(statusCode < 500)
+      requestRing.record(statusCode < 500)
       logger.info('http_request', { method: req.method, route, status: statusCode, elapsed_ms: elapsed })
     }
   }
@@ -920,7 +969,7 @@ function idempotencyKey(req, subject, url) {
   return `${subject || 'anonymous'}\u0000${req.method}\u0000${url.pathname}\u0000${key}`
 }
 
-async function handleApi(store, req, res, url, { checkWebhookUrl, idempotency } = {}) {
+async function handleApi(store, req, res, url, { checkWebhookUrl, idempotency, requestRing } = {}) {
   let key
   try {
     // Resolved here as well as inside handleApiRequest: the key must be scoped
@@ -933,7 +982,7 @@ async function handleApi(store, req, res, url, { checkWebhookUrl, idempotency } 
     jsonResponse(res, error.statusCode || 400, { success: false, error: error.message })
     return
   }
-  if (!key) return handleApiRequest(store, req, res, url, { checkWebhookUrl, idempotency })
+  if (!key) return handleApiRequest(store, req, res, url, { checkWebhookUrl, idempotency, requestRing })
 
   // Buffered before dispatch so a retry can be compared with the attempt it
   // claims to repeat. `readRawBody` memoises, so the handler still reads a
@@ -1019,7 +1068,7 @@ async function handleApi(store, req, res, url, { checkWebhookUrl, idempotency } 
     return idempotency.release(key)
   }
   try {
-    await handleApiRequest(store, req, res, url, { checkWebhookUrl, idempotency })
+    await handleApiRequest(store, req, res, url, { checkWebhookUrl, idempotency, requestRing })
   } finally {
     delete res.__capture
     // Nothing wrote a JSON response, so the hook never ran. Released so the key
@@ -1037,14 +1086,14 @@ async function handleApi(store, req, res, url, { checkWebhookUrl, idempotency } 
  * request's identity by default, so the default is the secure one and a new
  * route cannot forget.
  */
-async function handleApiRequest(store, req, res, url, { checkWebhookUrl, idempotency } = {}) {
+async function handleApiRequest(store, req, res, url, { checkWebhookUrl, idempotency, requestRing } = {}) {
   // Resolve the identity once, here, and publish it for the whole dispatch.
   //
   // `authenticate` was already being called on this path for the idempotency
   // key, so this is not a second authentication — it is the same call, hoisted
   // so the answer is available before any handler runs rather than after.
   const auth = (isAuthConfigured() && !isPublicRequest(req.method, url.pathname) ? authenticate(req) : null) || null
-  return runWithRequestContext(auth, () => handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl, idempotency }))
+  return runWithRequestContext(auth, () => handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl, idempotency, requestRing }))
 }
 
 /**
@@ -1087,7 +1136,7 @@ function findVisible(records, id, { includeDeleted = false } = {}) {
   return record
 }
 
-async function handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl, idempotency } = {}) {
+async function handleApiRequestInContext(store, req, res, url, auth, { checkWebhookUrl, idempotency, requestRing } = {}) {
   // An `/api/v1/` path reached dispatch. Cleared again if it matches nothing, so
   // the metric label distinguishes "a route we served" from "a path we did not
   // recognise" — the second is what a scanner produces, one per request.
@@ -2473,7 +2522,7 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     const year = url.searchParams.get('year') || undefined
     let kpi
     try {
-      kpi = computeQuarterlyKpi(data, { quarter, year })
+      kpi = computeQuarterlyKpi(data, { quarter, year, ringRate: requestRing?.successRate() })
     } catch (err) {
       jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
       return
@@ -2515,7 +2564,7 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     const year = url.searchParams.get('year') || undefined
     let kpi
     try {
-      kpi = computeQuarterlyKpi(data, { quarter, year })
+      kpi = computeQuarterlyKpi(data, { quarter, year, ringRate: requestRing?.successRate() })
     } catch (err) {
       jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
       return
@@ -2553,7 +2602,7 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     const quarter = url.searchParams.get('quarter') || undefined
     const year = url.searchParams.get('year') || undefined
     try {
-      const kpi = computeQuarterlyKpi(data, { quarter, year })
+      const kpi = computeQuarterlyKpi(data, { quarter, year, ringRate: requestRing?.successRate() })
       jsonResponse(res, 200, { success: true, data: kpi })
     } catch (err) {
       jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
@@ -5417,16 +5466,44 @@ function hasTraversalSegment(rawUrl) {
   }
 }
 
-async function getConnectorRegistry() {
-  if (connectorRegistry === null) {
+/**
+ * QUA-01. The connector registry, memoised per server.
+ *
+ * `connectors.registry.json` is the same file for every server in a process, so
+ * the *content* is genuinely process-wide — but the cache was a module global
+ * holding a promise-shaped answer, and it cached the failure too: a transient
+ * read error, or a file that was not there yet during a deploy, set
+ * `connectorRegistry = []` permanently and every later request was told the
+ * deployment has no connectors. The catch is a fallback, not a measurement, and
+ * caching it turned a one-off miss into the process's answer.
+ *
+ * So the memo holds only a successful read. A failure returns the empty list to
+ * this caller and leaves the cache empty for the next one. `registryFile` is
+ * injectable so a test can point at its own fixture without writing into the
+ * repository root.
+ */
+function createConnectorRegistryCache(registryFile = registryPath) {
+  let cached = null
+  return async function getConnectorRegistry() {
+    if (cached) return cached
     try {
-      const content = await fs.readFile(registryPath, 'utf8')
-      connectorRegistry = JSON.parse(content)
-    } catch {
-      connectorRegistry = []
+      cached = JSON.parse(await fs.readFile(registryFile, 'utf8'))
+    } catch (error) {
+      logger.warn('connector_registry_unreadable', {
+        message: 'the connector registry could not be read; this request sees no connectors, and the next one retries',
+        path: registryFile,
+        err: { message: error?.message },
+      })
+      return []
     }
+    return cached
   }
-  return connectorRegistry
+}
+
+const processConnectorRegistry = createConnectorRegistryCache()
+
+async function getConnectorRegistry() {
+  return processConnectorRegistry()
 }
 
 function getDefaultStore() {

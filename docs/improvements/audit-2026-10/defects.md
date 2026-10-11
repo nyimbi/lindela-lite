@@ -904,6 +904,37 @@ handler and writes a body (only `sendFile` and the tile route special-case HEAD)
 one test process share the idempotency namespace and metrics; a test that injects
 `{store}` still shares them. Tests are order-dependent. ENH-65.
 
+**Fixed 2026-10-11.** Each named global is now owned by whoever creates it.
+
+- The **request-outcome ring** (`src/observability.js`) is a `createRequestRing()`
+  factory. `createServer` holds one per server and records into it; the KPI routes
+  pass its `successRate()` to `computeQuarterlyKpi`. `computeApiUptime(ringRate)`
+  distinguishes "no ring supplied" (`undefined` → process ring, for scripts) from
+  "a ring was supplied and is empty" (`null` → not measured), so a server can no
+  longer fall through to another server's traffic. The cached-KPI path recomputes
+  uptime rather than replaying it — it is the one field that is not a function of
+  `data`, so it is not in the cache key and replaying it would hand one server the
+  last writer's figure.
+- The **driver** is a `createPeriodicDriver()` factory holding its own timer and
+  in-flight flag. The old idempotence guard made `startPeriodicDriver` a silent
+  no-op for a second caller — "already running" and "your driver is running" were
+  the same return value. The process-level exports keep a default instance for the
+  entry point.
+- The **connector registry** memo (`getConnectorRegistry`) no longer caches a
+  failed read. A transient miss set `[]` permanently, so one bad read during a
+  deploy made every later request report a deployment with no connectors.
+- `defaultStorePromise` stays process-scoped and is documented as such: it is what
+  a server constructed with no store resolves, which is honestly process-wide.
+- `idempotency` was already per-server (`src/server.js` `idempotency(store)`), as
+  was `inboundLimiter`. `requestContext` in `src/utils.js` is an `AsyncLocalStorage`
+  — process-wide by construction, and per-request in effect, which is the correct
+  scope for it; it is not a shared-mutable defect.
+
+`test/server-isolation.test.js` drives two servers in one process and asserts each
+reports its own traffic, that an empty injected ring does not fall through to the
+process ring, and that two drivers tick their own stores. Canaried: removing the
+`options.requestRing` seam fails two of the five.
+
 ### QUA-02 — HIGH — 44 of 162 test files assert on source text, not behaviour
 `readFileSync` into a string then `.includes`/`.match`. `test/partner-sql-predicate.test.js:244`
 strips comments from `src/server.js` and asserts a *regex* is present — it passes
