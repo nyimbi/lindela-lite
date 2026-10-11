@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { riskLevel, severityWeight } from './schema.js'
-import { clamp, haversineKm, stableId, toNumber } from './utils.js'
+import { clamp, canonicalHash, haversineKm, stableId, toNumber } from './utils.js'
 import { KNOWN_DISTRICTS } from './districts.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
 import { meanMeasured } from '../public/shared/units.js'
@@ -230,58 +230,322 @@ function driftFromStore(data) {
   return report.records.map((record) => ({ ...record, id: `drift_${record.region_name}`, type: 'model_drift', generated_at: report.generated_at }))
 }
 
+/**
+ * ENH-62 — the content-addressed derived cache.
+ *
+ * `refreshAnalytics` recomputed all eight derived collections on every run. The
+ * eight are not one computation with one input: `model_drift` is a function of
+ * the climate series alone, `data_quality` of six ingested collections plus
+ * `source_runs`, `region_trust` of alerts and model cards. Keying the whole set
+ * on one global digest would skip everything the moment any collection was
+ * touched, which is the common case — an ingestion run writes one collection and
+ * a refresh that follows it would then redo all eight. So each collection is
+ * keyed on the digest of its *own* inputs, and a collection whose inputs stood
+ * still is skipped even when a sibling's moved. That per-collection skip is the
+ * entire point; a single key would have been a cache that almost never hits.
+ *
+ * Correctness first, speed second. A stale hit publishes a number computed from
+ * inputs that have since changed, which is the one output this platform may not
+ * produce. So the rule is fail-open: a collection misses unless its digest is
+ * demonstrably reproducible. The digest covers every input the collection
+ * reads — enumerated from the module that computes it, not guessed — and the
+ * ones it cannot cover are named in `CLOCK_DEPENDENT` so the miss is a decision
+ * on the page rather than a hole in a hash.
+ *
+ * The skip is observable. `refreshAnalytics` returns the collections it
+ * recomputed and the ones it skipped, and writes the same list to the log, so a
+ * test can assert the skip happened and an operator can watch the cache work.
+ * An unreported skip is indistinguishable from a refresh that silently did
+ * nothing — the DAT-07 failure mode, where a job reports success while
+ * measuring nothing.
+ */
+
+/** The collection a cache entry is keyed on: `name`, `inputs` (collections it reads) and a clock-free digest. */
+export const DERIVED_INPUTS = Object.freeze([
+  {
+    name: 'risk_scores',
+    // The three risk scorers. `collectRegions` reads all four geometry
+    // collections; each scorer then reads a subset by radius. All four are
+    // listed because the region set is a function of all four, and a region
+    // appearing or moving changes every score on it.
+    inputs: ['climate_observations', 'hazard_events', 'conflict_events', 'service_assets'],
+  },
+  {
+    name: 'impact_assessments',
+    // Service impacts read the assets and the region scores they borrow from —
+    // but those scores are the *freshly computed* ones, not the stored rows. The
+    // stored `risk_scores` are the output of the previous refresh and do not move
+    // until the swap below, so keying this collection on them would miss a hazard
+    // that arrived after the last refresh and had not yet been scored. The inputs
+    // are therefore the same four collections the scorers read, plus the assets
+    // they score against — which is the same set `risk_scores` names, because
+    // `collectRegions` reads the assets too. So the two recompute together, which
+    // is correct: an impact is a function of the scores, and the scores are a
+    // function of the geometry.
+    inputs: ['climate_observations', 'hazard_events', 'conflict_events', 'service_assets'],
+  },
+  {
+    name: 'data_quality',
+    inputs: ['climate_observations', 'hazard_events', 'conflict_events', 'service_assets', 'food_security_records', 'disease_observations', 'source_runs'],
+  },
+  { name: 'population_at_risk', inputs: ['service_assets', 'hazard_events'] },
+  { name: 'facilities_at_risk', inputs: ['service_assets', 'hazard_events'] },
+  { name: 'road_access', inputs: ['service_assets', 'hazard_events'] },
+  // Calibration reads alert outcomes and trained model cards; drift reads the
+  // climate series alone. Two inputs and one, and neither is the other's.
+  { name: 'region_trust', inputs: ['alert_events', 'flood_probability_models'] },
+  { name: 'model_drift', inputs: ['climate_observations'] },
+])
+
+/**
+ * Collections whose recomputation reads a clock that is not part of the inputs,
+ * so the cache must miss rather than hit.
+ *
+ * `computeRoadAccess` reads `new Date()` and calls `temporalStatus` on it: a
+ * hazard that is `active` today is `stale` in eight days, so a stored road
+ * access row is a function of wall-clock time as well as of the store. `now` is
+ * injectable and `refreshAnalytics` does not inject it, so the value is not
+ * reproducible from the inputs the digest covers. Hashing a clock would defeat
+ * the cache the moment it mattered — every run produces a different digest, so
+ * it would recompute every time and report a hit rate of zero, which is honest
+ * but useless. The honest alternative is to say so: this collection always
+ * recomputes, and it is named here rather than left as a silent miss.
+ *
+ * `computeDataQuality` reads `Date.now()` through `freshnessPenaltyFor` and
+ * `freshnessLabel`: both feed `confidence` and `freshness`, so a source whose
+ * records did not change still loses confidence as its newest record ages past
+ * two, fourteen and forty-five days. The store's inputs are identical across
+ * those boundaries and the published number is not, so this one is clock-bound
+ * for the same reason as road access.
+ *
+ * The other six are clock-free by construction. They stamp `generated_at` with
+ * `new Date()`, but that field is metadata and not a value any of them reads
+ * back, and the recomputation itself does not consult the clock.
+ */
+export const CLOCK_DEPENDENT = Object.freeze(['road_access', 'data_quality'])
+
+/**
+ * The collections a cached entry's digest was computed over.
+ *
+ * Read from the declaration rather than the key's own copy so a test can ask
+ * "what does the digest cover" without reaching into the cache's internals.
+ */
+export function derivedInputsFor(name) {
+  return DERIVED_INPUTS.find((entry) => entry.name === name)?.inputs || []
+}
+
+/** A collection's inputs as a plain object of records, missing collections read as empty. */
+function sliceOf(data, collections) {
+  const out = {}
+  for (const collection of collections) out[collection] = data[collection] || []
+  return out
+}
+
+/**
+ * A stable digest over a collection's inputs, or `null` when they cannot be
+ * digested and the collection must therefore miss.
+ *
+ * `canonicalHash` sorts keys at every depth, so two reads of the same records in
+ * a different order hash the same — the store sorts newest-first, and a merge
+ * that reorders without changing content must not look like a change. Its
+ * `ignoreKeys` default drops `id`, `updated_at`, `created_at`, `generated_at`,
+ * `payload_hash` and the rest, but only at the *top level* of what it is handed,
+ * and what it is handed here is a map of collection names to arrays. No key of
+ * that map is a record stamp, so nothing is actually dropped: every field of
+ * every record is covered.
+ *
+ * That over-coverage is deliberate. A record-level `updated_at` is not always
+ * metadata — `computeDataQuality` reads `observed_at || occurred_at ||
+ * updated_at || generated_at` for its freshness, and `driftFromStore` reads
+ * `observed_at || created_at` for its windows — so stripping per-record stamps to
+ * make the digest "stable" would be a digest that ignores an input the collection
+ * reads, which is the stale hit this whole design refuses. The cost of covering
+ * them is a false *miss* when a re-ingest rewrites a record without changing
+ * anything a collection reads; a false miss recomputes and is merely slower,
+ * which is the direction the error has to point.
+ *
+ * The refusal is the other important half. A record that JSON cannot serialise —
+ * a cyclic reference, a value a connector left as a `BigInt` or a function —
+ * throws in `JSON.stringify` rather than hashing to something. A digest that
+ * cannot be computed is not a digest of the empty set: it is an absent
+ * measurement, and the collection must miss. Returning `null` here, and treating
+ * `null` as a miss, is what keeps an undigestible input from becoming a false
+ * hit. The alternative — hashing `String(record)`, or falling back to `'[]'` —
+ * would make every undigestible store hash identically and the cache would
+ * serve one store's numbers against another's inputs.
+ */
+function derivedDigest(name, data) {
+  try {
+    return canonicalHash(sliceOf(data, derivedInputsFor(name)))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Which collections a refresh must recompute, and which it may reuse.
+ *
+ * A cache entry is reusable only when the previous digest exists, is not `null`
+ * (the undigestible case), and equals the current one. Anything else — no entry,
+ * an undigestible input, a changed digest, a clock-dependent collection — is a
+ * recompute. There is no partial credit: a collection is recomputed whole or
+ * skipped whole.
+ *
+ * `stored` is the outgoing derived collections, and it is what stops the cache
+ * reporting a full skip on a cold cache. A skip is only real when there are rows
+ * to reuse; a digest that matches but has no stored rows behind it is a cache
+ * entry for a value that is not there, and reusing it would publish nothing where
+ * the last run published rows. A missing previous value is therefore a
+ * recompute, whatever the digest says — the "skipped 8, recomputed 0" result
+ * this repository has shipped before, where a check measured nothing and called
+ * it success.
+ */
+export function planDerivedRefresh(data, cache, stored = {}) {
+  const recompute = []
+  const skip = []
+  for (const { name } of DERIVED_INPUTS) {
+    const rows = stored[name]
+    if (CLOCK_DEPENDENT.includes(name) || !Array.isArray(rows)) {
+      recompute.push(name)
+      continue
+    }
+    const current = derivedDigest(name, data)
+    if (current !== null && cache && cache[name] === current) skip.push(name)
+    else recompute.push(name)
+  }
+  return { recompute, skip }
+}
+
+/** The fresh digests for the collections just recomputed. Skipped ones keep the digest they had. */
+function digestsAfter(plan, data, previousDigests = {}) {
+  const out = {}
+  for (const { name } of DERIVED_INPUTS) {
+    if (plan.recompute.includes(name)) out[name] = derivedDigest(name, data)
+    else if (previousDigests[name] !== undefined) out[name] = previousDigests[name]
+  }
+  return out
+}
+
 export async function refreshAnalytics(store) {
   const data = await store.read()
-  const risk_scores = [
-    ...computeFloodRisk(data),
-    ...computeClimateConflictRisk(data),
-    // ENH-56. The joint score, stored beside the two marginals rather than
-    // instead of them: a compound score answers a question neither asks, and
-    // replacing one of them with it would lose the marginal.
-    ...computeCompoundHazardRisk(data),
-  ]
-  const impact_assessments = computeServiceImpacts(data, risk_scores)
-  const data_quality = computeDataQuality(data)
-  const population_at_risk = computePopulationAtRisk(data)
-  const facilities_at_risk = computeFacilitiesAtRisk(data)
-  const road_access = computeRoadAccess(data)
+  // One read, taken before the swap. `replaceAnalytics` overwrites the derived
+  // collections, so both the plan (which needs the outgoing digests) and the
+  // reconciliation's "before" side (which needs the outgoing rows) have to be
+  // decided from the pre-swap snapshot. Reading the store again after the swap
+  // would compare the new rows against themselves.
+  const plan = planDerivedRefresh(data, cacheFor(store), data)
+  const previousDigests = cacheFor(store)
+  const previousValues = await readDerived(store, ['risk_scores', 'impact_assessments'], data)
+  const computed = {}
+  // Computed on demand rather than all eight unconditionally, so a skipped
+  // collection is genuinely not recomputed. `region_trust` borrows the freshly
+  // computed `risk_scores` because its measured rate prefers them to the stored
+  // ones — the same value either way when `risk_scores` was itself skipped, since
+  // a skip means the inputs behind both are identical.
+  const need = (name) => plan.recompute.includes(name)
+  if (need('risk_scores')) {
+    computed.risk_scores = [
+      ...computeFloodRisk(data),
+      ...computeClimateConflictRisk(data),
+      // ENH-56. The joint score, stored beside the two marginals rather than
+      // instead of them: a compound score answers a question neither asks, and
+      // replacing one of them with it would lose the marginal.
+      ...computeCompoundHazardRisk(data),
+    ]
+  }
+  if (need('impact_assessments')) computed.impact_assessments = computeServiceImpacts(data, computed.risk_scores || data.risk_scores || [])
+  if (need('data_quality')) computed.data_quality = computeDataQuality(data)
+  if (need('population_at_risk')) computed.population_at_risk = computePopulationAtRisk(data)
+  if (need('facilities_at_risk')) computed.facilities_at_risk = computeFacilitiesAtRisk(data)
+  if (need('road_access')) computed.road_access = computeRoadAccess(data)
   // Calibration and drift are computed on every refresh and stored like the rest
   // of the derived set, so a region's stale trust score is replaced rather than
   // accumulating under evidence that has since moved.
-  const region_trust = calibrationByRegion({ ...data, risk_scores })
-  const model_drift = driftFromStore(data)
+  if (need('region_trust')) computed.region_trust = calibrationByRegion({ ...data, risk_scores: computed.risk_scores || data.risk_scores || [] })
+  if (need('model_drift')) computed.model_drift = driftFromStore(data)
   // ENH-23. The counts a value was computed from travel *with the value*, so
   // the next refresh has two real sides to compare: the number that was stored
   // and the counts it was stored from. Without them the only available
   // comparison is a number against itself, which is a check that cannot fail.
   //
   // Stamped before the swap, so what the store held is what the comparison reads.
-  for (const record of risk_scores) record.input_counts = inputDigestFor(placeOf(record), data)
-  for (const record of impact_assessments) record.input_counts = inputDigestFor(placeOf(record), data)
+  for (const record of computed.risk_scores || []) record.input_counts = inputDigestFor(placeOf(record), data)
+  for (const record of computed.impact_assessments || []) record.input_counts = inputDigestFor(placeOf(record), data)
 
-  const previous = await readDerived(store, ['risk_scores', 'impact_assessments'])
-  await store.replaceAnalytics({
-    risk_scores, impact_assessments, data_quality,
-    population_at_risk, facilities_at_risk, road_access,
-    region_trust, model_drift,
-  })
-  const reconciliation = await reconcileDerivedNumbers(store, data, { previous, now: new Date().toISOString() })
+  // The skipped collections keep the rows the store already holds — `data` is the
+  // pre-swap snapshot — so a skip is a genuine no-op rather than a recompute whose
+  // result is thrown away.
+  const payload = { ...computed }
+  for (const name of plan.skip) payload[name] = data[name] || []
+
+  await store.replaceAnalytics(payload)
+  // Only the recomputed half is reconciled: a skipped collection's rows are
+  // identical to what the store held, so comparing them would report "nothing
+  // moved" for a collection nothing measured. The reconciliation is for values
+  // that moved, and a skip is the case where they could not have.
+  const reconciliation = await reconcileDerivedNumbers(store, data, { previous: previousValues, now: new Date().toISOString() })
+  rememberDigests(store, digestsAfter(plan, data, previousDigests))
 
   // Persist calibration snapshot (best-effort, don't fail refresh)
   if (process.env.LINDELA_LITE_CALIBRATION_DIR !== 'off' && process.env.NODE_ENV !== 'test') {
     try {
       const calibDir = path.resolve(process.env.LINDELA_LITE_CALIBRATION_DIR || 'data/calibration')
       await fs.mkdir(calibDir, { recursive: true })
-      await fs.writeFile(path.join(calibDir, 'latest.json'), JSON.stringify({ risk_scores, data_quality, generated_at: new Date().toISOString() }, null, 2))
+      await fs.writeFile(path.join(calibDir, 'latest.json'), JSON.stringify({ risk_scores: payload.risk_scores, data_quality: payload.data_quality, generated_at: new Date().toISOString() }, null, 2))
     } catch {
       // swallow errors
     }
   }
 
+  logger.debug('derived_cache', { recomputed: plan.recompute, skipped: plan.skip })
+
   return {
-    risk_scores, impact_assessments, data_quality, population_at_risk, facilities_at_risk,
+    ...payload,
+    recomputed: [...plan.recompute],
+    skipped: [...plan.skip],
     unexpected_changes: reconciliation.rows.length,
   }
+}
+
+/**
+ * The digests the last refresh on this store instance left.
+ *
+ * In-memory, keyed by store identity, and that is a deliberate choice over
+ * persisting them. A persisted cache would survive a restart and let the first
+ * refresh after a deploy skip, but it would also need a place to live — a
+ * `derived_digests` collection in the store's own declaration — and it would
+ * serve a digest computed by a *previous build* against inputs the current build
+ * reads differently. The digest covers inputs, not the code that reads them, so
+ * a cache that outlives the process that filled it can hit across a changed
+ * engine: exactly the stale hit this design refuses. An in-memory cache cannot
+ * outlive its process, so a deploy always misses and always recomputes, and the
+ * first run on a fresh instance is honest about being a first run.
+ *
+ * A `WeakMap` rather than a `Map`, so a discarded store does not keep its digest
+ * alive. The key is the store object, so two stores in one process — two
+ * deployments, or a test's scratch store — never read each other's cache.
+ *
+ * The digest itself is recomputed from a fresh read on every refresh, so a
+ * "hit" means the inputs are *currently* identical, not that they were when the
+ * entry was written. Nothing is trusted from the cache except the fact that the
+ * last run's inputs hashed to the same value as this run's.
+ */
+const DERIVED_CACHE = new WeakMap()
+
+function cacheFor(store) {
+  if (!store || (typeof store !== 'object' && typeof store !== 'function')) return {}
+  let cache = DERIVED_CACHE.get(store)
+  if (!cache) {
+    cache = {}
+    DERIVED_CACHE.set(store, cache)
+  }
+  return cache
+}
+
+/** Record the digests this refresh computed, for the next one to compare against. */
+function rememberDigests(store, digests) {
+  if (!store || (typeof store !== 'object' && typeof store !== 'function')) return
+  DERIVED_CACHE.set(store, { ...digests })
 }
 
 /**
@@ -292,12 +556,15 @@ export async function refreshAnalytics(store) {
  * reconciliation say "nothing moved", rather than reporting every district as an
  * unexplained change on a fresh deployment.
  */
-async function readDerived(store, collections) {
+async function readDerived(store, collections, snapshot = null) {
   if (typeof store.read !== 'function') return new Map()
-  const snapshot = await store.read()
+  // The caller may hand in a snapshot it already holds. `refreshAnalytics` does,
+  // because the outgoing rows have to be captured *before* the swap, and reading
+  // the store again after it would compare the new rows against themselves.
+  const read = snapshot || await store.read()
   const out = new Map()
   for (const collection of collections) {
-    for (const record of snapshot[collection] || []) {
+    for (const record of read[collection] || []) {
       // The whole outgoing record, not just its value: the input counts it was
       // computed from are on it, and they are the other side of the comparison.
       out.set(derivedKey(collection, record), { collection, record, value: comparableValue(record) })
