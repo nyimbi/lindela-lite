@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 35 | 31, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 53, 54, 58, 61, 62, 63, 64, 65, 66, 69, 70, 72, 73, 74, 75, 78, 79, 81 |
-| PARTIAL | 10 | 32, 38, 42, 51, 52, 55, 56, 57, 59, 71 |
-| ABSENT | 6 | 60, 67, 68, 76, 77, 80 |
+| IMPLEMENTED | 36 | 31, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 53, 54, 56, 58, 61, 62, 63, 64, 65, 66, 69, 70, 72, 73, 74, 75, 78, 79, 81 |
+| PARTIAL | 10 | 32, 38, 42, 51, 52, 55, 57, 59, 67, 71 |
+| ABSENT | 5 | 60, 68, 76, 77, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-59 has three tables checked against each
@@ -819,6 +819,34 @@ dependence beats three independent scores a planner must combine by hand.
 > flood", the joint answers "how bad is the convoy that cannot move", and a planner
 > needs both. 15 tests; the full suite is 3591 passing.
 
+**Shipped 2026-10-12, closing the third hazard — IMPLEMENTED.** The note above
+listed disease as the first of three things the entry does not get.
+`compoundHazardScoreThree` counts flood, conflict and disease jointly and reports
+the whole contingency — all seven month-classes — with the triple lift against the
+product of the three marginals and the pairwise lifts beside it, because a planner
+acting on this needs to know *which* pair drives the excess.
+
+*A separate function, not a third optional argument.* Making disease optional
+would leave every existing two-hazard caller with `p_disease === 0`, which is
+exactly the condition that already refuses with "no disease-month in this window"
+— so all 15 existing tests would have gone from a score to a refusal. A second
+entry point keeps the two-hazard contract intact; those 15 pass unchanged.
+
+*The disease input is shaped differently, and both differences are silent.*
+Disease records carry `observed_at` where hazards and conflicts carry
+`occurred_at`, so a reader that reads only the latter counts zero disease-months
+and reports the hazard absent — a refusal that looks like a finding about the data
+and is a bug in the reader. Canaried: reverting it produced 6 failures. And
+WHO-GHO rows are national *annual* aggregates stamped `YYYY-01-01`; counting them
+manufactures a January disease-month in every year of the series. They are
+excluded by the marker `who-gho.js` already sets, and the exclusion count is
+returned rather than dropped silently, because a dropped input is a denominator
+nobody can check.
+
+Each absent hazard is named separately: with three, "no hazard-month" would not
+say which, and the three have different remedies — no disease is a surveillance
+gap, no flood is a dry record.
+
 **ENH-57 — Scheduled multi-audience briefing.** `src/narrator.js` audits its own
 output against the fact set. Extend it to scheduled generation of role-specific
 briefings (district officer, national coordinator, partner) from the same grounded
@@ -945,6 +973,39 @@ memory-exhaustion failure into a refusal, which is the platform's own idiom.
 (`filterRecords`, `refreshAnalytics`, `/ready`) go to a replica; writes stay on the
 primary. A per-request query budget fails a route that scans the whole store rather
 than letting it degrade every other caller.
+
+**Shipped 2026-10-12, as the mechanism — not yet wired.** `src/read-replica.js`
+routes a read to the replica and everything else to the primary from one store
+object, so a caller cannot get the direction wrong. `src/query-budget.js` fails a
+route whose read scans the whole store.
+
+*The read set is enumerated from the store, not hardcoded.* `read()` and
+`iterateRecords()` go to the replica; every other method is forwarded, and the list
+is walked off the prototype chain so a store method added later is routed without
+an edit. A hardcoded list is a method that silently reaches the wrong connection
+the day someone adds one. Writes are never retried on the replica — a retry there
+is silent divergence. With no replica configured the wrapper returns the primary
+object *itself*, the same reference, so a deployment without one has no
+indirection and no behaviour change.
+
+*The budget counts two axes the store actually reports* — rows handed back and
+store operations — never a planner's estimate. A whole-store read is caught by the
+row axis without a special case, because its row count is the size of the store.
+It lives in an `AsyncLocalStorage`, so it is per-request by construction and two
+concurrent requests cannot spend each other's. A cost that is not a finite
+non-negative number is **refused, never charged as zero**: a budget that measures
+nothing must fail rather than report success. A metered read with no budget in
+scope is likewise refused, so wiring is a deliberate act rather than a silent pass.
+
+Replica failure defaults to falling back to the primary, counted and logged — the
+read returns the same rows, only slower — with `onReplicaFailure: 'fail'` for a
+deployment that would rather shed load. The `iterateRecords` fallback is taken only
+before the first record is yielded; after that the error propagates, because a
+mid-stream restart risks a duplicated or skipped record.
+
+**PARTIAL:** nothing calls these yet — `server.js` was not touched, and the caller
+contract is in both headers. Until it is wired the budget refuses an unmetered
+read rather than passing it, so the wiring cannot be forgotten silently.
 
 ---
 
