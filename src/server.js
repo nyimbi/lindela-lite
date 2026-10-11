@@ -1687,7 +1687,11 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
 
   if (req.method === 'POST' && url.pathname === '/api/v1/demo/seed') {
     try {
-      const { seedAll, ingestPublicSources, summary } = await import('../scripts/seed-demo.mjs')
+      // ARC-03. `./demo-seed.js`, not `../scripts/seed-demo.mjs`. A production
+      // request path reaching into `scripts/` is inverted layering, and it put
+      // the 75 KB seed module on the runtime path where an import error there
+      // is a 500 on a live route. The script is now a wrapper over this module.
+      const { seedAll, ingestPublicSources, summary } = await import('./demo-seed.js')
       await ingestPublicSources(store)
       await seedAll(store)
       await refreshAnalytics(store)

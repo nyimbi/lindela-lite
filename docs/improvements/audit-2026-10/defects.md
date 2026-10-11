@@ -611,6 +611,27 @@ live routes went undocumented; adding a route touches up to five files. ENH-59.
 The 75 KB seed script is bundled into the runtime path; an import error there is a
 runtime 500 on a live route, and the script cannot be moved without touching the server.
 
+**Fixed 2026-10-11.** The implementation moved to `src/demo-seed.js` and the
+handler now `await import('./demo-seed.js')` (`src/server.js:1694`). The
+`scripts/` file remains, as a thin wrapper that re-exports the three functions
+and keeps its own `main()` — `package.json`, `run.sh` and `docs/demo-guide.md`
+all name `node scripts/seed-demo.mjs`, so the command has to keep working, and
+the demo-seed tests import the wrapper unchanged. `createStoreFromEnv` is now
+imported only by the wrapper, since it is used by the CLI entry point and not by
+the library.
+
+Guarded by `test/layering.test.js`, which asserts the structural invariant in
+both directions: no module under `src/` imports from `scripts/`, and the demo
+seed is still reachable from `src/` with the script re-exporting it. Canaried by
+putting the coupling back.
+
+The first version of that guard passed on the very coupling it was written to
+catch: it anchored the match on the line start, and the defect is
+`const { … } = await import('../scripts/…')`, which begins with `const`. It also
+matched its own explanatory comment in `src/demo-seed.js`, reporting the fix as
+the defect — so it now strips comments before scanning. Both were found by
+running the canary, which is the only way either would have surfaced.
+
 ### ARC-04 — HIGH — `normalizeSeverity`/`severityWeight` implemented three times with three mappings
 
 **Fixed 2026-10-11.** Both server-side copies were wrong, each internally
