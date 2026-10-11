@@ -51,6 +51,14 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/data-quality': Object.freeze(["data_quality"]),
   'GET /api/v1/disease-observations': Object.freeze(["disease_observations"]),
   'GET /api/v1/disease-observations/summary': Object.freeze(["disease_observations"]),
+  // The collector cannot measure this one, so the entry is written from a direct
+  // probe and the reason is recorded here. A district id is a *code constant*
+  // (`resolveDistrict` looks it up in `KNOWN_DISTRICTS`), not a store record, so
+  // the collector's `probe-id` 404s before the handler reads anything and the
+  // route lands in the wide list by default. Measured with `?=turkana` it reads
+  // 11 collections — `districtOverview` gathers every district-scoped surface —
+  // which is under the wide threshold and is what is declared below.
+  'GET /api/v1/districts/:id': Object.freeze(["alert_events", "community_feedback", "field_reports", "hazard_events", "incidents", "intervention_tasks", "interventions", "rapidpro_dispatches", "risk_scores", "service_assets", "workflow_instances"]),
   'GET /api/v1/equity/breaches': Object.freeze(["alert_events", "rapidpro_dispatches"]),
   'GET /api/v1/equity/by-district': Object.freeze(["alert_events", "rapidpro_dispatches"]),
   'GET /api/v1/events': Object.freeze(["conflict_events", "hazard_events"]),

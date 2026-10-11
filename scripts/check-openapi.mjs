@@ -116,11 +116,43 @@ function patternToPaths(literal) {
   return paths
 }
 
-/** The body of a top-level function, by brace matching. */
+/**
+ * The body of a top-level function, by brace matching.
+ *
+ * Two things the first version got wrong, both found by pointing this at
+ * `handleApiRequestInContext` and getting a 114-character body for a 1,597-line
+ * function:
+ *
+ *   - `indexOf('function X(')` matches the *call* `handleApiRequestInContext(…)`
+ *     before the definition, because the call site is earlier in the file. The
+ *     definition is anchored on `function X(` at the start of a line.
+ *   - the body is not the first `{` after the name. A destructured parameter —
+ *     `(store, req, …, { checkWebhookUrl, idempotency } = {})` — puts a brace
+ *     pair inside the parameter list, so brace matching from there closed on the
+ *     parameter object and returned the signature. The named `match*Route`
+ *     matchers take plain parameters, which is why this never showed until
+ *     something with a destructured argument was measured.
+ *
+ * So: find the matching `)` of the parameter list, and the body is the first `{`
+ * after it.
+ */
 function functionBody(name) {
-  const start = src.indexOf(`function ${name}(`)
-  if (start < 0) return null
-  const open = src.indexOf('{', start)
+  const definition = new RegExp(`^(?:async\\s+)?function\\s+${name}\\s*\\(`, 'm').exec(src)
+  if (!definition) return null
+  const paramsOpen = src.indexOf('(', definition.index)
+  let parens = 0
+  let paramsClose = -1
+  for (let i = paramsOpen; i < src.length; i += 1) {
+    if (src[i] === '(') parens += 1
+    else if (src[i] === ')') {
+      parens -= 1
+      if (parens === 0) { paramsClose = i; break }
+    }
+  }
+  if (paramsClose < 0) return null
+
+  const open = src.indexOf('{', paramsClose)
+  if (open < 0) return null
   let depth = 0
   for (let i = open; i < src.length; i += 1) {
     if (src[i] === '{') depth += 1
@@ -151,6 +183,38 @@ const addPath = (route) => {
 // so the method genuinely does not matter here.
 for (const match of src.matchAll(/(?:url\.|route\.)?pathname\s*===\s*'([^']+)'/g)) {
   addPath(match[1])
+}
+
+// ── Family 1b: inline regex matches in the dispatcher ───────────────────────
+// ARC-02's residue, and the reason `/api/v1/districts/{id}` was served and
+// undocumented: Family 2 reads `.match(/…/)` only inside a *named* `match*Route`
+// function, so an inline match written directly in the request handler is
+// invisible to this check in both directions — it is not reported as
+// undocumented, and the document cannot be checked against it. `/api/v1/
+// districts/{id}` is fetched by the district portal on every district page.
+//
+// The named-matcher pass below reads the same syntax, so this pass only adds
+// paths the first did not already find; a duplicate is a Set insert and costs
+// nothing, but scoping it this way keeps the coverage line honest about which
+// family produced what.
+// The same syntax Family 2 reads, applied to the dispatcher body rather than to
+// a named matcher's body. The scope matters in both directions: run over the
+// whole file, this also reads `.match()` calls that are not routing at all — a
+// tokenizer's segment regex produced `/api/v1/{id}`, and the STAC and OGC
+// matchers produced paths their own pass already owns and spells differently —
+// and every one of those arrives as a served route the document is then accused
+// of missing. A check that invents five findings on a clean tree is a check
+// nobody reads.
+const dispatcherBody = functionBody('handleApiRequestInContext')
+if (!dispatcherBody) {
+  // The scope is load-bearing, so its absence is a failure rather than a quiet
+  // reduction in coverage: without the body this pass silently finds nothing,
+  // and a check that finds nothing passes.
+  console.error('check-openapi: handleApiRequestInContext not found; inline route matches are unchecked')
+  process.exit(1)
+}
+for (const m of dispatcherBody.matchAll(/\.match\((\/.+?\/[gimsuy]*)\)/g)) {
+  for (const route of patternToPaths(m[1].slice(1, m[1].lastIndexOf('/')))) addPath(route)
 }
 
 // ── Family 2: match*Route dispatchers ───────────────────────────────────────

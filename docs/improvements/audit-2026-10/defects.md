@@ -648,6 +648,47 @@ and `:392`), per-route inline validation, and business logic that belongs in
 client's 29 endpoints. `scripts/check-openapi.mjs` exists precisely because nine
 live routes went undocumented; adding a route touches up to five files. ENH-59.
 
+**Partly closed 2026-10-11; the consolidation (ENH-59) is still open.** The
+entry's own remedy is a single generator, and that is not what this changed.
+What it fixed is the reason the five tables could disagree undetected: the
+cross-checks that exist all had a blind spot, and the blind spot was the same
+one in each.
+
+`check-openapi.mjs` reads the route surface out of `src/server.js` in two
+families — literal `pathname === '…'` conditions, and `.match(/…/)` inside a
+*named* `match*Route` function. An inline `.match()` written directly in the
+request handler was invisible to both. `/api/v1/districts/{id}` is exactly that
+shape: served (`src/server.js:2670`), fetched by the district portal on every
+district page (`public/districts/app.js:622,936`), and documented nowhere. The
+gate now reads the dispatcher body as a third family.
+
+Fixing that exposed a second bug in the same function. `functionBody` located a
+definition with `indexOf('function X(')`, which matches the *call* before the
+definition, and then took the first `{` after the name — which for a
+destructured parameter is the parameter object, not the body. Pointed at
+`handleApiRequestInContext` it returned 114 characters for a 1,597-line
+function. The named `match*Route` matchers take plain parameters, so nothing had
+ever exercised it.
+
+The client's endpoint list had no check at all. `public/sw.js`'s `NEVER_CACHED`
+named `/api/v1/readyz` — a path the server has never served; the route is
+`/api/v1/ready`. It was harmless in effect (an exclusion list naming a path that
+is never requested) and wrong in fact: the list is read as an inventory of the
+server's claim endpoints, and one naming a route the server does not have cannot
+be checked against it. Its test asserted `NEVER_CACHED.length >= 3` while naming
+three paths, so the fourth was never examined. Every entry is now checked against
+the routes read out of `server.js`.
+
+Now `openapi ok — 153 documented paths, 153 served routes parsed`, against 150
+and 151 before. Canaried three ways: removing the `districts/{id}` document
+entry (reported as missing), making the dispatcher body unlocatable (fails
+loudly rather than silently checking nothing), and restoring the dead
+`readyz` entry (fails only the never-cached test).
+
+What remains is ENH-59 itself: five tables still exist, and a route still
+touches several files. They now cannot disagree *silently* in the ways above,
+which is a different property from having one source.
+
 ### ARC-03 — HIGH — `/api/v1/demo/seed` imports `scripts/seed-demo.mjs` at request time
 `src/server.js:1269`. Production `src/` depends on `scripts/` — inverted layering.
 The 75 KB seed script is bundled into the runtime path; an import error there is a

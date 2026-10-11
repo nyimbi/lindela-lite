@@ -20,9 +20,17 @@
  * `pagerSummary` was written to prevent and then never called from anywhere.
  *
  * `listScope` is the seam: it takes the envelope and returns what may honestly
- * be claimed. The pure arithmetic is tested in `test/paging.test.js`; this file
- * guards the wiring, because a correct function nothing calls is the defect
- * again with better tests.
+ * be claimed. The pure arithmetic is tested in `test/paging.test.js`.
+ *
+ * **Why this file drives the real renders.** It used to assert on the source
+ * text of the two call sites — `assert.match(APP_CODE, /renderPager\(\$\(…/` —
+ * which is QUA-02's exemplar. That broke the moment ENH-81 renamed a local
+ * (`scope.total` → `walked.total`) while the behaviour stayed correct, which is
+ * the failure mode exactly: a test that fails on a rename and passes on a
+ * regression. The three wiring tests below now observe the numbers the pager is
+ * actually handed — the alerts rail through the real boot, the reports panel
+ * through its real `mount()` — so a rename cannot touch them and a revert to
+ * `filtered.length` fails them.
  */
 
 import assert from 'node:assert/strict'
@@ -32,26 +40,12 @@ import { fileURLToPath } from 'node:url'
 import { before, describe, it } from 'node:test'
 
 import { installBrowserEnv } from './browser-env.mjs'
-import { listScope } from '../public/shared/paging.js'
+import { listScope, pageWindow } from '../public/shared/paging.js'
+import { esc, truncate } from '../public/shared/fmt.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC_ROOT = new URL('../public/', import.meta.url)
-const APP = readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8')
 const INDEX = readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8')
-const REPORTS = readFileSync(path.join(ROOT, 'public', 'panels', 'reports.js'), 'utf8')
-
-/**
- * Source with comments stripped.
- *
- * The prose in this repo quotes the very strings a scan must not match — the
- * comment above `renderPagerScope` names `next_cursor` and the alerts call site
- * explains the old `filtered.length` — so a scan that reads comments tests the
- * documentation rather than the program.
- */
-const codeOf = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-
-const APP_CODE = codeOf(APP)
-const REPORTS_CODE = codeOf(REPORTS)
 
 let renderPagerScope
 
@@ -76,40 +70,145 @@ const envelope = (over = {}) => ({
   ...over,
 })
 
+/**
+ * Boot the console against a stubbed store and hand back the elements it wrote.
+ *
+ * A fresh specifier per call, because ESM caches by URL: two scenarios sharing
+ * one `app.js` URL would run the second against the first's module state, and
+ * the second assertion would be measuring the first boot. The module's own
+ * top-level `await refresh({ first: true })` means the import resolving *is* the
+ * boot having finished — including the renders — so there is no timer to wait
+ * on and nothing to poll.
+ *
+ * `fetch` is answered by URL, so a scenario states its envelope rather than
+ * driving a server: what is under test is what the console does with the
+ * numbers, not where they came from.
+ */
+let boots = 0
+async function boot({ alerts, health = { storage: { mode: 'json' } } }) {
+  boots += 1
+  const elements = new Map()
+  installBrowserEnv({
+    elements,
+    respond: (url) => {
+      if (url.includes('/api/v1/alert-events')) return { body: alerts }
+      if (url.includes('/api/v1/health')) return { body: { success: true, data: health } }
+      return undefined
+    },
+  })
+  await import(new URL(`app.js?boot=${boots}`, PUBLIC_ROOT).href)
+  return elements
+}
+
+/** The `Showing a–b of N` line `renderPager` writes, or null if it wrote none. */
+const pagerStatus = (host) => (host?.innerHTML || '').match(/pagination-status">([^<]*)/)?.[1] ?? null
+
+/**
+ * A console object for `panels/reports.js`, with the pager observed.
+ *
+ * `renderPager` is a recorder rather than a stub of the thing under test: the
+ * panel's obligation is to *pass* the scope total, and the third argument is
+ * where that obligation is discharged. `listScope` is the real one, so the
+ * panel is exercised against the arithmetic the console uses.
+ */
+function reportsConsole({ state, onPager }) {
+  const calls = []
+  const seen = { listScope: 0 }
+  return {
+    calls,
+    console_: {
+      // The panel writes `innerHTML` and then binds `[data-action]` on the
+      // container; the stub has to answer `querySelectorAll` with an empty list
+      // or the render dies before it reaches the pager, which is the call under
+      // test. Everything else is a field the panel reads and never acts on.
+      $: (id) => ({
+        id, innerHTML: '', value: '', hidden: true,
+        querySelector: () => null, querySelectorAll: () => [],
+      }),
+      state,
+      escapeHtml: esc,
+      truncate,
+      displayDate: (v) => String(v ?? ''),
+      pageWindow,
+      renderPager: (host, key, total, onGo) => { calls.push({ key, total }); onPager?.(host, key, total, onGo) },
+      listScope: (env, rows) => { seen.listScope += 1; return listScope(env, rows) },
+      setStatus() {},
+      postJson: async () => ({}),
+      refresh: async () => {},
+      t: (key) => key,
+      safeClass: (v) => String(v ?? ''),
+    },
+    seen,
+  }
+}
+
 /* ------------------------------------------------------------------ tests */
 
 describe('ARC-06 — the pager total comes from the envelope, not the fetched page', () => {
-  it('the alerts pager is given the scope total', () => {
-    // The call site is the fix. `filtered.length` there is the defect verbatim.
-    assert.match(
-      APP_CODE,
-      /renderPager\(\$\('alertsPager'\),\s*'alerts',\s*scope\.total/,
-      'the alerts pager must count the envelope total; `filtered.length` renders "of 30" over a set of 61',
-    )
-    assert.ok(
-      !/renderPager\(\$\('alertsPager'\),\s*'alerts',\s*filtered\.length/.test(APP_CODE),
-      'the pager still counts the fetched page',
+  it('the alerts rail pages the envelope total, not the page it holds', async () => {
+    // 30 rows in hand, an envelope that says the set is 61. The defect renders
+    // "of 30" here and stops, because `pageWindow` would be told the set is the
+    // fetch. Observed on the pager's own output rather than at the call site.
+    const elements = await boot({
+      alerts: {
+        data: Array.from({ length: 30 }, (_, i) => ({ id: `a${i}`, status: 'pending', severity: 'high' })),
+        returned: 30, limit: 200, total: 61, has_more: false, next_cursor: null,
+      },
+    })
+    assert.equal(
+      pagerStatus(elements.get('alertsPager')),
+      'Showing 1–25 of 61',
+      'the alerts pager must count the envelope total; "of 30" is the fetched page presented as the set',
     )
   })
 
-  it('the reports pager is given the scope total too', () => {
+  it('the reports panel pages the envelope total too', () => {
     // `/api/v1/reports?limit=20` against a store holding 40 is the same defect
-    // on a second surface, which is why this is checked on both.
-    assert.match(REPORTS_CODE, /renderPager\(\$\('reportsPager'\),\s*'reports',\s*scope\.total/)
-    assert.ok(
-      !/renderPager\(\$\('reportsPager'\),\s*'reports',\s*reports\.length/.test(REPORTS_CODE),
-      'the reports pager still counts the fetched page',
-    )
+    // on a second surface, which is why it is checked on both. The panel takes
+    // its console as a parameter, so the observation needs no browser: the
+    // recorded third argument is the number the pager renders.
+    const rows = Array.from({ length: 20 }, (_, i) => ({ id: `r${i}`, title: `Report ${i}`, status: 'draft' }))
+    const { console_, calls } = reportsConsole({
+      state: { reports: rows, data: { reports: { data: rows, returned: 20, total: 40, has_more: true } }, templates: [] },
+    })
+    return import(new URL('panels/reports.js', PUBLIC_ROOT).href).then(({ mount }) => {
+      mount(console_).renderReportsPanel()
+      assert.equal(calls.length, 1, 'the reports panel rendered without paging')
+      assert.equal(calls[0].key, 'reports')
+      assert.equal(
+        calls[0].total, 40,
+        'the reports pager must count the envelope total; 20 is the fetched page presented as the set',
+      )
+    })
   })
 
-  it('the panels that page receive listScope', () => {
-    // A panel destructuring it from an absent key gets `undefined` and throws on
-    // first render, so the console passes it in explicitly at both sites.
-    for (const panel of ['panels/equity.js', 'panels/reports.js']) {
-      const match = APP_CODE.match(new RegExp(`lazy\\('/${panel.replace('.', '\\.')}'\\)`))
-      assert.ok(match, `${panel} is no longer lazily loaded; update this test`)
-    }
-    assert.match(APP_CODE, /\$,\s*state,\s*escapeHtml,\s*truncate,\s*pageWindow,\s*renderPager,\s*listScope,/)
+  it('the reports panel consults the listScope it is handed', () => {
+    // The parameter is load-bearing, not decorative. `mount` destructures it,
+    // so a console that does not pass it hands the panel `undefined` and the
+    // first render throws — which is why the console passes it in explicitly at
+    // both sites, and why the check is on the mount rather than on the source
+    // text that spells the parameter's name.
+    //
+    // The other direction matters too: a panel that took the parameter and then
+    // computed the total itself would pass the check above by coincidence. The
+    // recorder counts the calls, so "handed it" and "used it" are separate
+    // facts.
+    const rows = Array.from({ length: 20 }, (_, i) => ({ id: `r${i}`, title: `Report ${i}`, status: 'draft' }))
+    const state = { reports: rows, data: { reports: { data: rows, returned: 20, total: 40, has_more: true } }, templates: [] }
+    const { console_, seen } = reportsConsole({ state })
+
+    return import(new URL('panels/reports.js', PUBLIC_ROOT).href).then(({ mount }) => {
+      mount(console_).renderReportsPanel()
+      assert.ok(seen.listScope > 0, 'the panel computed its own total instead of reading the envelope')
+
+      const incomplete = { ...console_ }
+      delete incomplete.listScope
+      assert.throws(
+        () => mount(incomplete).renderReportsPanel(),
+        TypeError,
+        'without listScope the render must fail loudly — a silent `undefined` total is the defect',
+      )
+    })
   })
 })
 
@@ -158,14 +257,26 @@ describe('ARC-06 — the count says what the pager is not showing', () => {
 })
 
 describe('ARC-06 — the console has a node to write the count into', () => {
-  it('the alerts scope line exists in the markup', () => {
-    // Written to by `renderPagerScope` and hidden until then. Without the node
-    // the function is a no-op and the count silently never appears.
+  it('the alerts scope line exists in the served markup', () => {
+    // Asserted against `index.html` rather than observed in a boot, because the
+    // sandbox's `getElementById` fabricates any id on demand — a boot would pass
+    // with the node absent from the page. Reading markup is not the QUA-02
+    // failure; reading the *program's* text was.
     assert.match(INDEX, /id="alertsScope"/, 'index.html must carry the alerts scope line')
     assert.match(INDEX, /id="alertsScope"[^>]*role="status"/, 'it is a status region, not decoration')
   })
 
-  it('the call site writes into it', () => {
-    assert.match(APP_CODE, /renderPagerScope\(\$\('alertsScope'\)/)
+  it('the boot writes the count into that node', async () => {
+    // The call site, observed: the text can only arrive from the render, so a
+    // dropped or renamed call site leaves the node empty and fails here.
+    const elements = await boot({
+      alerts: {
+        data: Array.from({ length: 30 }, (_, i) => ({ id: `a${i}`, status: 'pending', severity: 'high' })),
+        returned: 30, limit: 200, total: 61, has_more: false, next_cursor: null,
+      },
+    })
+    const scope = elements.get('alertsScope')
+    assert.equal(scope.hidden, false, 'the scope line stays hidden if nothing rendered into it')
+    assert.match(scope.textContent, /61 alerts/, 'the count must name the envelope total')
   })
 })

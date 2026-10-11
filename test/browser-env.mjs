@@ -29,6 +29,7 @@
  * replaces the property outright.
  */
 
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -71,14 +72,31 @@ export const PUBLIC_ROOT = pathToFileURL(path.join(ROOT, 'public') + path.sep)
 export function installModuleResolution(publicRoot = PUBLIC_ROOT) {
   registerHooks({
     resolve(specifier, context, nextResolve) {
-      // Every *root-relative* specifier a front-end module uses, not just
-      // `/shared/`. The console and the CHW app lazy-load `/workflow/*.js` and
-      // `/panels/*.js` the same way they import `/shared/*.js`, and a resolver
-      // that only knew about one of those directories made a test fail with
-      // ERR_MODULE_NOT_FOUND for a module that exists — which reads as a missing
-      // file rather than as a gap in the harness.
-      if (specifier.startsWith('/shared/') || specifier.startsWith('/workflow/') || specifier.startsWith('/panels/')) {
-        return { url: new URL(`.${specifier}`, publicRoot).href, shortCircuit: true }
+      // Every *root-relative* specifier a front-end module uses, not a list of
+      // the directories that happened to exist when this was written. The
+      // console and the CHW app lazy-load `/workflow/*.js` and `/panels/*.js`
+      // the same way they import `/shared/*.js`, and an allow-list of three
+      // prefixes made a test fail with ERR_MODULE_NOT_FOUND for a module that
+      // exists — which reads as a missing file rather than as a gap in the
+      // harness.
+      //
+      // The allow-list cost more than one confusing failure. `/action-rail.js`
+      // sits at the root of `public/`, so it resolved nowhere; `lazy()` deletes
+      // its cache entry on rejection and retries, so every poll tick re-imported
+      // it and logged a stack. The suite still passed — the failure was caught
+      // and reported as a dead panel — so the only symptom was a test file that
+      // ran for two minutes and 200,000 error lines nobody read.
+      //
+      // Resolving against the filesystem rather than a prefix list is the fix
+      // that cannot go stale: a specifier that names a file under `public/` is
+      // that file, whatever directory it is in.
+      if (specifier.startsWith('/') && !specifier.startsWith('//')) {
+        const candidate = new URL(`.${specifier}`, publicRoot)
+        if (existsSync(fileURLToPath(candidate))) {
+          return { url: candidate.href, shortCircuit: true }
+        }
+        // A root-relative specifier with no file behind it is left to Node, so
+        // the error names the missing module rather than this resolver.
       }
       return nextResolve(specifier, context)
     },
@@ -100,7 +118,20 @@ export function stubElement(tag = 'DIV') {
   return {
     tagName: String(tag).toUpperCase(),
     nodeName: String(tag).toUpperCase(),
-    style: {},
+    // A real `CSSStyleDeclaration`, to the extent the console uses one.
+    // `style: {}` meant every property assignment worked (a plain object takes
+    // any key) and `setProperty` — the one method `applyMapTransform` calls —
+    // threw. That threw inside `renderMap`, so the boot `refresh` aborted
+    // before it reached the alert rail, and the wiring tests that wanted to
+    // observe the rail's pager had to read `app.js` as text instead. A stub
+    // that is missing one method is not a smaller stub; it is a different
+    // program, and the tests written against it measure the stub.
+    style: {
+      _props: {},
+      setProperty(name, value) { this._props[name] = String(value) },
+      getPropertyValue(name) { return this._props[name] ?? '' },
+      removeProperty(name) { const had = this._props[name]; delete this._props[name]; return had ?? '' },
+    },
     dataset: {},
     classList: {
       _set: new Set(),
@@ -411,11 +442,30 @@ export function installBrowserEnv(options = {}) {
   const realClearTimeout = globalThis.clearTimeout.bind(globalThis)
 
   defineGlobal('clearInterval', () => {})
+  /**
+   * Timers, split by whether the caller asked for a delay.
+   *
+   * A zero-delay timer is a microtask in disguise and must actually run — the
+   * console defers renders through `setTimeout(fn, 0)`, and a stub that dropped
+   * those would make the module look like it never painted.
+   *
+   * A *delayed* timer is a poll, and running it early is not a smaller version
+   * of running it late: `schedulePoll` re-arms itself from inside its own
+   * callback, so clamping 30 s to 0 turns the console's poll into a busy loop.
+   * Measured on `paging-scope-wiring.test.js`, one boot produced 206,246
+   * "Action rail failed to render" stacks in 120 seconds — and the suite still
+   * reported a pass, because the failure was caught and logged as a dead panel.
+   * A test that is green while spinning at 1,700 requests a second is not
+   * measuring the console; it is measuring the stub.
+   *
+   * So a delayed timer is *dropped*, not clamped. Nothing in these tests waits
+   * on a poll — the boot's `await refresh({ first: true })` is the whole
+   * sequence — and dropping it also stops a 30-second timer keeping the process
+   * alive, which is the reason the clamp was here.
+   */
   defineGlobal('setTimeout', (fn, ms) => {
-    // Real timers still run — a module that awaits a resolved promise needs
-    // them — but the delay is clamped, so a 30-second poll cannot keep the
-    // test process alive for 30 seconds.
     if (typeof fn !== 'function') return 0
+    if (Number(ms) > 0) return 0
     return realSetTimeout(fn, 0)
   })
   defineGlobal('clearTimeout', (id) => realClearTimeout(id))

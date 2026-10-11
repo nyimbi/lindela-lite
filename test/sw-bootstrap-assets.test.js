@@ -29,6 +29,23 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC = path.join(ROOT, 'public')
 const read = (rel) => readFileSync(path.join(ROOT, rel), 'utf8')
 
+/**
+ * Every path the server serves, as `check-openapi.mjs` parses it: literal
+ * `pathname === '…'` conditions, inline `.match(/…/)` in the dispatcher, and
+ * the named `match*Route` helpers. Read from `src/server.js` rather than from
+ * the OpenAPI document, because the document is a second hand-maintained list
+ * and the question here is what the *server* answers.
+ *
+ * The one route family this cannot reconstruct is a matcher that builds its
+ * paths from a map (`matchHistoryRoute`'s `const routes = {…}`), which is why
+ * the assertion below is a membership test against a set that may be
+ * incomplete — it can fail a dead entry, and it will not falsely pass one.
+ */
+const ROUTED_PATHS = new Set(
+  [...read('src/server.js').matchAll(/(?:url\.|route\.)?pathname\s*===\s*'([^']+)'/g)]
+    .map((m) => m[1]),
+)
+
 function allFiles(dir = PUBLIC, acc = []) {
   for (const entry of readdirSync(dir)) {
     const full = path.join(dir, entry)
@@ -254,7 +271,16 @@ describe('a claim about the server is never answered from a cache', () => {
     for (const path of ['/api/v1/incidents', '/api/v1/field-reports', '/index.html', '/shared/runtime.js']) {
       assert.equal(isNeverCached(path), false, `${path} is data or an asset, and caching it is the point`)
     }
-    assert.ok(NEVER_CACHED.length >= 3)
+    // Every entry, not a sample of three. The list was asserted as
+    // `length >= 3` while the test named three paths, so a fourth entry was
+    // never examined — and it was `/api/v1/readyz`, which the server has never
+    // served. The list reads as an inventory of the server's claim endpoints,
+    // so each entry has to be one.
+    for (const path of NEVER_CACHED) {
+      assert.match(path, /^\/api\/v1\//, `${path} is not an API path`)
+      assert.ok(ROUTED_PATHS.has(path),
+        `${path} is in NEVER_CACHED but the server serves no such route — the list is an inventory of the server's claim endpoints`)
+    }
   })
 
   it('classifyApiRequest refuses them, so no bucket claims them', async () => {

@@ -121,11 +121,18 @@ const MAP_LAYER_COLLECTIONS = new Set([
  * They are excluded from the API buckets entirely rather than marked
  * uncacheable, so they cannot be written into a bucket by another route's
  * response either.
+ *
+ * `/api/v1/readyz` was a fourth entry and the server has never served it —
+ * `src/server.js` routes `/api/v1/ready`. It was harmless in effect (an
+ * exclusion list naming a path that is never requested) and wrong in fact: the
+ * list is read as an inventory of the server's claim endpoints, and one that
+ * names a route the server does not have cannot be checked against it. The test
+ * asserted `NEVER_CACHED.length >= 3` while naming three paths, so the fourth
+ * was never examined.
  */
 export const NEVER_CACHED = Object.freeze([
 	'/api/v1/health',
 	'/api/v1/ready',
-	'/api/v1/readyz',
 	'/api/v1/auth-info',
 ])
 

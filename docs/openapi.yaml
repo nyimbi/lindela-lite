@@ -2286,6 +2286,27 @@ paths:
       responses:
         '200':
           description: Districts
+  /api/v1/districts/{id}:
+    get:
+      summary: One district's overview
+      description: >-
+        The district portal fetches this by slug on every district page, and by
+        hash when a URL carries one. It was served and undocumented: the route
+        is a regex match rather than a literal, so `check-openapi.mjs` — which
+        parses literal conditions and the named `match*Route` helpers — could not
+        see it in either direction.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: A district slug or hash as `/api/v1/districts` lists it.
+      responses:
+        '200':
+          description: The district overview
+        '404':
+          description: No district by that name
   /api/v1/impact/facilities-at-risk:
     get:
       summary: Service facilities at risk, by district
