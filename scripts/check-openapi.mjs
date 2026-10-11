@@ -31,8 +31,29 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+/**
+ * Every source file the route surface can live in.
+ *
+ * ARC-01 moved the export family out of `src/server.js` into
+ * `src/routes/exports.js`. Read from `server.js` alone, this check reported all
+ * five export paths as *ghosts* — documented, and served by nothing it could
+ * see — which is the exact inverse of the defect it exists to catch, arrived at
+ * by a refactor that made the tree better. A gate scoped to a file rather than
+ * to the surface it audits goes blind the moment the surface moves, and goes
+ * blind *silently*: it was reporting five findings, so at least it was loud. A
+ * family that moved and was documented correctly would have reported nothing.
+ *
+ * So the surface is every module under `src/routes/` plus `src/server.js`, read
+ * by directory rather than by a list — a list is a second place to forget.
+ */
+const routeSources = fs.readdirSync(path.join(root, 'src/routes'))
+  .filter((name) => name.endsWith('.js'))
+  .sort()
+  .map((name) => ({ name: `src/routes/${name}`, text: fs.readFileSync(path.join(root, 'src/routes', name), 'utf8') }))
 const src = fs.readFileSync(path.join(root, 'src/server.js'), 'utf8')
 const spec = fs.readFileSync(path.join(root, 'docs/openapi.yaml'), 'utf8')
+const allSources = [src, ...routeSources.map((r) => r.text)]
 
 /** `/api/v1/x/:id` → `/api/v1/x/{id}`, which is how OpenAPI spells it. */
 const openapiPath = (raw) => raw.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, '{$1}')
@@ -136,29 +157,29 @@ function patternToPaths(literal) {
  * So: find the matching `)` of the parameter list, and the body is the first `{`
  * after it.
  */
-function functionBody(name) {
-  const definition = new RegExp(`^(?:async\\s+)?function\\s+${name}\\s*\\(`, 'm').exec(src)
+function functionBody(name, source = src) {
+  const definition = new RegExp(`^(?:export\\s+)?(?:async\\s+)?function\\s+${name}\\s*\\(`, 'm').exec(source)
   if (!definition) return null
-  const paramsOpen = src.indexOf('(', definition.index)
+  const paramsOpen = source.indexOf('(', definition.index)
   let parens = 0
   let paramsClose = -1
-  for (let i = paramsOpen; i < src.length; i += 1) {
-    if (src[i] === '(') parens += 1
-    else if (src[i] === ')') {
+  for (let i = paramsOpen; i < source.length; i += 1) {
+    if (source[i] === '(') parens += 1
+    else if (source[i] === ')') {
       parens -= 1
       if (parens === 0) { paramsClose = i; break }
     }
   }
   if (paramsClose < 0) return null
 
-  const open = src.indexOf('{', paramsClose)
+  const open = source.indexOf('{', paramsClose)
   if (open < 0) return null
   let depth = 0
-  for (let i = open; i < src.length; i += 1) {
-    if (src[i] === '{') depth += 1
-    else if (src[i] === '}') {
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1
+    else if (source[i] === '}') {
       depth -= 1
-      if (depth === 0) return src.slice(open, i + 1)
+      if (depth === 0) return source.slice(open, i + 1)
     }
   }
   return null
@@ -181,8 +202,14 @@ const addPath = (route) => {
 // and take whatever method arrives; a check that only read the guarded form
 // would claim coverage it does not have. Both comparisons below are path-only,
 // so the method genuinely does not matter here.
-for (const match of src.matchAll(/(?:url\.|route\.)?pathname\s*===\s*'([^']+)'/g)) {
-  addPath(match[1])
+// Every source that can carry a route, not just the dispatcher. The literal
+// family is the one an extracted family is most likely to arrive in — a matcher
+// that reads `pathname === '…'` — so scoping this pass to `server.js` is what
+// made ARC-01's move invisible.
+for (const source of allSources) {
+  for (const match of source.matchAll(/(?:url\.|route\.)?pathname\s*===\s*'([^']+)'/g)) {
+    addPath(match[1])
+  }
 }
 
 // ── Family 1b: inline regex matches in the dispatcher ───────────────────────
@@ -220,12 +247,19 @@ for (const m of dispatcherBody.matchAll(/\.match\((\/.+?\/[gimsuy]*)\)/g)) {
 // ── Family 2: match*Route dispatchers ───────────────────────────────────────
 // The pairing is by name (`matchFooRoute` ↔ `handleFooRoute`), so a new family
 // is covered by writing the new matcher rather than by editing a list here.
-const matchers = [...src.matchAll(/^function (match[A-Za-z]+Route)\(/gm)].map((m) => m[1])
 const coverage = { parsed: [], unparsed: [] }
 
-for (const matcher of matchers) {
+for (const source of allSources) {
+// `export function` as well as bare `function`. A route module exports its
+// matcher — it has to, or nothing can call it — and a matcher this regex does
+// not see is a family reported as *no paths*, which passes the comparison by
+// contributing nothing. That is the quietest possible failure of this gate:
+// `matchExportRoute` was served, documented and correct, and the run said
+// "160 documented, 160 served" while five of those 160 came from the literal
+// pass alone and this pass never looked.
+for (const matcher of [...source.matchAll(/^(?:export\s+)?function (match[A-Za-z]+Route)\(/gm)].map((m) => m[1])) {
   const handlerName = `handle${matcher.slice('match'.length)}`
-  const matcherBody = functionBody(matcher)
+  const matcherBody = functionBody(matcher, source)
   if (!matcherBody) {
     coverage.unparsed.push(`${matcher} (not found)`)
     continue
@@ -266,6 +300,7 @@ for (const matcher of matchers) {
   }
   coverage.parsed.push({ matcher, handler: handlerName, paths: paths.size })
   for (const route of paths) addPath(route)
+}
 }
 
 // ── Compare ─────────────────────────────────────────────────────────────────

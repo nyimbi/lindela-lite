@@ -70,7 +70,17 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/equity/by-district': Object.freeze(["alert_events", "rapidpro_dispatches"]),
   'GET /api/v1/events': Object.freeze(["conflict_events", "hazard_events"]),
   'GET /api/v1/explain/:id': Object.freeze(["data_lineage", "risk_scores", "source_runs"]),
-  'GET /api/v1/export.geojson': Object.freeze(["alert_events", "conflict_events", "field_reports", "hazard_events", "impact_assessments", "incidents", "response_resources", "risk_scores", "service_assets"]),
+  // ARC-01. The union of what the export family spans, not the nine this route
+  // used to carry. `export.csv` had fourteen collections and `export.geojson`
+  // nine, so the same store produced two exports of different sizes and neither
+  // said which was the whole set. Both now spread `EXPORT_COLLECTIONS`
+  // (`src/routes/exports.js`), which is the drift this closes.
+  //
+  // The five added here carry no coordinates in the demo data, so they
+  // contribute no features — but they are read, and a manifest that omits a
+  // collection the handler touches is the shape that reads `undefined` on
+  // PostgreSQL. Exact, not wide.
+  'GET /api/v1/export.geojson': Object.freeze(["alert_events", "conflict_events", "field_reports", "hazard_events", "impact_assessments", "incidents", "intervention_tasks", "interventions", "alert_rules", "rapidpro_dispatches", "rapidpro_inbound_messages", "response_resources", "risk_scores", "service_assets"]),
   'GET /api/v1/field-reports': Object.freeze(["field_reports"]),
   'GET /api/v1/field-reports/:id': Object.freeze(["field_reports"]),
   'GET /api/v1/flood-probability/models': Object.freeze(["flood_probability_models"]),
