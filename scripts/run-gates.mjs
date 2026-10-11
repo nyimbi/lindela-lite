@@ -115,6 +115,12 @@ const GATES = [
     why: 'ENH-45. Applies the aggregation-kind registry to `reduce(sum)` sites and refuses a sum over an intensive measurement. It found the second live instance of VER-01 — the climate-conflict scorer summing point rainfall across stations, in the same module the flood scorer was fixed in. Reads files only, and carries eleven canaries, the first two of which are the defect and its fix side by side.',
   },
   {
+    name: 'check-unit-mixing',
+    script: 'scripts/check-unit-mixing.mjs',
+    tier: 'self-contained',
+    why: 'ENH-47. Applies the unit/dimension/period registry: a connector that writes an accumulating field without declaring its period is flagged, and so is a module that averages such a field across periods. It found two live instances in one module — `src/analytics.js` averages `precipitation_mm` in the flood and climate-conflict scorers, where the same field is the preceding 15 minutes in one record and the whole-day total in the next. Reads files only, and carries twelve canaries; the last one is the exemption bug that let a reverted fix pass, kept so it cannot return.',
+  },
+  {
     name: 'check-route-envelopes',
     script: 'scripts/check-route-envelopes.mjs',
     tier: 'self-contained',

@@ -4,6 +4,7 @@ import { riskLevel, severityWeight } from './schema.js'
 import { clamp, haversineKm, stableId, toNumber } from './utils.js'
 import { KNOWN_DISTRICTS } from './districts.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
+import { meanMeasured } from '../public/shared/units.js'
 import { computeRoadAccess } from './road-access.js'
 import { logger } from './observability.js'
 import { calibrationByRegion } from './calibration.js'
@@ -440,19 +441,28 @@ export function computeFloodRisk(data, options = {}) {
     // probability of 10%, p90 was about 1.9x the observed precipitation. A
     // percentile is only preferred when a real probabilistic forecast supplied
     // it, which is now identified by `ensemble_source`.
+    // ENH-47. Each reading keeps the record it came from, because the record is
+    // what declares the period. `precipitation_mm` is written into
+    // `climate_observations` by `src/connectors/open-meteo.js` twice: once from
+    // the API's `current` block, which is the preceding **15 minutes**, and once
+    // from its `daily` block, which is the **whole-day total**. Same dimension,
+    // same scale, same field name — so no dimension check and no scale check can
+    // see the problem, and the mean below blended them. A 3 mm quarter-hour
+    // beside a 40 mm day published as "21.5 mm", a number describing no period
+    // at all, and the flood score was computed from it.
     const precipValues = climate.map((item) => {
-      if (Number.isFinite(item.bias_corrected_precipitation_mm)) return Number(item.bias_corrected_precipitation_mm)
+      if (Number.isFinite(item.bias_corrected_precipitation_mm)) return { ...item, precipitation_mm: Number(item.bias_corrected_precipitation_mm) }
       if (item.ensemble_source === 'open_meteo_ensemble' && Number.isFinite(item.ensemble_p90)) {
-        return Number(item.ensemble_p90)
+        return { ...item, precipitation_mm: Number(item.ensemble_p90) }
       }
       // A missing reading is unknown, not zero. `|| 0` made an absent
       // precipitation record look like a measured dry spell, which lowers the
       // score — the worst direction for an absent input.
-      return Number.isFinite(item.precipitation_mm) ? Number(item.precipitation_mm) : null
+      return { ...item, precipitation_mm: Number.isFinite(item.precipitation_mm) ? Number(item.precipitation_mm) : null }
     })
-    const usablePrecip = precipValues.filter((v) => v !== null)
+    const usablePrecip = precipValues.filter((item) => item.precipitation_mm !== null)
     const missingPrecip = precipValues.length - usablePrecip.length
-    // The mean of the readings, not their sum.
+    // The mean of the readings, not their sum — and within one period.
     //
     // Every observation here is a *point* total: `nearby` collects each station
     // within 125 km, and each reports the rainfall at its own location. Adding
@@ -462,9 +472,13 @@ export function computeFloodRisk(data, options = {}) {
     // well-instrumented district while starving the identical under-instrumented
     // one. The score was a map of where the stations are. A spatial mean is the
     // quantity the term is named for.
-    const precipitation = usablePrecip.length
-      ? usablePrecip.reduce((sum, v) => sum + v, 0) / usablePrecip.length
-      : null
+    //
+    // `meanMeasured` enforces the period axis the name could not: when the
+    // in-scope readings state two different declared periods it takes the mean
+    // over the larger group and reports `mixed`, so the payload can say the
+    // input was mixed rather than publishing a blend as a measurement.
+    const rainfallMean = meanMeasured(usablePrecip, 'precipitation_mm')
+    const precipitation = rainfallMean.mean
     // Only a percentile from a genuine probabilistic forecast counts as ensemble
     // coverage. Percentiles previously synthesized from a point value would
     // otherwise always satisfy this and report uncertainty the data does not have.
@@ -536,6 +550,14 @@ export function computeFloodRisk(data, options = {}) {
       precipitation_readings_used: usablePrecip.length,
       missing_precipitation_records: missingPrecip,
       missing_probability_records: missingProbability,
+      // ENH-47. The period the mean is over, and whether the in-scope readings
+      // disagreed about it. `mixed: true` means the input blended a 15-minute
+      // snapshot with a daily total and the mean below is over the larger group
+      // — a reader must be able to see that rather than take a number that
+      // describes no period for a measurement.
+      precipitation_period: rainfallMean.period,
+      precipitation_period_mixed: rainfallMean.mixed,
+      precipitation_by_period: rainfallMean.by_period,
       flood_hazard_events: hazards.length,
       // A score computed without the probability term is a different quantity
       // from one computed with it, and the difference is 0.35 of weight in the
@@ -639,13 +661,18 @@ export function computeClimateConflictRisk(data, options = {}) {
     // coercion is the first version of this guard and it looked like it worked;
     // `test/climate-coverage-honesty.test.js:124` exists because of it, and it
     // caught this exact regression when the mean was written.
+    // ENH-47. Same period axis as the flood scorer above, and the same reason:
+    // the records carry the field, the records declare the period, and a mean
+    // over two declared periods describes neither. `rainfall` keeps the records
+    // so `meanMeasured` can read each one's period.
     const rainfall = climate
       .filter((item) => item.precipitation_mm !== null
         && item.precipitation_mm !== undefined
         && item.precipitation_mm !== '')
-      .map((item) => Number(item.precipitation_mm))
-      .filter((v) => Number.isFinite(v))
-    const meanRainfall = rainfall.length ? rainfall.reduce((sum, v) => sum + v, 0) / rainfall.length : 0
+      .map((item) => ({ ...item, precipitation_mm: Number(item.precipitation_mm) }))
+      .filter((item) => Number.isFinite(item.precipitation_mm))
+    const rainfallMean = meanMeasured(rainfall, 'precipitation_mm')
+    const meanRainfall = rainfallMean.mean ?? 0
     // The cap stays where it was. The term's scale is unchanged for a region
     // with one station, and a region with many now reads the weather rather
     // than the count — which is the point, and is why the *value* of a score

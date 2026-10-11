@@ -778,6 +778,46 @@ gated behind their own method tests and which never touch the store.
 
 ---
 
+### VER-15 — HIGH — One field name, two periods; the flood and climate scores average a 15-minute reading with a daily total
+Found 2026-10-11 while building ENH-47, not by the audit. `precipitation_mm` is
+written into `climate_observations` by `src/connectors/open-meteo.js` from **two
+different quantities under one field name**: `data.current.precipitation`, typed
+`current_weather`, is the *preceding 15 minutes* (Open-Meteo's `current` block is
+a 900-second backward-looking sum), and `daily.precipitation_sum[i]`, typed
+`precipitation_forecast`, is the *whole-day total*. `computeFloodRisk` and
+`computeClimateConflictRisk` both average the field over a `nearby()` collection,
+so the average is taken across periods as well as stations.
+
+**Failure.** One `current_weather` record at 3.0 mm/15 min beside one
+`precipitation_forecast` record at 40.0 mm/day averages to **21.5** — a rate
+neither record states, over a period neither names, feeding a risk band. Verified
+by probe, not inference: `{precip: 21.5, score: 32}`. The register's ENH-47 entry
+predicted a mm/metre mix; a scan found **none**. The instance is one axis over.
+
+**Fix.** ENH-47. `MEASUREMENT_PERIODS` declares `precipitation_mm` at
+`per_15_min` for `current_weather` and `per_day` for `precipitation_forecast`, and
+`meanMeasured` (`public/shared/units.js`) groups by period and means over the
+largest group rather than over everything, publishing `mixed` and `by_period` so a
+caller reports the refusal instead of a blend. Both scorers take the mean from it
+(`src/analytics.js:481`, `:648`), and the flood driver carries
+`precipitation_period`, `precipitation_period_mixed` and `precipitation_by_period`.
+
+The refusal is scoped to two *declared* periods. A pre-ENH-47 record that never
+declared one reads `unspecified` and blends as before, because treating an
+undeclared period as a second period would fail every deployment that has not been
+re-ingested — the same reasoning that keeps a `null` (does-not-accumulate) reading
+distinct from an unmeasured one.
+
+**The gate's own first version was this defect one level up.** `check-unit-mixing.mjs`
+exempted any file that imported the registry helper, so reverting the fix in
+`src/analytics.js` — which by then imported `meanMeasured` — left the gate
+reporting *clean* on the exact line it was written to catch. A file that imports
+the fix at one site is not period-aware at every other site; that is the
+19-of-27-paths failure the repository keeps finding, here inside the gate built to
+find it. The exemption is gone and the canary that caught it is kept.
+
+---
+
 ### ARC-02 — HIGH — Five parallel route tables, no single source of truth
 `src/server.js` (68 conditions + 16 helpers), `src/route-manifests.js` (183 entries),
 `docs/openapi.yaml` (150 paths), `src/auth.js:431` scopes (91 entries), and the

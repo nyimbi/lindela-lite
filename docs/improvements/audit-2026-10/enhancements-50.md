@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 21 | 31, 34, 35, 36, 37, 39, 40, 44, 45, 46, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
+| IMPLEMENTED | 22 | 31, 34, 35, 36, 37, 39, 40, 44, 45, 46, 47, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
 | PARTIAL | 11 | 32, 33, 42, 50, 51, 52, 55, 57, 59, 70, 78 |
-| ABSENT | 19 | 38, 41, 43, 47, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
+| ABSENT | 18 | 38, 41, 43, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
@@ -485,6 +485,40 @@ restoring it exits 0.
 percent — declared with dimensions, and checked at the boundary where a number
 enters or leaves. `src/analytics/numeric.js` is the absent-value gate; this is its
 unit sibling. It catches a mm/metre mix that currently renders as a plausible number.
+
+**Shipped 2026-10-11.** The registry is `public/shared/units.js`, the gate
+`scripts/check-unit-mixing.mjs`, the test `test/unit-mixing.test.js`. Three axes,
+not two — and the third is the one that mattered:
+
+- **The stated defect does not exist in this tree.** A scan for `A <op> B` where
+  the two names carry different unit suffixes found **zero** mm/metre mixes. The
+  class is real and worth the gate; the instance the entry names is not here.
+- **The instance is one axis down.** `precipitation_mm` is written into
+  `climate_observations` by `src/connectors/open-meteo.js` twice under one field
+  name: from `data.current.precipitation` (type `current_weather`, the *preceding
+  15 minutes*, a 900-second backward-looking sum) and from `daily.precipitation_sum[i]`
+  (type `precipitation_forecast`, the *whole-day total*). `computeFloodRisk` and
+  `computeClimateConflictRisk` both average them. A 3.0 mm/15 min reading beside a
+  40.0 mm/day reading becomes `21.5` — a number describing no period, rendered as
+  a plausible one. That is the entry's own sentence with the unit swapped for the
+  period.
+- **The gate found two live instances in one module** (`src/analytics.js:481`,
+  `:648`), the same shape ENH-45 recorded: one class, two scorers, fixed in the
+  one you were looking at and live in the one you were not.
+- **`UNSPECIFIED_PERIOD` is not `null`, and only two *declared* periods refuse to
+  blend.** A record that never declared its period is not evidence of a different
+  one; treating it as one would fail every deployment that has not been
+  re-ingested. `null` means the field does not accumulate at all.
+- **The gate's own first version was the failure it exists to catch.** It exempted
+  any file importing `units.js` — so reverting the fix in `src/analytics.js`,
+  which now imports `meanMeasured`, left the gate reporting *clean* on the exact
+  defect it was written for. The exemption is gone; the canary that caught it is
+  kept (`scripts/check-unit-mixing.mjs`, "still flags a bare reduce in a file that
+  also imports the helper"). A gate a file satisfies by importing the fix once, at
+  one site, is the 19-of-27-paths failure this repository keeps finding.
+- **`compareMeasurements` contradicted `periodsPresent` and `meanMeasured`** on
+  whether an unspecified period conflicts; the test caught the registry arguing
+  with itself and the wildcard reading won, since two of the three already held it.
 
 **ENH-48 — Provenance-stamped exports.** Every exported row carries `source_id`,
 `observed_at` and `payload_hash` (the record already stores the hash —
