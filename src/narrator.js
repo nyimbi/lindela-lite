@@ -131,6 +131,10 @@ function formatValue(value) {
  */
 export async function narrateReport(report, {
   env = process.env, narrator = null, http: transport = fetch, now = new Date().toISOString(),
+  // ENH-57: a briefing audience's own length. Absent, this is the report
+  // narrator's 120 words — the default is unchanged, and a caller that passes
+  // nothing gets exactly the behaviour it had before this parameter existed.
+  maxWords = 120,
 } = {}) {
   const config = narratorStatus(env, narrator)
   const model = config.model
@@ -143,7 +147,7 @@ export async function narrateReport(report, {
     return refused('the report has no generated sections to narrate; generate it first')
   }
 
-  const request = buildNarrativeRequest(report)
+  const request = buildNarrativeRequest(report, { maxWords })
   let answer
   try {
     const res = await transport(`${config.base_url}/api/generate`, {
