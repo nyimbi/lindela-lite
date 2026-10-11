@@ -70,7 +70,12 @@ function monthsTouched(events, isMember) {
   const months = new Set()
   for (const event of events || []) {
     if (!isMember(event)) continue
-    const key = monthOf(event.occurred_at)
+    // `occurred_at` is the hazard/conflict shape; disease records carry
+    // `observed_at` (`reliefweb-epidemics.js`). Reading only the first would
+    // count zero disease-months and report the third hazard as absent — a
+    // refusal that looks like a finding about the data and is a bug in the
+    // reader.
+    const key = monthOf(event.occurred_at) || monthOf(event.observed_at)
     if (key) months.add(key)
   }
   return months
@@ -217,6 +222,155 @@ function levelFor(score) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
+}
+
+/**
+ * ENH-56, third hazard — the joint rate of all three, not a pairwise score.
+ *
+ * The entry names three hazards and the module above counts two. This adds
+ * disease, and it is a **separate function** rather than a third optional
+ * argument to `compoundHazardScore`, for a reason that is not stylistic: making
+ * disease optional would leave the existing two-hazard callers returning
+ * `p_disease === 0`, which is exactly the condition that already refuses with
+ * "no disease-month in this window". Every caller would have gone from a score
+ * to a refusal. A second entry point keeps the two-hazard contract intact and
+ * states the three-hazard one on its own terms.
+ *
+ * **What the joint means here.** With three hazards the lift is no longer a
+ * single ratio a reader can check by eye, so the module reports the whole
+ * contingency — all seven month-classes (each hazard alone, each pair, all
+ * three, none) — and computes the lift of the triple against the product of the
+ * three marginals. The pairwise lifts are carried too, because a planner acting
+ * on this needs to know *which* pair is driving the excess.
+ *
+ * **The disease input is shaped differently and that is the whole difficulty.**
+ * `reliefweb_epidemics` records carry `observed_at` and a real event date;
+ * `who_gho` records carry `observed_at` stamped `YYYY-01-01` for a *national
+ * annual aggregate*, with `first_seen_source_type: 'national_annual_aggregate'`.
+ * Feeding the second kind through a month counter would manufacture a January
+ * disease-month every year of the series and inflate the joint rate with months
+ * that share nothing but a calendar. So an annual aggregate is excluded, and it
+ * is excluded **visibly**: `excluded_annual_aggregates` is returned, because a
+ * silently dropped input is a denominator nobody can check.
+ *
+ * The same rule as the flood family applies and is stated rather than implied:
+ * disease records with no readable date contribute no month, rather than being
+ * dated to the epoch or to now.
+ */
+export function compoundHazardScoreThree({ hazardEvents = [], conflictEvents = [], diseaseEvents = [], from = null, to = null, region = null } = {}) {
+  const floods = monthsTouched(hazardEvents, (e) => FLOOD_FAMILY.includes(String(e.event_type || '').toLowerCase()))
+  const conflicts = monthsTouched(conflictEvents, () => true)
+
+  // The annual-aggregate exclusion, counted so it can be reported.
+  let annualAggregates = 0
+  const diseases = monthsTouched(diseaseEvents, (e) => {
+    if (isAnnualAggregate(e)) { annualAggregates += 1; return false }
+    return true
+  })
+
+  const touched = [...new Set([...floods, ...conflicts, ...diseases])].sort()
+  const declared = monthsInWindow(from, to)
+  const denominator = declared.length ? declared : monthsInWindow(touched[0], touched[touched.length - 1])
+  const n = denominator.length
+
+  const count = (set) => denominator.filter((m) => set.has(m)).length
+  const floodMonths = count(floods)
+  const conflictMonths = count(conflicts)
+  const diseaseMonths = count(diseases)
+  const bothFC = denominator.filter((m) => floods.has(m) && conflicts.has(m)).length
+  const bothFD = denominator.filter((m) => floods.has(m) && diseases.has(m)).length
+  const bothCD = denominator.filter((m) => conflicts.has(m) && diseases.has(m)).length
+  const allThree = denominator.filter((m) => floods.has(m) && conflicts.has(m) && diseases.has(m)).length
+
+  const rate = (c) => (n ? round4(c / n) : null)
+  const pFlood = n ? floodMonths / n : null
+  const pConflict = n ? conflictMonths / n : null
+  const pDisease = n ? diseaseMonths / n : null
+  const pAll = n ? allThree / n : null
+
+  // The product of three marginals is what independence predicts for the
+  // triple. Guarded the same way the pair is: a zero marginal makes the lift a
+  // ratio with no denominator, not a large number.
+  const independentAll = [pFlood, pConflict, pDisease].every((p) => p !== null && p > 0)
+    ? pFlood * pConflict * pDisease
+    : null
+  // Pairwise, so a reader can see which pair drives the excess. Each is guarded
+  // on its own two marginals rather than on all three.
+  const pairLift = (a, b, pab) => (a > 0 && b > 0 && pab !== null ? round4(pab / (a * b)) : null)
+
+  const contingency = {
+    months: n,
+    flood_months: floodMonths,
+    conflict_months: conflictMonths,
+    disease_months: diseaseMonths,
+    all_three_months: allThree,
+    both_flood_conflict_months: bothFC,
+    both_flood_disease_months: bothFD,
+    both_conflict_disease_months: bothCD,
+    p_flood: rate(floodMonths),
+    p_conflict: rate(conflictMonths),
+    p_disease: rate(diseaseMonths),
+    p_all_three: rate(allThree),
+    p_all_three_if_independent: independentAll === null ? null : round4(independentAll),
+    lift_all_three: independentAll ? round4(pAll / independentAll) : null,
+    pair_lifts: {
+      flood_conflict: pairLift(pFlood, pConflict, n ? bothFC / n : null),
+      flood_disease: pairLift(pFlood, pDisease, n ? bothFD / n : null),
+      conflict_disease: pairLift(pConflict, pDisease, n ? bothCD / n : null),
+    },
+    window: { from: denominator[0] || null, to: denominator[n - 1] || null },
+    excluded_annual_aggregates: annualAggregates,
+  }
+
+  if (n < MIN_COMPOUND_MONTHS) {
+    return {
+      region, score: null, level: 'unknown', contingency,
+      reason: `${n} month(s) of record; ${MIN_COMPOUND_MONTHS} are needed before a joint rate is reported rather than a curve through noise`,
+    }
+  }
+  // Each hazard is checked separately and named. With three, "no hazard-month"
+  // would not say which one is absent, and the three have different remedies —
+  // a window with no disease is a surveillance gap, one with no flood is a dry
+  // record, and a planner acts differently on each.
+  const absent = [['flood', floodMonths], ['conflict', conflictMonths], ['disease', diseaseMonths]]
+    .filter(([, c]) => c === 0)
+    .map(([name]) => name)
+  if (absent.length) {
+    return {
+      region, score: null, level: 'unknown', contingency,
+      reason: `no ${absent.join(' or ')}-month in this window, so the joint rate is undefined rather than zero`,
+    }
+  }
+
+  const score = clamp(Math.round((allThree / n) * 100), 0, 100)
+  return {
+    region,
+    score,
+    level: levelFor(score),
+    contingency,
+    basis: {
+      description: 'joint rate of a flood-month, a conflict-month and a disease-month meeting in the same calendar month — not the sum of three independent scorers, and not a pairwise score',
+      joint_months: allThree,
+      of_months: n,
+      lift_over_independence: contingency.lift_all_three,
+      pair_lifts: contingency.pair_lifts,
+      window: contingency.window,
+    },
+    reason: null,
+  }
+}
+
+/**
+ * A national annual aggregate, which has a year and no month.
+ *
+ * The WHO Global Health Observatory emits one row per country per year and
+ * stamps it `YYYY-01-01`. That is not a January observation; it is an annual
+ * total wearing a date, and a month counter that accepts it puts a disease-month
+ * in every January of the series. `who-gho.js` marks these with
+ * `first_seen_source_type`, and the marker is what this reads.
+ */
+function isAnnualAggregate(event) {
+  return String(event?.first_seen_source_type || '') === 'national_annual_aggregate'
 }
 
 function round4(x) {
