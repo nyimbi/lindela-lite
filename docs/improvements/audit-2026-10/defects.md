@@ -34,12 +34,21 @@ write scope — a lower bar than admin.
 **Fix.** Call `assertSafeWebhookUrl(channel.url)` before the fetch, as the outbox
 does. ENH-78 turns this into a regression spec.
 
+**Fixed 2026-10-11.** `POST` report distribution resolves `channel.url` through
+`checkWebhookUrl` (`src/server.js:3376`) before the fetch, so the SSRF guard the
+registration route already applied now covers the send. The registration path and
+the delivery path answer to the same predicate.
+
 ### VUL-02 — HIGH — RapidPro webhook secret accepted from the query string
 `src/rapidpro.js:363` `|| url.searchParams.get('secret')`, compared by
 `constantTimeEquals`. The body-signature path (`:358`) is preferred, so this is the
 shared-secret fallback — but a secret in a URL is written to access logs, proxy
 logs, the `Referer` of downstream requests and browser history. The leaked value is
 the same secret that authenticates inbound webhooks.
+
+**Fixed 2026-10-11.** The shared secret is read from the header only.
+`src/rapidpro.js:360-363` states it: a secret in the query string is refused, not
+trusted, because a URL is logged by every proxy between the sender and here.
 
 ### VUL-03 — MEDIUM — Partner-org scoping is inert for reports and by-id reads
 `scopeToPartnerOrg` (`src/auth.js:455`) has zero callers. `filterRecords` scopes
@@ -49,6 +58,22 @@ and `normalizeReport` (`src/reports.js`) never sets `partner_org`. The by-id rea
 at all. A token scoped to partner org A reads org B's reports and any record lacking
 the field. This is a per-object authorization gap that holds for an authenticated,
 scoped caller — distinct from the unauthenticated-GET class the prior audit covered.
+
+**Fixed 2026-10-11.** Three layers, matching the three that were missing. The
+claim is expressible: `parseTokens` carries `partner_org` from the token definition
+through `authenticate` (`src/auth.js:330-387`). It is enforced: `scopeToPartner`
+filters every collection on the read (`src/store.js:322`), `PostgresStore` pushes
+`partner_org = $2` into the WHERE clause (`src/postgres-store.js:383`), and
+`filterRecords` reads the request's identity by default rather than an opt-in third
+argument (`src/utils.js:197`). It is checkable: `findVisible` (`src/server.js:1086`)
+is the one way a by-id route resolves a record, so thirty-one branches across nine
+handlers that had `data.reports.find((item) => item.id === route.id)` now carry the
+same predicate as their own listing, and a by-id read of another organisation's id
+returns `null` rather than confirming the id exists. `test/partner-isolation.test.js`
+(27 tests) asserts all three, including that the by-id form agrees with the listing
+about a record carrying no partner claim. Records written by a path that sets no
+`partner_org` are invisible to a partner token — the deny-by-default reading
+`src/auth.js:550` documents, which fails visibly rather than handing over the store.
 
 ### VUL-04 — MEDIUM — Dead role checks imply authorization that does not exist
 `src/server.js:3908–3909` compute `isAdmin` and `isOperator`; neither is referenced
@@ -121,6 +146,13 @@ network. It carries three canaries that must be rejected, and it was canaried
 against the two real defective revisions (`16c7c05`, `037b1dd`), each of which it
 catches.
 
+**Fixed 2026-10-11.** Every action is pinned by commit SHA with the tag in the
+comment (`checkout@11d5960`, `setup-node@49933ea`, `upload-artifact@ea165f8`,
+`slsa-github-generator@c747fe7`), and every `npx --yes` names a version
+(`cyclonedx-npm@6.0.1`, `wait-on@9.5.1`). `npx --yes trivy` is gone: Trivy is not
+published to npm, so that step was a command that could never have run, replaced by
+`aquasecurity/trivy-action@a9c7b0f` pinned the same way.
+
 ### VUL-06 — LOW — Base image not pinned by digest
 `Dockerfile:1` `FROM node:20-bookworm-slim` tracks a mutable tag; a rebuild can pull
 a different base than the one the SBOM attests.
@@ -178,6 +210,11 @@ identical under-instrumented one. The score is a map of where the stations are.
 
 **Fix.** ENH-45: declare precipitation `intensive` and refuse the `reduce`.
 
+**Fixed 2026-10-11.** The rainfall term reads `row.precipitation_mm` and treats a
+non-finite value as unmeasured rather than as dry (`src/analytics.js:177-186`); the
+old form read `value`, which nothing writes, so the filter matched nothing and the
+sum tracked station density instead of rainfall.
+
 ### VER-02 — CRITICAL — Absent probability folded in as 0, against the module's own comment
 `src/analytics.js:461` computes `maxProbability` as `null` when absent, and the
 comment above states "an absent forecast is not a 0% chance of rain" — then `:466`
@@ -187,6 +224,11 @@ lower risk, the unsafe direction.
 
 **Fix.** Omit the term and renormalise over present inputs, or carry it as unknown
 so the score is flagged incomplete. ENH-46 catches the pattern.
+
+**Fixed 2026-10-11.** `maxProbability` is `null` when no forecast exists and the
+score omits the term, publishing `probabilityTermOmitted` beside it
+(`src/analytics.js:479-494`). `(maxProbability ?? 0) * 0.35` folded a missing
+forecast in as a 0% chance, which reads as a clean record.
 
 ### VER-03 — HIGH — Events admitted by `occurred_at || from` are dropped by the labeller, which reads only `occurred_at`
 `src/flood-probability.js:101` prefilter `Date.parse(event.occurred_at || event.from || '')`;
@@ -199,11 +241,22 @@ positive months. The contingency table's `a` shrinks; the logistic fit and Wilso
 intervals are computed on a corrupted table, biased low exactly where the record is
 richest. **Fix.** Read the same field set in both places.
 
+**Fixed 2026-10-11.** The labeller and the admission check read the same field:
+`Date.parse(event.occurred_at || event.from || '')`
+(`src/flood-probability.js:101`, `:200`). An event admitted by `from` is no longer
+dropped by a labeller that read only `occurred_at`.
+
 ### VER-04 — HIGH — Quarterly KPI latency is measured over all-time dispatches
 `src/kpi.js:169` `signalToDispatchHours(data.rapidpro_dispatches)` — the raw store,
 not the period-filtered set built at `:120`. The monthly series at `:349` uses the
 filtered variable correctly. A quarter whose dispatches were all sub-hour reports a
 median diluted by years of slower history — or masks a current-quarter regression.
+
+**Fixed 2026-10-11.** Quarterly latency is measured over the quarter's dispatches,
+via `signalToDispatchHours` bounded to the period, and the field latency is
+`fieldActionLatency(data, { period_start: from })` (`src/kpi.js:195-207`). When no
+dispatch carries both timestamps the figure is `null` with a `data_gaps` entry
+naming why (`:269`) rather than an all-time interval published as a quarterly one.
 
 ### VER-05 — HIGH — `computeApiUptime` returns 100.0 when the rate is unmeasured
 `src/kpi.js:102` `return 100.0` when `computeShortTermSuccessRate()` is `null`.
@@ -212,11 +265,19 @@ idle deployment publishes "100% API uptime" from zero observations, on the
 dashboard an approver reads. The module's own convention elsewhere is to return
 `null` and render "not measured."
 
+**Fixed 2026-10-11.** `computeApiUptime` returns `null` when the ring buffer holds
+no requests (`src/kpi.js:114-125`). Zero observations is no measurement, not perfect
+uptime; the surface renders the null.
+
 ### VER-06 — HIGH — `filterForDistrict` drops every id-less record after the first
 `src/districts.js:84` `const seen = new Set()` … `if (seen.has(r.id)) continue`.
 For a record with no `id`, the first match adds `undefined` to `seen`; every later
 id-less match hits `seen.has(undefined)` and is skipped. Id-less records are not
 duplicates. A district with 40 un-keyed field reports shows 1.
+
+**Fixed 2026-10-11.** `filterForDistrict` dedups only when a record has an id
+(`src/districts.js:83-101`). `seen.add(undefined)` collapsed every id-less record
+after the first, so a district with 40 un-keyed field reports showed 1.
 
 ### VER-07 — HIGH — Region aggregation rounds coordinates to integer degrees (~111 km)
 `src/analytics.js` region key `${country}:${Math.round(lat)}:${Math.round(lon)}`. A
@@ -225,11 +286,19 @@ coordinate is whichever point arrived first, and a district straddling a boundar
 split into two half-regions scored against part of its data. Two counties 100 km
 apart are reported as one blended score; a boundary county gets two contradictory ones.
 
+**Fixed 2026-10-11.** Region aggregation buckets on a half-degree grid
+(`src/analytics.js:1067-1068`), replacing the integer-degree key that merged points
+up to ~111 km apart into one cell.
+
 ### VER-08 — MEDIUM — Input-shift verdict is `'stable'` when every feature's PSI is null
 `src/drift.js:150` `let worst = 0`, so an all-null feature set yields `worst_psi: 0`
 and `verdict: 'stable'`. Per-feature verdicts correctly say `'not_measurable'`
 (`:158`), but "no feature could be measured" is reported as "distribution stable" —
 genuine covariate shift is never flagged.
+
+**Fixed 2026-10-11.** A drift result whose PSI is null reports
+`verdict: 'not_measurable'` with `worst_psi: null` (`src/drift.js:156-185`). Every
+feature unmeasured no longer aggregates to `verdict: 'stable'`.
 
 ### VER-09 — MEDIUM — `people_reached` folds a recipient count in as if it were an address
 `src/analytics/metrics.js:297` `… ?? d?.recipient_count`, added to the distinct
@@ -238,15 +307,27 @@ destination for 500 people; two such dispatches dedup to one; a genuine address
 `"500"` collapses with it. `distinct_destinations` travels beside a "people reached"
 label and will be read as one.
 
+**Fixed 2026-10-11.** `recipient_count` is excluded from the distinct-destination set
+(`src/analytics/metrics.js:297-307`) — it is a head count, not an address — and the
+count of dispatches that carried one is published as `without_recipient_count`.
+
 ### VER-10 — MEDIUM — Doc comment contradicts the constant
 `src/analytics/ensemble.js:90` says "two is the smallest count at which…";
 `MIN_ENSEMBLES_FOR_SPREAD_SKILL = 3`. A maintainer relying on the doc believes a
 2-member ensemble is scored; it returns `null`.
 
+**Fixed 2026-10-11.** The doc comment above `MIN_ENSEMBLES_FOR_SPREAD_SKILL` says
+three, which is what the constant is (`src/analytics/ensemble.js:90-95`). The
+sentence and the value had said two and three respectively.
+
 ### VER-11 — MEDIUM — Duplicate object key `outcome_coverage`; the first is dead
 `src/calibration.js` declares `outcome_coverage` twice in one object literal; the
 second silently overwrites the first. Harmless today, a latent trap: an edit to the
 first line has no effect.
+
+**Fixed 2026-10-11.** `outcome_coverage` is declared once in the literal, in the
+four-decimal form (`src/calibration.js:157`), with a comment recording that the
+first declaration was dead.
 
 ### VER-12 — LOW — Service-impact confidence coerces absent confidence to 0 via `|| 0`
 `src/analytics.js` `(nearestFlood?.item?.confidence || 0)`. An asset outside every
@@ -257,6 +338,10 @@ risk radius reports confidence 0, reading as "certain the risk is zero" rather t
 
 ## Concurrency
 
+**Fixed 2026-10-11.** The service-impact payload publishes the nearest flood risk's
+confidence as `null` when the asset is outside every radius
+(`src/analytics.js:735`), so an unmeasured risk no longer reads as a certain zero.
+
 ### CON-01 — CRITICAL — Cross-replica read-modify-write in `outbox.emit`
 `src/outbox.js:64` `const data = await store.read()`, then `:106`
 `await store.merge({ events_outbox: [record], … })`. The guard at `:66` and the
@@ -266,6 +351,11 @@ merge — the `attempts`/`next_attempt_at` carry-forward is decided from stale s
 An event re-emitted mid-dispatch resurrects a row whose backoff was just set.
 ENH-63 (`pg_advisory_lock`) is the fix.
 
+**Fixed 2026-10-11.** `emit` decides and merges inside one `store.withLock`
+(`src/outbox.js:70`), which on Postgres is a transaction-scoped advisory lock, so the
+read-modify-write is serialised across replicas and an event re-emitted mid-dispatch
+cannot resurrect a row whose backoff was just set.
+
 ### CON-02 — HIGH — No deadlock retry; `write()` vs `merge()` lock inversion
 `src/postgres-store.js:336` `DELETE FROM lite_records WHERE collection <> '__schema'`
 takes row locks across essentially the whole table inside a txn, while `merge()`
@@ -274,6 +364,11 @@ no retry on `40P01` (grep for `advisory|ISOLATION|deadlock|40P01` in
 `postgres-store.js` returns nothing). A `write()` racing a `merge()` returns a raw
 deadlock error to the caller with no backoff.
 
+**Fixed 2026-10-11.** Every write transaction takes one advisory lock first
+(`src/postgres-store.js:64-80`), which removes the `write()`-vs-`merge()` inversion
+rather than surviving it, and a retry on the two retryable SQLSTATEs (`40001`,
+`40P01`) covers a caller that did not take the lock (`:60`, `:614`).
+
 ### CON-03 — HIGH — `payload_hash` dedupe SELECT is not serialised against concurrent merges
 `src/postgres-store.js` upsert: `SELECT payload_hash … ANY($2)` then a JS `seen` Set
 filters, then one `INSERT … ON CONFLICT (collection,id) DO UPDATE`. Two concurrent
@@ -281,11 +376,17 @@ merges both run the SELECT before either commits, both see the hash absent, both
 insert. `ON CONFLICT` saves only id collisions — two records with **different ids
 but the same hash** both persist, defeating the dedupe.
 
+**Fixed 2026-10-11.** The dedupe path runs under the same advisory lock, so the
+`payload_hash` SELECT is serialised against concurrent merges. Cited at the site.
+
 ### CON-04 — HIGH — `evaluateAndPersistAlerts` fans out N full read-modify-write cycles
 `src/server.js:3337–3363`: one `store.merge`, then `for (const event of raised) await emit(…)`.
 Each `emit` does its own `store.read()` + `store.merge()`. A storm raising 200
 alerts is 200 sequential whole-store reads and 200 merges, serialised, on the
 request/periodic path. O(raised × N).
+
+**Fixed 2026-10-11.** `evaluateAndPersistAlerts` batches its writes rather than
+fanning out N read-modify-write cycles. Cited at the site.
 
 ### CON-05 — MEDIUM — `isSuppressed` re-filters all `alert_events` per rule, per evaluation; `Math.max(...seen)` spread
 `src/alerts.js` `data.alert_events.filter(e => e.rule_id === rule.id)` inside
@@ -294,6 +395,9 @@ evaluation is O(active_rules × alert_events). `Math.max(...seen)` passes one ar
 per prior event — a long history can exceed the engine's argument limit and throw
 `RangeError: Maximum call stack size exceeded`.
 
+**Fixed 2026-10-11.** `isSuppressed` no longer re-filters all `alert_events` per
+rule per evaluation, and the `Math.max(...seen)` spread is gone. Cited at the site.
+
 ### CON-06 — MEDIUM — Idempotency is not durable and the offline path does not use it
 `src/server.js:637` `createIdempotencyStore({ ttlMs: 24h, maxEntries: 1000 })` is
 in-process; `idempotencyKey` requires a client `Idempotency-Key` the service-worker
@@ -301,10 +405,18 @@ outbox does not mint. A retry after a process restart duplicates the write; a qu
 drain of >1,000 mutations evicts earlier keys. `/ready` honestly reports
 `{ in_process: true }`. ENH-40/63.
 
+**Fixed 2026-10-11.** `in_process` is gone from the readiness answer rather than
+set to false (`src/server.js:1238`), and the idempotency store is durable.
+
 ### CON-07 — MEDIUM — In-process-only dispatch lock, acknowledged but not enforced across replicas
 `src/outbox.js:129` `_dispatchLocks = new WeakMap()` keyed on the `store` object;
 the comment states two replicas need `pg_advisory_lock`. With >1 process,
 `dispatchPending` runs concurrently in each and the same pending row is POSTed twice.
+
+**Fixed 2026-10-11.** The dispatch decision runs inside `store.withLock`
+(`src/outbox.js:281`), so two replicas contend on the advisory lock instead of each
+POSTing the same pending row. The in-process `WeakMap` remains as a per-process
+fast path, not as the guarantee.
 
 ### CON-08 — LOW — `reportedHeads` Set grows for the process lifetime
 `src/audit-chain.js:458` `const reportedHeads = new Set()`, added to and never
@@ -314,6 +426,8 @@ proportional to distinct tamper warnings seen.
 ---
 
 ## Scalability
+
+**Fixed 2026-10-11.** `reportedHeads` is bounded. Cited at the site.
 
 ### SCL-01 — CRITICAL — Postgres `read()` materialises every requested row, no `LIMIT`, no cursor
 `src/postgres-store.js:267` `SELECT collection, body FROM lite_records WHERE …`, then
@@ -328,12 +442,18 @@ is 4,517 rows by the code's own comment; history collections are larger. ENH-61.
 (`runIngestion` `src/ingestion.js:177`, `dispatchPending` `src/outbox.js:164`). One
 tick is ~10+ full-store materialisations at `intervalSeconds` cadence. O(items × N).
 
+**Fixed 2026-10-11.** `runPeriodicTick` reads the store once per tick and passes it to
+each driver item, rather than each item reading the whole store. Cited at the site.
+
 ### SCL-03 — HIGH — `filterRecords` chains ~18 full-collection passes then slices
 `src/utils.js:207–241`: a fixed chain of `.filter()` calls (bbox, country, source,
 event_type, … date-range), each allocating a new array over the full collection,
 then `.slice(0, limit)`. Every pass walks the whole collection even when a selective
 early filter leaves three rows. O(filters × N) allocations per request.
 `buildDistrictRelations` also builds a nested Map over all chains per call.
+
+**Fixed 2026-10-11.** `filterRecords` applies selective predicates before the
+expensive ones and stops allocating a new array per filter. Cited at the site.
 
 ### SCL-04 — HIGH — `sendFile` reads, sha1-hashes and gzip-syncs on every static request
 `src/server.js:4610` `fs.readFile`, `:4624` `etagFor(content)` = sha1 over the whole
@@ -342,16 +462,25 @@ no gzip cache. `:4632` `last-modified = new Date().toUTCString()` is *now* on ev
 response, so `If-Modified-Since` can never 304 (only the ETag path can). Concurrent
 static requests serialise on the sync gzip work.
 
+**Fixed 2026-10-11.** `sendFile` serves from a prepared cache keyed on
+`mtimeMs`/`size`, so the read, the sha1 and the gzip happen once per version rather
+than once per request. Cited at the site.
+
 ### SCL-05 — MEDIUM — `jsonResponse` stringifies and sha256-hashes every 200 body
 `src/utils.js` `jsonResponse`: `JSON.stringify(body)` plus a sha256 over the
 serialised bytes to compute the ETag, per response. A 5,000-record page is a full
 serialise + hash on the hot path, O(response bytes) sync.
+
+**Fixed 2026-10-11.** `jsonResponse` caches the stringified body and its hash. Cited
+at the site.
 
 ### SCL-06 — MEDIUM — `terrain.js` tile cache is unbounded
 `src/terrain.js:35` `const tileCache = new Map()`, set with no size cap and no
 eviction (contrast `src/basemap-tiles.js:124`, which bounds with `TILE_CACHE_LIMIT`).
 Each decoded terrarium tile is a full elevation raster; panning at zoom ≤ 13
 accumulates every distinct `z/x/y` for the process lifetime — tens to hundreds of MB.
+
+**Fixed 2026-10-11.** The terrain tile cache is bounded. Cited at the site.
 
 ### SCL-07 — MEDIUM — `/ready` does two full-store reads and a full chain verification per probe
 `src/server.js:839` `await withTimeout(store.read(), …)` for reachability, `:861` a
@@ -360,9 +489,15 @@ which re-hashes every `action_logs` entry (O(n log n) + O(n) sha256). A load bal
 polling readiness pays this every few seconds — amplification on the endpoint
 designed to be polled most.
 
+**Fixed 2026-10-11.** `/ready` no longer does two full-store reads per probe. Cited
+at the site.
+
 ### SCL-08 — MEDIUM — `pg0.runCommand` accumulates output unbounded; timer not unref'd
 `src/pg0.js:67–96`: child `stdout`/`stderr` handlers concatenate into growing
 strings with no cap, and the abort `setTimeout` is cleared but never `unref`'d.
+
+**Fixed 2026-10-11.** `pg0.runCommand` caps accumulated output and unrefs its timer.
+Cited at the site.
 
 ### SCL-09 — LOW — `rate-limit.js` `acquire()` queue is unbounded
 `src/rate-limit.js:213` `queue.push({ resolve })` with no `maxQueue`. Callers that
@@ -374,6 +509,9 @@ the outbound path. ENH-66.
 
 ## Observability
 
+**Fixed 2026-10-11.** The `rate-limit.js` `acquire()` queue is bounded. Cited at the
+site.
+
 ### OBS-01 — HIGH — Logger argument order inverted at five call sites; those log lines are malformed
 `logger.error`/`info`/`warn` are `(event, fields)` (`src/observability.js:40`,
 `logEvent` at `:43` spreads `fields`). These pass `(fieldsObject, 'message')`:
@@ -384,6 +522,11 @@ the outbound path. ENH-66.
 keyed on `event` cannot match — including the outbox-emit-failure path an operator
 greps during an incident.
 
+**Fixed 2026-10-11.** Every call site is `logger.<level>('event', { fields })`, the
+order `logEvent` expects (`src/observability.js:40-43`). The inverted form set
+`event` to an object and spread a string as `fields`, emitting numeric keys and no
+string `event` — which is the field an incident pipeline greps.
+
 ### OBS-02 — HIGH — Outbox emit failures on two report paths are swallowed silently
 `src/server.js:2631` `try { await emit(store, 'report.created', record) } catch {}`
 and `:2751` the same for `report.distributed`. Every other emit site logs and
@@ -391,11 +534,20 @@ counters. If the store write fails the event is never enqueued, no webhook fires
 and the handler returns 201 `success: true` — a distributed SITREP reports success
 while its subscriber notification was dropped, with no error, counter or dead-letter.
 
+**Fixed 2026-10-11.** Outbox emit failures on the two report paths are logged rather
+than swallowed. Cited at the site.
+
 ### OBS-03 — MEDIUM — No request or correlation id anywhere
 `grep -rni "request_id|correlation" src/` returns nothing. The request log line
 (`src/server.js:457`) carries no id; the 500 handler mints `incident_id` but never
 puts it on the log line nor propagates it. A 500's id returned to the client cannot
 be joined to the log entry for that request. ENH-64.
+
+**Fixed 2026-10-11.** Every request gets an id: `sanitizeRequestId(req.headers['x-request-id']) || randomUUID()`
+is set on the response and published to the logger through `runWithRequestId`
+(`src/server.js:495-496`), and `x-request-id` is in the CORS expose list
+(`src/cors.js:58`, `:91`) so a browser client can read it. A 500's id joins the
+client's report to the log entry for that request.
 
 ### OBS-04 — MEDIUM — `/health` returns 200 in `starting` when no heartbeat has ever been written
 `src/server.js:948` `const starting = !heartbeat`; `:949` returns 200 when
@@ -405,6 +557,10 @@ indefinitely. The Dockerfile and compose healthchecks poll `/health`, so the
 container is reported healthy forever while the pipeline never ran. `/ready` is
 correct but no orchestrator probes it.
 
+**Fixed 2026-10-11.** A process that has never written a heartbeat is `starting` only
+inside a start grace window and `degraded` after it (`src/server.js:1347-1362`), so a
+failed `startPeriodicDriver` no longer reports the container healthy forever.
+
 ### OBS-05 — MEDIUM — Observability values computed and never surfaced
 `metricsOverflow()` (`src/observability.js:187`) has no caller — the counters for
 dropped/bucketed/evicted metric series, which the module documents as "reported,
@@ -412,11 +568,18 @@ never silently absorbed," are themselves silently absorbed. `uptimeStats()`
 (`src/observability.js:3`) and `piiSaltStatus()` (`src/pii.js:295`) likewise have no
 production consumer. `/metrics` calls only `metrics.render()`.
 
+**Fixed 2026-10-11.** The observability values are surfaced. Cited at the site.
+
 ### OBS-06 — MEDIUM — Periodic and failure paths bypass the structured logger
 `src/server.js:241`, `:260` (`runPeriodicTick`), `:3359`, `:4782` use `console.error`,
 not `logger`. Plain text on stderr: `LINDELA_LITE_LOG_LEVEL` filtering and JSON
 aggregation do not apply, so a JSON pipeline loses exactly the messages — a failing
 tick, a dead driver — an operator most needs.
+
+**Fixed 2026-10-11.** The periodic and failure paths call `logger`
+(`src/server.js:341`, `:365`, `:663`), so `LINDELA_LITE_LOG_LEVEL` filtering and
+JSON aggregation apply to exactly the messages an operator needs. No `console.error`
+remains in `src/server.js`.
 
 ### OBS-07 — LOW — `kpi._cache` is bounded but not TTL-swept
 `src/kpi.js` evicts oldest on overflow and checks `expires`; module-global across
@@ -425,6 +588,10 @@ requests. No correctness issue found; noted for completeness.
 ---
 
 ## Architecture
+
+**Fixed 2026-10-11.** The KPI cache is swept, and `cacheStats()`
+(`src/kpi.js:26-32`) reports `{size, live, expired, max}` — the seam that lets a test
+watch the sweep work.
 
 ### ARC-01 — CRITICAL — `handleApiRequestInContext` is a 1,597-line god function
 `src/server.js:763–2360` holds the entire `/api/v1` surface: 68 literal
