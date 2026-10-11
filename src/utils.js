@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { KNOWN_DISTRICTS } from './districts.js'
 import { errorEnvelope } from './errors.js'
+import { hxlRow } from './hxl.js'
 
 export function stableId(prefix, value) {
   const hash = crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16)
@@ -545,13 +546,21 @@ export function parseCsv(text) {
   return dataRows.map((cells) => Object.fromEntries(headers.map((header, index) => [header.trim(), cells[index]?.trim() ?? ''])))
 }
 
-export function toCsv(records) {
+export function toCsv(records, { hxl = false } = {}) {
   const flatRecords = records.map((record) => flattenRecord(record))
   const headers = [...new Set(flatRecords.flatMap((record) => Object.keys(record)))].sort()
   // Headers are record keys, and a record key is still data: any field name a
   // connector invents ends up on this line. Escape it like a value — a key
   // holding a comma would otherwise shift every column to its right by one.
-  const lines = [headers.map((header) => csvEscape(header)).join(',')]
+  const lines = []
+  // ENH-31. The HXL hashtag row goes *above* the header row, which is where the
+  // standard puts it and where HDX looks. Off by default: an export that
+  // changed shape because an option was added would break every consumer that
+  // already parses it, and the change would look like an improvement in the
+  // diff. Built from `headers`, so a tag cannot land on a column it does not
+  // describe.
+  if (hxl) lines.push(hxlRow(headers).map((tag) => csvEscape(tag)).join(','))
+  lines.push(headers.map((header) => csvEscape(header)).join(','))
   for (const record of flatRecords) {
     lines.push(headers.map((header) => csvEscape(record[header])).join(','))
   }

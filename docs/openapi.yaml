@@ -2171,6 +2171,16 @@ paths:
   /api/v1/export.csv:
     get:
       summary: Export records as CSV
+      parameters:
+        - name: hxl
+          in: query
+          description: >-
+            Add an HXL hashtag row above the header, so a partner's pipeline can
+            map the columns without a per-dataset table. Off by default; a value
+            that is not a switch is refused rather than read as truthy.
+          schema:
+            type: string
+            enum: ['1', '0', 'true', 'false', 'yes', 'no']
       responses:
         '200':
           description: CSV export
@@ -2178,6 +2188,11 @@ paths:
             text/csv:
               schema:
                 type: string
+        '400':
+          description: hxl was not one of the accepted switches
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /api/v1/action-logs/{id}:
     parameters:
       - $ref: '#/components/parameters/Id'

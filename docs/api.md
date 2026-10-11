@@ -96,7 +96,7 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 - `POST /api/v1/report-schedule-runs/:id/retry` retries the schedule that produced the run.
 - `GET /api/v1/assessments` returns a combined assessment package.
 - `GET /api/v1/export.geojson` returns event and service features as GeoJSON.
-- `GET /api/v1/export.csv` returns events as CSV.
+- `GET /api/v1/export.csv` returns events as CSV. Add `?hxl=1` to put an [HXL](https://hxlstandard.org/) hashtag row above the header — `#adm2+name` over `district`, `#geo+lat` over `latitude` — so a partner's pipeline can map the columns without a per-dataset table. Off by default, and a value that is not a switch (`?hxl=maybe`) is refused with `400 bad_request` rather than read as truthy.
 
 ## Common Filters
 

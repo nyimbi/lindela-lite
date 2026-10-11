@@ -43,6 +43,7 @@ import {
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
 import { collectionPage, currentRequestAuth, filterRecords, jsonResponse, matchedAndPage, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
+import { parseHxlFlag } from './hxl.js'
 import { createIdempotencyFor } from './idempotency.js'
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor, piiSaltStatus } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
@@ -2756,11 +2757,24 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     // partner scoping. It is the single widest read in the API and the one
     // SEC-01 found serving field reports and message bodies unauthenticated.
     ], url.searchParams, { auth: req.__auth, data, collection: 'export' })
+    // ENH-31. `?hxl=1` adds the HXL hashtag row above the header. A value that
+    // is not a switch is refused rather than read as truthy — `Boolean('maybe')`
+    // is true, so a truthiness test would tag the export for a caller who did
+    // not ask, and ignoring it instead tells a caller a parameter was honoured
+    // when it was not. Same rule as `?limit=abc`.
+    const hxl = parseHxlFlag(url.searchParams.get('hxl'))
+    if (hxl === undefined) {
+      jsonResponse(res, 400, {
+        success: false,
+        error: 'hxl must be one of 1, 0, true, false, yes or no',
+      })
+      return
+    }
     res.writeHead(200, {
       'content-type': 'text/csv; charset=utf-8',
-      'content-disposition': 'attachment; filename="lindela-lite-export.csv"',
+      'content-disposition': `attachment; filename="lindela-lite-export${hxl ? '-hxl' : ''}.csv"`,
     })
-    res.end(toCsv(records))
+    res.end(toCsv(records, { hxl: Boolean(hxl) }))
     return
   }
 

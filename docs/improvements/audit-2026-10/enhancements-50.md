@@ -41,6 +41,33 @@ emits an HXL hashtag row above the header (`#loc+name`, `#date+occurred`,
 partner must hand-map every column. `src/server.js` `export.csv` route; the
 hashtag registry belongs in `src/schema.js` beside the field definitions.
 
+**Shipped 2026-10-11.** `src/hxl.js` holds the registry and `toCsv(records, {hxl})`
+emits the row; `GET /api/v1/export.csv?hxl=1` serves it. Two deviations from the
+note above, both deliberate.
+
+The registry went in its own module rather than in `src/schema.js`. `schema.js`
+holds the *store's* vocabulary — the status and type enumerations a record is
+validated against — and this registry is keyed by the *export's* column names,
+which are what `flattenRecord` makes of a record key: a nested field becomes a
+dotted path (`location.admin1`), an underscored one stays underscored
+(`source_id`). Putting it beside the field definitions would have invited
+writing it against the store's names, and that mistake is silent — the tag
+simply never matches a header and the column reads as unmapped.
+
+The row is built by looking each header up (`hxlRow(headers)`), not by walking
+the registry. A row built by walking the registry emits every hashtag in
+registry order, and `toCsv` sorts its headers, so the file would carry tags that
+are each correct and each on the wrong column with nothing downstream able to
+tell. The canary that walks the registry fails 3 cases.
+
+It is opt-in (`?hxl=1`), because an export that changed shape when an option was
+added would break every consumer already parsing it and the change would look
+like an improvement in the diff. `?hxl=maybe` is a 400, not a truthy read —
+`Boolean('maybe')` is true, so a truthiness test tags the export for a caller who
+did not ask. Eleven cases in `test/hxl-export.test.js`; canaried in three
+directions (registry-order row: 3 failures; truthiness: 1; a malformed hashtag in
+the registry: 5).
+
 **ENH-32 — DHIS2 `dataValueSet` push.** `src/connectors/dhis2.js` already speaks
 DHIS2 to *pull*. The push half is a serializer plus a scheduled job: map the KPI
 rollups to org-unit/dataElement/period triples and POST to `/api/dataValueSets`.
