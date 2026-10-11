@@ -65,6 +65,7 @@ import { matchExportRoute, handleExportRoute } from './routes/exports.js'
 import { matchKpiRoute, handleKpiRoute } from './routes/kpi.js'
 import { matchFieldSignalRoute, handleFieldSignalRoute } from './routes/field-signals.js'
 import { matchExposureRoute, handleExposureRoute } from './routes/exposure.js'
+import { matchDerivedRoute, handleDerivedRoute } from './routes/derived.js'
 import {
   formCatalogue, formFor, latestForm, mergeForms, validateAnswers, validateFormDefinition,
 } from './forms.js'
@@ -1463,6 +1464,14 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     data, req, res, url, jsonResponse,
   })) return
 
+  // ARC-01. The derived-collection reads, extracted to `src/routes/derived.js`.
+  // Five reads over what `refreshAnalytics` recomputes, three of which carry a
+  // refusal that has to travel beside the figure rather than replace it.
+  const derivedRoute = matchDerivedRoute(url.pathname, req.method)
+  if (derivedRoute && await handleDerivedRoute(derivedRoute, {
+    data, req, res, url, jsonResponse,
+  })) return
+
   if (req.method === 'GET' && url.pathname === '/api/v1/auth-info') {
     // What this token is, as the server understands it. The partner portal
     // rendered its organisation from localStorage — a value the user typed,
@@ -2366,25 +2375,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/data-quality') {
-    // ENH-72. The ordering is confidence descending, and the confidence is a
-    // completeness heuristic rather than an accuracy measurement — both facts
-    // travel with the payload so a reader is not left to infer the second from
-    // the field's name.
-    const ranking = explainRanking('data-quality', { entries: data.data_quality })
-    jsonResponse(res, 200, { success: true, ranking, ...collectionPage(data.data_quality, url.searchParams, { auth: req.__auth, data, collection: 'data_quality' }) })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/data-lineage') {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.data_lineage || [], url.searchParams, { auth: req.__auth, data, collection: 'data_lineage' }) })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/operations/summary') {
-    jsonResponse(res, 200, { success: true, data: operationalSummary(data) })
-    return
-  }
 
   if (req.method === 'POST' && url.pathname === '/api/v1/analytics/bias-correct') {
     const body = await readRequestJson(req)
@@ -2406,38 +2396,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  // Calibration and drift are stored on every refresh, so they are read like
-  // any other derived collection. Both refuse on thin evidence and say why;
-  // the refusal travels with the row rather than becoming an empty list.
-  if (req.method === 'GET' && url.pathname === '/api/v1/calibration/by-region') {
-    const rows = data.region_trust || []
-    const region = url.searchParams.get('region')
-    const selected = region ? rows.filter((r) => r.region_name === region) : rows
-    jsonResponse(res, 200, {
-      success: true,
-      regions: rows.length,
-      returned: selected.length,
-      // A region with too little evidence has `trust` null and a reason. The
-      // count of refusals is as much of the answer as the scores.
-      refused: selected.filter((r) => r.trust === null || r.trust === undefined).length,
-      data: selected,
-    })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/model-drift') {
-    const rows = data.model_drift || []
-    jsonResponse(res, 200, {
-      success: true,
-      regions: rows.length,
-      verdicts: rows.reduce((acc, r) => {
-        acc[r.verdict] = (acc[r.verdict] || 0) + 1
-        return acc
-      }, {}),
-      data: rows,
-    })
-    return
-  }
 
   // "Where did this number come from."
   //
