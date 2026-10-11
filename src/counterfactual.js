@@ -112,6 +112,23 @@ export const DEFAULT_SEED = 0x9e3779b9
 export const CONFIDENCE_LEVEL = 0.95
 
 /**
+ * The refusals this module can return, as codes.
+ *
+ * Every `refusal(...)` call below prefixes its sentence with one of these,
+ * because a caller that has to match on prose to know *why* an estimate is
+ * absent is a caller that breaks when the prose is edited. ENH-50's registry
+ * imports this list rather than restating it — a copied vocabulary agrees today
+ * and drifts tomorrow, which is the failure the registry exists to prevent.
+ */
+export const COUNTERFACTUAL_REFUSALS = Object.freeze([
+  'thin_treated_arm',
+  'thin_comparison_arm',
+  'mismatched_comparison_set',
+  'baseline_imbalance',
+  'no_variation',
+])
+
+/**
  * A deterministic 32-bit PRNG (mulberry32).
  *
  * `Math.random` is the wrong instrument here: it makes the interval differ
