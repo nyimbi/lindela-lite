@@ -295,7 +295,7 @@ function applyI18n() {
 // directly, which is the whole point of the move. A re-export nobody calls is a
 // second entry point into the same module, and the next reader has to work out
 // which one is real.
-import { pageWindow, setPage, listScope } from '/shared/paging.js'
+import { pageWindow, setPage, listScope, fetchAllPages } from '/shared/paging.js'
 
 function renderPager(host, key, total, onGo) {
   if (!host) return
@@ -352,11 +352,19 @@ function resetListPage(key) { setPage(key, 1, 0) }
  * Written as text, not innerHTML: the numbers are the only content and one of
  * them comes from an envelope.
  */
-export function renderPagerScope(host, scope, noun, { filtered, fetched } = {}) {
+export function renderPagerScope(host, scope, noun, { filtered, fetched, capped = false } = {}) {
   if (!host) return
   const plural = (n) => `${n} ${noun}${n === 1 ? '' : 's'}`
   const parts = []
-  if (scope.complete) {
+  if (capped) {
+    // ENH-81. The walk stopped at its page cap with the set still going. The
+    // arithmetic below would say "0 are not loaded" — the walk holds every row
+    // the server's `total` counts, because the walk is what produced the count
+    // — and that sentence is the defect this whole change is about: a list that
+    // reads as complete when rows past it were never fetched.
+    parts.push(`Showing the ${plural(fetched)} most recent; `
+      + `older ${noun}s were not fetched — narrow the filter to reach them.`)
+  } else if (scope.complete) {
     parts.push(`All ${plural(scope.total)} loaded.`)
   } else {
     parts.push(`Showing the ${plural(fetched)} most recent of ${plural(scope.total)}; `
@@ -3659,7 +3667,32 @@ async function refresh({ first = false, force = false } = {}) {
         }
       })(),
       load('assets', '/api/v1/service-assets?limit=100'),
-      load('alerts', '/api/v1/alert-events?limit=30'),
+      // ENH-81. The rail walks `next_cursor` to the end of the set rather than
+      // holding one page and paging inside it. On a feed longer than the fetch,
+      // every row past the first page was unreachable from any surface — the
+      // pager counted within a window it already had. `maxPages` bounds the walk
+      // so a runaway feed cannot hold the tick open; `truncated` is what the
+      // scope line reads to say the walk stopped short rather than that the set
+      // ended, which is the distinction ARC-06 drew for the count.
+      (async () => {
+        if (!want.has('alerts')) return { skipped: true }
+        try {
+          const walk = await fetchAllPages(
+            (path) => fetchJson(path),
+            { path: '/api/v1/alert-events', limit: 200, maxPages: 20 },
+          )
+          return {
+            alerts: {
+              data: walk.rows, returned: walk.rows.length, total: walk.total,
+              has_more: walk.truncated, next_cursor: null,
+            },
+            alertsWalkTruncated: walk.truncated,
+            failed: null,
+          }
+        } catch {
+          return { alerts: null, failed: 'alerts' }
+        }
+      })(),
       load('reports', '/api/v1/reports?limit=20'),
       load('reportTemplates', '/api/v1/report-templates?limit=20'),
       load('climate', '/api/v1/climate?limit=200'),
@@ -3724,6 +3757,10 @@ async function refresh({ first = false, force = false } = {}) {
     const alerts = merged.alerts
     if (alerts) {
       state.data.alerts = alerts
+      // ENH-81. Whether the walk stopped at its cap rather than at the end of
+      // the set. Held separately from the envelope's `has_more`, which the walk
+      // sets from the same value — this is the one the scope line reads.
+      state.alertsTruncated = merged.alertsWalkTruncated === true
       renderAlertsBadge(alerts.data || [])
       // Task 3: fill the authorised-action outcome for alerts fired before the
       // field existed, from the execution row the alert already names.
@@ -5346,8 +5383,15 @@ function _renderAlertsPanel() {
   // the client pages inside a window it already has and never follows the
   // server's `next_cursor`. `listScope` says which of those is true.
   const scope = listScope(state.data.alerts, filtered)
-  renderPager($('alertsPager'), 'alerts', scope.total, () => _renderAlertsPanel())
-  renderPagerScope($('alertsScope'), scope, 'alert', { filtered: filtered.length, fetched: state.data.alerts?.data?.length || 0 })
+  // ENH-81. The walk follows `next_cursor` to the end of the set, so a
+  // truncated scope now means one thing only: the walk hit its page cap. That
+  // is a different sentence from "the server sent one page", and it is the one
+  // the operator needs — the rows past the cap are still unreachable, and
+  // saying so is what stops the list reading as complete.
+  const fetched = state.data.alerts?.data?.length || 0
+  const walked = { ...scope, complete: scope.complete && !state.alertsTruncated }
+  renderPager($('alertsPager'), 'alerts', walked.total, () => _renderAlertsPanel())
+  renderPagerScope($('alertsScope'), walked, 'alert', { filtered: filtered.length, fetched, capped: state.alertsTruncated })
 
   container.querySelectorAll('[data-action]').forEach((btn) => {
     btn.addEventListener('click', (e) => {

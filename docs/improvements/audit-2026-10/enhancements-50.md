@@ -538,6 +538,33 @@ Order-of-magnitude claim: a deployment with more alerts than its fetch limit
 currently cannot reach them at all, from any surface. That is unbounded rows
 unreachable against a fixed number reachable.
 
+**Fixed 2026-10-11.** `fetchAllPages` in `public/shared/paging.js` walks
+`next_cursor` to the end of the set, or to a `maxPages` cap. It is DOM-free and
+takes `fetchPage` as an argument, so it is unit-tested without a browser — nine
+tests in `test/paging.test.js`, including the 61-row case the entry describes
+(30 fetched, 31 unreachable before).
+
+The cap is the part that needed care, and it is where the entry's own logic
+extends one layer down. A walk that stops at `maxPages` and returns what it
+holds, saying nothing, is the same defect: a page that reads as the whole set.
+So the return carries `truncated`, set by two causes that must not be conflated
+with "complete" — the cap was reached with the set still going, or a page failed
+mid-walk. Both leave a list that is real and incomplete, which is a thing the
+operator can be told; `failed` distinguishes them.
+
+The rail now fetches through the walk (`limit: 200, maxPages: 20`) instead of
+`?limit=30`, and `renderPagerScope` gained a `capped` case. Without it the
+pager's own arithmetic said "**0 are not loaded**" over a capped walk — the walk
+holds every row the count came from — which is precisely the sentence this entry
+exists to remove. It now reads "older alerts were not fetched — narrow the
+filter to reach them."
+
+Canaried four ways: stopping the walk after one page (18/22, all four
+walk-dependent tests), reporting the cap as completion (21/22, only the cap
+test), disabling the capped copy (56/57, only the copy test), and a no-op
+replacement of the point guard that correctly changed nothing. `check-budget`
+passes at 214.4 KB against 216 KB — 1.6 KB of headroom, no raise.
+
 ---
 
 ## Scoring matrix (all fifty, ranked)

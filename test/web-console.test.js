@@ -623,6 +623,35 @@ describe('public/app.js — console frontend', () => {
         'a missing toggle is off, not a crash on the boot path')
     })
 
+    it('says rows were not fetched when the walk stopped at its cap', () => {
+      // ENH-81. The pager's own arithmetic would say "0 are not loaded" — the
+      // walk holds every row the count came from — and that sentence is the
+      // defect: a list that reads as complete when rows past it were never
+      // fetched.
+      const host = { textContent: '', hidden: true }
+      app.renderPagerScope(host, { total: 4000, held: 4000, complete: false, truncated: true }, 'alert',
+        { filtered: 4000, fetched: 4000, capped: true })
+      assert.match(host.textContent, /were not fetched/,
+        'a capped walk must say the rows exist and were not fetched')
+      assert.ok(!/0 are not loaded/.test(host.textContent),
+        'the arithmetic form would claim completeness over rows that were never requested')
+    })
+
+    it('keeps the ordinary incomplete sentence when the server sent one page', () => {
+      const host = { textContent: '', hidden: true }
+      app.renderPagerScope(host, { total: 61, held: 30, complete: false, truncated: true }, 'alert',
+        { filtered: 30, fetched: 30, capped: false })
+      assert.match(host.textContent, /31 are not loaded/,
+        'the un-walked case must keep its count')
+    })
+
+    it('still says the whole set is loaded when it is', () => {
+      const host = { textContent: '', hidden: true }
+      app.renderPagerScope(host, { total: 12, held: 12, complete: true, truncated: false }, 'alert',
+        { filtered: 12, fetched: 12, capped: false })
+      assert.match(host.textContent, /All 12 alerts loaded/)
+    })
+
     it('names every ambient endpoint it polls on a tab that is not the first', () => {
       // AMBIENT_ENDPOINTS is the set fetched on every tab, so a name added to
       // ALL_ENDPOINTS but not here is a surface that stops updating when the
