@@ -662,6 +662,31 @@ operational thresholds (passable/restricted/impassable). No `src/` module classi
 A partner API or SMS client gets raw depth and must re-implement the banding — or go
 without. The honesty claim ("0.3 m impedes movement") is enforced only for browser users.
 
+**Fixed 2026-10-11.** Three routes now classify what they publish, using the same
+pure modules the console loads — so the banding a partner reads and the banding an
+operator sees cannot drift.
+
+- `/api/v1/river-discharge`: each item gains `band`, `band_label`, `severity` and
+  `band_max_m3s`; the payload gains `model_note` and the full `bands` table.
+- `/api/v1/weather`: every forecast day gains `band`/`band_label`, the current
+  block gains `temperature_band`/`condition_label`, and `precip_bands`/`temp_bands`
+  are published.
+- `/api/v1/flood-depth`: each profile level gains `depth_band`, `depth_band_label`
+  and `depth_band_note` — the operational consequence in words ("restricted", not
+  "d1"). The grid gains `per_band`, cells and share per band over the *surveyed*
+  denominator, plus the `flood_bands` table.
+
+The `public/shared/` modules were already DOM-free and importable from Node
+(`src/server.js` imported `dischargeBand` before this change), so the defect was
+never the module location — it was that only one route used them. The band tables
+travel with each payload so a consumer that has never read this repository can
+audit the cut points; a band key with no legend is a classification taken on faith.
+
+`test/api-banding.test.js` drives all three routes and asserts the band agrees with
+the shared function for the number reported, and that the grid's per-band summary
+counts exactly the surveyed cells it summarises. Canaried: short-circuiting
+`bandedDepthProfile` fails it.
+
 ### ARC-06 — MEDIUM — Pagination implemented twice with two clamp algorithms
 `collectionPage`/`matchedAndPage` (`src/utils.js:259`, `:307`) server-side;
 `public/shared/paging.js` client-side (`LIST_PAGE_SIZE=25` vs server default 500 /

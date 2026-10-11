@@ -61,7 +61,15 @@ import { summarizeRoadAccess } from './road-access.js'
 import { summarizeFoodSecurity } from './connectors/ipc-hdx.js'
 import { districtWeatherReport } from './connectors/open-meteo-forecast.js'
 import { summarizeDiseaseObservations } from './connectors/who-gho.js'
-import { dischargeBand } from '../public/shared/discharge-bands.js'
+import { dischargeBand, DISCHARGE_BANDS, DISCHARGE_MODEL_NOTE } from '../public/shared/discharge-bands.js'
+// ARC-05. The operational banding the browser draws with, applied on the server
+// too. These modules are pure and DOM-free by construction, so importing them
+// from `src/` is not reaching into the client — it is the same code the client
+// loads, which is the point: a partner API or an SMS client that gets raw depth
+// has to re-implement the thresholds, and the honesty claim ("0.3 m impedes
+// movement") is then enforced only for browser users.
+import { FLOOD_DEPTH_BANDS, floodDepthBand } from '../public/shared/flood-bands.js'
+import { precipBand, tempBand, weatherCodeLabel, PRECIP_BANDS, TEMP_BANDS } from '../public/shared/weather-bands.js'
 import { planDelivery } from './routing.js'
 import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { upstreamTileUrl, loadRasterTile } from './basemap-tiles.js'
@@ -1799,7 +1807,39 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     // time. Not paged — five districts, seven days each, is a fixed small
     // payload, and `districtWeatherReport` states the absence of data rather
     // than answering with an empty page that reads as "no weather".
-    jsonResponse(res, 200, { success: true, ...districtWeatherReport(data.weather_forecasts || []) })
+    //
+    // ARC-05. Every reading is banded server-side. The overlay bands today's
+    // total itself (`weatherLayerView`), but a partner reading this JSON gets
+    // 20 mm with no way to know it is the boundary where runoff starts cutting
+    // roads — and the thresholds are operational, not decorative. Each day
+    // carries its band; the current block carries its temperature band and
+    // condition label. The band table is published once so a consumer can audit
+    // the cut points without reading this repository.
+    const report = districtWeatherReport(data.weather_forecasts || [])
+    jsonResponse(res, 200, {
+      success: true,
+      ...report,
+      districts: report.districts.map((district) => ({
+        ...district,
+        current: district.current
+          ? {
+            ...district.current,
+            temperature_band: tempBand(district.current.temperature_c)?.key || null,
+            condition_label: weatherCodeLabel(district.current.weather_code),
+          }
+          : null,
+        forecast: (district.forecast || []).map((day) => ({
+          ...day,
+          band: precipBand(day.precipitation_mm)?.key || null,
+          band_label: precipBand(day.precipitation_mm)?.label || null,
+        })),
+      })),
+      precip_bands: PRECIP_BANDS.map((b) => ({
+        key: b.key, label: b.label, severity: b.severity,
+        max_mm: Number.isFinite(b.max) ? b.max : null,
+      })),
+      temp_bands: TEMP_BANDS.map((b) => ({ key: b.key, label: b.label, max_c: Number.isFinite(b.max) ? b.max : null })),
+    })
     return
   }
 
@@ -1846,11 +1886,34 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     for (const item of items) {
       if (!asOf || item.as_of > asOf) asOf = item.as_of
     }
-    const withBand = items.map((item) => ({
-      ...item,
-      band: dischargeBand(item.river_discharge_m3s)?.key || 'unknown',
-    }))
-    jsonResponse(res, 200, { success: true, data: withBand, as_of: asOf, note })
+    // ARC-05. The band, its label and its severity travel with the number, so a
+    // partner reading this JSON gets the same operational reading the browser
+    // draws rather than a bare m³/s they must threshold themselves. The cut
+    // points are published alongside so the reading is auditable without the
+    // source: a consumer can see that 50 m³/s is where "moderate" begins.
+    const withBand = items.map((item) => {
+      const band = dischargeBand(item.river_discharge_m3s)
+      return {
+        ...item,
+        band: band?.key || 'unknown',
+        band_label: band?.label || null,
+        severity: band?.severity || 'ungraded',
+        // Null when the band is unknown: the number was reported but no band
+        // matched, which is a different state from "no reading".
+        band_max_m3s: band && Number.isFinite(band.max) ? band.max : null,
+      }
+    })
+    jsonResponse(res, 200, {
+      success: true,
+      data: withBand,
+      as_of: asOf,
+      note,
+      model_note: DISCHARGE_MODEL_NOTE,
+      bands: DISCHARGE_BANDS.map((b) => ({
+        key: b.key, label: b.label, severity: b.severity,
+        max_m3s: Number.isFinite(b.max) ? b.max : null,
+      })),
+    })
     return
   }
 
@@ -4371,22 +4434,98 @@ async function handleFloodDepth(url, res) {
         terrainContext(lat, lon),
         depthProfile(lat, lon, { levels_m: levels }),
       ])
-      jsonResponse(res, 200, { success: true, data: { ...profile, terrain: context } })
+      jsonResponse(res, 200, { success: true, data: { ...bandedDepthProfile(profile), terrain: context } })
       return true
     }
 
     if (hasPoint) {
       const profile = await depthProfile(lat, lon, { levels_m: levels })
-      jsonResponse(res, 200, { success: true, data: profile })
+      jsonResponse(res, 200, { success: true, data: bandedDepthProfile(profile) })
       return true
     }
 
     const grid = await depthGrid({ south, west, north, east, levelM: levels, gridSize })
-    jsonResponse(res, 200, { success: true, data: grid })
+    jsonResponse(res, 200, { success: true, data: bandedDepthGrid(grid) })
   } catch (error) {
     jsonResponse(res, error.statusCode || 400, { success: false, error: error.message })
   }
   return true
+}
+
+/**
+ * ARC-05. The operational band for every depth this route publishes.
+ *
+ * `floodDepthBand` is the same function the map shades cells with, so the
+ * banding a partner reads here and the banding an operator sees on screen
+ * cannot drift — which is the whole reason it is shared rather than
+ * re-derived. The cut points are operational: 0.3 m impedes walking, 1 m stops
+ * a light vehicle, 2 m and a road is effectively gone.
+ *
+ * `flood_bands` travels with the payload once, so the thresholds are auditable
+ * by a consumer that has never read this file. Without it, a partner receiving
+ * `band: "d1"` knows a classification happened but not what it means.
+ */
+const FLOOD_BAND_TABLE = FLOOD_DEPTH_BANDS.map((b) => ({
+  key: b.key,
+  label: b.label,
+  note: b.note,
+  max_m: Number.isFinite(b.max) ? b.max : null,
+}))
+
+/** Band one depth reading, preserving the null-is-not-zero discipline. */
+function bandedDepth(depth) {
+  const band = floodDepthBand(depth)
+  return {
+    depth_band: band?.key || null,
+    depth_band_label: band?.label || null,
+    // The operational consequence, in words. A partner routing a vehicle needs
+    // "restricted", not "d1".
+    depth_band_note: band?.note || null,
+  }
+}
+
+/** A depth profile with each level's depth banded. */
+function bandedDepthProfile(profile) {
+  return {
+    ...profile,
+    // A profile carries one depth per requested level. The top-level
+    // `inundated`/`onset_level_m` stay as they are — this adds the band beside
+    // each number rather than replacing any of the existing refusals.
+    profile: (profile.profile || []).map((point) => ({ ...point, ...bandedDepth(point.depth_m) })),
+    flood_bands: FLOOD_BAND_TABLE,
+  }
+}
+
+/**
+ * A depth grid with its primary-level band summary.
+ *
+ * The grid itself is up to 65,536 cells and banding each one would multiply the
+ * payload for a map that bands client-side anyway. What a non-browser consumer
+ * needs is the summary: how much of the surveyed box falls in each band. That
+ * is what `per_band` states, and it is the number a partner would otherwise
+ * have to derive by re-implementing the thresholds.
+ */
+function bandedDepthGrid(grid) {
+  const counts = new Map(FLOOD_DEPTH_BANDS.map((b) => [b.key, { key: b.key, label: b.label, note: b.note, cells: 0 }]))
+  let banded = 0
+  for (const depth of grid.depth_grid || []) {
+    const band = floodDepthBand(depth)
+    if (!band) continue
+    counts.get(band.key).cells += 1
+    banded += 1
+  }
+  const total = (grid.depth_grid || []).filter((d) => typeof d === 'number' && Number.isFinite(d)).length
+  return {
+    ...grid,
+    per_band: [...counts.values()].map((entry) => ({
+      ...entry,
+      // Share of *surveyed* cells, the same denominator `coverage_pct` uses.
+      // Naming the denominator matters: "40% in band d1" is not 40% of the
+      // district, and `surveyedAreaKm2` exists to say so.
+      pct_of_surveyed: total ? Math.round((entry.cells / total) * 10000) / 100 : null,
+    })),
+    flood_bands: FLOOD_BAND_TABLE,
+  }
 }
 
 /**
