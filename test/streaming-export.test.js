@@ -67,7 +67,7 @@ const parseNdjson = (text) => {
 }
 
 describe('ENH-37 — the NDJSON export streams every record, not a page', () => {
-  it('returns all 1,200 records where the CSV route would stop at 500', async () => {
+  it('returns all 1,200 records, where the route it replaces stopped at 500', async () => {
     await withServer(async (base, store) => {
       await store.merge({ hazard_events: hazards(1200) })
 
@@ -75,16 +75,31 @@ describe('ENH-37 — the NDJSON export streams every record, not a page', () => 
       assert.equal(res.status, 200)
       assert.match(res.headers.get('content-type'), /application\/x-ndjson/)
       const records = parseNdjson(await res.text())
-
-      // The headline. `export.csv` against the same store returns 500 and says
-      // nothing about the rest.
       assert.equal(records.length, 1200, 'the export stopped at a page rather than streaming the set')
+    })
+  })
 
-      const csv = await fetch(`${base}/api/v1/export.csv`)
-      const csvRows = (await csv.text()).split('\n').filter((line) => line.length)
-      // header + 500 data rows. Asserted rather than assumed, because the point
-      // of this test is the difference between the two routes.
-      assert.equal(csvRows.length, 501, 'the CSV route no longer caps at the default limit; this test\'s premise moved')
+  it('the CSV and GeoJSON exports are complete too, not 500 rows', async () => {
+    // ENH-37 was scoped to a new streaming route, and the register's own
+    // measurement — 500 of 12,929 — was a statement about the *existing* CSV
+    // route. Adding a correct route beside a truncating one leaves the
+    // truncation in place on the format partners actually file. Both are
+    // `unlimited` now: the dispatcher has already materialised every collection
+    // for them, so the cap saved nothing and only made the file lie.
+    await withServer(async (base, store) => {
+      // Coordinates, because `toGeoJson` drops a location-less record rather
+      // than putting it at Null Island — so a fixture without them would assert
+      // 0 features and pass for the wrong reason.
+      await store.merge({
+        hazard_events: hazards(1200).map((h, i) => ({ ...h, latitude: 3 + i / 10_000, longitude: 36 + i / 10_000 })),
+      })
+
+      const csv = await (await fetch(`${base}/api/v1/export.csv`)).text()
+      const csvRows = csv.split('\n').filter((line) => line.length)
+      assert.equal(csvRows.length, 1201, 'the CSV export is a page, not an export: header + 1,200 rows')
+
+      const geo = await (await fetch(`${base}/api/v1/export.geojson`)).json()
+      assert.equal(geo.features.length, 1200, 'the GeoJSON export silently stops at the default limit')
     })
   })
 

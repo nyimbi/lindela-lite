@@ -3016,7 +3016,11 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       ...data.field_reports,
       ...data.response_resources,
       ...data.alert_events,
-    ], url.searchParams)
+    // `unlimited` for the same reason as `export.csv`: a FeatureCollection that
+    // silently stops at 500 puts the map's features and the map's count in
+    // disagreement with no marker, and a GIS client cannot tell a truncated
+    // collection from a small one.
+    ], url.searchParams, {}, { unlimited: true })
     jsonResponse(res, 200, toGeoJson(records), { 'content-type': 'application/geo+json; charset=utf-8' })
     return
   }
@@ -3040,7 +3044,15 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     // No context at all, so this route had neither district resolution nor
     // partner scoping. It is the single widest read in the API and the one
     // SEC-01 found serving field reports and message bodies unauthenticated.
-    ], url.searchParams, { auth: req.__auth, data, collection: 'export' })
+    //
+    // `unlimited`, because an export is not a page. Without it `filterRecords`
+    // slices to `parseLimit`'s default and this route returned **500 of 12,929**
+    // records on the demo store with nothing in the body to say so — a silent
+    // truncation in the one format a partner files as the record of truth. The
+    // dispatcher has already materialised every collection above, so the cap
+    // saved nothing; it only made the file lie. A caller who wants a page has
+    // every list route.
+    ], url.searchParams, { auth: req.__auth, data, collection: 'export' }, { unlimited: true })
     // ENH-31. `?hxl=1` adds the HXL hashtag row above the header. A value that
     // is not a switch is refused rather than read as truthy — `Boolean('maybe')`
     // is true, so a truthiness test would tag the export for a caller who did

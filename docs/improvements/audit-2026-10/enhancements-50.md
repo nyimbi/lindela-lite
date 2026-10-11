@@ -126,6 +126,14 @@ rather than being handed the whole store. Both halves are canaried — reverting
 the move fails the budget test, dropping the narrow read fails the attribution
 test, and neither canary touches the other's test.
 
+`export.csv` and `export.geojson` were truncating too, and stayed that way for
+the first pass of this work: the register's measurement — 500 of 12,929 — was a
+statement about the *existing* CSV route, and a new correct route beside a
+truncating one leaves the truncation on the format partners actually file. Both
+now pass `unlimited: true`. The cap saved nothing there — the dispatcher has
+already materialised every collection for a wide route — it only made the file
+lie. Pinned in the same test file, and canaried by removing the flag.
+
 ---
 
 ## Group H — Offline-first field system (ODK/KoboToolbox class)
