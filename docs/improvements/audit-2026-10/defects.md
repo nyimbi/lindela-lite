@@ -676,6 +676,27 @@ inside the same function, three auth gates (one centralised, two copies at `:366
 and `:392`), per-route inline validation, and business logic that belongs in
 `kpi.js`/`reports.js`. A change to one route requires reading 1,600 lines. ENH-60.
 
+### VER-14 — HIGH — Four read routes answer a write method with 200
+Found 2026-10-11 while extracting the exposure family (ARC-01), not by the audit.
+`src/routes/exposure.js` (was `src/server.js`): `/road-access`, `/road-access/summary`,
+`/food-security` and `/food-security/summary` were written as
+`if (url.pathname === …)` with **no verb test**, unlike the routes around them.
+`DELETE /api/v1/road-access` therefore returned **200** with the full listing.
+
+Verified against a live server, not inferred: `POST`, `DELETE` and the rest all
+answered 200 on those four paths before the fix and 404 after it. `docs/openapi.yaml`
+documents all four as `get:` alone, so the served surface was wider than the
+published contract — the shape CLAUDE.md records as "an inventory of routes read
+from the source is not an inventory of routes the app serves". A client cannot tell
+a handler that ignored the method from one that honoured it, and the metric label
+counted the request as a served route.
+
+**Fixed 2026-10-11.** `matchExposureRoute(pathname, method)` refuses every non-GET
+verb (`src/routes/exposure.js:47`), so the wrong method falls through to the 404.
+A canary that removes the guard fails the test.
+
+---
+
 ### ARC-02 — HIGH — Five parallel route tables, no single source of truth
 `src/server.js` (68 conditions + 16 helpers), `src/route-manifests.js` (183 entries),
 `docs/openapi.yaml` (150 paths), `src/auth.js:431` scopes (91 entries), and the

@@ -42,7 +42,7 @@ import {
 } from './reports.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
-import { collectionPage, currentRequestAuth, filterRecords, jsonResponse, matchedAndPage, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
+import { collectionPage, currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext, toCsv, toGeoJson, stableId } from './utils.js'
 import { createIdempotencyFor } from './idempotency.js'
 import { redactPii, applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor, piiSaltStatus } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
@@ -58,14 +58,13 @@ import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection, STAC_READ_COLLECTIONS } from './stac.js'
 import { renderCapXml } from './cap.js'
 import { emit, emitMany, dispatchPending, outboxRollup } from './outbox.js'
-import { summarizeRoadAccess } from './road-access.js'
-import { summarizeFoodSecurity } from './connectors/ipc-hdx.js'
 import { districtWeatherReport } from './connectors/open-meteo-forecast.js'
 import { createVintageIndex } from './vintage.js'
 import { assertCategory, taxonomyDocument } from './taxonomy.js'
 import { matchExportRoute, handleExportRoute } from './routes/exports.js'
 import { matchKpiRoute, handleKpiRoute } from './routes/kpi.js'
 import { matchFieldSignalRoute, handleFieldSignalRoute } from './routes/field-signals.js'
+import { matchExposureRoute, handleExposureRoute } from './routes/exposure.js'
 import {
   formCatalogue, formFor, latestForm, mergeForms, validateAnswers, validateFormDefinition,
 } from './forms.js'
@@ -1453,6 +1452,17 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     store, data, req, res, url, jsonResponse,
   })) return
 
+  // ARC-01. The exposure family, extracted to `src/routes/exposure.js`. Nine
+  // reads over seven paths whose roll-ups must describe the matched set rather
+  // than the page. Four of those paths had no verb test at all, so
+  // `DELETE /api/v1/road-access` answered 200 with the full listing while
+  // `docs/openapi.yaml` documented `get:` alone; the matcher now takes the
+  // method and the wrong verb falls through to the 404.
+  const exposureRoute = matchExposureRoute(url.pathname, req.method)
+  if (exposureRoute && await handleExposureRoute(exposureRoute, {
+    data, req, res, url, jsonResponse,
+  })) return
+
   if (req.method === 'GET' && url.pathname === '/api/v1/auth-info') {
     // What this token is, as the server understands it. The partner portal
     // rendered its organisation from localStorage — a value the user typed,
@@ -2159,65 +2169,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/service-impacts') {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.impact_assessments, url.searchParams, { auth: req.__auth, data, collection: 'impact_assessments' }) })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/impact/population-at-risk') {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.population_at_risk || [], url.searchParams, { auth: req.__auth, data, collection: 'population_at_risk' }) })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/impact/facilities-at-risk') {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.facilities_at_risk || [], url.searchParams, { auth: req.__auth, data, collection: 'facilities_at_risk' }) })
-    return
-  }
-
-  if (url.pathname === '/api/v1/road-access') {
-    // One record per road asset, so the set grows with the road network — the
-    // same shape its food-security sibling had before R-27, and fixed the same
-    // way. Returning the whole array meant a caller could not tell a complete
-    // answer from a truncated one, and there was no second page to ask for.
-    //
-    // The roll-up is computed from `matched`, not from the page: `impassable`
-    // beside a page of 25 roads must describe the network, not the window, or
-    // the map's "N of M roads impassable" undercounts as soon as the set
-    // outgrows the limit.
-    const includeDeleted = url.searchParams.get('include_deleted') === 'true'
-    const all = includeDeleted
-      ? (data.road_access || [])
-      : (data.road_access || []).filter((item) => !isDeleted(item))
-    const { matched, ...page } = matchedAndPage(all, url.searchParams, { auth: req.__auth, data, collection: 'road_access' })
-    jsonResponse(res, 200, { success: true, ...page, summary: summarizeRoadAccess(matched) })
-    return
-  }
-
-  if (url.pathname === '/api/v1/road-access/summary') {
-    jsonResponse(res, 200, { success: true, data: summarizeRoadAccess(data.road_access || []) })
-    return
-  }
-
-  if (url.pathname === '/api/v1/food-security') {
-    // Summary rides along with the list, like road-access: a caller paging the
-    // records gets the roll-up for nothing instead of a second request.
-    //
-    // R-27. This called `filterRecords` and returned its capped page directly —
-    // no `total`, no `has_more`, no cursor. Against the demo store that is 500
-    // of 4,517 records with nothing to say so, and the remaining 4,017 were
-    // unreachable: raising `limit` was the only way in, which is the second
-    // full scan `collectionPage`'s docstring was written to end. The roll-up is
-    // computed from the whole matched set rather than the page, so it describes
-    // what matched rather than what happened to fit.
-    const { matched, ...page } = matchedAndPage(data.food_security_records || [], url.searchParams, { auth: req.__auth, data, collection: 'food_security_records' })
-    jsonResponse(res, 200, { success: true, ...page, summary: summarizeFoodSecurity(matched) })
-    return
-  }
-
-  if (url.pathname === '/api/v1/food-security/summary') {
-    jsonResponse(res, 200, { success: true, data: summarizeFoodSecurity(data.food_security_records || []) })
-    return
-  }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/flood-probability/models') {
     jsonResponse(res, 200, {
