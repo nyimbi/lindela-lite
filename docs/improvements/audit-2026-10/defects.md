@@ -344,6 +344,30 @@ first declaration was dead.
 risk radius reports confidence 0, reading as "certain the risk is zero" rather than
 "no risk reading for this asset."
 
+### VER-13 — HIGH — The IoT map layer coerces an absent sensor position to Null Island
+Found 2026-10-11 while extracting the field-signal family (ARC-01), not by the audit.
+`src/routes/field-signals.js` `iotMapLayer`: `if (!Number.isFinite(Number(row.lat)) …)`.
+`Number(null) === 0` is finite, so a sensor that reported no position passed the
+filter and was drawn at 0/0 in the Gulf of Guinea. The disease map twenty lines away
+carries a comment warning against exactly this coercion and uses
+`Number.isFinite(record.latitude)` instead — the guard was applied at one of the two
+sites, which is the shape CLAUDE.md records as "a control that exists is not a control
+that is applied".
+
+Invisible until now because every fixture in the repo omits `lat` **entirely** rather
+than sending `null` (`test/api-substrate.test.js:503`), and `Number(undefined)` is
+`NaN`, which the filter correctly rejects. The bug needs a producer that sends an
+explicit `null` — which is what `normalizeIotObservation` writes for a gateway that
+omits the field (`lat: input.lat ?? existing?.lat ?? null`).
+
+**Fixed 2026-10-11.** Both map layers read coordinates through `readCoordinate`
+(`src/routes/field-signals.js:63-90`, `:100-112`), the module whose own doc comment
+says the guard "has to rule absence out before it asks about the number". That is
+stricter than raw `Number.isFinite(x)` as well: it admits the numeric string `"3.12"`
+that connectors send, which `Number.isFinite` would reject as a non-number.
+Three canaries confirm the test fires on the null-coercion, on the raw-`isFinite`
+variant, and on the iot filter specifically.
+
 ---
 
 ## Concurrency

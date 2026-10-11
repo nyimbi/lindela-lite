@@ -61,11 +61,11 @@ import { emit, emitMany, dispatchPending, outboxRollup } from './outbox.js'
 import { summarizeRoadAccess } from './road-access.js'
 import { summarizeFoodSecurity } from './connectors/ipc-hdx.js'
 import { districtWeatherReport } from './connectors/open-meteo-forecast.js'
-import { summarizeDiseaseObservations } from './connectors/who-gho.js'
 import { createVintageIndex } from './vintage.js'
 import { assertCategory, taxonomyDocument } from './taxonomy.js'
 import { matchExportRoute, handleExportRoute } from './routes/exports.js'
 import { matchKpiRoute, handleKpiRoute } from './routes/kpi.js'
+import { matchFieldSignalRoute, handleFieldSignalRoute } from './routes/field-signals.js'
 import {
   formCatalogue, formFor, latestForm, mergeForms, validateAnswers, validateFormDefinition,
 } from './forms.js'
@@ -85,10 +85,8 @@ import { upstreamTileUrl, loadRasterTile } from './basemap-tiles.js'
 import { trainDistrictModels, predict } from './flood-probability.js'
 import { normalizeWebhookSubscription, assertSafeWebhookUrl } from './webhooks.js'
 import { KNOWN_DISTRICTS, districtOverview } from './districts.js'
+import { normalizeFieldOutcome, DONE_OUTCOME_CODES } from './field-outcomes.js'
 import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from './equity.js'
-import { normalizeCommunityFeedback, feedbackSummaryByAlert } from './community.js'
-import { normalizeSchoolAttendance, normalizeIotObservation, districtAttendanceRate, latestSensorReadings } from './field-signals.js'
-import { normalizeFieldOutcome, fieldActionLatency, outcomeCounts, DONE_OUTCOME_CODES } from './field-outcomes.js'
 import { runScenario, encodeScenarioUrl, decodeScenarioUrl } from './scenarios.js'
 import { normalizeParametricRule, simulateDisbursement } from './parametric.js'
 import { screenNames } from './sanctions.js'
@@ -1449,6 +1447,12 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     store, data, req, res, url, jsonResponse, requestRing,
   })) return
 
+  // ARC-01. The field-signal family, extracted to `src/routes/field-signals.js`.
+  const fieldSignalRoute = matchFieldSignalRoute(url.pathname, req.method)
+  if (fieldSignalRoute && await handleFieldSignalRoute(fieldSignalRoute, {
+    store, data, req, res, url, jsonResponse,
+  })) return
+
   if (req.method === 'GET' && url.pathname === '/api/v1/auth-info') {
     // What this token is, as the server understands it. The partner portal
     // rendered its organisation from localStorage — a value the user typed,
@@ -2215,63 +2219,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  if (url.pathname === '/api/v1/disease-observations') {
-    // `?map=1` asks the narrow shape the map layer consumes: only records
-    // with finite coordinates, and the placement honesty carried alongside
-    // them. Unplacable records (granularity 'unknown') are deliberately NOT
-    // here — the map draws nothing for them — while the paged default below
-    // still lists them, so nothing an operator could read in the detail
-    // dialog is hidden by the geometry filter.
-    if (url.searchParams.get('map') === '1') {
-      // Number.isFinite(record.latitude) directly, not Number.isFinite(Number(record.latitude)):
-      // Number(null) === 0 is finite, and that coercion once planted every alert
-      // of a CAP feed on Null Island — the exact reuse this must not repeat.
-      const mapped = (data.disease_observations || [])
-        .filter((record) => Number.isFinite(record.latitude) && Number.isFinite(record.longitude))
-        .map((record) => ({
-          id: record.id,
-          source: record.source,
-          disease: record.disease || null,
-          country: record.country || null,
-          latitude: Number(record.latitude),
-          longitude: Number(record.longitude),
-          location_name: record.location_name || null,
-          granularity: record.granularity || 'unknown',
-          cases: Number.isFinite(Number(record.cases)) ? Number(record.cases) : null,
-          deaths: Number.isFinite(Number(record.deaths)) ? Number(record.deaths) : null,
-          observed_at: record.observed_at || null,
-          source_url: record.source_url || null,
-        }))
-      // String-folded latest timestamp, seeded from undefined — folding
-      // against a null seed silently loses everything ('2026…' > 'null' is
-      // alphabetically false).
-      const times = (data.disease_observations || []).map((r) => r.observed_at).filter(Boolean)
-      const asOf = times.length ? times.sort().at(-1) : null
-      jsonResponse(res, 200, {
-        success: true,
-        data: mapped,
-        as_of: asOf,
-        note: 'Subnational coordinates where available; national centroid otherwise.',
-      })
-      return
-    }
-    // R-27, as above: paged and self-describing rather than a silent cap, and
-    // the series states come from the whole matched set. The comment on
-    // `/disease-observations/summary` below already said why computing them
-    // over a page is wrong — this route was doing exactly that.
-    const { matched, ...page } = matchedAndPage(data.disease_observations || [], url.searchParams, { auth: req.__auth, data, collection: 'disease_observations' })
-    jsonResponse(res, 200, { success: true, ...page, summary: summarizeDiseaseObservations(matched) })
-    return
-  }
-
-  if (url.pathname === '/api/v1/disease-observations/summary') {
-    // The list endpoint caps at filterRecords' page limit, and the series
-    // states must not be computed over an arbitrary page of the collection —
-    // the dashboard strip therefore reads the whole store here.
-    jsonResponse(res, 200, { success: true, data: summarizeDiseaseObservations(data.disease_observations || []) })
-    return
-  }
-
   if (req.method === 'GET' && url.pathname === '/api/v1/flood-probability/models') {
     jsonResponse(res, 200, {
       success: true,
@@ -2710,28 +2657,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   // here rather than from handleRapidProRoute because the path is not under
   // /api/v1/rapidpro — a confirmation is a first-class record with its own
   // collection, its own manifest and its own scopes, not a view of the reply log.
-  if (req.method === 'GET' && url.pathname === '/api/v1/field-outcomes') {
-    jsonResponse(res, 200, {
-      success: true,
-      ...collectionPage(data.field_outcomes || [], url.searchParams, { auth: req.__auth, data, collection: 'field_outcomes' }),
-    })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/field-outcomes/summary') {
-    // The refusal is returned as a 200 alongside the counts, never as a bare
-    // null. A dashboard that receives `null` renders a dash, and a dash reads as
-    // "the response time is zero" or "we have no data" — the sentence below is
-    // what distinguishes them.
-    jsonResponse(res, 200, {
-      success: true,
-      total: (data.field_outcomes || []).length,
-      by_outcome_code: outcomeCounts(data),
-      ...fieldActionLatency(data),
-    })
-    return
-  }
-
   // Parametric disbursement routes
   const parametricRoute = matchParametricRoute(url.pathname)
   if (parametricRoute) {
@@ -2794,146 +2719,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   }
 
   // Community feedback routes
-  if (req.method === 'GET' && url.pathname === '/api/v1/community-feedback/summary') {
-    jsonResponse(res, 200, { success: true, data: feedbackSummaryByAlert(data) })
-    return
-  }
-
-  if (url.pathname === '/api/v1/community-feedback') {
-    if (req.method === 'GET') {
-      jsonResponse(res, 200, { success: true, ...collectionPage(data.community_feedback || [], url.searchParams, { auth: req.__auth, data, collection: 'community_feedback' }) })
-      return
-    }
-    if (req.method === 'POST') {
-      const body = await readRequestJson(req)
-      let record
-      try {
-        record = normalizeCommunityFeedback(body)
-      } catch (err) {
-        jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
-        return
-      }
-      // R-22: one merge, so the event cannot outlive the record it announces.
-      const outboxRecord = await emit(store, 'community_feedback.created', { feedback_id: record.id }, {
-        community_feedback: [record],
-      })
-      jsonResponse(res, 201, { success: true, data: record, outbox_event: outboxRecord.id })
-      return
-    }
-  }
-
-  if (url.pathname === '/api/v1/school-attendance') {
-    if (req.method === 'GET') {
-      const rows = data.school_attendance_observations || []
-      const districts = [...new Set(rows.map((row) => row.district).filter(Boolean))].sort()
-      jsonResponse(res, 200, {
-        success: true,
-        ...collectionPage(rows, url.searchParams, { auth: req.__auth, data, collection: 'school_attendance_observations' }),
-        summary: {
-          overall_rate: districtAttendanceRate(data),
-          districts: Object.fromEntries(districts.map((district) => [district, districtAttendanceRate(data, { district })])),
-          schools: new Set(rows.map((row) => row.school_id || row.school_name).filter(Boolean)).size,
-        },
-      })
-      return
-    }
-    if (req.method === 'POST') {
-      const body = await readRequestJson(req)
-      let record
-      try {
-        record = normalizeSchoolAttendance(body)
-      } catch (err) {
-        jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
-        return
-      }
-      const log = actionLog('school_attendance_observations', 'created', record, body.actor, req.__auth?.subject)
-      const outboxRecord = await emit(store, 'school_attendance.created', { record_id: record.id }, {
-        school_attendance_observations: [record],
-        action_logs: [log],
-      })
-      jsonResponse(res, 201, { success: true, data: record, outbox_event: outboxRecord.id })
-      return
-    }
-  }
-
-  if (url.pathname === '/api/v1/iot-observations') {
-    if (req.method === 'GET') {
-      // `?map=1` returns the latest reading per sensor with coordinates — the
-      // shape the map layer draws. `?sensor_type=X&above=N` scopes the summary;
-      // a cold-chain rule asks "latest reading per fridge, and how many readings
-      // breached 8°C", which is what `latestSensorReadings` answers.
-      if (url.searchParams.get('map') === '1') {
-        const rows = data.iot_observations || []
-        const bySensor = new Map()
-        for (const row of rows) {
-          if (!Number.isFinite(Number(row.lat)) || !Number.isFinite(Number(row.lon))) continue
-          const current = bySensor.get(row.sensor_id)
-          if (!current || String(row.observed_at) > String(current.observed_at)) bySensor.set(row.sensor_id, row)
-        }
-        const latest = [...bySensor.values()].map((row) => ({
-          id: row.id,
-          sensor_id: row.sensor_id,
-          sensor_type: row.sensor_type,
-          district: row.district || null,
-          lat: Number(row.lat),
-          lon: Number(row.lon),
-          value: row.value,
-          unit: row.unit || '',
-          observed_at: row.observed_at,
-          battery_pct: row.battery_pct ?? null,
-        }))
-        const times = rows.map((row) => row.observed_at).filter(Boolean)
-        jsonResponse(res, 200, { success: true, data: latest, as_of: times.length ? times.sort().at(-1) : null })
-        return
-      }
-      const rows = data.iot_observations || []
-      const sensorType = url.searchParams.get('sensor_type')
-      const above = url.searchParams.get('above')
-      const summary = sensorType
-        ? latestSensorReadings(data, { sensorType, above: above === null ? null : Number(above) })
-        : null
-      jsonResponse(res, 200, {
-        success: true,
-        ...collectionPage(rows, url.searchParams, { auth: req.__auth, data, collection: 'iot_observations' }),
-        summary,
-      })
-      return
-    }
-    if (req.method === 'POST') {
-      // Sensor gateways push either one reading or { readings: [...] }. A
-      // partial batch rejects as a unit: half-written batches are how a
-      // gateway and the store disagree about what was recorded.
-      const body = await readRequestJson(req)
-      const inputs = Array.isArray(body?.readings) ? body.readings : [body]
-      if (!inputs.length) {
-        jsonResponse(res, 400, { success: false, error: 'a reading or a non-empty readings array is required' })
-        return
-      }
-      let records
-      try {
-        records = inputs.map((input) => normalizeIotObservation(input))
-      } catch (err) {
-        jsonResponse(res, err.statusCode || 400, { success: false, error: err.message })
-        return
-      }
-      const now = new Date().toISOString()
-      const logs = records.map((record) => actionLog('iot_observations', 'created', record, body.actor || 'iot_gateway', req.__auth?.subject))
-      // The outbox event id is derived from this payload (outbox.js outboundEventId).
-      // A count-only payload made every same-size batch collide on one id, so once a
-      // count-N event was delivered, every later count-N batch was silently dropped
-      // (records and action logs lost, API still 201). A stable batch id derived
-      // from the record ids keeps true retries of the same batch deduplicated while
-      // making distinct batches distinct.
-      const batchId = stableId('iot_batch', records.map((record) => record.id).sort())
-      const outboxRecord = await emit(store, 'iot.observations_recorded', { count: records.length, batch_id: batchId }, {
-        iot_observations: records,
-        action_logs: logs,
-      })
-      jsonResponse(res, 201, { success: true, data: records.length === 1 ? records[0] : records, count: records.length, outbox_event: outboxRecord.id })
-      return
-    }
-  }
-
   if (req.method === 'GET' && url.pathname === '/api/v1/assessments') {
     jsonResponse(res, 200, {
       success: true,
