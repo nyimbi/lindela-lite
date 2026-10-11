@@ -161,6 +161,20 @@ export const APP_VERSION = (() => {
  * POSTs `/ingest/run-due`); this owns *what else that tick must include*, which
  * the sidecar cannot know about without duplicating this list.
  */
+
+/**
+ * How long `POST /api/v1/demo/seed` will wait for live ingestion before giving
+ * up on it and seeding the demo data alone.
+ *
+ * The default source set is nine third-party services. `ipc_hdx` alone fans ~92
+ * requests against its declared 20/min budget, which is a floor of ~4.6 minutes
+ * and was measured at 188 seconds end to end on a warm network. A request with
+ * no ceiling is held open by whichever upstream is slowest, and the demo seed
+ * is the one route whose useful half — the labelled demo data — does not depend
+ * on any of them.
+ */
+const DEMO_SEED_BUDGET_MS = 45_000
+
 const DRIVER_ITEMS = [
   { id: 'ingestion', label: 'ingestion schedules', run: (store, data) => runDueIngestionSchedules(store, data) },
   { id: 'alerts', label: 'alert evaluation', run: (store, data) => evaluateAndPersistAlerts(store, data) },
@@ -1884,18 +1898,57 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   }
 
   if (req.method === 'POST' && url.pathname === '/api/v1/demo/seed') {
+    // Declared outside the `try` because the `catch` needs all of them: it
+    // reports `budgetMs`, and the budget-exhausted path — the one path that
+    // matters — has to seed the demo data with the same three functions that
+    // threw. A `const` in the block is not in scope in its own handler.
+    let budgetMs = DEMO_SEED_BUDGET_MS
+    let seedAll, ingestPublicSources, summary
     try {
       // ARC-03. `./demo-seed.js`, not `../scripts/seed-demo.mjs`. A production
       // request path reaching into `scripts/` is inverted layering, and it put
       // the 75 KB seed module on the runtime path where an import error there
       // is a 500 on a live route. The script is now a wrapper over this module.
-      const { seedAll, ingestPublicSources, summary } = await import('./demo-seed.js')
-      await ingestPublicSources(store)
+      ;({ seedAll, ingestPublicSources, summary } = await import('./demo-seed.js'))
+      // The `sources` field was documented on `ingestPublicSources` and on this
+      // route and read by neither: the route called it with no options, so a
+      // caller who asked for one source got all nine, live. That is not a
+      // cosmetic gap — the default set is nine third-party services, and
+      // `ipc_hdx` alone fans ~92 requests against a 20/min budget, so an
+      // unscoped seed is a three-minute request that a test cannot bound and a
+      // deployment cannot interrupt.
+      const body = await readRequestJson(req).catch(() => ({}))
+      const sources = Array.isArray(body?.sources) && body.sources.length ? body.sources : undefined
+      // A deadline, because the alternative is a request held open by whichever
+      // upstream is slowest. `ipc_hdx`'s own per-request timeout does not bound
+      // this: it has 92 requests to make and each may take its full 30s.
+      budgetMs = Number.isFinite(body?.timeout_ms) && body.timeout_ms > 0
+        ? Number(body.timeout_ms)
+        : DEMO_SEED_BUDGET_MS
+      await withTimeout(ingestPublicSources(store, { sources }), budgetMs)
       await seedAll(store)
       await refreshAnalytics(store)
       const counts = await summary(store)
       jsonResponse(res, 200, { success: true, counts })
     } catch (e) {
+      // A seed that ran out of wall clock is not a failed seed: the demo data
+      // below still lands, and the live half is the part that is optional.
+      // Reporting 500 for it would make a slow upstream look like a broken
+      // deployment, which is the confusion this route exists to avoid.
+      if (e?.name === 'TimeoutError') {
+        logger.warn('demo_seed_ingestion_budget_exhausted', { budget_ms: budgetMs, err: { message: e.message } })
+        try {
+          await seedAll(store)
+          await refreshAnalytics(store)
+          const counts = await summary(store)
+          jsonResponse(res, 200, { success: true, counts, ingestion: 'budget_exhausted' })
+          return
+        } catch (fallbackError) {
+          logger.error('demo_seed_failed', { err: { message: fallbackError.message, stack: fallbackError.stack } })
+          jsonResponse(res, 500, { success: false, error: fallbackError.message })
+          return
+        }
+      }
       logger.error('demo_seed_failed', {
         err: { message: e.message, stack: e.stack },
       })

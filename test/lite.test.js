@@ -4536,6 +4536,14 @@ describe('Demo seed', () => {
   })
 
   it('POST /api/v1/demo/seed returns 200 with counts.field_reports >= 30 and counts.workflow_instances >= 10', async () => {
+    // Scoped to one source, and that is not a shortcut around the assertion.
+    // The route's own `sources` field is what a caller uses to bound the seed,
+    // and the default set is nine third-party services: `ipc_hdx` alone fans
+    // ~92 requests against its declared 20/min budget, so the unscoped call
+    // measured 188 seconds and made this file the one that gets cancelled when
+    // the machine is busy. What the test is *for* — the counts the endpoint
+    // returns — does not depend on which sources ran, because `seedAll` is what
+    // produces them.
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-demo-endpoint-'))
     const store = new JsonStore(path.join(dir, 'store.json'))
     store.mode = 'json'
@@ -4544,12 +4552,43 @@ describe('Demo seed', () => {
     const addr = listener.address()
     const baseUrl = `http://127.0.0.1:${addr.port}`
     try {
-      const res = await fetch(`${baseUrl}/api/v1/demo/seed`, { method: 'POST' })
+      const res = await fetch(`${baseUrl}/api/v1/demo/seed`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sources: ['usgs_earthquake'] }),
+      })
       assert.equal(res.status, 200)
       const body = await res.json()
       assert.ok(body.success, 'success should be true')
       assert.ok(body.counts.field_reports >= 30, `field_reports ${body.counts.field_reports} < 30`)
       assert.ok(body.counts.workflow_instances >= 10, `workflow_instances ${body.counts.workflow_instances} < 10`)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('the demo seed honours a sources field rather than running all nine', async () => {
+    // The field was documented on `ingestPublicSources` and on the route and
+    // read by neither, so a caller asking for one source got all nine, live.
+    // Asserted on what the store records, not on the response shape: the
+    // source_runs rows are the thing that says which sources actually ran.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-demo-scope-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    store.mode = 'json'
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const addr = listener.address()
+    try {
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/v1/demo/seed`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sources: ['usgs_earthquake'] }),
+      })
+      assert.equal(res.status, 200)
+      const data = await store.read()
+      const ran = new Set((data.source_runs || []).map((r) => r.source))
+      assert.deepEqual([...ran], ['usgs_earthquake'],
+        `the seed ran ${[...ran].join(', ')} — a scoped request must not fan out to the default set`)
     } finally {
       listener.close()
     }

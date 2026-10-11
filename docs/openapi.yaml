@@ -2410,6 +2410,32 @@ paths:
   /api/v1/demo/seed:
     post:
       summary: Load demonstration data
+      description: >-
+        Seeds the labelled demonstration dataset, then attempts live ingestion
+        from the public sources. The ingestion half is bounded: the default set
+        is nine third-party services, and `ipc_hdx` alone paces ~92 requests
+        against its declared 20/min budget, so an unscoped seed takes minutes.
+        The response says `ingestion: budget_exhausted` when that ceiling was
+        reached — the demonstration data still lands, because none of it depends
+        on a third party being reachable.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sources:
+                  type: array
+                  items: { type: string }
+                  description: >-
+                    Which ingestion sources to run. Omit for the default set of
+                    nine. Scope this to one source when you want a fast seed.
+                timeout_ms:
+                  type: integer
+                  description: >-
+                    Wall-clock ceiling for the ingestion half, in milliseconds.
+                    Defaults to 45000.
       responses:
         '200':
           description: Seeded

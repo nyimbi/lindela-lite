@@ -715,6 +715,27 @@ matched its own explanatory comment in `src/demo-seed.js`, reporting the fix as
 the defect — so it now strips comments before scanning. Both were found by
 running the canary, which is the only way either would have surfaced.
 
+**A second defect in the same route, fixed 2026-10-11.** ARC-03's fix moved the
+implementation but left the handler calling `ingestPublicSources(store)` with no
+options. Two consequences, both silent:
+
+  - `ingestPublicSources` documents a `sources` field, and so did the route, and
+    neither read it. A caller asking for one source got all nine, live.
+  - Nothing bounded the call. The default set is nine third-party services and
+    `ipc_hdx` fans ~92 requests against its declared 20/min budget, so
+    `POST /api/v1/demo/seed` measured **188 seconds** — long enough that
+    `test/lite.test.js` is the file node's runner cancels when the machine is
+    busy, which is how this surfaced. A test that cancels under load reads as a
+    flake, and the flake was a three-minute live crawl nobody had measured.
+
+The handler now reads the documented `sources`, applies a `DEMO_SEED_BUDGET_MS`
+ceiling (45s, overridable per request), and on exhaustion seeds the demonstration
+data alone and reports `ingestion: budget_exhausted` — because none of the demo
+data depends on a third party being reachable, and a slow upstream must not read
+as a broken deployment. The seed test now scopes itself to one source; the
+scoping itself is asserted separately, on the `source_runs` rows, because the
+field being ignored is exactly the defect.
+
 ### ARC-04 — HIGH — `normalizeSeverity`/`severityWeight` implemented three times with three mappings
 
 **Fixed 2026-10-11.** Both server-side copies were wrong, each internally
