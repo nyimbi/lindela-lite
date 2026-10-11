@@ -228,6 +228,7 @@ export const WIDE_ROUTES = Object.freeze([
   'POST /api/v1/ingest/schedules',
   'POST /api/v1/ingest/schedules/defaults',
   'POST /api/v1/ingest/schedules/:id/run',
+  'POST /api/v1/export/dhis2',
   'POST /api/v1/interventions',
   'POST /api/v1/kpi/refresh-snapshots',
   'POST /api/v1/maintenance/apply-retention',

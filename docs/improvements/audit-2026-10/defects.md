@@ -1022,12 +1022,34 @@ ENH-38/39.
 connector. It can pull from DHIS2 and cannot push to it: one-way interoperability.
 ENH-31/32/37.
 
-**Partly closed 2026-10-11.** Two of the three halves landed: `?hxl=1` on the CSV
-route emits the hashtag row (`src/hxl.js`), and `/api/v1/export.ndjson` streams
-through `store.iterateRecords` rather than buffering. What remains is the DHIS2
-push — `dataValueSet` serialisation and the scheduled job — which is the half the
-row is really about, because a pull-only connector is the one-way link this
-defect names. The row stays open until that lands.
+**Fixed 2026-10-11.** All three halves. `?hxl=1` on the CSV route emits the
+hashtag row (`src/hxl.js`), `/api/v1/export.ndjson` streams through
+`store.iterateRecords` rather than buffering, and `src/connectors/dhis2-push.js`
+— served at `POST /api/v1/export/dhis2` — closes the one-way link, which was the
+half this row is really about.
+
+The push's substance is its refusals, because its failure mode is worse than the
+pull's: a number that leaves the building lands in a national database. Three
+records are refused and counted in `refused_records` rather than written — one
+with no `dataElement` mapping (a wrong UID files a correct number under the wrong
+question, indistinguishable from a wrong number downstream), one with no
+`orgUnit` mapping, and one whose **value is absent**. The last is VER-02's class
+on the way out: `Number(null)` is 0 and `Number('')` is 0, so a truthiness or
+`Number()` check would file every unreported reading as a measured zero in
+someone else's system of record. A dataValueSet cannot express "nobody reported",
+so the record is refused rather than flattened.
+
+`dry_run` defaults to **true**: the caller must ask for the write, and the
+default answer to "should this leave the building" is no. And a 200 from DHIS2 is
+not acceptance — the endpoint answers 200 with `status: 'ERROR'` and a conflict
+list, so `outcome` reads DHIS2's own verdict and is `pushed` only when it is OK.
+A push in which every record was refused returns 502, not a 200 with
+`dataValues: 0`.
+
+Canaried two ways: removing the absent-value refusal (four tests fail) and
+disabling the route condition (three fail, including the front-door request — a
+registered route the dispatcher does not match is the gap QUA-02 names, and the
+only evidence is a request through the real entry point).
 
 ### CAP-03 — HIGH — No administrative-hierarchy / org-unit model (vs DHIS2)
 `src/districts.js` and `DEFAULT_REGIONS` exist, but district resolution is scattered

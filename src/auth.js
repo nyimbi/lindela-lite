@@ -163,6 +163,9 @@ export const WRITE_SCOPES = Object.freeze([
   ['/api/v1/webhooks', 'admin:integrations'],
   ['/api/v1/outbox', 'admin:integrations'],
   ['/api/v1/connectors', 'admin:connectors'],
+  // A push writes into someone else's system of record, so it is the
+  // connector-admin scope rather than a read of this platform's own exports.
+  ['/api/v1/export/dhis2', 'admin:connectors'],
   ['/api/v1/sources', 'admin:schedules'],
   ['/api/v1/ingest', 'admin:schedules'],
   ['/api/v1/workflows', 'admin:workflows'],

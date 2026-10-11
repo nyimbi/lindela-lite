@@ -65,6 +65,7 @@ import { summarizeRoadAccess } from './road-access.js'
 import { summarizeFoodSecurity } from './connectors/ipc-hdx.js'
 import { districtWeatherReport } from './connectors/open-meteo-forecast.js'
 import { summarizeDiseaseObservations } from './connectors/who-gho.js'
+import { pushDataValueSet } from './connectors/dhis2-push.js'
 import { dischargeBand, DISCHARGE_BANDS, DISCHARGE_MODEL_NOTE } from '../public/shared/discharge-bands.js'
 // ARC-05. The operational banding the browser draws with, applied on the server
 // too. These modules are pure and DOM-free by construction, so importing them
@@ -1842,6 +1843,27 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       },
       action_logs: logs,
     })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/v1/export/dhis2') {
+    // CAP-02. The push half of the DHIS2 link. `dry_run` defaults to true in
+    // `pushDataValueSet`, so an operator can see the exact body without a
+    // write; sending requires `dry_run: false` in the body, which is the point.
+    const body = await readRequestJson(req)
+    const records = Array.isArray(body.records) ? body.records : (data.climate_observations || [])
+    const result = await pushDataValueSet({
+      ...body,
+      records,
+      // The request's own mapping wins; absent one, the deployment's connector
+      // config is the mapping the pull already reads.
+      org_units: body.org_units || body.orgUnits || {},
+      data_elements: body.data_elements || body.dataElements || {},
+    })
+    // A push whose outcome is not `pushed` or `dry_run` did not do what the
+    // caller asked, so it is not a 200 with a flag — the status says so.
+    const status = result.outcome === 'pushed' || result.outcome === 'dry_run' ? 200 : 502
+    jsonResponse(res, status, { success: result.outcome === 'pushed' || result.outcome === 'dry_run', ...result })
     return
   }
 

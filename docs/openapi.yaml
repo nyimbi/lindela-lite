@@ -2168,6 +2168,69 @@ paths:
             application/geo+json:
               schema:
                 type: object
+  /api/v1/export/dhis2:
+    post:
+      summary: Push observations to a DHIS2 instance as a dataValueSet
+      description: >-
+        The push half of the DHIS2 link. `src/connectors/dhis2.js` pulls; without
+        this the interoperability is one-way, which for a national system of
+        record is the half that matters.
+
+        `dry_run` defaults to **true**, so the response carries the exact body
+        that would be sent and nothing leaves the building until a caller passes
+        `dry_run: false`. Three refusals are counted in `refused_records` rather
+        than written: a record with no `dataElement` mapping (a wrong UID files
+        a correct number under the wrong question), a record with no `orgUnit`
+        mapping, and a record whose value is absent — an absent reading is not a
+        zero, and a dataValueSet cannot express the difference. A push in which
+        every record was refused returns 502, not a 200 with `dataValues: 0`.
+
+        A 200 from DHIS2 does not mean the values were accepted: the endpoint
+        answers 200 with `status: ERROR` and a conflict list. `import_status`
+        carries DHIS2's own verdict, and `outcome` is `pushed` only when it is
+        OK.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                records:
+                  type: array
+                  description: >-
+                    The observations to push. Defaults to this store's
+                    `climate_observations`.
+                  items:
+                    type: object
+                org_units:
+                  type: object
+                  description: District name to DHIS2 orgUnit UID.
+                  additionalProperties:
+                    type: string
+                data_elements:
+                  type: object
+                  description: Indicator name to DHIS2 dataElement UID.
+                  additionalProperties:
+                    type: string
+                base_url:
+                  type: string
+                  description: The DHIS2 instance root URL.
+                period:
+                  type: string
+                  description: >-
+                    A DHIS2 period for every record, overriding the monthly
+                    period derived from each record's observation date.
+                dry_run:
+                  type: boolean
+                  default: true
+      responses:
+        '200':
+          description: The push succeeded, or was a dry run
+        '502':
+          description: >-
+            DHIS2 rejected the import, or the push was refused (gated off, no
+            base_url, or every record refused)
   /api/v1/export.ndjson:
     get:
       summary: Stream every matching record as newline-delimited JSON
