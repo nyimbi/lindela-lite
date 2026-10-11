@@ -4,6 +4,19 @@ import { esc as escapeHtml } from '/shared/fmt.js'
 import { ERROR, LOADING, QUEUED, createLoadSequence, describeActionFailure, describeState, distinguishFailure, staleReadNote } from '/shared/states.js'
 mountNavbar({ activePath: '/chw' })
 
+/**
+ * CAP-01. The form version this wizard fills.
+ *
+ * The wizard renders these questions, so it names them on every submission —
+ * the server validates the answers against exactly this `(id, version)` and
+ * refuses a report that does not fit. The pair is asserted against
+ * `src/forms.js` by `test/forms.test.js`, so the client and the server cannot
+ * disagree about which version of the form is in the field: changing the
+ * wizard's questions without publishing a new version fails the suite.
+ */
+const CHW_SYMPTOM_FORM_ID = 'chw_symptom_report'
+const CHW_SYMPTOM_FORM_VERSION = 1
+
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
   currentScreen: 'home',
@@ -720,6 +733,30 @@ async function submitSymptomReport() {
   const body = {
     kind: 'symptom',
     category: state.symptom.type,
+    // CAP-01. The form this report was filled against, and the answers keyed by
+    // the field names that form declares. Without the pair, a record is only
+    // interpretable against whichever version of the form happens to be current
+    // when someone reads it — so when a question changes, the reports collected
+    // under the old wording become indistinguishable from the new ones and the
+    // column holds answers to two different questions. The server validates the
+    // answers against exactly this version and refuses a report that does not
+    // fit, so a client sending a version the deployment does not serve is told
+    // rather than silently filing under a version it guessed.
+    form_id: CHW_SYMPTOM_FORM_ID,
+    form_version: CHW_SYMPTOM_FORM_VERSION,
+    answers: {
+      who: state.symptom.who,
+      symptom: state.symptom.type,
+      duration_value: count,
+      duration_unit: unit,
+      danger_signs: state.symptom.severity?.dangerSigns || [],
+      danger_signs_other: state.symptom.severity?.otherText || undefined,
+      contact_sick: state.symptom.exposure?.contactSick ?? undefined,
+      contact_dead: state.symptom.exposure?.contactDead ?? undefined,
+      vaccination: state.symptom.exposure?.vaccinationStatus ?? undefined,
+      water_source: state.symptom.exposure?.waterSource ?? undefined,
+      location: state.symptom.location ?? undefined,
+    },
     description: `${state.symptom.who} with ${state.symptom.type} for ${count} ${unit}`,
     // Duration as fields, not only as a sentence. `duration_days` and
     // `duration_hours` are what a triage query can filter on; the description

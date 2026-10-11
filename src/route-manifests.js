@@ -230,6 +230,12 @@ export const WIDE_ROUTES = Object.freeze([
   'POST /api/v1/ingest/schedules/:id/run',
   'GET /api/v1/exports',
   'GET /api/v1/taxonomy',
+  // CAP-01. Reading the form catalogue and one version, and publishing a new
+  // version. The catalogue reads nothing from the store but the published
+  // definitions; publishing writes them, so it is declared with its collection.
+  'GET /api/v1/forms',
+  'GET /api/v1/forms/:id',
+  'POST /api/v1/forms',
   'POST /api/v1/export/dhis2',
   'POST /api/v1/interventions',
   'POST /api/v1/kpi/refresh-snapshots',

@@ -2275,6 +2275,78 @@ paths:
       responses:
         '200':
           description: The active taxonomy
+  /api/v1/forms:
+    get:
+      summary: The form catalogue — one entry per form id
+      description: >-
+        A form definition is a versioned artifact, not a hard-coded wizard. This
+        is the catalogue: one entry per form id, naming the newest version and
+        every version still readable.
+
+        Versions are **immutable**. Publishing an edit writes version `n+1` and
+        version `n` stays readable forever, because submissions name the exact
+        version they were filled against and a submission that names a version
+        nobody can read is a record nobody can interpret. That is also why a
+        published version cannot be replaced — the artifact would keep its name
+        and change its meaning, and everything already stamped with it would be
+        silently wrong. The same defect as rewriting an applied migration.
+      responses:
+        '200':
+          description: The catalogue
+    post:
+      summary: Publish a new version of a form
+      description: >-
+        The write half, and the point of the row: the person who owns the
+        question does not have to be the person who can merge to `main`.
+
+        The definition is validated before it is stored, and the refusal names
+        the field it is about rather than saying "invalid" — a form builder that
+        does not say which question is wrong makes the author hunt through a form
+        they cannot see. A definition that does not validate is never stored, so
+        a malformed form cannot become servable by being published.
+
+        Publishing a version that already exists is a 409, not an overwrite.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                form:
+                  type: object
+                  description: >-
+                    The definition — `{id, version, fields}`, where each field
+                    carries `name`, `type`, an optional `label`, `required`,
+                    `options`, and a `relevant` skip expression.
+  /api/v1/forms/{id}:
+    get:
+      summary: One form version, or the newest version of a form id
+      description: >-
+        `?version=` names an exact version; without it the newest is returned.
+        A version the deployment does not hold is a 404 naming the versions it
+        does hold, rather than a fallback to the newest — a submission names an
+        exact version, and answering a request for version 3 with version 4's
+        fields is how two versions in the field stop being reconcilable.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: query
+          description: The exact version to read. Omit for the newest.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: The form definition
+        '404':
+          description: >-
+            No such form id, or no such version of it. The error names the
+            versions this deployment holds.
   /api/v1/export.ndjson:
     get:
       summary: Stream every matching record as newline-delimited JSON

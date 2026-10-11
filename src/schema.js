@@ -336,6 +336,9 @@ export function emptyStore() {
     // CON-06. Idempotency keys, durable rather than in-process. Must match
     // COLLECTIONS in store.js — see record_versions above.
     idempotency_keys: [],
+    // CAP-01. Published form versions a deployment adds. Must match COLLECTIONS
+    // in store.js — see record_versions above.
+    form_definitions: [],
   }
 }
 

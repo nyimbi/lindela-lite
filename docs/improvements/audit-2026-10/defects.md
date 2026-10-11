@@ -1016,6 +1016,56 @@ A district cannot change a question without a redeploy; submissions from two for
 versions cannot be reconciled; the mobile app shares no schema with the web wizard.
 ENH-38/39.
 
+**Fixed 2026-10-11.** `src/forms.js`, served at `/api/v1/forms` and
+`/api/v1/forms/{id}`, with the wizard filing against a named version.
+
+*A form is `{id, version, fields}` and the version is the identity.* Not
+`{id, fields}` with a version number beside it: two versions of one form are two
+different questions, so they are two artifacts. **Versions are immutable** —
+publishing an edit writes `n+1` and `n` stays readable forever, because
+submissions name the exact version they were filled against and a submission that
+names a version nobody can read is a record nobody can interpret. Replacing a
+published version is a 409 naming the version to publish instead; the built-in
+is refused too, on the same reasoning that a rewritten applied migration leaves
+every database stamped with it silently wrong. Publishing is a write through the
+API, so the person who owns the question no longer has to be the person who can
+merge to `main`.
+
+*The definition is the client's schema, so it has to be the client's.* The first
+draft of `CHW_SYMPTOM_FORM` was an idealised questionnaire — `under_five`,
+`five_to_seventeen`, a boolean `contact_sick` — and none of it was what the
+wizard renders, which offers `self`/`child`/`other`, a three-state
+`yes`/`no`/`unknown` select, and `sleepy`/`weak` among the danger signs. A
+definition that does not match the client that fills it is worse than none: it
+looks authoritative, it validates, and every answer the real client sends is
+refused as out of vocabulary. The definition now mirrors the wizard's own
+`data-` attributes, and a test reads them out of `public/chw/index.html` and
+asserts the two agree option for option — adding a sixth symptom button fails the
+suite until version 2 is published.
+
+*A skip rule on a checkbox group is membership, not identity.* `danger_signs ==
+other` compares against an array, so the first implementation's `===` made every
+such rule false and silently hid the follow-up question nobody could then answer.
+The operator's meaning follows the field's type, which is the only reading that
+makes the expression mean what a form author wrote.
+
+*The submission carries `(form_id, form_version)` and the answers are validated
+against exactly that pair.* An answer to a question the named version does not
+ask is a 400 naming the field, not a stored value no version can interpret — the
+rule that keeps a JSON column queryable. `Number('')` is 0, so an empty numeric
+answer is absence rather than a measured zero, and `"false"` is refused as a
+boolean because it is truthy and would report every respondent as having had
+contact. A client that names no form still files a report and its record says
+`null` — which is what makes the pre-CAP-01 records identifiable rather than
+silently attributed to whichever version is current.
+
+Four gates, each canaried by breaking it and watching it fail: the immutability
+refusal, the recorded version, the answer validation, and the two client-drift
+checks (form version, answer keys) that read the wizard's source. The offline
+outbox already minted a client idempotency key per queued mutation (ENH-40's
+client half), so a retry after a restart is deduped rather than duplicated; what
+was missing was the artifact, and that is what this adds.
+
 ### CAP-02 — HIGH — No bulk/streaming interchange (vs HDX, DHIS2)
 `/api/v1/export.csv` and `export.geojson` exist, but no HXL row and no DHIS2
 `dataValueSet` export — despite shipping a `src/connectors/dhis2.js` *ingest*

@@ -68,6 +68,9 @@ import { summarizeDiseaseObservations } from './connectors/who-gho.js'
 import { pushDataValueSet } from './connectors/dhis2-push.js'
 import { vintageOf, createVintageIndex } from './vintage.js'
 import { assertCategory, taxonomyDocument } from './taxonomy.js'
+import {
+  formCatalogue, formFor, latestForm, mergeForms, validateAnswers, validateFormDefinition,
+} from './forms.js'
 import { dischargeBand, DISCHARGE_BANDS, DISCHARGE_MODEL_NOTE } from '../public/shared/discharge-bands.js'
 // ARC-05. The operational banding the browser draws with, applied on the server
 // too. These modules are pure and DOM-free by construction, so importing them
@@ -497,6 +500,19 @@ const processDriver = createPeriodicDriver()
  * because the question is about this process's responses.
  */
 const processVintageIndex = createVintageIndex()
+
+/**
+ * CAP-01. Every form version this deployment can serve: the built-ins merged
+ * with whatever has been published to the store.
+ *
+ * A function of `data` rather than a module-level cache, because a published
+ * version must be servable on the next request rather than after a restart —
+ * and because two replicas reading one store must agree, which a per-process
+ * cache would only do until one of them published.
+ */
+function activeForms(data) {
+  return mergeForms(data?.form_definitions || [])
+}
 
 export function startPeriodicDriver(store, options) {
   return processDriver.start(store, options)
@@ -1870,6 +1886,88 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     // malformed extension is reported in `problems` rather than thrown, so a bad
     // config is visible instead of stopping the process.
     jsonResponse(res, 200, { success: true, data: taxonomyDocument() })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/forms') {
+    // CAP-01. The catalogue: one entry per form id, naming the newest version
+    // and every version still readable. Built-ins come from `src/forms.js` and a
+    // deployment's published versions from the store, merged the same way the
+    // taxonomy merges its extension — a published `(id, version)` replaces the
+    // built-in with that pair, and a higher version is an addition.
+    jsonResponse(res, 200, {
+      success: true,
+      data: { forms: formCatalogue(activeForms(data)), published: (data.form_definitions || []).length },
+    })
+    return
+  }
+
+  const formMatch = url.pathname.match(/^\/api\/v1\/forms\/([^/]+)$/)
+  if (req.method === 'GET' && formMatch) {
+    const id = decodeURIComponent(formMatch[1])
+    const requested = url.searchParams.get('version')
+    const forms = activeForms(data)
+    // A version the deployment does not hold is a 404 naming what it does hold,
+    // not a fallback to the newest. A submission names an exact version, and
+    // answering a request for version 3 with version 4's fields is how two
+    // versions in the field stop being reconcilable.
+    const form = requested === null
+      ? latestForm(forms, id)
+      : formFor(forms, id, Number(requested))
+    if (!form) {
+      const known = forms.filter((f) => f.id === id).map((f) => f.version)
+      jsonResponse(res, 404, {
+        success: false,
+        error: known.length
+          ? `${id} has no version ${requested}; this deployment holds ${known.join(', ')}`
+          : `no form with id ${id}`,
+      })
+      return
+    }
+    jsonResponse(res, 200, { success: true, data: form })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/v1/forms') {
+    // Publishing is a write through the API, which is the whole point of the
+    // row: the person who owns the question does not have to be the person who
+    // can merge to main.
+    const body = await readRequestJson(req)
+    const definition = body.form || body
+    const problems = validateFormDefinition(definition)
+    if (problems.length) {
+      jsonResponse(res, 400, { success: false, error: problems.join('; '), problems })
+      return
+    }
+    const forms = activeForms(data)
+    const existing = formFor(forms, definition.id, definition.version)
+    // Publishing a version that already exists is a 409, not an overwrite.
+    // Versions are immutable: submissions name them, so editing a published
+    // version in place leaves every record stamped with it silently wrong —
+    // the same defect as rewriting an applied migration.
+    if (existing && existing.deployment !== true) {
+      jsonResponse(res, 409, {
+        success: false,
+        error: `${definition.id} v${definition.version} is a built-in and cannot be replaced; publish v${definition.version + 1}`,
+      })
+      return
+    }
+    if (existing) {
+      jsonResponse(res, 409, {
+        success: false,
+        error: `${definition.id} v${definition.version} is already published and a published version is immutable; publish v${definition.version + 1}`,
+      })
+      return
+    }
+    const stored = {
+      ...definition,
+      fields: definition.fields.map((field) => ({ ...field })),
+      published_at: new Date().toISOString(),
+      published_by: req.__auth?.subject || null,
+    }
+    const log = actionLog('form_definitions', 'published', stored, 'api', req.__auth?.subject)
+    await store.merge({ form_definitions: [stored], action_logs: [log] })
+    jsonResponse(res, 201, { success: true, data: stored })
     return
   }
 
@@ -5170,8 +5268,46 @@ async function handleChwRoute(store, data, req, res, url, route) {
         ? Number(body.location.accuracy_m)
         : null,
       reported_by: req.__auth?.subject,
+      // CAP-01. The exact `(id, version)` this report was filled against.
+      // Without it a record is only interpretable against whichever version of
+      // the form happens to be current when someone reads it — so when a
+      // question changes, the records collected under the old wording become
+      // indistinguishable from the new ones and the column holds answers to two
+      // different questions. A submission that names a version nobody can read
+      // is a record nobody can interpret, which is why versions are immutable
+      // and a published one is never replaced.
+      //
+      // Absent when the client sent no form: an older client still files a
+      // report, and its record says `null` rather than claiming a version it did
+      // not use. That is the honest value, and it is what makes the pre-CAP-01
+      // records identifiable.
+      form_id: typeof body.form_id === 'string' ? body.form_id : null,
+      form_version: Number.isInteger(body.form_version) ? body.form_version : null,
       created_at: now,
       updated_at: now,
+    }
+
+    // CAP-01. Answers validated against the version the client named, when it
+    // named one. A client that sends `form_id` and no answers is filing a report
+    // in the old free-text shape and is left alone; a client that sends answers
+    // gets them checked against the definition, and a report that does not
+    // validate is a 400 naming the field rather than a record with a value no
+    // version of the form can read.
+    if (record.form_id) {
+      const definition = formFor(activeForms(data), record.form_id, record.form_version)
+      if (!definition) {
+        jsonResponse(res, 400, {
+          success: false,
+          error: `this deployment serves no ${record.form_id} v${record.form_version}`,
+        })
+        return
+      }
+      const { answers, problems } = validateAnswers(definition, body.answers || {})
+      if (problems.length) {
+        jsonResponse(res, 400, { success: false, error: problems.join('; '), problems })
+        return
+      }
+      record.answers = answers
     }
 
     // One policy for both records written here. `anonymous` is a per-request

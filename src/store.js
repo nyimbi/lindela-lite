@@ -231,6 +231,11 @@ export const SCHEMA = Object.freeze([
   // queue drain of more than `maxEntries` mutations evicted keys still inside
   // their window. One row per key, holding the outcome to replay.
   { key: 'idempotency_keys' },
+  // CAP-01. Published form versions. A collection rather than a file, because a
+  // district publishing a question is a write through the API and not a deploy,
+  // and because two replicas must serve the same version of the same form.
+  // Built-ins live in `src/forms.js`; this holds the versions a deployment adds.
+  { key: 'form_definitions' },
   // ENH-07. Quarantine homes are declared, not hand-named: one per
   // QUARANTINE_SOURCES entry, appended below.
 ].map((entry) => Object.freeze({ kind: 'records', ...entry })).concat(

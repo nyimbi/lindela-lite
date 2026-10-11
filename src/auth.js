@@ -71,6 +71,9 @@ export const READ_SCOPES = Object.freeze([
   // CAP-04. The vintage manifest is an inventory of this deployment's exports.
   ['/api/v1/exports', 'read:analytics'],
   ['/api/v1/taxonomy', 'read:analytics'],
+  // CAP-01. A form definition is the question set a field report was filled
+  // against, so reading it is the same privilege as reading the taxonomy.
+  ['/api/v1/forms', 'read:analytics'],
   ['/api/v1/flood-probability', 'read:analytics'],
   ['/api/v1/scenarios', 'read:scenarios'],
   // The audit chain, and the caller's own identity. `read:self` is not a
@@ -169,6 +172,11 @@ export const WRITE_SCOPES = Object.freeze([
   // A push writes into someone else's system of record, so it is the
   // connector-admin scope rather than a read of this platform's own exports.
   ['/api/v1/export/dhis2', 'admin:connectors'],
+  // CAP-01. Publishing a form version changes the question every future field
+  // report is asked, and an immutable version cannot be withdrawn — so it is
+  // the schema scope, not a read of one. The first path prefix that matches
+  // wins, and the two GET routes above are listed before this one.
+  ['/api/v1/forms', 'admin:schemas'],
   ['/api/v1/sources', 'admin:schedules'],
   ['/api/v1/ingest', 'admin:schedules'],
   ['/api/v1/workflows', 'admin:workflows'],
