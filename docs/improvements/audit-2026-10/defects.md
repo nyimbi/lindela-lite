@@ -794,7 +794,7 @@ neither record states, over a period neither names, feeding a risk band. Verifie
 by probe, not inference: `{precip: 21.5, score: 32}`. The register's ENH-47 entry
 predicted a mm/metre mix; a scan found **none**. The instance is one axis over.
 
-**Fix.** ENH-47. `MEASUREMENT_PERIODS` declares `precipitation_mm` at
+**Fixed 2026-10-11; the marker was missing until 2026-10-12, which is why this row read as open.** ENH-47. `MEASUREMENT_PERIODS` declares `precipitation_mm` at
 `per_15_min` for `current_weather` and `per_day` for `precipitation_forecast`, and
 `meanMeasured` (`public/shared/units.js`) groups by period and means over the
 largest group rather than over everything, publishing `mixed` and `by_period` so a
