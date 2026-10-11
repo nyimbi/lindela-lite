@@ -23,7 +23,6 @@ import {
 } from './ingestion.js'
 import { actionLog, buildCreate, counts, operationalSummary } from './operations.js'
 import { parseRapidProFieldReport, rapidProStatus, responseMetrics, sendRapidProAlert, sendRapidProReportSummary, verifyRapidProWebhook, parseRapidProReply, reconcileInbound, deliveryReport, dueEscalations, formatDeliveryReport } from './rapidpro.js'
-import { chainEntries, verifyChain, renderAuditProof } from './audit-chain.js'
 import {
   approveReport,
   computeNextRunAt,
@@ -51,9 +50,7 @@ import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { normalizeAlertOutcome, determinationFor, projectDetermination, outcomeTally, outcomeReasons } from './outcomes.js'
 import { rankAlerts } from './triage.js'
 import { decisionLatency } from './decision-latency.js'
-import { observationSeries, recordHistory, projectableCollections } from './series.js'
 import { collectionsForRequest, needsHistory } from './route-manifests.js'
-import { describeWatermarkState } from './watermarks.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection, STAC_READ_COLLECTIONS } from './stac.js'
 import { renderCapXml } from './cap.js'
@@ -68,6 +65,7 @@ import { matchExposureRoute, handleExposureRoute } from './routes/exposure.js'
 import { matchDerivedRoute, handleDerivedRoute } from './routes/derived.js'
 import { matchOperationalRoute, handleOperationalRoute } from './routes/operational.js'
 import { matchSnapshotRoute, handleSnapshotRoute } from './routes/snapshots.js'
+import { matchProvenanceRoute, handleProvenanceRoute } from './routes/provenance.js'
 import { findVisible } from './visibility.js'
 import {
   formCatalogue, formFor, latestForm, mergeForms, validateAnswers, validateFormDefinition,
@@ -2368,94 +2366,17 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   }
 
 
-  // "Where did this number come from."
-  //
-  // The server's half: resolve the record and hand back everything the store
-  // knows about how it arrived — the source run, the lineage row, the record's
-  // own declared limits. The chain of reasoning itself is rendered by
-  // `explainRecord` in the browser module, so there is one implementation of it
-  // rather than a server copy that drifts.
-  const explainRoute = matchExplainRoute(url.pathname)
-  if (explainRoute && req.method === 'GET') {
-    const kind = url.searchParams.get('kind') || 'risk_scores'
-    const id = explainRoute.id
-    const rows = data[kind] || []
-    const record = rows.find((r) => String(r.id) === id)
-    if (!record) {
-      jsonResponse(res, 404, { success: false, error: `No ${kind} record with id ${id}` })
-      return
-    }
-    const run = record._source_run_id
-      ? (data.source_runs || []).find((r) => r.id === record._source_run_id) || null
-      : null
-    const lineage = (data.data_lineage || []).filter((l) => l.source_run_id === record._source_run_id)
-    jsonResponse(res, 200, {
-      success: true,
-      kind,
-      record,
-      // A record with no source run still gets a 200: it exists, and saying so
-      // is the answer. Absence of provenance is a fact about the record, not a
-      // reason to withhold it.
-      provenance: {
-        source_run: run,
-        lineage,
-        // Stated rather than left as null, because null here reads as "we did
-        // not look" rather than "there was nothing to find".
-        known: Boolean(run || lineage.length),
-        note: run || lineage.length
-          ? null
-          : 'This record names no source run, so its origin cannot be traced from the store.',
-      },
-      limits: record.limits || null,
-      calibrated_uncertainty: record.calibrated_uncertainty ?? null,
-    })
-    return
-  }
-
-  const auditRoute = matchAuditRoute(url.pathname)
-  if (auditRoute && req.method === 'GET') {
-    // The published head travels OUT OF BAND. Verifying a chain against a head
-    // stored inside the chain it protects proves nothing: a file re-chained
-    // end to end is internally consistent and completely rewritten.
-    // chainEntries returns the entries AND the head it computed; it is not itself
-    // the list, and passing the object where an array was wanted is what made
-    // this route 500 on its first call.
-    const { entries } = chainEntries(data.action_logs || [])
-    const publishedHead = url.searchParams.get('head') || null
-    const proof = verifyChain(entries, { expectedHead: publishedHead })
-    jsonResponse(res, 200, {
-      success: true,
-      entries: entries.length,
-      head: entries.length ? entries[entries.length - 1].entry_hash : null,
-      verified: proof.ok,
-      // Present so a reader is not left to infer it from a missing field: a chain
-      // nobody anchored is internally consistent and still not proof.
-      unanchored: !publishedHead,
-      defects: proof.defects || [],
-      advisories: proof.advisories || [],
-      // renderAuditProof re-verifies from the entries itself and renders the
-      // human-readable document a non-engineer reads. Passing it the proof
-      // object instead is what made this route 500 on its third attempt.
-      proof: renderAuditProof(entries, { expectedHead: publishedHead }),
-    })
-    return
-  }
+  // ARC-01. The provenance reads: where a record came from, what the platform
+  // believed over time, what its own chain shows, and how far each source has
+  // been read. One matcher refuses the wrong verb for the whole family.
+  const provenanceRoute = matchProvenanceRoute(url.pathname, req.method)
+  if (provenanceRoute && await handleProvenanceRoute(provenanceRoute, {
+    data, req, res, url, jsonResponse,
+  })) return
 
   const reportingRoute = matchReportingRoute(url.pathname, req.method)
   if (reportingRoute) {
     await handleReportingRoute(store, data, req, res, url, reportingRoute, { checkWebhookUrl })
-    return
-  }
-
-  const watermarkRoute = matchWatermarkRoute(url.pathname, req.method)
-  if (watermarkRoute) {
-    await handleWatermarkRoute(store, data, req, res, url, watermarkRoute)
-    return
-  }
-
-  const historyRoute = matchHistoryRoute(url.pathname)
-  if (historyRoute) {
-    await handleHistoryRoute(store, data, req, res, url, historyRoute)
     return
   }
 
@@ -3716,52 +3637,6 @@ async function handleAlertEvaluation(store, data, req, res) {
   })
 }
 
-/**
- * ENH-49 — the history exists and nothing could reach it.
- *
- * `valueAsOf` and `versionsFor` had zero production callers, so "why does this
- * district's count disagree with the report" was a question the repository held
- * the answer to and had no way to ask. This is that question as a query.
- */
-async function handleWatermarkRoute(store, data, req, res, url, route) {
-  jsonResponse(res, 200, {
-    success: true,
-    data: describeWatermarkState(
-      Object.fromEntries((data.watermark_state || []).map((row) => [row.source, row.state || {}])),
-    ),
-  })
-}
-
-async function handleHistoryRoute(store, data, req, res, url, route) {
-  if (req.method !== 'GET') {
-    jsonResponse(res, 405, { success: false, error: 'History is read-only: a value the platform believed is written by an ingestion run or a correction, not by an API caller', code: ERROR_CODES.READ_ONLY })
-    return
-  }
-  if (route.record) {
-    const recordId = url.searchParams.get('id')
-    if (!recordId) {
-      jsonResponse(res, 400, { success: false, error: 'id is required: /history/:collection/record asks about one record' })
-      return
-    }
-    jsonResponse(res, 200, {
-      success: true,
-      data: recordHistory(data, { collection: route.collection, recordId, at: url.searchParams.get('at') }),
-    })
-    return
-  }
-  jsonResponse(res, 200, {
-    success: true,
-    data: observationSeries(data, {
-      collection: route.collection,
-      district: url.searchParams.get('district'),
-      at: url.searchParams.get('at'),
-    }),
-    // Repeated at the top level so a client that guessed a collection name sees
-    // the right ones without reaching into the data object.
-    projectable_collections: projectableCollections(),
-  })
-}
-
 async function handleAlertRoute(store, data, req, res, url, route) {
   // The generic collection branches below read `data[route.collection]`, and a
   // route that is a *view* rather than a collection has no such key — so these
@@ -4633,22 +4508,7 @@ function matchReportingRoute(pathname, method = 'GET') {
 }
 
 /** R-52. The watermark state, which had no route at all. */
-function matchWatermarkRoute(pathname, method = 'GET') {
-  // VER-14, the class. A read of every source's high-water mark; the spec says
-  // `get:` and nothing else. `DELETE /api/v1/watermarks` used to answer 200.
-  if (method !== 'GET') return null
-  return pathname === '/api/v1/watermarks' ? { kind: 'watermarks' } : null
-}
-
 /** ENH-49. A named matcher rather than an inline prefix test, so the spec gate can see it. */
-function matchHistoryRoute(pathname) {
-  const record = pathname.match(/^\/api\/v1\/history\/([^/]+)\/record$/)
-  if (record) return { kind: 'history', collection: decodeURIComponent(record[1]), record: true }
-  const series = pathname.match(/^\/api\/v1\/history\/([^/]+)$/)
-  if (!series) return null
-  return { kind: 'history', collection: decodeURIComponent(series[1]), record: null }
-}
-
 function matchAlertRoute(pathname) {
   const capMatch = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\.cap$/)
   if (capMatch) return { collection: 'alert_events', id: decodeURIComponent(capMatch[1]), format: 'cap' }
@@ -4770,19 +4630,6 @@ async function handleProtocolRoute(store, data, req, res, url, route) {
  * Named rather than an inline regex so the route-coverage check can parse it
  * and so it sits with every other matcher here rather than inside a handler.
  */
-function matchExplainRoute(pathname) {
-  const match = pathname.match(/^\/api\/v1\/explain\/([^/]+)$/)
-  if (!match) return null
-  return { id: decodeURIComponent(match[1]) }
-}
-
-function matchAuditRoute(pathname) {
-  if (pathname === '/api/v1/audit/verify') return { action: 'verify' }
-  const head = pathname.match(/^\/api\/v1\/audit\/head$/)
-  if (head) return { action: 'head' }
-  return null
-}
-
 function matchWorkflowRoute(pathname) {
   const transition = pathname.match(/^\/api\/v1\/workflows\/([^/]+)\/transition$/)
   if (transition) return { id: decodeURIComponent(transition[1]), action: 'transition' }
