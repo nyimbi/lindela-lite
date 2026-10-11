@@ -1109,13 +1109,38 @@ which is wrong for most of the list:
   rendered *label*, where the wording is the artifact, so the source is a fair
   proxy. It is not the module's only coverage.
 
-The mechanical check, for the record: of 90 modules under `src/`, exactly two
-have no behavioural import in any test — `src/cors.js`, exercised through the
-server surface by `test/cors-preflight.test.js` rather than imported, and
-`src/lineage.js`, which is dead code (`recordLineage` has zero callers;
-`src/provenance.js:recordLineageRow` superseded it). The dead module is the
-finding worth keeping from this entry, and it belongs to the orphaned-module
-class rather than to test coverage.
+The mechanical check, for the record: of the 90 modules under `src/` at
+2026-10-11 — 65 at the top level, 25 under `connectors/` and `analytics/` — two
+have no behavioural import in any test:
+
+- `src/cors.js` — exercised through the server surface by
+  `test/cors-preflight.test.js` rather than imported. The entry's claim is about
+  behaviour and this module has it; the import is a proxy for the behaviour, not
+  the thing itself.
+- `src/demo-seed.js` — driven through `POST /api/v1/demo/seed` by
+  `test/lite.test.js` and named by `test/layering.test.js` for the ARC-03
+  boundary it defines.
+
+`src/lineage.js` was the third and the only genuine finding: dead code
+(`recordLineage` had zero callers; `src/provenance.js:recordLineageRow`
+superseded it). It was deleted in `da64321` along with the route-envelope gate
+that found it. The entry's module count was also wrong — it said 90; the tree
+had 65 by the time anyone counted.
+
+**Fixed 2026-10-11.** `scripts/check-module-coverage.mjs` makes this census a
+gate rather than a paragraph. It reads every `.js` under `src/` recursively and
+every test file, and requires each module to be either reached by a test
+(statically, dynamically, or for side effects) or named in
+`SERVER_SURFACE_MODULES` with the route that reaches it and the file that drives
+it. It checks the other direction too: an allowlist entry a test now imports is
+reported as a stale exemption, because an entry that outlives its reason is how
+an allowlist becomes a place to hide. Nine canaries cover both directions,
+including that a bare specifier and a mention in a comment are not imports.
+Registered in `scripts/run-gates.mjs` as self-contained (12 gates).
+
+It found `src/demo-seed.js`, which the hand count above had missed — the module
+is reached only through `POST /api/v1/demo/seed`, so nothing imports it from a
+test file and a name-based census cannot see it.
 
 ### QUA-06 — MEDIUM — No test asserts a route's response envelope shape consistently
 `api-substrate.test.js` covers pagination/ETag/idempotency/readiness on

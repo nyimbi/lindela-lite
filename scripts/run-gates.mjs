@@ -115,6 +115,12 @@ const GATES = [
     why: 'QUA-06. Drives every route the OpenAPI spec documents against a real server and asserts the envelope invariants no test enforced everywhere: a boolean `success`, a `code` on every failure, and an array `data` that is either fully paginated or a named exception. Found `/api/v1/connectors/status` reporting a bare `total` and `/api/v1/road-access` unpaged on its first run. Binds an ephemeral port on 127.0.0.1 rather than :4177, so it needs nothing started.',
   },
   {
+    name: 'check-module-coverage',
+    script: 'scripts/check-module-coverage.mjs',
+    tier: 'self-contained',
+    why: 'QUA-05. Reads every module under src/ and every test file, and requires each module to be reached by a test or named in SERVER_SURFACE_MODULES with the route that reaches it. Makes the coverage census re-runnable, which the hand count it replaces was not — that count missed src/demo-seed.js and reported src/lineage.js as covered. Pure file reads.',
+  },
+  {
     name: 'check-budget-and-surface-contract',
     script: 'test/web-hidden-display.test.js',
     tier: 'self-contained',
