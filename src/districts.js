@@ -1,19 +1,40 @@
 import { METRICS, computeMetric } from './analytics/metrics.js'
 import { median } from './analytics/numeric.js'
 import { explainRanking } from '../public/shared/rank-explain.js'
+import { ORG_UNITS, ORG_UNIT_SYNONYMS, orgUnitFor } from './org-units.js'
 
 // The payload quotes the declared basis verbatim, so a reader comparing this
 // page with the CO tile or the equity table sees the same sentence and knows
 // the same number is being described.
 const FALSE_ALERT_BASIS = METRICS.false_alert_rate.basis
 
-export const KNOWN_DISTRICTS = Object.freeze([
-  { slug: 'turkana', name: 'Turkana', country: 'KE', center: { lat: 3.1167, lon: 35.6 }, radius_km: 200 },
-  { slug: 'aweil', name: 'Aweil', country: 'SS', center: { lat: 8.767, lon: 27.4 }, radius_km: 150 },
-  { slug: 'bor', name: 'Bor', country: 'SS', center: { lat: 6.207, lon: 31.548 }, radius_km: 150 },
-  { slug: 'karamoja', name: 'Karamoja', country: 'UG', center: { lat: 2.5333, lon: 34.6667 }, radius_km: 200 },
-  { slug: 'mandera', name: 'Mandera', country: 'KE', center: { lat: 3.9366, lon: 41.8569 }, radius_km: 150 },
-])
+/**
+ * The districts this platform publishes pages for, projected from the
+ * administrative registry (`src/org-units.js`).
+ *
+ * CAP-03. The list is derived rather than declared, so the geography exists in
+ * one place: the registry carries the codes, the parent pointers and the
+ * level, and this is the view the existing callers read. The projection keeps
+ * the key order and the values the literal had, because a dozen modules and
+ * their tests read this shape.
+ */
+export const KNOWN_DISTRICTS = Object.freeze(
+  ORG_UNITS
+    .filter((unit) => unit.publishes_page)
+    .map((unit) => Object.freeze({
+      slug: unit.slug,
+      name: unit.name,
+      country: unit.country,
+      center: unit.center,
+      radius_km: unit.radius_km,
+      // CAP-03. The code and the parent, which the registry has and this shape
+      // did not: a reference that is an identifier, and the pointer that makes
+      // "roll this district up to its country" a walk rather than a lookup
+      // table maintained per module.
+      code: unit.code,
+      parent_code: unit.parent_code,
+    })),
+)
 
 /**
  * Names the data uses that are not the district names the platform publishes.
@@ -23,15 +44,16 @@ export const KNOWN_DISTRICTS = Object.freeze([
  * `inDistrict` compared `"moroto"` against `"Karamoja"`, found no match, and the
  * Karamoja page read `people_reached: 0` while 3,504 Moroto recipients existed.
  * Two functions, one vocabulary, and the gap between them was a district that
- * looked like it had never been warned.
+ * looked like it had never been warned. The table now lives in the registry
+ * (`ORG_UNIT_SYNONYMS`) and every resolution path reads it from there.
  */
-const SYNONYMS = { moroto: 'karamoja' }
-
 export function resolveDistrict(slugOrName) {
   if (!slugOrName) return null
   const key = String(slugOrName).toLowerCase().trim()
-  const resolved = SYNONYMS[key] || key
-  return KNOWN_DISTRICTS.find(d => d.slug === resolved || d.name.toLowerCase() === resolved) || null
+  const resolved = ORG_UNIT_SYNONYMS[key] || key
+  const unit = orgUnitFor(resolved)
+  if (!unit || !unit.slug) return null
+  return KNOWN_DISTRICTS.find((d) => d.slug === unit.slug) || null
 }
 
 function haversineKm(center, lat, lon) {
@@ -55,7 +77,13 @@ function haversineKm(center, lat, lon) {
 function canonicalDistrictName(value) {
   const key = String(value ?? '').toLowerCase().trim()
   if (!key) return ''
-  return SYNONYMS[key] || key
+  // The synonym table in the registry maps a name to a *code*; this function's
+  // contract is the canonical *slug*, which is what the comparisons below read.
+  // Resolving through the registry rather than reading the table directly is
+  // what keeps one vocabulary: `moroto` and `karamoja` reach the same unit
+  // whichever field carried them.
+  const unit = orgUnitFor(key)
+  return unit?.slug || key
 }
 
 function inDistrict(district, record) {

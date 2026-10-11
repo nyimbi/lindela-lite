@@ -1057,6 +1057,35 @@ across seven modules and there is no registry with codes, boundaries and a paren
 pointer. Every aggregation re-derives the hierarchy; a district split is a data
 migration, not a config change. ENH-33.
 
+**Fixed 2026-10-11.** `src/org-units.js` is the registry: every unit with a
+`code`, a `level`, a `parent_code`, a `boundary_kind` and a centre/radius.
+`KNOWN_DISTRICTS` and `DEFAULT_REGIONS` are now **projections** of it rather than
+parallel literals — byte-identical to what they were, which the tests pin, since
+a dozen modules and four connectors read those shapes.
+
+The `boundary_kind` field is load-bearing. This platform has no polygons, and a
+reader who takes a 200 km circle for an administrative edge aggregates the wrong
+records; every unit says `center_radius` so the resolution is a field rather
+than an assumption.
+
+**The payoff is the rollup.** `descendantsOf`/`rollupSlugsFor` walk the tree, so
+`?district=Kenya` scopes to Turkana and Mandera through `recordInDistrict`, and a
+district added under Kenya is covered the moment its entry exists — the property
+the row named as missing. A leaf is unchanged, and a misspelling still returns
+nothing rather than everything.
+
+Two duplicate lookups died on the way, and both were live bugs. `cap.js` had its
+own `resolveDistrict` that consulted no synonym table, so a CAP message for a
+`moroto` alert published with no area; `utils.js`'s `resolveDistrictFilter`
+matched slug and name only, so `?district=moroto` returned nothing while the
+record sat in Karamoja. `districts.js`'s `canonicalDistrictName` read the deleted
+local `SYNONYMS` table and returned a code where the comparisons need a slug —
+which a hand-built probe missed (proximity matched first, so the branch was never
+reached) and only the live route caught, as a 500.
+
+Canaried two ways: the parent-scope branch (three tests fail) and the synonym
+table (seven fail, across `org-units` and `lite`).
+
 ### CAP-04 — MEDIUM — No publication/dataset versioning for downstream consumers (vs HDX)
 `/api/v1/export.*` returns a live query with an ETag. A report citing "the
 flood-risk dataset" cannot name which vintage it read. ENH-34.

@@ -1,3 +1,5 @@
+import { WEATHER_DEFAULT_CODES, orgUnitByCode } from './org-units.js'
+
 export const SOURCE_IDS = Object.freeze([
   'open_meteo',
   'gdacs',
@@ -21,11 +23,21 @@ export const SOURCE_IDS = Object.freeze([
 
 export const BLOCKED_SOURCE_IDS = Object.freeze(['gdelt'])
 
-export const DEFAULT_REGIONS = Object.freeze([
-  { name: 'Turkana', country: 'KE', lat: 3.1167, lon: 35.6 },
-  { name: 'Mogadishu', country: 'SO', lat: 2.0469, lon: 45.3182 },
-  { name: 'Juba', country: 'SS', lat: 4.8594, lon: 31.5713 },
-])
+/**
+ * The regions a default weather pull covers, projected from the administrative
+ * registry (`src/org-units.js`) — CAP-03.
+ *
+ * The list is a selection with an order, so it names codes rather than
+ * repeating the coordinates: the geography lives in one place, and this is the
+ * view the connectors read. `{name, country, lat, lon}` is kept exactly,
+ * because four connectors and their fixtures read this shape.
+ */
+export const DEFAULT_REGIONS = Object.freeze(
+  WEATHER_DEFAULT_CODES
+    .map((code) => orgUnitByCode(code))
+    .filter(Boolean)
+    .map((unit) => Object.freeze({ name: unit.name, country: unit.country, lat: unit.center.lat, lon: unit.center.lon })),
+)
 
 export const SERVICE_TYPES = Object.freeze([
   'health',

@@ -1,5 +1,6 @@
 import { KNOWN_DISTRICTS } from './districts.js'
 import { ALERT_EVENT_STATUSES } from './schema.js'
+import { orgUnitFor } from './org-units.js'
 
 /**
  * The CAP msgType for each alert lifecycle status.
@@ -189,12 +190,21 @@ function restrictionFor(scope) {
   return 'No dissemination restriction. Derived by Lindela Lite from public monitoring data; verify before acting.'
 }
 
-/** The alert's district, if it names one we have a real extent for. */
+/**
+ * The alert's district, if it names one we have a real extent for.
+ *
+ * Resolved through the administrative registry (CAP-03) rather than by a
+ * second lookup written here. The copy this replaces compared the name
+ * case-insensitively and consulted no synonym table, so a CAP message for a
+ * `moroto` alert found no extent and published with no area — the same gap that
+ * made the Karamoja district page read zero. One registry, one vocabulary.
+ */
 function resolveDistrict(alertEvent) {
   const named = alertEvent?.scope?.district || alertEvent?.district || null
   if (!named) return null
-  const key = String(named).trim().toLowerCase()
-  return KNOWN_DISTRICTS.find((d) => d.slug === key || d.name.toLowerCase() === key) || null
+  const unit = orgUnitFor(named)
+  if (!unit || !unit.slug) return null
+  return KNOWN_DISTRICTS.find((d) => d.slug === unit.slug) || null
 }
 
 /** What the alert is, from the fields an alert event actually carries. */

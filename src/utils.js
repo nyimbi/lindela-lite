@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { KNOWN_DISTRICTS } from './districts.js'
+import { orgUnitFor, rollupSlugsFor } from './org-units.js'
 import { errorEnvelope } from './errors.js'
 import { hxlRow } from './hxl.js'
 
@@ -919,10 +920,34 @@ export function resolveDistrictFilter(value) {
   if (value === null || value === undefined || value === '') return null
   const key = String(value).trim().toLowerCase()
   if (!key) return null
-  const known = KNOWN_DISTRICTS.find(
-    (d) => d.slug === key || d.name.toLowerCase() === key,
-  )
-  return known || { slug: key, name: value, center: null, radius_km: null, unknown: true }
+  // CAP-03. Through the registry, so a synonym resolves here too. The copy this
+  // replaces matched slug and name only, so a filter of `moroto` was treated as
+  // an unknown district and returned nothing while the record it names sat in
+  // Karamoja — the third function with its own vocabulary.
+  const unit = orgUnitFor(key)
+  const known = unit?.slug ? KNOWN_DISTRICTS.find((d) => d.slug === unit.slug) : null
+  if (known) return known
+  // CAP-03. A parent unit — a country, or a code — is a scope, not a miss: it
+  // covers every district beneath it. `slugs` is what `recordInDistrict` reads,
+  // so `?district=Kenya` scopes to Turkana and Mandera, and a district added
+  // under Kenya is covered the moment its entry exists rather than when a
+  // lookup table here is updated. A unit with no descendants and no page is
+  // still unknown, so a misspelling returns nothing rather than everything.
+  if (unit) {
+    const slugs = rollupSlugsFor(unit.code)
+    if (slugs.length) {
+      return {
+        slug: unit.slug || unit.code.toLowerCase(),
+        name: unit.name,
+        center: unit.center || null,
+        radius_km: unit.radius_km || null,
+        code: unit.code,
+        slugs,
+        rollup: true,
+      }
+    }
+  }
+  return { slug: key, name: value, center: null, radius_km: null, unknown: true }
 }
 
 /**
@@ -935,7 +960,15 @@ export function resolveDistrictFilter(value) {
  */
 export function recordInDistrict(item, district, relations = null) {
   if (!district) return true
-  const labels = [district.slug, district.name, String(district.name).toLowerCase()]
+  // CAP-03. A parent scope covers every district beneath it, so the label set
+  // is the rollup rather than the one name. For a leaf district this is a
+  // one-element list and the behaviour is unchanged.
+  const labels = district.slugs
+    ? district.slugs.flatMap((slug) => {
+      const known = KNOWN_DISTRICTS.find((d) => d.slug === slug)
+      return known ? [known.slug, known.name, known.name.toLowerCase()] : [slug]
+    })
+    : [district.slug, district.name, String(district.name).toLowerCase()]
   const named = [item.district, item.region, item.region_name, item.admin1, item.scope?.district]
   for (const value of named) {
     if (typeof value !== 'string') continue
