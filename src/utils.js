@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { KNOWN_DISTRICTS } from './districts.js'
+import { errorEnvelope } from './errors.js'
 
 export function stableId(prefix, value) {
   const hash = crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16)
@@ -698,6 +699,13 @@ export function toGeoJson(records) {
  * revalidatable. `304` carries no body, which is the entire point.
  */
 export function jsonResponse(res, status, body, headers = {}, req = res?.req || null) {
+  // ARC-07. The one place a response body is written is the one place a code
+  // can be guaranteed on every failed one. `errorEnvelope` adds `code` when the
+  // status is 4xx/5xx and the body says `success: false`, and leaves everything
+  // else — a success, a non-object body, a site that named its own code —
+  // exactly as the caller wrote it. Doing it here rather than at 129 call sites
+  // is what makes it a property of the envelope instead of a habit.
+  body = errorEnvelope(status, body)
   const payload = JSON.stringify(body)
   // Vary on the credential, so no cache between here and the browser — the
   // service worker's Cache API included — may serve one caller's body to

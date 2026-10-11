@@ -329,20 +329,56 @@ itself need approval) and `synthetic_for` naming the original — which is the
 memory that makes it fire once, ever. `GET /api/v1/ready` reports how many it
 raised in the last tick.
 
+## Errors
+
+Every failing response has the same shape, and every one carries a `code`:
+
+```json
+{ "success": false, "code": "not_found", "error": "Report not found" }
+```
+
+Branch on `code`. The `error` string is written for a human, is reworded when
+the wording improves, and is the first thing a translation touches — a client
+that matches on it breaks on a copy edit and says nothing when it does.
+
+`code` defaults to the status: `400 bad_request`, `401 unauthorized`,
+`403 forbidden`, `404 not_found`, `405 method_not_allowed`,
+`409 conflict`, `413 payload_too_large`, `415 unsupported_media_type`,
+`422 unprocessable_entity`, `429 rate_limited`, `500 internal_error`,
+`502 upstream_failed`, `503 service_unavailable`. A status outside that list
+resolves to `bad_request` below 500 and `internal_error` at or above it, so a
+code is always present.
+
+Where one status carries several meanings the endpoint names its own code, and
+these are the ones that matter to a client:
+
+| Status | Code | Means |
+| --- | --- | --- |
+| `409` | `idempotency_in_flight` | A request under this `Idempotency-Key` is still running. Retry the **same** body. |
+| `409` | `immutable` | The report is approved or distributed. Regenerating it is not a conflict to retry; it is a state you cannot leave. |
+| `409` | `invalid_state` | The alert or workflow instance is not in a state this action accepts. |
+| `409` | `record_deleted` | A soft-deleted record. A second `DELETE` answers this; it will never succeed. |
+| `405` | `read_only` | The collection is append-only to the platform (action logs, history). |
+
+The vocabulary is closed — `src/errors.js` is the whole of it — and
+`test/error-taxonomy.test.js` reads `src/` to refuse a code that is referenced
+and not defined.
+
 ## Rate Limits
 
 Every request is charged to a per-client budget before it does any work,
-including authentication. Over budget is `429` with `Retry-After` in seconds and
-the class in the body:
+including authentication. Over budget is `429` with `Retry-After` in seconds,
+the class in the body, and the code `rate_limited`:
 
 ```json
-{ "success": false, "error": "Rate limit exceeded for the read budget. Retry in 3s.",
+{ "success": false, "code": "rate_limited",
+  "error": "Rate limit exceeded for the read budget. Retry in 3s.",
   "class": "read", "retry_after_seconds": 3 }
 ```
 
 | Class | Budget | Applies to |
 | --- | --- | --- |
-| `read` | 120/min, 8 concurrent | `GET`s, and everything not listed below |
+| `read` | 300/min, 24 concurrent | `GET`s, and everything not listed below |
 | `write` | 60/min, 6 concurrent | `POST`/`PUT`/`PATCH`/`DELETE` |
 | `heavy` | 6/min, 1 concurrent | `/api/v1/ingest/run`, `/ingest/run-one`, `/ingest/run-due`, `/ingest/schedules/defaults`, `/report-schedules/run-due` |
 

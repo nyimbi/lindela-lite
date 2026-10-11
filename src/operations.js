@@ -8,6 +8,7 @@ import {
   riskLevel,
 } from './schema.js'
 import { haversineKm, stableId, toNumber } from './utils.js'
+import { ERROR_CODES } from './errors.js'
 import { computeMetric } from './analytics/metrics.js'
 
 const OPERATIONAL_COLLECTIONS = Object.freeze({
@@ -77,7 +78,13 @@ export function buildUpdate(collection, existing, patch, data) {
 export function buildSoftDelete(collection, existing, actor, data = null) {
   if (!existing) throw Object.assign(new Error('Record not found'), { statusCode: 404 })
   if (existing.deleted_at) {
-    throw Object.assign(new Error('Record is already deleted'), { statusCode: 409 })
+    // ARC-07. This is the second DELETE, and the caller must be told to stop
+    // rather than to retry: a client that reads it as a generic conflict sends
+    // the delete again, forever, against a record that can never accept it.
+    throw Object.assign(new Error('Record is already deleted'), {
+      statusCode: 409,
+      code: ERROR_CODES.RECORD_DELETED,
+    })
   }
   const merged = { ...existing, deleted_at: new Date().toISOString(), deleted_by: actor || null }
   // `data` is required by the normalizers that cross-reference a parent

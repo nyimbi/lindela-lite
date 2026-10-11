@@ -483,6 +483,46 @@ max 5,000). A paging bug is fixed in one and persists in the other.
 `{success:false, error:…}` is written at every `jsonResponse` site. Zero `code`
 field. Clients string-match `error` text. One 422, five 409, twenty-three 405.
 
+**Fixed 2026-10-11.** Every failing response now carries a `code`, and the
+guarantee is mechanical rather than per-site: the default is applied inside
+`jsonResponse`, the one place a body is written, so a new error site cannot
+forget it. A per-site fix would have passed every test that names a route and
+failed the one that walks the surface.
+
+`src/errors.js` holds the vocabulary — 19 codes, frozen — plus the status
+defaults and `errorEnvelope`. Two layers, because one is not enough: the status
+already says everything for most failures (a 404 is a 404), and where it does
+not, the endpoint names its code from the same closed set. Four distinct 409s
+became four codes — `idempotency_in_flight`, `immutable`, `invalid_state`,
+`record_deleted` — because a client that reads them alike retries the one it
+must not: the soft-deleted record accepts no delete, ever, and the immutable
+report accepts no regeneration.
+
+The site-named codes travel two ways. `buildSoftDelete` throws with `code` on
+the error, and the central handler passes `error.code` through **only when it
+is in the vocabulary** — that check is what makes it safe, since `error.code` is
+`ENOENT` on a filesystem error and would otherwise reach a client as this API's
+own reason. Every other site sets it literally, and `test/error-taxonomy.test.js`
+reads `src/` to refuse an `ERROR_CODES.X` that resolves to nothing.
+
+Canaried in both directions: disabling the envelope fails 5 cases, dropping the
+`record_deleted` code fails 1, dropping `idempotency_in_flight` fails 1, and
+removing a code from the OpenAPI enum fails 1. 15 cases in
+`test/error-taxonomy.test.js`, the last of which walks fifteen failing requests
+across the route surface and asserts each one's code is in the vocabulary — the
+guard over the class rather than over the four sites a test happens to name.
+
+`docs/openapi.yaml` gained the `Error` schema with the code enum, and
+`docs/api.md` gained an **Errors** section. The enum is asserted against
+`ERROR_CODES` in both directions, so a code the server can send and the
+document does not list fails the suite.
+
+Two corrections to the register's own numbers, found while fixing this: the
+site count is 129, not 128, and the 429 body is one of them. The doc's
+`Rate Limits` table also still carried the pre-ENH-07 read budget (120/min, 8
+concurrent); it is 300/min, 24 concurrent in `src/inbound-rate-limit.js`, and
+the table now says so.
+
 ### ARC-08 — MEDIUM — The collection manifest is applied at one call site; nine others bypass it
 
 **Fixed 2026-10-11, partially.** The `/stac/*` and `/ogc/*` half is fixed and it

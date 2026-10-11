@@ -7,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, isPublicRequest, publicReadsOpen, publicPaths } from './auth.js'
 import { corsResponseHeaders, isPreflight, preflightResponse } from './cors.js'
+import { ERROR_CODES } from './errors.js'
 import { logger, metrics, metricsOverflow, timer, runWithRequestId, uptimeStats } from './observability.js'
 import { narrateReport, NARRATOR_BASIS } from './narrator.js'
 import { refreshAnalytics, calibrationReport } from './analytics.js'
@@ -636,7 +637,17 @@ export function createServer(options = {}) {
       const statusCode = error.statusCode || 500
       const exposeMessage = statusCode < 500
       if (exposeMessage) {
-        jsonResponse(res, statusCode, { success: false, error: error.message || 'Request failed' })
+        // ARC-07. A thrown error may name its own code, and the envelope keeps
+        // it only when it is in the vocabulary. That validation is what makes
+        // this safe to pass through: `error.code` is `ENOENT` on a filesystem
+        // error and `ERR_…` on a Node internal, neither of which is a code this
+        // API publishes, and both of which would otherwise reach a client as
+        // this endpoint's own vocabulary.
+        jsonResponse(res, statusCode, {
+          success: false,
+          error: error.message || 'Request failed',
+          code: error.code,
+        })
       } else {
         // The id the client is handed is the request's own id, not a second one
         // minted here. They used to be different: the response carried an
@@ -961,6 +972,7 @@ async function handleApi(store, req, res, url, { checkWebhookUrl, idempotency } 
       jsonResponse(res, 409, {
         success: false,
         error: 'A request with this Idempotency-Key is already being processed and has not completed. Retry shortly.',
+        code: ERROR_CODES.IDEMPOTENCY_IN_FLIGHT,
       }, { 'idempotency-in-flight': 'true' })
       return
     }
@@ -969,6 +981,7 @@ async function handleApi(store, req, res, url, { checkWebhookUrl, idempotency } 
       jsonResponse(res, 409, {
         success: false,
         error: 'A request with this Idempotency-Key is already being processed and has not completed. Retry shortly.',
+        code: ERROR_CODES.IDEMPOTENCY_IN_FLIGHT,
       }, { 'idempotency-in-flight': 'true' })
       return
     }
@@ -1084,7 +1097,7 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       // that buffered the body themselves.
       req.rawBody = await readRawBody(req)
       if (!verifyRapidProWebhook(req)) {
-        jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook' })
+        jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook', code: ERROR_CODES.INVALID_SIGNATURE })
         return
       }
     } else if (!isPublicRequest(req.method, url.pathname)) {
@@ -3069,7 +3082,7 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
       return
     }
     if (['approved', 'distributed'].includes(existing.status)) {
-      jsonResponse(res, 409, { success: false, error: 'Approved or distributed reports cannot be regenerated' })
+      jsonResponse(res, 409, { success: false, error: 'Approved or distributed reports cannot be regenerated', code: ERROR_CODES.IMMUTABLE })
       return
     }
     const record = generateReportSections(existing, data, body)
@@ -3090,7 +3103,7 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
       return
     }
     if (['approved', 'distributed'].includes(existing.status)) {
-      jsonResponse(res, 409, { success: false, error: 'Approved or distributed reports are immutable except archival' })
+      jsonResponse(res, 409, { success: false, error: 'Approved or distributed reports are immutable except archival', code: ERROR_CODES.IMMUTABLE })
       return
     }
     if (!(existing.sections || []).length) {
@@ -3547,7 +3560,7 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
     }
     const approvalState = alert.approval?.state || 'proposed'
     if (approvalState !== 'approved' && approvalState !== 'auto_approved') {
-      jsonResponse(res, 409, { success: false, error: 'Alert not approved', current_state: approvalState })
+      jsonResponse(res, 409, { success: false, error: 'Alert not approved', current_state: approvalState, code: ERROR_CODES.INVALID_STATE })
       return
     }
     const dispatch = await sendRapidProAlert(alert, body)
@@ -3560,7 +3573,7 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
   if (req.method === 'POST' && route.kind === 'field-report') {
     req.rawBody = await readRawBody(req)
     if (!verifyRapidProWebhook(req)) {
-      jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook secret' })
+      jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook secret', code: ERROR_CODES.INVALID_SIGNATURE })
       return
     }
     const payload = await readRequestJson(req)
@@ -3592,7 +3605,7 @@ async function handleRapidProRoute(store, data, req, res, url, route) {
   // bounded window, never by a payload-supplied alert_event_id.
   if (req.method === 'POST' && route.kind === 'rapidpro-reply') {
     if (!verifyRapidProWebhook(req)) {
-      jsonResponse(res, 401, { success: false, error: 'Invalid webhook signature' })
+      jsonResponse(res, 401, { success: false, error: 'Invalid webhook signature', code: ERROR_CODES.INVALID_SIGNATURE })
       return
     }
     const body = await readRequestJson(req)
@@ -3857,7 +3870,7 @@ async function handleWatermarkRoute(store, data, req, res, url, route) {
 
 async function handleHistoryRoute(store, data, req, res, url, route) {
   if (req.method !== 'GET') {
-    jsonResponse(res, 405, { success: false, error: 'History is read-only: a value the platform believed is written by an ingestion run or a correction, not by an API caller' })
+    jsonResponse(res, 405, { success: false, error: 'History is read-only: a value the platform believed is written by an ingestion run or a correction, not by an API caller', code: ERROR_CODES.READ_ONLY })
     return
   }
   if (route.record) {
@@ -4130,7 +4143,7 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
 
   if (req.method === 'POST' && !route.id) {
     if (route.collection === 'action_logs') {
-      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only' })
+      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only', code: ERROR_CODES.READ_ONLY })
       return
     }
     const body = await readRequestJson(req)
@@ -4157,7 +4170,7 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
 
   if (req.method === 'PATCH' && route.id) {
     if (route.collection === 'action_logs') {
-      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only' })
+      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only', code: ERROR_CODES.READ_ONLY })
       return
     }
     const body = await readRequestJson(req)
@@ -4169,7 +4182,7 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
     // way — `findVisible` is what carries it.
     const existing = findVisible(data[route.collection], route.id, { includeDeleted: true })
     if (isDeleted(existing)) {
-      jsonResponse(res, 409, { success: false, error: 'Record is deleted' })
+      jsonResponse(res, 409, { success: false, error: 'Record is deleted', code: ERROR_CODES.RECORD_DELETED })
       return
     }
     const record = buildUpdate(route.collection, existing, { ...body, id: route.id }, data)
@@ -4181,7 +4194,7 @@ async function handleOperationalRoute(store, data, req, res, url, route) {
 
   if (req.method === 'DELETE' && route.id) {
     if (route.collection === 'action_logs') {
-      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only' })
+      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only', code: ERROR_CODES.READ_ONLY })
       return
     }
     const body = await readRequestJson(req)

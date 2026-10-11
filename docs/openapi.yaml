@@ -2656,6 +2656,52 @@ components:
       schema:
         type: string
   schemas:
+    Error:
+      type: object
+      description: >-
+        Every failing response, in one shape. Branch on `code`: the `error`
+        string is written for a human and is reworded when the wording
+        improves, so a client matching on it breaks on a copy edit and reports
+        nothing when it does. The vocabulary is closed and lives in
+        `src/errors.js`; `code` defaults to the status and an endpoint names its
+        own only where one status carries several meanings (four distinct 409s:
+        `idempotency_in_flight`, `immutable`, `invalid_state`,
+        `record_deleted`).
+      required: [success, error, code]
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        code:
+          type: string
+          enum:
+            - bad_request
+            - unauthorized
+            - invalid_signature
+            - forbidden
+            - not_found
+            - method_not_allowed
+            - read_only
+            - conflict
+            - idempotency_in_flight
+            - immutable
+            - invalid_state
+            - record_deleted
+            - payload_too_large
+            - unsupported_media_type
+            - unprocessable_entity
+            - rate_limited
+            - upstream_failed
+            - internal_error
+            - service_unavailable
+        error:
+          type: string
+          description: The human sentence. Not a contract.
+        incident_id:
+          type: string
+          description: >-
+            Present on a 5xx, and equal to that request's `x-request-id`. It is
+            the id the client was shown, so the log line it names is findable.
     SchoolAttendanceInput:
       type: object
       required: [school_id, present, enrolled]
