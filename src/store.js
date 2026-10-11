@@ -236,6 +236,14 @@ export const SCHEMA = Object.freeze([
   // and because two replicas must serve the same version of the same form.
   // Built-ins live in `src/forms.js`; this holds the versions a deployment adds.
   { key: 'form_definitions' },
+  // ENH-34. Immutable, citable dataset snapshots. A vintage hash identifies a
+  // dataset but the store keeps no copy of it, so a report citing "the
+  // flood-risk dataset, vintage 4f2a…" named something nobody could fetch or
+  // re-read. A snapshot is the copy: records frozen at the read that produced
+  // them, with the licence and attribution a downstream consumer has to carry.
+  // Declared here because it is a write through the API, and because two
+  // replicas must serve the same snapshot for the same handle.
+  { key: 'dataset_snapshots' },
   // ENH-07. Quarantine homes are declared, not hand-named: one per
   // QUARANTINE_SOURCES entry, appended below.
 ].map((entry) => Object.freeze({ kind: 'records', ...entry })).concat(

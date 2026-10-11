@@ -2168,6 +2168,76 @@ paths:
             application/geo+json:
               schema:
                 type: object
+  /api/v1/dataset-snapshots:
+    get:
+      summary: The dataset snapshots this deployment holds
+      description: >-
+        The index of stored snapshots: handle, vintage, licence and provenance
+        for each, with the records withheld. A listing that carried the rows
+        would be the export route under a second name.
+      responses:
+        '200':
+          description: The snapshot index, newest first
+    post:
+      summary: Snapshot the export collections under a citable handle
+      description: >-
+        ENH-34. A vintage identifies a dataset; this stores a copy of it and
+        mints a handle that resolves to the copy, so a report citing a dataset
+        can be reproduced after the store moves on.
+
+        `licence` is required and `attribution` is required whenever the licence
+        requires it, because a consumer cannot comply with an obligation it
+        cannot see. An empty body defaults to `internal-only` — the one licence
+        that cannot be wrong if the caller forgot to say. A set past the record
+        limit is refused rather than truncated: a truncated snapshot carries a
+        handle, and a handle reads as the record of truth.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                licence:
+                  type: string
+                  enum: [CC-BY-4.0, CC-BY-SA-4.0, CC0-1.0, ODbL-1.0, internal-only]
+                attribution:
+                  type: string
+                collections:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '201':
+          description: The snapshot handle and its provenance
+        '400':
+          description: An unknown licence, a missing required attribution, an unknown collection, or a set past the record limit
+  /api/v1/dataset-snapshots/{id}:
+    get:
+      summary: Resolve a snapshot handle
+      description: >-
+        The records frozen at the read that produced the snapshot, or the
+        provenance alone with `?records=false` for a consumer checking a
+        citation without pulling the dataset.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The snapshot handle, as returned by the create response.
+          schema:
+            type: string
+        - name: records
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ['false']
+      responses:
+        '200':
+          description: The snapshot
+        '404':
+          description: No snapshot with that handle
   /api/v1/exports:
     get:
       summary: The vintages this process has served

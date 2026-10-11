@@ -56,6 +56,13 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/connectors': Object.freeze(["source_runs"]),
   'GET /api/v1/data-lineage': Object.freeze(["data_lineage"]),
   'GET /api/v1/data-quality': Object.freeze(["data_quality"]),
+  // ENH-34. The index and one handle read only their own collection. The POST
+  // is measured `null` and lives in WIDE_ROUTES below: it takes the collections
+  // to snapshot from its body, so the set it reads is the caller's, and no
+  // manifest can be narrower than the whole store without being wrong for a
+  // caller who names one the manifest did not guess.
+  'GET /api/v1/dataset-snapshots': Object.freeze(["dataset_snapshots"]),
+  'GET /api/v1/dataset-snapshots/:id': Object.freeze(["dataset_snapshots"]),
   'GET /api/v1/disease-observations': Object.freeze(["disease_observations"]),
   'GET /api/v1/disease-observations/summary': Object.freeze(["disease_observations"]),
   // The collector cannot measure this one, so the entry is written from a direct
@@ -228,6 +235,7 @@ export const WIDE_ROUTES = Object.freeze([
   'POST /api/v1/chw/reply',
   'POST /api/v1/chw/report',
   'POST /api/v1/community-feedback',
+  'POST /api/v1/dataset-snapshots',
   'POST /api/v1/demo/seed',
   'POST /api/v1/equity/scan',
   'POST /api/v1/field-reports',

@@ -339,6 +339,9 @@ export function emptyStore() {
     // CAP-01. Published form versions a deployment adds. Must match COLLECTIONS
     // in store.js — see record_versions above.
     form_definitions: [],
+    // ENH-34. Immutable, citable dataset snapshots. Must match COLLECTIONS in
+    // store.js — see record_versions above.
+    dataset_snapshots: [],
   }
 }
 

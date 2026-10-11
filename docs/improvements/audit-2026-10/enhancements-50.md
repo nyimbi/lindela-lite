@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 17 | 31, 35, 37, 40, 45, 46, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
+| IMPLEMENTED | 18 | 31, 34, 35, 37, 40, 45, 46, 48, 49, 61, 63, 64, 65, 66, 69, 72, 73, 81 |
 | PARTIAL | 11 | 32, 33, 42, 50, 51, 52, 55, 57, 59, 70, 78 |
-| ABSENT | 23 | 34, 36, 38, 39, 41, 43, 44, 47, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
+| ABSENT | 22 | 36, 38, 39, 41, 43, 44, 47, 53, 54, 56, 58, 60, 62, 67, 68, 71, 74, 75, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
@@ -105,6 +105,49 @@ aggregation one source. This is the DHIS2 org-unit primitive the platform lacks.
 live query with an ETag. A report citing "the flood-risk dataset" cannot name which
 vintage it read. Snapshot exports into an immutable, licence-tagged, handle-addressable
 collection so a downstream consumer can cite a version and reproduce it.
+
+**Shipped 2026-10-11.** CAP-04 had already given an export a *vintage* — a content
+hash identifying a dataset — and stopped there on purpose. `src/vintage.js` states
+the refusal in its own header: "It is not a snapshot. The store keeps no copy, and
+`?vintage=` on an export is refused rather than silently ignored — offering a
+parameter that cannot be honoured is worse than not offering it, because a report
+that names a vintage it did not actually read is a citation that lies." That was
+right, and it was also the gap: a vintage says which dataset you read and does not
+let anyone else read it.
+
+`POST /api/v1/dataset-snapshots` freezes the records at the read that produced them
+and returns a handle; `GET /api/v1/dataset-snapshots/{id}` resolves it, with
+`?records=false` for the provenance alone; `GET /api/v1/dataset-snapshots` is the
+index, carrying handles and provenance and never the rows. The domain is
+`src/snapshots.js`, the routes `src/routes/snapshots.js`.
+
+Three decisions worth naming:
+
+- **The handle is not the vintage.** The vintage is a hash of content, so two
+  snapshots of unchanged data share one; minting the handle from it would collide
+  and return the older licence stamp for a newer read. The handle carries the
+  vintage, so a consumer can still ask "is this the same data I hold".
+- **A licence travels with its own obligation.** `CC-BY-4.0` tells a consumer to
+  attribute but not to whom, so `LICENCES` names the obligation in words beside the
+  SPDX string, and a licence requiring attribution given none is refused rather
+  than stored with a null. An empty body defaults to `internal-only` — the one
+  licence that cannot be wrong if the caller forgot to say.
+- **A snapshot that cannot be taken says so.** Past `MAX_SNAPSHOT_RECORDS` the
+  request is refused rather than truncated: a truncated snapshot carries a handle,
+  and a handle reads as the record of truth. This is the truncation class the
+  repository keeps removing (ENH-37, R-27).
+
+Four canaries, each watched failing on the property it removes: dropping the
+attribution guard (two tests — the module guard and the route that calls it),
+minting the handle from the vintage, removing the record limit, and letting the
+listing carry its records. `test/snapshots.test.js` (25).
+
+The family first shipped as one file in `src/`, and `check-openapi.mjs` reported
+both documented paths as ghosts — the gate reads `src/server.js` and every module
+under `src/routes/`, by directory rather than by a list, so a matcher in `src/` is
+invisible to it. Split along the same line `routes/exports.js`/`vintage.js` already
+follows, and the gate now reports `parsed matchSnapshotRoute → handleSnapshotRoute:
+2 paths`, 162 documented and 162 served.
 
 **ENH-35 — OGC API Features + STAC catalogue.** The vector layers and raster
 products are served bespoke. OGC API Features and a STAC catalogue make them

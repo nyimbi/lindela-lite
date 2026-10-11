@@ -70,6 +70,10 @@ export const READ_SCOPES = Object.freeze([
   ['/api/v1/data-quality', 'read:analytics'],
   // CAP-04. The vintage manifest is an inventory of this deployment's exports.
   ['/api/v1/exports', 'read:analytics'],
+  // ENH-34. A stored snapshot is the same inventory, one layer down: the
+  // vintage a manifest row names, with the records kept. Reading it is the
+  // privilege that reads the manifest.
+  ['/api/v1/dataset-snapshots', 'read:analytics'],
   ['/api/v1/taxonomy', 'read:analytics'],
   // CAP-01. A form definition is the question set a field report was filled
   // against, so reading it is the same privilege as reading the taxonomy.
@@ -182,6 +186,12 @@ export const WRITE_SCOPES = Object.freeze([
   ['/api/v1/workflows', 'admin:workflows'],
   ['/api/v1/scenarios', 'admin:scenarios'],
   ['/api/v1/analytics', 'admin:analytics'],
+  // ENH-34. Creating a snapshot writes a durable copy of the export
+  // collections — field reports and message bodies included — under a handle
+  // that cannot be withdrawn. That is an analytics-governance act, the same
+  // privilege that runs a bias correction, and not a lesser `read:export`. The
+  // read side above is `read:analytics`; this is the write it pairs with.
+  ['/api/v1/dataset-snapshots', 'admin:analytics'],
   ['/api/v1/flood-probability/train', 'admin:analytics'],
   ['/api/v1/kpi/refresh-snapshots', 'admin:analytics'],
   ['/api/v1/maintenance', 'admin:maintenance'],

@@ -67,6 +67,7 @@ import { matchFieldSignalRoute, handleFieldSignalRoute } from './routes/field-si
 import { matchExposureRoute, handleExposureRoute } from './routes/exposure.js'
 import { matchDerivedRoute, handleDerivedRoute } from './routes/derived.js'
 import { matchOperationalRoute, handleOperationalRoute } from './routes/operational.js'
+import { matchSnapshotRoute, handleSnapshotRoute } from './routes/snapshots.js'
 import { findVisible } from './visibility.js'
 import {
   formCatalogue, formFor, latestForm, mergeForms, validateAnswers, validateFormDefinition,
@@ -1432,6 +1433,14 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   const derivedRoute = matchDerivedRoute(url.pathname, req.method)
   if (derivedRoute && await handleDerivedRoute(derivedRoute, {
     data, req, res, url, jsonResponse,
+  })) return
+
+  // ENH-34. Citable dataset snapshots. Dispatched beside the derived reads
+  // because a snapshot is a read frozen — it takes the same materialised store
+  // and stores a copy of what a vintage already identifies.
+  const snapshotRoute = matchSnapshotRoute(url.pathname, req.method)
+  if (snapshotRoute && await handleSnapshotRoute(snapshotRoute, {
+    data, req, res, url, jsonResponse, store,
   })) return
 
   if (req.method === 'GET' && url.pathname === '/api/v1/auth-info') {
