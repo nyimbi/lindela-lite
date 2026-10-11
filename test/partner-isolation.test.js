@@ -153,6 +153,29 @@ describe('a partner claim is enforced', () => {
     })
   })
 
+  it('hands the caller\'s organisation to the store read, not a parameter', async () => {
+    // QUA-02's exemplar, in behavioural form. This claim used to be asserted by
+    // reading `src/server.js` as text and matching a regex against the read
+    // call. That test passes whenever the line exists — including when the
+    // expression evaluates to null at runtime — and fails on a rename while the
+    // behaviour is correct. Recording the options the store actually received
+    // is the same claim with neither property.
+    await withServer(async (base, store) => {
+      await store.merge({ service_assets: assets })
+      const seen = []
+      const read = store.read.bind(store)
+      store.read = async (options) => { seen.push(options); return read(options) }
+
+      const res = await get(base, '/api/v1/service-assets', 'tok-a')
+      assert.equal(res.status, 200)
+      assert.ok(seen.length > 0, 'the route did not read the store at all')
+      for (const options of seen) {
+        assert.equal(options.partnerOrg, 'orgA',
+          `a store read reached the adapter with partnerOrg ${JSON.stringify(options.partnerOrg)}`)
+      }
+    })
+  })
+
   it('refuses a partner_org on the export route too', async () => {
     await withServer(async (base) => {
       const res = await get(base, '/api/v1/export.csv?partner_org=orgB', 'tok-a')

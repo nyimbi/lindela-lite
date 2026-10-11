@@ -233,21 +233,16 @@ describe('ENH-17 — the partner predicate in the store read, against a real Pos
     assert.deepEqual((data.field_reports || []).map((r) => r.id), ['fr-orgA'])
   })
 
-  it('the server reads with the caller\'s organisation, not a parameter', async (t) => {
-    // The clause only helps if the request's token reaches it. A handler that
-    // omitted `partnerOrg` would fall back to a whole-platform read — correct,
-    // because `filterRecords` still scopes the response, but back to 39,715 rows
-    // over the wire for every request.
-    if (needsPostgres(t)) return
-    const { readFileSync } = await import('node:fs')
-    const path = await import('node:path')
-    const source = readFileSync(path.join(import.meta.dirname, '..', 'src', 'server.js'), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '')
-    assert.match(
-      source,
-      /store\.read\(\{[^}]*partnerOrg:\s*currentRequestAuth\(\)\?\.partner_org/,
-      'the read call must take the organisation from the request context',
-    )
-  })
+  // The clause only helps if the request's token reaches it. A handler that
+  // omitted `partnerOrg` would fall back to a whole-platform read — correct,
+  // because `filterRecords` still scopes the response, but back to 39,715 rows
+  // over the wire for every request.
+  //
+  // That claim used to be asserted here by reading `src/server.js` as text and
+  // matching a regex against the read call (QUA-02). It now lives in
+  // `test/partner-isolation.test.js` as "hands the caller's organisation to the
+  // store read, not a parameter", which records the options the adapter
+  // actually received. The text form passed whenever the line existed — a
+  // `partnerOrg` expression evaluating to `null` at runtime still matched — and
+  // failed on a rename while the behaviour was correct.
 })
