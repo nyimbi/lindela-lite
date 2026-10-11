@@ -344,6 +344,10 @@ first declaration was dead.
 risk radius reports confidence 0, reading as "certain the risk is zero" rather than
 "no risk reading for this asset."
 
+**Fixed 2026-10-11.** The service-impact payload publishes the nearest flood risk's
+confidence as `null` when the asset is outside every radius
+(`src/analytics.js:761`), so an unmeasured risk no longer reads as a certain zero.
+
 ### VER-13 — HIGH — The IoT map layer coerces an absent sensor position to Null Island
 Found 2026-10-11 while extracting the field-signal family (ARC-01), not by the audit.
 `src/routes/field-signals.js` `iotMapLayer`: `if (!Number.isFinite(Number(row.lat)) …)`.
@@ -371,10 +375,6 @@ variant, and on the iot filter specifically.
 ---
 
 ## Concurrency
-
-**Fixed 2026-10-11.** The service-impact payload publishes the nearest flood risk's
-confidence as `null` when the asset is outside every radius
-(`src/analytics.js:735`), so an unmeasured risk no longer reads as a certain zero.
 
 ### CON-01 — CRITICAL — Cross-replica read-modify-write in `outbox.emit`
 `src/outbox.js:64` `const data = await store.read()`, then `:106`
