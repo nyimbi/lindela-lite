@@ -19,6 +19,27 @@ calendar time: 1 ≈ days, 5 ≈ a quarter.
 
 ---
 
+## Status against the tree — verified 2026-10-11
+
+Every row below was checked against the code, not against the note beneath it.
+The per-item notes carry the detail; this is the summary, and it exists because
+the two had drifted: three items were marked shipped while four others were
+shipped and unmarked, and the register was the last place anyone looked.
+
+| Verdict | Count | Items |
+|---|---|---|
+| IMPLEMENTED | 13 | 31, 35, 37, 40, 46, 48, 49, 61, 63, 64, 65, 66, 81 |
+| PARTIAL | 12 | 32, 33, 42, 50, 51, 52, 55, 57, 59, 70, 72, 78 |
+| ABSENT | 26 | 34, 36, 38, 39, 41, 43, 44, 45, 47, 53, 54, 56, 58, 60, 62, 67, 68, 69, 71, 73, 74, 75, 76, 77, 79, 80 |
+
+PARTIAL means the substrate exists and the item's own claim does not: ENH-32
+pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
+or parents, ENH-59 has three tables checked against each other and no single
+declaration they are generated from. Reading a PARTIAL as done is the error this
+table exists to prevent.
+
+---
+
 ## Group G — Interoperability substrate: push, not only pull
 
 The platform can *ingest* from the humanitarian ecosystem and cannot *publish*

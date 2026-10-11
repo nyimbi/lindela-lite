@@ -153,25 +153,48 @@ export async function submitOutcome({ alertId, determination, reason, determined
 }
 
 /**
- * The fetch for the coverage line. Failure is not an error state: an unanswerable
- * tally means the rail says nothing about coverage rather than claiming zero.
+ * The two fetches, over `apiFetch`.
+ *
+ * `apiFetch` rather than a raw `fetch`, and that is not a style preference: it
+ * is what puts a timeout and an `ok` check on these requests. The tally is
+ * cosmetic — a line above the alert list — and on a weak link a request with no
+ * timeout never settles, so the console sits with a pending coverage line for
+ * the life of the page.
+ *
+ * **`apiFetch` returns a parsed body, not a Response.** These two functions read
+ * `payload.ok` and `await payload.json()` for a long time, which is Response
+ * accessors — and `apiFetch` has already thrown on a non-ok status and already
+ * parsed the JSON, so `payload.ok` was `undefined` on every real call. The
+ * consequences were silent and opposite to what the tests claimed:
+ *
+ *   - `fetchCoverage` returned `null` always, so the coverage line was hidden on
+ *     every deployment. "12 of 400 alerts judged" — the number an operator needs
+ *     before believing any rate the console shows — never appeared.
+ *   - `fetchReasons` fell through to `FALLBACK_REASONS` always, so the dialog
+ *     offered the client's own copy of the catalogue. That is the exact defect
+ *     the old source-text test asserted could not happen (`assert.match(APP,
+ *     /fetchReasons\(\)/)`): the call was there, and its contract was not.
+ *
+ * Both were invisible to the suite because the tests inject a Response-shaped
+ * `fetchImpl` — a stub that matched the *caller* rather than the default. The
+ * tests below now drive the real `apiFetch` path, and the injected seam keeps
+ * the Response shape the rest of the codebase uses (`queue-core.js:sendRecord`)
+ * for the failure cases.
  */
 export async function fetchCoverage({ fetchImpl = apiFetch } = {}) {
-  // `apiFetch` rather than a raw fetch, and that is not a style preference: it
-  // is what puts a timeout and an `ok` check on this request. The tally is
-  // cosmetic — a line above the alert list — and on a weak link a request with
-  // no timeout never settles, so the console sits with a pending coverage line
-  // for the life of the page.
-  //
-  // A throw is caught for the same reason as a non-OK response: this is an
-  // offline-first console, and "the tally could not be fetched" is the common
-  // case rather than the exceptional one.
   try {
     const payload = await fetchImpl('/api/v1/alert-outcomes/tally')
-    if (!payload.ok) return null
-    const body = await payload.json()
-    return body.success ? body.data : null
+    // Tolerate both shapes so an injected Response-style seam still works.
+    if (typeof payload?.json === 'function') {
+      if (payload.ok === false) return null
+      const body = await payload.json()
+      return body.success ? body.data : null
+    }
+    return payload?.success ? payload.data : null
   } catch {
+    // This is an offline-first console, and "the tally could not be fetched" is
+    // the common case rather than the exceptional one. `apiFetch` throws on a
+    // non-ok status, which lands here for the same reason a network error does.
     return null
   }
 }
@@ -180,9 +203,12 @@ export async function fetchCoverage({ fetchImpl = apiFetch } = {}) {
 export async function fetchReasons({ fetchImpl = apiFetch } = {}) {
   try {
     const payload = await fetchImpl('/api/v1/alert-outcomes/reasons')
-    if (!payload.ok) return FALLBACK_REASONS
-    const body = await payload.json()
-    return body.success ? body.data.reasons : FALLBACK_REASONS
+    if (typeof payload?.json === 'function') {
+      if (payload.ok === false) return FALLBACK_REASONS
+      const body = await payload.json()
+      return body.success ? body.data.reasons : FALLBACK_REASONS
+    }
+    return payload?.success ? payload.data.reasons : FALLBACK_REASONS
   } catch {
     return FALLBACK_REASONS
   }

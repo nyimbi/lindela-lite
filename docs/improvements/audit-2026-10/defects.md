@@ -991,6 +991,13 @@ ENH-38/39.
 connector. It can pull from DHIS2 and cannot push to it: one-way interoperability.
 ENH-31/32/37.
 
+**Partly closed 2026-10-11.** Two of the three halves landed: `?hxl=1` on the CSV
+route emits the hashtag row (`src/hxl.js`), and `/api/v1/export.ndjson` streams
+through `store.iterateRecords` rather than buffering. What remains is the DHIS2
+push — `dataValueSet` serialisation and the scheduled job — which is the half the
+row is really about, because a pull-only connector is the one-way link this
+defect names. The row stays open until that lands.
+
 ### CAP-03 — HIGH — No administrative-hierarchy / org-unit model (vs DHIS2)
 `src/districts.js` and `DEFAULT_REGIONS` exist, but district resolution is scattered
 across seven modules and there is no registry with codes, boundaries and a parent
@@ -1101,6 +1108,27 @@ expression evaluating to `null` at runtime still matches). Dense also in
 `test/explain-alert-panel.test.js` (34), `test/severity-chip.test.js` (32). A
 refactor fails the test while the code is correct; a semantic break passes. Both
 erode trust in the suite.
+
+**Residue fixed 2026-10-11; the class remains open.** `test/outcome-surface.test.js`
+was the densest genuine instance and is now behavioural: the alert rail's outcome
+control is *clicked* through the handler `renderAlertsPanel` attaches, and the
+dialog's option list is read from the element the console wrote. Converting it
+found two defects the source-text assertions had covered for the life of the
+file, which is the thesis of this row demonstrated on itself:
+
+  - `public/shared/outcomes.js` read `payload.ok` and `await payload.json()` off
+    `apiFetch`'s return, which is a *parsed body* — so `fetchCoverage` returned
+    `null` on every real call (the coverage line never rendered in production)
+    and `fetchReasons` always fell back to the client's own catalogue.
+  - `public/app.js`'s `openOutcomeDialog` fetched the catalogue and then dropped
+    it: `determinationFor(alert)` was called with no `reasons`, so the select
+    rendered `FALLBACK_REASONS` regardless. The call existed and was inert, and
+    `assert.match(APP, /fetchReasons\(\)/)` was satisfied by it.
+
+The remaining files are counted by *call*, not by class, and most are legitimate:
+`test/severity-chip.test.js` pins a CSS component list, `test/viz-explain.test.js`
+reads a data file. Distinguishing markup-pinning from behaviour-asserting is the
+remaining work, and it is a judgement per file rather than a sweep.
 
 ### QUA-03 — HIGH — `public/app.js` cannot be imported; tested through a hand-rolled DOM stub
 `test/web-console.test.js` states it: it runs a boot sequence at import time. 6,324

@@ -106,6 +106,72 @@ export function installModuleResolution(publicRoot = PUBLIC_ROOT) {
 /* ============================================================== DOM ==== */
 
 /**
+ * The elements a shallow scan of an `innerHTML` string can see.
+ *
+ * Not a parser and not trying to be: it reads start tags and their attributes,
+ * which is exactly the surface the console's delegated handlers select on
+ * (`[data-action]`, `[data-i18n]`, `.rail-tab`). It deliberately does *not*
+ * model nesting, text nodes or the DOM tree — a half-DOM that answers nesting
+ * questions wrongly is worse than one that answers none, because the test then
+ * asserts against the stub's idea of structure rather than the console's.
+ */
+function scanHtml(html) {
+  const out = []
+  for (const [, tag, attrsText] of String(html).matchAll(/<([a-zA-Z][\w-]*)((?:\s+[^<>]*?)?)\/?>/g)) {
+    const el = stubElement(tag)
+    for (const [, name, value] of attrsText.matchAll(/([\w:-]+)(?:="([^"]*)")?/g)) {
+      const lower = name.toLowerCase()
+      if (lower === 'id' || lower === 'class' || lower.startsWith('data-')) {
+        // The camelCase key the DOM uses, so `el.dataset.action` reads what the
+        // console writes as `data-action`.
+        const key = lower.startsWith('data-')
+          ? lower.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+          : lower
+        el.dataset[key] = value ?? ''
+      }
+      if (lower === 'id') el.id = value ?? ''
+      el.setAttribute(lower, value ?? '')
+    }
+    out.push(el)
+  }
+  return out
+}
+
+/**
+ * Whether a scanned element matches a selector, for the shapes this codebase
+ * uses: `tag`, `.class`, `#id`, `[attr]`, `[attr="v"]`, and comma-separated
+ * unions of those.
+ *
+ * Anything else returns **false rather than throwing**, deliberately: a stub
+ * that throws on a selector the real DOM understands turns a passing test into
+ * a failing one for a reason that is about the harness. A selector this cannot
+ * evaluate matches nothing — the same answer the old always-empty stub gave —
+ * so nothing regresses, and a test needing a richer selector fails on its own
+ * assertion rather than on the sandbox.
+ */
+function matchesSelector(el, sel) {
+  return String(sel).split(',').some((part) => {
+    const attr = part.trim().match(/^\[([\w:-]+)(?:([~^$*|]?=)"([^"]*)")?\]$/)
+    if (attr) {
+      const [, name, op, value] = attr
+      const actual = name.toLowerCase().startsWith('data-')
+        ? el.dataset[name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())]
+        : el.getAttribute(name.toLowerCase())
+      if (op === undefined) return actual !== null && actual !== undefined
+      return op === '=' ? actual === value : false
+    }
+    const m = part.trim().match(/^([a-zA-Z][\w-]*)?(?:\.([\w-]+))?(?:#([\w-]+))?$/)
+    if (!m) return false
+    const [, tag, cls, id] = m
+    if (!tag && !cls && !id) return false
+    if (tag && el.tagName !== tag.toUpperCase()) return false
+    if (cls && !el.classList.contains(cls)) return false
+    if (id && el.id !== id) return false
+    return true
+  })
+}
+
+/**
  * An element stub.
  *
  * Returns a fresh object each call because a module that holds a reference to
@@ -166,9 +232,28 @@ export function stubElement(tag = 'DIV') {
     setAttribute: (k, v) => { attrs[k] = String(v) },
     removeAttribute: (k) => { delete attrs[k] },
     hasAttribute: (k) => k in attrs,
-    addEventListener() {},
-    removeEventListener() {},
+    // Listeners are *recorded*, not dropped. A no-op `addEventListener` makes
+    // every delegated control undrivable, and the tests written against it
+    // assert on the handler's source text instead of its effect — which is the
+    // exact substitution this harness exists to remove. Recording costs nothing
+    // for a module that only registers, and lets a test fire the click a
+    // person would.
+    _listeners: new Map(),
+    addEventListener(type, fn) {
+      if (!this._listeners.has(type)) this._listeners.set(type, [])
+      this._listeners.get(type).push(fn)
+    },
+    removeEventListener(type, fn) {
+      const list = this._listeners.get(type)
+      if (!list) return
+      const i = list.indexOf(fn)
+      if (i >= 0) list.splice(i, 1)
+    },
     dispatchEvent: () => true,
+    // The click handlers a test can drive. `fire(el, 'click', event)` in the
+    // test is the caller; this is only the storage. A method, not an arrow —
+    // an arrow in an object literal has no `this` to read `_listeners` from.
+    listeners(type) { return (this._listeners.get(type) || []).slice() },
     appendChild(c) { this.children.push(c); return c },
     removeChild(c) {
       const i = this.children.indexOf(c)
@@ -205,9 +290,53 @@ export function stubElement(tag = 'DIV') {
     get lastElementChild() { return this.children[this.children.length - 1] || null },
     get childElementCount() { return this.children.length },
     insertRow() {},
+    // A deferred panel arrives through `insertAdjacentHTML`, and without it the
+    // dialog surfaces cannot be opened at all — which is why their tests read
+    // `app.js` as text. The ids in the inserted markup are handed to the
+    // environment so `getElementById` finds them, exactly as the browser does;
+    // the parse is deliberately shallow, because this stub is not a DOM and a
+    // half-DOM that answers the wrong questions is worse than one that answers
+    // none. `_onInsertHtml` is set by `installBrowserEnv`.
+    insertAdjacentHTML(_position, html) {
+      if (typeof this._onInsertHtml === 'function') this._onInsertHtml(String(html))
+      this.innerHTML += String(html)
+    },
+    showModal() { this.open = true },
+    close() {
+      this.open = false
+      for (const fn of this.listeners('close')) fn({ type: 'close', target: this })
+    },
+    open: false,
     cloneNode: () => stubElement(tag),
-    querySelector: (sel) => stubElement(typeof sel === 'string' ? sel.replace(/^[.#]/, '') : 'div'),
-    querySelectorAll: () => [],
+    /**
+     * A scanned node when the element's markup has been set through
+     * `innerHTML`, and a permissive stand-in otherwise.
+     *
+     * The fallback is not a convenience. This element's real children may live
+     * in an `index.html` the harness never loads, so "the scan found nothing"
+     * is *not* evidence that the selector matches nothing — and returning null
+     * on that evidence makes every module-level `querySelector('.dialog-close')
+     * .addEventListener(...)` throw at import. That is what happened to
+     * `focal-point/app.js`, and the module-importability test caught it, which
+     * is the test doing its job on the harness rather than on the console.
+     */
+    querySelector(sel) { return this.querySelectorAll(sel)[0] ?? stubElement(String(sel).replace(/^[.#]/, '')) },
+    /**
+     * The scan is cached against the `innerHTML` it was made from, because a
+     * DOM returns the *same* nodes for the same markup and the console relies
+     * on that: `renderAlertsPanel` selects `[data-action]` and attaches a
+     * handler to each button, and the test then selects the same button to
+     * fire it. Without the cache those are two different objects, the handler
+     * lives on a node nobody can reach, and the test reports a decorative
+     * button. Keyed on the markup so a re-render invalidates it for free.
+     */
+    querySelectorAll(sel) {
+      if (this._scanFor !== this.innerHTML) {
+        this._scanFor = this.innerHTML
+        this._scan = scanHtml(this.innerHTML)
+      }
+      return this._scan.filter((el) => matchesSelector(el, sel))
+    },
     closest: () => null,
     matches: () => false,
     contains: () => false,
@@ -298,6 +427,15 @@ export function installBrowserEnv(options = {}) {
 
   const documentElement = stubElement('html')
   const body = stubElement('body')
+  // Deferred markup lands on `document.body`, and the dialog's controls are
+  // reached by id afterwards. Registering the ids the insert declares is what
+  // lets `loadOutcomeTemplate` wire its buttons to elements that exist — the
+  // same reason the browser needs the markup in the document, not in a string.
+  body._onInsertHtml = (html) => {
+    for (const [, id] of html.matchAll(/\bid="([^"]+)"/g)) {
+      if (!byId.has(id)) byId.set(id, stubElement())
+    }
+  }
 
   defineGlobal('window', {
     addEventListener() {},
@@ -443,30 +581,34 @@ export function installBrowserEnv(options = {}) {
 
   defineGlobal('clearInterval', () => {})
   /**
-   * Timers, split by whether the caller asked for a delay.
+   * Timers, with the caller's delay preserved and the handle unreferenced.
    *
-   * A zero-delay timer is a microtask in disguise and must actually run — the
-   * console defers renders through `setTimeout(fn, 0)`, and a stub that dropped
-   * those would make the module look like it never painted.
+   * The delay used to be clamped to 0, which is not a smaller version of the
+   * real delay — it is a different program. `schedulePoll` re-arms itself from
+   * inside its own callback, so a 30-second poll clamped to 0 is a busy loop:
+   * measured on `paging-scope-wiring.test.js`, one boot produced 206,246
+   * "Action rail failed to render" stacks in 120 seconds, and the suite still
+   * reported a pass because the failure was caught and logged as a dead panel.
+   * A test that is green while spinning at 1,700 requests a second is measuring
+   * the stub, not the console.
    *
-   * A *delayed* timer is a poll, and running it early is not a smaller version
-   * of running it late: `schedulePoll` re-arms itself from inside its own
-   * callback, so clamping 30 s to 0 turns the console's poll into a busy loop.
-   * Measured on `paging-scope-wiring.test.js`, one boot produced 206,246
-   * "Action rail failed to render" stacks in 120 seconds — and the suite still
-   * reported a pass, because the failure was caught and logged as a dead panel.
-   * A test that is green while spinning at 1,700 requests a second is not
-   * measuring the console; it is measuring the stub.
+   * Dropping delayed timers instead fixes the spin and breaks a different
+   * thing: a test that awaits `setTimeout(resolve, 50)` never resolves, and the
+   * whole file dies on an unsettled top-level await.
    *
-   * So a delayed timer is *dropped*, not clamped. Nothing in these tests waits
-   * on a poll — the boot's `await refresh({ first: true })` is the whole
-   * sequence — and dropping it also stops a 30-second timer keeping the process
-   * alive, which is the reason the clamp was here.
+   * So the delay is passed through and the handle is unreferenced. `unref` is
+   * the exact tool for the two properties wanted at once — the timer still
+   * fires if the loop is alive for other work, and it never *keeps* the loop
+   * alive. That is what stops a 30-second poll outliving its test, which is the
+   * problem the clamp was reaching for. Verified rather than assumed: an
+   * unref'd zero-delay timer fires after a `setImmediate`, so deferring a
+   * render this way still paints.
    */
   defineGlobal('setTimeout', (fn, ms) => {
     if (typeof fn !== 'function') return 0
-    if (Number(ms) > 0) return 0
-    return realSetTimeout(fn, 0)
+    const handle = realSetTimeout(fn, Number(ms) || 0)
+    handle?.unref?.()
+    return handle
   })
   defineGlobal('clearTimeout', (id) => realClearTimeout(id))
 

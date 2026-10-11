@@ -4412,14 +4412,20 @@ async function openOutcomeDialog(alert) {
   if (!(await loadOutcomeTemplate())) return
   const dialog = $('outcomeDialog')
   if (!dialog) return
-  const determination = determinationFor(alert)
+  // The catalogue is fetched *before* the decision, not after it. It used to be
+  // fetched here and then dropped on the floor — `determinationFor` was called
+  // with no `reasons`, so it built its option lists from `FALLBACK_REASONS` and
+  // the select rendered the client's own copy on every open. The call was
+  // present and inert, which is why the test that grepped for `fetchReasons()`
+  // passed while the dialog never once used the server's answer.
+  const reasons = await fetchReasons()
+  const determination = determinationFor(alert, { reasons })
   if (determination.kind === 'unavailable') {
     setStatus(determination.reason)
     return
   }
   state._outcomeAlert = alert
 
-  const reasons = await fetchReasons()
   $('outcomeSeverity').textContent = alert.severity || '—'
   $('outcomeRule').textContent = alert.rule_name || alert.metric || '—'
 
