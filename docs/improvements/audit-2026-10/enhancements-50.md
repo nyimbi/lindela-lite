@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 36 | 31, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 53, 54, 56, 58, 61, 62, 63, 64, 65, 66, 69, 70, 72, 73, 74, 75, 78, 79, 81 |
-| PARTIAL | 10 | 32, 38, 42, 51, 52, 55, 57, 59, 67, 71 |
-| ABSENT | 5 | 60, 68, 76, 77, 80 |
+| IMPLEMENTED | 42 | 31, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
+| PARTIAL | 6 | 32, 38, 42, 59, 67, 71 |
+| ABSENT | 3 | 60, 68, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-59 has three tables checked against each
@@ -704,6 +704,25 @@ and a number that changed with unchanged inputs (already logged at
 `src/analytics.js:417`) becomes a reconcilable event rather than a log line. This
 is the substrate for the determinism claim in ENH-76.
 
+> **Shipped 2026-10-12 — IMPLEMENTED.** `src/reconciliation.js` classifies every
+> published number into four outcomes, not one: `reconciled` (value moved, inputs
+> moved), `changed_without_input_change` (not a function of declared inputs — names
+> the clock or seed if the run declared one, else says `unknown`),
+> `unchanged_with_input_change` (an input not wired in — names the fields that
+> moved), and `cannot_trace` (no provenance, a half-written envelope, no prior
+> observation). The fourth is a refusal and is never folded into agreement:
+> `reconcileRun` reports `measured`, `untraced` and `first_sight` as separate
+> counts, so a run that compared nothing reports `measured: 0`. ENH-23's
+> `reconcileDerivedNumbers` detected **one** of the four, only above a 5% band, and
+> stored a row; the ledger answers "did it change at all" and leaves the band to
+> ENH-23. Joins bitemporal history, `buildProvenance` envelopes and the analytics
+> `input_counts`, keyed on the imported `derivedKey` so it cannot drift from the
+> analytics key; events carry clock-free `stableId` ids so re-reconciling a pair
+> updates rather than duplicates. The ledger is an append-only hash chain reusing
+> `audit-chain.js`. 21 tests. The first canary of the `traceAfter` guard *passed*
+> because `traceBefore` masked it — the guards were isolated and re-canaried
+> (`traceAfter` fails 1, `traceBefore` fails 2) before the coverage was believed.
+
 ---
 
 ## Group J — Decision and planning (novel operational paradigms)
@@ -726,6 +745,25 @@ threshold fires a pre-agreed action within a funding window, with the trigger, t
 crossing and the action all recorded. This is the paradigm shift from "here is a
 risk score" to "here is what happens next and who is funded" — the reason
 anticipatory action exists as a field.
+
+> **Shipped 2026-10-12 — IMPLEMENTED.** `src/anticipatory-action.js`. Two things
+> must hold before a trigger fires, and both are refusals rather than warnings.
+> The model must not refuse for the region: the model card's own refusal or a
+> missed floor is returned as-is, checked **before** the threshold comparison so
+> the operator reads the model's sentence rather than a comparison against an
+> absent value — an unsupplied floor refuses too, because it is unverified rather
+> than met. The crossing must fall inside the funding window, checked **first**
+> because `NaN` compares false in both directions and an unreadable bound would
+> otherwise fall through to the fire branch, a fail-open on the one authority
+> constraint; a crossing outside the window is still recorded as an audit fact
+> with `fired: false`. Vocabulary is the siblings', not a parallel copy —
+> operators re-exported from `alerts.js` (the list `parametric.js` validates
+> against), the name limit from `parametric.js`, the model check through
+> `modelCard`. The named metric is read only from `forecast.metrics`; a top-level
+> `value` never stands in, which would be the silent-key-list defect. The
+> crossing id is content-only, so re-evaluating is idempotent. 27 tests; disabling
+> the window check drops the run to 22/27, so the window tests fire on their own
+> defect.
 
 **ENH-53 — Resource pre-positioning optimiser.** Given the forecast distribution
 and the road network (`src/road-access.js`), compute where to stage stock to
@@ -777,6 +815,11 @@ reporting a large number for it would rank a gap that closing cannot change.
 **ENH-55 — Scenario comparison workbench.** Side-by-side interventions with their
 uncertainty, over the same region and window, so a coordinator compares rather
 than reads one number at a time.
+
+> **Shipped 2026-10-12 — IMPLEMENTED.** `src/scenario-compare.js` compares two
+> interventions over the same ground and carries each one's uncertainty rather
+> than a point difference — a comparison of two numbers without their intervals
+> is a comparison of two draws. 20 tests.
 
 **ENH-56 — Compound-hazard risk model.** Flood, conflict and disease interact
 (`computeClimateConflictRisk` exists in isolation). A joint model with explicit
@@ -851,6 +894,27 @@ gap, no flood is a dry record.
 output against the fact set. Extend it to scheduled generation of role-specific
 briefings (district officer, national coordinator, partner) from the same grounded
 fact set, so the narrative cannot invent a figure for any audience.
+
+> **Shipped 2026-10-12 — IMPLEMENTED.** `src/briefing.js` builds three audiences
+> (district officer 90 words, national coordinator 140, partner 110) from one
+> report's own sections. The audience changes what is said, never what is true: a
+> briefing is a **selection** over the fact set, declared rather than written into
+> a prompt, because a rule expressed as prose is a rule the model may follow or
+> not. Two mechanisms keep an unentitled figure out, deliberately separate — the
+> fact set handed to the model is already narrowed, so a withheld figure is absent
+> from `allowedNumbers` and restating it is caught by the existing figure audit
+> (the same refusal path, not a second one); and an audience with no permitted
+> facts is refused `no_permitted_facts` rather than written short, because an
+> empty briefing reads as "nothing to report" — a claim about the situation when
+> the truth is a claim about entitlement. The section names are `reports.js`'s own
+> `SECTION_LIBRARY`, checked at import: I first wrote `hazards`/`access`/`actions`,
+> which match nothing, and every briefing would have refused
+> `no_permitted_facts` — a refusal an operator reads as "no data". `narrateReport`
+> accepted `maxWords` and never passed it, so the per-audience lengths would have
+> been dropped; fixed, and canaried. Scheduling is a function of an injected clock,
+> keyed per period so re-running a day is a no-op rather than a second email; an
+> unreadable instant is due for nobody, not for everyone. 21 tests, canaried three
+> ways.
 
 **ENH-58 — Counterfactual impact evaluation.** Given a dispatch and a matched
 comparison set, estimate what the intervention changed. This is what turns the
@@ -1257,9 +1321,39 @@ exists), reproduce any published number bit-for-bit. This is the strongest possi
 version of the platform's honesty claim: not "we say what we computed" but "you can
 recompute it."
 
+> **Shipped 2026-10-12 — IMPLEMENTED.** `src/replay.js`. A capture holds what
+> `refreshAnalytics` read, what it published, the instant it ran, the raw fetched
+> bodies (through `src/capture.js`'s own serialiser — no second byte format) and
+> the action-log head. `replayRun` re-derives through the **production**
+> `refreshAnalytics` against a store adapter answering with the captured snapshot;
+> the engine is never reimplemented, because a second implementation would be the
+> thing that diverges. Determinism is pinned at three points and each is pinned
+> rather than assumed: the clock (`refreshAnalytics` takes no `now`, so the
+> captured instant is installed as `globalThis.Date` for one awaited replay and
+> restored in a `finally`; a capture with no `pinned_at` is *unverifiable* and
+> names it, never replayed against `Date.now()`), the ordering (inputs fed in
+> captured order, both adapters sorting identically, because `collectRegions` is
+> order-sensitive), and the side effects (the calibration snapshot write is
+> suppressed and its directory restored). Three verdicts: `reproduced` asserts a
+> non-zero match count so a vacuous pass fails; `diverged` names the collection,
+> record key, field path, both values and whether inputs moved; `unverifiable`
+> compares nothing and is never reported as `reproduced`. `Object.is` is the float
+> comparator, so a last-digit difference and `-0` vs `0` are divergences —
+> `canonicalHash` pairs records but never decides, because `JSON.stringify` renders
+> `-0` as `0`. 18 tests, deterministic across repeated runs.
+
 **ENH-77 — Synthetic-population load model.** Drive the API from a model of real
 access patterns (a CHW syncing, a console polling, a partner pulling) to find the
 capacity ceiling before a flood season does.
+
+> **Shipped 2026-10-12 — IMPLEMENTED.** `src/load-model.js` and
+> `scripts/load-probe.mjs`, 17 tests. The probe found a real platform finding
+> rather than confirming a hope: the default population — 1 console, 63 CHW
+> devices, 3 partners — is far over the inbound write budget. A shift-start
+> thundering herd fires roughly 1,575 writes at t=0 against
+> `INBOUND_POLICIES.write` of 60/min per client, so a 45-second run issued 305
+> requests, peaked at 277 concurrent, and had 209 refused with 429. **The rate
+> limiter binds before capacity does** — the ceiling is a policy, not a server.
 
 **ENH-78 — Executable security regression suite.** SSRF (VUL-01), tenant isolation
 (VUL-03) and authz (VUL-04) as specs that fail the build, modelled on the existing
