@@ -676,7 +676,7 @@ inside the same function, three auth gates (one centralised, two copies at `:366
 and `:392`), per-route inline validation, and business logic that belongs in
 `kpi.js`/`reports.js`. A change to one route requires reading 1,600 lines. ENH-60.
 
-**In progress.** Eight families are out, each one a coherent group with its own
+**In progress.** Nine families are out, each one a coherent group with its own
 matcher, its own test file, and a property that is the reason it is a family
 rather than a set of blocks:
 
@@ -689,13 +689,16 @@ rather than a set of blocks:
 | `src/routes/derived.js` | 5 | a refusal travels beside the figure, not instead of it |
 | `src/routes/operational.js` | 7 collections × 4 verbs | `include_deleted` on the reads, ignored on the writes; `action_logs` read-only (VUL-03) |
 | `src/routes/provenance.js` | 6 | none of them is a collection read and every one refuses a write; `history` answers 405+`read_only` where the rest 404 |
+| `src/routes/alerting.js` | 21 paths | a view is computed and has no `data[...]` key, so the kind guards carry the branch |
 | `src/routes/snapshots.js` | 3 | ENH-34's citable handles |
 | `src/visibility.js` | — | `findVisible`, the one by-id resolver (VUL-03) |
 
-`src/server.js` is 5,230 lines and the dispatcher 1,403, from 5,603 and 1,903 at
+`src/server.js` is 4,886 lines and the dispatcher 1,392, from 5,603 and 1,903 at
 the start of the extraction. Each family was canaried at the property that
 justifies it, and every canary was watched failing on its own assertion before
-the family was committed.
+the family was committed — including the canaries that *did not* fire, which is
+how the alerting family's docstring was corrected from a claim about ordering
+that the code does not make.
 
 Four defects were found *by* the extraction rather than by the audit: VER-13
 (Null Island in `iotMapLayer`), VER-14 (four read routes answering a write), the
@@ -706,10 +709,9 @@ cannot tell an optional group from a required one and reported only the
 two-segment path. Split into two patterns, which is what the original inline
 matcher had done.
 
-Still inline: the remaining `match*Route` families (`scenario`, `parametric`,
-`chw`, `ingestion`, `reporting`, `workflow`, `rapidPro`, `alert`, `trigger`,
-`protocol`, `webhook`) and the risk/analytics reads. ENH-60's ~15-module target
-is the endpoint.
+Still inline: `scenario`, `parametric`, `chw`, `ingestion`, `reporting`,
+`workflow`, `rapidPro`, `webhook`, and the risk/analytics reads. ENH-60's
+~15-module target is the endpoint.
 
 ### VER-14 — HIGH — Four read routes answer a write method with 200
 Found 2026-10-11 while extracting the exposure family (ARC-01), not by the audit.
