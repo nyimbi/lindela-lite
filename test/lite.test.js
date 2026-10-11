@@ -5940,6 +5940,58 @@ describe('Lindela Lite flood probability model basis', () => {
     assert.equal(events_matched, 1)
   })
 
+  // ENH-49. The monitor over the label step. VER-03 was the pre-filter and the
+  // labeller reading different date fields, so an event was counted in
+  // `events_matched` and never labelled a month — the contingency table's
+  // positive count biased low by exactly those events, with nothing saying so.
+  // The fields agree now; what remains is an event outside the months the
+  // rainfall series could sample, which is real and must be published.
+  it('reports how many admitted events no sampled month could label', async () => {
+    const fp = await fpImport()
+    const daily = deterministicDaily(1)
+    const events = [
+      floodEvent(2005, 6, 10),   // July 2005: kept, labelled
+      floodEvent(2005, 11, 5),   // December 2005: kept, labelled
+      // January 2005 is inside the series but the trailing 90-day window cannot
+      // reach real data, so no sample exists for it — admitted, never labelled.
+      floodEvent(2005, 0, 5),
+    ]
+    const built = fp.buildDistrictSamples(daily, events, { latitude: 0, longitude: 0, country: 'TL' })
+    assert.equal(built.events_matched, 3)
+    assert.equal(built.events_unlabelled, 1, 'the unlabelled event was not counted')
+    assert.equal(built.label_coverage, Math.round((2 / 3) * 10000) / 10000)
+    // The monitor and the labels must agree by construction: the months that
+    // carry a label are exactly the events counted as labelled.
+    assert.equal(built.samples.filter((s) => s.label).length, 2)
+  })
+
+  it('reports no label coverage when no event was admitted, rather than a perfect one', async () => {
+    // A ratio over zero events is unmeasured, and this module publishes null
+    // for that everywhere else. `1.0` here would read as "every event was
+    // labelled" on a fit that had no events at all.
+    const fp = await fpImport()
+    const { events_matched, label_coverage } = fp.buildDistrictSamples(
+      deterministicDaily(1), [], { latitude: 0, longitude: 0, country: 'TL' },
+    )
+    assert.equal(events_matched, 0)
+    assert.equal(label_coverage, null)
+  })
+
+  it('labels a GDACS event dated only by `from`, the field the pre-filter admits on', async () => {
+    // VER-03's canary, held here because ENH-49's monitor is what would have
+    // caught it: an event with no `occurred_at` survives the radius filter and
+    // must reach the label. Reverting the labeller to `occurred_at` alone makes
+    // this fail on the label and on the coverage count together.
+    const fp = await fpImport()
+    const daily = deterministicDaily(1)
+    const fromOnly = { event_type: 'flood', country: 'TL', latitude: 0, longitude: 0, from: '2005-08-10T00:00:00.000Z' }
+    const built = fp.buildDistrictSamples(daily, [fromOnly], { latitude: 0, longitude: 0, country: 'TL' })
+    assert.equal(built.events_matched, 1)
+    assert.equal(built.events_unlabelled, 0, 'the `from`-dated event was admitted but not labelled')
+    assert.equal(built.label_coverage, 1)
+    assert.ok(built.samples.find((s) => s.month === '2005-08').label, 'August must carry the label')
+  })
+
   it('counts contingencies with a Wilson interval and a lift, and refuses under 10 months', async () => {
     const fp = await fpImport()
     const samples = []

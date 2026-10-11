@@ -111,16 +111,46 @@ export function buildDistrictSamples(daily, floodEvents, district, options = {})
   const byMonth = groupByMonth(series)
   const indexByDate = new Map(series.map((d, i) => [d.date, i]))
   const samples = []
+  // ENH-49. Which admitted events a sampled month actually labelled. Collected
+  // here rather than re-derived, because the answer is "did this event fall in
+  // a month this function kept", and that is known only at the moment the month
+  // is kept — a second pass would have to reproduce the coverage gate and the
+  // series-end boundary, which is the drift the monitor exists to catch.
+  const labelled = new Set()
   for (const month of byMonth) {
     const stats = monthStats(month, series, minCoverage, indexByDate)
     if (!stats) continue
-    const label = monthHasFlood(month, events)
+    const matched = monthFloodEvents(month, events)
+    for (const event of matched) labelled.add(event)
     // The month key travels with the sample: ENH-20 needs a block to measure
     // clustering over, and a sample that does not say when it was is a sample
     // nobody can group.
-    samples.push({ ...stats, month: month.key, label })
+    samples.push({ ...stats, month: month.key, label: matched.length > 0 })
   }
-  return { samples, events_matched: events.length, months_kept: samples.length }
+
+  // An event the pre-filter admits but no sampled month can label is counted in
+  // `events_matched` and contributes nothing to the contingency table — the
+  // positive count is biased low by exactly those events, and nothing said so.
+  // VER-03 was this failure with the two halves reading different date fields;
+  // the fields agree now, so what remains is an event outside the months the
+  // rainfall series could sample: a GDACS record from before the CHIRPS window,
+  // or from a month whose trailing window was too sparse to keep.
+  //
+  // That is a real state rather than a defect, so it is published, not refused
+  // — but it is published, because `events_matched` on its own reads as "this
+  // many events informed the fit" and only some of them did. `label_coverage`
+  // is the share that did, and a monitor over it is the check that turns the
+  // VER-03 class into a failing assertion instead of an audit finding.
+  const eventsUnlabelled = events.length - labelled.size
+  return {
+    samples,
+    events_matched: events.length,
+    months_kept: samples.length,
+    events_unlabelled: eventsUnlabelled,
+    label_coverage: events.length > 0
+      ? Math.round(((events.length - eventsUnlabelled) / events.length) * 10000) / 10000
+      : null,
+  }
 }
 
 function normalizeDaily(daily) {
@@ -187,16 +217,20 @@ function monthStats(month, series, minCoverage, indexByDate) {
  * noise at month grain, not something a lag window fixes without
  * double-counting neighbouring months.
  */
-function monthHasFlood(month, events) {
+function monthFloodEvents(month, events) {
   const monthStart = Date.parse(`${month.key}-01T00:00:00.000Z`)
   const monthEnd = month.days[month.days.length - 1]
   const last = Date.parse(`${monthEnd.date}T23:59:59.999Z`)
-  return events.some((event) => {
+  return events.filter((event) => {
     // The same field set the pre-filter admits on. Reading only `occurred_at`
     // here dropped every event dated by `from` (GDACS-style): it survived the
     // radius/date filter and was counted in events_matched, but never labelled
     // a month, so the contingency table's flood-positive count was biased low
     // exactly where the historical record is richest.
+    //
+    // Returns the events rather than a boolean so ENH-49's label-coverage
+    // monitor and this label cannot disagree: the monitor counts what this
+    // function matched, so a future change to the window moves both.
     const t = Date.parse(event.occurred_at || event.from || '')
     return Number.isFinite(t) && t >= monthStart && t <= last
   })
@@ -234,7 +268,7 @@ function daysInMonth(monthKey) {
  * the very same monthStats machinery with the very same coverage gates, but
  * the label is hydrological — the month's maximum daily GloFAS discharge
  * above a fixed percentile of the record's monthly maxima. Where
- * monthHasFlood answers "did a flood get reported here", this answers "did
+ * monthFloodEvents answers "did a flood get reported here", this answers "did
  * the reach at the district point carry flood-level water" — denser, but
  * model-conditioned (see MODEL_BASIS_DISCHARGE.label_caveat).
  *
@@ -728,9 +762,9 @@ export function trainDistrictModels(data, options = {}) {
         },
       }
     } else {
-      const { samples: built, events_matched, months_kept } = buildDistrictSamples(seriesRecord.daily, floodEvents, district)
+      const { samples: built, events_matched, months_kept, events_unlabelled, label_coverage } = buildDistrictSamples(seriesRecord.daily, floodEvents, district)
       samples = built
-      sampleFacts = { flood_months: samples.filter((s) => s.label).length, events_matched, months_kept }
+      sampleFacts = { flood_months: samples.filter((s) => s.label).length, events_matched, months_kept, events_unlabelled, label_coverage }
     }
 
     const fit = fitLogisticRegression(samples)

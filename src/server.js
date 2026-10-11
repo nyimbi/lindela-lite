@@ -2027,6 +2027,15 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
         label_source: latest.label_source,
         months_kept: latest.months_kept,
         events_matched: latest.events_matched,
+        // ENH-49. `events_matched` reads as "this many events informed the fit"
+        // and only some of them did: an admitted event whose month the rainfall
+        // series could not sample is counted here and contributes nothing to
+        // the contingency table. The pair below is the monitor — a client that
+        // quotes the probability reads `label_coverage` beside it, and a
+        // coverage that falls is the VER-03 class failing visibly rather than
+        // an audit finding six months later.
+        events_unlabelled: latest.events_unlabelled ?? null,
+        label_coverage: latest.label_coverage ?? null,
         metadata: latest.metadata,
       },
     })

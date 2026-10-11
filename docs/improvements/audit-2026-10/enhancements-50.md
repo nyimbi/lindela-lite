@@ -239,6 +239,29 @@ event is counted but never labels a month. A check that the set admitted by the
 prefilter equals the set the label function can see turns that class into a failing
 test.
 
+**Shipped 2026-10-11.** The monitor is `events_unlabelled` and `label_coverage`,
+returned by `buildDistrictSamples` and published on `/api/v1/flood-probability`
+beside `events_matched` (`src/flood-probability.js:130-140`, `src/server.js:2031`).
+Two deviations from the entry as written:
+
+- **The label function returns the events, not a boolean.** `monthHasFlood` became
+  `monthFloodEvents` (`src/flood-probability.js:220`), and the sample's `label` is
+  `matched.length > 0` over the same array the monitor counts. That is what makes
+  the two halves agree *by construction* rather than by two implementations that
+  happen to match today — which is exactly the failure VER-03 was, one level up.
+- **The residual is published, not refused.** With the date fields agreeing, an
+  event the pre-filter admits and no sampled month can label is one outside the
+  months the rainfall series could sample: a record from before the CHIRPS window,
+  or from a month whose trailing window was too sparse to keep. That is a real
+  state, so `label_coverage` reports the share rather than the fit refusing — but
+  it reports, because `events_matched` alone reads as "this many events informed
+  the fit" and only some of them did. `label_coverage` is `null` when no event was
+  admitted, this module's convention for a ratio over an empty set.
+
+Guarded by four cases in `test/lite.test.js`, one of which is the VER-03 canary:
+an event dated only by `from` must reach the label and the coverage count. Verified
+failing on the reverted labeller (1 fail, `occurred_at` alone).
+
 **ENH-50 — Model-card and floor registry.** Every model publishes its basis, its
 sample floors and its refusal vocabulary in one machine-readable place
 (`MODEL_BASIS` is the seed). `check-no-flood-probability.mjs` reads it today; a
