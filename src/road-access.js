@@ -411,7 +411,12 @@ export function summarizeRoadAccess(records) {
   const byTemporalStatus = { active: 0, forecast: 0, stale: 0, undated: 0 }
   for (const record of records) {
     byStatus[record.access_status] = (byStatus[record.access_status] || 0) + 1
-    for (const item of record.obstructions) {
+    // `|| []`, matching the `|| 0` one line up. Every record this module
+    // produces carries `obstructions`, but the roll-up is exported and reads
+    // whatever the store holds — a row written before the field existed, or by
+    // a hand-edited store, is a road with no recorded obstruction, not a
+    // reason to fail the whole dashboard with a TypeError.
+    for (const item of record.obstructions || []) {
       if (item.temporal_status in byTemporalStatus) byTemporalStatus[item.temporal_status] += 1
       if (!item.blocking) continue
       blockedByType[item.event_type] = (blockedByType[item.event_type] || 0) + 1

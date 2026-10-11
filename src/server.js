@@ -1827,11 +1827,21 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   }
 
   if (url.pathname === '/api/v1/road-access') {
+    // One record per road asset, so the set grows with the road network — the
+    // same shape its food-security sibling had before R-27, and fixed the same
+    // way. Returning the whole array meant a caller could not tell a complete
+    // answer from a truncated one, and there was no second page to ask for.
+    //
+    // The roll-up is computed from `matched`, not from the page: `impassable`
+    // beside a page of 25 roads must describe the network, not the window, or
+    // the map's "N of M roads impassable" undercounts as soon as the set
+    // outgrows the limit.
     const includeDeleted = url.searchParams.get('include_deleted') === 'true'
-    const records = includeDeleted
+    const all = includeDeleted
       ? (data.road_access || [])
       : (data.road_access || []).filter((item) => !isDeleted(item))
-    jsonResponse(res, 200, { success: true, data: records, summary: summarizeRoadAccess(records) })
+    const { matched, ...page } = matchedAndPage(all, url.searchParams, { auth: req.__auth, data, collection: 'road_access' })
+    jsonResponse(res, 200, { success: true, ...page, summary: summarizeRoadAccess(matched) })
     return
   }
 
@@ -2333,9 +2343,14 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
         } : null,
       }
     })
+    // `count`, not `total`: the registry is a fixed catalogue read from disk, so
+    // there is no second page and no limit to report against. `total` beside an
+    // array with no `returned`/`limit`/`has_more` is a paging envelope missing
+    // four of its five keys, which reads as truncation. The bounded-catalogue
+    // routes in this file all say `count` for the same reason.
     jsonResponse(res, 200, {
       success: true,
-      total: rows.length,
+      count: rows.length,
       enabled: rows.filter((r) => r.enabled).length,
       data: rows,
     })

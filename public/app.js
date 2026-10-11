@@ -1446,7 +1446,11 @@ function clearRoutePlan() {
 
 async function loadRoadStatus() {
   try {
-    const body = await fetchJson('/api/v1/road-access')
+    // `limit=5000` is the server's own maximum, asked for explicitly. The route
+    // pages now, and the overlay draws what it is given: at the default 500 a
+    // road network larger than that would silently lose its tail, and a missing
+    // road draws as no road — the failure map-frame.js was written to end.
+    const body = await fetchJson('/api/v1/road-access?limit=5000')
     if (body?.success) {
       state.roadAccess = body.data || []
       // "0 impassable" and "the count did not load" both used to render as

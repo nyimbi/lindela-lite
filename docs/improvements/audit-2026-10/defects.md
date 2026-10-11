@@ -781,15 +781,9 @@ only partially catches it.
 (10,309 bytes), referenced by nothing. 85 KB of duplicated seed logic; the next
 person edits the wrong file.
 
-### ARC-11 — LOW — Two orphaned "copy" seed scripts committed
-
 **Fixed 2026-10-11** (in the demo-polish work that preceded this pass; verified
 absent here). Both `scripts/seed-demo copy.mjs` and `scripts/seed-demo-data
 copy.mjs` are gone from the tree and from git, and nothing references them.
-
-`scripts/seed-demo copy.mjs` (74,920 bytes) and `scripts/seed-demo-data copy.mjs`
-(10,309 bytes), referenced by nothing. 85 KB of duplicated seed logic; the next
-person edits the wrong file.
 
 ### ARC-12 — LOW — Orphaned re-export and orphan entry point
 
@@ -927,6 +921,34 @@ tamper-evident log) are the two that matter; also `src/observability.js`,
 `src/community.js`, `src/bitemporal.js`. `public/sw.js` (930 lines, the offline
 outbox whose correctness is an exactly-once claim) is tested by reading its text.
 
+**Partly stale; verified 2026-10-11.** Re-checked against the tree, and the
+entry conflates "no file named after the module" with "no behavioural test",
+which is wrong for most of the list:
+
+- Six of the ten have a dedicated behavioural suite under a feature name:
+  `audit-chain` → `test/audit-chain.test.js` (29 tests), `observability` →
+  `observability-substrate.test.js` + `observability-bounds.test.js`,
+  `route-manifests` → `test/route-manifests.test.js`, `narrator` →
+  `test/report-narrator.test.js`, `bitemporal` → `test/bitemporal-history.test.js`.
+  `public/sw.js` is the flatly wrong one: four files import it as a module and
+  exercise `evictionPlan`, `classifyApiRequest`, `shellGraph`, `parseReferences`,
+  `isNeverCached` and `sanitizeHeaders` as functions; the text-read assertions
+  are supplementary, not the coverage.
+- Three have no dedicated file but are imported and asserted on behaviourally:
+  `pg0.js` (three files), `sanctions.js` and `community.js` (`lite.test.js`).
+- One is a genuine partial: `pdf.js` has no dedicated file, and one assertion set
+  at `test/lite.test.js:5668` reads its source as text — though it is checking a
+  rendered *label*, where the wording is the artifact, so the source is a fair
+  proxy. It is not the module's only coverage.
+
+The mechanical check, for the record: of 90 modules under `src/`, exactly two
+have no behavioural import in any test — `src/cors.js`, exercised through the
+server surface by `test/cors-preflight.test.js` rather than imported, and
+`src/lineage.js`, which is dead code (`recordLineage` has zero callers;
+`src/provenance.js:recordLineageRow` superseded it). The dead module is the
+finding worth keeping from this entry, and it belongs to the orphaned-module
+class rather than to test coverage.
+
 ### QUA-06 — MEDIUM — No test asserts a route's response envelope shape consistently
 `api-substrate.test.js` covers pagination/ETag/idempotency/readiness on
 `service_assets` only. No test walks all 150 documented routes asserting
@@ -935,12 +957,53 @@ returning `data: [...]` unpaged next to a paginated sibling is undetected. The
 `check-openapi.mjs` trick (read the surface from the server, require both directions)
 generalises to this.
 
+**Fixed 2026-10-11.** `scripts/check-route-envelopes.mjs` reads the routes out of
+`docs/openapi.yaml` and drives each one against a real server seeded with a probe
+record per collection, asserting four invariants: a JSON body is an object with a
+boolean `success`; a 4xx/5xx failure carries a `code`; an array `data` is either
+fully paginated (all of `returned`, `limit`, `total`, `has_more`, `next_cursor`)
+or named in `ARRAY_IS_COMPLETE` with the reason its set cannot grow; and a paged
+`total` is at least its `returned`. Exemptions are by media type where a route
+speaks a published standard — GeoJSON (RFC 7946), the STAC catalogue, OGC API
+Features — because wrapping those in this envelope would break the schema they
+exist to speak. Registered in `scripts/run-gates.mjs` as a `self-contained` gate
+(11 gates now), with 13 canaries covering both directions of every rule.
+
+It found three real defects on its first run, which is the point of it:
+
+- `/api/v1/connectors/status` returned `total` beside an array with none of the
+  other four paging keys — a partial paging envelope, the shape the finding names.
+  `total` is now `count`, matching the file's convention for a bounded catalogue
+  (`src/server.js:2336`).
+- `/api/v1/road-access` returned the whole set unpaged, so a caller could not tell
+  a complete answer from a truncated one and there was no second page to ask for —
+  the same defect R-27 fixed for its food-security sibling. It now pages via
+  `matchedAndPage`, with the roll-up computed from `matched` rather than the page,
+  so `impassable` describes the network rather than the window
+  (`src/server.js:1832`). `public/app.js:1449` asks for `?limit=5000` explicitly,
+  since a road network larger than the default 500 would silently lose its tail.
+- `summarizeRoadAccess` threw on a record with no `obstructions` field, turning a
+  dashboard roll-up into a 500. Now `|| []`, matching the `|| 0` beside it
+  (`src/road-access.js:414`).
+
+Guarded by `test/lite.test.js` "pages road access and computes the roll-up from
+the whole matched set", canaried by reverting the handler to the unpaged form.
+
 ### QUA-07 — MEDIUM — `?limit=abc` returns an empty page indistinguishable from no data
 `src/utils.js:215` `Math.min(Math.max(Number(query.get('limit') || 500), 1), 5000)`.
 `Number('abc')` is `NaN`; `Math.max(NaN,1)` is `NaN`; `matched.slice(0, NaN)` returns
 `[]`. A typo'd query parameter reads as an empty dataset with `total: 0`. The
 codebase is otherwise scrupulous about exactly this falsy-zero class — this is an
 inconsistency, not a philosophy.
+
+**Fixed 2026-10-11.** `parseLimit` at `src/utils.js:88` is now the one place a
+`limit` is read, and it refuses rather than coercing: a value that is not a
+non-negative integer sets `statusCode = 400`, which `jsonResponse` renders as a
+failure envelope carrying a `code`. The registered line (`:215`) was the old
+inline `Math.min(Math.max(Number(...)))`; the helper replaced it. Guarded by
+`test/query-veracity.test.js:175`, and the road-access paging test above asserts
+the same refusal through the real HTTP surface (`?limit=abc` → 400 with a code),
+because a unit test on the parser does not prove the route wired it up.
 
 ### QUA-08 — HIGH — A test writes into a tracked repo file, so the suite's result depends on worker count
 `test/static-and-tile-caches.test.js` proves "a changed file is re-prepared" by

@@ -109,6 +109,12 @@ const GATES = [
     why: 'ENH-46. Flags a numeric fallback on a field the module itself declares nullable — decided by the `<subject>_refusal` convention in the tree, not by a hand-written field list that goes stale. Reads files only, and carries eleven canaries plus a self-test, because the class it checks (VER-02, VER-09, VER-12) shipped four times and was found by audit each time.',
   },
   {
+    name: 'check-route-envelopes',
+    script: 'scripts/check-route-envelopes.mjs',
+    tier: 'self-contained',
+    why: 'QUA-06. Drives every route the OpenAPI spec documents against a real server and asserts the envelope invariants no test enforced everywhere: a boolean `success`, a `code` on every failure, and an array `data` that is either fully paginated or a named exception. Found `/api/v1/connectors/status` reporting a bare `total` and `/api/v1/road-access` unpaged on its first run. Binds an ephemeral port on 127.0.0.1 rather than :4177, so it needs nothing started.',
+  },
+  {
     name: 'check-budget-and-surface-contract',
     script: 'test/web-hidden-display.test.js',
     tier: 'self-contained',

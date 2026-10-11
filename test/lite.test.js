@@ -3903,6 +3903,67 @@ describe('Lindela Lite road access', () => {
     }
   })
 
+  it('pages road access and computes the roll-up from the whole matched set', async () => {
+    // QUA-06. The route returned every road with no paging keys, so a caller
+    // could not tell a complete answer from a truncated one — the same shape
+    // R-27 fixed for food-security. The roll-up must describe the network, not
+    // the page: `impassable` beside a page of 1 road must still count the 3
+    // roads behind it, or the map's "N of M impassable" undercounts the moment
+    // the network outgrows the limit.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-road-page-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const roads = ['A', 'B', 'C', 'D'].map((name, i) => ({
+      id: `r${i}`, name: `Road ${name}`, service_type: 'road', country: 'KE',
+      latitude: 3.1 + i / 100, longitude: 35.6, road_class: 'unpaved',
+    }))
+    await store.merge({
+      service_assets: roads,
+      hazard_events: [{ id: 'h1', event_type: 'flood', severity: 'critical', title: 'Flood', latitude: 3.1, longitude: 35.6 }],
+    })
+    const { refreshAnalytics } = await import('../src/analytics.js')
+    await refreshAnalytics(store)
+
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const baseUrl = `http://localhost:${listener.address().port}`
+    try {
+      const page = await fetchJson(`${baseUrl}/api/v1/road-access?limit=1`)
+      assert.equal(page.success, true)
+      assert.equal(page.data.length, 1, 'the page carries the limit it was given')
+      assert.equal(page.total, 4, 'total describes the matched set, not the page')
+      assert.equal(page.returned, 1)
+      assert.equal(page.has_more, true)
+      assert.ok(page.next_cursor, 'a truncated answer offers the way to the rest')
+      assert.equal(page.summary.total_roads, 4, 'the roll-up describes the network, not the window')
+
+      const all = await fetchJson(`${baseUrl}/api/v1/road-access?limit=5000`)
+      assert.equal(all.data.length, 4)
+      assert.equal(all.has_more, false)
+      assert.equal(all.next_cursor, null)
+      // The invariant, stated without guessing the hazard radius: the roll-up is
+      // a property of the matched set, so asking for one road and asking for all
+      // of them must report the same network. Before the fix the summary was
+      // computed from whatever `data` held, so these two disagreed. Compared
+      // field by field because `generated_at` is a timestamp and two calls one
+      // millisecond apart are not a defect.
+      for (const key of ['total_roads', 'passable', 'restricted', 'impassable', 'cut_off_rate_pct', 'blocked_by_hazard_type']) {
+        assert.deepEqual(page.summary[key], all.summary[key], `summary.${key} must not depend on the page`)
+      }
+      assert.ok(all.summary.impassable > 0, 'the flood must cut at least one road, or this proves nothing')
+
+      // A limit the server cannot honour is refused rather than read as zero.
+      // QUA-07: `Number('abc')` is NaN, and `slice(0, NaN)` is `[]` — the typo
+      // would otherwise read as "no roads are cut off".
+      const refused = await fetch(`${baseUrl}/api/v1/road-access?limit=abc`)
+      assert.equal(refused.status, 400)
+      const refusedBody = await refused.json()
+      assert.equal(refusedBody.success, false)
+      assert.ok(refusedBody.code, 'a failure a client can branch on carries a code')
+    } finally {
+      listener.close()
+    }
+  })
+
   it('survives a road with no coordinates without failing the overlay', async () => {
     // Fixtures and partial imports produce rows without geometry. The overlay
     // must skip those rather than draw NaN coordinates into the SVG.

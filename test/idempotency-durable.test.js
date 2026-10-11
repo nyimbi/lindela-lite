@@ -145,10 +145,19 @@ describe('CON-06 — a durable idempotency store', () => {
     // first one's receipt while it was still inside its window. A sweep removes
     // only what is past its expiry, so the live set is bounded by the TTL and
     // the traffic, and never by an arbitrary count.
-    const idem = createDurableIdempotencyStore(await fresh(), { ttlMs: 20, sweepEvery: 1 })
+    // A controllable clock, not a sleep. The old form slept 40ms against a 20ms
+    // TTL and then read the row back through `count()` and `claim()` — and on a
+    // loaded machine those two reads can themselves cross the TTL, so the
+    // assertion failed for a reason the defect does not name. It did exactly
+    // that once in the full suite. `now` is injectable so the boundary is
+    // crossed deliberately: the two old rows are pushed past expiry, the live
+    // one is written at the later instant, and nothing depends on how long the
+    // test takes to run.
+    let clock = Date.parse('2026-01-01T00:00:00.000Z')
+    const idem = createDurableIdempotencyStore(await fresh(), { ttlMs: 20, sweepEvery: 1, now: () => clock })
     await idem.settle('old-1', 201, { id: 'old' }, 'fp')
     await idem.settle('old-2', 201, { id: 'old' }, 'fp')
-    await new Promise((resolve) => setTimeout(resolve, 40))
+    clock += 40
     // A live key written after the two above; the sweep this settle triggers
     // must take the expired pair and leave this one.
     await idem.settle('live-1', 201, { id: 'live' }, 'fp')
