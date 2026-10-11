@@ -28,15 +28,25 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 42 | 31, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
-| PARTIAL | 6 | 32, 38, 42, 59, 67, 71 |
-| ABSENT | 3 | 60, 68, 80 |
+| IMPLEMENTED | 43 | 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
+| PARTIAL | 4 | 38, 59, 67, 71 |
+| ABSENT | 4 | 42, 60, 68, 80 |
 
-PARTIAL means the substrate exists and the item's own claim does not: ENH-32
-pulls from DHIS2 and does not push, ENH-59 has three tables checked against each
-other and no single declaration they are generated from. Reading a PARTIAL as
-done is the error this
+PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
+three tables checked against each other and no single declaration they are
+generated from, ENH-38's wizard files the served version but still renders its
+hand-written screens, ENH-67's replica split and budget have no caller, ENH-71's
+disclosure model has no importer. Reading a PARTIAL as done is the error this
 table exists to prevent.
+
+**Two rows were wrong in opposite directions, found 2026-10-12 by checking the
+code rather than the note.** ENH-32 was marked PARTIAL against a summary line
+that said it pulls and does not push — but `src/connectors/dhis2-push.js` exists,
+`src/routes/exports.js` calls it, and 14 tests pass; it is IMPLEMENTED. ENH-42
+was marked PARTIAL with **no shipped note at all**, and there is no tile-pack
+code in the tree; it is ABSENT. A register that drifts optimistically is worse
+than one that drifts pessimistically, because the first claims work that does not
+exist. Both counts here are read off the listed ids by script, never by eye.
 
 ---
 
@@ -93,6 +103,17 @@ the registry: 5).
 DHIS2 to *pull*. The push half is a serializer plus a scheduled job: map the KPI
 rollups to org-unit/dataElement/period triples and POST to `/api/dataValueSets`.
 Today interoperability is one-way, which for a national platform is a blocker.
+
+> **Shipped — IMPLEMENTED, mis-marked PARTIAL until 2026-10-12.** The push half
+> exists and is wired: `src/connectors/dhis2-push.js` holds
+> `dataValueSetFrom(records, { orgUnits, dataElements, period })` (the KPI rollup
+> mapped to org-unit/dataElement/period triples) and `pushDataValueSet(request)`,
+> and `src/routes/exports.js` calls it from the `export/dhis2` route as a **post**
+> beside the reads, so an operator can see the exact body before sending it. 14
+> tests in `test/dhis2-push.test.js`. It took the SSRF guard (ENH-78's sweep) like
+> the other four outbound sites. The register's summary line still said "pulls and
+> does not push", which is how it stayed PARTIAL — the note was never updated when
+> the code landed.
 
 **ENH-33 — Administrative org-unit registry.** District resolution is scattered
 across `src/districts.js`, `src/utils.js`, `src/kpi.js`, `src/analytics/metrics.js`,
