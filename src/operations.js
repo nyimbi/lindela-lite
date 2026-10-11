@@ -11,6 +11,7 @@ import { haversineKm, stableId, toNumber } from './utils.js'
 import { assertCategory } from './taxonomy.js'
 import { ERROR_CODES } from './errors.js'
 import { computeMetric } from './analytics/metrics.js'
+import { stampQuality } from './quality.js'
 
 const OPERATIONAL_COLLECTIONS = Object.freeze({
   incidents: 'incident',
@@ -255,7 +256,7 @@ function normalizeFieldReport(input, data, existing = null) {
     ? normalizeDemographics(input.demographics)
     : existing?.demographics
 
-  return stripUndefined({
+  const record = stripUndefined({
     id: input.id || stableId('report', [input.incident_id, input.intervention_id, input.summary, input.observed_at || now]),
     incident_id: input.incident_id || intervention?.incident_id || null,
     intervention_id: input.intervention_id || null,
@@ -288,6 +289,23 @@ function normalizeFieldReport(input, data, existing = null) {
     deleted_at: input.deleted_at || existing?.deleted_at || null,
     deleted_by: input.deleted_by ?? existing?.deleted_by ?? null,
     metadata: objectValue(input.metadata),
+  })
+
+  // ENH-44. The quality verdict is stamped here as well as on the CHW route,
+  // because these are the two doors into `field_reports` and a gate at one of
+  // two doors is not a gate. The operational door has no GPS fix of its own, so
+  // most of what it can assess is the capture skew and the duplicate question —
+  // and an unassessable axis is reported as unassessable rather than assumed
+  // good.
+  //
+  // `captured_at` is the device's own stamp and is deliberately *not* defaulted
+  // to `observed_at`. `observed_at` is when the event happened, which for an
+  // operator entering a week-old report is a week; reading that as clock skew
+  // would flag every backdated record as a broken clock. No stamp means the axis
+  // is unmeasured, and it says so.
+  return stampQuality(record, {
+    candidates: data?.field_reports || [],
+    received_at: now,
   })
 }
 

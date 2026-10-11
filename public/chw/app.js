@@ -733,6 +733,14 @@ async function submitSymptomReport() {
   const body = {
     kind: 'symptom',
     category: state.symptom.type,
+    // ENH-44. When the phone captured this, which is not when the server
+    // receives it. A report filed from a village with no signal arrives hours or
+    // days later, and without this stamp the server has no way to tell a queued
+    // report from a device whose clock is wrong — both look like "the timestamps
+    // do not match". The offline queue sends the body it was handed, so the
+    // stamp is taken here, at the moment of filing, rather than at the moment of
+    // sending.
+    captured_at: new Date().toISOString(),
     // CAP-01. The form this report was filled against, and the answers keyed by
     // the field names that form declares. Without the pair, a record is only
     // interpretable against whichever version of the form happens to be current
@@ -883,6 +891,8 @@ function setupIncidentScreen() {
       kind: 'incident',
       category: categorySelect.value,
       description: desc,
+      // ENH-44. Stamped at filing, not at sending — see the symptom path above.
+      captured_at: new Date().toISOString(),
       // Null coordinates with a stated source, or nothing at all. Never a
       // `reported_here` that names a place the report does not have.
       location: state.incident.location

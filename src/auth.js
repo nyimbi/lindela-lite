@@ -36,6 +36,12 @@ export const READ_SCOPES = Object.freeze([
   ['/api/v1/interventions', 'read:incidents'],
   ['/api/v1/tasks', 'read:incidents'],
   ['/api/v1/field-reports', 'read:incidents'],
+  // ENH-44. The submission-quality roll-up over the same records, so the same
+  // privilege that reads a report reads how much to trust it. Named separately
+  // because `firstMatch` compares segment counts: the row above covers
+  // `/field-reports` and `/field-reports/<id>` and does *not* cover a named
+  // sub-resource, which would otherwise fall to `admin:*`.
+  ['/api/v1/field-reports/quality', 'read:incidents'],
   ['/api/v1/response-resources', 'read:incidents'],
   ['/api/v1/action-logs', 'read:incidents'],
   ['/api/v1/rapidpro', 'read:incidents'],

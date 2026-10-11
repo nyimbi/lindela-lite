@@ -89,6 +89,9 @@ export const ROUTE_MANIFESTS = Object.freeze({
   // PostgreSQL. Exact, not wide.
   'GET /api/v1/export.geojson': Object.freeze(["alert_events", "conflict_events", "field_reports", "hazard_events", "impact_assessments", "incidents", "intervention_tasks", "interventions", "alert_rules", "rapidpro_dispatches", "rapidpro_inbound_messages", "response_resources", "risk_scores", "service_assets"]),
   'GET /api/v1/field-reports': Object.freeze(["field_reports"]),
+  // ENH-44. The quality roll-up reads only the collection whose verdicts it
+  // counts — the verdict is stamped at write time, so nothing here joins out.
+  'GET /api/v1/field-reports/quality': Object.freeze(["field_reports"]),
   'GET /api/v1/field-reports/:id': Object.freeze(["field_reports"]),
   'GET /api/v1/flood-probability/models': Object.freeze(["flood_probability_models"]),
   'GET /api/v1/flood-risk': Object.freeze(["risk_scores"]),

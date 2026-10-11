@@ -1781,6 +1781,29 @@ paths:
       responses:
         '200':
           description: Field report updated
+  /api/v1/field-reports/quality:
+    get:
+      summary: How much to trust the field reports in the store
+      description: >-
+        Counts the submission-quality verdicts stamped on each field report at
+        write time. ENH-44: a coordinator reading a queue of reports needs to
+        know which are worth weighting, and a 2 km fix with a device clock a day
+        ahead and a near-identical twin filed an hour earlier is not the same
+        evidence as a 12 m fix filed once.
+
+        The verdict is *carried*, never applied. Nothing here or at the write
+        door drops a report: a health worker who filed one has filed it, and a
+        gate that silently discards a disease signal is worse than the noise it
+        removes. `grade` is the weakest measured axis; a report whose accuracy
+        and capture time were both unmeasured grades `unassessable` rather than
+        passing by default, and `pre_gate_records` counts the reports written
+        before the gate existed, which are counted rather than dropped.
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: >-
+            total, by_grade, grade, duplicates_flagged, pre_gate_records,
+            reports
   /api/v1/response-resources:
     get:
       summary: List response resources

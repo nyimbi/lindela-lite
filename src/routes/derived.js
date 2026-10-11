@@ -28,6 +28,7 @@
 
 import { explainRanking } from '../../public/shared/rank-explain.js'
 import { operationalSummary } from '../operations.js'
+import { qualityTally } from '../quality.js'
 import { collectionPage } from '../utils.js'
 
 /**
@@ -43,6 +44,10 @@ export function matchDerivedRoute(pathname, method = 'GET') {
   if (pathname === '/api/v1/operations/summary') return { kind: 'operations-summary' }
   if (pathname === '/api/v1/calibration/by-region') return { kind: 'calibration-by-region' }
   if (pathname === '/api/v1/model-drift') return { kind: 'model-drift' }
+  // ENH-44. The submission-quality roll-up. A derived read like the rest: the
+  // verdict is stamped on each field report at write time and this only counts
+  // what is there.
+  if (pathname === '/api/v1/field-reports/quality') return { kind: 'field-report-quality' }
   return null
 }
 
@@ -92,6 +97,35 @@ export async function handleDerivedRoute(route, { data, req, res, url, jsonRespo
       // `regions: N` rather than an empty list that reads as "no regions".
       refused: selected.filter((r) => r.trust === null || r.trust === undefined).length,
       data: selected,
+    })
+    return true
+  }
+
+  if (kind === 'field-report-quality') {
+    // ENH-44. The roll-up a coordinator weights a queue by. Every field report
+    // carries a `quality` verdict stamped at write time; this counts them. A
+    // record written before the gate existed has no verdict, and it is counted
+    // as `unassessable` rather than dropped — a store whose older half is
+    // silently excluded from the tally would read as a healthier queue than it
+    // is, which is the opposite of what this endpoint is for.
+    const reports = (data.field_reports || []).filter((r) => !r.deleted_at)
+    // A record with no verdict is folded in as `unassessable` rather than
+    // dropped. Dropping it makes `total` disagree with `reports` — two numbers
+    // in one payload counting different sets — and makes a store whose older
+    // half predates the gate read as a healthier queue than it is.
+    const tally = qualityTally(reports.map((r) => r.quality ?? {
+      grade: 'unassessable',
+      duplicates: [],
+      reasons: ['this record was written before the quality gate existed, so nothing about it was measured'],
+    }))
+    jsonResponse(res, 200, {
+      success: true,
+      ...tally,
+      // Named explicitly, because `unassessable` covers two different facts: a
+      // verdict that measured nothing, and a record written before verdicts
+      // existed. Only the first is a report about the field.
+      pre_gate_records: reports.filter((r) => !r.quality).length,
+      reports: reports.length,
     })
     return true
   }

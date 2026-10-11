@@ -63,6 +63,7 @@ import { matchOperationalRoute, handleOperationalRoute } from './routes/operatio
 import { matchSnapshotRoute, handleSnapshotRoute } from './routes/snapshots.js'
 import { matchProvenanceRoute, handleProvenanceRoute } from './routes/provenance.js'
 import { matchAlertingRoute, handleAlertingRoute } from './routes/alerting.js'
+import { stampQuality } from './quality.js'
 import { findVisible } from './visibility.js'
 import {
   formCatalogue, formFor, latestForm, mergeForms, validateAnswers, validateFormDefinition,
@@ -4121,6 +4122,15 @@ async function handleChwRoute(store, data, req, res, url, route) {
       // records identifiable.
       form_id: typeof body.form_id === 'string' ? body.form_id : null,
       form_version: Number.isInteger(body.form_version) ? body.form_version : null,
+      // ENH-44. When the phone says it captured the report. Distinct from
+      // `created_at`, which is when the server received it — for a report that
+      // sat in the offline queue for a day the two differ by a day, and that
+      // difference is the only thing that separates "filed from a village with
+      // no signal" from "the device clock is wrong". A client that sends
+      // nothing gets `null` and the skew axis reports itself unmeasured, which
+      // is the honest answer; defaulting it to `now` would claim every report
+      // arrived on time.
+      captured_at: typeof body.captured_at === 'string' && body.captured_at ? body.captured_at : null,
       created_at: now,
       updated_at: now,
     }
@@ -4176,13 +4186,25 @@ async function handleChwRoute(store, data, req, res, url, route) {
     }, policy)
     inbound.field_report_id = redacted.id
 
-    const log = actionLog('field_reports', 'created', redacted, 'chw_web', req.__auth?.subject)
+    // ENH-44. The verdict is stamped onto the record before it is stored, and
+    // it is stamped *after* redaction so the duplicate comparison runs over the
+    // text that will actually be kept — comparing against the unredacted
+    // summary would match on words the record does not contain.
+    //
+    // The candidates are read from the store rather than from `data`, because a
+    // double submission is most often two reports filed minutes apart and the
+    // dispatcher's snapshot is taken before the first of them was written. The
+    // read is scoped to `field_reports` alone.
+    const candidates = (await store.read())?.field_reports || []
+    const stamped = stampQuality(redacted, { candidates, received_at: now })
+
+    const log = actionLog('field_reports', 'created', stamped, 'chw_web', req.__auth?.subject)
     await store.merge({
-      field_reports: [redacted],
+      field_reports: [stamped],
       rapidpro_inbound_messages: [inbound],
       action_logs: [log],
     })
-    jsonResponse(res, 201, { success: true, data: redacted })
+    jsonResponse(res, 201, { success: true, data: stamped })
     return
   }
 
