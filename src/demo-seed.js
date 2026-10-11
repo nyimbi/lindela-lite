@@ -509,8 +509,14 @@ function buildFieldReports(incidents, interventions) {
         pwd: isPwd,
         refugee_or_idp: isRefugee,
       },
+      // CAP-05. The category belongs in `category`, not in `metadata`. It was
+      // parked there because the field had no vocabulary and a top-level string
+      // would have been one more unvalidated spelling; now that the taxonomy
+      // resolves it, `metadata.category` is a second place the same fact lives
+      // and nothing reads it — a filter on `category` would miss all forty seed
+      // reports. The seed writes the field the API validates.
+      category: categories[i % categories.length],
       metadata: {
-        category: categories[i % categories.length],
         refugee_idp: isRefugee,
         verified: i % 3 !== 0,
       },

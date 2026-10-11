@@ -8,6 +8,7 @@ import {
   riskLevel,
 } from './schema.js'
 import { haversineKm, stableId, toNumber } from './utils.js'
+import { assertCategory } from './taxonomy.js'
 import { ERROR_CODES } from './errors.js'
 import { computeMetric } from './analytics/metrics.js'
 
@@ -274,7 +275,11 @@ function normalizeFieldReport(input, data, existing = null) {
     // Also carried explicitly: these are set on reports raised through
     // POST /api/v1/chw/report and were surviving only because the store merges
     // rather than replaces.
-    category: input.category ?? existing?.category ?? null,
+    // CAP-05. Resolved through the taxonomy rather than stored as free text:
+    // an unknown value is a 400 naming the vocabulary, and a known spelling
+    // (`diarrhea`, `wash`) is stored under its canonical code. The field used
+    // to accept any string, which is how a categorical field stops being one.
+    category: assertCategory(input.category ?? existing?.category ?? null),
     status: input.status ?? existing?.status ?? 'new',
     source: input.source ?? existing?.source ?? null,
     demographics,

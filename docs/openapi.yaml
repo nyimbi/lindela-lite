@@ -2249,6 +2249,32 @@ paths:
           description: >-
             DHIS2 rejected the import, or the push was refused (gated off, no
             base_url, or every record refused)
+  /api/v1/taxonomy:
+    get:
+      summary: The impact/needs vocabulary a field report's category resolves against
+      description: >-
+        `field_reports.category` was free text with no vocabulary behind it, so
+        two spellings of one thing could both exist and an export carried
+        whatever a reporter's client sent. This route is that vocabulary.
+
+        The response carries the built-in categories (each with a stable `code`,
+        a `label`, and the `group` a report aggregates over when the specific
+        category is too fine), the deployment's own additions — marked
+        `deployment: true`, so a consumer can tell which vocabulary produced a
+        record's category — and the alias table, so a client can accept the
+        spellings the store already holds (`diarrhea` for `diarrhoea`) rather
+        than only the codes.
+
+        `problems` names any malformed `LINDELA_LITE_TAXONOMY` extension that was
+        ignored, rather than the refusal being swallowed: a deployment that
+        believes it added a category and did not needs to see why.
+
+        A `category` that is neither a code nor an alias is refused with a 400
+        naming the vocabulary, rather than accepted as a new one — free text in
+        a categorical field is how a taxonomy rots.
+      responses:
+        '200':
+          description: The active taxonomy
   /api/v1/export.ndjson:
     get:
       summary: Stream every matching record as newline-delimited JSON

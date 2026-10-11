@@ -1126,6 +1126,48 @@ until it was moved to a narrow one.
 no taxonomy registry, no per-deployment field definition. A partner cannot add a
 question to a field report without a code change.
 
+**Fixed 2026-10-11.** `src/taxonomy.js`, wired at both doors that write the field.
+
+*The registry.* Three things, not one. A **closed vocabulary** of eighteen codes,
+each with a label and a `group` (hazard / health / needs / other) — the group is
+what a report aggregates over when the specific category is too fine, and it is a
+stable thing to count by in a way a code is not. A **deployment extension point**:
+`LINDELA_LITE_TAXONOMY` (JSON in the env) or `data/taxonomy.json` adds categories
+with no code change, which is the property the defect named as missing. And an
+**alias table**, so the spellings the store already holds keep resolving —
+`diarrhea` for `diarrhoea`, `wash` for `water`, `violence` for `conflict`. A
+vocabulary that refuses the data it already holds is a migration, not a taxonomy.
+
+*The refusals.* A value that is neither a code nor an alias is a 400 naming the
+vocabulary, not a new category: free text in a categorical field is how a taxonomy
+rots. A malformed extension is **ignored with a reason** on `problems` rather than
+thrown at import, because a bad config must not stop the process serving and the
+refusal has to be visible rather than swallowed.
+
+*Two doors, and the second was the one that mattered.* `assertCategory` went into
+`normalizeFieldReport` first, which guards the operational API. But
+`POST /api/v1/chw/report` — the route the CHW client actually posts to — builds
+its `field_reports` record inline and never reaches the normaliser, so a registry
+wired only there was a gate at one of two doors, and the unguarded one is the
+highest-volume writer of this field. It also stored `body.category || body.kind`,
+so a client sending no category got the *form* — `symptom` or `incident` — filed
+as the category, a transport fact in a field reports are filtered by. Both routes
+now call the registry, and `test/taxonomy.test.js` asserts each.
+
+*Two data defects the registry exposed.* The demo seed parked its category in
+`metadata.category`, which nothing reads — a filter on `category` missed all forty
+seed reports and every one listed as unclassified. And the CHW symptom wizard
+offers five buttons (`fever`, `cough`, `diarrhea`, `rash`, `other`) whose values
+the client posts as the category; `rash` was absent from the vocabulary, so the
+first report filed from that button would have been refused. Both are asserted
+now: the seed writes the field the API validates, and every `data-symptom-type`
+in the wizard must resolve — an assertion that reads the buttons out of the HTML,
+so adding a sixth without extending the vocabulary fails the suite.
+
+`GET /api/v1/taxonomy` serves the vocabulary as a document — categories, groups,
+aliases, and the deployment count — so a form renders its sections from the
+registry instead of hardcoding them.
+
 ### CAP-06 — MEDIUM — No CORS / preflight; no HEAD on API routes
 
 **Fixed 2026-10-11.** Both halves, in `src/cors.js` and the dispatch head.

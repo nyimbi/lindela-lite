@@ -49,7 +49,6 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
  */
 export const SERVER_SURFACE_MODULES = Object.freeze({
   'cors.js': 'Middleware. Its behaviour is response headers on a real request, asserted by test/cors-preflight.test.js through the server; importing it would test a function and not the thing.',
-  'demo-seed.js': 'Driven through POST /api/v1/demo/seed by test/lite.test.js, and named by test/layering.test.js for the ARC-03 boundary it defines (the route must import ./demo-seed.js, not ../scripts/seed-demo.mjs).',
 })
 
 /**

@@ -79,7 +79,7 @@ const post = (base, pathname, token, body = {}) => fetch(`${base}${pathname}`, {
 describe('a documented role reaches the route it is documented for', () => {
   it('lets role:chw file a symptom report', async () => {
     await withServer(async (base) => {
-      const res = await post(base, '/api/v1/chw/report', 'tok-chw', { description: 'fever in three children', category: 'health' })
+      const res = await post(base, '/api/v1/chw/report', 'tok-chw', { description: 'fever in three children', category: 'fever' })
       assert.notEqual(res.status, 403, 'the role the API document names was refused by the gate')
       assert.ok(res.status < 400, `role:chw got ${res.status} filing a report`)
     })
@@ -119,14 +119,14 @@ describe('a documented role reaches the route it is documented for', () => {
     // The widening must be a widening. A gate that admitted every token because
     // it learned to read `role:` would be a worse defect than the one it fixed.
     await withServer(async (base) => {
-      const res = await post(base, '/api/v1/chw/report', 'tok-reader', { description: 'x', category: 'health' })
+      const res = await post(base, '/api/v1/chw/report', 'tok-reader', { description: 'x', category: 'fever' })
       assert.equal(res.status, 403, 'a token with neither the role nor the scope reached a CHW route')
     })
   })
 
   it('still admits the platform token', async () => {
     await withServer(async (base) => {
-      const res = await post(base, '/api/v1/chw/report', 'tok-star', { description: 'x', category: 'health' })
+      const res = await post(base, '/api/v1/chw/report', 'tok-star', { description: 'x', category: 'fever' })
       assert.ok(res.status < 400, `the * token got ${res.status}`)
     })
   })
@@ -138,7 +138,7 @@ describe('a documented role reaches the route it is documented for', () => {
     // and every assertion is green.
     await withServer(async (base) => {
       for (const [pathname, body] of [
-        ['/api/v1/chw/report', { description: 'flooded road', category: 'health' }],
+        ['/api/v1/chw/report', { description: 'flooded road', category: 'fever' }],
         ['/api/v1/chw/reply', { alert_event_id: 'ae_1', message: 'on our way' }],
         ['/api/v1/community-feedback', { alert_event_id: 'ae_1', source: 'operator', message: 'road cut' }],
       ]) {

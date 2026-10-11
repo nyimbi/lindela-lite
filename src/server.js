@@ -67,6 +67,7 @@ import { districtWeatherReport } from './connectors/open-meteo-forecast.js'
 import { summarizeDiseaseObservations } from './connectors/who-gho.js'
 import { pushDataValueSet } from './connectors/dhis2-push.js'
 import { vintageOf, createVintageIndex } from './vintage.js'
+import { assertCategory, taxonomyDocument } from './taxonomy.js'
 import { dischargeBand, DISCHARGE_BANDS, DISCHARGE_MODEL_NOTE } from '../public/shared/discharge-bands.js'
 // ARC-05. The operational banding the browser draws with, applied on the server
 // too. These modules are pure and DOM-free by construction, so importing them
@@ -1859,6 +1860,16 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       },
       action_logs: logs,
     })
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/v1/taxonomy') {
+    // CAP-05. The vocabulary a client renders and a validator enforces, from one
+    // source. A partner adds a category through `LINDELA_LITE_TAXONOMY` or
+    // `data/taxonomy.json` and it appears here without a code change; a
+    // malformed extension is reported in `problems` rather than thrown, so a bad
+    // config is visible instead of stopping the process.
+    jsonResponse(res, 200, { success: true, data: taxonomyDocument() })
     return
   }
 
@@ -5140,7 +5151,14 @@ async function handleChwRoute(store, data, req, res, url, route) {
     const record = {
       id: stableId('report', [body.description, body.location?.latitude, body.location?.longitude, now]),
       summary: body.description,
-      category: body.category || body.kind,
+      // CAP-05. `body.category || body.kind` stored free text, and it stored
+      // `symptom` or `incident` — the *form* — whenever a client sent no
+      // category, which made the categorical field carry a transport fact. A
+      // value the taxonomy does not know is a 400 here rather than a record
+      // nobody can aggregate: this route writes `field_reports` directly and
+      // never reaches `normalizeFieldReport`, so the registry had to be called
+      // at both doors.
+      category: assertCategory(body.category ?? null),
       status: 'new',
       source: 'chw_web',
       latitude: hasFix ? reportedLat : null,
