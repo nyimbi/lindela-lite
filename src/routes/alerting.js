@@ -50,6 +50,7 @@ import {
   normalizeTriggerProtocol, updateAlertEvent,
 } from '../alerts.js'
 import { renderCapXml } from '../cap.js'
+import { capPermalink, renderCapFeed, validateCapProfile } from '../cap-profile.js'
 import { decisionLatency } from '../decision-latency.js'
 import { logger, metrics } from '../observability.js'
 import { actionLog, counts } from '../operations.js'
@@ -92,6 +93,12 @@ export function matchAlertingRoute(pathname) {
   // endpoints.
   if (pathname === '/api/v1/alert-outcomes/decision-latency') return { kind: 'decision-latency' }
   if (pathname === '/api/v1/alert-outcomes') return { kind: 'alert-outcomes' }
+
+  // ENH-36. The Atom feed over the alerts. A consumer cites a feed and dedupes
+  // on the entry id; polling a bespoke JSON search endpoint is not how GDACS or
+  // FEWS NET are consumed. Matched before the collection pattern, which would
+  // otherwise take `cap-feed` as an alert-events record id and 404.
+  if (pathname === '/api/v1/alert-events/cap-feed') return { kind: 'cap-feed' }
 
   const collection = pathname.match(/^\/api\/v1\/(alert-rules|alert-events)(?:\/([^/]+))?$/)
   if (collection) {
@@ -140,7 +147,7 @@ function matchTriggeringRoute(pathname) {
  * the caller of this function needs to know.
  */
 const ALERT_KINDS = new Set([
-  'cap', 'alert-collection', 'alert-event-action', 'alert-outcome', 'alert-outcomes',
+  'cap', 'cap-feed', 'alert-collection', 'alert-event-action', 'alert-outcome', 'alert-outcomes',
   'triage', 'outcome-reasons', 'outcome-tally', 'decision-latency',
 ])
 
@@ -203,8 +210,51 @@ async function handleAlertRoute(route, { data, req, res, url, jsonResponse, stor
       return true
     }
     const xml = renderCapXml(record)
-    res.writeHead(200, { 'content-type': 'application/xml; charset=utf-8' })
+    // ENH-36. The document is validated before it is served, and a document that
+    // fails the profile is a 500 naming the reason rather than a 200 carrying
+    // XML a consumer's parser will reject. The failure direction matters: a
+    // malformed alert served as valid is a national system that silently drops
+    // this platform's warnings, which is worse than an endpoint that is plainly
+    // down. The check is cheap — a regex scan over a document of a few hundred
+    // bytes — and it runs on the real output rather than on a fixture.
+    const profile = validateCapProfile(xml)
+    if (!profile.valid) {
+      logger.error('cap_profile_violation', {
+        alert_id: route.id,
+        message: 'the rendered CAP document does not conform to CAP 1.2; refusing to serve it as valid',
+        errors: profile.errors,
+      })
+      metrics.counter('cap_profile_violations_total')
+      jsonResponse(res, 500, {
+        success: false,
+        error: 'the CAP document for this alert does not conform to the CAP 1.2 profile',
+        problems: profile.errors,
+      })
+      return true
+    }
+    // The permalink travels in a Link header so a consumer polling the .cap
+    // document learns the feed URL without a second discovery step.
+    const permalink = capPermalink(record)
+    res.writeHead(200, {
+      'content-type': 'application/xml; charset=utf-8',
+      link: `<${permalink}>; rel="self", </api/v1/alert-events/cap-feed>; rel="alternate"; type="application/atom+xml"`,
+    })
     res.end(xml)
+    return true
+  }
+
+  if (req.method === 'GET' && route.kind === 'cap-feed') {
+    // ENH-36. The feed a partner cites. Entries are the alerts the caller can
+    // see — through the same visibility filter the rest of the family uses, so a
+    // partner-organisation token does not learn about another partner's alerts
+    // by reading a feed nobody thought to scope.
+    const visible = (data.alert_events || []).filter((record) => findVisible(data.alert_events, record.id, { includeDeleted }) !== null)
+    const feed = renderCapFeed(visible, {
+      baseUrl: `http://${req.headers?.host || 'localhost'}`,
+      self: '/api/v1/alert-events/cap-feed',
+    })
+    res.writeHead(200, { 'content-type': 'application/atom+xml; charset=utf-8' })
+    res.end(feed)
     return true
   }
 

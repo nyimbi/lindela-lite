@@ -2997,6 +2997,24 @@ paths:
                   `scope` defaults to `Public` for every alert; a
                   `<restriction>` element states the dissemination basis of this
                   particular message.
+  /api/v1/alert-events/cap-feed:
+    get:
+      # A collection of CAP alerts as Atom, which is how GDACS and FEWS NET are
+      # polled in practice: a subscriber needs the set and a stable permalink per
+      # member, not a single document it has to already know the id of.
+      summary: Atom feed of the visible CAP alerts
+      responses:
+        '200':
+          description: An Atom 1.0 feed whose entries link to `/alert-events/{id}.cap`
+          content:
+            application/atom+xml:
+              schema:
+                type: string
+                description: |
+                  One `<entry>` per alert, `<id>` the alert's own id and
+                  `<link rel="alternate" type="application/xml">` the CAP
+                  permalink. Deleted and out-of-scope alerts are filtered, so
+                  the feed is exactly the set this caller may read.
   /api/v1/disease-observations/summary:
     get:
       summary: Outbreak context roll-up

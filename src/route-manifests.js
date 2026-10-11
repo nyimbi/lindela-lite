@@ -35,6 +35,11 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/alert-events': Object.freeze(["alert_events"]),
   'GET /api/v1/alert-events/:id': Object.freeze(["alert_events"]),
   'GET /api/v1/alert-events/:id.cap': Object.freeze(["alert_events"]),
+  // ENH-36. The Atom feed over the same alerts. Listed explicitly although the
+  // runtime lookup normalises it onto the `:id` row anyway: the guard in
+  // `test/route-manifests.test.js` reads the *spec* path, so an unlisted feed
+  // reads as an unmeasured route and the table stops being a measurement.
+  'GET /api/v1/alert-events/cap-feed': Object.freeze(["alert_events"]),
   // ENH-69. A ranking over the open alerts, but it also reads hazard_events and
   // service_assets: the expected-loss proxy is severity x exposure, and exposure
   // comes from the impact model's population-at-risk rows.

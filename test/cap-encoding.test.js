@@ -197,4 +197,73 @@ describe('the CAP route serves the encoded message', () => {
       listener.close()
     }
   })
+
+  it('mints a permalink that points at the document it just served', async () => {
+    // ENH-36. The Link header is the discovery step a feed consumer needs, and
+    // a header naming a URL that does not resolve is worse than no header: it
+    // is a citation the reader trusts.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-cap-link-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const { port } = listener.address()
+
+    try {
+      await store.merge({ alert_events: [alert({ id: 'alert_open' })] })
+      const response = await fetch(`http://localhost:${port}/api/v1/alert-events/alert_open.cap`)
+      const link = response.headers.get('link') || ''
+      assert.match(link, /rel="self"/, 'the served document named no self permalink')
+      const self = /<([^>]+)>;\s*rel="self"/.exec(link)?.[1]
+      assert.ok(self, `no self link was parseable from: ${link}`)
+
+      // Follow it. A permalink that 404s is a permalink in name only.
+      const followed = await fetch(new URL(self, `http://localhost:${port}`))
+      assert.equal(followed.status, 200, `the permalink ${self} did not resolve`)
+      // Not byte-equality: `<sent>` is stamped at render, so two renders of one
+      // alert differ by milliseconds. What has to hold is that the permalink
+      // names the same alert, which is the identifier.
+      assert.equal(tag(await followed.text(), 'identifier'), 'alert_open')
+    } finally {
+      listener.close()
+    }
+  })
+})
+
+describe('the CAP feed is the set a subscriber polls', () => {
+  it('lists the visible alerts, each with a permalink that resolves', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-cap-feed-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const { port } = listener.address()
+
+    try {
+      await store.merge({
+        alert_events: [
+          alert({ id: 'alert_open' }),
+          alert({ id: 'alert_gone', deleted_at: '2026-10-01T00:00:00.000Z' }),
+        ],
+      })
+
+      const response = await fetch(`http://localhost:${port}/api/v1/alert-events/cap-feed`)
+      assert.equal(response.status, 200)
+      assert.match(response.headers.get('content-type') || '', /atom\+xml/)
+      const feed = await response.text()
+
+      assert.match(feed, /<id>alert_open<\/id>/, 'the live alert is not in the feed')
+      assert.ok(!/alert_gone/.test(feed), 'a deleted alert was published in the feed')
+
+      // The handler passes a base URL, so the href is absolute — which is right
+      // for a feed a partner polls from elsewhere. Resolve it against the
+      // listener rather than assuming either shape.
+      const href = /<link rel="alternate"[^>]*href="([^"]+\.cap)"/.exec(feed)?.[1]
+      assert.ok(href, `no entry carried a CAP permalink:\n${feed}`)
+      const resolved = new URL(href, `http://localhost:${port}`)
+      assert.equal(resolved.pathname, '/api/v1/alert-events/alert_open.cap')
+      assert.equal((await fetch(resolved)).status, 200,
+        `the feed advertised ${href}, which does not resolve`)
+    } finally {
+      listener.close()
+    }
+  })
 })
