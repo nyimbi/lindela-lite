@@ -215,6 +215,16 @@ non-finite value as unmeasured rather than as dry (`src/analytics.js:177-186`); 
 old form read `value`, which nothing writes, so the filter matched nothing and the
 sum tracked station density instead of rainfall.
 
+**The class had a second live instance, found by ENH-45's gate 2026-10-11.**
+`computeClimateConflictRisk` — the sibling scorer, in the same module — summed
+`precipitation_mm` over the same `nearby()` collection
+(`src/analytics.js:624`), so its climate term measured sensor density too. Two
+instances of one defect, months apart, in one file, is the case for a registry
+rather than a third fix; the term is now the spatial mean (`:644`). The fix
+lands in ENH-45's registry, which classifies `precipitation_mm` intensive along
+the space axis and extensive along time — the axis distinction is what lets
+`src/flood-probability.js` keep summing rainfall over days, which is correct.
+
 ### VER-02 — CRITICAL — Absent probability folded in as 0, against the module's own comment
 `src/analytics.js:461` computes `maxProbability` as `null` when absent, and the
 comment above states "an absent forecast is not a 0% chance of rain" — then `:466`

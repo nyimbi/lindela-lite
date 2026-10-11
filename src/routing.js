@@ -318,6 +318,13 @@ export function planDelivery(data, { from, to, linkRadiusKm, maxMinutes } = {}) 
 
   const feasible = legs.filter((leg) => leg.feasible)
   const unreachable = legs.filter((leg) => !leg.feasible)
+  // aggregation-ok: the legs are disjoint routes to distinct destinations, so
+  // they partition the journey and each one's total is its own. This is the
+  // case the registry's `intensive` kind would otherwise refuse: a duration or
+  // a distance is intensive across observations of the same route, and
+  // extensive across the parts of one journey.
+  const totalMinutes = Math.round(feasible.reduce((sum, l) => sum + l.total_minutes, 0) * 10) / 10
+  const totalDistanceKm = Math.round(feasible.reduce((sum, l) => sum + l.total_distance_km, 0) * 10) / 10
 
   return {
     from,
@@ -333,8 +340,8 @@ export function planDelivery(data, { from, to, linkRadiusKm, maxMinutes } = {}) 
       reachable: feasible.length,
       unreachable: unreachable.length,
       coverage_pct: legs.length ? Math.round((feasible.length / legs.length) * 10000) / 100 : 0,
-      total_minutes: Math.round(feasible.reduce((sum, l) => sum + l.total_minutes, 0) * 10) / 10,
-      total_distance_km: Math.round(feasible.reduce((sum, l) => sum + l.total_distance_km, 0) * 10) / 10,
+      total_minutes: totalMinutes,
+      total_distance_km: totalDistanceKm,
       any_degraded: feasible.some((l) => l.degraded),
       requires_foot: feasible.filter((l) => l.mode === 'foot').length,
       blocked_by: countBy(unreachable.map((l) => l.blocked_by).filter(Boolean)),

@@ -101,7 +101,7 @@ export const SCORING_RULES = Object.freeze({
     source: 'Math.round(climatePressure + hazardPressure + conflictPressure + servicePressure)',
     formula: 'min(35, rainfall) + min(25, 12 x severity weight per event) + min(30, 4 + 0.8 x fatalities per event) + min(10, 1.5 x assets)',
     terms: [
-      { name: 'Climate pressure', shape: 'capped', cap: 35, driver: 'climate_observations', unit: 'mm', driverLabel: 'in-scope climate observations', needs: 'the rainfall reading on each one', aggregate: 'sum of precipitation_mm' },
+      { name: 'Climate pressure', shape: 'capped', cap: 35, driver: 'climate_observations', unit: 'mm', driverLabel: 'in-scope climate observations', needs: 'the rainfall reading on each one', aggregate: 'mean of precipitation_mm' },
       { name: 'Hazard pressure', shape: 'capped', cap: 25, driver: 'hazard_events', unit: 'events', driverLabel: 'in-scope hazard events', needs: 'the severity of each event', aggregate: 'sum of 12 x severityWeight' },
       { name: 'Conflict pressure', shape: 'capped', cap: 30, driver: 'conflict_events', unit: 'events', driverLabel: 'in-scope conflict events', needs: 'the fatality count on each event', aggregate: 'sum of 4 + 0.8 x fatalities' },
       { name: 'Service exposure', shape: 'linear', cap: 10, driver: 'nearby_service_assets', weight: 1.5, unit: 'assets', driverLabel: 'in-scope service assets' },

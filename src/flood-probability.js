@@ -185,6 +185,11 @@ function monthStats(month, series, minCoverage, indexByDate) {
   if (present.length < 90 * minCoverage) return null
   // Gaps are skipped, not zero-filled: a sum over present days underestimates
   // slightly, and a flagged low coverage beats an invented interpolation.
+  //
+  // aggregation-ok: this sums rainfall along the *time* axis, where a total is
+  // a real quantity — 20 mm on each of five consecutive days is 100 mm of
+  // accumulated rain. The spatial axis is the one that must not be summed, and
+  // that is what the aggregation-kind registry refuses; see its axis note.
   const sum = (days) => days.reduce((acc, d) => acc + (d.mm || 0), 0)
   const sum30 = sum(series.slice(endIndex - 29, endIndex + 1))
   const sum90 = sum(trail)

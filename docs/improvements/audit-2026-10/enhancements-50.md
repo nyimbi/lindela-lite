@@ -28,9 +28,9 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 13 | 31, 35, 37, 40, 46, 48, 49, 61, 63, 64, 65, 66, 81 |
+| IMPLEMENTED | 14 | 31, 35, 37, 40, 45, 46, 48, 49, 61, 63, 64, 65, 66, 81 |
 | PARTIAL | 12 | 32, 33, 42, 50, 51, 52, 55, 57, 59, 70, 72, 78 |
-| ABSENT | 26 | 34, 36, 38, 39, 41, 43, 44, 45, 47, 53, 54, 56, 58, 60, 62, 67, 68, 69, 71, 73, 74, 75, 76, 77, 79, 80 |
+| ABSENT | 25 | 34, 36, 38, 39, 41, 43, 44, 47, 53, 54, 56, 58, 60, 62, 67, 68, 69, 71, 73, 74, 75, 76, 77, 79, 80 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-32
 pulls from DHIS2 and does not push, ENH-33 has districts and no org-unit codes
@@ -234,6 +234,33 @@ while violating.
 `reduce` an intensive quantity makes VER-01 (precipitation summed across stations,
 `src/analytics.js:452`) impossible to write rather than merely fixed. The bug is a
 map of station density; the registry is the cure for the class.
+
+**Shipped 2026-10-11.** `public/shared/aggregation-kinds.js` is the registry and
+`scripts/check-aggregation-kinds.mjs` is the gate, registered `self-contained`.
+The kind is read off the unit suffix, which is what the field name actually
+states: `precipitation_mm` is intensive, `hazard_events` is a count and is not.
+
+Two things the entry did not anticipate, both forced by the tree:
+
+  - **The axis.** `mm` is intensive over *space* and extensive over *time* — 20 mm
+    at five stations is one storm reported five times, 20 mm on five days is
+    100 mm of accumulated rain. Same unit, opposite answers, so the registry names
+    both and `aggregationKindFor(field, { axis })` defaults to space, the axis
+    VER-01 got wrong. `src/flood-probability.js` sums rainfall along time and is
+    correct; a registry that could not say so would have flagged it.
+  - **The marker.** `aggregation-ok: <reason>`, the same discipline as the
+    absent-value gate's `absent-ok:`, for rows that partition the population —
+    `src/routing.js` sums journey legs, which are disjoint. It reaches the whole
+    blank-line-delimited paragraph, so one reason can cover two sums it explains.
+
+`sumField`/`meanField` are the runtime half: a `sumField(rows, 'precipitation_mm')`
+throws and names the mean to use instead. A gate that says no and stops is a gate
+people route around.
+
+The gate found the class's **second live instance** on its first run: the
+climate-conflict scorer summed point rainfall across stations in the same module
+where VER-01 was fixed (`src/analytics.js:624`, now the mean at `:644`). Eleven
+canaries, the first two being the defect and its fix side by side.
 
 **ENH-46 — Absent-value linter as a gate.** `?? 0`, `|| 0` and `Number(null)` on a
 nullable field are the repository's named defect class. A static gate over `src/`

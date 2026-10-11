@@ -791,6 +791,17 @@ plus a `missing_precipitation_records` count in `drivers` so the shortfall is vi
 the flood scorer already does at `:110`. Already catalogued at
 `docs/architecture/analytics-and-alerts.md:512`; the code has not moved.
 
+**Closed 2026-10-11, and the entry understated it.** The coercion was one defect; the
+aggregate was the other, and the larger one. `climate.reduce((sum, item) => sum + …)` adds
+the same storm once per station, so the term measured sensor density — VER-01 exactly, in
+the sibling scorer of the module where VER-01 was fixed. The term is now the spatial mean
+of the finite readings (`src/analytics.js:644`), the count of readings that carried one is
+`climateWithRainfall`, and `docs/architecture/analytics-and-alerts.md` states the mean.
+ENH-45's registry (`public/shared/aggregation-kinds.js`) now classifies `precipitation_mm`
+as intensive along the space axis and extensive along time, and
+`scripts/check-aggregation-kinds.mjs` refuses a sum over the former — this line was its
+first finding.
+
 ---
 
 ### D21 — Scenario deltas average over different region sets

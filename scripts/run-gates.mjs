@@ -109,6 +109,12 @@ const GATES = [
     why: 'ENH-46. Flags a numeric fallback on a field the module itself declares nullable — decided by the `<subject>_refusal` convention in the tree, not by a hand-written field list that goes stale. Reads files only, and carries eleven canaries plus a self-test, because the class it checks (VER-02, VER-09, VER-12) shipped four times and was found by audit each time.',
   },
   {
+    name: 'check-aggregation-kinds',
+    script: 'scripts/check-aggregation-kinds.mjs',
+    tier: 'self-contained',
+    why: 'ENH-45. Applies the aggregation-kind registry to `reduce(sum)` sites and refuses a sum over an intensive measurement. It found the second live instance of VER-01 — the climate-conflict scorer summing point rainfall across stations, in the same module the flood scorer was fixed in. Reads files only, and carries eleven canaries, the first two of which are the defect and its fix side by side.',
+  },
+  {
     name: 'check-route-envelopes',
     script: 'scripts/check-route-envelopes.mjs',
     tier: 'self-contained',

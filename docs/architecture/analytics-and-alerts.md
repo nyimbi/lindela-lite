@@ -168,7 +168,7 @@ caps (`src/analytics.js:153`).
 
 | Term | Radius | Formula | Cap |
 |---|---|---|---|
-| `climatePressure` | 125 km | Σ `precipitation_mm \|\| 0` | 35 |
+| `climatePressure` | 125 km | mean `precipitation_mm` | 35 |
 | `hazardPressure` | 250 km | Σ `severityWeight × 12`, **all** hazard types | 25 |
 | `conflictPressure` | 125 km | Σ `(4 + fatalities × 0.8)` | 30 |
 | `servicePressure` | 75 km | `serviceAssets.length × 1.5` | 10 |

@@ -621,18 +621,44 @@ export function computeClimateConflictRisk(data, options = {}) {
     const hazards = nearby(data.hazard_events, region, 250)
     const conflicts = nearby(data.conflict_events, region, 125)
     const serviceAssets = nearby(data.service_assets, region, 75)
-    const climatePressure = Math.min(35, climate.reduce((sum, item) => sum + Number(item.precipitation_mm || 0), 0))
+    // The mean of the readings, not their sum — the same defect VER-01 fixed in
+    // the flood scorer, live here until ENH-45's gate found it.
+    //
+    // `nearby` collects every climate observation within 125 km and each one is
+    // a *point* total, so adding them added the same storm once per station and
+    // this term measured sensor density rather than rainfall. That the flood
+    // path was fixed and this one was not is the argument for a registry rather
+    // than a third fix: the two lines sat in the same module.
+    //
+    // The registry says `precipitation_mm` is intensive along the space axis
+    // and extensive along time; this is the space axis.
+    //
+    // The presence check is spelled out rather than left to `Number.isFinite(
+    // Number(…))`, which is `true` for `null` — `Number(null)` is 0 — and would
+    // therefore read every CHIRPS raster listing as a measured dry day. That
+    // coercion is the first version of this guard and it looked like it worked;
+    // `test/climate-coverage-honesty.test.js:124` exists because of it, and it
+    // caught this exact regression when the mean was written.
+    const rainfall = climate
+      .filter((item) => item.precipitation_mm !== null
+        && item.precipitation_mm !== undefined
+        && item.precipitation_mm !== '')
+      .map((item) => Number(item.precipitation_mm))
+      .filter((v) => Number.isFinite(v))
+    const meanRainfall = rainfall.length ? rainfall.reduce((sum, v) => sum + v, 0) / rainfall.length : 0
+    // The cap stays where it was. The term's scale is unchanged for a region
+    // with one station, and a region with many now reads the weather rather
+    // than the count — which is the point, and is why the *value* of a score
+    // can move. A change in what a published number means is recorded here
+    // rather than made silently.
+    const climatePressure = Math.min(35, meanRainfall)
     // How many climate observations actually carried a rainfall number. Every
     // CHIRPS record has `precipitation_mm: null` by construction — the connector
     // reports which rasters exist, not what fell — and open-meteo-flood does the
     // same. Counting them in the confidence vector gave a region full climate
     // coverage credit for observations that contributed nothing to the score
-    // above, and `confidence` is what the p10/p90 band is drawn from. The
-    // pressure sum itself is unaffected: a null adds nothing either way.
-    const climateWithRainfall = climate.filter((item) => item.precipitation_mm !== null
-      && item.precipitation_mm !== undefined
-      && item.precipitation_mm !== ''
-      && Number.isFinite(Number(item.precipitation_mm))).length
+    // above, and `confidence` is what the p10/p90 band is drawn from.
+    const climateWithRainfall = rainfall.length
     const hazardPressure = Math.min(25, hazards.reduce((sum, event) => sum + severityWeight(event.severity) * 12, 0))
     const conflictPressure = Math.min(30, conflicts.reduce((sum, event) => sum + 4 + Number(event.fatalities || 0) * 0.8, 0))
     const servicePressure = Math.min(10, serviceAssets.length * 1.5)
