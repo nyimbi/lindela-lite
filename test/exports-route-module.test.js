@@ -42,21 +42,43 @@ function fakeResponse() {
 
 const url = (query = '') => new URL(`http://127.0.0.1/api/v1/export.ndjson${query}`)
 
-describe('ARC-01 — matchExportRoute is a function of the pathname alone', () => {
-  it('matches each of the five export paths and nothing else', () => {
+describe('ARC-01 — matchExportRoute reads the pathname and the verb, per route', () => {
+  it('matches each of the five export paths on its own declared method', () => {
+    // The family is NOT uniform, and assuming it was is a bug this file already
+    // caught once. Four routes read; `export/dhis2` is a POST that pushes a
+    // dataValueSet upstream. `docs/openapi.yaml` is the source of these verbs.
     const expected = {
-      '/api/v1/exports': 'manifest',
-      '/api/v1/export.ndjson': 'ndjson',
-      '/api/v1/export.geojson': 'geojson',
-      '/api/v1/export.csv': 'csv',
-      '/api/v1/export/dhis2': 'dhis2',
+      '/api/v1/exports': ['manifest', 'GET'],
+      '/api/v1/export.ndjson': ['ndjson', 'GET'],
+      '/api/v1/export.geojson': ['geojson', 'GET'],
+      '/api/v1/export.csv': ['csv', 'GET'],
+      '/api/v1/export/dhis2': ['dhis2', 'POST'],
     }
-    for (const [pathname, kind] of Object.entries(expected)) {
-      assert.deepEqual(matchExportRoute(pathname), { kind }, `${pathname} did not match as ${kind}`)
+    for (const [pathname, [kind, method]] of Object.entries(expected)) {
+      assert.deepEqual(matchExportRoute(pathname, method), { kind }, `${method} ${pathname} did not match as ${kind}`)
     }
-    // The near-misses. A matcher that fell back to a prefix test would take
-    // `/api/v1/export.csv.bak` and serve it as the export — and would take
-    // `/api/v1/exportsomething`, which is a route nobody wrote.
+  })
+
+  it('refuses the verb a route does not declare, in both directions', () => {
+    // A blanket `method !== 'GET'` guard would close the four read routes and
+    // break the push — which is what the first attempt at VER-14 did, and
+    // `test/dhis2-push.test.js:221` is what caught it. The wrong verb on any of
+    // the five falls through to the dispatcher's 404.
+    for (const pathname of ['/api/v1/exports', '/api/v1/export.ndjson', '/api/v1/export.geojson', '/api/v1/export.csv']) {
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        assert.equal(matchExportRoute(pathname, method), null, `${method} ${pathname} matched a read route`)
+      }
+    }
+    for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) {
+      assert.equal(matchExportRoute('/api/v1/export/dhis2', method), null, `${method} matched the DHIS2 push, which is a POST`)
+    }
+    assert.deepEqual(matchExportRoute('/api/v1/export/dhis2', 'POST'), { kind: 'dhis2' })
+  })
+
+  it('does not match a near miss', () => {
+    // A matcher that fell back to a prefix test would take `/api/v1/export.csv.bak`
+    // and serve it as the export — and would take `/api/v1/exportsomething`,
+    // which is a route nobody wrote.
     for (const pathname of [
       '/api/v1/export',
       '/api/v1/export.csv.bak',
@@ -69,16 +91,8 @@ describe('ARC-01 — matchExportRoute is a function of the pathname alone', () =
       '',
       '/',
     ]) {
-      assert.equal(matchExportRoute(pathname), null, `${pathname} matched a route it should not`)
+      assert.equal(matchExportRoute(pathname, 'GET'), null, `${pathname} matched a route it should not`)
     }
-  })
-
-  it('does not read the request, so it cannot disagree with the gate that parses it', () => {
-    // The gate reads `pathname === '…'` inside a named `match*Route`. A matcher
-    // that took a request object and consulted the method would parse the same
-    // and mean something different, so the arity is asserted rather than
-    // assumed.
-    assert.equal(matchExportRoute.length, 1, 'matchExportRoute takes the pathname and nothing else')
   })
 })
 

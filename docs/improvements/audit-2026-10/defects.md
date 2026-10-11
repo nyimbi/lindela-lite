@@ -691,9 +691,35 @@ from the source is not an inventory of routes the app serves". A client cannot t
 a handler that ignored the method from one that honoured it, and the metric label
 counted the request as a served route.
 
-**Fixed 2026-10-11.** `matchExposureRoute(pathname, method)` refuses every non-GET
-verb (`src/routes/exposure.js:47`), so the wrong method falls through to the 404.
-A canary that removes the guard fails the test.
+**Fixed 2026-10-11, and then swept for the class.** `matchExposureRoute(pathname,
+method)` refuses every non-GET verb (`src/routes/exposure.js:47`), so the wrong
+method falls through to the 404. A canary that removes the guard fails the test.
+
+Because a gate is scoped to the bug you found and not to the class it belongs to,
+the served surface was then swept against `docs/openapi.yaml` directly — every
+documented path against every method, through a live server, with the inbound
+rate limiter widened so a 429 could not mask a result. **13 undeclared methods
+answered 200**, in four more routes:
+
+- `matchExportRoute` (`src/routes/exports.js`) — `DELETE /api/v1/exports` returned
+  the vintage manifest.
+- `matchWatermarkRoute` (`src/server.js`) — `DELETE /api/v1/watermarks` returned
+  every source's high-water mark.
+- `matchReportingRoute` — `GET /api/v1/report-schedules/run-due` is the worst of
+  them. `run-due` is an action the spec declares `post:` alone; the matcher
+  returned the schedule kind for any verb, and the handler's next branch
+  (`GET && !route.id`) answered the **schedule listing** with a 200. An operator
+  asking "has the run happened" was handed a list of schedules and no error.
+- `/api/v1/metrics` — left as-is, deliberately. It is a Prometheus scrape
+  endpoint, method-agnostic by convention, and it sits in the inbound limiter's
+  `UNLIMITED` list for the same reason. Recorded here so the next sweep does not
+  re-open it.
+
+All three real ones now take the method; the sweep re-run reports **4** remaining,
+all `/api/v1/metrics`. The other non-404 codes are 405s (an explicit refusal,
+which is the right answer) and six 400s from pure-computation routes
+(`flood-depth`, `trigger-protocols`, `workflows`) whose mutation branches are all
+gated behind their own method tests and which never touch the store.
 
 ---
 

@@ -66,12 +66,23 @@ function exportRecords(data) {
  * Pathname only, so this is a pure function of the URL — the property the
  * `check-openapi.mjs` gate reads to build its inventory of the served surface.
  */
-export function matchExportRoute(pathname) {
-  if (pathname === '/api/v1/exports') return { kind: 'manifest' }
-  if (pathname === '/api/v1/export.ndjson') return { kind: 'ndjson' }
-  if (pathname === '/api/v1/export.geojson') return { kind: 'geojson' }
-  if (pathname === '/api/v1/export.csv') return { kind: 'csv' }
-  if (pathname === '/api/v1/export/dhis2') return { kind: 'dhis2' }
+/**
+ * Which export route a request is, or null.
+ *
+ * VER-14, the class: the verb is checked per route rather than as a blanket
+ * guard, because this family is not uniform. `docs/openapi.yaml` declares four
+ * of these `get:` and `export/dhis2` **`post:`** — it pushes a dataValueSet
+ * upstream and defaults to a dry run. A blanket `method !== 'GET'` here would
+ * close the four and break the fifth; that is what the first attempt did, and
+ * `test/dhis2-push.test.js:221` caught it. The methods below are read off the
+ * spec, not assumed from the family's shape.
+ */
+export function matchExportRoute(pathname, method = 'GET') {
+  if (pathname === '/api/v1/exports' && method === 'GET') return { kind: 'manifest' }
+  if (pathname === '/api/v1/export.ndjson' && method === 'GET') return { kind: 'ndjson' }
+  if (pathname === '/api/v1/export.geojson' && method === 'GET') return { kind: 'geojson' }
+  if (pathname === '/api/v1/export.csv' && method === 'GET') return { kind: 'csv' }
+  if (pathname === '/api/v1/export/dhis2' && method === 'POST') return { kind: 'dhis2' }
   return null
 }
 

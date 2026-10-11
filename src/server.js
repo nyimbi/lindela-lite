@@ -1424,7 +1424,7 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   // `req.__auth` is stamped first because `export.csv` hands the authenticated
   // caller to `filterRecords`; a route above that line would export the whole
   // store to a partner-scoped token.
-  const exportRoute = matchExportRoute(url.pathname)
+  const exportRoute = matchExportRoute(url.pathname, req.method)
   if (exportRoute && await handleExportRoute(exportRoute, {
     store,
     req,
@@ -2512,13 +2512,13 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  const reportingRoute = matchReportingRoute(url.pathname)
+  const reportingRoute = matchReportingRoute(url.pathname, req.method)
   if (reportingRoute) {
     await handleReportingRoute(store, data, req, res, url, reportingRoute, { checkWebhookUrl })
     return
   }
 
-  const watermarkRoute = matchWatermarkRoute(url.pathname)
+  const watermarkRoute = matchWatermarkRoute(url.pathname, req.method)
   if (watermarkRoute) {
     await handleWatermarkRoute(store, data, req, res, url, watermarkRoute)
     return
@@ -4780,8 +4780,19 @@ function matchIngestionRoute(pathname) {
   return null
 }
 
-function matchReportingRoute(pathname) {
-  if (pathname === '/api/v1/report-schedules/run-due') return { kind: 'schedules', action: 'run-due' }
+function matchReportingRoute(pathname, method = 'GET') {
+  // VER-14, the class. `run-due` is an action, and the spec declares it `post:`
+  // alone. The matcher returned `{ kind: 'schedules', action: 'run-due' }` for
+  // any verb, and the handler's next branch — `GET && !route.id` — then answered
+  // the *schedule listing* with a 200. So an undocumented `GET
+  // /api/v1/report-schedules/run-due` returned every schedule, which is a
+  // plausible-looking answer to a question nobody asked, and an operator
+  // checking "has the run happened" read a list instead of a run. Requiring the
+  // verb here lets a non-POST fall through to the id lookup below, which finds
+  // no schedule called `run-due` and answers 404.
+  if (pathname === '/api/v1/report-schedules/run-due') {
+    return method === 'POST' ? { kind: 'schedules', action: 'run-due' } : null
+  }
   const scheduleRunAction = pathname.match(/^\/api\/v1\/report-schedule-runs\/([^/]+)\/(retry)$/)
   if (scheduleRunAction) return { kind: 'schedule-runs', id: decodeURIComponent(scheduleRunAction[1]), action: scheduleRunAction[2] }
   const reportExport = pathname.match(/^\/api\/v1\/reports\/([^/]+)\/export\.(md|json|csv|geojson)$/)
@@ -4807,7 +4818,10 @@ function matchReportingRoute(pathname) {
 }
 
 /** R-52. The watermark state, which had no route at all. */
-function matchWatermarkRoute(pathname) {
+function matchWatermarkRoute(pathname, method = 'GET') {
+  // VER-14, the class. A read of every source's high-water mark; the spec says
+  // `get:` and nothing else. `DELETE /api/v1/watermarks` used to answer 200.
+  if (method !== 'GET') return null
   return pathname === '/api/v1/watermarks' ? { kind: 'watermarks' } : null
 }
 
