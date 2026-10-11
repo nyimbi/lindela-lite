@@ -1,5 +1,5 @@
 import { emptyStore } from './schema.js'
-import { COLLECTIONS, DERIVED_COLLECTIONS, HISTORY_COLLECTION, assertDeclaredCollection, assertDeclaredCollections, normaliseReadOptions, sortRecords, supersededVersions } from './store.js'
+import { COLLECTIONS, DERIVED_COLLECTIONS, HISTORY_COLLECTION, assertDeclaredCollection, assertDeclaredCollections, normaliseReadOptions, readRowBudget, sortRecords, supersededVersions, StoreReadBudgetExceeded } from './store.js'
 import { BITEMPORAL_COLLECTIONS, VERSIONS_PER_RECORD } from './bitemporal.js'
 import { nowIso } from './utils.js'
 import { pendingMigrations, targetVersion } from './migrations.js'
@@ -126,10 +126,14 @@ export async function withWriteRetry(fn, { attempts = WRITE_RETRY_ATTEMPTS } = {
 }
 
 export class PostgresStore {
-  constructor({ databaseUrl, pool } = {}) {
+  constructor({ databaseUrl, pool, readRowBudget: budget } = {}) {
     if (!databaseUrl && !pool) throw new Error('PostgresStore requires a databaseUrl or pool')
     this.databaseUrl = databaseUrl
     this.pool = pool
+    // SCL-01. Injectable so a test can put the ceiling where it can reach it.
+    // A budget only settable by environment variable is a budget a test has to
+    // exercise by inserting 200,000 rows, which is not a test anybody runs.
+    this.readRowBudget = Number.isFinite(budget) && budget > 0 ? Math.floor(budget) : null
     this.ready = false
   }
 
@@ -414,10 +418,21 @@ export class PostgresStore {
     // is stamped `now()` at write time and so sorts by insertion rather than by
     // when the record describes. All the ordering bought was `rows[0]`, which
     // `#newestWrite()` answers without touching the bodies.
+    //
+    // SCL-01. `LIMIT` is set one over the budget. The extra row is what makes
+    // the count honest: PostgreSQL counts what the scan produced before LIMIT
+    // stopped it, so `rows.length > budget` is exact evidence of an overrun
+    // without a second `count(*)` query over the same predicate. With a plain
+    // `LIMIT budget` the result is indistinguishable from a table that holds
+    // exactly the budget, and the refusal below could never fire.
+    const budget = this.readRowBudget ?? readRowBudget()
     const { rows } = await runner.query(
-      `SELECT collection, body FROM lite_records WHERE ${clauses.join(' AND ')}`,
+      `SELECT collection, body FROM lite_records WHERE ${clauses.join(' AND ')} LIMIT ${budget + 1}`,
       params,
     )
+    if (rows.length > budget) {
+      throw new StoreReadBudgetExceeded(rows.length, budget, collections)
+    }
 
     const store = emptyStore()
     // A Set, not `COLLECTIONS.includes()`. The array form ran a linear scan per

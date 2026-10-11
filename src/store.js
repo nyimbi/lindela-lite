@@ -246,6 +246,66 @@ const COLLECTION_SET = new Set(COLLECTIONS)
 export const HISTORY_COLLECTION = 'record_versions'
 
 /**
+ * SCL-01. The ceiling on rows one read may materialise, and the refusal when it
+ * is crossed.
+ *
+ * Declared here rather than in either adapter, for the same reason
+ * `HISTORY_COLLECTION` is: the two stores refusing on different requests is the
+ * defect class (`ARC-10`) these shared declarations exist to prevent. The
+ * default is roughly five times the largest measured deployment, so no honest
+ * deployment reaches it and a runaway cannot turn a GET into an OOM. A
+ * programme that genuinely holds more sets `LINDELA_LITE_READ_ROW_BUDGET` and
+ * says so, rather than meeting the limit as a 500.
+ */
+export const DEFAULT_READ_ROW_BUDGET = 200_000
+
+/** The configured budget, or the default. A non-numeric or zero setting is the default. */
+export function readRowBudget() {
+  const raw = Number(process.env.LINDELA_LITE_READ_ROW_BUDGET)
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_READ_ROW_BUDGET
+}
+
+/**
+ * Raised when a read would materialise more rows than the budget allows.
+ *
+ * A refusal, not a truncation. A silently truncated store read is the worst
+ * outcome available: every aggregate over it is wrong, every "not found" is
+ * indistinguishable from "not fetched", and the response is a 200 that reads as
+ * success. This codebase refuses a number it cannot honestly produce, by name.
+ */
+export class StoreReadBudgetExceeded extends Error {
+  constructor(count, budget, collections) {
+    const scope = collections === null
+      ? 'every collection'
+      : `${collections.length} named collection(s)`
+    super(`the read matched ${count} rows, over the ${budget}-row budget for ${scope}; narrow the request with a collection manifest or raise LINDELA_LITE_READ_ROW_BUDGET`)
+    this.name = 'StoreReadBudgetExceeded'
+    // 503, not 500: this is a capacity answer, not a fault. `expose` carries the
+    // sentence to the caller, who is the only one who can act on it.
+    this.statusCode = 503
+    this.expose = true
+    this.count = count
+    this.budget = budget
+  }
+}
+
+/**
+ * How many rows a read would return, counted the way the Postgres `WHERE`
+ * counts them: the named collections when a manifest is given, every declared
+ * collection otherwise, minus history unless it was asked for.
+ */
+export function countReadRows(source, collections, includeHistory) {
+  const wanted = collections === null ? null : new Set(collections)
+  let total = 0
+  for (const collection of COLLECTIONS) {
+    if (wanted !== null && !wanted.has(collection)) continue
+    if (!includeHistory && collection === HISTORY_COLLECTION) continue
+    total += source[collection]?.length || 0
+  }
+  return total
+}
+
+/**
  * The read contract, in one place, because two adapters implement it.
  *
  * `read()` accepts three call shapes — no argument, an options object, and a
@@ -369,8 +429,15 @@ export function assertDeclaredCollection(collection) {
 }
 
 export class JsonStore {
-  constructor(filePath = process.env.LINDELA_LITE_STORE || path.resolve('data/lindela-lite-store.json')) {
+  constructor(filePath = process.env.LINDELA_LITE_STORE || path.resolve('data/lindela-lite-store.json'), { readRowBudget: budget } = {}) {
     this.filePath = filePath
+    // SCL-01. The same ceiling `PostgresStore` applies, because a store that
+    // refuses on one backend and serves on the other is the ARC-10 defect class
+    // — a route that 503s in production and passes every test here. The JSON
+    // file is held whole in memory by design, so this bounds what a single read
+    // *hands a caller*, not what the process holds; the two adapters agreeing on
+    // the refusal is the property that matters.
+    this.readRowBudget = Number.isFinite(budget) && budget > 0 ? Math.floor(budget) : null
     // Every mutation is a read-modify-write of one file. Two concurrent callers
     // would each read the same snapshot and the second write would discard the
     // first's records (20 concurrent POSTs left 6 survivors). This promise
@@ -442,6 +509,14 @@ export class JsonStore {
   async read(options = {}) {
     const { collections, includeHistory, partnerOrg } = normaliseReadOptions(options)
     const read = await this.#readAll()
+    // SCL-01. Counted over exactly the rows this read would return, which is
+    // the same set the Postgres adapter's `WHERE` matches — the named
+    // collections when there is a manifest, everything declared when there is
+    // not. Counting the file instead would make the two adapters refuse on
+    // different requests.
+    const budget = this.readRowBudget ?? readRowBudget()
+    const matched = countReadRows(read, collections, includeHistory)
+    if (matched > budget) throw new StoreReadBudgetExceeded(matched, budget, collections)
     // A bare read is answered with the cached object itself, not a copy of it.
     // R-28 asserts the second `read()` returns the same reference as the first —
     // that identity *is* the observable evidence that the parse was reused

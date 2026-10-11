@@ -696,7 +696,15 @@ export function createServer(options = {}) {
       // errors (validation, not-found, conflict) and their text is written for
       // the caller. Anything else is an internal fault and gets a correlation id.
       const statusCode = error.statusCode || 500
-      const exposeMessage = statusCode < 500
+      // A 5xx whose message was written *for the caller* says so, rather than
+      // being flattened to "Internal server error". The rule below is right for
+      // a fault — `pg` errors carry the connection string and the failing
+      // statement — but wrong for a deliberate refusal that happens to carry a
+      // 5xx status, which is what a capacity limit is: the caller can act on
+      // "narrow the request", and hiding that turns an actionable 503 into a
+      // mystery. Opt-in, so no message is exposed by accident; `auth.js`'s
+      // fail-closed config error is the existing case.
+      const exposeMessage = statusCode < 500 || error.expose === true
       if (exposeMessage) {
         // ARC-07. A thrown error may name its own code, and the envelope keeps
         // it only when it is in the vocabulary. That validation is what makes

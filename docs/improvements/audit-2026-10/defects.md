@@ -436,6 +436,32 @@ request naming a large collection transfers the whole table into the Node heap p
 request, O(total rows) bytes + O(N log N) sort, unbounded. `food_security_records`
 is 4,517 rows by the code's own comment; history collections are larger. ENH-61.
 
+**Fixed 2026-10-11.** A row budget on `read()`, enforced identically in both
+adapters. The query is `LIMIT budget + 1` — the extra row is what makes the
+overrun exact without a second `count(*)` over the same predicate, since
+PostgreSQL counts what the scan produced before `LIMIT` stopped it. Over the
+budget the read throws `StoreReadBudgetExceeded` (503) rather than truncating:
+a silently short read makes every aggregate over it wrong, every "not found"
+indistinguishable from "not fetched", and returns a 200 that reads as success.
+The error carries `expose: true` so the dispatch hands the caller the sentence
+that says what to do, instead of flattening it to "Internal server error".
+
+Default 200,000 rows, overridable by `LINDELA_LITE_READ_ROW_BUDGET`; the budget
+is a deployment property, not a constant of the code. Injectable per store so a
+test can reach the ceiling without inserting 200,000 rows. A zero or non-numeric
+setting falls back to the default rather than disabling the limit.
+
+Declared in `store.js`, not in either adapter, and `countReadRows` is shared:
+the JSON store applies the same ceiling, because a route that 503s on Postgres
+and serves on JSON is the ARC-10 defect class — a production failure that passes
+every test. `test/read-budget.test.js` drives the identical over-budget call
+against both adapters and asserts they refuse with the *same message*, so a
+caller can branch on either. Canaried: removing the check fails three of its
+five tests.
+
+This closes the store-read half of ENH-66. The unbounded outbound rate-limit
+queue (`src/rate-limit.js`) is the other half and remains open.
+
 ### SCL-02 — HIGH — `runPeriodicTick` reads the whole store once per driver item
 `src/server.js:229–263` `for (const item of DRIVER_ITEMS) { const data = await store.read() }`
 — 7 items → 7 full-store reads per tick, plus each item's own internal reads
