@@ -54,7 +54,21 @@ export function callers(modulePath, root) {
   const found = []
   for (const file of walkFiles(root)) {
     if (file === modulePath || file.startsWith('test/')) continue
-    if (pattern.test(fs.readFileSync(path.join(root, file), 'utf8'))) found.push(file)
+    // A file the walk listed can be gone by the time it is read. `node --test`
+    // runs files in parallel workers, and `test/budget-walker.test.js` plants a
+    // canary module under `public/shared/` and removes it in a `finally` — so
+    // this read raced a delete and crashed the whole generator with ENOENT.
+    // A vanished file is not a caller; it is not a finding either. Skipping it
+    // is right for a scan whose subject is *content*, and it keeps a transient
+    // write in another worker from failing a build that has nothing to do with it.
+    let text
+    try {
+      text = fs.readFileSync(path.join(root, file), 'utf8')
+    } catch (error) {
+      if (error.code === 'ENOENT') continue
+      throw error
+    }
+    if (pattern.test(text)) found.push(file)
   }
   return found
 }

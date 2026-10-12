@@ -14,14 +14,25 @@
  *
  * Usage: node scripts/check-budget.mjs
  *        BUDGET_KB=80 node scripts/check-budget.mjs   (to allow headroom once)
+ *        node scripts/check-budget.mjs <dir>          (measure a copy of the tree)
+ *
+ * The optional root is for `test/budget-walker.test.js`, which plants a module
+ * into the graph to prove the walker sees it. Planting into the real
+ * `public/shared/` meant writing a tracked file from a test, and `node --test`
+ * runs files in parallel workers against one shared tree — so the canary raced
+ * every other reader of that directory. It now measures its own copy. argv
+ * rather than an environment variable on purpose: a stray `LINDELA_ROOT` in a
+ * developer's shell would silently measure the wrong tree and report a pass.
  */
 
-import { readFileSync, existsSync, statSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const root = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const publicDir = path.join(root, 'public')
 
 /** The console's first load, before any interaction. */
