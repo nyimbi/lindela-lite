@@ -215,9 +215,15 @@ export async function handleChwRoute(route, { store, data, req, res, jsonRespons
     //
     // The candidates are read from the store rather than from `data`, because a
     // double submission is most often two reports filed minutes apart and the
-    // dispatcher's snapshot is taken before the first of them was written. The
-    // read is scoped to `field_reports` alone.
-    const candidates = (await store.read())?.field_reports || []
+    // dispatcher's snapshot is taken before the first of them was written.
+    //
+    // Scoped, and it was not. The comment above this line said "the read is
+    // scoped to `field_reports` alone" for as long as the line was a bare
+    // `store.read()` — which materialises every collection. Measured against
+    // this deployment's store: 169 field reports wanted, 48,473 rows read, a
+    // 287× over-read on the route a health worker's phone hits. The manifest is
+    // what the comment claimed; a claim in a comment is not a scope.
+    const candidates = (await store.read({ collections: ['field_reports'] }))?.field_reports || []
     const stamped = stampQuality(redacted, { candidates, received_at: now })
 
     const log = actionLog('field_reports', 'created', stamped, 'chw_web', req.__auth?.subject)

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 import { metrics } from './observability.js'
+import { DEFAULT_READ_ROW_BUDGET, normaliseReadOptions } from './store.js'
 
 /**
  * ENH-67 — a read that scans the whole store fails its own request, not every
@@ -106,6 +107,23 @@ import { metrics } from './observability.js'
 export const DEFAULT_QUERY_BUDGET = Object.freeze({ rows: 25_000, queries: 200 })
 
 /**
+ * The allowance for a route declared whole-store.
+ *
+ * `ROUTE_MANIFESTS` names what each narrow route reads; `WIDE_ROUTES` is the
+ * list of routes that read everything on purpose — `demo/seed`, `ingest/run`,
+ * `kpi/refresh-snapshots`, the exports. Those are not defects to catch, so the
+ * row axis is set at the store's *own* ceiling rather than at a number this
+ * module invents: the budget then never refuses a read the store would have
+ * served, and the axis that still bites is queries, where a route issuing two
+ * thousand round trips is a defect whatever it is reading.
+ *
+ * Deliberately not "unmetered". A route with no budget is a route whose cost
+ * nobody counts, and the whole point of establishing one per request is that
+ * the wide case is a *decision recorded here* rather than an absence.
+ */
+export const WIDE_QUERY_BUDGET = Object.freeze({ rows: DEFAULT_READ_ROW_BUDGET, queries: 2_000 })
+
+/**
  * The configured allowance, or the default.
  *
  * A non-numeric or non-positive setting is the default, the same direction
@@ -184,10 +202,31 @@ const measurable = (value) => Number.isFinite(value) && value >= 0
  * `undefined`, a bare number — is a store that did not report what it read, so
  * it is unmeasurable rather than empty. An empty object is a genuine zero: a
  * store with no rows read is a store whose read cost nothing.
+ *
+ * On a scoped read the count is taken over the collections the read *asked
+ * for*, by name, rather than by enumerating the result. Both are the same
+ * number — a scoped read returns the whole declared shape with the unnamed
+ * collections empty (`manifestShape`), so the unnamed ones contribute zero —
+ * but they are not the same *act*. Enumerating touches every collection on the
+ * object, and where that object is instrumented rather than merely read, the
+ * measurement becomes indistinguishable from the route having read all sixty:
+ * the manifest-drift gate reported `GET /api/v1/calibration/by-region` as
+ * reading every `quarantine_*`, `record_versions` and `payload_captures` the
+ * moment this budget was wired into the dispatch. A count that reads the named
+ * keys is the same total and is not a claim about the rest.
  */
-export function measureRead(result, operation = 'read') {
+export function measureRead(result, operation = 'read', options = {}) {
   if (!result || typeof result !== 'object') {
     throw new QueryBudgetUnmeasurable(operation, `the store returned ${result === null ? 'null' : typeof result} where a store object was expected`)
+  }
+  const { collections } = normaliseReadOptions(options)
+  if (collections !== null) {
+    let rows = 0
+    for (const name of collections) {
+      const value = result[name]
+      if (Array.isArray(value)) rows += value.length
+    }
+    return rows
   }
   let rows = 0
   for (const value of Object.values(result)) {
@@ -281,7 +320,7 @@ function meteredLocked(locked, ledger) {
   return {
     async read(options) {
       const result = await locked.read(options)
-      ledger.charge({ operation: 'withLock.read', rows: measureRead(result, 'withLock.read'), queries: 1 })
+      ledger.charge({ operation: 'withLock.read', rows: measureRead(result, 'withLock.read', options), queries: 1 })
       return result
     },
     async readOne(collection, id) {
@@ -327,7 +366,7 @@ export function budgetedStore(store) {
     const ledger = requireLedger('read')
     if (typeof store.read !== 'function') throw new QueryBudgetUnmeasurable('read', 'the store implements no read() to measure')
     const result = await store.read(options)
-    ledger.charge({ operation: 'read', rows: measureRead(result, 'read'), queries: 1 })
+    ledger.charge({ operation: 'read', rows: measureRead(result, 'read', options), queries: 1 })
     return result
   }
 

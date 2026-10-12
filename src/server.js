@@ -22,6 +22,8 @@ import { actionLog, counts, operationalSummary } from './operations.js'
 import { verifyRapidProWebhook } from './rapidpro.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
+import { budgetedStore, queryBudgetLimits, runWithQueryBudget, WIDE_QUERY_BUDGET } from './query-budget.js'
+import { readReplicaStore } from './read-replica.js'
 import { collectionPage, currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext } from './utils.js'
 import { createIdempotencyFor } from './idempotency.js'
 import { applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor, piiSaltStatus } from './pii.js'
@@ -503,6 +505,22 @@ export function stopPeriodicDriver() {
 
 export function createServer(options = {}) {
   const storeProvider = options.store ? Promise.resolve(options.store) : getDefaultStore()
+  // ENH-67. The store the API handlers read through: reads reach the replica if
+  // this deployment configured one, and every operation is charged to the
+  // request's own budget.
+  //
+  // Applied here rather than to the store itself, because the budget refuses an
+  // operation with no request to charge — deliberately, so wiring is a
+  // deliberate act. The periodic driver, `/ready` and the static path use the
+  // raw store and are not metered; they are not requests, and a budget that
+  // counted them would be counting a tick's own heartbeat against a caller.
+  //
+  // Both wrappers are constructed per server, from the store this server
+  // resolved, so two servers in one test process do not share a budget ledger
+  // or a replica fallback count. `readReplicaStore` returns the primary
+  // *itself* when no replica is configured, so a deployment without one has no
+  // wrapper in its path.
+  const apiStore = (store) => budgetedStore(readReplicaStore(store, { replica: options.replica ?? null }))
   // One limiter per server, not per request: the budget is per client across
   // the process, and a limiter rebuilt per request would have no memory of the
   // last request at all. Injectable so a test can drive it with a fake clock.
@@ -704,7 +722,20 @@ export function createServer(options = {}) {
       }
       if (url.pathname.startsWith('/api/v1/')) {
         const resolved = await storeProvider
-        await handleApi(resolved, req, res, url, { checkWebhookUrl, idempotency: idempotency(resolved), requestRing })
+        // ENH-67. The allowance is chosen per route: a route whose manifest is
+        // `null` — `WIDE_ROUTES`, the exports, the seed — reads the whole store
+        // on purpose and gets the store's own ceiling, so the budget never
+        // refuses a read the store would have served. A route with a manifest
+        // gets the narrow default, which is the one that catches a handler
+        // reaching for collections its declaration does not name.
+        //
+        // `collectionsForRequest` is asked rather than the key compared, because
+        // the explain route resolves its collection from `?kind=` and the answer
+        // is a property of the request, not of the path.
+        const wide = collectionsForRequest(req.method, url.pathname, url.searchParams) === null
+        const metered = apiStore(resolved)
+        await runWithQueryBudget(wide ? WIDE_QUERY_BUDGET : queryBudgetLimits(), () =>
+          handleApi(metered, req, res, url, { checkWebhookUrl, idempotency: idempotency(resolved), requestRing }))
         return
       }
       await handleStatic(req, res, url.pathname, staticRoot)

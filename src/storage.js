@@ -48,3 +48,23 @@ function annotate(store, mode) {
   store.mode = mode
   return store
 }
+
+/**
+ * ENH-67. The read replica, if this deployment has one.
+ *
+ * `LINDELA_LITE_REPLICA_URL` names a streaming replica; unset, this returns
+ * `null` and `readReplicaStore` hands back the primary *itself*, so a
+ * deployment without a replica runs exactly the code it ran before this
+ * existed — no wrapper, no indirection, no second pool.
+ *
+ * `ensureSchema()` is deliberately not called. A replica is read-only and its
+ * schema arrives by streaming from the primary; running migrations against it
+ * would be a write to a database that exists to be read, and the failure would
+ * be silent until the replica diverged. The pool is lazy, so an unreachable
+ * replica costs nothing here — the first read falls back and counts itself.
+ */
+export function createReplicaFromEnv(env = process.env) {
+  const url = env.LINDELA_LITE_REPLICA_URL
+  if (!url) return null
+  return new PostgresStore({ databaseUrl: url })
+}

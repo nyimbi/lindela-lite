@@ -356,11 +356,39 @@ const EXPLAIN_KEY = 'GET /api/v1/explain/:id'
  * kind that names a real collection is read alongside the same two provenance
  * lookups; a kind that does not falls back to the measured entry and the
  * handler's 404, which for a nonsense or misspelled kind is the honest miss.
+ *
+ * Matching is segment-wise, and it has to be. This used to blank the first two
+ * segments after `/api/v1/` with a single regex — `incidents/123` becoming
+ * `incidents/:id` — which is right for a collection followed by a record and
+ * wrong for everything else in the table. Three ways it was wrong, all of them
+ * answering `null`, which is the whole-store read this table exists to replace:
+ *
+ *   - a *fixed* second segment is not an id. `calibration/by-region`,
+ *     `audit/head`, `kpi/quarterly`, `ingest/status`, `rapidpro/escalations` —
+ *     27 entries were shadowed by their own `:id` sibling the moment the
+ *     rewrite ran first.
+ *   - a deeper id is not the second segment. `/api/v1/ingest/schedules/:id`
+ *     puts its record one level further down, so `schedules/abc` rewrote to
+ *     `schedules/:id/abc`, matched nothing, and read the store.
+ *   - a suffix on the id is not a separate segment. `:id.cap` is a wildcard
+ *     *within* a segment, and a blanking rewrite cannot express it.
+ *
+ * So the pattern is matched segment by segment: `:name` matches any one
+ * segment, `:name.suffix` matches any segment ending in `.suffix`. Where more
+ * than one pattern matches, the one with the fewest wildcards wins, so a
+ * literal route always beats a wildcard sibling. This is the same shape the
+ * spec's own paths take, which is what makes it checkable: the drift gate
+ * drives every documented route through this function and compares the answer
+ * against what the handler touched.
+ *
+ * The shadowing was invisible while a whole-store read cost only bandwidth and
+ * became visible the moment ENH-67 metered one — the budget charged
+ * `GET /api/v1/calibration/by-region` for every collection it enumerated, and
+ * the gate reported 64 undeclared reads on a route that reads `region_trust`.
  */
 export function collectionsForRequest(method, pathname, search = null) {
-  const bare = String(pathname || '')
-    .replace(/\/api\/v1\/([^/]+)\/[^/]+(?=\/|$)/, '/api/v1/$1/:id')
-  const key = `${String(method || 'GET').toUpperCase()} ${bare}`
+  const key = matchRouteKey(method, pathname)
+  if (key === null) return null
   if (WIDE_ROUTES.includes(key)) return null
   if (key === EXPLAIN_KEY) {
     const kind = typeof search?.get === 'function' ? search.get('kind') : null
@@ -369,4 +397,64 @@ export function collectionsForRequest(method, pathname, search = null) {
     }
   }
   return ROUTE_MANIFESTS[key] || null
+}
+
+/**
+ * The one key a request names, or `null` when the table has never seen it.
+ *
+ * A literal key wins outright. Otherwise every pattern for the method is
+ * matched and the most specific is taken: fewest wildcards first, then the
+ * wildcard that constrains more of its segment. The tiebreak is not decorative
+ * — `GET /api/v1/alert-events/probe-id.cap` matches both `:id` and `:id.cap`
+ * with one wildcard each, and the two entries name the same collection, so the
+ * wrong winner is harmless *today*. It is resolved by specificity rather than
+ * left to the iteration order of an object literal, because the next pair of
+ * siblings to collide need not agree.
+ */
+export function matchRouteKey(method, pathname) {
+  const verb = String(method || 'GET').toUpperCase()
+  const segments = String(pathname || '').split('/').filter(Boolean)
+  const literal = `${verb} /${segments.join('/')}`
+  if (ROUTE_MANIFESTS[literal] || WIDE_ROUTES.includes(literal)) return literal
+  let best = null
+  let bestScore = null
+  for (const key of patternsFor(verb)) {
+    const score = matchesRouteKey(key, segments)
+    if (score === null) continue
+    if (bestScore === null || score[0] < bestScore[0] || (score[0] === bestScore[0] && score[1] > bestScore[1])) {
+      best = key
+      bestScore = score
+    }
+  }
+  return best
+}
+
+/** `[wildcards, constrainedChars]` when `key` matches `segments`, else `null`. */
+function matchesRouteKey(key, segments) {
+  const pattern = key.slice(key.indexOf(' ') + 1).split('/').filter(Boolean)
+  if (pattern.length !== segments.length) return null
+  let wildcards = 0
+  let constrained = 0
+  for (let i = 0; i < pattern.length; i += 1) {
+    const part = pattern[i]
+    if (part === segments[i]) continue
+    const wild = /^:([A-Za-z_][A-Za-z0-9_]*)(.*)$/.exec(part)
+    // A literal segment that does not match is a miss. A wildcard matches its
+    // segment, and a wildcard with a suffix — `:id.cap` — must also end in it.
+    if (!wild) return null
+    if (wild[2] && !segments[i].endsWith(wild[2])) return null
+    wildcards += 1
+    constrained += wild[2].length
+  }
+  return [wildcards, constrained]
+}
+
+const PATTERNS_BY_VERB = new Map()
+function patternsFor(verb) {
+  let patterns = PATTERNS_BY_VERB.get(verb)
+  if (!patterns) {
+    patterns = [...Object.keys(ROUTE_MANIFESTS), ...WIDE_ROUTES].filter((key) => key.startsWith(`${verb} `))
+    PATTERNS_BY_VERB.set(verb, patterns)
+  }
+  return patterns
 }
