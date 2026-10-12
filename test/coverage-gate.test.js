@@ -19,12 +19,19 @@ import { parseTotals } from '../scripts/check-coverage.mjs'
  * did not read turns it into a lie.
  */
 describe('QUA-04 — the coverage parser reads the totals row and nothing else', () => {
-  it('reads a report row in either spelling Node emits', () => {
-    // Node prefixes table rows with `ℹ ` in TTY mode and prints them bare
-    // otherwise. A parser that knew only one spelling would work on a
-    // developer's machine and fail in CI, or the reverse.
+  it('reads a report row in every spelling Node emits', () => {
+    // The prefix is a reporter-version detail and there are three of them:
+    // `ℹ ` on Node 26, `# ` on Node 22 (which CI pins), and bare when the
+    // reporter is not decorating. This test previously enumerated two, and the
+    // comment above it said a parser that knew only one spelling "would work on
+    // a developer's machine and fail in CI, or the reverse" — which is exactly
+    // what the missing third did: the gate failed every CI run it ever had with
+    // "could not find the `all files` row" against a log containing the row.
+    // A check for "every spelling" that enumerates some of them is the bug in
+    // the check, so all three are here.
     const expected = { lines: 95.68, branches: 81.65, functions: 93.55 }
     assert.deepEqual(parseTotals('ℹ all files                |  95.68 |    81.65 |   93.55 |'), expected)
+    assert.deepEqual(parseTotals('# all files                |  95.68 |    81.65 |   93.55 |'), expected)
     assert.deepEqual(parseTotals('all files | 95.68 | 81.65 | 93.55 |'), expected)
   })
 

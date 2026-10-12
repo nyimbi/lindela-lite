@@ -88,12 +88,20 @@ function runCoverage(files) {
  * The `all files` row of the coverage table.
  *
  * Node prints one row per file and a totals row whose first column is
- * `all files`, prefixed with `ℹ ` when the reporter is in TTY mode and bare
- * otherwise. Its columns are: lines %, branch %, functions %, then the three
+ * `all files`. Its columns are: lines %, branch %, functions %, then the three
  * raw counts. Anything else in the table has a path in column one.
+ *
+ * **The row's prefix is a reporter-version detail, and reading only one of them
+ * is how this gate failed on every CI run it ever had.** Node 26 emits `ℹ `;
+ * Node 22 — which is what CI pins — emits `# `. Both are the same row under
+ * different reporters, and the `#` form is what the suite's own output uses for
+ * its summary lines. Accepting only `ℹ ` meant `parseTotals` returned null, and
+ * the gate reported "could not find the `all files` row" against a log that
+ * plainly contained it. A bare row is accepted too, because that is the form
+ * when the reporter is not decorating at all.
  */
 export function parseTotals(text) {
-  const line = text.split('\n').find((row) => /^(?:ℹ )?all files\s/.test(row.trim()))
+  const line = text.split('\n').find((row) => /^(?:ℹ |# )?all files\s/.test(row.trim()))
   if (!line) return null
   const numbers = line.match(/(\d+(?:\.\d+)?)/g)
   if (!numbers || numbers.length < 3) return null
