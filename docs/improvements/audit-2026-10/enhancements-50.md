@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 543-line function with 30
+generated from, and ENH-60's dispatcher is still one 526-line function with 31
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1087,11 +1087,11 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Thirty families are out; the dispatcher is not
+> **PARTIAL — 2026-10-12. Thirty-one families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 543 lines and `server.js` 5,603 →
-> 2,133. (The count is *matchers*, not files: 29 modules under `src/routes/`, one
+> set of blocks. The dispatcher went 1,903 → 526 lines and `server.js` 5,603 →
+> 2,117. (The count is *matchers*, not files: 30 modules under `src/routes/`, one
 > of which — `alerting.js` — carries two, `matchAlertingRoute` and the
 > non-exported `matchTriggeringRoute`. An earlier version of this line recorded
 > the file count as the matcher count, so it read one high for a day — the same
@@ -1232,14 +1232,15 @@ testable in isolation. This unblocks every other substrate item.
 > would hide the one row that matters. Canaried: planting that filter fails the
 > test with `a failed event was filtered out of the outbox listing`.
 >
-> What is left is not more of the same. The dispatcher still holds **5 inline
-> literal route conditions** (measured from the dispatcher's own line range; the
-> 17 previously recorded here does not reproduce against the file). They are
-> one-off routes whose bodies *are* the business logic: `demo/seed`,
-> `maintenance/apply-retention`, the `events` read, and the `assessments`
-> roll-up. A sixth literal, `/api/v1/rapidpro/field-report`, is an auth
-> precondition rather than a route: it buffers the body and verifies the HMAC,
-> then falls through to the family.
+> What is left is not more of the same. The dispatcher held **5 inline literal
+> route conditions** at this point in the day (measured from the dispatcher's own
+> line range; the 17 previously recorded here does not reproduce against the
+> file). They were one-off routes whose bodies *are* the business logic:
+> `demo/seed`, `maintenance/apply-retention`, the `events` read, and the
+> `assessments` roll-up. A fifth literal, `/api/v1/rapidpro/field-report`, is an
+> auth precondition rather than a route: it buffers the body and verifies the
+> HMAC, then falls through to the family. The `events` and `assessments` pair
+> came out later the same day — see the end of this entry — leaving three.
 >
 > **`service-assets` came off that list on 2026-10-12, and it was not a
 > candidate — it was a live defect.** The list above named "the two
@@ -1332,6 +1333,50 @@ testable in isolation. This unblocks every other substrate item.
 >
 > The move itself is verified rather than asserted, and the three checks are in
 > ARC-01's entry.
+>
+> **The events-and-assessments family came out next, and it takes two of the five
+> literals at once because they were one expression written twice.**
+> `/api/v1/events` *is* the merged hazard-and-conflict list, and
+> `/api/v1/assessments` publishes that same list as `recent_events` beside the
+> risk roll-ups derived from it — so the union
+> `[...data.hazard_events, ...data.conflict_events]` appeared in the dispatcher
+> twice, which is the VER-18 shape at the level of an expression rather than a
+> route. `src/routes/events.js` (2 paths, 11 tests) is now the one place that
+> answers "what counts as an event": `recentEvents(data)` is called by both
+> routes, so a change to the union is a change in one place rather than two that
+> currently agree.
+>
+> The assessments roll-up is where the move earned its keep. Two of its members
+> carried a defect the extraction made visible by putting them side by side:
+> `recent_events` was the one list on the route that did not thread `auth`, so a
+> partner token asking for `/api/v1/assessments` received **every hazard and
+> conflict event in the platform** while the four lists beside it were filtered —
+> a per-object authorization gap of exactly the kind VUL-03 recorded; and
+> `calibration` was exported, documented in the JTBD catalogue as evidence this
+> route "includes calibration metadata", and **called from nowhere**. A claim in
+> a catalogue is not a feature. Both are asserted through the handler now:
+> `recent_events` is scoped like its siblings, and `calibration` is published
+> over the scoped score list, so a partner token learns mean confidence only over
+> scores it can see. Canaried both ways — dropping the scope fails with "orgA
+> must see only its own events", dropping `calibration` fails with "the route
+> must publish calibration, not merely export it".
+>
+> The family dispatches **once**, where the `/events` block was, so
+> `/assessments` is now tried earlier than it was. That is order-preserving in
+> effect and only because no family between the two sites names either path —
+> verified by grepping the dispatcher for both literals rather than by reading
+> the blocks, which is how the claim is checked rather than asserted. Two imports
+> left `server.js` as orphans (`calibrationReport`, `collectionPage`). The
+> dispatcher went 543 → 526 lines and `server.js` 2,133 → 2,117.
+>
+> **Three inline literal route conditions remain**, and the paragraph above is
+> now wrong about two of them: `demo/seed` and `maintenance/apply-retention`.
+> Both are POST mutations whose bodies *are* the business logic — the demo seed
+> resolves its three functions inside a budget guard, and the retention route
+> refuses on an unset window before it deletes anything — and neither has a
+> sibling to join, which is the argument for ENH-59 rather than for extracting
+> them. The fourth literal, `/api/v1/rapidpro/field-report`, is still the auth
+> precondition rather than a route.
 
 **ENH-61 — Streaming cursor reads.** `PostgresStore.read()` issues
 `SELECT collection, body FROM lite_records WHERE …` with no `LIMIT`

@@ -10,7 +10,7 @@ import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPa
 import { corsResponseHeaders, isPreflight, preflightResponse } from './cors.js'
 import { ERROR_CODES } from './errors.js'
 import { logger, metrics, timer, runWithRequestId } from './observability.js'
-import { refreshAnalytics, calibrationReport } from './analytics.js'
+import { refreshAnalytics } from './analytics.js'
 import { evaluateAlertRules } from './alerts.js'
 import {
   runDueIngestionSchedules,
@@ -21,7 +21,7 @@ import { verifyRapidProWebhook } from './rapidpro.js'
 import { createStoreFromEnv } from './storage.js'
 import { budgetedStore, queryBudgetLimits, runWithQueryBudget, WIDE_QUERY_BUDGET } from './query-budget.js'
 import { readReplicaStore } from './read-replica.js'
-import { collectionPage, currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext } from './utils.js'
+import { currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext } from './utils.js'
 import { createIdempotencyFor } from './idempotency.js'
 import { applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
@@ -49,6 +49,7 @@ import { matchOutboxRoute, handleOutboxRoute } from './routes/outbox.js'
 import { matchRiskRoute, handleRiskRoute } from './routes/risk.js'
 import { matchDistrictRoute, handleDistrictRoute } from './routes/districts.js'
 import { matchAmbientRoute, handleAmbientRoute } from './routes/ambient.js'
+import { matchEventsRoute, handleEventsRoute } from './routes/events.js'
 import { matchUploadRoute, handleUploadRoute } from './routes/upload.js'
 import { matchFormsRoute, handleFormsRoute } from './routes/forms.js'
 import { matchComputeRoute, handleComputeRoute } from './routes/compute.js'
@@ -1425,11 +1426,20 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/events') {
-    const records = [...data.hazard_events, ...data.conflict_events]
-    jsonResponse(res, 200, { success: true, ...collectionPage(records, url.searchParams, { auth: req.__auth, data, collection: 'incidents' }) })
-    return
-  }
+  // ENH-60. The events-and-assessments family, extracted to `src/routes/events.js`:
+  // `/api/v1/events` is the merged hazard-and-conflict list, and
+  // `/api/v1/assessments` publishes that same list as `recent_events` beside the
+  // risk roll-ups derived from it.
+  //
+  // The family dispatches once, here, where the `/events` block was — so
+  // `/assessments` is now tried earlier than it was. That is order-preserving in
+  // effect and only because no route between here and its old site matches
+  // either path: the ambient, risk, compute, rapidpro, provenance, reporting,
+  // alerting, catalogue, parametric, operational, chw and workflow families all
+  // name paths that are neither. Verified by grepping the whole dispatcher for
+  // both literals, not by reading the blocks.
+  const eventsRoute = matchEventsRoute(url.pathname, req.method)
+  if (eventsRoute && handleEventsRoute(eventsRoute, { data, req, res, url, jsonResponse })) return
 
   // ENH-60. The ambient-layer family, extracted to `src/routes/ambient.js`: the
   // raw observation series, the per-district weather roll-up and the latest
@@ -1552,36 +1562,10 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   const districtRoute = matchDistrictRoute(url.pathname, req.method)
   if (districtRoute && await handleDistrictRoute(districtRoute, { store, data, req, res, url, jsonResponse })) return
 
-  // Community feedback routes
-  if (req.method === 'GET' && url.pathname === '/api/v1/assessments') {
-    jsonResponse(res, 200, {
-      success: true,
-      data: {
-        generated_at: new Date().toISOString(),
-        counts: counts(data),
-        flood_risk: filterRecords(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }),
-        climate_conflict_risk: filterRecords(data.risk_scores.filter((risk) => risk.type === 'climate_conflict_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }),
-        service_impacts: filterRecords(data.impact_assessments, url.searchParams, { auth: req.__auth, data, collection: 'impact_assessments' }),
-        data_quality: filterRecords(data.data_quality, url.searchParams, { auth: req.__auth, data, collection: 'data_quality' }),
-        operations: operationalSummary(data),
-        alert_events: filterRecords(data.alert_events, url.searchParams, { auth: req.__auth, data, collection: 'alert_events' }),
-        // The only record list on this route that was never scoped. Every
-        // sibling above threads `auth`; this one did not, so a partner token
-        // asking for /api/v1/assessments received every hazard and conflict
-        // event in the platform while the four lists beside it were filtered.
-        recent_events: filterRecords([...data.hazard_events, ...data.conflict_events], url.searchParams, { auth: req.__auth, data, collection: 'recent_events' }),
-        // `calibrationReport` was exported, documented in the JTBD catalogue as
-        // evidence this route "includes calibration metadata", and called from
-        // nowhere. A claim in a catalogue is not a feature. It is here now, over
-        // the same scoped score list its siblings use — otherwise a partner token
-        // would learn mean confidence over scores it cannot see.
-        calibration: calibrationReport({
-          risk_scores: filterRecords(data.risk_scores, url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }),
-        }),
-      },
-    })
-    return
-  }
+  // ENH-60. The assessments half of the events family, extracted to
+  // `src/routes/events.js` and dispatched above with `/api/v1/events`, which is
+  // the same union this route publishes as `recent_events`.
+
 
 
 

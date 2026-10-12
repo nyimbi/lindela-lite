@@ -195,10 +195,15 @@ describe('a family route is not shadowed by an inline dispatcher block', () => {
     }
 
     // The canary-in-reverse: a scan that parses nothing passes every assertion
-    // below it. The dispatcher carries six literals today — the extraction has
-    // been taking them out one family at a time — so the floor is the count the
-    // scan must at least find for the regex to be working, not a target.
-    assert.ok(inline.size >= 4, `parsed ${inline.size} inline literals in src/server.js:${start}..${end}, which is not the dispatcher`)
+    // below it, because an empty `inline` produces no shadows. The floor is the
+    // count the scan must at least find for the regex to be working, not a
+    // target — so it tracks the literals that exist rather than a round number.
+    // Three today, and each is named in `enhancements-50.md`: `demo/seed` and
+    // `maintenance/apply-retention`, both one-off POST mutations with no family
+    // to join, plus the `/api/v1/rapidpro/field-report` auth precondition, which
+    // is not a route. Lower this when one of them is extracted or removed; do
+    // not lower it to zero, which is the number that means the regex broke.
+    assert.ok(inline.size >= 3, `parsed ${inline.size} inline literals in src/server.js:${start}..${end}, which is not the dispatcher`)
 
     const families = familyPaths()
     assert.ok(families.size >= 40, `parsed ${families.size} family paths, which is not the route surface`)
