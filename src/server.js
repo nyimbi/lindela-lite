@@ -48,6 +48,8 @@ import { matchSnapshotRoute, handleSnapshotRoute } from './routes/snapshots.js'
 import { matchProvenanceRoute, handleProvenanceRoute } from './routes/provenance.js'
 import { matchAlertingRoute, handleAlertingRoute } from './routes/alerting.js'
 import { matchWebhookRoute, handleWebhookRoute } from './routes/webhooks.js'
+import { matchFederationRoute, handleFederationRoute } from './routes/federation.js'
+import { runFederationSync } from './federation-peers.js'
 import { matchScenarioRoute, handleScenarioRoute } from './routes/scenarios.js'
 import { matchIngestionRoute, handleIngestionRoute } from './routes/ingestion.js'
 import { matchRapidProRoute, handleRapidProRoute } from './routes/rapidpro.js'
@@ -184,6 +186,16 @@ const DRIVER_ITEMS = [
   // — a chain the system believes it ran — and nobody was ever told. This is the
   // pass that notices, and it raises one synthetic alert per original, ever.
   { id: 'reconcile', label: 'delivery reconciliation', run: (store, data) => reconcileUndeliveredDispatches(store, data) },
+  // ENH-80. The federated exchange, on the same cadence as everything else.
+  //
+  // `runFederationSync` returns `ran: false` for a node with no peers rather than
+  // failing, which is what makes this item safe to run on every deployment: the
+  // driver's own contract is that one item failing must not stop the rest, and an
+  // item that failed on every single-node installation forever would be an alarm
+  // nobody can clear. A peer that is down *is* a failure, isolated to that peer —
+  // `federate` catches it per peer, the others still exchange, and the heartbeat
+  // names which one did not.
+  { id: 'federation', label: 'federated exchange', run: (store, data) => runFederationSync(store, data) },
 ]
 
 /** Raise an alert for every chain the system believes it dispatched and did not. */
@@ -399,6 +411,19 @@ function summarise(id, value) {
   if (id === 'reports') return { ran: value?.runs?.length ?? 0, reports: value?.reports?.length ?? 0 }
   if (id === 'retention') return { expired: Number(value?.expired) || 0 }
   if (id === 'reconcile') return { raised: Number(value?.raised) || 0 }
+  // ENH-80. `ran: false` is the no-peers case and is reported as such rather than
+  // as a run that moved nothing — a heartbeat that said `peers: 0, ok: true`
+  // would be the measurement-of-nothing shape the summary rule refuses.
+  if (id === 'federation') {
+    if (!value?.ran) return { ran: false, configured: Number(value?.configured) || 0 }
+    return {
+      ran: true,
+      peers: Number(value?.peers) || 0,
+      reached: Number(value?.reached) || 0,
+      sent: Number(value?.sent) || 0,
+      applied: Number(value?.applied) || 0,
+    }
+  }
   return null
 }
 
@@ -1555,6 +1580,16 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   // ARC-01. The webhook-subscription family, extracted to `src/routes/webhooks.js`.
   const webhookRoute = matchWebhookRoute(url.pathname)
   if (webhookRoute && await handleWebhookRoute(webhookRoute, { store, data, req, res, url, jsonResponse })) return
+
+  // ENH-80. The federation family, extracted to `src/routes/federation.js`.
+  // Dispatched after the store read, because every route in it reads a
+  // collection: the status and peer routes read the registry, and the two peer-
+  // facing routes serve this node's syncable collections. The one route that
+  // writes — the receiving merge — takes the read as its snapshot rather than
+  // re-reading, which is what keeps the merge comparison against the state the
+  // request began from.
+  const federationRoute = matchFederationRoute(url.pathname)
+  if (federationRoute && await handleFederationRoute(federationRoute, { store, data, req, res, url, jsonResponse })) return
 
   if (req.method === 'GET' && url.pathname === '/api/v1/outbox') {
     jsonResponse(res, 200, { success: true, ...collectionPage(data.events_outbox || [], url.searchParams, { auth: req.__auth, data, collection: 'events_outbox' }) })

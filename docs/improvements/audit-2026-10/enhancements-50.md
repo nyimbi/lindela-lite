@@ -28,15 +28,15 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 47 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
-| PARTIAL | 4 | 59, 60, 71, 80 |
+| IMPLEMENTED | 49 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81 |
+| PARTIAL | 2 | 59, 60 |
 | ABSENT | 0 | none |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, ENH-60's dispatcher is still one 1,372-line function with 17
-families out of it, ENH-71's disclosure model has no importer. Reading a PARTIAL
-as done is the error this table exists to prevent.
+generated from, and ENH-60's dispatcher is still one 1,391-line function with 19
+families out of it. Reading a PARTIAL as done is the error this table exists to
+prevent.
 
 **Two rows were wrong in opposite directions, found 2026-10-12 by checking the
 code rather than the note.** ENH-32 was marked PARTIAL against a summary line
@@ -1087,10 +1087,13 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Seventeen families are out; the dispatcher is not gone.**
+> **PARTIAL — 2026-10-12. Eighteen families are out; the dispatcher is not gone.**
 > Every route *family* now lives under `src/routes/` with its own matcher, its own
 > test file, and a property that makes it a family rather than a set of blocks.
-> The dispatcher went 1,903 → 1,371 lines and `server.js` 5,603 → 3,237.
+> The dispatcher went 1,903 → 1,391 lines and `server.js` 5,603 → 3,313. ENH-80
+> added the eighteenth family (`src/routes/federation.js`, 7 paths) and moved the
+> line count up rather than down: the family is new surface, not an extraction,
+> and the table records the count it actually is.
 >
 > What is left is not more of the same. The dispatcher still holds **35 inline
 > literal route conditions** over 876 non-comment lines, and they are one-off
@@ -1700,6 +1703,60 @@ bitemporal model is the substrate; this is the topology it enables.
 > would make one node's outage a fleet-wide deletion, so the module declines and
 > a test asserts the refusal. The route that drives an exchange, and the
 > scheduler that runs one, are not written.
+>
+> **IMPLEMENTED 2026-10-12.** The contract was complete and reached by nothing:
+> both entry points take `peers` as an argument and nothing supplied them. Three
+> pieces close it, and each was a design question rather than plumbing.
+>
+> *The registry is a collection, and it is deliberately not synced.*
+> `federation_peers` holds the peer rows, so the routes read them through the
+> same `data` a listing does and there is no second config file to keep in step
+> with the store. It is named in `NON_SYNCABLE_REASONS` as `registry`, and the
+> reason is the merge rule itself: `mergeCollection` keeps the greater
+> `validTime`, so two nodes that remove different peers converge on the **union**
+> of what either ever held. A peer removed at one node is re-learned from the
+> other on the next exchange and can never be retired — a member you cannot
+> remove, which is the admission-control failure wearing a convergence story.
+> `SYNCABLE_COLLECTIONS` now derives from `NON_SYNCABLE_REASONS` rather than
+> being a second list, so the two cannot drift.
+>
+> *One gate is not enough.* The exchange applies the **sending** node's residency
+> policy, which is right — the policy that governs what may leave is the one at
+> the node the bytes leave. It is not sufficient: the node they arrive at has its
+> own law, and a record the national node may part with is not automatically one
+> a district node may keep. `POST /exchange/merge` applies the receiving node's
+> policy again through `acceptablePayload` before storing anything, and reports
+> `withheld` (refused by this node's residency law) separately from `refused` (a
+> collection this node does not sync) because they are different findings.
+>
+> *A node with no peers is a skip; a peer that is down is a failure.* `federate`
+> refuses an empty peer list — `{peers: 0, ok: true}` is a measurement of nothing
+> reported as health — but the scheduled item runs every fifteen minutes on every
+> deployment, including the single-node ones that will never federate, and an
+> alarm nobody can clear is one everybody learns to ignore. So
+> `runFederationSync` separates `ran: false` (nothing to do, recorded as a skip)
+> from `ran: true, ok: false` (an exchange was attempted and failed). The
+> operator's `POST /sync` turns the same state into a **400**, for the opposite
+> reason: a caller who asked for a sync and got a 200 would read it as a sync
+> that happened.
+>
+> *Deletion still does not propagate, and every status response says so.* The
+> limitation is unchanged and is now carried in `deletion` on the status and sync
+> responses rather than left for an operator to infer from a clean summary — the
+> same rule the retention route follows: a control that cannot do a thing must
+> say which thing.
+>
+> Reachable at `GET /federation/status`, `GET|POST /federation/peers`,
+> `DELETE /federation/peers/{id}`, `GET /federation/exchange`,
+> `GET /federation/exchange/manifest`, `POST /federation/exchange/merge` and
+> `POST /federation/sync`, plus a `federation` item in `DRIVER_ITEMS`. Peer URLs
+> are guarded at registration by `assertConnectorUrl` — metadata ranges refused,
+> RFC-1918 permitted, because a peer node in a district office is on the
+> operator's own LAN and a guard that refused it would refuse the deployment this
+> feature exists for. The receiving routes take `read:federation` rather than
+> `read:integrations`, because `/exchange` serves every syncable collection and
+> the integrations scope would also hand over connector, ingest and source
+> configuration.
 
 ---
 

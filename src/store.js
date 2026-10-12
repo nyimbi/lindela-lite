@@ -100,6 +100,29 @@ export const SORT_FIELDS = Object.freeze([
 export const STORE_METADATA_KEYS = Object.freeze(['version', 'updated_at'])
 
 /**
+ * The collection holding this node's view of the federation membership.
+ *
+ * ENH-80. Declared above `SCHEMA` because `SCHEMA` names it, and named as a
+ * constant for the same reason `HISTORY_COLLECTION` is — one spelling, so a
+ * reader and a predicate cannot disagree.
+ *
+ * It is a declared collection and it is **excluded from the exchange**, which is
+ * the opposite of what the naive answer suggests. A registry is a fact the nodes
+ * should agree on, so syncing it sounds right; what makes it wrong is that
+ * `mergeCollection` decides a conflict by valid time and keeps the later record,
+ * so two nodes that remove different peers converge on the *union* of what either
+ * ever held. A peer removed at one node is re-learned from the other on the next
+ * exchange and can never be retired — a member you cannot remove, which is the
+ * admission-control failure wearing a convergence story.
+ *
+ * `remove()` is how a peer leaves, decided locally at each node, the same way
+ * `remove()` is how a record leaves and for the same reason: absence does not
+ * propagate. `federation.js` names this collection in `NON_SYNCABLE_REASONS` so
+ * it cannot arrive through `SYNCABLE_COLLECTIONS` by default.
+ */
+export const FEDERATION_PEERS_COLLECTION = 'federation_peers'
+
+/**
  * The one declaration every storage adapter is checked against.
  *
  * Three lists in this repo once described the same 39 collections: this one,
@@ -244,6 +267,16 @@ export const SCHEMA = Object.freeze([
   // Declared here because it is a write through the API, and because two
   // replicas must serve the same snapshot for the same handle.
   { key: 'dataset_snapshots' },
+  // ENH-80. The peer registry. `src/federation.js` takes `peers` as an argument
+  // and nothing supplied them, so the whole module had no caller. This is the
+  // list, and it is a **collection rather than a config file** for a reason the
+  // topology decides: a per-deployment file makes each node's view of the
+  // membership a separate fact no route can report, and `assertPeer` refuses a
+  // malformed row at the boundary rather than at the fetch.
+  //
+  // Declared, and deliberately **not** synced — see
+  // `FEDERATION_PEERS_COLLECTION` above, which carries the reason.
+  { key: FEDERATION_PEERS_COLLECTION },
   // ENH-07. Quarantine homes are declared, not hand-named: one per
   // QUARANTINE_SOURCES entry, appended below.
 ].map((entry) => Object.freeze({ kind: 'records', ...entry })).concat(

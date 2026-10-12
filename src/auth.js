@@ -62,6 +62,14 @@ export const READ_SCOPES = Object.freeze([
   ['/api/v1/webhooks', 'read:integrations'],
   ['/api/v1/outbox', 'read:integrations'],
   ['/api/v1/connectors', 'read:integrations'],
+  // ENH-80. A scope of its own rather than `read:integrations`, and the reason is
+  // what `/exchange` serves: every syncable collection in the store. A peer token
+  // holding `read:integrations` would, by this one row, also read the connector
+  // registry, the ingest schedules and the source catalogue — three surfaces it
+  // has no business seeing, widened by a route that happens to share a prefix.
+  // The narrow scope is what lets an operator issue a peer exactly what a peer
+  // needs, which is the whole point of the table.
+  ['/api/v1/federation', 'read:federation'],
   ['/api/v1/ingest', 'read:integrations'],
   ['/api/v1/sources', 'read:integrations'],
   ['/api/v1/workflows', 'read:integrations'],
@@ -180,6 +188,14 @@ export const WRITE_SCOPES = Object.freeze([
   ['/api/v1/webhooks', 'admin:integrations'],
   ['/api/v1/outbox', 'admin:integrations'],
   ['/api/v1/connectors', 'admin:connectors'],
+  // ENH-80. Federation is a registry of other nodes this one will *write to* and
+  // *accept writes from*, which is the webhook subscription's shape one level up:
+  // the row names a destination the platform will later fetch, and the merge
+  // route stores records from whoever presents the address. `admin:federation`
+  // is its own scope for the same reason the read side is — the write routes
+  // reach the whole syncable store, and `admin:integrations` also holds the
+  // connector and schedule configuration, which is not what federation is.
+  ['/api/v1/federation', 'admin:federation'],
   // A push writes into someone else's system of record, so it is the
   // connector-admin scope rather than a read of this platform's own exports.
   ['/api/v1/export/dhis2', 'admin:connectors'],

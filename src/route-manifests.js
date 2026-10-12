@@ -164,6 +164,15 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/weather': Object.freeze(["weather_forecasts"]),
   'GET /api/v1/river-discharge': Object.freeze(["climate_observations"]),
   'GET /api/v1/webhooks': Object.freeze(["webhook_subscriptions"]),
+  // ENH-80. The registry routes and the operator's status read are narrow: the
+  // registry, plus the heartbeat the status route reads for the last exchange.
+  // The two *peer-facing* routes are not here — they serve every syncable
+  // collection, which is a whole-store read by definition, and they are named in
+  // WIDE_ROUTES below.
+  'GET /api/v1/federation/peers': Object.freeze(["federation_peers"]),
+  'GET /api/v1/federation/status': Object.freeze(["federation_peers", "system_heartbeat"]),
+  'POST /api/v1/federation/peers': Object.freeze(["federation_peers", "action_logs"]),
+  'DELETE /api/v1/federation/peers/:id': Object.freeze(["federation_peers", "action_logs"]),
   'GET /api/v1/workflows': Object.freeze(["workflow_instances"]),
   'GET /api/v1/workflows/metrics': Object.freeze(["workflow_instances"]),
   'GET /api/v1/workflows/:id': Object.freeze(["workflow_instances"]),
@@ -301,6 +310,19 @@ export const WIDE_ROUTES = Object.freeze([
   'POST /api/v1/webhooks',
   'POST /api/v1/workflows/metrics',
   'POST /api/v1/workflows/:id/transition',
+  // ENH-80. The peer-facing half of the federation family. All four are wide for
+  // the same reason and it is not a fallback: `/exchange` and `/manifest` serve
+  // every syncable collection, so their collection set *is* the syncable set —
+  // a list of 55 names that goes stale the next time a collection is added.
+  // `/merge` writes whatever the payload names, narrowed at the handler by
+  // `acceptablePayload` rather than by a manifest. `/sync` drives an exchange in
+  // both directions over the same set. The registry routes beside them are
+  // narrow and are in `ROUTE_MANIFESTS` above; the two halves really are
+  // different routes with different collection sets.
+  'GET /api/v1/federation/exchange',
+  'GET /api/v1/federation/exchange/manifest',
+  'POST /api/v1/federation/exchange/merge',
+  'POST /api/v1/federation/sync',
   // ENH-42. The offline tile-pack pair reads no collection at all — the plan
   // route is arithmetic over a bbox and the pack route fetches from the tile
   // server the deployment is configured with — so there is no manifest to

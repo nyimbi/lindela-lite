@@ -136,6 +136,7 @@ import { createHash } from 'node:crypto'
 import {
   COLLECTIONS,
   DERIVED_COLLECTIONS,
+  FEDERATION_PEERS_COLLECTION,
   HISTORY_COLLECTION,
   isDeclared,
   recordTimestamp,
@@ -150,35 +151,50 @@ import {
 } from './residency.js'
 
 /**
- * The collections a node may send or receive.
- *
- * `COLLECTIONS` minus the derived set minus history. History is excluded because
- * it is not a fact about the world but this node's record of when it changed its
- * mind, and the two axes would otherwise have to be merged across nodes; the peer
- * rebuilds its own history from the values it receives, through the same
- * `mergeById` path a local write takes. A caller that wants a peer's history can
- * read it explicitly — `exchangeWith` will not carry it implicitly.
- *
- * Computed from `COLLECTIONS` rather than written out, so a collection added to
- * `SCHEMA` syncs by default and the only way to keep one out is to declare it
- * derived or as history. A hand-written list here is the silent-key-list bug
- * (`ADR-002`) with a network on one side of it.
- */
-export const SYNCABLE_COLLECTIONS = Object.freeze(
-  COLLECTIONS.filter((collection) => !DERIVED_COLLECTIONS.includes(collection) && collection !== HISTORY_COLLECTION),
-)
-
-/**
  * The collections this node refuses to sync, and why.
  *
  * A lookup rather than a predicate, so a caller can state the reason it did not
  * send something. "Skipped" with no reason is the shape a reader cannot act on
  * and a reviewer cannot check.
+ *
+ * Three reasons, and the third is ENH-80's own. `registry` is not derived and not
+ * history: it is local configuration that lives in the store, and it is excluded
+ * because syncing it would make a peer **unremovable**. `mergeCollection` keeps
+ * the later record by valid time, so a removal at one node is re-learned from the
+ * other on the next exchange and the two converge on the union of every peer
+ * either ever held. Absence does not propagate, exactly as it does not for a
+ * record — and for a registry that is the difference between an operator who can
+ * retire a peer and one who cannot.
+ *
+ * Declared before `SYNCABLE_COLLECTIONS` because that list is *derived from this
+ * one*: the two cannot drift into different answers about which collection
+ * crosses, which is the defect the single predicate exists to prevent.
  */
 export const NON_SYNCABLE_REASONS = Object.freeze({
   ...Object.fromEntries(DERIVED_COLLECTIONS.map((collection) => [collection, 'derived'])),
   [HISTORY_COLLECTION]: 'history',
+  [FEDERATION_PEERS_COLLECTION]: 'registry',
 })
+
+/**
+ * The collections a node may send or receive.
+ *
+ * `COLLECTIONS` minus the derived set, minus history, minus the peer registry.
+ * History is excluded because it is not a fact about the world but this node's
+ * record of when it changed its mind, and the two axes would otherwise have to be
+ * merged across nodes; the peer rebuilds its own history from the values it
+ * receives, through the same `mergeById` path a local write takes. A caller that
+ * wants a peer's history can read it explicitly — `exchangeWith` will not carry
+ * it implicitly.
+ *
+ * Computed from `COLLECTIONS` rather than written out, so a collection added to
+ * `SCHEMA` syncs by default and the only way to keep one out is to give it a
+ * reason in the table above. A hand-written list here is the silent-key-list bug
+ * (`ADR-002`) with a network on one side of it.
+ */
+export const SYNCABLE_COLLECTIONS = Object.freeze(
+  COLLECTIONS.filter((collection) => NON_SYNCABLE_REASONS[collection] === undefined),
+)
 
 /** The reason a derived collection is not synced, stated for a human. */
 export const DERIVED_NOT_SYNCED = Object.freeze(
@@ -186,6 +202,35 @@ export const DERIVED_NOT_SYNCED = Object.freeze(
   + 'would send a number computed from a store the receiving node does not hold, and the '
   + 'receiving node\'s own refresh replaces the collection wholesale, so the row would be '
   + 'deleted by an unrelated job. Sync the inputs and let the peer recompute.',
+)
+
+/**
+ * The reason the peer registry is not synced, stated for a human.
+ *
+ * Exported beside `DERIVED_NOT_SYNCED` because the status route has to explain
+ * the skip to an operator, and a route that writes its own sentence is a second
+ * copy of a decision this module already made.
+ */
+export const REGISTRY_NOT_SYNCED = Object.freeze(
+  'the peer registry is local configuration, not a fact about the world: syncing it would '
+  + 'make a peer unremovable, because the merge rule keeps the later record by valid time and '
+  + 'so re-learns a peer another node removed. Add and remove peers at each node.',
+)
+
+/**
+ * What this exchange does not do, stated once for the status route.
+ *
+ * The route reports a sync summary, and a summary that lists only what moved
+ * reads as a complete account of the exchange. It is not: a deletion at one node
+ * leaves the record standing at every other, by design, because inferring removal
+ * from absence would make one node's outage a fleet-wide deletion. So the
+ * refusal travels with the summary rather than in a doc nobody reads at 3am.
+ */
+export const DELETION_DOES_NOT_PROPAGATE = Object.freeze(
+  'deletion does not propagate. There is no tombstone, so a record removed at one node stays '
+  + 'at every other until it is removed there too. Inferring a removal from a record\'s absence '
+  + 'would make one node\'s outage read as a fleet-wide deletion, which is the wrong direction '
+  + 'to guess in. Every sync therefore reports records added or revised, never records removed.',
 )
 
 /**
@@ -203,6 +248,18 @@ export function nonSyncableReason(collection) {
 /** True when `collection` may cross the boundary in either direction. */
 export function isSyncable(collection) {
   return isDeclared(collection) && nonSyncableReason(collection) === null
+}
+
+/**
+ * Every collection this node will not sync, with its reason.
+ *
+ * The status route reports this, and it reads the table rather than restating it:
+ * a route that wrote its own list of what is skipped would describe a policy the
+ * exchange does not follow, and the two would agree only until one changed. The
+ * order is the table's, so the answer is stable across processes.
+ */
+export function skippedCollections() {
+  return Object.entries(NON_SYNCABLE_REASONS).map(([collection, reason]) => ({ collection, reason }))
 }
 
 /**
@@ -474,6 +531,55 @@ export function permittedPayload(storeRead, policy) {
 }
 
 /**
+ * What the *receiving* node accepts, given what a sender offered it.
+ *
+ * The exchange applies the sender's policy, which is the correct half of the
+ * question: the policy that governs what may leave is the one at the node the
+ * bytes leave. It is not the whole question. A record a sender may part with is
+ * not automatically a record the receiver may keep, and the two nodes have
+ * different laws — a national node holding records for four countries syncs with
+ * a district node permitted to keep one.
+ *
+ * So the receiving surface runs the same predicate again, against its own policy,
+ * and returns `{ payload, withheld }` in the shape `permittedPayload` uses. Two
+ * properties make this a gate rather than a formality:
+ *
+ *   - **it is the same function**, `permittedRecord`, so "the sender would have
+ *     withheld this" and "the receiver withholds this" cannot be two different
+ *     answers computed by two implementations that agree only until one changes;
+ *   - **it is applied to what arrived, not to what was requested**, so a payload
+ *     that names a collection the receiving node does not have is dropped by name
+ *     rather than written into a store that has no such key.
+ *
+ * `withheld` is returned rather than logged, for the reason the sender-side list
+ * is: an exchange that stored three of forty records and said nothing is
+ * indistinguishable from one that stored three.
+ */
+export function acceptablePayload(payload = {}, policy) {
+  const accepted = {}
+  const withheld = []
+  for (const collection of SYNCABLE_COLLECTIONS) {
+    accepted[collection] = []
+    for (const record of Array.isArray(payload?.[collection]) ? payload[collection] : []) {
+      const { record: permitted, action, reason } = permittedRecord(record, policy)
+      if (!permitted) {
+        withheld.push({ collection, id: record?.id ?? null, action, reason })
+        continue
+      }
+      accepted[collection].push(permitted)
+    }
+  }
+  // A collection the sender named that this node does not sync at all. Named
+  // separately from `withheld`, because "the receiver's residency law refused
+  // this record" and "this node does not have that collection" are different
+  // findings and only one of them is about the record.
+  const refused = Object.keys(payload || {})
+    .filter((collection) => !SYNCABLE_COLLECTIONS.includes(collection))
+    .map((collection) => ({ collection, reason: nonSyncableReason(collection) || 'not a declared collection' }))
+  return { payload: accepted, withheld, refused }
+}
+
+/**
  * Exchange one node's store with one peer's store, in the directions asked for.
  *
  * `direction` is the direction of *travel*, read from this node's point of view:
@@ -603,8 +709,15 @@ export async function exchangeWith(peer, {
  * `replaceCollection` is not used here for a related reason: it would write the
  * whole collection, including records this node holds and the peer does not, and
  * an absent record is not a deleted one.
+ *
+ * Exported as the receiving half of the HTTP surface. A peer node's
+ * `POST /exchange/merge` writes the payload it was handed, and it must write it
+ * through *this* function rather than through a second `mergeCollection` call in
+ * the route: the merge rule is the entry's whole claim, and a receiving path that
+ * used `mergeById` directly would resolve the same conflict the other way
+ * depending on which node received it.
  */
-async function mergeInto(store, snapshot, payload) {
+export async function mergeInto(store, snapshot, payload) {
   const conflicts = []
   let applied = 0
   for (const collection of SYNCABLE_COLLECTIONS) {

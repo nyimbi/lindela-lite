@@ -342,6 +342,9 @@ export function emptyStore() {
     // ENH-34. Immutable, citable dataset snapshots. Must match COLLECTIONS in
     // store.js — see record_versions above.
     dataset_snapshots: [],
+    // ENH-80. The peer registry. Must match COLLECTIONS in store.js — see
+    // record_versions above.
+    federation_peers: [],
   }
 }
 

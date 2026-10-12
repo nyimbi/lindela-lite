@@ -2393,6 +2393,161 @@ paths:
       responses:
         '200':
           description: The active taxonomy
+  /api/v1/federation/status:
+    get:
+      summary: What this node federates, with what, and what it refuses to carry
+      description: >-
+        ENH-80. The operator's read: the peer registry, the last exchange the
+        scheduled tick recorded, and — the part a summary usually omits — what the
+        exchange will not do.
+
+        `configured` and `active` are separate numbers because a node with three
+        peers and two paused is not a node with one peer, and one number could not
+        say which.
+
+        `skipped` names the collections the exchange does not carry, by reason:
+        `derived` (the peer recomputes them), `history` (rebuilt from the values)
+        and `registry` (this collection itself — syncing it would let two nodes
+        converge on the union of every peer either ever held, so a removed peer
+        could never be retired).
+
+        `deletion` states the limitation that would otherwise read as a bug the
+        first time an operator removes a record at one node and finds it standing
+        at the other: there is no tombstone, and inferring a removal from absence
+        would make one node's outage a fleet-wide deletion.
+      responses:
+        '200':
+          description: The node's federation status
+  /api/v1/federation/peers:
+    get:
+      summary: List the registered peers
+      description: >-
+        The registry this node exchanges with. Paged like every other listing, so
+        "this is all of them" is a claim the response carries rather than one the
+        caller assumes.
+      responses:
+        '200':
+          description: A page of the peer registry
+    post:
+      summary: Register a peer, or update the one at the same origin
+      description: >-
+        The URL is caller-supplied here and fetched later, so it is validated at
+        registration by `assertConnectorUrl`: the cloud metadata ranges are
+        refused and RFC-1918 is **permitted**, because a peer node in a district
+        office is on the operator's own network and a guard that refused it would
+        refuse the deployment this feature exists for.
+
+        The URL is normalised to its origin plus the fixed exchange path, so a
+        stored peer cannot carry a path of its own, and credentials embedded in a
+        URL are refused — a peer URL is written into the store and read back by
+        the status route of every node that lists it.
+
+        The id is derived from the **origin**, so re-registering the same address
+        under a new display name updates that row rather than creating a second
+        peer to the same node, which would run the same exchange twice per tick.
+      responses:
+        '200':
+          description: The peer was updated
+        '201':
+          description: The peer was created
+        '400':
+          description: >-
+            The URL, name, direction or policy is unusable. The message names
+            which field, because a registry that refuses a row without saying why
+            makes the operator guess at a config they cannot see.
+  /api/v1/federation/peers/{id}:
+    delete:
+      summary: Remove a peer
+      description: >-
+        Removal is **local and deliberate**, which is why the registry is
+        excluded from the exchange: a synced registry would be re-learned from
+        the peer on the next exchange and could never be retired. Absence does not
+        propagate — the same rule the records themselves follow.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: Identifier of the peer row.
+      responses:
+        '200':
+          description: The peer was removed, with its action-log entry
+        '404':
+          description: No peer with that id
+  /api/v1/federation/sync:
+    post:
+      summary: Exchange with every active peer now, rather than on the tick
+      description: >-
+        The operator's "do it now", calling the same `runFederationSync` the
+        scheduled driver item calls, so the button and the timer cannot diverge.
+
+        A node with no active peer is a **400**, not a 200: the caller asked for a
+        sync and a 200 would read as a sync that happened. The scheduled item
+        treats the same state as a skip, and the difference is deliberate — an
+        alarm nobody can clear is one everybody learns to ignore, and a request
+        that silently did nothing is the same failure pointed the other way.
+
+        A peer that is down does not fail the run for the others: `federate`
+        isolates it, the rest still exchange, and the response names which one did
+        not complete. That case is a **502**.
+      responses:
+        '200':
+          description: The exchange summary, with `deletion` stating what it cannot carry
+        '400':
+          description: No peer is active, so there was nothing to exchange with
+        '502':
+          description: One or more peer exchanges did not complete; the failures name the peer
+  /api/v1/federation/exchange:
+    get:
+      summary: Serve this node's syncable collections to a peer
+      description: >-
+        The peer-facing read, carrying the collections at the top level beside the
+        manifest — so a peer reads one document rather than two requests that
+        could disagree about what this node held. `digest` is computed over the
+        payload by the same `exchangeManifest` a local exchange uses, which is
+        what makes a peer's verification check this node's answer rather than a
+        second implementation of it.
+
+        Scope is `read:federation`, deliberately not `read:integrations`: this
+        route serves every syncable collection, so the integrations scope would
+        also hand a peer connector, ingest and source configuration.
+      responses:
+        '200':
+          description: The syncable collections, the digest over them, and what was skipped
+  /api/v1/federation/exchange/manifest:
+    get:
+      summary: This node's manifest alone, so a peer can verify a read without repeating it
+      description: >-
+        The same digest and collection inventory as `/exchange` with the rows
+        omitted. It exists so the receive-side check is possible: a peer that
+        states what it holds lets the sender notice a read that succeeded and did
+        not deliver everything — the failure a throw cannot report because nothing
+        threw.
+      responses:
+        '200':
+          description: The manifest
+  /api/v1/federation/exchange/merge:
+    post:
+      summary: Receive a peer's payload, under this node's own residency policy
+      description: >-
+        The receiving half, and the reason one gate is not enough. The exchange
+        applies the *sending* node's policy, which is right — the policy that
+        governs what may leave is the one at the node the bytes leave. It is not
+        sufficient: the node they arrive at has its own law, and a record this
+        node may send is not automatically one that node may keep. So this applies
+        the receiving node's policy again before storing anything.
+
+        `withheld` and `refused` travel separately because they are different
+        findings: a row withheld was refused by this node's residency law, and a
+        row refused names a collection this node does not sync at all. A merge
+        that stored three of forty rows and said nothing is indistinguishable from
+        one that stored three.
+      responses:
+        '200':
+          description: What was applied, and what was not, by reason
+        '400':
+          description: The payload is not an object keyed by collection
   /api/v1/tile-packs/plan:
     get:
       summary: Size an offline tile pack before requesting it
