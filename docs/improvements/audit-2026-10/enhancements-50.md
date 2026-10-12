@@ -29,8 +29,8 @@ shipped and unmarked, and the register was the last place anyone looked.
 | Verdict | Count | Items |
 |---|---|---|
 | IMPLEMENTED | 44 | 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
-| PARTIAL | 4 | 38, 59, 67, 71 |
-| ABSENT | 3 | 42, 60, 80 |
+| PARTIAL | 6 | 38, 42, 59, 67, 71, 80 |
+| ABSENT | 1 | 60 |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
@@ -442,6 +442,29 @@ A second copy would be the drift the split is meant to avoid.
 nothing, so the offline map is a fixed asset. Let an operator define a bbox and
 generate a downloadable pack (PMTiles) so a CHW's phone has the terrain for their
 ward without a connection.
+
+> **Shipped 2026-10-12, as the pack format — no HTTP route yet.** `public/shared/tile-pack.js`
+> plans a bbox, writes and reads a PMTiles v3 archive, and builds a manifest a
+> client verifies offline. The spec is archived verbatim with its citation at
+> `docs/research/tile-packs/sources/`, and the Hilbert index and header codecs
+> were cross-checked against the reference implementation rather than written
+> from memory.
+>
+> *The manifest carries the tile id list, not a count.* A client holding a
+> partial download needs to know **which** tile is absent, and a count that
+> disagrees says only that something is wrong. `verifyPackManifest` names the
+> missing ids.
+>
+> *One canary caught a live false positive.* The corner-tile completeness check
+> derived its longitude edge with `floor` where the enumerator uses `ceil - 1`,
+> so a complete pack whose bbox ended on a tile boundary was reported as holed.
+> Latitude never diverges — the row range absorbs the difference — which is why
+> a canary aimed there did not fire and the premise, not the guard, was wrong.
+>
+> **PARTIAL:** the route that materialises tiles via `loadRasterTile` is the
+> integration step, not part of this claim. The module is in no console graph
+> (`check-budget` unchanged at 229.5 KB of 230.0 KB), so wiring it is also gated
+> on the panel-handler extraction.
 
 **ENH-43 — SMS/USSD submission fallback.** A structured SMS grammar for the field
 report subset, and USSD for feature phones. The RapidPro two-way layer
@@ -1534,6 +1557,41 @@ limit is not treated as unlimited retention.
 regional, partner) that peer-sync with the store layer's own conformance contract,
 so no single central store is a chokepoint or a single point of failure. The
 bitemporal model is the substrate; this is the topology it enables.
+
+> **Shipped 2026-10-12, as the peer-sync contract — no route or scheduler yet.**
+> `src/federation.js` exchanges manifests and merges collections between two
+> stores. A node is a store and a peer is another store, reached through the same
+> `read`/`merge` pair `test/store-conformance.test.js` exercises, so the module
+> imports no `pg` and no server module.
+>
+> *The merge rule is chosen for what it makes arguable.* The winner is the record
+> with the greater `validTime`, so a node's stored value after any exchange
+> sequence is the **maximum** of the values it has seen. Maximum is commutative,
+> associative and idempotent, so A→B→A and B→A→B agree and a re-run is
+> `max(x,x)=x` — asserted both ways, with genuine one-way exchanges, because a
+> single `direction: 'both'` call would pass without ever trying the other order.
+> `mergeById` is not the decision: it is last-write-wins by arrival order, which
+> depends on which node ran the merge. Only winners reach it.
+>
+> *A derived collection is not synced as a value.* A peer's `risk_scores` row is
+> a function of that peer's inputs, model version and calibration window; merged
+> locally it would sit indistinguishably beside the local row, and the next
+> `replaceAnalytics` at either node would delete it. The inputs sync and the peer
+> recomputes.
+>
+> *A drift found and closed while writing it.* `validTime` mirrored the store's
+> `SORT_FIELDS` by hand, and the copy was already wrong — it was missing
+> `started_at`, so a record whose only timestamp was `started_at` had no valid
+> time and lost every conflict it entered. It now imports `recordTimestamp`, and
+> the test asserts the cascade against the store's exported list rather than a
+> second literal.
+>
+> **PARTIAL, and the limit is stated in the module.** Deletion does not
+> propagate: `mergeById` cannot express a removal and there is no tombstone, so a
+> record deleted at one node stays at every other. Inferring removal from absence
+> would make one node's outage a fleet-wide deletion, so the module declines and
+> a test asserts the refusal. The route that drives an exchange, and the
+> scheduler that runs one, are not written.
 
 ---
 
