@@ -1374,18 +1374,42 @@ are, each for a reason the code now states:
   already a manifest and needs no helper.
 - `src/kpi.js:431` — `computeMonthlyKpiSeries` reads five collections, and the
   route is already mapped to the wider of the two KPI surfaces.
-- `src/server.js` `/api/v1/health`, `/metrics`, and the trigger-protocol run —
-  all three call `counts()`, which reads 22 collections by construction.
+- `src/server.js` `/api/v1/health` (`:1433`) and `/api/v1/assessments` (`:1794`),
+  and `evaluateAndPersistAlerts` (`:1860`) — all three call `counts()`
+  (`src/operations.js:448`), which touches 22 collections by construction. This
+  bullet previously read "`/health`, `/metrics`, and the trigger-protocol run".
+  Two of the three were wrong: `/metrics` answers `metrics.render()` and reads no
+  collection at all, and the trigger run moved to `src/routes/alerting.js` when
+  the family was extracted. `/assessments` — the third `counts()` caller, and the
+  only one still inline in the dispatcher — was not mentioned.
 - `src/server.js:2759` — a deliberate re-read after ingestion and
   `refreshAnalytics` have written, so a narrow manifest would be answering from
   a snapshot the route knows is stale.
 
-`store.read({collections: collectionsForRequest(…)})` is used once
-(`src/server.js:900`); direct whole-store reads remain at `src/server.js:234, 490,
-839, 861, 2424, 4344`, `src/kpi.js:395`, `src/analytics.js:226, 285`,
-`src/ingestion.js:177`. `handleStacRoute:490` and `handleProtocolRoute:4344` each
-materialise the entire store. ENH-07's optimisation is half-applied; the widest
-readers are the un-migrated ones.
+`store.read({collections: collectionsForRequest(…)})` is the dispatcher's own read
+(`src/server.js:1305`), and every `/api/v1/` route inherits it. Direct whole-store
+reads remain at `src/server.js:261` and `:266` (the driver tick's `tickStore`),
+`src/kpi.js:467`, `src/analytics.js:430, 564`, `src/ingestion.js:177`,
+`src/routes/ingestion.js:161` (the `run-due` alert evaluation) and
+`src/routes/alerting.js:480` (the trigger-protocol execution).
+
+**The citations above were rewritten 2026-10-12 because they had rotted past the
+end of the file.** The block read `src/server.js:234, 490, 839, 861, 2424, 4344`
+— in a file that is now 2,366 lines, so two of those numbers name nothing at all.
+`handleProtocolRoute:4344` had moved to `src/routes/alerting.js:480` when the
+alerting family was extracted, and `handleStacRoute` — the one reader the fixed
+paragraph above describes as *already* migrated — was still listed as an
+un-migrated whole-store reader. Three of the seven citations were wrong in three
+different ways, and none of it was checkable by a test, which is the point: this
+is the register's own cautionary case, an evidence cell that is a line number.
+
+`handleStacRoute` (`src/server.js:827`) reads through `STAC_READ_COLLECTIONS` and
+the caller's partner scope; the two remaining `store.read()` calls in `server.js`
+are the driver tick's, which reads the whole store deliberately — it is the
+snapshot every scheduled item shares for the length of one tick, and a narrow
+read per item is the amplification ARC-08 exists to remove, in the other
+direction. ENH-07's optimisation is applied wherever a route's read is narrowable
+without changing what it answers.
 
 ### ARC-09 — MEDIUM — Storage-format knowledge leaks outside the store layer
 
