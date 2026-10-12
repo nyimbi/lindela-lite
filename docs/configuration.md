@@ -69,6 +69,36 @@ Most source options are passed in ingestion requests or schedules:
 - `stale_after_minutes`
 - Source-specific feed URLs or CSV/GeoJSON payloads.
 
+## Offline Tile Packs
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `LINDELA_LITE_PACK_TILE_URL` | _(unset)_ | Tile URL template containing `{z}`, `{x}` and `{y}`, used as the source for offline PMTiles packs (`GET /api/v1/tile-packs`, ENH-42). Must point at a tile server that permits building archives from its tiles. |
+
+Unset is the shipped default, and it is not a placeholder: **the public OSM and
+CARTO tile servers prohibit this use by name.** The OSM Tile Usage Policy §4 is
+headed *"Prohibited: bulk downloading ("scraping") and offline use"* and lists
+*"Building tile archives (e.g. `.zip`, `.mbtiles`) for later distribution"*; the
+CARTO Basemap Terms §9.c prohibit *"downloading or extracting map content in
+bulk"*. Both are archived verbatim under
+[`research/tile-packs/sources/`](./research/tile-packs/sources/INDEX.md). The
+basemap proxy's upstreams are therefore **not** usable as a pack source, even
+though the proxy itself is a correct use of both services.
+
+A pack request with the variable unset is a `503` naming it, rather than a
+fallback to a server whose terms forbid the request. OSM's policy names the
+remedy in the same paragraph — *"use self-hosted tiles or a provider that
+explicitly allows offline/prefetching"* — and that remedy is this variable.
+
+The variable is operator configuration, so a caller never supplies a URL: it
+supplies a bbox and a zoom range, and the coordinates are range-checked against
+`2^z` before being substituted as text. The template is validated as a connector
+URL, so an instance-metadata host is refused while an operator's own LAN tile
+server (`http://192.168.x.x:8080/tiles/{z}/{x}/{y}.png`) is the expected case.
+
+`GET /api/v1/tile-packs/plan` works with the variable unset — sizing a pack is
+arithmetic, and an operator sizes one before standing a tile server up.
+
 ## Privacy
 
 | Variable | Default | Description |
@@ -152,6 +182,9 @@ RAPIDPRO_BASE_URL=https://rapidpro.io
 RAPIDPRO_API_TOKEN=replace-if-used
 RAPIDPRO_ALERT_FLOW_UUID=replace-if-used
 RAPIDPRO_WEBHOOK_SECRET=replace-if-used
+# Only if this deployment builds offline tile packs, and only pointing at a tile
+# server that permits it. See "Offline Tile Packs" above.
+LINDELA_LITE_PACK_TILE_URL=
 ```
 
 ## Configuration Checks

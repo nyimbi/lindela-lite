@@ -92,11 +92,79 @@ const tileCache = new Map()
 // twice against the upstream.
 const tileInflight = new Map()
 
+/**
+ * The tile server an offline pack is built from, or `null` when there is none.
+ *
+ * ENH-42 does not build packs from `TILE_UPSTREAMS`, and this variable exists
+ * rather than a default because both public upstreams prohibit exactly that, by
+ * name. The OSM Tile Usage Policy §4 is titled "Prohibited: bulk downloading
+ * ("scraping") and offline use" and lists *"Building tile archives (e.g. `.zip`,
+ * `.mbtiles`) for later distribution"* and *"Offline use is not permitted on
+ * tile.openstreetmap.org"*; the CARTO Basemap Terms §9.c prohibit *"downloading
+ * or extracting map content in bulk"*. Both are archived verbatim with
+ * citations under `docs/research/tile-packs/sources/`.
+ *
+ * OSM names the remedy — *"use self-hosted tiles or a provider that explicitly
+ * allows offline/prefetching"* — and that remedy is this variable. So unset is
+ * the shipped default, and a pack request without it is refused by name rather
+ * than served from a server whose terms forbid it. The plan route still works
+ * unconfigured: it is arithmetic over a bbox, and an operator sizes a pack
+ * before standing a tile server up.
+ *
+ * The template is operator configuration, not caller input, which is the same
+ * jurisdiction as `RAPIDPRO_BASE_URL` — and it is why the route validates it
+ * with `assertConnectorUrl` (metadata ranges refused, RFC-1918 permitted: a
+ * district office's own tile server is on its LAN).
+ */
+export function packTileTemplate(env = process.env) {
+	const raw = String(env.LINDELA_LITE_PACK_TILE_URL || '').trim()
+	if (!raw) return null
+	if (!/\{z\}/.test(raw) || !/\{x\}/.test(raw) || !/\{y\}/.test(raw)) {
+		throw new Error('LINDELA_LITE_PACK_TILE_URL must be a tile URL template containing {z}, {x} and {y}')
+	}
+	return raw
+}
+
+/**
+ * The URL for one tile of an operator-configured pack source, or null when the
+ * request is malformed.
+ *
+ * Range-checked field by field exactly as `upstreamTileUrl` is, and for the
+ * same reason: the template is a prefix and the coordinates are the caller's,
+ * so a pack request must not be able to aim the server at a path it did not
+ * mean. `{z}`/`{x}`/`{y}` are substituted as *text*, so a caller-supplied
+ * string can never become part of the path.
+ */
+export function packTileUrl(template, z, x, y) {
+	if (!template) return null
+	if (!Number.isInteger(z) || !Number.isInteger(x) || !Number.isInteger(y)) return null
+	if (z < 0 || z > MAX_TILE_ZOOM) return null
+	const n = 2 ** z
+	if (x < 0 || x >= n || y < 0 || y >= n) return null
+	return template.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y))
+}
+
 /** Same bytes, same headers, for the same immutable tile (ADR-013). */
 export async function loadRasterTile(source, z, x, y) {
 	const url = upstreamTileUrl(source, z, x, y)
 	if (!url) return null
-	const cacheKey = `${source}/${z}/${x}/${y}`
+	return loadTileAt(`${source}/${z}/${x}/${y}`, url)
+}
+
+/**
+ * One tile of a pack source. Shares `loadTileAt` with the proxy above rather
+ * than repeating the fetch, because the PNG-signature check is the part a
+ * second copy would drop — and a pack assembled from bodies nobody verified is
+ * a pack whose holes are invisible until a phone is offline in a ward.
+ */
+export async function loadPackTile(template, z, x, y) {
+	const url = packTileUrl(template, z, x, y)
+	if (!url) return null
+	return loadTileAt(`pack:${z}/${x}/${y}`, url)
+}
+
+/** The fetch, the signature check and the LRU, shared by both entry points. */
+async function loadTileAt(cacheKey, url) {
 	const hit = tileCache.get(cacheKey)
 	if (hit) {
 		tileCache.delete(cacheKey)
@@ -123,6 +191,24 @@ export async function loadRasterTile(source, z, x, y) {
 			tileCache.set(cacheKey, entry)
 			if (tileCache.size > TILE_CACHE_LIMIT) tileCache.delete(tileCache.keys().next().value)
 			return entry
+		} catch {
+			// `null`, not a throw — and this is load-bearing for both callers.
+			//
+			// `fetchWithRetry` raises an `HttpError` on any non-2xx, so without
+			// this every upstream 404 became an exception thrown out of the
+			// route. Both callers already branch on a null tile: the proxy
+			// answers 502 and the pack builder records a hole. Those branches
+			// were unreachable for any non-2xx — a missing tile took the whole
+			// request down instead of being reported, which is precisely the
+			// defect ENH-42 exists to prevent ("a pack built with holes that
+			// ships as complete renders a blank square in a ward and says
+			// nothing" — this was the louder version: no pack at all).
+			//
+			// A timeout and a connection refusal land here too, which is right:
+			// for a tile, "the server did not answer" and "the server answered
+			// 404" are the same fact — this tile is not available — and neither
+			// should be an unhandled rejection.
+			return null
 		} finally {
 			tileInflight.delete(cacheKey)
 		}

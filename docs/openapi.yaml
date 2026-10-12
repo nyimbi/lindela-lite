@@ -2393,6 +2393,116 @@ paths:
       responses:
         '200':
           description: The active taxonomy
+  /api/v1/tile-packs/plan:
+    get:
+      summary: Size an offline tile pack before requesting it
+      description: >-
+        The arithmetic half of ENH-42. Answers how many tiles a bbox needs across
+        a zoom range and roughly how many bytes they are, without fetching
+        anything and without requiring a tile server to be configured — an
+        operator sizes a pack before standing one up.
+
+        `tile_count` is exact and `estimated_bytes` assumes a typical tile, so
+        the two travel together rather than one standing in for the other.
+
+        A bbox over the pack budget is refused with a **400** naming the count and
+        the ceiling (`reason: tile_budget`) rather than clamped or served slowly.
+        An unbounded pack is a denial-of-service on a tile server, and the pack
+        module already treats the count as the thing to refuse. The other
+        refusals are `invalid_bbox`, `outside_mercator`, `invalid_zoom`,
+        `empty_enumeration`, `corner_uncovered` and `byte_budget`.
+
+        `download_path` is the same request spelled as the pack route, so a
+        client pastes what it just sized rather than transposing a pair of
+        coordinates into a 400.
+      parameters:
+        - $ref: '#/components/parameters/Bbox'
+        - name: min_zoom
+          in: query
+          description: Lowest zoom in the range; defaults to the module minimum
+          schema:
+            type: integer
+        - name: max_zoom
+          in: query
+          description: Highest zoom in the range; defaults to 14
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: The pack's size, its bounds and where to fetch it
+        '400':
+          description: >-
+            The bbox or zoom range is unusable, or the pack is over budget. The
+            `reason` names which.
+  /api/v1/tile-packs:
+    get:
+      summary: Build a PMTiles archive for a bbox, from the deployment's tile server
+      description: >-
+        The materialising half of ENH-42: fetches every tile of the plan and
+        returns one PMTiles v3 archive, or the manifest alone when the caller
+        sends `Accept: application/json`.
+
+        **The tiles come from `LINDELA_LITE_PACK_TILE_URL`, not from the basemap
+        proxy.** The obvious wiring — build the pack from the OSM/CARTO proxy
+        ADR-013 already ships — is prohibited by both of those upstreams, by
+        name. The OSM Tile Usage Policy §4 is headed *"Prohibited: bulk
+        downloading ("scraping") and offline use"* and lists *"Building tile
+        archives (e.g. `.zip`, `.mbtiles`) for later distribution"*; the CARTO
+        Basemap Terms §9.c prohibit *"downloading or extracting map content in
+        bulk"*. Both are archived verbatim under
+        `docs/research/tile-packs/sources/`. OSM names the remedy in the same
+        paragraph — *"use self-hosted tiles or a provider that explicitly allows
+        offline/prefetching"* — so the variable is the documented path and not a
+        workaround.
+
+        Unset is therefore the shipped default, and a pack request without it is
+        a **503** with `reason: pack_source_not_configured` naming the variable.
+        Not a 500 (nothing failed) and not an empty pack.
+
+        The variable is operator configuration, so the caller never supplies a
+        URL — it supplies a bbox and a zoom range, and `{z}`/`{x}`/`{y}` are
+        substituted as text into the operator's prefix after each coordinate is
+        range-checked against `2^z`.
+
+        **A tile the server does not have is reported, not skipped.** It appears
+        in the manifest's `extra.missing_tiles` and in the
+        `x-lindela-missing-count` header, and `verifyPackManifest` names it again
+        on the client. A pack built with holes that ships as complete renders a
+        blank square in a ward and says nothing. If the server answers none of
+        the tiles at all that is a **502** (`no_tiles_fetched`), which is a
+        different fact from "this bbox has no tiles".
+
+        The archive carries its own provenance in metadata — the source template,
+        the attribution, the bbox and the zoom range — because a pack on a phone
+        has no server beside it to ask.
+      parameters:
+        - $ref: '#/components/parameters/Bbox'
+        - name: min_zoom
+          in: query
+          description: Lowest zoom in the range; defaults to the module minimum
+          schema:
+            type: integer
+        - name: max_zoom
+          in: query
+          description: Highest zoom in the range; defaults to 14
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: >-
+            The PMTiles archive as `application/vnd.pmtiles`, or the manifest as
+            JSON when the request sends `Accept: application/json`
+        '400':
+          description: >-
+            The bbox or zoom range is unusable, the pack is over budget, or the
+            archive was refused (the root directory is too large for the format's
+            16 KB limit). The `reason` names which.
+        '502':
+          description: The configured tile server answered none of the pack's tiles
+        '503':
+          description: >-
+            No tile server is configured. The response names
+            `LINDELA_LITE_PACK_TILE_URL`.
   /api/v1/forms:
     get:
       summary: The form catalogue — one entry per form id

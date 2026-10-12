@@ -4,7 +4,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, it } from 'node:test'
-import { clearRasterTileCache, upstreamTileUrl } from '../src/basemap-tiles.js'
+import { clearRasterTileCache, loadPackTile, packTileTemplate, packTileUrl, upstreamTileUrl } from '../src/basemap-tiles.js'
 import { createServer } from '../src/server.js'
 import { JsonStore } from '../src/store.js'
 
@@ -79,5 +79,79 @@ describe('basemap tile proxy route', () => {
 			const res = await fetch(`${base}/api/v1/basemap/tiles/carto/6/64/31.png`)
 			assert.equal(res.status, 400)
 		})
+	})
+})
+
+// ENH-42. The pack source is operator configuration and shares the proxy's
+// fetch path, so the two properties worth asserting are its validation and the
+// fact that it *is* the same path — a second copy of the fetch would drop the
+// PNG-signature check, and a pack assembled from unverified bodies is a pack
+// whose holes are invisible until a phone is offline in a ward.
+describe('offline pack tile source', () => {
+	it('is null when unset, and the reason the public upstreams are not a fallback', () => {
+		// Not a default. OSM's Tile Usage Policy §4 prohibits building tile
+		// archives and CARTO's terms §9.c prohibit bulk extraction; both are
+		// archived under `docs/research/tile-packs/sources/`.
+		assert.equal(packTileTemplate({}), null)
+		assert.equal(packTileTemplate({ LINDELA_LITE_PACK_TILE_URL: '   ' }), null)
+	})
+
+	it('refuses a template that is not a tile template, naming the variables', () => {
+		assert.throws(
+			() => packTileTemplate({ LINDELA_LITE_PACK_TILE_URL: 'https://tiles.example.test/all.png' }),
+			/\{z\}, \{x\} and \{y\}/,
+		)
+		// A template missing one placeholder is the same defect with two thirds
+		// of the evidence, so each is checked rather than the first.
+		for (const missing of ['{z}', '{x}', '{y}']) {
+			const template = ['{z}', '{x}', '{y}'].filter((p) => p !== missing).join('/')
+			assert.throws(
+				() => packTileTemplate({ LINDELA_LITE_PACK_TILE_URL: `https://t.example.test/${template}.png` }),
+				/tile URL template/,
+				`a template without ${missing} was accepted`,
+			)
+		}
+	})
+
+	it('substitutes the coordinates and range-checks each against 2^z', () => {
+		const template = 'https://tiles.example.test/{z}/{x}/{y}.png'
+		assert.equal(packTileUrl(template, 10, 612, 502), 'https://tiles.example.test/10/612/502.png')
+		// The same bounds `upstreamTileUrl` enforces, because the template is a
+		// prefix and the coordinates are the caller's.
+		assert.equal(packTileUrl(template, 10, 1024, 0), null, 'x must be within 2^z')
+		assert.equal(packTileUrl(template, 10, 0, 1024), null, 'y must be within 2^z')
+		assert.equal(packTileUrl(template, 16, 0, 0), null, 'zoom is policy-capped')
+		assert.equal(packTileUrl(template, 1.5, 0, 0), null)
+		assert.equal(packTileUrl(null, 10, 612, 502), null)
+	})
+
+	it('fetches from the template and verifies the PNG signature, like the proxy', async () => {
+		// A local server, not a public one: the property under test is the shared
+		// fetch path, and reaching a real tile service to test it would be a
+		// flakiness generator pointed at somebody's infrastructure.
+		const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+		const server = http.createServer((req, res) => {
+			if (req.url === '/10/612/502.png') { res.writeHead(200, { 'content-type': 'image/png' }); res.end(png); return }
+			if (req.url === '/10/613/502.png') { res.writeHead(200, { 'content-type': 'image/png' }); res.end('not a png at all'); return }
+			res.writeHead(404); res.end()
+		})
+		const listener = server.listen(0)
+		await new Promise((resolve) => listener.once('listening', resolve))
+		const template = `http://127.0.0.1:${listener.address().port}/{z}/{x}/{y}.png`
+		try {
+			clearRasterTileCache()
+			const tile = await loadPackTile(template, 10, 612, 502)
+			assert.ok(tile?.bytes, 'a real PNG came back as nothing')
+			assert.equal(tile.bytes.length, png.length)
+
+			// 200 with a non-PNG body is the case the signature check exists for:
+			// it would reach the browser as a broken image and nothing would say why.
+			assert.equal(await loadPackTile(template, 10, 613, 502), null, 'a non-PNG body was accepted')
+			// And a 404 is null, not a thrown error: a hole is a fact to record.
+			assert.equal(await loadPackTile(template, 10, 614, 502), null)
+		} finally {
+			clearRasterTileCache()
+			listener.close()
+		}
 	})
 })

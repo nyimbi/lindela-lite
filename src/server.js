@@ -38,6 +38,7 @@ import { districtWeatherReport } from './connectors/open-meteo-forecast.js'
 import { createVintageIndex } from './vintage.js'
 import { taxonomyDocument } from './taxonomy.js'
 import { matchExportRoute, handleExportRoute } from './routes/exports.js'
+import { matchTilePackRoute, handleTilePackRoute } from './routes/tile-packs.js'
 import { matchKpiRoute, handleKpiRoute } from './routes/kpi.js'
 import { matchFieldSignalRoute, handleFieldSignalRoute } from './routes/field-signals.js'
 import { matchExposureRoute, handleExposureRoute } from './routes/exposure.js'
@@ -1361,6 +1362,15 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     vintageIndex: processVintageIndex,
     loadData: () => store.read(readRequest),
   })) return
+
+  // ENH-42. The offline tile-pack family, extracted to `src/routes/tile-packs.js`.
+  // Dispatched above the store read because neither route reads the store: the
+  // plan route is arithmetic over a bbox, and the pack route fetches from the
+  // tile server the deployment is configured with. Reading every collection to
+  // answer "how many tiles is this bbox" is the same waste the export family was
+  // hoisted to avoid, one step less severe.
+  const tilePackRoute = matchTilePackRoute(url.pathname, req.method)
+  if (tilePackRoute && await handleTilePackRoute(tilePackRoute, { req, res, url, jsonResponse })) return
 
   const data = await store.read(readRequest)
 

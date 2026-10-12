@@ -53,6 +53,38 @@ credit travels with the pack rather than being assumed.
 
 ## Decisions
 
+**The pack is built from an operator-configured tile server, not from the
+basemap proxy — and that was decided by reading the two upstreams' policies, not
+by preference.** This is the decision that changed the feature's shape, and it
+overturned the plan's first design.
+
+The obvious wiring was `loadRasterTile('osm', z, x, y)` — the OSM/CARTO proxy
+ADR-013 already ships in `src/basemap-tiles.js`. Both of those upstreams prohibit
+exactly that use, by name:
+
+- **OSM.** The Tile Usage Policy's §4 is headed *"Prohibited: bulk downloading
+  ("scraping") and offline use"* and lists *"Building tile archives (e.g. `.zip`,
+  `.mbtiles`) for later distribution"* and *"Offline use is not permitted on
+  tile.openstreetmap.org"*. The same paragraph names the remedy: *"use
+  self-hosted tiles or a provider that explicitly allows offline/prefetching"*.
+- **CARTO.** The Basemap Terms §9.c prohibit *"downloading or extracting map
+  content in bulk"*, *"reselling, sublicensing or redistributing the map tiles or
+  other map content as tiles or data"*, and *"proxying or caching the content on
+  the server side"*.
+
+Both documents are archived verbatim under [`sources/`](./sources/INDEX.md),
+because the decision rests on their wording and a URL that rots would leave the
+reasoning resting on nothing. This is not inferable from the proxy's own code:
+the proxy is a *correct* use of both services, and a pack is not — the difference
+is bulk extraction and redistribution, which the code cannot express.
+
+So the tile source is `LINDELA_LITE_PACK_TILE_URL`, operator configuration in the
+same jurisdiction as `RAPIDPRO_BASE_URL`. Unset is the shipped default, and a
+pack request without it is a **503 naming the variable**, not a fallback to a
+server whose terms forbid the request. The plan route works unconfigured, because
+sizing a pack is arithmetic and an operator sizes one before standing a server
+up.
+
 **PMTiles v3, not a zip of z/x/y PNGs.** Chosen because the enumeration is the
 load-bearing part of ENH-42 and a zip stores a *set* where PMTiles stores a
 *keyed map*. A zip of `z/x/y.png` has no index a client can verify against: to
@@ -129,3 +161,10 @@ manifest is the completeness proof the format leaves to the application.
 - TileJSON 3.0 `vector_layers` — referenced by the PMTiles spec for vector
   tiles; not applicable here (this pack is raster) but noted for completeness:
   <https://github.com/mapbox/tilejson-spec>
+- OpenStreetMap Foundation, *Tile Usage Policy* —
+  <https://operations.osmfoundation.org/policies/tiles/> (archived at
+  [`sources/osm-tile-usage-policy.md`](./sources/osm-tile-usage-policy.md)).
+  §4 is the clause that rules out building a pack from the OSM proxy.
+- CARTO, *Basemap Terms* — <https://carto.com/legal/basemap-terms/> (archived at
+  [`sources/carto-basemap-terms.md`](./sources/carto-basemap-terms.md)). §9.c is
+  the same clause for the CARTO raster.

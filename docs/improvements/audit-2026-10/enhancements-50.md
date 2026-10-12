@@ -28,24 +28,26 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 46 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
-| PARTIAL | 5 | 42, 59, 60, 71, 80 |
+| IMPLEMENTED | 47 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
+| PARTIAL | 4 | 59, 60, 71, 80 |
 | ABSENT | 0 | none |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, ENH-67's replica split and budget have no caller, ENH-71's
-disclosure model has no importer. Reading a PARTIAL as done is the error this
-table exists to prevent.
+generated from, ENH-60's dispatcher is still one 1,372-line function with 17
+families out of it, ENH-71's disclosure model has no importer. Reading a PARTIAL
+as done is the error this table exists to prevent.
 
 **Two rows were wrong in opposite directions, found 2026-10-12 by checking the
 code rather than the note.** ENH-32 was marked PARTIAL against a summary line
 that said it pulls and does not push — but `src/connectors/dhis2-push.js` exists,
 `src/routes/exports.js` calls it, and 14 tests pass; it is IMPLEMENTED. ENH-42
-was marked PARTIAL with **no shipped note at all**, and there is no tile-pack
-code in the tree; it is ABSENT. A register that drifts optimistically is worse
-than one that drifts pessimistically, because the first claims work that does not
-exist. Both counts here are read off the listed ids by script, never by eye.
+was marked PARTIAL with **no shipped note at all**, and there was no tile-pack
+code in the tree; at that moment it was ABSENT. (It was built later the same day —
+format first, then the route — and is IMPLEMENTED above.) A register that drifts
+optimistically is worse than one that drifts pessimistically, because the first
+claims work that does not exist. Both counts here are read off the listed ids by
+script, never by eye.
 
 ---
 
@@ -471,10 +473,51 @@ ward without a connection.
 > Latitude never diverges — the row range absorbs the difference — which is why
 > a canary aimed there did not fire and the premise, not the guard, was wrong.
 >
-> **PARTIAL:** the route that materialises tiles via `loadRasterTile` is the
-> integration step, not part of this claim. The module is in no console graph
-> (`check-budget` unchanged at 229.5 KB of 230.0 KB), so wiring it is also gated
-> on the panel-handler extraction.
+> **IMPLEMENTED 2026-10-12** by `src/routes/tile-packs.js` (two routes, dispatched
+> above the store read in `src/server.js` because neither touches a collection):
+> `GET /api/v1/tile-packs/plan` sizes a pack as arithmetic and works with nothing
+> configured; `GET /api/v1/tile-packs` materialises the archive. 18 tests in
+> `test/tile-packs-route-module.test.js`, four of them canaried by watching them
+> fail.
+>
+> **The plan's design was wrong, and the upstreams' own policies said so.** The
+> integration step was specified as reusing `loadRasterTile` — the OSM/CARTO proxy
+> ADR-013 ships. Both of those upstreams prohibit exactly that, by name: the OSM
+> Tile Usage Policy §4 is headed *"Prohibited: bulk downloading ("scraping") and
+> offline use"* and lists *"Building tile archives (e.g. `.zip`, `.mbtiles`) for
+> later distribution"*; the CARTO Basemap Terms §9.c prohibit *"downloading or
+> extracting map content in bulk"*. Both documents are now archived verbatim under
+> `docs/research/tile-packs/sources/`, and the reasoning that rests on them is
+> written out in `docs/research/tile-packs/README.md`. OSM names the remedy in the
+> same paragraph — *"use self-hosted tiles or a provider that explicitly allows
+> offline/prefetching"* — so the pack source is the operator-configured
+> `LINDELA_LITE_PACK_TILE_URL`, unset by default, and a pack request without it is
+> a **503 naming the variable** rather than a fallback to a server whose terms
+> forbid the request.
+>
+> *Three refusals, each by name.* Over budget (`tile_budget`, with the count and
+> the ceiling); no tile server configured (`pack_source_not_configured`, 503);
+> and a tile the server does not have, reported in the manifest's `missing_tiles`
+> and the `x-lindela-missing-count` header rather than silently skipped — a pack
+> built with holes that ships as complete renders a blank square in a ward and
+> says nothing.
+>
+> *A falsy-zero bug found while writing the tests.* `Number('')` is `0`, a valid
+> coordinate, so `?bbox=36,2.9,35.5,` would have become a bbox with its north edge
+> on the equator. `Number.isFinite` cannot see it — zero is finite — so a blank
+> segment is now refused explicitly. Canaried by reverting the guard.
+>
+> **A pre-existing dead branch, found by the same tests, in the proxy ENH-42 was
+> told to reuse.** `src/server.js`'s basemap tile route branches `if (!tile)` →
+> 502, and the branch could not be reached for any non-2xx upstream:
+> `fetchWithRetry` raises an `HttpError` on a non-2xx, so a 404 from a tile
+> server threw out of `loadTileAt` and past the route's check. A missing tile
+> took the whole request down as an unhandled error instead of being reported —
+> the mirror image of this feature's own defect, and it would have made the pack
+> builder abort on the first hole rather than record it. `loadTileAt` now
+> catches and returns `null`, which is what both callers already branch on. Two
+> tests cover it (one at the proxy, one end-to-end through the route against a
+> local server), both canaried.
 
 **ENH-43 — SMS/USSD submission fallback.** A structured SMS grammar for the field
 report subset, and USSD for feature phones. The RapidPro two-way layer

@@ -301,6 +301,17 @@ export const WIDE_ROUTES = Object.freeze([
   'POST /api/v1/webhooks',
   'POST /api/v1/workflows/metrics',
   'POST /api/v1/workflows/:id/transition',
+  // ENH-42. The offline tile-pack pair reads no collection at all — the plan
+  // route is arithmetic over a bbox and the pack route fetches from the tile
+  // server the deployment is configured with — so there is no manifest to
+  // declare and an empty one is what `test/route-manifests.test.js` rejects.
+  // Wide is the vocabulary's only word for "not measured against a collection
+  // set", the same word `GET /api/v1/health` uses for the same reason, and the
+  // dispatcher runs both *above* the store read (`src/server.js`, ENH-42 block),
+  // so the whole-store read this declaration would otherwise imply never
+  // happens.
+  'GET /api/v1/tile-packs',
+  'GET /api/v1/tile-packs/plan',
 ])
 /** How much of the API is still on the whole-store read, as one number. */
 export const UNMAPPED_COUNT = WIDE_ROUTES.length
