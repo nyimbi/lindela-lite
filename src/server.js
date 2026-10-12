@@ -6,10 +6,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, isPublicRequest, publicReadsOpen, publicPaths } from './auth.js'
+import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, isPublicRequest, publicReadsOpen } from './auth.js'
 import { corsResponseHeaders, isPreflight, preflightResponse } from './cors.js'
 import { ERROR_CODES } from './errors.js'
-import { logger, metrics, metricsOverflow, timer, runWithRequestId, uptimeStats } from './observability.js'
+import { logger, metrics, timer, runWithRequestId } from './observability.js'
 import { refreshAnalytics, calibrationReport } from './analytics.js'
 import { evaluateAlertRules } from './alerts.js'
 import {
@@ -18,21 +18,21 @@ import {
 } from './ingestion.js'
 import { actionLog, counts, operationalSummary } from './operations.js'
 import { verifyRapidProWebhook } from './rapidpro.js'
-import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
 import { budgetedStore, queryBudgetLimits, runWithQueryBudget, WIDE_QUERY_BUDGET } from './query-budget.js'
 import { readReplicaStore } from './read-replica.js'
 import { collectionPage, currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext } from './utils.js'
 import { createIdempotencyFor } from './idempotency.js'
-import { applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor, piiSaltStatus } from './pii.js'
+import { applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
 import { executeTriggerProtocols } from './protocols.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { collectionsForRequest, needsHistory } from './route-manifests.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection, STAC_READ_COLLECTIONS } from './stac.js'
-import { emit, emitMany, dispatchPending, outboxRollup } from './outbox.js'
+import { emit, emitMany, dispatchPending } from './outbox.js'
 import { createVintageIndex } from './vintage.js'
 import { matchExportRoute, handleExportRoute } from './routes/exports.js'
+import { matchLivenessRoute, handleLivenessRoute } from './routes/liveness.js'
 import { matchTilePackRoute, handleTilePackRoute } from './routes/tile-packs.js'
 import { matchKpiRoute, handleKpiRoute } from './routes/kpi.js'
 import { matchFieldSignalRoute, handleFieldSignalRoute } from './routes/field-signals.js'
@@ -63,7 +63,6 @@ import { matchWorkflowRoute, handleWorkflowRoute } from './routes/workflows.js'
 import { upstreamTileUrl, loadRasterTile } from './basemap-tiles.js'
 import { assertSafeWebhookUrl } from './webhooks.js'
 import { createRequestRing } from './observability.js'
-import { auditRollup, auditChainWarning } from './audit-chain.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
@@ -1113,128 +1112,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     }
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/ready') {
-    // Health answers "is this process running". Readiness answers "can it serve
-    // a request right now" — which is a different question, because the store
-    // is a separate dependency that can be unreachable while the process is
-    // perfectly alive and still answering /health with 200. A load balancer
-    // polling only /health will keep a broken instance in rotation and hand
-    // every user a 500 it could have routed around.
-    const started = Date.now()
-    const timeoutMs = Number(url.searchParams.get('timeout_ms') || 2000)
-    // SCL-07. One read, and it names what it wants.
-    //
-    // This endpoint is the most-polled surface in the deployment — a load
-    // balancer asks every few seconds — and it read the whole store twice per
-    // probe. On the Postgres store a whole-store read is every row's body,
-    // including `record_versions`, which is 60% of the table by bytes and which
-    // nothing here reads. Two of those per probe, on the endpoint designed to be
-    // polled most, is amplification in the wrong direction.
-    //
-    // The second read also meant a *failing* store cost two timeouts, not one:
-    // the probe read timed out, and then the rollup read timed out behind it. A
-    // readiness check that takes 2× its own timeout to say "unready" holds the
-    // load balancer open twice as long as it needs to.
-    //
-    // The two rollups are the only thing this route computes, so the manifest is
-    // exactly their inputs. Reachability is still genuinely tested: a scoped read
-    // opens the same connection and runs the same query shape.
-    const READY_COLLECTIONS = ['action_logs', 'events_outbox']
-    let probe = { ok: true, error: null }
-    let snapshot = null
-    try {
-      snapshot = await withTimeout(store.read({ collections: READY_COLLECTIONS }), timeoutMs)
-    } catch (error) {
-      probe = { ok: false, error: error?.name === 'TimeoutError' ? `store did not respond within ${timeoutMs}ms` : String(error?.message || error) }
-    }
-    const latency = Date.now() - started
-
-    // Two rollups that were computed and never read.
-    //
-    // `verifyChain` was called from exactly one route, so a tampered or
-    // truncated `action_logs` table was detected when somebody asked for the
-    // proof or not at all — which is not evidence. `outboxRollup` says how many
-    // deliveries are dead-lettered, and nothing surfaced it.
-    //
-    // Guarded. A probe that hangs is worse than one that answers "unready": this
-    // endpoint exists to be polled, and a probe that never returns holds the
-    // caller open — which is how a readiness check stops being a signal and
-    // becomes an outage.
-    //
-    // SCL-07. This used to be a second whole-store read behind its own timeout.
-    // The read above now carries both collections, so the rollups are computed
-    // from what it returned and there is no second round-trip to fail. A store
-    // that could not answer leaves `snapshot` null and both rollups report that
-    // honestly rather than by timing out twice.
-    let audit = null
-    let outbox = null
-    if (snapshot === null) {
-      const reason = probe.error || 'the store could not be read'
-      audit = { valid: null, error: reason }
-      outbox = { degraded: null, error: reason }
-    } else {
-      try {
-        audit = auditRollup(snapshot.action_logs || [])
-        // CON-08 / R-51. Loud once per broken head, quiet after. `auditChainWarning`
-        // existed for exactly this and had no callers, so a broken chain was
-        // reported on the readiness body and nowhere else — an operator watching
-        // logs during an incident would not have seen it. Called with the rollup,
-        // which is the shape this path has; the set it dedupes against is bounded.
-        auditChainWarning('ready', audit)
-        outbox = outboxRollup(snapshot)
-      } catch (rollupError) {
-        audit = { valid: null, error: String(rollupError?.message || rollupError) }
-        outbox = { degraded: null, error: String(rollupError?.message || rollupError) }
-      }
-    }
-    const degraded = audit?.valid === false || outbox?.degraded === true
-
-    const ready = probe.ok && !degraded
-    jsonResponse(res, ready ? 200 : 503, {
-      success: ready,
-      ready,
-      store: { mode: store.mode || 'custom', reachable: probe.ok, latency_ms: latency, error: probe.error },
-      // Reported, not implied: the whole bound on the idempotency guarantee.
-      //
-      // `in_process` is gone rather than set to false, because it was never the
-      // right question. What a caller needs to know is whether a retry survives
-      // a restart, and that is `durable`. A store that cannot lock — a test
-      // double — gets the in-process implementation and reports it, which is the
-      // one case where the weaker guarantee is the honest answer.
-      idempotency: {
-        mode: idempotency?.mode || 'in-process',
-        durable: idempotency?.mode === 'durable',
-        collection: idempotency?.collection || null,
-        ttl_hours: Math.round((idempotency?.ttlMs ?? 0) / (60 * 60 * 1000)),
-      },
-      // Two rollups that were computed and never read. A tampered action log
-      // and a dead-lettered webhook were both invisible on the one endpoint a
-      // load balancer and an operator already poll.
-      audit,
-      outbox,
-      // OBS-05. Three more values that were computed and had no reader.
-      // `metricsOverflow()` counts what the metric bounds in
-      // `src/observability.js` refused — dropped label keys, folded values,
-      // evicted series — and nothing surfaced it, so the cardinality guard could
-      // have been discarding every second series for a month with no way to
-      // know. `uptimeStats()` answers "how long has this instance been up",
-      // which is the first question asked of a suspect instance and was only
-      // answerable from the process table. `piiSaltStatus()` says whether
-      // pseudonyms survive a restart: a generated salt means every pseudonym
-      // this deployment has ever written becomes unlinkable at the next
-      // restart, and nothing said so outside a startup log line.
-      //
-      // `/ready` rather than a new route: it is already the operator surface
-      // that carries `audit`, `outbox` and `idempotency`, it is public, and it
-      // already returns no records. A fourth endpoint would be a fourth thing to
-      // authenticate and a fourth place to forget.
-      metrics: metricsOverflow(),
-      uptime: uptimeStats(),
-      pii: piiSaltStatus(),
-      checked_at: new Date().toISOString(),
-    })
-    return
-  }
 
 
 
@@ -1261,6 +1138,31 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     partnerOrg: currentRequestAuth()?.partner_org || null,
   }
   req.__auth = auth
+
+  // ENH-60. The liveness family, extracted to `src/routes/liveness.js`: `/health`
+  // ("is this process running") and `/ready` ("can it serve a request right
+  // now"). Dispatched above the store read, where the `/ready` block was, so the
+  // order the dispatcher tries its routes in is unchanged.
+  //
+  // The read is a thunk, and that is load-bearing rather than tidy. The two
+  // routes sat on opposite sides of `const data = await store.read(...)`:
+  // `/ready` above it — its whole point is that it probes the store with one
+  // *scoped* read and must not materialise the store — and `/health` below it,
+  // because it reads `system_heartbeat` and counts the collections. Passing
+  // `data` directly to a single dispatch site put the binding in its own
+  // temporal dead zone and answered 500 on the liveness routes, which
+  // `check-route-methods` caught. The thunk keeps both properties exactly:
+  // `/ready` never calls it, `/health` gets the one read it had. It must sit
+  // below the `readRequest` declaration for the same reason.
+  //
+  // `withTimeout`, `pipelineIsHealthy` and `driverIntervalSeconds` are passed
+  // in rather than imported: all three live in this file, and importing them
+  // from a module this file imports would be a cycle.
+  const livenessRoute = matchLivenessRoute(url.pathname)
+  if (livenessRoute && await handleLivenessRoute(livenessRoute, {
+    store, req, res, url, jsonResponse, loadData: () => store.read(readRequest),
+    withTimeout, pipelineIsHealthy, driverIntervalSeconds, appVersion: APP_VERSION, idempotency,
+  })) return
 
   // ARC-01. The export family, extracted to `src/routes/exports.js`, dispatched
   // *before* the store read rather than after it.
@@ -1367,89 +1269,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/health') {
-    // Is the thing this process exists to do actually happening?
-    //
-    // It asserted exactly one thing — that the store answered — and then
-    // returned the literal string `ok`. It did not assert that ingestion is
-    // running, that schedules are honoured, that alerts are evaluated, or that
-    // the queue is draining. So a process that was up, serving 200s, and whose
-    // pipeline had been dead for a week was indistinguishable from a healthy
-    // one, and `Dockerfile:23-24` polls exactly this endpoint every 30 seconds.
-    //
-    // Two intervals before red, so a single slow tick is not an outage.
-    const heartbeat = data.system_heartbeat?.[0] || null
-    const pipeline = pipelineIsHealthy(heartbeat)
-    // Three states, not two.
-    //
-    // A process that has never completed a cycle is `starting`, not broken: it
-    // may have been up for four seconds. Reporting that as red would mean every
-    // fresh deployment, and every restart, starts red — and a monitor that
-    // starts red is a monitor that gets ignored.
-    //
-    // Red is reserved for the case that matters: a heartbeat exists and has gone
-    // stale. That is a pipeline that ran and stopped.
-    //
-    // OBS-04. "Has never written a heartbeat" was `starting` forever, whatever
-    // the uptime. If `startPeriodicDriver` fails — it logs and the process stays
-    // up — no heartbeat is ever merged, `/health` answers 200/`starting`
-    // indefinitely, and `Dockerfile`/compose poll exactly this endpoint. The
-    // container is reported healthy while the pipeline never ran once. The
-    // distinction is this server's own age, measured from `createServer` rather
-    // than from the process: a deployment four seconds old has not had its
-    // chance, one that has been serving for two intervals and still written
-    // nothing has failed to start, and that is a different finding.
-    const uptimeSeconds = Math.floor((Date.now() - (res.locals?.serverStartedAt ?? Date.now())) / 1000)
-    const startGraceSeconds = driverIntervalSeconds() * 2
-    const starting = !heartbeat && uptimeSeconds <= startGraceSeconds
-    const neverStarted = !heartbeat && !starting
-    jsonResponse(res, pipeline.healthy || starting ? 200 : 503, {
-      success: pipeline.healthy || starting,
-      status: starting ? 'starting' : pipeline.healthy ? 'ok' : 'degraded',
-      pipeline: {
-        healthy: pipeline.healthy,
-        last_success_age_seconds: pipeline.ageSeconds,
-        interval_seconds: heartbeat?.interval_seconds ?? null,
-        last_failure: pipeline.lastFailure || null,
-        // The two ways to be unhealthy read the same in `healthy: false` and
-        // call for different fixes: one is a pipeline that stopped, the other a
-        // pipeline that never began. Named here so the operator does not have to
-        // infer it from a null age.
-        never_started: neverStarted,
-        process_uptime_seconds: uptimeSeconds,
-        note: pipeline.healthy
-          ? null
-          : neverStarted
-            ? `No heartbeat has been recorded in ${uptimeSeconds}s of uptime, more than two ${driverIntervalSeconds()}s intervals. The periodic driver has not completed a cycle since this process started.`
-            : 'The pipeline has not completed a cycle recently. Nothing below has been refreshed since the last one that did.',
-      },
-      // One version, from package.json. The UI used to hardcode it in two HTML
-      // files and one translation file and it drifted behind the package, so a
-      // panel asking "which build is this?" would have been told the wrong one.
-      // Read once at startup and fail loudly if it cannot be read, rather than
-      // reporting a version we made up.
-      version: APP_VERSION,
-      updated_at: data.updated_at,
-      counts: counts(data),
-      sources: publicSourceCatalog().map((source) => source.id),
-      exclusions: ['gdelt'],
-      storage: { mode: store.mode || 'custom' },
-      // The auth posture, on the one route an operator can reach without a
-      // token. It used to live only on `/api/v1/auth-info`, which needs a token
-      // to read — so the person asking "is this deployment secured?" was the one
-      // person who could not find out. The answer is a boolean, a public-path
-      // list, and nothing about who holds what.
-      auth: {
-        configured: isAuthConfigured(),
-        // `false` here means every route except the public list is closed to
-        // everyone, which is a working deployment. It does *not* mean the
-        // deployment is unsecured — that is `configured: false`.
-        enforced: isAuthConfigured(),
-        public_paths: publicPaths(),
-      },
-    })
-    return
-  }
 
   // ENH-60. The source-catalogue family, extracted to `src/routes/catalogue.js`:
   // the source list, the connector registry, and the connector gate status. All

@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 741-line function with 28
+generated from, and ENH-60's dispatcher is still one 561-line function with 29
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1087,15 +1087,15 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Twenty-eight families are out; the dispatcher is not
+> **PARTIAL — 2026-10-12. Twenty-nine families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 741 lines and `server.js` 5,603 →
-> 2,331. (The count is *matchers*, not files: 27 modules under `src/routes/`, one
+> set of blocks. The dispatcher went 1,903 → 561 lines and `server.js` 5,603 →
+> 2,150. (The count is *matchers*, not files: 28 modules under `src/routes/`, one
 > of which — `alerting.js` — carries two, `matchAlertingRoute` and the
-> non-exported `matchTriggeringRoute`. The 27 recorded here before this entry was
-> the file count, so it read one high for a day — the same off-by-one the
-> 17-conditions figure had.)
+> non-exported `matchTriggeringRoute`. An earlier version of this line recorded
+> the file count as the matcher count, so it read one high for a day — the same
+> off-by-one the 17-conditions figure had.)
 > ENH-80 added the eighteenth family (`src/routes/federation.js`, 7 paths) and
 > moved the line count up rather than down: that family is new surface, not an
 > extraction. ENH-60 then took the **hazard-risk family**
@@ -1232,15 +1232,14 @@ testable in isolation. This unblocks every other substrate item.
 > would hide the one row that matters. Canaried: planting that filter fails the
 > test with `a failed event was filtered out of the outbox listing`.
 >
-> What is left is not more of the same. The dispatcher still holds **9 inline
-> literal route conditions** (measured from the dispatcher's own line range — the
-> 17 previously recorded here does not reproduce against the file), and they are
-> one-off routes whose bodies *are* the
-> business logic: `demo/seed`, `maintenance/apply-retention`, the
-> `events` read, the
-> `assessments` roll-up, and the liveness pair (`ready`, `health`) plus the two
-> `auth-info` answers — one on the authenticated path and one on the 401 path,
-> which is a different route that happens to share a path. A tenth literal,
+> What is left is not more of the same. The dispatcher still holds **6 inline
+> literal route conditions** — seven occurrences, because `auth-info` is written
+> twice, once on the authenticated path and once on the 401 path, and those are
+> two different routes that happen to share a path. (Measured from the
+> dispatcher's own line range; the 17 previously recorded here does not
+> reproduce against the file.) They are one-off routes whose bodies *are* the
+> business logic: `demo/seed`, `maintenance/apply-retention`, the `events` read,
+> and the `assessments` roll-up. A seventh literal,
 > `/api/v1/rapidpro/field-report`, is an auth precondition rather than a route:
 > it buffers the body and verifies the HMAC, then falls through to the family.
 >
@@ -1257,6 +1256,39 @@ testable in isolation. This unblocks every other substrate item.
 > `test/dispatch-shadow.test.js` guards the class — no family matcher's path may
 > also be an inline dispatcher literal — because the set comparison in
 > `check-openapi.mjs` cannot see a path served twice.
+>
+> **The liveness pair came out next, on 2026-10-12, and it is a family by the
+> dispatcher's own words.** `/health` ("is this process running") and `/ready`
+> ("can it serve a request right now") sat 200 lines apart in the function, on
+> opposite sides of the store read — and the comments at each already stated that
+> they are one question asked at two depths. The move is 205 lines into
+> `src/routes/liveness.js` (11 tests), and it kept the property that made the
+> split load-bearing: the dispatcher's read is passed as a **thunk**, so `/ready`
+> still never materialises the store. Passing `data` directly instead put the
+> binding in its own temporal dead zone for an undeclared verb, which answered
+> **500** where the contract says the verb is not offered — caught by
+> `check-route-methods`, which is the gate that exists for exactly this. Both
+> halves are asserted: a verb guard before any work, and a test that the
+> readiness probe triggers zero whole-store reads.
+>
+> The move had a cost the extraction pattern had not paid before, and it is the
+> finding of this unit. Two guards derived "every path the server serves" from
+> `src/server.js` **alone** — `test/sw-bootstrap-assets.test.js`, which checks
+> that every `NEVER_CACHED` entry is a route the server actually serves, and
+> `test/route-scope-coverage.test.js`, which asserts the health route still
+> reports the auth posture. The moment `/api/v1/health` moved into the module,
+> both went blind and reported the route as missing. Neither was wrong about its
+> subject: the route moved, its contract did not. The first is the dangerous
+> direction — it demanded deleting a *correct* entry from `NEVER_CACHED`, which
+> would let an offline operator read a cached "healthy", the exact defect that
+> list exists for. Register entry **VER-19**.
+>
+> Fixed by extracting the derivation rather than patching two readers:
+> `scripts/route-surface.mjs` now owns the three-family parser and reads
+> `src/routes/` by directory, so a family extracted tomorrow is covered without
+> an edit. `check-openapi.mjs` went 338 → 101 lines with **byte-identical**
+> output. Canaried by renaming the matcher's literal: `check-openapi` exits 1
+> naming the missing route and the service-worker guard fails 1 of 15.
 >
 > **`ingest/run` came off that list on 2026-10-12, and its removal corrects the
 > paragraph it left.** The entry above said extracting the remainder is "a move

@@ -195,9 +195,10 @@ describe('a family route is not shadowed by an inline dispatcher block', () => {
     }
 
     // The canary-in-reverse: a scan that parses nothing passes every assertion
-    // below it. The dispatcher carries eleven literals today; a regex that
-    // stopped matching would make this file green forever.
-    assert.ok(inline.size >= 8, `parsed ${inline.size} inline literals in src/server.js:${start}..${end}, which is not the dispatcher`)
+    // below it. The dispatcher carries six literals today — the extraction has
+    // been taking them out one family at a time — so the floor is the count the
+    // scan must at least find for the regex to be working, not a target.
+    assert.ok(inline.size >= 4, `parsed ${inline.size} inline literals in src/server.js:${start}..${end}, which is not the dispatcher`)
 
     const families = familyPaths()
     assert.ok(families.size >= 40, `parsed ${families.size} family paths, which is not the route surface`)

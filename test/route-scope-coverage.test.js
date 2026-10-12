@@ -31,9 +31,22 @@ import { describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { READ_SCOPES, WRITE_SCOPES, ROUTE_SCOPES, DENIED_SCOPE, scopeForRoute } from '../src/auth.js'
+import { routeSources } from '../scripts/route-surface.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const SERVER = fs.readFileSync(path.join(ROOT, 'src', 'server.js'), 'utf8')
+
+/**
+ * The whole route surface as one string: `src/server.js` plus every module under
+ * `src/routes/`, from the shared derivation in `scripts/route-surface.mjs`.
+ *
+ * This was `src/server.js` alone until 2026-10-12. ENH-60 moved the liveness
+ * pair into `src/routes/liveness.js` and the posture assertions below — which
+ * read source text on purpose, because the thing compared is a list of string
+ * literals in the same language — stopped finding `/api/v1/health` and
+ * `public_paths: publicPaths()`. The route moved; the route's *answers* did not.
+ * Reading the surface rather than one file is what keeps that distinction.
+ */
+const SURFACE = routeSources(ROOT).map((s) => s.text).join('\n')
 
 const SPEC = fs.readFileSync(path.join(ROOT, 'docs', 'openapi.yaml'), 'utf8')
 
@@ -220,8 +233,8 @@ describe('the operator can see the posture without holding a token', () => {
     // this deployment secured?" lived on a route that requires being already
     // secured. `test/auth-deny-by-default.test.js` asserts the health route
     // reports it; this records why that assertion exists.
-    assert.ok(SERVER.includes('/api/v1/health'), 'the health route is still the public one')
-    assert.ok(SERVER.includes('public_paths: publicPaths()'), 'and it now names the public paths')
-    assert.ok(SERVER.includes('configured: isAuthConfigured()'))
+    assert.ok(SURFACE.includes('/api/v1/health'), 'the health route is still the public one')
+    assert.ok(SURFACE.includes('public_paths: publicPaths()'), 'and it now names the public paths')
+    assert.ok(SURFACE.includes('configured: isAuthConfigured()'))
   })
 })

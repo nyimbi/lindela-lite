@@ -1028,6 +1028,72 @@ one tested implementation and it is the one nobody is calling.
 
 ---
 
+### VER-19 — MEDIUM — extracting a route family blinded two guards that read the surface from one file
+
+**Found 2026-10-12**, by the full suite failing immediately after ENH-60 moved
+the liveness pair out of `src/server.js` into `src/routes/liveness.js`. Two
+tests, in different files, for different reasons:
+
+| Guard | Assertion | What it saw |
+|---|---|---|
+| `test/sw-bootstrap-assets.test.js` | every `NEVER_CACHED` entry is a route the server serves | `/api/v1/health` is in `NEVER_CACHED` but the server serves no such route |
+| `test/route-scope-coverage.test.js` | the health route still reports the auth posture | `SERVER.includes('/api/v1/health')` → false |
+
+Neither is a product defect and neither test was wrong about its subject. Both
+derived "every path the server serves" from `src/server.js` alone:
+
+```js
+const ROUTED_PATHS = new Set(
+  [...read('src/server.js').matchAll(/(?:url\.|route\.)?pathname\s*===\s*'([^']+)'/g)].map((m) => m[1]),
+)
+```
+
+The route moved; its contract did not. The first guard reported a **live** entry
+as a dead one, which is the false-negative direction: the fix it demands is to
+delete a correct entry from `NEVER_CACHED`, and deleting it would let an offline
+operator read a cached "healthy" — the exact defect that list was created for
+(`check-offline-roundtrip.mjs` found it with the server genuinely stopped).
+
+`check-openapi.mjs` had already met this class and solved it: ARC-01's extraction
+of the export family made it report five live paths as *ghosts*, so its header
+now reads "the surface is every module under `src/routes/` plus `src/server.js`,
+read by directory rather than by a list — a list is a second place to forget."
+The lesson was written down and two other readers did not inherit it.
+
+**Fixed 2026-10-12** by extracting the derivation rather than patching the two
+readers. `scripts/route-surface.mjs` now owns the three-family parser
+(literal `pathname ===`, inline `.match()` in the dispatcher body, and named
+`match*Route` matchers), reads `src/routes/` by directory, and exports
+`servedRoutePaths(root)` and `pathLiterals(root)`. `check-openapi.mjs` went
+338 → 101 lines and its output is **byte-identical** to before the change —
+`diff` of the two runs is empty, 174 documented paths, 174 served routes parsed.
+The two blinded guards now import the shared derivation.
+
+Canaried both readers against a planted defect: renaming the matcher's literal
+to `/api/v1/helth-typo` made `check-openapi.mjs` exit 1 naming
+`/api/v1/health` as missing and `sw-bootstrap-assets.test.js` fail 1 of 15.
+Reverted from a file backup (`cp /tmp/liveness.bak src/routes/liveness.js`), not
+`git checkout`.
+
+**Not fixed, recorded:** `scripts/collect-route-manifests.mjs:42` reads
+`src/server.js` alone for the same purpose. It is a manual generator, not a gate
+(absent from `run-gates.mjs`), and its consumer `src/route-manifests.js` is
+verified behaviourally by `test/route-manifests.test.js` against a live server —
+so its blindness is latent rather than live. It should read `routeSources()` too
+the next time it is run; a generator whose output a behavioural test checks is
+one regeneration away from being wrong, not wrong now.
+
+The rule: **a guard scoped to a file goes blind when the surface moves, and goes
+blind silently.** This is the checker-side twin of VER-18 — there the dispatcher
+answered a path the family also served; here the checkers looked where the route
+used to be. Both follow from the same property of an extraction: it moves the
+truth without moving the readers. When a family moves, grep every guard for the
+*shape* of its discovery (`read('src/server.js')`, `iterdir`, `glob('*/`) rather
+than for the old path string, which appears nowhere in a walk that builds paths
+from a directory listing.
+
+---
+
 ### ARC-02 — HIGH — Five parallel route tables, no single source of truth
 
 `src/server.js` (68 conditions + 16 helpers), `src/route-manifests.js` (183 entries),

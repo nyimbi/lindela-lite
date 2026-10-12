@@ -25,26 +25,34 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 
+import { pathLiterals } from '../scripts/route-surface.mjs'
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC = path.join(ROOT, 'public')
 const read = (rel) => readFileSync(path.join(ROOT, rel), 'utf8')
 
 /**
- * Every path the server serves, as `check-openapi.mjs` parses it: literal
- * `pathname === '…'` conditions, inline `.match(/…/)` in the dispatcher, and
- * the named `match*Route` helpers. Read from `src/server.js` rather than from
- * the OpenAPI document, because the document is a second hand-maintained list
- * and the question here is what the *server* answers.
+ * Every path the server serves, from the shared derivation in
+ * `scripts/route-surface.mjs` — literal `pathname === '…'` conditions, inline
+ * `.match(/…/)` in the dispatcher, and the named `match*Route` helpers, read
+ * across every file the surface can live in rather than from `src/server.js`
+ * alone. Read from the source rather than from the OpenAPI document, because the
+ * document is a second hand-maintained list and the question here is what the
+ * *server* answers.
  *
- * The one route family this cannot reconstruct is a matcher that builds its
- * paths from a map (`matchHistoryRoute`'s `const routes = {…}`), which is why
- * the assertion below is a membership test against a set that may be
- * incomplete — it can fail a dead entry, and it will not falsely pass one.
+ * This read `src/server.js` alone until 2026-10-12, when ENH-60 moved the
+ * liveness pair into `src/routes/liveness.js` and this set stopped containing
+ * `/api/v1/health` — the test then reported a live entry as a dead one. A
+ * checker scoped to a file goes blind the moment the surface moves; scoped to
+ * the surface, it does not.
+ *
+ * The one route family the full parser reconstructs that a literal scan does not
+ * is a matcher that builds its paths from a map (`matchHistoryRoute`'s `const
+ * routes = {…}`), which is why the assertion below is a membership test against
+ * a set that may be incomplete — it can fail a dead entry, and it will not
+ * falsely pass one.
  */
-const ROUTED_PATHS = new Set(
-  [...read('src/server.js').matchAll(/(?:url\.|route\.)?pathname\s*===\s*'([^']+)'/g)]
-    .map((m) => m[1]),
-)
+const ROUTED_PATHS = pathLiterals(ROOT)
 
 function allFiles(dir = PUBLIC, acc = []) {
   for (const entry of readdirSync(dir)) {
