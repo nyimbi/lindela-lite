@@ -966,6 +966,7 @@ serves the collection, the family serves the by-id read.
 
 ---
 
+### ARC-02 — HIGH — Five parallel route tables, no single source of truth
 
 `src/server.js` (68 conditions + 16 helpers), `src/route-manifests.js` (183 entries),
 `docs/openapi.yaml` (150 paths), `src/auth.js:431` scopes (91 entries), and the
