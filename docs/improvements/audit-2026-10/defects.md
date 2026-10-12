@@ -981,7 +981,7 @@ What remains is ENH-59 itself: five tables still exist, and a route still
 touches several files. They now cannot disagree *silently* in the ways above,
 which is a different property from having one source.
 
-**Seven more families out, 2026-10-12, six of them extractions.** ENH-80 added
+**Eight more families out, 2026-10-12, seven of them extractions.** ENH-80 added
 `src/routes/federation.js` (7 paths) as new surface rather than an extraction.
 ENH-60 then took the **hazard-risk family** out into `src/routes/risk.js` — 6
 paths, 9 blocks, 146 lines: the two marginal rankings, the joint compound score,
@@ -995,14 +995,24 @@ the **upload family** into `src/routes/upload.js` — 2 routes on one path,
 the vocabulary, the catalogue, one version, and the publish that adds one — and
 the **compute family** into `src/routes/compute.js` — 4 routes: the four that run
 a model over the request's own arguments, whose matcher is deliberately
-asymmetric because two of them answer a wrong verb with a 405 rather than a 404.
-The dispatcher is 863 lines and `server.js` 2,509, from 1,903 and 5,603 at the start.
+asymmetric because two of them answer a wrong verb with a 405 rather than a 404 —
+and the **catalogue family** into `src/routes/catalogue.js` — 3 routes that join a
+static catalogue against run history, where the shared failure is that a
+catalogue is never empty, so an empty history answers 200 with a full-looking
+list and the row to be afraid of is one that reads healthy because nothing was
+ever recorded. That move also settled a real inconsistency: `connectors` and
+`connectors/status` computed "the latest run" two different ways, and the first
+used `new Date(completed_at).getTime()`, which is `NaN` for a run still in
+flight — and `NaN` compares equal to everything, so a running run sorted
+unpredictably against finished ones. Both now share one helper.
+The dispatcher is 795 lines and `server.js` 2,384, from 1,903 and 5,603 at the start.
 `check-openapi` reads all six new families as third-family route sources with no
 second list to keep in step — `parsed matchRiskRoute → handleRiskRoute: 6 paths`,
 `parsed matchDistrictRoute → handleDistrictRoute: 5 paths`, `parsed
 matchAmbientRoute → handleAmbientRoute: 3 paths`, `parsed matchUploadRoute →
 handleUploadRoute: 1 paths`, `parsed matchFormsRoute → handleFormsRoute: 3 paths`
-and `parsed matchComputeRoute → handleComputeRoute: 4 paths`, still 174
+`parsed matchComputeRoute → handleComputeRoute: 4 paths` and
+`parsed matchCatalogueRoute → handleCatalogueRoute: 3 paths`, still 174
 documented and 174 served — which is the property the entry
 above established and the reason none of the extractions needed a table edit at
 all.
@@ -1053,10 +1063,18 @@ existed for the risk group and nothing else; both the `./districts.js` and
 `./equity.js` import lines, whose five symbols the district family now reaches
 through its own module; three more with the ambient move (`open-meteo-forecast.js`,
 `discharge-bands.js`, `weather-bands.js`); and three with the upload move
-(`upload.js`'s three symbols, which the family now imports itself). A stale
+(`upload.js`'s three symbols, which the family now imports itself); and four with
+the catalogue move (`ingestionStatus`, the `GATE_ENV` table, `registryPath`, and
+the registry cache itself, whose only two readers are now in the new module). A stale
 duplicate of the "route planning requires a POST body" comment sat between two
 of the risk blocks describing a route handled a hundred lines below; it is gone.
-**17 inline literal conditions remain** and the consolidation is still ENH-59's.
+**14 inline literal route conditions remain inside the dispatcher** (15 in
+`server.js`; the extra one is the `/metrics` alias, which is handled above
+dispatch). The sources/connectors group left with the family itself. The count
+was previously recorded as 17, which no reading of the file reproduces — the
+grep showed 18 before this move — so the figure here is the one measured from the
+dispatcher's own line range rather than carried forward. The consolidation is
+still ENH-59's.
 
 ### ARC-03 — HIGH — `/api/v1/demo/seed` imports `scripts/seed-demo.mjs` at request time
 `src/server.js:1269`. Production `src/` depends on `scripts/` — inverted layering.

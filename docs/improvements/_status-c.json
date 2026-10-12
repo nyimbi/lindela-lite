@@ -56,11 +56,11 @@
       "id": "ENH-19",
       "title": "Map → chart → record drill-down, with a `/explain` endpoint",
       "status": "shipped",
-      "detail": "No `/api/v1/explain/:kind/:id` route exists — the route table in `src/server.js` has no matching path. A map click opens `openDetailDialog` (`public/app.js:3781`), which renders the record's own fields as a flat `<dl>` — no time series, no underlying records, no per-term coefficient breakdown. The adjacent evidence defect did get fixed: `calibrationReport` is now routed from `/api/v1/assessments` (`src/server.js:1276`), but that is the calibration metadata, not the equation endpoint.",
+      "detail": "No `/api/v1/explain/:kind/:id` route exists — the route table in `src/server.js` has no matching path. A map click opens `openDetailDialog` (`public/app.js:3781`), which renders the record's own fields as a flat `<dl>` — no time series, no underlying records, no per-term coefficient breakdown. The adjacent evidence defect did get fixed: `calibrationReport` is now routed from `/api/v1/assessments` (`src/server.js:1807`), but that is the calibration metadata, not the equation endpoint.",
       "evidence": [
         "public/app.js:3781",
         "public/app.js:3786",
-        "src/server.js:1276",
+        "src/routes/provenance.js:54",
         "src/analytics.js:258"
       ],
       "guarded_by": "test/viz-explain.test.js",

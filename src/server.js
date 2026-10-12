@@ -13,7 +13,6 @@ import { logger, metrics, metricsOverflow, timer, runWithRequestId, uptimeStats 
 import { refreshAnalytics, calibrationReport } from './analytics.js'
 import { evaluateAlertRules } from './alerts.js'
 import {
-  ingestionStatus,
   runDueIngestionSchedules,
   runIngestion,
 } from './ingestion.js'
@@ -52,6 +51,7 @@ import { matchUploadRoute, handleUploadRoute } from './routes/upload.js'
 import { matchFormsRoute, handleFormsRoute } from './routes/forms.js'
 import { matchComputeRoute, handleComputeRoute } from './routes/compute.js'
 import { runFederationSync } from './federation-peers.js'
+import { matchCatalogueRoute, handleCatalogueRoute } from './routes/catalogue.js'
 import { matchScenarioRoute, handleScenarioRoute } from './routes/scenarios.js'
 import { matchIngestionRoute, handleIngestionRoute } from './routes/ingestion.js'
 import { matchRapidProRoute, handleRapidProRoute } from './routes/rapidpro.js'
@@ -67,23 +67,6 @@ import { auditRollup, auditChainWarning } from './audit-chain.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
 const docsDir = path.resolve(__dirname, '../docs')
-const registryPath = path.resolve(__dirname, '../connectors.registry.json')
-
-/**
- * Env gate per connector id, for `GET /api/v1/connectors/status`.
- *
- * Only the three field-system connectors are gated; everything else runs
- * unconditionally, and is reported as enabled rather than being given an
- * invented flag an operator could set and be ignored. A gate listed here but not
- * honoured by the connector would be worse than no gate — it would report
- * "enabled" over a source that then refuses to run — so this table is kept next
- * to the gates it mirrors rather than derived from them.
- */
-const GATE_ENV = Object.freeze({
-  dhis2: 'LINDELA_LITE_DHIS2_ENABLED',
-  kobo: 'LINDELA_LITE_KOBO_ENABLED',
-  iot: 'LINDELA_LITE_IOT_ENABLED',
-})
 
 /**
  * QUA-01. The store a bare `createServer()` resolves, memoised per process.
@@ -1467,36 +1450,17 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/sources') {
-    const health = ingestionStatus(data)
-    jsonResponse(res, 200, {
-      success: true,
-      data: publicSourceCatalog().map((source) => ({
-        ...source,
-        last_run: data.source_runs.find((run) => run.source === source.id) || null,
-        health: health.find((item) => item.source === source.id)?.status || 'unknown',
-        schedule: health.find((item) => item.source === source.id)?.schedule || null,
-      })),
-    })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/connectors') {
-    const registry = await getConnectorRegistry()
-    const sourceRuns = data.source_runs || []
-    const withStatus = registry.map((connector) => {
-      const lastRun = sourceRuns
-        .filter((run) => run.source === connector.id)
-        .sort((a, b) => new Date(b.completed_at).getTime() - new Date(a.completed_at).getTime())[0]
-      return {
-        ...connector,
-        last_run: lastRun || null,
-        status: lastRun?.status || 'unknown',
-      }
-    })
-    jsonResponse(res, 200, { success: true, data: withStatus })
-    return
-  }
+  // ENH-60. The source-catalogue family, extracted to `src/routes/catalogue.js`:
+  // the source list, the connector registry, and the connector gate status. All
+  // three join a static catalogue against `source_runs`, and all three resolve
+  // absence to a named state rather than to a healthy-looking default.
+  //
+  // The third route's block sat far below this one, in the connector-status
+  // position. The family is dispatched in two places rather than moved, so the
+  // order the dispatcher tries its routes in is unchanged.
+  const catalogueRoute = matchCatalogueRoute(url.pathname, req.method)
+  if (catalogueRoute && catalogueRoute.kind !== 'connectors-status'
+    && await handleCatalogueRoute(catalogueRoute, { data, req, res, url, jsonResponse })) return
 
   // ARC-01. The webhook-subscription family, extracted to `src/routes/webhooks.js`.
   const webhookRoute = matchWebhookRoute(url.pathname)
@@ -1808,61 +1772,12 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     data, req, res, url, jsonResponse, store,
   })) return
 
-  // Which connectors this deployment can actually run, and why not.
-  //
-  // The vision claims the platform works from field systems — school attendance,
-  // sensor readings, survey responses. An operator looking at a dashboard built
-  // on those claims needs to know which of them are switched on, because a panel
-  // quietly full of zeroes is indistinguishable from a panel fed by nothing.
-  //
-  // `enabled` is decided by the gate the connector itself uses, read from the
-  // registry rather than hardcoded here — a gate declared in two places is a
-  // gate that will be updated in one. Where a connector has no gate it is
-  // reported as always-on rather than given an invented flag name.
-  if (req.method === 'GET' && url.pathname === '/api/v1/connectors/status') {
-    const registry = await getConnectorRegistry()
-    const entries = Array.isArray(registry) ? registry : []
-    const runs = data.source_runs || []
-    const rows = entries.map((connector) => {
-      const gateVar = GATE_ENV[connector.id] || null
-      const enabled = gateVar ? process.env[gateVar] === 'on' : true
-      // The most recent run for THIS connector, not the most recent run overall.
-      // Attributing the newest run's status to every connector would report a
-      // working DHIS2 as broken because the weather source failed afterwards.
-      const lastRun = runs
-        .filter((run) => run.source === connector.id)
-        .sort((a, b) => String(b.completed_at || b.started_at || '').localeCompare(String(a.completed_at || a.started_at || '')))[0] || null
-      return {
-        id: connector.id,
-        description: connector.description || '',
-        gate: gateVar,
-        enabled,
-        // A gated-off connector is a deliberate choice by an operator, so it says
-        // what to set rather than just reporting false.
-        reason: enabled ? null : `set ${gateVar}=on and provide its credentials to enable this source`,
-        output: connector.schemas?.output || [],
-        last_run: lastRun ? {
-          id: lastRun.id,
-          status: lastRun.status,
-          completed_at: lastRun.completed_at || null,
-          records: lastRun.records ?? null,
-          error: lastRun.error || null,
-        } : null,
-      }
-    })
-    // `count`, not `total`: the registry is a fixed catalogue read from disk, so
-    // there is no second page and no limit to report against. `total` beside an
-    // array with no `returned`/`limit`/`has_more` is a paging envelope missing
-    // four of its five keys, which reads as truncation. The bounded-catalogue
-    // routes in this file all say `count` for the same reason.
-    jsonResponse(res, 200, {
-      success: true,
-      count: rows.length,
-      enabled: rows.filter((r) => r.enabled).length,
-      data: rows,
-    })
-    return
-  }
+  // ENH-60. The third catalogue route. `connectors/status` sits here rather than
+  // with its two siblings above because this is where its block was; the family
+  // is dispatched in two places so the order the dispatcher tries its routes in
+  // is unchanged.
+  if (catalogueRoute?.kind === 'connectors-status'
+    && await handleCatalogueRoute(catalogueRoute, { data, req, res, url, jsonResponse })) return
 
   // Field outcomes: the confirmations a responder sends with `DONE`. Served from
   // here rather than from handleRapidProRoute because the path is not under
@@ -2414,46 +2329,6 @@ function hasTraversalSegment(rawUrl) {
   } catch {
     return true
   }
-}
-
-/**
- * QUA-01. The connector registry, memoised per server.
- *
- * `connectors.registry.json` is the same file for every server in a process, so
- * the *content* is genuinely process-wide — but the cache was a module global
- * holding a promise-shaped answer, and it cached the failure too: a transient
- * read error, or a file that was not there yet during a deploy, set
- * `connectorRegistry = []` permanently and every later request was told the
- * deployment has no connectors. The catch is a fallback, not a measurement, and
- * caching it turned a one-off miss into the process's answer.
- *
- * So the memo holds only a successful read. A failure returns the empty list to
- * this caller and leaves the cache empty for the next one. `registryFile` is
- * injectable so a test can point at its own fixture without writing into the
- * repository root.
- */
-function createConnectorRegistryCache(registryFile = registryPath) {
-  let cached = null
-  return async function getConnectorRegistry() {
-    if (cached) return cached
-    try {
-      cached = JSON.parse(await fs.readFile(registryFile, 'utf8'))
-    } catch (error) {
-      logger.warn('connector_registry_unreadable', {
-        message: 'the connector registry could not be read; this request sees no connectors, and the next one retries',
-        path: registryFile,
-        err: { message: error?.message },
-      })
-      return []
-    }
-    return cached
-  }
-}
-
-const processConnectorRegistry = createConnectorRegistryCache()
-
-async function getConnectorRegistry() {
-  return processConnectorRegistry()
 }
 
 function getDefaultStore() {

@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 863-line function with 26
+generated from, and ENH-60's dispatcher is still one 795-line function with 27
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1090,8 +1090,8 @@ testable in isolation. This unblocks every other substrate item.
 > **PARTIAL — 2026-10-12. Twenty-six families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 863 lines and `server.js` 5,603 →
-> 2,509.
+> set of blocks. The dispatcher went 1,903 → 795 lines and `server.js` 5,603 →
+> 2,384.
 > ENH-80 added the eighteenth family (`src/routes/federation.js`, 7 paths) and
 > moved the line count up rather than down: that family is new surface, not an
 > extraction. ENH-60 then took the **hazard-risk family**
@@ -1127,6 +1127,38 @@ testable in isolation. This unblocks every other substrate item.
 > move records rather than fixes, because deduplicating it would touch the CHW
 > family in the same commit and a move that also refactors is a move nobody can
 > review.
+>
+> The **catalogue family** (`src/routes/catalogue.js`, 3 routes) followed: the
+> source list, the connector registry, and the connector gate status. All three
+> join a *static* catalogue — the source list compiled into `schema.js`, the
+> connector list read from `connectors.registry.json` — against the *dynamic*
+> run history in `source_runs`, and they are one family because they share the
+> failure mode that shape produces: a catalogue is never empty, so a route that
+> joins one against an empty history answers `200` with a full-looking list. The
+> answer to be afraid of is not an error, it is a row that reads healthy because
+> nothing was ever recorded. Every route here therefore resolves absence to a
+> named state rather than to a default that looks like success — `never_run` for
+> a source with no run, `unknown` for a connector with none, `enabled: false`
+> with the variable to set for one that is gated off.
+>
+> The move also settled a small inconsistency between two routes that had been
+> computing "the latest run" two different ways. `connectors` used
+> `new Date(b.completed_at).getTime()`, which is `NaN` for a run still in
+> flight — and `NaN` compares equal to everything, so a running run sorted
+> unpredictably against finished ones instead of last. Both routes now share one
+> `latestRunFor` helper that falls back to `started_at`, which is also what makes
+> the per-connector attribution assertable. The family is dispatched in *two*
+> places, not one: `connectors/status` sat far below its siblings in the
+> dispatcher, and moving it up to join them would have reordered dispatch. The
+> matcher takes the method, so a write verb falls through to the surface's own
+> `404` rather than becoming this family's refusal — verified live.
+>
+> `getConnectorRegistry` and its `GATE_ENV` table moved with the family, along
+> with `registryPath`: both routes that read the registry are in the new module
+> and nothing outside it does, so the module-level memo now lives where its only
+> reader is. Four orphans left `server.js` — the `ingestionStatus` import, the
+> `GATE_ENV` table, `registryPath`, and the registry cache. The dispatcher went
+> 863 → 795 lines and `server.js` 2,509 → 2,384.
 >
 > The **compute family** (`src/routes/compute.js`, 4 routes) closed the day's
 > extractions: the four routes that run a model over the request's own
@@ -1181,11 +1213,16 @@ testable in isolation. This unblocks every other substrate item.
 > matchComputeRoute → handleComputeRoute: 4 paths`, still 174 documented and 174
 > served.
 >
-> What is left is not more of the same. The dispatcher still holds **17 inline
-> literal route conditions**, and they are one-off routes whose bodies *are* the
-> business logic: `demo/seed`, `maintenance/apply-retention`, `service-assets`,
-> the sources/connectors/outbox group, and the liveness pair remain. Extracting
-> those is a move only
+> What is left is not more of the same. The dispatcher still holds **14 inline
+> literal route conditions** (measured from the dispatcher's own line range — the
+> 17 previously recorded here does not reproduce against the file), and they are
+> one-off routes whose bodies *are* the
+> business logic: `demo/seed`, `maintenance/apply-retention`, the two
+> `service-assets` verbs, the outbox pair, `ingest/run`, the `events` read, the
+> `assessments` roll-up, and the liveness pair (`ready`, `health`) plus the two
+> `auth-info` answers — one on the authenticated path and one on the 401 path,
+> which is a different route that happens to share a path. Extracting those is a
+> move only
 > after ENH-59 has a route table to declare them in — otherwise it is relocating
 > branches and calling it architecture. The ~15-module target is reached when the
 > literal conditions are declarations.
