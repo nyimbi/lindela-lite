@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 561-line function with 29
+generated from, and ENH-60's dispatcher is still one 543-line function with 30
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1087,11 +1087,11 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Twenty-nine families are out; the dispatcher is not
+> **PARTIAL — 2026-10-12. Thirty families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 561 lines and `server.js` 5,603 →
-> 2,150. (The count is *matchers*, not files: 28 modules under `src/routes/`, one
+> set of blocks. The dispatcher went 1,903 → 543 lines and `server.js` 5,603 →
+> 2,133. (The count is *matchers*, not files: 29 modules under `src/routes/`, one
 > of which — `alerting.js` — carries two, `matchAlertingRoute` and the
 > non-exported `matchTriggeringRoute`. An earlier version of this line recorded
 > the file count as the matcher count, so it read one high for a day — the same
@@ -1232,16 +1232,14 @@ testable in isolation. This unblocks every other substrate item.
 > would hide the one row that matters. Canaried: planting that filter fails the
 > test with `a failed event was filtered out of the outbox listing`.
 >
-> What is left is not more of the same. The dispatcher still holds **6 inline
-> literal route conditions** — seven occurrences, because `auth-info` is written
-> twice, once on the authenticated path and once on the 401 path, and those are
-> two different routes that happen to share a path. (Measured from the
-> dispatcher's own line range; the 17 previously recorded here does not
-> reproduce against the file.) They are one-off routes whose bodies *are* the
-> business logic: `demo/seed`, `maintenance/apply-retention`, the `events` read,
-> and the `assessments` roll-up. A seventh literal,
-> `/api/v1/rapidpro/field-report`, is an auth precondition rather than a route:
-> it buffers the body and verifies the HMAC, then falls through to the family.
+> What is left is not more of the same. The dispatcher still holds **5 inline
+> literal route conditions** (measured from the dispatcher's own line range; the
+> 17 previously recorded here does not reproduce against the file). They are
+> one-off routes whose bodies *are* the business logic: `demo/seed`,
+> `maintenance/apply-retention`, the `events` read, and the `assessments`
+> roll-up. A sixth literal, `/api/v1/rapidpro/field-report`, is an auth
+> precondition rather than a route: it buffers the body and verifies the HMAC,
+> then falls through to the family.
 >
 > **`service-assets` came off that list on 2026-10-12, and it was not a
 > candidate — it was a live defect.** The list above named "the two
@@ -1289,6 +1287,28 @@ testable in isolation. This unblocks every other substrate item.
 > an edit. `check-openapi.mjs` went 338 → 101 lines with **byte-identical**
 > output. Canaried by renaming the matcher's literal: `check-openapi` exits 1
 > naming the missing route and the service-worker guard fails 1 of 15.
+>
+> **The auth-info family came out on 2026-10-12, and it is the VER-18 shape in
+> its purest form: one path, written twice.** `GET /api/v1/auth-info` was
+> answered from two places in the dispatcher — on the 401 path, so a console
+> with no key can learn it needs one, and on the authenticated path, where the
+> caller's identity is known. Two copies of one response is exactly what VER-18
+> recorded, and here the two copies agreed only by coincidence: the 401-path
+> copy hardcoded `auth_configured: true`, which happens to be what
+> `isAuthConfigured()` returns inside the branch guarding it. Agreement by
+> coincidence is not a contract, so the family is **one handler called at both
+> points**, with `auth` null at the first. The two answers are now one
+> expression rather than two that currently match.
+>
+> It qualifies as a family by the same test `ingest/run` did — *is there a
+> family for it to be the missing member of* — and the answer is that the two
+> copies are the same route at two depths of one question. `src/routes/
+> auth-info.js` is 62 lines; the dispatcher went 561 → 543 and `server.js` 2,150
+> → 2,133, with `publicReadsOpen` orphaned from the `server.js` import as the
+> move's only casualty. Canaried by dropping the identity from the handler: two
+> tests fail, one in the module's own file and one in `auth-bootstrap`, which is
+> the pair that proves both call sites go through the handler rather than one
+> through each.
 >
 > **`ingest/run` came off that list on 2026-10-12, and its removal corrects the
 > paragraph it left.** The entry above said extracting the remainder is "a move

@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, isPublicRequest, publicReadsOpen } from './auth.js'
+import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, isPublicRequest } from './auth.js'
 import { corsResponseHeaders, isPreflight, preflightResponse } from './cors.js'
 import { ERROR_CODES } from './errors.js'
 import { logger, metrics, timer, runWithRequestId } from './observability.js'
@@ -33,6 +33,7 @@ import { emit, emitMany, dispatchPending } from './outbox.js'
 import { createVintageIndex } from './vintage.js'
 import { matchExportRoute, handleExportRoute } from './routes/exports.js'
 import { matchLivenessRoute, handleLivenessRoute } from './routes/liveness.js'
+import { matchAuthInfoRoute, handleAuthInfoRoute } from './routes/auth-info.js'
 import { matchTilePackRoute, handleTilePackRoute } from './routes/tile-packs.js'
 import { matchKpiRoute, handleKpiRoute } from './routes/kpi.js'
 import { matchFieldSignalRoute, handleFieldSignalRoute } from './routes/field-signals.js'
@@ -1086,20 +1087,11 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
         // what `auth_configured` would report.
         //
         // Identity is still returned only for a caller who presented a token;
-        // without one the response is nulls and the flag.
-        if (req.method === 'GET' && url.pathname === '/api/v1/auth-info') {
-          jsonResponse(res, 200, {
-            success: true,
-            data: {
-              subject: null,
-              scopes: [],
-              partner_org: null,
-              auth_configured: true,
-              anonymous_reads: publicReadsOpen(),
-            },
-          })
-          return
-        }
+        // without one the response is nulls and the flag. `auth` is null here,
+        // which is what makes this the anonymous answer — the same handler as
+        // the authenticated path below, so the two cannot drift.
+        const authInfoRoute = matchAuthInfoRoute(url.pathname, req.method)
+        if (authInfoRoute && handleAuthInfoRoute(authInfoRoute, { auth: null, res, jsonResponse })) return
         jsonResponse(res, 401, { success: false, error: 'Unauthorized' })
         return
       }
@@ -1248,26 +1240,17 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     data, req, res, url, jsonResponse, store,
   })) return
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/auth-info') {
-    // What this token is, as the server understands it. The partner portal
-    // rendered its organisation from localStorage — a value the user typed,
-    // never checked against anything — so the interface showed an isolation
-    // that the server had no opinion about.
-    jsonResponse(res, 200, {
-      success: true,
-      data: {
-        subject: auth?.subject || null,
-        scopes: auth?.scopes || [],
-        partner_org: auth?.partner_org || null,
-        auth_configured: isAuthConfigured(),
-        // Whether anonymous visitors can read the console's data surface.
-        // The banner gate uses this to distinguish "paste a token to see
-        // anything" from "browse freely; a token only unlocks writes".
-        anonymous_reads: publicReadsOpen(),
-      },
-    })
-    return
-  }
+  // ENH-60. The auth-info family, extracted to `src/routes/auth-info.js`. One
+  // path answered from two places — here, and on the 401 path above — which is
+  // the shape VER-18 recorded. The two copies agreed by coincidence; they are
+  // now one handler, called at both points with `auth` null at the first.
+  //
+  // The partner portal rendered its organisation from localStorage — a value
+  // the user typed, never checked against anything — so the interface showed an
+  // isolation that the server had no opinion about. This is the route that
+  // answers it from the server's side.
+  const authInfoRoute = matchAuthInfoRoute(url.pathname, req.method)
+  if (authInfoRoute && handleAuthInfoRoute(authInfoRoute, { auth, res, jsonResponse })) return
 
 
   // ENH-60. The source-catalogue family, extracted to `src/routes/catalogue.js`:
