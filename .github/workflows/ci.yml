@@ -229,7 +229,18 @@ jobs:
         run: |
           google-chrome --headless --disable-gpu --no-sandbox \
             --remote-debugging-port=9222 --user-data-dir="$RUNNER_TEMP/cdp" about:blank &
-          npx --yes wait-on@9.5.1 http://127.0.0.1:9222/json/version --timeout 60000
+          # `http-get://`, not `http://`. `wait-on` defaults to a HEAD request for
+          # an `http://` target, and Chrome's DevTools endpoint answers HEAD by
+          # closing the connection mid-response — axios reports `Parse Error:
+          # Expected HTTP/, RTSP/ or ICE/` and the wait times out against a
+          # Chrome that is up and listening. This step failed exactly that way on
+          # the first run that ever executed it (run 38287359750): the log shows
+          # `DevTools listening on ws://127.0.0.1:9222/...` two lines above
+          # `Timed out waiting for: http://127.0.0.1:9222/json/version`, and the
+          # seven browser gates were skipped behind it. A plain GET on the same
+          # URL returns 200 with 427 bytes of JSON. Do not "simplify" this back
+          # to `http://`.
+          npx --yes wait-on@9.5.1 "http-get://127.0.0.1:9222/json/version" --timeout 60000
       - name: Run every gate that needs a browser
         # `RUNNER_TEMP` redirects `audit-a11y`'s two tracked findings files out
         # of the checkout, so the job measures without dirtying the tree.

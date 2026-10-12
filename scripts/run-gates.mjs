@@ -333,7 +333,10 @@ if (needsServer) {
   console.error('  npx --yes wait-on http://127.0.0.1:4177/api/v1/health --timeout 60000')
   console.error('  google-chrome --headless --disable-gpu --no-sandbox \\')
   console.error('    --remote-debugging-port=9222 --user-data-dir="$RUNNER_TEMP/cdp" about:blank &')
-  console.error('  npx --yes wait-on http://127.0.0.1:9222/json/version --timeout 60000')
+  // `http-get://` for the DevTools endpoint: Chrome answers a HEAD there by
+  // closing the connection mid-response, so `wait-on`'s default HEAD probe times
+  // out against a Chrome that is up. See the same note in `.github/workflows/ci.yml`.
+  console.error('  npx --yes wait-on "http-get://127.0.0.1:9222/json/version" --timeout 60000')
   console.error('')
 }
 
