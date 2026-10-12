@@ -39,14 +39,14 @@
 
 import {
   BUILTIN_FORMS, CHW_SYMPTOM_FORM, FIELD_TYPES, INVALID, applicableFields, coerce,
-  fieldHook, isRelevant, isVersion, renderField, renderForm, validateAnswers,
-  validateFormDefinition,
+  fieldHook, isRelevant, isVersion, readField, renderField, renderForm,
+  validateAnswers, validateFormDefinition,
 } from '../public/shared/forms.js'
 
 export {
   BUILTIN_FORMS, CHW_SYMPTOM_FORM, FIELD_TYPES, INVALID, applicableFields, coerce,
-  fieldHook, isRelevant, isVersion, renderField, renderForm, validateAnswers,
-  validateFormDefinition,
+  fieldHook, isRelevant, isVersion, readField, renderField, renderForm,
+  validateAnswers, validateFormDefinition,
 }
 
 /**

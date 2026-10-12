@@ -64,6 +64,7 @@ function makeElement(tag = 'div', id = '') {
 		disabled: false,
 		classes: new Set(),
 		children: [],
+		parentNode: null,
 		listeners: {},
 		classList: {
 			add(...c) { for (const x of c) el.classes.add(x) },
@@ -74,18 +75,77 @@ function makeElement(tag = 'div', id = '') {
 		setAttribute(k, v) { el.attrs[k] = String(v) },
 		getAttribute: (k) => (k in el.attrs ? el.attrs[k] : null),
 		hasAttribute: (k) => k in el.attrs,
-		appendChild(child) { el.children.push(child); return child },
-		append(...c) { el.children.push(...c) },
+		get firstChild() { return el.children[0] ?? null },
+		get className() { return [...el.classes].join(' ') },
+		set className(value) {
+			el.classes.clear()
+			for (const name of String(value).split(/\s+/).filter(Boolean)) el.classes.add(name)
+		},
+		appendChild(child) {
+			if (child && child.parentNode && child.parentNode !== el) {
+				const at = child.parentNode.children.indexOf(child)
+				if (at !== -1) child.parentNode.children.splice(at, 1)
+			}
+			if (child) child.parentNode = el
+			el.children.push(child)
+			return child
+		},
+		append(...c) { for (const child of c) el.appendChild(child) },
+		insertBefore(child, before) {
+			const at = el.children.indexOf(before)
+			if (child) child.parentNode = el
+			if (at === -1) el.children.push(child)
+			else el.children.splice(at, 0, child)
+			return child
+		},
+		remove() {
+			if (el.parentNode) {
+				const at = el.parentNode.children.indexOf(el)
+				if (at !== -1) el.parentNode.children.splice(at, 1)
+			}
+		},
 		addEventListener(type, fn) { (el.listeners[type] ||= []).push(fn) },
 		removeEventListener() {},
 		focus() {},
 		scrollIntoView() {},
-		remove() {},
-		querySelector: () => null,
-		querySelectorAll: () => [],
+		querySelector: (sel) => el.querySelectorAll(sel)[0] ?? null,
+		querySelectorAll(sel) { return walk(el).filter((node) => matches(node, sel)) },
 		click(event = {}) { for (const fn of el.listeners.click || []) fn({ target: el, ...event }) },
 	}
 	return el
+}
+
+/** Every element at or beneath `el`, depth first. */
+function walk(el) {
+	const out = []
+	const visit = (node) => {
+		for (const child of node.children || []) {
+			if (!child || typeof child !== 'object' || !child.children) continue
+			out.push(child)
+			visit(child)
+		}
+	}
+	visit(el)
+	return out
+}
+
+/**
+ * A selector small enough to read and complete enough to be honest: the
+ * attribute forms the renderer and the reader use (`[hook]`, `[hook="v"]`,
+ * `[data-geopoint-part="latitude"]`), a class, and `#id`. The app's own
+ * `document.querySelectorAll` still handles the hand-written wizard's sweeps.
+ */
+function matches(node, sel) {
+	sel = sel.trim()
+	if (sel.startsWith('#')) return node.id === sel.slice(1)
+	if (sel.startsWith('.')) return node.classes.has(sel.slice(1))
+	const attr = /^\[([a-zA-Z0-9_-]+)(?:="([^"]*)")?\]$/.exec(sel)
+	if (attr) {
+		const [, name, value] = attr
+		if (!(name in node.attrs)) return false
+		return value === undefined || node.attrs[name] === value
+	}
+	return false
 }
 
 /**
@@ -124,8 +184,22 @@ async function bootChw({ geolocation = null, servedForm } = {}) {
 		return { name, el }
 	})
 
+	// ENH-38. The mount point a served definition is rendered into. The built-in
+	// screens are appended to it, the same as in the real markup, so the app's
+	// document-wide sweeps (`[data-symptom-who]`, `#severityChecklist …`) find
+	// them.
+	const wizardEl = makeElement('div', 'symptomWizard')
+	for (const { el } of screens) wizardEl.appendChild(el)
+	byId.set('symptomWizard', wizardEl)
+
 	const getById = (id) => {
-		if (!byId.has(id)) byId.set(id, makeElement('div', id))
+		if (byId.has(id)) return byId.get(id)
+		// A served definition's screens and buttons are created by the renderer,
+		// not by this stub, so an id the app assigned directly (`screen.id = …`)
+		// is found by walking what the renderer built.
+		const rendered = walk(wizardEl).find((node) => node.id === id)
+		if (rendered) { byId.set(id, rendered); return rendered }
+		byId.set(id, makeElement('div', id))
 		return byId.get(id)
 	}
 
@@ -160,15 +234,20 @@ async function bootChw({ geolocation = null, servedForm } = {}) {
 		getElementById: getById,
 		documentElement: makeElement('html'),
 		createElement: (tag) => makeElement(tag),
-		querySelector: () => null,
+		createTextNode: (text) => { const node = makeElement('#text'); node.textContent = String(text); return node },
+		querySelector: (sel) => documentStub.querySelectorAll(sel)[0] ?? null,
 		querySelectorAll(selector) {
 			const m = /^\[([a-z-]+)(?:="([^"]*)")?\]$/.exec(selector)
-			if (m) return byAttr(m[1], m[2])
+			if (m) {
+				const byAttribute = walk(wizardEl).filter((node) => matches(node, selector))
+				if (byAttribute.length) return byAttribute
+				return byAttr(m[1], m[2])
+			}
 			// The `.screen` sweep in showScreen.
-			if (selector === '.screen') return screens.map((s) => s.el)
+			if (selector === '.screen') return walk(wizardEl).filter((node) => node.classes.has('screen'))
 			// The i18n sweep in the runtime.
 			if (selector === '[data-i18n]' || selector === '[data-i18n-title]') return []
-			return []
+			return walk(wizardEl).filter((node) => matches(node, selector))
 		},
 	}
 
@@ -237,7 +316,7 @@ async function bootChw({ geolocation = null, servedForm } = {}) {
 	define('setInterval', () => 0)
 
 	await vm.runInContext(
-		`(async () => {${source}\nglobalThis.__chw = { state, showScreen, requestUserLocation, setHint, describeLocation, submitSymptomReport, renderStepProgress, SYMPTOM_STEPS, adoptableForm, loadServedForm, getActiveForm: () => activeForm }\n})()`,
+		`(async () => {${source}\nglobalThis.__chw = { state, showScreen, requestUserLocation, setHint, describeLocation, submitSymptomReport, renderStepProgress, SYMPTOM_STEPS: () => SYMPTOM_STEPS, adoptableForm, loadServedForm, readAnswers, usesBuiltinScreens, buildServed, getActiveForm: () => activeForm }\n})()`,
 		context,
 	)
 	await new Promise((r) => setTimeout(r, 20))
@@ -519,7 +598,7 @@ describe('CW-14 — a blocked control explains itself', () => {
 describe('HX-09 — the wizard names the step you are on', () => {
 	it('counts seven steps, and the dots agree with the count', async () => {
 		const app = await bootChw()
-		assert.equal(app.context.__chw.SYMPTOM_STEPS.length, 7)
+		assert.equal(app.context.__chw.SYMPTOM_STEPS().length, 7)
 		// Reproduced over CDP: the last screen drew five dots and the other four
 		// drew four, so the row could not be read as a position in anything.
 		const html = read('public/chw/index.html')
@@ -604,10 +683,11 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		assert.equal(body.form_version, 2, 'the wizard filed a version it did not render')
 	})
 
-	it('refuses a served version that asks a question this app cannot show', async () => {
-		// Adopting a definition with a field the static screens do not render
-		// would drop the new question silently and file a subset under a version
-		// number that claims the whole. Refusing is the honest failure.
+	it('renders a served version that asks a question the built-in does not have', async () => {
+		// The half ENH-38 was missing. The static screens could only draw the
+		// built-in's questions, so a served v2 that added one was refused. Now the
+		// wizard renders the definition: the new field gets a screen, and its
+		// answer reaches the submission keyed by its own name.
 		const servedForm = {
 			...forms.CHW_SYMPTOM_FORM,
 			version: 2,
@@ -616,10 +696,131 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		const app = await bootChw({ servedForm })
 		await wait(30)
 
+		assert.equal(app.context.__chw.getActiveForm().version, 2,
+			'the wizard did not adopt a served definition it can now render')
+		// The extra question has a screen of its own, drawn from the definition,
+		// and that screen carries an action button. Read the real DOM, not `el(id)`
+		// — that helper fabricates a missing element, so it cannot tell a rendered
+		// screen from an absent one.
+		const dom = app.context.document
+		const extra = dom.querySelectorAll('#muac_mmScreen')
+		assert.equal(extra.length, 1, 'the served question got no screen')
+		assert.ok(extra[0].querySelectorAll('.btn-primary').length >= 1,
+			'the served question got no way to advance')
+	})
+
+	it('files a served definition’s answers keyed by the definition’s own names', async () => {
+		// A rendered field whose answer is dropped is worse than one refused,
+		// because it files silently. So the submission built from a served
+		// definition must carry the new question under its own name.
+		const servedForm = {
+			...forms.CHW_SYMPTOM_FORM,
+			version: 2,
+			fields: [...forms.CHW_SYMPTOM_FORM.fields, { name: 'muac_mm', label: 'MUAC (mm)', type: 'integer' }],
+		}
+		const app = await bootChw({ servedForm })
+		await wait(30)
+
+		const { readAnswers } = app.context.__chw
+		// The extra question renders as an input the reader can reach. Answer it,
+		// then read: the answer must arrive keyed by the definition's own name.
+		const widget = app.context.document.querySelectorAll('[data-field-muac-mm]')[0]
+		assert.ok(widget, 'the served definition’s field was not rendered with a readable hook')
+		widget.value = '125'
+		// A multiselect is the field most easily dropped by a reader that handles
+		// only text inputs, and a dropped answer is worse than a refused one
+		// because it files silently. Tick two boxes and require both back.
+		const boxes = app.context.document.querySelectorAll('[data-field-danger-signs]')
+		assert.ok(boxes.length >= 2, 'the served definition’s multiselect was not rendered as checkboxes')
+		boxes[0].checked = true
+		boxes[1].checked = true
+		const answers = readAnswers(app.context.__chw.getActiveForm())
+		assert.equal(answers.muac_mm, '125', 'the served definition’s extra answer did not reach the answers object')
+		assert.deepEqual(answers.danger_signs, [boxes[0].getAttribute('data-field-danger-signs'), boxes[1].getAttribute('data-field-danger-signs')],
+			'a multiselect answer was dropped by the served-definition reader')
+		// And no key the definition does not declare can appear — the loop is over
+		// the definition, so the property holds by construction.
+		const declared = new Set(servedForm.fields.map((f) => f.name))
+		const undeclared = Object.keys(answers).filter((k) => !declared.has(k))
+		assert.deepEqual(undeclared, [], 'the served definition filed an answer to a question it does not ask')
+	})
+
+	it('keys the answers identically whether the built-in or a served v1 is active', async () => {
+		// The test that catches a silent drop. A served definition that asks the
+		// built-in's own questions must file an answer set with exactly those keys
+		// — no field invented, none lost.
+		const builtin = await bootChw()
+		await wait(30)
+		const served = await bootChw({ servedForm: { ...forms.CHW_SYMPTOM_FORM, version: 2 } })
+		await wait(30)
+
+		const a = builtin.context.__chw.readAnswers(builtin.context.__chw.getActiveForm())
+		const b = served.context.__chw.readAnswers(served.context.__chw.getActiveForm())
+		assert.deepEqual(Object.keys(a).sort(), Object.keys(b).sort(),
+			'the answer keys differ between the built-in and a served definition that asks the same questions')
+	})
+
+	it('submits a served definition’s answers through the real submission path', async () => {
+		// The readAnswers unit above proves the reader; this proves the wire. A
+		// served v2 with an extra question, answered and submitted, must file the
+		// extra answer under its own name — not a subset that files silently.
+		const servedForm = {
+			...forms.CHW_SYMPTOM_FORM,
+			version: 2,
+			fields: [...forms.CHW_SYMPTOM_FORM.fields, { name: 'muac_mm', label: 'MUAC (mm)', type: 'integer' }],
+		}
+		const app = await bootChw({ servedForm })
+		await wait(30)
+
+		const widget = app.context.document.querySelectorAll('[data-field-muac-mm]')[0]
+		widget.value = '125'
+		app.context.__chw.state.symptom = { ...app.context.__chw.state.symptom, who: 'self', type: 'fever', durationValue: 3, durationUnit: 'days' }
+		await app.context.__chw.submitSymptomReport()
+		await wait(40)
+
+		const body = JSON.parse(app.fetchCalls.find((c) => c.path === '/api/v1/chw/report').options.body)
+		assert.equal(body.form_version, 2)
+		assert.equal(body.answers.muac_mm, '125', 'the served question’s answer did not reach the submission')
+	})
+
+	it('renders the built-in with no fetch at all, when the form route is unreachable', async () => {
+		// The field app is offline-first. A health worker with no signal must still
+		// open the wizard, and the built-in is what lets it. `servedForm: null`
+		// makes the route 404; the wizard must still be usable.
+		const app = await bootChw({ servedForm: null })
+		await wait(30)
+		assert.equal(app.context.__chw.getActiveForm().version, 1)
+		// The wizard opens and advances on the built-in's own screens.
+		app.el('reportSymptomBtn').click()
+		await wait()
+		assert.ok(app.el('symptomScreen').classes.has('active'), 'the wizard did not open offline')
+		app.clickButton({ 'data-symptom-who': 'self' })
+		app.el('symptomNextBtn').click()
+		await wait()
+		assert.ok(app.el('symptomTypeScreen').classes.has('active'),
+			'the offline wizard did not advance on the built-in’s screens')
+	})
+
+	it('refuses a served version with a field type it cannot draw, naming the field', async () => {
+		// The wizard now renders any field, so the refusal is narrower — but it is
+		// not gone. A field whose *type* has no control (`image` renders as a text
+		// box whose answer the server would reject) is refused, with the field and
+		// its type named. Adopting it and drawing something wrong would file a
+		// silently broken answer, which is the failure the refusal exists to avoid.
+		const servedForm = {
+			...forms.CHW_SYMPTOM_FORM,
+			version: 2,
+			fields: [...forms.CHW_SYMPTOM_FORM.fields, { name: 'lesion_photo', label: 'Photo', type: 'image' }],
+		}
+		const app = await bootChw({ servedForm })
+		await wait(30)
+
 		assert.equal(app.context.__chw.getActiveForm().version, 1,
-			'the wizard adopted a definition it cannot render')
-		assert.match(app.context.__chw.state.formNotice, /muac_mm/,
-			'the refusal must name the question the app cannot show')
+			'the wizard adopted a definition whose field type it cannot draw')
+		assert.match(app.context.__chw.state.formNotice, /lesion_photo/,
+			'the refusal must name the field')
+		assert.match(app.context.__chw.state.formNotice, /image/,
+			'the refusal must name the type it cannot draw')
 	})
 
 	it('starts from the built-in when the form route cannot be reached', async () => {
@@ -631,7 +832,7 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		assert.equal(app.context.__chw.state.formNotice, null, 'a missing route is not a notice')
 	})
 
-	it('adoptableForm accepts the built-in and names what it cannot render', async () => {
+	it('adoptableForm accepts the built-in, a wider definition, and refuses an undrawable type', async () => {
 		const app = await bootChw()
 		const { adoptableForm } = app.context.__chw
 		const { form, reason } = adoptableForm(forms.CHW_SYMPTOM_FORM)
@@ -642,11 +843,21 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		assert.equal(bad.form, null)
 		assert.match(bad.reason, /version/)
 
-		const extra = adoptableForm({
+		// A field the built-in does not have is now adoptable — the renderer
+		// draws it, so refusing it would be refusing the capability this item is.
+		const wider = adoptableForm({
 			...forms.CHW_SYMPTOM_FORM, version: 2,
 			fields: [...forms.CHW_SYMPTOM_FORM.fields, { name: 'new_q', label: 'New', type: 'text' }],
 		})
-		assert.equal(extra.form, null)
-		assert.match(extra.reason, /new_q/)
+		assert.ok(wider.form, 'a definition with a renderable extra field was refused')
+
+		// A type the renderer has no control for is not.
+		const undrawable = adoptableForm({
+			...forms.CHW_SYMPTOM_FORM, version: 2,
+			fields: [...forms.CHW_SYMPTOM_FORM.fields, { name: 'shot', label: 'Photo', type: 'image' }],
+		})
+		assert.equal(undrawable.form, null)
+		assert.match(undrawable.reason, /shot/)
+		assert.match(undrawable.reason, /image/)
 	})
 })

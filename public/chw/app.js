@@ -2,7 +2,7 @@ import { initI18n, t, apiFetch, initOfflineBanner, initOfflineQueue, initService
 import { mountNavbar } from '/shared/navbar.js'
 import { esc as escapeHtml } from '/shared/fmt.js'
 import { ERROR, LOADING, QUEUED, createLoadSequence, describeActionFailure, describeState, distinguishFailure, staleReadNote } from '/shared/states.js'
-import { CHW_SYMPTOM_FORM, validateFormDefinition } from '/shared/forms.js'
+import { CHW_SYMPTOM_FORM, RENDERABLE_TYPES, fieldHook, renderForm, readField, validateFormDefinition } from '/shared/forms.js'
 mountNavbar({ activePath: '/chw' })
 
 /**
@@ -25,28 +25,143 @@ mountNavbar({ activePath: '/chw' })
 let activeForm = CHW_SYMPTOM_FORM
 
 /**
- * The fields the static wizard renders. The screens are hand-written markup, so
- * a served definition is adoptable only while it asks exactly these questions.
+ * A served definition the wizard has not seen before is rendered by
+ * `renderForm` — one screen per field, in order. This is the half ENH-38 was
+ * missing: the built-in's screens are hand-authored, so before this the wizard
+ * could only adopt a definition whose questions were a subset of theirs.
  *
- * A served version that adds a field is **not** adopted: the wizard would render
- * the questions it knows and silently drop the new one, filing an answer set the
- * definition marks required-and-missing — or worse, a record missing a question
- * the district added. Refusing to adopt is the honest failure: the wizard keeps
- * filling the version it can render, and `state.formNotice` says why, rather
- * than filing a subset under a version number that claims the whole.
+ * The built-in keeps its own screens and its own furniture (the geolocation
+ * buttons, the manual coordinate picker, the demographics selects, the step
+ * grouping). Those are not schema — they are the wizard — and rendering them
+ * from a definition is not a thing a definition can express. What *is* shared,
+ * and what makes the two paths one, is `readAnswers`: it reads the answers the
+ * active definition declares, by the same hooks `renderField` writes, whether
+ * the DOM in front of it was authored by hand or drawn from a definition.
  */
-const RENDERED_FIELDS = Object.freeze(CHW_SYMPTOM_FORM.fields.map((f) => f.name))
 
-/** Adopt a served definition, or return the reason it cannot be rendered. */
-function adoptableForm(definition, rendered = RENDERED_FIELDS) {
+/** Prepend the progress dots and the "Step n of m" counter a screen carries. */
+function appendStepChrome(screen) {
+  const dots = document.createElement('div')
+  dots.className = 'progress-dots'
+  dots.setAttribute('data-step', '0')
+  const counter = document.createElement('p')
+  counter.className = 'step-counter'
+  counter.setAttribute('data-step-counter', '')
+  screen.insertBefore(counter, screen.firstChild)
+  screen.insertBefore(dots, screen.firstChild)
+}
+
+/**
+ * Render a served definition into the wizard container, replacing the built-in's
+ * symptom screens. One screen per field, each with a Next/Back bar; the last
+ * submits.
+ */
+function buildServed(definition, container) {
+  for (const old of container.querySelectorAll('.screen')) old.remove()
+  const { screens } = renderForm(document, definition)
+  screens.forEach((screen, index) => {
+    const field = definition.fields[index]
+    // A select rendered as a button row has no handler of its own — `renderField`
+    // draws, it does not wire. Without this a served definition's choice buttons
+    // are dead, which is the difference between a question drawn and a question
+    // answerable.
+    if (field.type === 'select' && Array.isArray(field.options) && field.options.length <= 6) {
+      const hook = `[${fieldHook(field.name)}]`
+      for (const button of screen.querySelectorAll(hook)) {
+        button.addEventListener('click', () => {
+          for (const other of screen.querySelectorAll(hook)) other.classList.remove('selected')
+          button.classList.add('selected')
+        })
+      }
+    }
+    appendStepChrome(screen)
+    const last = index === screens.length - 1
+    const row = document.createElement('div')
+    row.className = 'action-buttons'
+    if (index > 0) {
+      const back = document.createElement('button')
+      back.id = `${definition.fields[index - 1].name}BackBtn`
+      back.textContent = 'Back'
+      back.addEventListener('click', () => showScreen(definition.fields[index - 1].name))
+      row.appendChild(back)
+    }
+    const next = document.createElement('button')
+    next.className = 'btn-primary'
+    next.id = last ? 'symptomSubmitBtn' : `${field.name}NextBtn`
+    next.textContent = last ? 'Submit' : 'Next'
+    next.addEventListener('click', last
+      ? () => submitSymptomReport()
+      : () => showScreen(definition.fields[index + 1].name))
+    row.appendChild(next)
+    screen.appendChild(row)
+    container.appendChild(screen)
+  })
+}
+
+/** The `{screen, label}` list the progress dots and the step counter read. */
+function stepsOf(definition) {
+  return definition.fields.map((f) => ({ screen: f.name, label: f.label || f.name }))
+}
+
+/**
+ * The built-in wizard's seven steps. The built-in groups several fields onto one
+ * screen, so its step list is its own — a served definition's is one step per
+ * field, which `setSteps` swaps in when one is adopted.
+ */
+const BUILTIN_STEPS = [
+  { screen: 'symptom', label: 'Who has this symptom?' },
+  { screen: 'symptomType', label: 'Which symptom?' },
+  { screen: 'symptomSeverity', label: 'Danger signs?' },
+  { screen: 'symptomDuration', label: 'How long has it been?' },
+  { screen: 'symptomLocation', label: 'Where is the person?' },
+  { screen: 'symptomExposure', label: 'Exposure and contact?' },
+  { screen: 'symptomAboutWho', label: 'About the patient' },
+]
+
+/**
+ * The wizard's live step order. `showScreen` and `renderStepProgress` both read
+ * this one list, so the dots, the counter and the announcement cannot drift —
+ * which is what HX-09 was.
+ */
+let SYMPTOM_STEPS = BUILTIN_STEPS
+let TOTAL_STEPS = SYMPTOM_STEPS.length
+
+function setSteps(definition) {
+  SYMPTOM_STEPS = usesBuiltinScreens(definition) ? BUILTIN_STEPS : stepsOf(definition)
+  TOTAL_STEPS = SYMPTOM_STEPS.length
+}
+
+/**
+ * Adopt a served definition, or return the reason it cannot be rendered.
+ *
+ * The refusal stays honest. The wizard can now draw any field, so what it refuses
+ * is narrower — but it is not gone: a field whose *type* the renderer has no
+ * control for (`image`) is refused with the field and its type named, rather than
+ * drawn as a text box whose answer the server would then reject. A definition
+ * that validates and whose every field type is renderable is adopted whole.
+ */
+function adoptableForm(definition) {
   const problems = validateFormDefinition(definition)
   if (problems.length) return { form: null, reason: problems.join('; ') }
-  const names = definition.fields.map((f) => f.name)
-  const unrendered = names.filter((name) => !rendered.includes(name))
-  if (unrendered.length) {
-    return { form: null, reason: `this deployment serves ${definition.id} v${definition.version}, which asks ${unrendered.join(', ')} — questions this app cannot show yet` }
+  const untyped = definition.fields
+    .filter((f) => !RENDERABLE_TYPES.includes(f.type))
+    .map((f) => `${f.name} (${f.type})`)
+  if (untyped.length) {
+    return { form: null, reason: `this deployment serves ${definition.id} v${definition.version}, which asks for ${untyped.join(', ')} — field types this app cannot draw yet` }
   }
   return { form: definition, reason: null }
+}
+
+/**
+ * Rebuild the symptom wizard from the active definition.
+ *
+ * The built-in's screens are the static markup `index.html` ships; a served
+ * definition is drawn from scratch. Only the served case rebuilds — the built-in
+ * must draw with no signal and with no work, and its screens already exist.
+ */
+function rebuildSymptomWizard() {
+  if (usesBuiltinScreens(activeForm)) return
+  buildServed(activeForm, $('symptomWizard'))
 }
 
 async function loadServedForm() {
@@ -63,6 +178,8 @@ async function loadServedForm() {
     }
     activeForm = form
     state.formNotice = null
+    setSteps(activeForm)
+    rebuildSymptomWizard()
   } catch {
     // Offline, or the route is gone. The built-in stands — this is the case the
     // field app exists for, and it is not an error worth showing.
@@ -77,29 +194,6 @@ const state = {
   incident: { category: null, description: null, location: null },
   anonymous: true,
 }
-
-/**
- * The symptom wizard is five screens, and it used to say so four times over.
- *
- * Every step carried the same `<h2>Report symptom</h2>`, so arriving anywhere
- * in the wizard looked identical to arriving at the first step, and the only
- * progress signal was a row of dots the health worker had to count — against
- * four dots on a wizard that has five screens. A dot row answers "how many";
- * the screen a person has just arrived at needs to say "which one".
- *
- * So each step names itself, and the counter is rendered from this one list so
- * the dots and the count cannot drift apart again.
- */
-const SYMPTOM_STEPS = [
-  { screen: 'symptom', label: 'Who has this symptom?' },
-  { screen: 'symptomType', label: 'Which symptom?' },
-  { screen: 'symptomSeverity', label: 'Danger signs?' },
-  { screen: 'symptomDuration', label: 'How long has it been?' },
-  { screen: 'symptomLocation', label: 'Where is the person?' },
-  { screen: 'symptomExposure', label: 'Exposure and contact?' },
-  { screen: 'symptomAboutWho', label: 'About the patient' },
-]
-const TOTAL_STEPS = SYMPTOM_STEPS.length
 
 /** What each refusal says. A control that will not move owes a sentence. */
 const HINTS = {
@@ -784,6 +878,68 @@ function setupSymptomAboutWhoScreen() {
   $('symptomAboutWhoBackBtn').addEventListener('click', () => showScreen('symptomLocation'))
 }
 
+/**
+ * Whether a definition asks exactly the questions the built-in's screens draw.
+ *
+ * The built-in's screens are hand-authored (they are the offline shell, and the
+ * audit and browser gates read their markup), so a served definition that asks
+ * the same questions in the same order renders through them and files the served
+ * version — the "re-titled v1" case. A definition that asks anything different
+ * is rendered from scratch by `buildServed`, and its answers are read from the
+ * DOM. Keying on the field *set* rather than the form id is what stops a served
+ * v2 with an extra question from being filed against the built-in's screens with
+ * the new answer silently dropped.
+ */
+function usesBuiltinScreens(definition) {
+  const builtin = CHW_SYMPTOM_FORM.fields.map((f) => f.name)
+  const names = definition.fields.map((f) => f.name)
+  return names.length === builtin.length && names.every((name, i) => name === builtin[i])
+}
+
+/**
+ * The answers the built-in wizard's own handlers collect, keyed by the field
+ * names `CHW_SYMPTOM_FORM` declares. This is the mapping that has always fed the
+ * submission; it is used only when the active definition asks exactly these
+ * questions, so no answer it carries can be a question the version does not.
+ */
+function builtinAnswers(symptom) {
+  return {
+    who: symptom.who,
+    symptom: symptom.type,
+    duration_value: symptom.durationValue,
+    duration_unit: symptom.durationUnit,
+    danger_signs: symptom.severity?.dangerSigns || [],
+    danger_signs_other: symptom.severity?.otherText || undefined,
+    contact_sick: symptom.exposure?.contactSick ?? undefined,
+    contact_dead: symptom.exposure?.contactDead ?? undefined,
+    vaccination: symptom.exposure?.vaccinationStatus ?? undefined,
+    water_source: symptom.exposure?.waterSource ?? undefined,
+    location: symptom.location ?? undefined,
+  }
+}
+
+/**
+ * Read every answer the active definition declares.
+ *
+ * The point of this function is that the `answers` object is keyed by the
+ * definition's own field names whichever definition is active. A definition that
+ * asks the built-in's questions is read from the wizard's state (its screens are
+ * the built-in's); any other is read from the DOM through `readField`, which
+ * reads exactly the widgets `renderField` drew. A field with no answer
+ * contributes nothing, and `validateAnswers` treats that as absence rather than
+ * as a dropped value; a field the definition does not declare cannot appear,
+ * because the loop is over the definition.
+ */
+function readAnswers(definition) {
+  if (usesBuiltinScreens(definition)) return builtinAnswers(state.symptom)
+  const answers = {}
+  for (const field of definition.fields) {
+    const value = readField(document, field)
+    if (value !== undefined) answers[field.name] = value
+  }
+  return answers
+}
+
 async function submitSymptomReport() {
   const unit = state.symptom.durationUnit || 'days'
   const count = state.symptom.durationValue
@@ -809,19 +965,14 @@ async function submitSymptomReport() {
     // rather than silently filing under a version it guessed.
     form_id: activeForm.id,
     form_version: activeForm.version,
-    answers: {
-      who: state.symptom.who,
-      symptom: state.symptom.type,
-      duration_value: count,
-      duration_unit: unit,
-      danger_signs: state.symptom.severity?.dangerSigns || [],
-      danger_signs_other: state.symptom.severity?.otherText || undefined,
-      contact_sick: state.symptom.exposure?.contactSick ?? undefined,
-      contact_dead: state.symptom.exposure?.contactDead ?? undefined,
-      vaccination: state.symptom.exposure?.vaccinationStatus ?? undefined,
-      water_source: state.symptom.exposure?.waterSource ?? undefined,
-      location: state.symptom.location ?? undefined,
-    },
+    // CAP-01/ENH-38. The answers keyed by the field names the active definition
+    // declares. Read from the DOM by the definition's own field list, so a
+    // served v2's extra question is filed with the built-in's, and the answers
+    // the server validates against are the answers the wizard drew. A definition
+    // that names a field with no widget contributes nothing, which is absence
+    // rather than a dropped value — the wizard never adopts a definition whose
+    // field types it cannot render.
+    answers: readAnswers(activeForm),
     description: `${state.symptom.who} with ${state.symptom.type} for ${count} ${unit}`,
     // Duration as fields, not only as a sentence. `duration_days` and
     // `duration_hours` are what a triage query can filter on; the description

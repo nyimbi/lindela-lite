@@ -520,6 +520,13 @@
       </div>
 
       <!-- Symptom report screen -->
+      <!-- Symptom report screens. The wrapper is the mount point for a served
+           definition: the built-in's screens below are what draws with no
+           signal, and when the deployment serves a version this app has not
+           seen, ENH-38's renderer replaces the wrapper's contents with screens
+           drawn from that definition. The wrapper holds only .screen children,
+           so replacing them is the whole of the swap. -->
+      <div id="symptomWizard">
       <div id="symptomScreen" class="screen">
         <div class="progress-dots" data-step="1"></div>
         <p class="step-counter" data-step-counter></p>
@@ -720,6 +727,7 @@
           <button id="symptomAboutWhoBackBtn" data-i18n="chw.back">Back</button>
           <button class="btn-primary" id="symptomSubmitBtn" data-i18n="chw.submit">Submit</button>
         </div>
+      </div>
       </div>
 
       <!-- Incident report screen -->

@@ -29,6 +29,21 @@ export const FIELD_TYPES = Object.freeze([
   'select', 'multiselect', 'boolean', 'geopoint', 'image',
 ])
 
+/**
+ * The field types `renderField` can draw an answer for.
+ *
+ * A subset of `FIELD_TYPES`, and the reason it is a separate declaration: a
+ * type a definition may *declare* is not the same as a type this renderer can
+ * *collect*. `image` validates and is offered — the incident screen has a file
+ * input — but the registry has no camera control, so a definition asking for one
+ * would render as a text box whose string the server then refuses. The gap is
+ * named here rather than closed by rendering something wrong.
+ */
+export const RENDERABLE_TYPES = Object.freeze([
+  'text', 'textarea', 'number', 'integer', 'date', 'datetime',
+  'select', 'multiselect', 'boolean', 'geopoint',
+])
+
 /** A field name is a slug, so it is a safe key in an answers object. */
 const NAME_SHAPE = /^[a-z][a-z0-9_]*$/
 
@@ -255,6 +270,25 @@ export function renderField(doc, field, { selected } = {}) {
     return group
   }
 
+  if (field.type === 'select') {
+    // More options than a button row can carry. This used to fall through to the
+    // text input below, which is a select whose values are not its options —
+    // exactly what `validateAnswers` refuses server-side, so the client would
+    // collect an answer the server always rejects. A dropdown is the honest
+    // shape: the options are the options.
+    const select = doc.createElement('select')
+    select.setAttribute(fieldHook(field.name), field.name)
+    for (const option of field.options || []) {
+      const opt = doc.createElement('option')
+      opt.value = option
+      opt.textContent = option
+      select.appendChild(opt)
+    }
+    if (selected !== undefined && selected !== null) select.value = String(selected)
+    group.appendChild(select)
+    return group
+  }
+
   if (field.type === 'multiselect') {
     for (const option of field.options || []) {
       const label = doc.createElement('label')
@@ -269,12 +303,93 @@ export function renderField(doc, field, { selected } = {}) {
     return group
   }
 
+  if (field.type === 'boolean') {
+    // A checkbox, not a text input. A text input collects the string "false",
+    // which is truthy, so every respondent would read as a yes — the same
+    // defect `test/forms.test.js` pins for the coercion.
+    const label = doc.createElement('label')
+    const input = doc.createElement('input')
+    input.type = 'checkbox'
+    input.setAttribute(fieldHook(field.name), field.name)
+    if (selected === true) input.checked = true
+    label.appendChild(input)
+    label.appendChild(doc.createTextNode(field.label || 'Yes'))
+    group.appendChild(label)
+    return group
+  }
+
+  if (field.type === 'geopoint') {
+    // Two number inputs, one hook carrying a JSON `{latitude, longitude}`. The
+    // wizard's location screen draws this by hand; a definition that asks for a
+    // coordinate gets the same shape, and `readField` reads it back the same way.
+    for (const [part, label] of [['latitude', 'Latitude'], ['longitude', 'Longitude']]) {
+      const wrap = doc.createElement('div')
+      const caption = doc.createElement('label')
+      caption.textContent = label
+      const input = doc.createElement('input')
+      input.type = 'number'
+      input.setAttribute('data-geopoint-part', part)
+      if (selected && Number.isFinite(Number(selected[part]))) input.value = String(selected[part])
+      wrap.appendChild(caption)
+      wrap.appendChild(input)
+      group.appendChild(wrap)
+    }
+    const holder = doc.createElement('input')
+    holder.type = 'hidden'
+    holder.setAttribute(fieldHook(field.name), field.name)
+    group.appendChild(holder)
+    return group
+  }
+
   const input = doc.createElement(field.type === 'textarea' ? 'textarea' : 'input')
-  if (field.type !== 'textarea') input.type = field.type === 'number' || field.type === 'integer' ? 'number' : 'text'
+  if (field.type !== 'textarea') {
+    input.type = field.type === 'number' || field.type === 'integer' ? 'number'
+      : field.type === 'date' ? 'date'
+        : field.type === 'datetime' ? 'datetime-local'
+          : 'text'
+  }
   input.setAttribute(fieldHook(field.name), field.name)
   if (selected !== undefined && selected !== null) input.value = String(selected)
   group.appendChild(input)
   return group
+}
+
+/**
+ * Read back the answer a rendered field currently holds — the mirror of
+ * `renderField`.
+ *
+ * Paired with the renderer so the two cannot drift: a widget that draws one
+ * thing and a reader that collects another is how an answer is silently
+ * dropped, and a dropped answer is worse than a refused one because it files.
+ * Returns `undefined` for a question nobody answered, which `validateAnswers`
+ * treats as absence rather than as a value.
+ */
+export function readField(doc, field) {
+  const hook = fieldHook(field.name)
+  const widgets = [...doc.querySelectorAll(`[${hook}]`)]
+  if (!widgets.length) return undefined
+  if (field.type === 'multiselect') {
+    return widgets.filter((el) => el.checked).map((el) => el.getAttribute(hook))
+  }
+  if (field.type === 'boolean') return Boolean(widgets[0].checked)
+  if (field.type === 'geopoint') {
+    const parts = [...doc.querySelectorAll('[data-geopoint-part]')]
+    const lat = Number(parts.find((el) => el.getAttribute('data-geopoint-part') === 'latitude')?.value)
+    const lon = Number(parts.find((el) => el.getAttribute('data-geopoint-part') === 'longitude')?.value)
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return undefined
+    // (0, 0) is in bounds and in the Gulf of Guinea. A report carrying it looks
+    // located to every downstream join while pointing at open water, so a pair
+    // that is both zero is absence, not a coordinate — the same guard the
+    // location screen and the server already apply.
+    if (lat === 0 && lon === 0) return undefined
+    return { latitude: lat, longitude: lon }
+  }
+  if (field.type === 'select') {
+    const chosen = widgets.find((el) => el.classList && el.classList.contains('selected'))
+    if (chosen) return chosen.getAttribute(hook)
+  }
+  const value = widgets[0].value
+  return value === '' || value === undefined ? undefined : value
 }
 
 /**

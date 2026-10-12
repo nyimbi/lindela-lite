@@ -28,14 +28,13 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 44 | 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
-| PARTIAL | 7 | 38, 42, 59, 60, 67, 71, 80 |
+| IMPLEMENTED | 45 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
+| PARTIAL | 6 | 42, 59, 60, 67, 71, 80 |
 | ABSENT | 0 | — |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, ENH-38's wizard files the served version but still renders its
-hand-written screens, ENH-67's replica split and budget have no caller, ENH-71's
+generated from, ENH-67's replica split and budget have no caller, ENH-71's
 disclosure model has no importer. Reading a PARTIAL as done is the error this
 table exists to prevent.
 
@@ -328,9 +327,9 @@ question without a redeploy.
 client. A district changes a question without a redeploy; the mobile app and the
 web wizard share one schema.
 
-**Shipped 2026-10-11, as the half the entry's harm was in.** The server substrate
-already existed (CAP-01: `src/forms.js`, `/api/v1/forms`, immutable versions). The
-gap was that the wizard never consumed it: it carried
+**Shipped 2026-10-11 and 2026-10-12, both halves.** The server substrate already
+existed (CAP-01: `src/forms.js`, `/api/v1/forms`, immutable versions). The gap was
+that the wizard never consumed it: it carried
 `const CHW_SYMPTOM_FORM_VERSION = 1` and filed version 1 forever. The server keeps
 every version immutable, so publishing v2 never broke v1 — the wizard went on
 asking the old question and stamping a version the district had moved past, and
@@ -350,11 +349,22 @@ nothing failed. What landed:
   would drop the new question silently and file a subset under a version number
   claiming the whole. `adoptableForm` refuses and `state.formNotice` names the
   question the app cannot show.
-- **What is not done.** The wizard still renders its hand-written screens; the
-  registry's `renderForm` exists and is tested but the field app does not call it
-  yet, so a district's v2 must stay within the questions the screens render to be
-  adopted. Full schema-driven rendering is the remaining half — it is what makes
-  *any* published definition renderable, not only a re-titled v1.
+- **The served definition is rendered, not re-titled.** The wizard now draws a
+  definition it has not seen: `renderForm` builds one screen per field, in order,
+  and `readAnswers` reads the answers back through the same `data-field-*` hooks
+  the renderer wrote, so a district's v2 that adds a question files that question
+  under its own name. `RENDERED_FIELDS` is no longer the capability — the
+  renderer is.
+- **The built-in still renders with no signal.** The field app is offline-first,
+  and its screens are still the hand-written markup `index.html` ships, drawn
+  before any fetch. A definition that asks exactly the built-in's questions
+  renders through those screens and files the served version; anything else is
+  drawn from scratch, so the offline path is unchanged rather than merely
+  preserved by a test.
+- **The refusal is narrower, not gone.** `adoptableForm` refuses a field whose
+  *type* the renderer has no control for — `image` would draw as a text box whose
+  answer the server rejects — and names the field and the type, rather than
+  adopting it and filing a silently broken answer.
 
 **ENH-39 — Conflict-free submission merge.** Each submission carries a UUID and the
 form version it was filled against. The server merges on that key, so two versions

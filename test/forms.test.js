@@ -225,18 +225,24 @@ describe('versioned form definitions (CAP-01)', () => {
       'a hard-coded version is back; it is the defect ENH-38 removed')
   })
 
-  it('names only declared fields in the answers the wizard sends', async () => {
-    // An answer key the definition does not declare is dropped by the server and
-    // reported as a problem — so a typo in the client's answers object is a 400
-    // on every report from the field, not a silently missing column.
+  it('keys the answers it sends by the active definition\'s own field names', async () => {
+    // ENH-38 changed how the answers object is built. It used to be a hand-typed
+    // literal, and the invariant was that every key in it was a declared field —
+    // a key the definition does not declare is dropped by the server and reported
+    // as a problem, so a typo was a 400 on every report from the field. The
+    // wizard now reads its answers from the DOM by the definition's own field
+    // list (`readAnswers`), so a key the version does not ask cannot be produced:
+    // the property holds by construction rather than by a literal kept in step by
+    // hand. What is asserted here is that construction.
     const src = await fs.readFile(new URL('../public/chw/app.js', import.meta.url), 'utf8')
-    const block = src.match(/answers: \{([\s\S]*?)\n    \},/)
-    assert.ok(block, 'the wizard no longer builds an answers object; CAP-01 has been undone')
-    const keys = [...block[1].matchAll(/^\s{6}([a-z_]+):/gm)].map((m) => m[1])
-    assert.ok(keys.length >= 8, `only ${keys.length} answer keys found: ${keys.join(', ')}`)
-    const declared = new Set(CHW_SYMPTOM_FORM.fields.map((f) => f.name))
-    const undeclared = keys.filter((k) => !declared.has(k))
-    assert.deepEqual(undeclared, [], 'the wizard sends answers to questions this version does not ask')
+    assert.match(src, /answers: readAnswers\(activeForm\)/,
+      'the wizard no longer builds its answers from the active definition')
+    assert.match(src, /function readAnswers\(definition\)/,
+      'the wizard has no schema-driven answer reader; the hand-typed literal is back')
+    // The reader iterates the definition's fields, not a fixed list.
+    const reader = src.slice(src.indexOf('function readAnswers('), src.indexOf('async function submitSymptomReport'))
+    assert.match(reader, /for \(const field of definition\.fields\)/,
+      'the answer reader does not walk the definition\'s fields')
   })
 
   it('declares every field type it validates, and no type it does not', () => {
