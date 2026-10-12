@@ -829,6 +829,19 @@ which is the right answer) and six 400s from pure-computation routes
 (`flood-depth`, `trigger-protocols`, `workflows`) whose mutation branches are all
 gated behind their own method tests and which never touch the store.
 
+**That "4 remaining" was wrong, and the way it was wrong is the point.** The
+sweep was re-run across the whole surface on 2026-10-12 and found **seven more**
+routes ignoring the verb, plus two working GETs the contract never declared. The
+first sweep had no predicate for a 5xx (see VER-17), and it read "405s and six
+400s" as the residue rather than checking each route's declared method against
+what it served. A sweep is a measurement of the predicate it carries, not of the
+class it names; "4 remaining" described the sweep's own question, not the
+surface. All seven take the method now — the reporting family's three by-id GETs
+and one PATCH had an action branch that ran before the `route.id` branch, so
+`GET /api/v1/reports/run-due`-shaped paths answered the by-id read — and the two
+GETs are declared in `docs/openapi.yaml`. The class now has a standing gate,
+`scripts/check-route-methods.mjs`, rather than a fourth hand sweep.
+
 ---
 
 ### VER-15 — HIGH — One field name, two periods; the flood and climate scores average a 15-minute reading with a daily total

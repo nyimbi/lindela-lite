@@ -127,6 +127,12 @@ const GATES = [
     why: 'QUA-06. Drives every route the OpenAPI spec documents against a real server and asserts the envelope invariants no test enforced everywhere: a boolean `success`, a `code` on every failure, and an array `data` that is either fully paginated or a named exception. Found `/api/v1/connectors/status` reporting a bare `total` and `/api/v1/road-access` unpaged on its first run. Binds an ephemeral port on 127.0.0.1 rather than :4177, so it needs nothing started.',
   },
   {
+    name: 'check-route-methods',
+    script: 'scripts/check-route-methods.mjs',
+    tier: 'self-contained',
+    why: 'VER-14 / VER-17. `check-openapi` compares paths and says so; `check-route-envelopes` drives only GET. So no gate owned the question "is a verb the contract does not declare refused?", and the same defect class was found three times by three hand sweeps — four read routes answering DELETE with 200 (VER-14), service-assets answering PATCH and DELETE with 500 (VER-17), and seven more routes plus two undeclared GETs when the sweep was finally run across the whole surface. This drives every verb against every documented path on an ephemeral port and requires an undeclared verb to be refused. `metrics` is the one method-agnostic path, named with its reason. Scoped to the undeclared verb only: an earlier draft also flagged declared 5xx and fired on four correct routes (`/health`’s documented 503, rapidpro’s unset-secret 503, the CAP renderer’s refusal), which is how a gate gets disabled. Carries eleven canaries, two of them the negative jurisdiction boundary.',
+  },
+  {
     name: 'check-module-coverage',
     script: 'scripts/check-module-coverage.mjs',
     tier: 'self-contained',

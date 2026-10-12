@@ -122,6 +122,7 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/outbox': Object.freeze(["events_outbox"]),
   'GET /api/v1/parametric-disbursements': Object.freeze(["parametric_disbursements"]),
   'GET /api/v1/parametric-rules': Object.freeze(["parametric_rules"]),
+  'GET /api/v1/parametric-rules/:id': Object.freeze(["parametric_rules"]),
   'GET /api/v1/rapidpro/escalations': Object.freeze(["rapidpro_dispatches", "rapidpro_inbound_messages"]),
   'GET /api/v1/rapidpro/inbound': Object.freeze(["rapidpro_inbound_messages"]),
   'GET /api/v1/rapidpro/response-metrics': Object.freeze(["rapidpro_dispatches", "rapidpro_inbound_messages"]),
@@ -164,6 +165,7 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/weather': Object.freeze(["weather_forecasts"]),
   'GET /api/v1/river-discharge': Object.freeze(["climate_observations"]),
   'GET /api/v1/webhooks': Object.freeze(["webhook_subscriptions"]),
+  'GET /api/v1/webhooks/:id': Object.freeze(["webhook_subscriptions"]),
   // ENH-80. The registry routes and the operator's status read are narrow: the
   // registry, plus the heartbeat the status route reads for the last exchange.
   // The two *peer-facing* routes are not here — they serve every syncable

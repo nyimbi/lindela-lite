@@ -163,7 +163,7 @@ async function handleReportTemplateRoute(store, data, req, res, url, route, json
     jsonResponse(res, 200, { success: true, ...collectionPage(data.report_templates, url.searchParams, { auth: req.__auth, data, collection: 'report_templates' }) })
     return
   }
-  if (req.method === 'GET' && route.id) {
+  if (req.method === 'GET' && route.id && !route.action) {
     const record = findVisible(data.report_templates, route.id)
     if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Report template not found' })
@@ -180,7 +180,7 @@ async function handleReportTemplateRoute(store, data, req, res, url, route, json
     jsonResponse(res, 201, { success: true, data: record, action_log: log })
     return
   }
-  if (req.method === 'PATCH' && route.id) {
+  if (req.method === 'PATCH' && route.id && !route.action) {
     const body = await readRequestJson(req)
     const existing = findVisible(data.report_templates, route.id)
     if (!existing) {
@@ -233,7 +233,7 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
     jsonResponse(res, 200, { success: true, ...collectionPage(data.reports, url.searchParams, { auth: req.__auth, data, collection: 'reports' }) })
     return
   }
-  if (req.method === 'GET' && route.id) {
+  if (req.method === 'GET' && route.id && !route.action) {
     const record = findVisible(data.reports, route.id)
     if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Report not found' })
@@ -450,7 +450,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route, { ch
     jsonResponse(res, 200, { success: true, ...collectionPage(data.report_schedules, url.searchParams, { auth: req.__auth, data, collection: 'report_schedules' }) })
     return
   }
-  if (req.method === 'GET' && route.id) {
+  if (req.method === 'GET' && route.id && !route.action) {
     const record = findVisible(data.report_schedules, route.id)
     if (!record) {
       jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })

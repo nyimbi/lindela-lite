@@ -460,6 +460,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/ListResponse'
   /api/v1/parametric-rules/{id}:
+    get:
+      summary: Get a parametric disbursement rule
+      description: >-
+        The rule in force, whole. It was served while the document declared only
+        the two write verbs, so a client reading the contract had no way to
+        fetch a rule by id — the collection listing was the only read it could
+        discover, and a rule referenced by a simulated disbursement could not be
+        resolved from the id that record carries.
+      operationId: getparametric-rules_id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: >-
+              Identifier of the parametric-rules record.
+      responses:
+        '200':
+          description: The rule
+        '404':
+          description: No such rule
     delete:
       summary: Remove a parametric disbursement rule
       description: >-
@@ -897,6 +919,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/ListResponse'
   /api/v1/webhooks/{id}:
+    get:
+      summary: Get a webhook subscription
+      description: >-
+        The subscription as stored, including the URL and the secret it signs
+        with — which is why the read goes through the same partner-organisation
+        predicate as the listing beside it. Served while the document declared
+        only `patch:`, so an operator could update a subscription they could not
+        read back.
+      operationId: getwebhooks_id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: >-
+              Identifier of the webhooks record.
+      responses:
+        '200':
+          description: The subscription
+        '404':
+          description: No such subscription
     patch:
       summary: Update a webhook subscription
       operationId: patchwebhooks_id
