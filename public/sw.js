@@ -601,12 +601,41 @@ function isCodeAsset(pathname) {
 }
 
 /**
+ * The cached document for a directory-shaped navigation.
+ *
+ * The precache is keyed by `ENTRY_PATHS` — `/chw/index.html` — because that is
+ * what the import graph reads references out of. A browser navigates to `/chw/`.
+ * `ignoreSearch` bridges a query string and nothing else, so on a *fresh*
+ * install the offline lookup for `/chw/?cold=1` found no entry, fell through to
+ * the JSON miss body, and the service worker served that body as the HTML
+ * document: a blank page reading `{"error":"unavailable-offline",…}` where the
+ * report wizard should be.
+ *
+ * It survived for as long as it did because the only machine that ran the drill
+ * had a warm profile: Chrome's HTTP cache held `/chw/` from an earlier online
+ * load, so the exact-match lookup hit and the precache was never consulted. The
+ * round-trip drill failed on the first cold profile it ever ran against — a
+ * first-time install, which is every real deployment — and reported it as "the
+ * shell rendered 291 chars with no wizard".
+ *
+ * Only for navigations, and only for a directory form: `/chw/app.js` must keep
+ * missing rather than be answered with the page, or a module fetch would return
+ * HTML and fail as a syntax error somewhere far from the cause.
+ */
+export function directoryEntry(cache, request) {
+	if (request.mode !== 'navigate') return Promise.resolve(undefined)
+	const url = new URL(request.url)
+	if (!url.pathname.endsWith('/')) return Promise.resolve(undefined)
+	return cache.match(new URL(`${url.pathname}index.html`, url.origin).toString())
+}
+
+/**
  * Network first for code, with the cache as the offline half.
  * The fetch carries cache: 'reload' so the revalidation cannot be answered
  * from the HTTP cache — the browser's max-age entry for a module would
  * otherwise be re-stored over and over as if it were fresh.
  */
-async function codeFirst(event, url) {
+export async function codeFirst(event, url) {
 	const cache = await caches.open(CACHE_NAME)
 	try {
 		const response = await fetch(event.request, { cache: 'reload' })
@@ -618,6 +647,7 @@ async function codeFirst(event, url) {
 	} catch {
 		const cached = await cache.match(event.request)
 			.then((hit) => hit || cache.match(event.request, { ignoreSearch: true }))
+			.then((hit) => hit || directoryEntry(cache, event.request))
 		if (cached) return cached
 		return new Response(JSON.stringify(offlineMissBody({ kind: 'static-miss', pathname: url.pathname })), {
 			status: 503,
