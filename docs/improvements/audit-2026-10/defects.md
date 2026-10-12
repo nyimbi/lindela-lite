@@ -1781,6 +1781,26 @@ The remaining files are counted by *call*, not by class, and most are legitimate
 reads a data file. Distinguishing markup-pinning from behaviour-asserting is the
 remaining work, and it is a judgement per file rather than a sweep.
 
+**`test/viz-uncertainty.test.js` converted 2026-10-12.** The row named it as the
+densest instance at 41, and it is now at **zero** `readFileSync` calls. The two
+assertions that were reading the module as a string were replaced by the claims
+they stood in for:
+
+  - `assert.match(source, /export const BAND_DISCLAIMER/)` — satisfied by the
+    export existing, and equally satisfied by a module that exports the
+    disclaimer and no longer *uses* it, which is the drift that matters. Now:
+    the caption a caller receives contains `BAND_DISCLAIMER`.
+  - `assert.ok(source.includes('viz-uncertainty: record claims calibrated_uncertainty: true'))`
+    — a log literal in a `throw`. Now: `assertSensitivity` is *called* and must
+    throw, naming the flag.
+
+Both were canaried by breaking the module, not the test: dropping
+`BAND_DISCLAIMER` from `bandCaption`'s parts failed the first with its own
+message, and making `assertSensitivity` return early failed the second. The
+count in this row's title (44) is by call and still counts the other files; it is
+left as stated rather than decremented by one, because a per-call count that
+moves by one per fix reports the count of calls, not the progress of the class.
+
 ### QUA-03 — HIGH — CLOSED — `public/app.js` cannot be imported; tested through a hand-rolled DOM stub
 `test/web-console.test.js` states it: it runs a boot sequence at import time. 6,324
 lines of console logic are exercised via `test/browser-env.mjs` stubs. No unit test

@@ -13,7 +13,6 @@
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { readFileSync } from 'node:fs'
 import {
   BAND_DISCLAIMER, assertSensitivity, bandCaption, bandOf, sensitivityBandChart,
   sensitivityRange, uncertaintyStyle,
@@ -329,10 +328,30 @@ describe('nothing in the module can be mistaken for the forbidden interval', () 
   })
 
   it('carries the disclaimer out of this module rather than restating it per caller', () => {
-    const source = readFileSync(new URL('../public/shared/viz-uncertainty.js', import.meta.url), 'utf8')
-    // The other modules call `bandCaption`; none of them re-derives the wording.
-    assert.match(source, /export const BAND_DISCLAIMER/)
-    assert.ok(source.includes("'viz-uncertainty: record claims calibrated_uncertainty: true"))
+    // Behaviour, not source text (QUA-02). The old form read the module as a
+    // string and matched `/export const BAND_DISCLAIMER/` and a log literal:
+    // both passed whenever the line existed, and both would keep passing if the
+    // disclaimer were exported but no longer *used*, which is the drift that
+    // matters. Asserting the value the callers actually receive is the claim.
+    assert.match(BAND_DISCLAIMER, /NOT a confidence interval/i,
+      'the shared disclaimer no longer says what it exists to say')
+    const caption = bandCaption({ calibrated_uncertainty: false })
+    assert.ok(caption.includes(BAND_DISCLAIMER),
+      'the caption does not carry the shared disclaimer, so a caller that renders it states less than this module does')
+  })
+
+  it('refuses a record that claims calibrated bounds, naming the flag', () => {
+    // The log literal the old source-text check matched is a thrown error
+    // message. Asserting it by throwing is the same claim with the behaviour
+    // behind it: a function that no longer throws fails here, and one whose
+    // message stopped naming the flag fails too.
+    assert.throws(
+      () => assertSensitivity({ id: 'r1', calibrated_uncertainty: true }),
+      /calibrated_uncertainty: true/,
+      'a record claiming calibrated bounds was rendered with a sensitivity caption',
+    )
+    assert.doesNotThrow(() => assertSensitivity({ id: 'r2', calibrated_uncertainty: false }))
+    assert.doesNotThrow(() => assertSensitivity({ id: 'r3' }), 'an absent flag is not a claim of calibration')
   })
 
   it('escapes every value it renders', () => {
