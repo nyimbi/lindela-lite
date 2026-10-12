@@ -50,6 +50,7 @@ import { matchAlertingRoute, handleAlertingRoute } from './routes/alerting.js'
 import { matchWebhookRoute, handleWebhookRoute } from './routes/webhooks.js'
 import { matchFederationRoute, handleFederationRoute } from './routes/federation.js'
 import { matchRiskRoute, handleRiskRoute } from './routes/risk.js'
+import { matchDistrictRoute, handleDistrictRoute } from './routes/districts.js'
 import { runFederationSync } from './federation-peers.js'
 import { matchScenarioRoute, handleScenarioRoute } from './routes/scenarios.js'
 import { matchIngestionRoute, handleIngestionRoute } from './routes/ingestion.js'
@@ -74,8 +75,6 @@ import { planDelivery } from './routing.js'
 import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { upstreamTileUrl, loadRasterTile } from './basemap-tiles.js'
 import { assertSafeWebhookUrl } from './webhooks.js'
-import { KNOWN_DISTRICTS, districtOverview } from './districts.js'
-import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from './equity.js'
 import { createRequestRing } from './observability.js'
 import { auditRollup, auditChainWarning } from './audit-chain.js'
 
@@ -2294,41 +2293,9 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   const workflowRoute = matchWorkflowRoute(url.pathname)
   if (workflowRoute && await handleWorkflowRoute(workflowRoute, { store, data, req, res, url, jsonResponse })) return
 
-  // District routes
-  if (req.method === 'GET' && url.pathname === '/api/v1/districts') {
-    jsonResponse(res, 200, { success: true, data: KNOWN_DISTRICTS })
-    return
-  }
-  const districtMatch = url.pathname.match(/^\/api\/v1\/districts\/([^/]+)$/)
-  if (districtMatch && req.method === 'GET') {
-    const overview = districtOverview(data, districtMatch[1])
-    if (!overview) {
-      jsonResponse(res, 404, { success: false, error: 'District not found' })
-      return
-    }
-    jsonResponse(res, 200, { success: true, data: overview })
-    return
-  }
-
-  // Equity routes
-  if (req.method === 'GET' && url.pathname === '/api/v1/equity/by-district') {
-    jsonResponse(res, 200, { success: true, data: equityByDistrict(data) })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/equity/breaches') {
-    const threshold = url.searchParams.has('threshold')
-      ? Number(url.searchParams.get('threshold'))
-      : undefined
-    jsonResponse(res, 200, { success: true, data: detectAccuracyBreaches(data, threshold !== undefined ? { threshold } : {}) })
-    return
-  }
-
-  if (req.method === 'POST' && url.pathname === '/api/v1/equity/scan') {
-    const ids = await createEquityAuditWorkflows(store, data)
-    jsonResponse(res, 201, { success: true, created: ids.length, ids })
-    return
-  }
+  // ENH-60. The district-and-equity family, extracted to `src/routes/districts.js`.
+  const districtRoute = matchDistrictRoute(url.pathname, req.method)
+  if (districtRoute && await handleDistrictRoute(districtRoute, { store, data, req, res, url, jsonResponse })) return
 
   // Community feedback routes
   if (req.method === 'GET' && url.pathname === '/api/v1/assessments') {
