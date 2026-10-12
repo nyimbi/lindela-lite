@@ -26,6 +26,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
@@ -124,22 +125,39 @@ describe('ENH-78 — the gate fails on a planted defect in the real tree', () =>
    * removes a guard or a marker from the real tree, requires the gate to exit
    * non-zero, and restores from a backup — never `git checkout`, which in a
    * shared tree reverts other agents' uncommitted work along with the mutation.
+   *
+   * "The real tree" is now a private copy of `src/`, and the reason is QUA-08's
+   * class rather than tidiness. `node --test` runs test files in parallel
+   * workers against one working tree, so while this block had a guard removed
+   * from `src/connectors/dhis2.js`, every other file in the suite was importing
+   * a module that is not what git holds. Node caches a module at first import,
+   * so a worker that loaded it inside the window kept the planted body for the
+   * rest of its run — a result that depends on scheduling is evidence for
+   * nothing, including the things it says are fine. The gate scans a copy; the
+   * mutation cannot be observed by anything but this test.
    */
   const plantAndRequireFailure = (relPath, target, label) => {
-    const full = path.join(ROOT, relPath)
-    const before = fs.readFileSync(full, 'utf8')
-    assert.ok(before.includes(target), `canary target not found in ${relPath} — the patch would be a no-op`)
-    fs.writeFileSync(full, before.replace(target, ''))
-    let failed = false
+    const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'outbound-canary-'))
     try {
-      execFileSync(process.execPath, [GATE], { stdio: 'pipe' })
-    } catch {
-      failed = true
-    } finally {
+      fs.cpSync(path.join(ROOT, 'src'), path.join(copy, 'src'), { recursive: true })
+      const full = path.join(copy, relPath)
+      const before = fs.readFileSync(full, 'utf8')
+      assert.ok(before.includes(target), `canary target not found in ${relPath} — the patch would be a no-op`)
+      fs.writeFileSync(full, before.replace(target, ''))
+      let failed = false
+      try {
+        execFileSync(process.execPath, [GATE, copy], { stdio: 'pipe' })
+      } catch {
+        failed = true
+      }
+      assert.ok(failed, `${label}: the gate passed with the guard removed`)
+      // The unplanted copy must scan clean, or the failure above was the copy
+      // being wrong rather than the gate noticing anything.
       fs.writeFileSync(full, before)
+      execFileSync(process.execPath, [GATE, copy], { stdio: 'pipe' })
+    } finally {
+      fs.rmSync(copy, { recursive: true, force: true })
     }
-    assert.ok(failed, `${label}: the gate passed with the guard removed`)
-    assert.deepEqual(scanTree(ROOT), [], `${label}: the tree was not restored`)
   }
 
   it('fails when a connector guard is deleted — dhis2 pull', () => {

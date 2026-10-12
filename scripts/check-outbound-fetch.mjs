@@ -53,9 +53,20 @@ import { fileURLToPath } from 'node:url'
  *
  * Exit 0 when every site is accounted for, 1 with the sites listed. Canaried in
  * `--self-test`.
+ *
+ * An optional root argument scans a copy of the tree instead. The canaries in
+ * `test/outbound-fetch.test.js` remove a guard from `src/` and require this gate
+ * to fail — and a test that edits a tracked file makes every other test's result
+ * a function of scheduling, because `node --test` runs files in parallel workers
+ * over one tree and Node caches a module at first import. QUA-08 was that defect
+ * for a served asset; this is the same class on `src/`. argv rather than an
+ * environment variable: a stray variable in a shell would silently scan the
+ * wrong tree and print `clean`.
  */
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const ROOT = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const SCAN_DIRS = ['src']
 const SCAN_EXT = /\.(js|mjs)$/
 const SKIP_DIRS = new Set(['node_modules', 'vendor', 'dist', '.git'])
