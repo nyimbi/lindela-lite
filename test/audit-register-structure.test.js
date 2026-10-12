@@ -35,6 +35,7 @@ import { describe, it } from 'node:test'
 
 const README = readFileSync(new URL('../docs/improvements/audit-2026-10/README.md', import.meta.url), 'utf8')
 const DEFECTS = readFileSync(new URL('../docs/improvements/audit-2026-10/defects.md', import.meta.url), 'utf8')
+const ENHANCEMENTS = readFileSync(new URL('../docs/improvements/audit-2026-10/enhancements-50.md', import.meta.url), 'utf8')
 
 /** Every `### PREFIX-NN — …` heading, in file order. */
 function entryIds(text) {
@@ -142,5 +143,64 @@ describe('the audit register’s skeleton, guarded', () => {
     assert.ok(claimedLate, `the README states "${stated[1]}" late finds, which is not a number this check can read`)
     assert.equal(ENTRIES.length, AUDIT_ENTRIES + claimedLate,
       `the register holds ${ENTRIES.length} entries; the README's 68 from the audit plus ${claimedLate} late find(s) is ${AUDIT_ENTRIES + claimedLate}. A heading was deleted, duplicated, or added without the total being updated.`)
+  })
+
+  it('the enhancements verdict table partitions ENH-31..ENH-81 exactly once each', () => {
+    // The sibling skeleton, in the other document. `enhancements-50.md` keeps
+    // its verdicts in a three-row table — IMPLEMENTED / PARTIAL / ABSENT, each
+    // naming its item numbers — and nothing checked it. It is hand-kept in
+    // exactly the way the defects register was, so it drifts in exactly the same
+    // way: an item moved from PARTIAL to IMPLEMENTED without leaving the PARTIAL
+    // row appears in two rows, and one added without a row appears in none.
+    //
+    // The scope is `ENH-31..ENH-81`, which is 51 items. The document's own title
+    // says "fifty" and its ranges say `ENH-31..ENH-80`; the extra one is ENH-81,
+    // which the file lists. The count is taken from the table rather than from
+    // the prose for that reason — the prose is what drifted.
+    const rows = new Map()
+    for (const line of ENHANCEMENTS.split('\n')) {
+      const row = /^\| (IMPLEMENTED|PARTIAL|ABSENT) \| (\d+) \| (.+) \|$/.exec(line)
+      if (row) rows.set(row[1], { count: Number(row[2]), items: row[3].trim() })
+    }
+    assert.equal(rows.size, 3, `parsed ${rows.size} verdict rows; the table has three`)
+
+    // `none` is the ABSENT row's spelling of an empty set. It is asserted
+    // rather than tolerated, because "none" with a non-zero count is a row that
+    // contradicts itself.
+    const listed = new Map()
+    const problems = []
+    for (const [verdict, { count, items }] of rows) {
+      const ids = items === 'none'
+        ? []
+        : items.split(',').map((part) => part.trim()).filter(Boolean).map(Number)
+      if (ids.some((n) => !Number.isInteger(n))) problems.push(`${verdict}: the item list is not all numbers — ${items}`)
+      if (ids.length !== count) problems.push(`${verdict}: the row states ${count} and lists ${ids.length} (${items})`)
+      for (const n of ids) {
+        if (listed.has(n)) problems.push(`ENH-${n} is listed under both ${listed.get(n)} and ${verdict}`)
+        listed.set(n, verdict)
+      }
+    }
+
+    // Every id in the document's scope appears exactly once. The scope is read
+    // from the IMPLEMENTED row's own maximum and minimum, which is circular for
+    // a missing id at either end — so the floor is pinned to the audit's stated
+    // range and only the ceiling is read from the table.
+    const numbers = [...listed.keys()].sort((a, b) => a - b)
+    const lo = 31
+    const hi = Math.max(...numbers)
+    for (let n = lo; n <= hi; n += 1) {
+      if (!listed.has(n)) problems.push(`ENH-${n} is in no verdict row — the range is ${lo}..${hi} and it is missing`)
+    }
+    assert.deepEqual(problems, [], problems.join('\n'))
+
+    // And the header sentence must agree with the rows it summarises, because
+    // that sentence is what a reader quotes without scrolling to the table.
+    const header = /of 51\.|(\d+) shipped, (\d+) partial, (\d+) not started/i.exec(ENHANCEMENTS)
+    if (header && header[1]) {
+      const [, shipped, partial, notStarted] = header
+      assert.equal(Number(shipped), rows.get('IMPLEMENTED').count, 'the header’s shipped count is not the IMPLEMENTED row’s')
+      assert.equal(Number(partial), rows.get('PARTIAL').count, 'the header’s partial count is not the PARTIAL row’s')
+      assert.equal(Number(notStarted), rows.get('ABSENT').count, 'the header’s not-started count is not the ABSENT row’s')
+    }
   })
 })
