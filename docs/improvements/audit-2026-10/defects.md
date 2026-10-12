@@ -696,9 +696,10 @@ and `:392`), per-route inline validation, and business logic that belongs in
 
 **PARTIAL — 2026-10-12. Every *family* is out; the god function is not gone.** The
 row's title is "1,597-line god function", and that is the claim to hold it to, so
-this is not Fixed. Seventeen families now live under `src/routes/`, each a
-coherent group with its own matcher, its own test file, and a property that is the
-reason it is a family rather than a set of blocks:
+this is not Fixed. **Thirty families** now live under `src/routes/` (29 modules,
+one of which — `alerting.js` — carries two matchers), each a coherent group with
+its own matcher, its own test file, and a property that is the reason it is a
+family rather than a set of blocks:
 
 | module | routes | what it holds |
 |---|---|---|
@@ -719,22 +720,43 @@ reason it is a family rather than a set of blocks:
 | `src/routes/workflows.js` | 4 | |
 | `src/routes/rapidpro.js` | 4 | the webhook verifies its own signature before the body is read |
 | `src/routes/webhooks.js` | 2 | |
+| `src/routes/risk.js` | 6 | the two marginal rankings, the joint score, the fit |
+| `src/routes/districts.js` | 5 | the registry, the per-district roll-up, the equity comparisons |
+| `src/routes/ambient.js` | 3 | the three routes a *partner* reads, so the band travels with the number |
+| `src/routes/upload.js` | 1 | one validator all three content types converge on; a failed batch writes nothing |
+| `src/routes/forms.js` | 3 | a published version is not overwritten (409); a built-in is superseded, not replaced |
+| `src/routes/catalogue.js` | 3 | a static catalogue joined against a dynamic history — absence resolves to a named state, never a healthy-looking default |
+| `src/routes/compute.js` | 4 | the input is the thing most likely to be wrong, and a wrong input returns a confident answer |
+| `src/routes/outbox.js` | 2 | the listing is deliberately *not* soft-delete filtered — the dead letter is the record |
+| `src/routes/federation.js` | 7 | ENH-80; new surface rather than an extraction |
+| `src/routes/tile-packs.js` | 2 | ENH-42; the pack is bounded and the refusal is by name |
+| `src/routes/liveness.js` | 2 | `/health` and `/ready` are one question at two depths; the read is a thunk, so `/ready` never materialises the store |
+| `src/routes/auth-info.js` | 1 | one path the dispatcher wrote twice; one handler called at both points |
 | `src/visibility.js` | — | `findVisible`, the one by-id resolver (VUL-03) |
 
-`src/server.js` is 3,237 lines from 5,603 at the start of the extraction, and the
-dispatcher 1,371 from 1,903.
+`src/server.js` is **2,133 lines** from 5,603 at the start of the extraction, and
+the dispatcher **543** from 1,903.
 
 **What remains, measured rather than described.** The dispatcher still carries
-**35 inline literal route conditions** over 876 non-comment lines, because they
-are not families: they are one-off routes whose bodies are the business logic
-itself — `/api/v1/flood-risk`, `/api/v1/compound-risk`, `/api/v1/conflict-risk`,
-the `equity/*` scans, the `flood-probability/*` group, `routing/plan`,
-`analytics/bias-correct`, `alerts/evaluate`, `upload` (which is 111 lines on its
-own), `demo/seed`, `maintenance/apply-retention`, `forms`, and the liveness pair.
-Extracting them is not a move: it is the ENH-59 route-table work plus a decision
-about which of them are really `reports.js`/`kpi.js` logic reached through a thin
-route. `ENH-60`'s ~15-module target is still the endpoint, and this row closes
-when the literal conditions are declarations rather than branches.
+**5 inline literal route conditions** over 251 non-comment lines, and they are not
+families: they are one-off routes whose bodies are the business logic itself —
+`demo/seed`, `maintenance/apply-retention`, the `events` read, and the
+`assessments` roll-up. (A sixth literal, `/api/v1/rapidpro/field-report`, is an
+auth precondition rather than a route: it buffers the body and verifies the HMAC,
+then falls through to the family.) Extracting these is not a move: it is the
+ENH-59 route-table work plus a decision about which of them are really
+`reports.js`/`kpi.js` logic reached through a thin route. `ENH-60`'s ~15-module
+target was passed long ago; this row closes when the literal conditions are
+declarations rather than branches.
+
+**The counts in this row were stale by a factor of seven and nobody noticed, which
+is the row's own subject.** It read "35 inline literal route conditions over 876
+non-comment lines" and "3,237 lines" while the file was 2,133 and the literals
+were 5 — every extraction since the paragraph was written updated ENH-60's entry
+and not this one. A CRITICAL row whose evidence is a number nobody re-measures is
+the ARC-08 failure in a second place, so the numbers here are now taken from
+`scripts/check-openapi.mjs`'s own output and the dispatcher's line range rather
+than recalled.
 
 Three checks together establish the move preserved behaviour, and each caught
 something the others missed:
