@@ -1997,6 +1997,22 @@ dialog { margin: auto; }
   width: 100%;
   border-collapse: collapse;
   font-size: var(--text-sm);
+  /* Fixed layout, so the columns are the container's width divided by the
+     declared proportions and not the sum of the text inside them.
+
+     With `auto` the table is `width: 100%` but cannot shrink below its
+     min-content, and `td { white-space: nowrap }` below makes that min-content
+     the width of the longest district name. On the author's machine the four
+     columns came to 353px against a 360px rail — a 7px margin that held by
+     luck. The first Linux run of the browser tier measured the same table 15
+     elements past the panel's right edge at 1440px, clipped by the rail's
+     `overflow-x: hidden`: the "Not acknowledged" column, the one that says who
+     was not reached, invisible on a platform nobody had run the gate on.
+
+     A width that depends on which fonts the host has is not a layout, it is a
+     coincidence. `fixed` removes the dependency; the district cell already
+     truncates at 40 characters with a `title`, so nothing is lost. */
+  table-layout: fixed;
 }
 
 .equity-table thead {
@@ -2045,9 +2061,16 @@ dialog { margin: auto; }
   white-space: nowrap;
 }
 
+/* Column proportions under `table-layout: fixed`, which ignores content width.
+   The district name is the only cell that carries prose — the other three are
+   counts and a percentage, at most five characters — so it takes the extra
+   quarter and the three numeric columns split the rest evenly. */
 .equity-table th:first-child,
 .equity-table td:first-child {
+  width: 40%;
   padding-left: var(--sp-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .equity-table th:not(:first-child),
