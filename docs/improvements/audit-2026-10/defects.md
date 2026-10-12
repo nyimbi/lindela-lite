@@ -1530,7 +1530,7 @@ The remaining files are counted by *call*, not by class, and most are legitimate
 reads a data file. Distinguishing markup-pinning from behaviour-asserting is the
 remaining work, and it is a judgement per file rather than a sweep.
 
-### QUA-03 — HIGH — `public/app.js` cannot be imported; tested through a hand-rolled DOM stub
+### QUA-03 — HIGH — CLOSED — `public/app.js` cannot be imported; tested through a hand-rolled DOM stub
 `test/web-console.test.js` states it: it runs a boot sequence at import time. 6,324
 lines of console logic are exercised via `test/browser-env.mjs` stubs. No unit test
 of any render function; the console is only as tested as the stub's fidelity.
@@ -1549,6 +1549,8 @@ were named by no test anywhere: `autoFitBox`, `currentFilters`,
 decisions — four documented guards, one of which (`isFinitePoint`) exists
 because fitting on GDACS bbox-only alerts drew the Indian Ocean at a larger
 scale.
+
+**Fixed 2026-10-12 — the residue is gone.** The last two of the six named exports with no test were `FOCUS_KEY_ATTR` and `preserveUiAroundRebuild`, and behind them sits the whole focus-and-scroll family — `captureFocus`, `restoreFocus`, `shouldDeferRedraw`, `captureScroll`, `restoreScroll` — six functions deciding whether an automatic redraw may run at all and whether the caret survives it. Eight tests now drive them with plain objects rather than asserting on a stub: a redraw is deferred while the operator is typing (the return value is the caller's signal to replay the paint on blur, so a wrong `true` means the paint happened and nothing is owed), the caret comes back with its selection and with `preventScroll` set, a node detached mid-rebuild does not become the failure the wrapper was written to prevent, and an unkeyed element is refused rather than restored to the wrong control. Canaried twice: dropping `preventScroll` fails 2, no longer deferring while typing fails 3. 65/65 in the file.
 
 Nine tests now drive them, in `test/web-console.test.js` under "QUA-03 — the
 framing and filter decisions are unit-tested, not stubbed". Each drives a

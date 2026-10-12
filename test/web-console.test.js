@@ -662,5 +662,137 @@ describe('public/app.js — console frontend', () => {
           `${name} is ambient but is not in ALL_ENDPOINTS`)
       }
     })
+
+    // The focus-and-scroll family. These six functions were named by no test
+    // anywhere, which is the residue QUA-03 named after the rest of it closed.
+    // They are not incidental: they decide whether an automatic redraw is
+    // allowed to run at all, and a rebuild that clobbers the caret loses a
+    // sentence the operator was mid-way through writing. A DOM stub cannot tell
+    // whether focus came back — it has to be driven with plain objects, which is
+    // why these pass their DOM by argument.
+    const keyed = (key, start = null, end = null) => ({
+      getAttribute: (name) => (name === app.FOCUS_KEY_ATTR ? key : null),
+      selectionStart: start, selectionEnd: end,
+    })
+
+    it('captures a caret only from an element that carries a stable key', () => {
+      // Anything else in a rebuilt subtree has no identity — its position moves
+      // as records arrive — and restoring focus to the wrong control is worse
+      // than dropping it.
+      assert.deepEqual(app.captureFocus(keyed('alert:7:approve', 3, 9)), { key: 'alert:7:approve', start: 3, end: 9 })
+      assert.equal(app.captureFocus(keyed(null)), null, 'an unkeyed element is not restorable')
+      assert.equal(app.captureFocus(null), null)
+      assert.equal(app.captureFocus({}), null, 'an element with no getAttribute is not a target')
+    })
+
+    it('restores the caret to the keyed node and its selection, without scrolling', () => {
+      const focused = []
+      const target = {
+        getAttribute: () => 'alert:7:approve',
+        focus: (options) => focused.push(options),
+        setSelectionRange: (a, b) => focused.push([a, b]),
+      }
+      const root = { querySelectorAll: () => [{ getAttribute: () => 'other' }, target] }
+      assert.equal(app.restoreFocus(root, { key: 'alert:7:approve', start: 2, end: 5 }), true)
+      // `preventScroll` is the whole reason this is not a plain `.focus()`: a
+      // node near the bottom of a long rebuilt list scrolls the page to it,
+      // which is the jump the capture exists to prevent.
+      assert.deepEqual(focused[0], { preventScroll: true })
+      assert.deepEqual(focused[1], [2, 5])
+    })
+
+    it('reports that it could not restore rather than claiming it did', () => {
+      // A false here is a caller's signal that the caret was lost, so it must
+      // not be true on the path where nothing was focused.
+      assert.equal(app.restoreFocus({ querySelectorAll: () => [] }, { key: 'gone' }), false)
+      assert.equal(app.restoreFocus(null, { key: 'gone' }), false)
+      assert.equal(app.restoreFocus({ querySelectorAll: () => [] }, null), false)
+    })
+
+    it('defers a redraw while the operator is typing', () => {
+      // Deferring is free — the data is already in `state` and the next paint
+      // puts it on screen — whereas clobbering the caret is not.
+      //
+      // Every element carries `getAttribute`, because the function returns
+      // early on an element that does not: it is a DOM element guard, not a
+      // property test, and a plain `{ tagName }` is refused before the tag is
+      // ever read.
+      const el = (tagName, extra = {}) => ({ tagName, getAttribute: () => null, ...extra })
+      assert.equal(app.shouldDeferRedraw(el('TEXTAREA')), true)
+      assert.equal(app.shouldDeferRedraw(el('INPUT')), true)
+      assert.equal(app.shouldDeferRedraw(el('select')), true, 'the tag is matched case-insensitively')
+      assert.equal(app.shouldDeferRedraw(el('DIV', { isContentEditable: true })), true)
+      assert.equal(app.shouldDeferRedraw(el('DIV', { closest: () => ({}) })), true,
+        'focus inside a live region is about to be rebuilt under the caret')
+      assert.equal(app.shouldDeferRedraw(el('BUTTON')), false)
+      assert.equal(app.shouldDeferRedraw(null), false)
+      assert.equal(app.shouldDeferRedraw({ tagName: 'TEXTAREA' }), false,
+        'a non-element is not a textarea, however it is tagged')
+    })
+
+    it('captures only scrollable nodes that actually moved', () => {
+      // A zero offset is the default, so recording it is noise in the snapshot
+      // and a write on restore that can shift a list nobody scrolled.
+      const moved = { scrollTop: 400 }
+      const still = { scrollTop: 0 }
+      const pairs = app.captureScroll([moved, still, null, {}])
+      assert.equal(pairs.length, 1, 'only the moved node is worth restoring')
+      assert.equal(pairs[0][0], moved)
+      assert.equal(pairs[0][1], 400)
+    })
+
+    it('restores scroll and survives a node detached mid-rebuild', () => {
+      const set = []
+      const node = { set scrollTop(v) { set.push(v) } }
+      assert.equal(app.restoreScroll([[node, 250]]), 1)
+      assert.deepEqual(set, [250])
+      // A node removed from the document between capture and restore throws on
+      // assignment in some engines; the rebuild has already succeeded by then,
+      // so this must not become the failure the wrapper was written to prevent.
+      const detached = { set scrollTop(_v) { throw new Error('detached') } }
+      assert.equal(app.restoreScroll([[detached, 10]]), 1)
+      assert.equal(app.restoreScroll(null), 0)
+    })
+
+    it('skips the rebuild entirely while the operator is typing, and says so', () => {
+      // The return value is the caller's signal to replay the deferred paint on
+      // blur. A `true` here would mean the paint happened and nothing is owed.
+      const original = globalThis.document
+      let ran = 0
+      globalThis.document = {
+        activeElement: { tagName: 'TEXTAREA', getAttribute: () => null },
+        querySelectorAll: () => [],
+        scrollingElement: null, body: null,
+        getElementById: () => null,
+      }
+      try {
+        assert.equal(app.preserveUiAroundRebuild(() => { ran++ }), false)
+        assert.equal(ran, 0, 'the rebuild must not run under the caret')
+      } finally { globalThis.document = original }
+    })
+
+    it('runs the rebuild and puts focus and scroll back when it is safe', () => {
+      const original = globalThis.document
+      const focused = []
+      const node = { scrollTop: 0 }
+      const active = keyed('alert:7:approve', 1, 1)
+      const target = {
+        getAttribute: () => 'alert:7:approve',
+        focus: () => focused.push('focus'),
+        setSelectionRange: () => focused.push('selection'),
+      }
+      globalThis.document = {
+        activeElement: active,
+        querySelectorAll: () => [target],
+        scrollingElement: node, body: null,
+        getElementById: () => null,
+      }
+      let ran = 0
+      try {
+        assert.equal(app.preserveUiAroundRebuild(() => { ran++; node.scrollTop = 0 }), true)
+        assert.equal(ran, 1)
+        assert.deepEqual(focused, ['focus', 'selection'], 'the caret comes back after the rebuild')
+      } finally { globalThis.document = original }
+    })
   })
 })
