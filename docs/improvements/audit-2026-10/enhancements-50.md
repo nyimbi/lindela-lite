@@ -36,7 +36,7 @@ PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 **five** tables checked against each other — the document, the manifest table,
 the method gating, the envelope shape and, since 2026-10-12, the client's call
 sites — and no single declaration they are generated from, and ENH-60's
-dispatcher is still one 511-line function with 32 families out of it. Reading a
+dispatcher is still one 411-line function with 33 families out of it. Reading a
 PARTIAL as done is the error this table exists to prevent: five cross-checks is
 a network that stops five tables disagreeing *silently*, which is a strictly
 weaker property than one source of truth, and the two are easy to conflate
@@ -751,7 +751,10 @@ test.
 
 **Shipped 2026-10-11.** The monitor is `events_unlabelled` and `label_coverage`,
 returned by `buildDistrictSamples` and published on `/api/v1/flood-probability`
-beside `events_matched` (`src/flood-probability.js:130-140`, `src/server.js:2031`).
+beside `events_matched` (`src/flood-probability.js:130-140`; published from
+`src/routes/risk.js`'s `flood-probability/models` handler — ENH-60 moved the
+route out of the dispatcher, and the citation is by handler name because the
+line number moved twice while this entry sat still).
 Two deviations from the entry as written:
 
 - **The label function returns the events, not a boolean.** `monthHasFlood` became
@@ -1135,11 +1138,11 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Thirty-two families are out; the dispatcher is not
+> **PARTIAL — 2026-10-12. Thirty-three families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 511 lines and `server.js` 5,603 →
-> 2,102. (The count is *matchers*, not files: 31 modules under `src/routes/`, one
+> set of blocks. The dispatcher went 1,903 → 411 lines and `server.js` 5,603 →
+> 2,009. (The count is *matchers*, not files: 32 modules under `src/routes/`, one
 > of which — `alerting.js` — carries two, `matchAlertingRoute` and the
 > non-exported `matchTriggeringRoute`. An earlier version of this line recorded
 > the file count as the matcher count, so it read one high for a day — the same
@@ -1417,14 +1420,16 @@ testable in isolation. This unblocks every other substrate item.
 > left `server.js` as orphans (`calibrationReport`, `collectionPage`). The
 > dispatcher went 543 → 526 lines and `server.js` 2,133 → 2,117.
 >
-> **Three inline literal route conditions remain**, and the paragraph above is
-> now wrong about two of them: `demo/seed` and `maintenance/apply-retention`.
-> Both are POST mutations whose bodies *are* the business logic — the demo seed
-> resolves its three functions inside a budget guard, and the retention route
-> refuses on an unset window before it deletes anything — and neither has a
-> sibling to join, which is the argument for ENH-59 rather than for extracting
-> them. The fourth literal, `/api/v1/rapidpro/field-report`, is still the auth
-> precondition rather than a route.
+> **Three inline literal route conditions remained at this point**, and the
+> paragraph above is now wrong about two of them: `demo/seed` and
+> `maintenance/apply-retention`. Both are POST mutations, and the claim that
+> neither "has a sibling to join" did not survive being checked — see the
+> operator-maintenance family below, which is the two of them. The test is not
+> *is the body small* but *is there a family for it to be the missing member
+> of*, and `src/auth.js` had already answered it: both prefixes resolve to the
+> one scope `admin:maintenance`. The third literal,
+> `/api/v1/rapidpro/field-report`, is the auth precondition rather than a route
+> and stays.
 >
 > **The tile proxy followed on 2026-10-12, and it is the one that paid for
 > itself.** `src/routes/basemap-tiles.js` is the thirty-second family — the raster
@@ -1445,20 +1450,76 @@ testable in isolation. This unblocks every other substrate item.
 > entry followed. Recorded in full under ARC-02; the extraction is ENH-60's, the
 > finding is ARC-02's, and neither would have happened without the other.
 >
-> **Three inline literal route conditions remain**, and the figure is measured
-> rather than carried forward: reading `handleApiRequestInContext`'s own body
-> through `route-surface.mjs`'s `functionBody` and matching `pathname === '…'`
-> returns exactly three — `/api/v1/demo/seed`,
-> `/api/v1/maintenance/apply-retention` and `/api/v1/rapidpro/field-report`.
-> (Eight literal conditions exist in `server.js` as a whole; the other five —
-> `/metrics`, `/api/v1/metrics`, `/stac/catalog.json`, `/docs`, and one more —
-> are outside the dispatcher, in the static-file and metrics blocks.)
+> **The operator-maintenance family came out next, and it takes the last two
+> literals that are actually routes.** `src/routes/maintenance.js` is the
+> thirty-third family: `POST /api/v1/maintenance/apply-retention` and
+> `POST /api/v1/demo/seed`. They are one family because `src/auth.js` already
+> said so — both prefixes resolve to the single scope `admin:maintenance`, and a
+> route group the authorization table treats as one privilege is one group
+> whatever the dispatcher's line numbering says.
 >
-> This paragraph said *seven* an hour ago, written from the count the previous
-> move left behind rather than from the file. That is the fourth time in this
-> entry that a number was carried forward and wrong, which is why the figure now
-> comes with the command that produces it. A count nobody re-measures is a
-> sentence, not a measurement.
+> It carried a live defect, and the defect is the reason they belong in one
+> file. The route and the driver's `retention` item
+> (`applyScheduledRetention`, 1,200 lines away in the same file) are two
+> implementations of one operation, and they **disagreed about which window
+> decides a refusal**. The route read `retentionWindowDays` — the *general*
+> window — and 400'd when it was unset. The driver read
+> `retentionWindowFor(policy, collection)` per collection. So a deployment that
+> configured only `communityFeedbackDays`, the more sensitive of the two, and
+> left `retentionDays` at zero got:
+>
+> ```
+> POST /api/v1/maintenance/apply-retention
+> → 400 "retentionDays is not a positive number ... Nothing was deleted."
+> ```
+>
+> while the scheduled driver had been expiring `community_feedback` on every
+> tick. The operator reads "nothing was deleted" and is exactly wrong; the one
+> collection being purged is the one carrying a member of the public's own
+> words. The route now applies each collection's own window the way the driver
+> does, refuses only when *no* collection has a window — the condition the
+> message was always about — and reports a collection with no rule as
+> `window_days: null` beside its counts rather than refusing the whole request
+> and lying about the other two.
+>
+> The two implementations still exist, deliberately: the driver takes the `data`
+> a tick already read and must not read the store again inside it, while the
+> route answers one request. Unifying them fully is a larger change than an
+> extraction. What this unit fixes is that they no longer *disagree*, and what
+> it makes possible is that the next reader finds both in one file.
+>
+> The test is the shape the defect needs: the route and the driver are run
+> against the same process policy and asserted to agree about which collections
+> have a window and how many records each expires. A test of either call site
+> alone cannot see this — the divergence is *between* two call sites, so the
+> assertion has to be between two call sites too. Canaried by restoring the
+> pre-extraction body (one window for everything, refusal read off it): the
+> HTTP test fails with "the route refused a policy that the driver acts on".
+>
+> The dispatcher went 511 → 411 lines and `server.js` 2,102 → 2,009; the family
+> is dispatched where the retention block was, so dispatch order is unchanged.
+> `DEMO_SEED_BUDGET_MS` moved with the seed and is re-exported from `server.js`,
+> because `test/` and `scripts/` read it off that module.
+>
+> **One inline literal route condition remains in the dispatcher**, and it is not
+> a route: `/api/v1/rapidpro/field-report` is an auth precondition that buffers
+> the body and verifies the HMAC before falling through to the family. The
+> figure is measured, not carried forward —
+> `functionBody('handleApiRequestInContext', src)` then matching
+> `url\.pathname\s*===\s*'…'` returns exactly one. `test/dispatch-shadow.test.js`
+> lost its size floor in the same commit, because a floor of 1 is the number a
+> *broken* regex also returns whenever any single literal survives it; it now
+> names that literal instead.
+>
+> Two stale figures in the paragraph above are corrected here rather than
+> silently replaced. It said "eight literal conditions exist in `server.js` as a
+> whole" and then named four plus "one more" — the eight does not reproduce
+> against the file under either spelling. Measured: **4** `url.pathname === '…'`
+> (`/metrics`, `/api/v1/metrics`, `/stac/catalog.json`, the rapidpro
+> precondition) and **2** bare `pathname === '…'` (`/docs` twice, in the static
+> handler and the doc-target resolver), **5 distinct**. That is the fifth
+> carried-forward number in this entry, which is why every figure here now names
+> the expression that produces it.
 
 **ENH-61 — Streaming cursor reads.** `PostgresStore.read()` issues
 `SELECT collection, body FROM lite_records WHERE …` with no `LIMIT`

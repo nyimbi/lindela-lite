@@ -23,7 +23,7 @@ import { budgetedStore, queryBudgetLimits, runWithQueryBudget, WIDE_QUERY_BUDGET
 import { readReplicaStore } from './read-replica.js'
 import { currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext } from './utils.js'
 import { createIdempotencyFor } from './idempotency.js'
-import { applyRetention, loadPolicy, retentionWindowDays, retentionWindowFor } from './pii.js'
+import { applyRetention, loadPolicy, retentionWindowFor } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
 import { executeTriggerProtocols } from './protocols.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
@@ -36,6 +36,7 @@ import { matchLivenessRoute, handleLivenessRoute } from './routes/liveness.js'
 import { matchAuthInfoRoute, handleAuthInfoRoute } from './routes/auth-info.js'
 import { matchTilePackRoute, handleTilePackRoute } from './routes/tile-packs.js'
 import { matchKpiRoute, handleKpiRoute } from './routes/kpi.js'
+import { matchMaintenanceRoute, handleMaintenanceRoute } from './routes/maintenance.js'
 import { matchFieldSignalRoute, handleFieldSignalRoute } from './routes/field-signals.js'
 import { matchExposureRoute, handleExposureRoute } from './routes/exposure.js'
 import { matchDerivedRoute, handleDerivedRoute } from './routes/derived.js'
@@ -130,8 +131,13 @@ export const APP_VERSION = (() => {
  * no ceiling is held open by whichever upstream is slowest, and the demo seed
  * is the one route whose useful half — the labelled demo data — does not depend
  * on any of them.
+ *
+ * The value lives in `src/routes/maintenance.js` now, beside the route that
+ * reads it — ENH-60 moved the seed there. It is re-exported here because
+ * `test/` and `scripts/` read it off this module and a constant is not worth a
+ * second import site.
  */
-const DEMO_SEED_BUDGET_MS = 45_000
+export { DEMO_SEED_BUDGET_MS } from './routes/maintenance.js'
 
 const DRIVER_ITEMS = [
   { id: 'ingestion', label: 'ingestion schedules', run: (store, data) => runDueIngestionSchedules(store, data) },
@@ -1326,120 +1332,20 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   const formsRoute = matchFormsRoute(url.pathname, req.method)
   if (formsRoute && await handleFormsRoute(formsRoute, { store, data, req, res, url, jsonResponse })) return
 
-  if (req.method === 'POST' && url.pathname === '/api/v1/maintenance/apply-retention') {
-    const policy = await loadPolicy()
-    const windowDays = retentionWindowDays(policy)
-    if (windowDays === null) {
-      // Refusing is the point. A window that is not a positive finite number
-      // used to become NaN, and `age > NaN` is false for every record — so the
-      // route expired nothing, reported `success: true`, and the retention job
-      // passed silently on every run. An operator who is told the window is not
-      // configured can fix it; one who is told `expired: 0` files it under
-      // "nothing to do" and keeps every field report the deployment ever took.
-      jsonResponse(res, 400, {
-        success: false,
-        error: `retentionDays is not a positive number (got ${JSON.stringify(policy.retentionDays)}); set it in data/pii-policy.json or LINDELA_LITE_PII_POLICY. Nothing was deleted.`,
-      })
-      return
-    }
-    const fieldReportRetention = applyRetention(data.field_reports, windowDays)
-    const inboundRetention = applyRetention(data.rapidpro_inbound_messages, windowDays)
-    // R-12. `community_feedback` carried a reporter hash and free text from a
-    // member of the public, and was in no retention table at all — the two
-    // collections holding the same class of data were, which is what made it an
-    // oversight rather than a decision.
-    const feedbackDays = retentionWindowFor(policy, 'community_feedback')
-    const feedbackRetention = feedbackDays === null
-      ? { kept: data.community_feedback || [], expired: [] }
-      : applyRetention(data.community_feedback, feedbackDays)
-    // remove(), not merge(). merge() keyed on id, so re-merging the survivors
-    // over the originals left every expired record exactly where it was — the
-    // route reported `{success: true, expired: 1}` and deleted nothing (DAT-07).
-    await store.remove({
-      collection: {
-        field_reports: fieldReportRetention.expired.map((record) => record.id),
-        rapidpro_inbound_messages: inboundRetention.expired.map((record) => record.id),
-        community_feedback: feedbackRetention.expired.map((record) => record.id),
-      },
-    })
-    jsonResponse(res, 200, {
-      success: true,
-      field_reports: {
-        kept: fieldReportRetention.kept.length,
-        expired: fieldReportRetention.expired.length,
-      },
-      rapidpro_inbound_messages: {
-        kept: inboundRetention.kept.length,
-        expired: inboundRetention.expired.length,
-      },
-      community_feedback: {
-        window_days: feedbackDays,
-        kept: feedbackRetention.kept.length,
-        expired: feedbackRetention.expired.length,
-      },
-    })
-    return
-  }
-
-  if (req.method === 'POST' && url.pathname === '/api/v1/demo/seed') {
-    // Declared outside the `try` because the `catch` needs all of them: it
-    // reports `budgetMs`, and the budget-exhausted path — the one path that
-    // matters — has to seed the demo data with the same three functions that
-    // threw. A `const` in the block is not in scope in its own handler.
-    let budgetMs = DEMO_SEED_BUDGET_MS
-    let seedAll, ingestPublicSources, summary
-    try {
-      // ARC-03. `./demo-seed.js`, not `../scripts/seed-demo.mjs`. A production
-      // request path reaching into `scripts/` is inverted layering, and it put
-      // the 75 KB seed module on the runtime path where an import error there
-      // is a 500 on a live route. The script is now a wrapper over this module.
-      ;({ seedAll, ingestPublicSources, summary } = await import('./demo-seed.js'))
-      // The `sources` field was documented on `ingestPublicSources` and on this
-      // route and read by neither: the route called it with no options, so a
-      // caller who asked for one source got all nine, live. That is not a
-      // cosmetic gap — the default set is nine third-party services, and
-      // `ipc_hdx` alone fans ~92 requests against a 20/min budget, so an
-      // unscoped seed is a three-minute request that a test cannot bound and a
-      // deployment cannot interrupt.
-      const body = await readRequestJson(req).catch(() => ({}))
-      const sources = Array.isArray(body?.sources) && body.sources.length ? body.sources : undefined
-      // A deadline, because the alternative is a request held open by whichever
-      // upstream is slowest. `ipc_hdx`'s own per-request timeout does not bound
-      // this: it has 92 requests to make and each may take its full 30s.
-      budgetMs = Number.isFinite(body?.timeout_ms) && body.timeout_ms > 0
-        ? Number(body.timeout_ms)
-        : DEMO_SEED_BUDGET_MS
-      await withTimeout(ingestPublicSources(store, { sources }), budgetMs)
-      await seedAll(store)
-      await refreshAnalytics(store)
-      const counts = await summary(store)
-      jsonResponse(res, 200, { success: true, counts })
-    } catch (e) {
-      // A seed that ran out of wall clock is not a failed seed: the demo data
-      // below still lands, and the live half is the part that is optional.
-      // Reporting 500 for it would make a slow upstream look like a broken
-      // deployment, which is the confusion this route exists to avoid.
-      if (e?.name === 'TimeoutError') {
-        logger.warn('demo_seed_ingestion_budget_exhausted', { budget_ms: budgetMs, err: { message: e.message } })
-        try {
-          await seedAll(store)
-          await refreshAnalytics(store)
-          const counts = await summary(store)
-          jsonResponse(res, 200, { success: true, counts, ingestion: 'budget_exhausted' })
-          return
-        } catch (fallbackError) {
-          logger.error('demo_seed_failed', { err: { message: fallbackError.message, stack: fallbackError.stack } })
-          jsonResponse(res, 500, { success: false, error: fallbackError.message })
-          return
-        }
-      }
-      logger.error('demo_seed_failed', {
-        err: { message: e.message, stack: e.stack },
-      })
-      jsonResponse(res, 500, { success: false, error: e.message })
-    }
-    return
-  }
+  // ENH-60. The operator-maintenance family, extracted to
+  // `src/routes/maintenance.js`: the retention sweep an operator triggers by
+  // hand, and the demo seed. They are one family because `src/auth.js` already
+  // treats them as one — both prefixes resolve to `admin:maintenance`.
+  //
+  // Dispatched here, where the retention block was, so the order the dispatcher
+  // tries its routes in is unchanged. That matters for the seed: it reads and
+  // writes the whole store, and it sat below the store read for the reason the
+  // export family sat above it — the two are opposite cases and both are
+  // deliberate.
+  const maintenanceRoute = matchMaintenanceRoute(url.pathname, req.method)
+  if (maintenanceRoute && await handleMaintenanceRoute(maintenanceRoute, {
+    store, data, req, res, url, jsonResponse, withTimeout, readRequestJson,
+  })) return
 
   // ENH-60. The events-and-assessments family, extracted to `src/routes/events.js`:
   // `/api/v1/events` is the merged hazard-and-conflict list, and

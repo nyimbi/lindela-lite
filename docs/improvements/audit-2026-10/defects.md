@@ -1484,6 +1484,35 @@ is a place where that network had a hole, and each hole was found by widening a
 check rather than by reading the code — which is the argument for the checks, and
 also the argument for the generator, made from opposite ends.
 
+**A sixth description of the surface, found 2026-10-12: the retention window is
+read two ways, and the two ways disagree.** This is not one of the five tables —
+it is the same *operation* described in two places, which is the same failure
+one level down, and it was found by moving the two implementations into one file
+rather than by widening a check. The route
+`POST /api/v1/maintenance/apply-retention` and the driver's `retention` item
+(`applyScheduledRetention`) both expire the same three collections. The route
+read its refusal off `retentionWindowDays(policy)` — the *general* window — and
+the driver read `retentionWindowFor(policy, collection)` per collection. A
+deployment that set only `communityFeedbackDays` and left `retentionDays` at
+zero got a 400 from the route saying "Nothing was deleted" while the driver
+expired `community_feedback` on every tick. The one collection the operator is
+told is untouched is the one carrying a member of the public's own words, and it
+is the one being purged.
+
+The route now applies each collection's own window the way the driver does and
+refuses only when no collection has one. Guarded by
+`test/maintenance-route-module.test.js`, which runs **both call sites** against
+the same process policy and asserts they agree — a test of either site alone
+cannot see a divergence that lives between them. Canaried by restoring the
+pre-extraction body: the HTTP test fails with "the route refused a policy that
+the driver acts on".
+
+The general lesson is the one this entry keeps relearning from a new direction:
+**a control that exists is not a control that is applied.** `retentionWindowFor`
+was correct, tested, and used by the driver — and the route three hundred lines
+away had its own answer to the same question. Neither was wrong about its
+subject; they were wrong about each other.
+
 ### ARC-03 — HIGH — `/api/v1/demo/seed` imports `scripts/seed-demo.mjs` at request time
 `src/server.js:1269`. Production `src/` depends on `scripts/` — inverted layering.
 The 75 KB seed script is bundled into the runtime path; an import error there is a

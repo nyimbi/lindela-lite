@@ -195,15 +195,19 @@ describe('a family route is not shadowed by an inline dispatcher block', () => {
     }
 
     // The canary-in-reverse: a scan that parses nothing passes every assertion
-    // below it, because an empty `inline` produces no shadows. The floor is the
-    // count the scan must at least find for the regex to be working, not a
-    // target — so it tracks the literals that exist rather than a round number.
-    // Three today, and each is named in `enhancements-50.md`: `demo/seed` and
-    // `maintenance/apply-retention`, both one-off POST mutations with no family
-    // to join, plus the `/api/v1/rapidpro/field-report` auth precondition, which
-    // is not a route. Lower this when one of them is extracted or removed; do
-    // not lower it to zero, which is the number that means the regex broke.
-    assert.ok(inline.size >= 3, `parsed ${inline.size} inline literals in src/server.js:${start}..${end}, which is not the dispatcher`)
+    // below it, because an empty `inline` produces no shadows. This was a size
+    // floor while three literals existed; ENH-60 moved two of them —
+    // `demo/seed` and `maintenance/apply-retention` — into
+    // `src/routes/maintenance.js`, and a floor of 1 is the number a *broken*
+    // regex also returns whenever any single literal survives it. So the floor
+    // is gone and the one literal that must be there is named instead.
+    //
+    // `/api/v1/rapidpro/field-report` is an auth precondition inside the
+    // `isAuthConfigured()` block, not a route — it reads a pathname to decide
+    // whether the caller may proceed, and it belongs inline. When it too is
+    // gone, replace this with an assertion about `families`, not with `>= 0`.
+    assert.ok(inline.has('/api/v1/rapidpro/field-report'),
+      `the scan did not find the one literal that remains in src/server.js:${start}..${end} — it parsed ${inline.size}, so the regex is not reading the dispatcher`)
 
     const families = familyPaths()
     assert.ok(families.size >= 40, `parsed ${families.size} family paths, which is not the route surface`)
