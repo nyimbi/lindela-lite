@@ -1501,15 +1501,51 @@ testable in isolation. This unblocks every other substrate item.
 > `DEMO_SEED_BUDGET_MS` moved with the seed and is re-exported from `server.js`,
 > because `test/` and `scripts/` read it off that module.
 >
-> **One inline literal route condition remains in the dispatcher**, and it is not
-> a route: `/api/v1/rapidpro/field-report` is an auth precondition that buffers
-> the body and verifies the HMAC before falling through to the family. The
-> figure is measured, not carried forward —
-> `functionBody('handleApiRequestInContext', src)` then matching
-> `url\.pathname\s*===\s*'…'` returns exactly one. `test/dispatch-shadow.test.js`
-> lost its size floor in the same commit, because a floor of 1 is the number a
-> *broken* regex also returns whenever any single literal survives it; it now
-> names that literal instead.
+> **The authentication gate came out last, and it takes the final literal with
+> it.** The block it replaces was the 48-line preamble every API request passes
+> through before any route is matched: buffer a signed webhook's bytes and verify
+> its HMAC, let a public *read* through, authenticate everything else, answer
+> `/auth-info` for a caller who has no key, then scope-check the identity that
+> resolved. `src/routes/auth-gate.js` is the thirty-fourth module under
+> `src/routes/` and the only one that exports no `match*Route`, because there is
+> nothing to match — it runs at a fixed point above every matcher and returns a
+> **verdict** rather than a boolean: `{ outcome: 'continue', auth }` or
+> `{ outcome: 'handled' }`. A boolean would lose the identity, which is the whole
+> reason the dispatcher had three things to do with the answer.
+>
+> **The dispatcher now carries no inline route literal at all** — the first time
+> that has been true. `functionBody('handleApiRequestInContext', src)` then
+> matching `url\.pathname\s*===\s*'…'` returns **zero**, where it returned one
+> before. The paragraph this replaces said what to do at exactly this moment:
+> "When it too is gone, replace this with an assertion about `families`, not with
+> `>= 0`." `test/dispatch-shadow.test.js` now asserts `inline.size === 0` and
+> carries a **canary that reads `src/routes/auth-gate.js` with the same regex**,
+> because `0` is also what a regex that matches nothing returns — a scan that
+> cannot find a literal known to be present cannot certify a dispatcher that has
+> none. The canary fires when the gate's own literal is renamed.
+>
+> Two of the gate's four decisions were verified rather than moved. The
+> `/auth-info` branch and the public-read branch each have a live-server test
+> already (`auth-bootstrap`, `auth-public-reads`), so the module's own test file
+> asserts the *shape* no live test can express: that `handled` and `continue` are
+> distinct outcomes, and that the identity the gate resolved is the one it
+> *returns* rather than one it mutates into a parameter. Its nine tests cover all
+> four decisions and the auth-free deployment, and each was canaried: deleting
+> the body-buffering line fails exactly the two tests that assert it, and nothing
+> else.
+>
+> The move cost three imports (`requireScope`, `scopeForRoute`,
+> `verifyRapidProWebhook` left `server.js` as orphans, caught by
+> `test/unused-imports.test.js` — which is the gate that exists for exactly
+> this), and it needed a real test file rather than an allowlist entry for
+> `check-module-coverage`: an allowlist is a place to hide, and this module is
+> reachable on every request.
+>
+> The dispatcher went 411 → **367 lines** and `server.js` 2,009 → **1,964**.
+> Thirty-four modules under `src/routes/`, thirty-three matchers. ENH-60 stays
+> PARTIAL — the dispatcher is smaller but it is not gone, and what remains is the
+> 367 lines of dispatch entries themselves, which is ENH-59's problem rather than
+> another extraction.
 >
 > Two stale figures in the paragraph above are corrected here rather than
 > silently replaced. It said "eight literal conditions exist in `server.js` as a

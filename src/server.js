@@ -6,7 +6,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { authenticate, requireScope, scopeForRoute, isAuthConfigured, isPublicPath, isPublicRequest } from './auth.js'
+import { authenticate, isAuthConfigured, isPublicPath, isPublicRequest } from './auth.js'
+import { enforceAuthGate } from './routes/auth-gate.js'
 import { corsResponseHeaders, isPreflight, preflightResponse } from './cors.js'
 import { ERROR_CODES } from './errors.js'
 import { logger, metrics, timer, runWithRequestId } from './observability.js'
@@ -17,7 +18,6 @@ import {
   runIngestion,
 } from './ingestion.js'
 import { actionLog, counts, operationalSummary } from './operations.js'
-import { verifyRapidProWebhook } from './rapidpro.js'
 import { createStoreFromEnv } from './storage.js'
 import { budgetedStore, queryBudgetLimits, runWithQueryBudget, WIDE_QUERY_BUDGET } from './query-budget.js'
 import { readReplicaStore } from './read-replica.js'
@@ -1061,58 +1061,14 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   // recognise" — the second is what a scanner produces, one per request.
   res.locals = res.locals || {}
   res.locals.matchedRoute = normalizeRoute(url.pathname)
-  if (isAuthConfigured()) {
-    if (url.pathname === '/api/v1/rapidpro/field-report' && req.method === 'POST') {
-      // Buffer first. A signature covers the exact bytes sent, and the body
-      // stream cannot be read twice — verifying first meant every HMAC-signed
-      // request failed closed against the real route while passing in tests
-      // that buffered the body themselves.
-      req.rawBody = await readRawBody(req)
-      if (!verifyRapidProWebhook(req)) {
-        jsonResponse(res, 401, { success: false, error: 'Invalid RapidPro webhook', code: ERROR_CODES.INVALID_SIGNATURE })
-        return
-      }
-    } else if (!isPublicRequest(req.method, url.pathname)) {
-      // Every route needs a token — and public paths are a read widening only
-      // (see `isPublicRequest`), so a mutation to a publicly listed path still
-      // lands here and still authenticates. The old guard rejected only
-      // non-GET methods, so `GET /api/v1/export.csv` — field reports and
-      // RapidPro message bodies — was served to anyone who could reach the
-      // port even with API keys correctly configured; the read side of that
-      // fix stays, the write side of it now never widens.
-      auth = authenticate(req)
-      if (!auth) {
-        // `/auth-info` is the one route an unauthenticated caller may reach,
-        // and it is here rather than in the handler so the answer is available
-        // *because* the key was missing.
-        //
-        // It reports `auth_configured`, so gating it meant the client could
-        // never learn it needed a key: a fresh console asked, got the same 401
-        // as every other route, and had nothing to distinguish "this deployment
-        // requires a token" from "this deployment is broken". It leaked nothing
-        // to get that far — a 401 already says authentication is on, which is
-        // what `auth_configured` would report.
-        //
-        // Identity is still returned only for a caller who presented a token;
-        // without one the response is nulls and the flag. `auth` is null here,
-        // which is what makes this the anonymous answer — the same handler as
-        // the authenticated path below, so the two cannot drift.
-        const authInfoRoute = matchAuthInfoRoute(url.pathname, req.method)
-        if (authInfoRoute && handleAuthInfoRoute(authInfoRoute, { auth: null, res, jsonResponse })) return
-        jsonResponse(res, 401, { success: false, error: 'Unauthorized' })
-        return
-      }
-      try {
-        requireScope(auth, scopeForRoute(req.method, url.pathname))
-      } catch (error) {
-        jsonResponse(res, error.statusCode || 403, { success: false, error: error.message })
-        return
-      }
-    }
-  }
-
-
-
+  // ENH-60. The authentication gate, extracted to `src/routes/auth-gate.js`.
+  // Every request passes through it before any route is matched — it has no
+  // matcher of its own, which is why it is the one module under `src/routes/`
+  // that exports a verdict rather than a `match`/`handle` pair. Dispatched here,
+  // above the store read, where the block it replaces sat.
+  const gate = await enforceAuthGate(req, res, url, { auth, jsonResponse })
+  if (gate.outcome === 'handled') return
+  auth = gate.auth
 
   // ENH-07. The manifest is what the route reads, measured rather than guessed
   // (`src/route-manifests.js`). `null` — a whole-store read — is the answer for

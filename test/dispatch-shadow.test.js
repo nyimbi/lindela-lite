@@ -194,20 +194,28 @@ describe('a family route is not shadowed by an inline dispatcher block', () => {
       if (!inline.has(m[1])) inline.set(m[1], line)
     }
 
-    // The canary-in-reverse: a scan that parses nothing passes every assertion
-    // below it, because an empty `inline` produces no shadows. This was a size
-    // floor while three literals existed; ENH-60 moved two of them —
-    // `demo/seed` and `maintenance/apply-retention` — into
-    // `src/routes/maintenance.js`, and a floor of 1 is the number a *broken*
-    // regex also returns whenever any single literal survives it. So the floor
-    // is gone and the one literal that must be there is named instead.
+    // The dispatcher carries **no** inline route literal now. ENH-60 moved the
+    // last one — `/api/v1/rapidpro/field-report`, which is an auth precondition
+    // rather than a route — into `src/routes/auth-gate.js` with the rest of the
+    // gate, and the previous form of this assertion said exactly what to do when
+    // that happened: "When it too is gone, replace this with an assertion about
+    // `families`, not with `>= 0`."
     //
-    // `/api/v1/rapidpro/field-report` is an auth precondition inside the
-    // `isAuthConfigured()` block, not a route — it reads a pathname to decide
-    // whether the caller may proceed, and it belongs inline. When it too is
-    // gone, replace this with an assertion about `families`, not with `>= 0`.
-    assert.ok(inline.has('/api/v1/rapidpro/field-report'),
-      `the scan did not find the one literal that remains in src/server.js:${start}..${end} — it parsed ${inline.size}, so the regex is not reading the dispatcher`)
+    // So the property is asserted directly. `inline.size === 0` on its own would
+    // also hold for a regex that matches nothing, which is why the canary below
+    // runs the *same* regex against the file the literal moved to: a scan that
+    // cannot find a literal known to be present cannot certify a dispatcher that
+    // has none.
+    const gate = fs.readFileSync(path.join(ROOT, 'src', 'routes', 'auth-gate.js'), 'utf8')
+    const canary = [...gate.matchAll(/url\.pathname\s*===\s*'([^']+)'/g)].map((m) => m[1])
+    assert.ok(canary.includes('/api/v1/rapidpro/field-report'),
+      `the inline-literal regex found ${canary.length} literal(s) in src/routes/auth-gate.js, `
+      + 'which is where the last one moved — so the regex is not reading source and the '
+      + 'dispatcher assertion below would pass on any input')
+
+    assert.equal(inline.size, 0,
+      `the dispatcher still carries ${inline.size} inline route literal(s): `
+      + `${[...inline.keys()].join(', ')} — a literal here runs before every family matcher`)
 
     const families = familyPaths()
     assert.ok(families.size >= 40, `parsed ${families.size} family paths, which is not the route surface`)
