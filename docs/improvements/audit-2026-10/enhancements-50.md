@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 795-line function with 27
+generated from, and ENH-60's dispatcher is still one 796-line function with 28
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1087,11 +1087,15 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Twenty-seven families are out; the dispatcher is not
+> **PARTIAL — 2026-10-12. Twenty-eight families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 795 lines and `server.js` 5,603 →
-> 2,384.
+> set of blocks. The dispatcher went 1,903 → 796 lines and `server.js` 5,603 →
+> 2,386. (The count is *matchers*, not files: 27 modules under `src/routes/`, one
+> of which — `alerting.js` — carries two, `matchAlertingRoute` and the
+> non-exported `matchTriggeringRoute`. The 27 recorded here before this entry was
+> the file count, so it read one high for a day — the same off-by-one the
+> 17-conditions figure had.)
 > ENH-80 added the eighteenth family (`src/routes/federation.js`, 7 paths) and
 > moved the line count up rather than down: that family is new surface, not an
 > extraction. ENH-60 then took the **hazard-risk family**
@@ -1213,12 +1217,27 @@ testable in isolation. This unblocks every other substrate item.
 > matchComputeRoute → handleComputeRoute: 4 paths`, still 174 documented and 174
 > served.
 >
-> What is left is not more of the same. The dispatcher still holds **14 inline
+> The **outbox family** (`src/routes/outbox.js`, 2 routes, 83 lines) came out
+> next, and it is the exception to the paragraph below rather than an instance of
+> it. The remaining literal conditions are one-off routes whose bodies *are* the
+> business logic; the outbox pair is not. `GET /outbox` is one `collectionPage`
+> call and `POST /outbox/dispatch` is one `dispatchPending` call, and both
+> already lived in `src/outbox.js` — the dispatcher held two lines that named a
+> module it had imported for its driver item. What makes it a family rather than
+> a pair of blocks is that the two routes are the two halves of one question: a
+> queue you can see and a queue you can drain. The move records the one property
+> worth keeping, that the listing is **not** soft-delete filtered — `failed` is
+> terminal in the outbox and the dead letter is the record of what stopped
+> getting through (R-47), so the filter every sibling collection list carries
+> would hide the one row that matters. Canaried: planting that filter fails the
+> test with `a failed event was filtered out of the outbox listing`.
+>
+> What is left is not more of the same. The dispatcher still holds **12 inline
 > literal route conditions** (measured from the dispatcher's own line range — the
 > 17 previously recorded here does not reproduce against the file), and they are
 > one-off routes whose bodies *are* the
 > business logic: `demo/seed`, `maintenance/apply-retention`, the two
-> `service-assets` verbs, the outbox pair, `ingest/run`, the `events` read, the
+> `service-assets` verbs, `ingest/run`, the `events` read, the
 > `assessments` roll-up, and the liveness pair (`ready`, `health`) plus the two
 > `auth-info` answers — one on the authenticated path and one on the 401 path,
 > which is a different route that happens to share a path. Extracting those is a

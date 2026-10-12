@@ -44,6 +44,7 @@ import { matchProvenanceRoute, handleProvenanceRoute } from './routes/provenance
 import { matchAlertingRoute, handleAlertingRoute } from './routes/alerting.js'
 import { matchWebhookRoute, handleWebhookRoute } from './routes/webhooks.js'
 import { matchFederationRoute, handleFederationRoute } from './routes/federation.js'
+import { matchOutboxRoute, handleOutboxRoute } from './routes/outbox.js'
 import { matchRiskRoute, handleRiskRoute } from './routes/risk.js'
 import { matchDistrictRoute, handleDistrictRoute } from './routes/districts.js'
 import { matchAmbientRoute, handleAmbientRoute } from './routes/ambient.js'
@@ -1476,18 +1477,11 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   const federationRoute = matchFederationRoute(url.pathname)
   if (federationRoute && await handleFederationRoute(federationRoute, { store, data, req, res, url, jsonResponse })) return
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/outbox') {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.events_outbox || [], url.searchParams, { auth: req.__auth, data, collection: 'events_outbox' }) })
-    return
-  }
-
-  if (req.method === 'POST' && url.pathname === '/api/v1/outbox/dispatch') {
-    const body = await readRequestJson(req)
-    const webhooks = data.webhook_subscriptions || []
-    const result = await dispatchPending(store, { webhooks, maxBatch: 50, timeoutMs: 5000 })
-    jsonResponse(res, 201, { success: true, ...result })
-    return
-  }
+  // ENH-60. The outbox family, extracted to `src/routes/outbox.js`: the queue's
+  // own listing and the operator's "deliver it now". Dispatched here, where the
+  // pair was, so the order the dispatcher tries its routes in is unchanged.
+  const outboxRoute = matchOutboxRoute(url.pathname, req.method)
+  if (outboxRoute && await handleOutboxRoute(outboxRoute, { store, data, req, res, url, jsonResponse })) return
 
   // ENH-60. The upload family, extracted to `src/routes/upload.js`: the column
   // contract a client reads before it sends anything, and the one validator all
