@@ -34,7 +34,6 @@ import { collectionsForRequest, needsHistory } from './route-manifests.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection, STAC_READ_COLLECTIONS } from './stac.js'
 import { emit, emitMany, dispatchPending, outboxRollup } from './outbox.js'
 import { createVintageIndex } from './vintage.js'
-import { taxonomyDocument } from './taxonomy.js'
 import { matchExportRoute, handleExportRoute } from './routes/exports.js'
 import { matchTilePackRoute, handleTilePackRoute } from './routes/tile-packs.js'
 import { matchKpiRoute, handleKpiRoute } from './routes/kpi.js'
@@ -51,6 +50,7 @@ import { matchRiskRoute, handleRiskRoute } from './routes/risk.js'
 import { matchDistrictRoute, handleDistrictRoute } from './routes/districts.js'
 import { matchAmbientRoute, handleAmbientRoute } from './routes/ambient.js'
 import { matchUploadRoute, handleUploadRoute } from './routes/upload.js'
+import { matchFormsRoute, handleFormsRoute } from './routes/forms.js'
 import { runFederationSync } from './federation-peers.js'
 import { matchScenarioRoute, handleScenarioRoute } from './routes/scenarios.js'
 import { matchIngestionRoute, handleIngestionRoute } from './routes/ingestion.js'
@@ -59,9 +59,6 @@ import { matchReportingRoute, handleReportingRoute, runDueReportSchedules } from
 import { matchParametricRoute, handleParametricRoute } from './routes/parametric.js'
 import { matchChwRoute, handleChwRoute } from './routes/chw.js'
 import { matchWorkflowRoute, handleWorkflowRoute } from './routes/workflows.js'
-import {
-  formCatalogue, formFor, latestForm, mergeForms, validateFormDefinition,
-} from './forms.js'
 // ARC-05. The operational banding the browser draws with, applied on the server
 // too. These modules are pure and DOM-free by construction, so importing them
 // from `src/` is not reaching into the client — it is the same code the client
@@ -503,19 +500,6 @@ const processDriver = createPeriodicDriver()
  * because the question is about this process's responses.
  */
 const processVintageIndex = createVintageIndex()
-
-/**
- * CAP-01. Every form version this deployment can serve: the built-ins merged
- * with whatever has been published to the store.
- *
- * A function of `data` rather than a module-level cache, because a published
- * version must be servable on the next request rather than after a restart —
- * and because two replicas reading one store must agree, which a per-process
- * cache would only do until one of them published.
- */
-function activeForms(data) {
-  return mergeForms(data?.form_definitions || [])
-}
 
 export function startPeriodicDriver(store, options) {
   return processDriver.start(store, options)
@@ -1608,99 +1592,12 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/taxonomy') {
-    // CAP-05. The vocabulary a client renders and a validator enforces, from one
-    // source. A partner adds a category through `LINDELA_LITE_TAXONOMY` or
-    // `data/taxonomy.json` and it appears here without a code change; a
-    // malformed extension is reported in `problems` rather than thrown, so a bad
-    // config is visible instead of stopping the process.
-    jsonResponse(res, 200, { success: true, data: taxonomyDocument() })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/forms') {
-    // CAP-01. The catalogue: one entry per form id, naming the newest version
-    // and every version still readable. Built-ins come from `src/forms.js` and a
-    // deployment's published versions from the store, merged the same way the
-    // taxonomy merges its extension — a published `(id, version)` replaces the
-    // built-in with that pair, and a higher version is an addition.
-    jsonResponse(res, 200, {
-      success: true,
-      data: { forms: formCatalogue(activeForms(data)), published: (data.form_definitions || []).length },
-    })
-    return
-  }
-
-  const formMatch = url.pathname.match(/^\/api\/v1\/forms\/([^/]+)$/)
-  if (req.method === 'GET' && formMatch) {
-    const id = decodeURIComponent(formMatch[1])
-    const requested = url.searchParams.get('version')
-    const forms = activeForms(data)
-    // A version the deployment does not hold is a 404 naming what it does hold,
-    // not a fallback to the newest. A submission names an exact version, and
-    // answering a request for version 3 with version 4's fields is how two
-    // versions in the field stop being reconcilable.
-    const form = requested === null
-      ? latestForm(forms, id)
-      : formFor(forms, id, Number(requested))
-    if (!form) {
-      const known = forms.filter((f) => f.id === id).map((f) => f.version)
-      jsonResponse(res, 404, {
-        success: false,
-        error: known.length
-          ? `${id} has no version ${requested}; this deployment holds ${known.join(', ')}`
-          : `no form with id ${id}`,
-      })
-      return
-    }
-    jsonResponse(res, 200, { success: true, data: form })
-    return
-  }
-
-  if (req.method === 'POST' && url.pathname === '/api/v1/forms') {
-    // Publishing is a write through the API, which is the whole point of the
-    // row: the person who owns the question does not have to be the person who
-    // can merge to main.
-    const body = await readRequestJson(req)
-    const definition = body.form || body
-    const problems = validateFormDefinition(definition)
-    if (problems.length) {
-      jsonResponse(res, 400, { success: false, error: problems.join('; '), problems })
-      return
-    }
-    const forms = activeForms(data)
-    const existing = formFor(forms, definition.id, definition.version)
-    // Publishing a version that already exists is a 409, not an overwrite.
-    // Versions are immutable: submissions name them, so editing a published
-    // version in place leaves every record stamped with it silently wrong —
-    // the same defect as rewriting an applied migration.
-    if (existing && existing.deployment !== true) {
-      jsonResponse(res, 409, {
-        success: false,
-        error: `${definition.id} v${definition.version} is a built-in and cannot be replaced; publish v${definition.version + 1}`,
-      })
-      return
-    }
-    if (existing) {
-      jsonResponse(res, 409, {
-        success: false,
-        error: `${definition.id} v${definition.version} is already published and a published version is immutable; publish v${definition.version + 1}`,
-      })
-      return
-    }
-    const stored = {
-      ...definition,
-      fields: definition.fields.map((field) => ({ ...field })),
-      published_at: new Date().toISOString(),
-      published_by: req.__auth?.subject || null,
-    }
-    const log = actionLog('form_definitions', 'published', stored, 'api', req.__auth?.subject)
-    await store.merge({ form_definitions: [stored], action_logs: [log] })
-    jsonResponse(res, 201, { success: true, data: stored })
-    return
-  }
-
-
+  // ENH-60. The taxonomy-and-forms family, extracted to `src/routes/forms.js`:
+  // the vocabulary a client renders and the form definitions it validates
+  // against. Dispatched here, where the taxonomy block was, so the order the
+  // dispatcher tries its routes in is unchanged.
+  const formsRoute = matchFormsRoute(url.pathname, req.method)
+  if (formsRoute && await handleFormsRoute(formsRoute, { store, data, req, res, url, jsonResponse })) return
 
   if (req.method === 'POST' && url.pathname === '/api/v1/maintenance/apply-retention') {
     const policy = await loadPolicy()

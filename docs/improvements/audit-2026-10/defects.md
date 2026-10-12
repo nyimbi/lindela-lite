@@ -981,7 +981,7 @@ What remains is ENH-59 itself: five tables still exist, and a route still
 touches several files. They now cannot disagree *silently* in the ways above,
 which is a different property from having one source.
 
-**Five more families out, 2026-10-12, four of them extractions.** ENH-80 added
+**Six more families out, 2026-10-12, five of them extractions.** ENH-80 added
 `src/routes/federation.js` (7 paths) as new surface rather than an extraction.
 ENH-60 then took the **hazard-risk family** out into `src/routes/risk.js` — 6
 paths, 9 blocks, 146 lines: the two marginal rankings, the joint compound score,
@@ -989,16 +989,37 @@ the model listing, the fit and the score — the **district-and-equity family**
 into `src/routes/districts.js` — 5 paths over three scales of the same question
 — the **ambient-layer family** into `src/routes/ambient.js` — 3 paths: the raw
 observation series, the weather roll-up and the modelled discharge per region —
-and the **upload family** into `src/routes/upload.js` — 2 routes on one path,
-124 lines, the largest single block taken out so far. The dispatcher is 993 lines
-and `server.js` 2,882, from 1,903 and 5,603 at the start. `check-openapi` reads
-all four new families as third-family route sources with no second list to keep
-in step — `parsed matchRiskRoute → handleRiskRoute: 6 paths`, `parsed
-matchDistrictRoute → handleDistrictRoute: 5 paths`, `parsed matchAmbientRoute →
-handleAmbientRoute: 3 paths` and `parsed matchUploadRoute → handleUploadRoute: 1
+the **upload family** into `src/routes/upload.js` — 2 routes on one path,
+124 lines, the largest single block taken out so far — and the
+**taxonomy-and-forms family** into `src/routes/forms.js` — 4 routes, 167 lines:
+the vocabulary, the catalogue, one version, and the publish that adds one. The
+dispatcher is 906 lines and `server.js` 2,779, from 1,903 and 5,603 at the start.
+`check-openapi` reads all five new families as third-family route sources with no
+second list to keep in step — `parsed matchRiskRoute → handleRiskRoute: 6 paths`,
+`parsed matchDistrictRoute → handleDistrictRoute: 5 paths`, `parsed
+matchAmbientRoute → handleAmbientRoute: 3 paths`, `parsed matchUploadRoute →
+handleUploadRoute: 1 paths` and `parsed matchFormsRoute → handleFormsRoute: 3
 paths`, still 174 documented and 174 served — which is the property the entry
 above established and the reason none of the extractions needed a table edit at
 all.
+
+The forms move carried `activeForms` out of the dispatcher with it, which is the
+first thing these extractions have taken that another route family also computes:
+`src/routes/chw.js` keeps its own copy of the same merge. That duplication is
+recorded rather than fixed — deduplicating it would touch the CHW family in the
+same commit, and a move that also refactors is a move nobody can review.
+
+It also exposed a class of drift the ledger test could not see. `_status-de.json`
+named ENH-26's rapidpro routes as `src/server.js:2841-2845` and the inbound
+webhook as `src/server.js:2036-2050`. The extraction moved both into
+`src/routes/rapidpro.js`; `2841` fell past the end of the shortened file and
+failed the reference check loudly, but `2036` still *resolved* — it now points at
+`operations: operationalSummary(data)`, unrelated code — so it passed silently
+and the ledger would have gone on citing a line that no longer means what it
+says. A line-numbered citation into a file that is being restructured is a
+reference that decays in two directions, and only one of them is loud. Both are
+repointed at the module the routes now live in, and status.md regenerated.
+
 
 Two of the moves found live defects rather than only relocating code. The
 discharge roll-up's same-day tiebreak compared `existing.date`, a field the
@@ -1020,7 +1041,7 @@ through its own module; three more with the ambient move (`open-meteo-forecast.j
 (`upload.js`'s three symbols, which the family now imports itself). A stale
 duplicate of the "route planning requires a POST body" comment sat between two
 of the risk blocks describing a route handled a hundred lines below; it is gone.
-**25 inline literal conditions remain** and the consolidation is still ENH-59's.
+**21 inline literal conditions remain** and the consolidation is still ENH-59's.
 
 ### ARC-03 — HIGH — `/api/v1/demo/seed` imports `scripts/seed-demo.mjs` at request time
 `src/server.js:1269`. Production `src/` depends on `scripts/` — inverted layering.

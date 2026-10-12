@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 993-line function with 23
+generated from, and ENH-60's dispatcher is still one 906-line function with 25
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1087,11 +1087,11 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Twenty-three families are out; the dispatcher is not
+> **PARTIAL — 2026-10-12. Twenty-four families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 993 lines and `server.js` 5,603 →
-> 2,882.
+> set of blocks. The dispatcher went 1,903 → 906 lines and `server.js` 5,603 →
+> 2,779.
 > ENH-80 added the eighteenth family (`src/routes/federation.js`, 7 paths) and
 > moved the line count up rather than down: that family is new surface, not an
 > extraction. ENH-60 then took the **hazard-risk family**
@@ -1111,7 +1111,22 @@ testable in isolation. This unblocks every other substrate item.
 > block taken out so far and the one where a partial write is most tempting, so
 > the three rules that prevent one now live together: a failed batch writes
 > nothing, a dry run writes no rows but still logs what it would have done, and a
-> malformed multipart body is a 400 rather than a 500.
+> malformed multipart body is a 400 rather than a 500. The **taxonomy-and-forms
+> family** (`src/routes/forms.js`, 4 routes, 167 lines) closed the run: the
+> vocabulary a client renders, the catalogue it picks a version from, the version
+> itself, and the publish that adds one. They are one family because they are the
+> *configuration* surface — everything else reads them — and because the same
+> immutability rule appears three times: a published version is not overwritten
+> (`409`, since submissions name it and editing one in place leaves every record
+> stamped with it silently wrong, the same defect as rewriting an applied
+> migration), a built-in is not replaced in place by a deployment but superseded
+> by a higher version, and a version the deployment does not hold is a `404`
+> naming the versions it does hold rather than a fallback to the newest. The
+> move carried `activeForms` with it, which had no caller outside this family;
+> `src/routes/chw.js` keeps its own copy of the same merge, a duplication this
+> move records rather than fixes, because deduplicating it would touch the CHW
+> family in the same commit and a move that also refactors is a move nobody can
+> review.
 >
 > Its matcher was written first as a guard (`if (pathname !== '…') return null`)
 > and `check-openapi` refused it: the gate parses the positive `===` form only, so
@@ -1142,13 +1157,14 @@ testable in isolation. This unblocks every other substrate item.
 > `check-openapi` reads each family as a third route source with no second list to
 > keep in step — `parsed matchRiskRoute → handleRiskRoute: 6 paths`, `parsed
 > matchDistrictRoute → handleDistrictRoute: 5 paths`, `parsed matchAmbientRoute →
-> handleAmbientRoute: 3 paths` and `parsed matchUploadRoute → handleUploadRoute: 1
-> paths`, still 174 documented and 174 served.
+> handleAmbientRoute: 3 paths`, `parsed matchUploadRoute → handleUploadRoute: 1
+> paths` and `parsed matchFormsRoute → handleFormsRoute: 3 paths`, still 174
+> documented and 174 served.
 >
-> What is left is not more of the same. The dispatcher still holds **25 inline
+> What is left is not more of the same. The dispatcher still holds **21 inline
 > literal route conditions**, and they are one-off routes whose bodies *are* the
 > business logic: `routing/plan`, `analytics/bias-correct`, `demo/seed`,
-> `maintenance/apply-retention`, `forms`, `service-assets`, and the liveness pair
+> `maintenance/apply-retention`, `service-assets`, and the liveness pair
 > remain. Extracting those is a move only
 > after ENH-59 has a route table to declare them in — otherwise it is relocating
 > branches and calling it architecture. The ~15-module target is reached when the
