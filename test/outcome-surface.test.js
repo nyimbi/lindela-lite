@@ -8,6 +8,10 @@ import {
 
 const PUBLIC_ROOT = new URL('../public/', import.meta.url)
 
+// Captured before `installBrowserEnv` swaps in its unref'd stub, so `settle`
+// can wait on a timer that actually fires. See the note there.
+const realSetTimeout = globalThis.setTimeout.bind(globalThis)
+
 /**
  * ENH-19 — the outcome channel had no way in.
  *
@@ -175,8 +179,19 @@ describe('ENH-19 — the surface is reachable and the reason catalogue comes fro
    * `loadTemplate` fetch and the `fetchReasons` fetch the dialog performs
    * before it renders — both are `await`ed inside the handler, so the option
    * list is written by the time this resolves.
+   *
+   * **Real timers, not the environment's stub.** `installBrowserEnv` replaces
+   * `setTimeout` with one that `unref`s the handle so a 30-second poll cannot
+   * outlive its test. An unref'd timer does not keep the loop alive, so when
+   * nothing else is pending the timer never fires and this promise never
+   * resolves — which is exactly what the loop does at the end of a test file.
+   * Node 26's runner holds the loop open through it; Node 22's does not, so
+   * these tests passed on the laptop and failed on every CI push with
+   * "Promise resolution is still pending but the event loop has already
+   * resolved". Captured before the stub is installed, as
+   * `alert-card-authorisation.test.js` already does.
    */
-  const settle = () => new Promise((r) => setTimeout(r, 0)).then(() => new Promise((r) => setTimeout(r, 0)))
+  const settle = () => new Promise((r) => realSetTimeout(r, 0)).then(() => new Promise((r) => realSetTimeout(r, 0)))
 
   let boots = 0
   async function boot({ alerts = rows(), coverage, reasons } = {}) {

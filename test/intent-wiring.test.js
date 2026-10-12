@@ -182,7 +182,7 @@ describe('ENH-71 — the console follows an explicit intent', () => {
       'app.js does not reach shared/intent-console.js through lazy(), so the surface is not wired in')
   })
 
-  it('the reachability property fires when a group is dropped from the total intent', () => {
+  it('the reachability property fires when a group is dropped from the total intent', async () => {
     // The canary. `manage` is the total intent and is what makes the
     // reachability property hold by construction; drop one group from its
     // `show` list and a control must become unreachable for a role. If the
@@ -197,16 +197,21 @@ describe('ENH-71 — the console follows an explicit intent', () => {
     assert.ok(source.includes(before), 'canary target not found — the patch would be a no-op')
     const after = "show: Object.freeze(['console', 'map', 'simulation', 'routing', 'rail', 'dialog'])"
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'intent-canary-'))
+    // The removal must happen *after* the import resolves, not in a `finally`
+    // around the `return`. `import()` reads the file asynchronously, so a
+    // synchronous `finally` deletes the directory before the loader opens it —
+    // and macOS's loader happened to win the race where Linux's did not, so
+    // this passed locally and failed on every CI push with ENOENT. Awaiting the
+    // import first makes the order explicit rather than lucky.
     try {
       const file = path.join(dir, 'intent.js')
       fs.writeFileSync(file, source.replace(before, after))
-      return import(pathToFileURL(file).href).then(({ reachability }) => {
-        const report = reachability()
-        assert.ok(report.unreachable.length > 0,
-          'dropping palette from manage.show stranded nothing; the reachability property is not firing')
-        assert.ok(report.onlyRouteUnreachable.some((u) => u.control === 'paletteInput'),
-          'paletteInput is the only-route control the dropped group stranded, and it was not reported')
-      })
+      const { reachability } = await import(pathToFileURL(file).href)
+      const report = reachability()
+      assert.ok(report.unreachable.length > 0,
+        'dropping palette from manage.show stranded nothing; the reachability property is not firing')
+      assert.ok(report.onlyRouteUnreachable.some((u) => u.control === 'paletteInput'),
+        'paletteInput is the only-route control the dropped group stranded, and it was not reported')
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

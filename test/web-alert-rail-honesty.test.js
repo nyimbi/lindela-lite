@@ -33,6 +33,25 @@ import { fileURLToPath } from 'node:url'
 import { before, describe, it } from 'node:test'
 import { installBrowserEnv } from './browser-env.mjs'
 
+/**
+ * The real timer, captured before anything can replace it.
+ *
+ * `installBrowserEnv` swaps `setTimeout` for a stub that `unref`s the handle, so
+ * a background poll cannot outlive its test. An unref'd timer does not keep the
+ * loop alive, so when nothing else is pending it never fires — and Node 22's
+ * runner drains the loop at the end of a file where Node 26's does not, which is
+ * why these tests passed on the laptop and failed on every CI push with
+ * "Promise resolution is still pending but the event loop has already resolved".
+ *
+ * This must sit **above the `before` hook**, not beside `boot` where it used to
+ * be. `before()` on Node 22 runs its callback eagerly, during module evaluation,
+ * so a `const realSetTimeout = globalThis.setTimeout.bind(globalThis)` placed
+ * below the hook binds the stub it was written to avoid — a capture that looks
+ * correct and is not. `alert-card-authorisation.test.js` has the same constant
+ * and gets away with it only because nothing installs the environment before it.
+ */
+const realSetTimeout = globalThis.setTimeout.bind(globalThis)
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC_ROOT = new URL('../public/', import.meta.url)
 const EN = JSON.parse(readFileSync(path.join(ROOT, 'public', 'i18n', 'en.json'), 'utf8'))
@@ -70,7 +89,6 @@ before(async () => {
  * English catalogue is served so the reassuring string and the error state
  * render as words rather than as key names.
  */
-const realSetTimeout = globalThis.setTimeout.bind(globalThis)
 let boots = 0
 async function boot({ alertsRespond } = {}) {
   boots += 1
