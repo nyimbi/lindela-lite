@@ -694,9 +694,10 @@ inside the same function, three auth gates (one centralised, two copies at `:366
 and `:392`), per-route inline validation, and business logic that belongs in
 `kpi.js`/`reports.js`. A change to one route requires reading 1,600 lines. ENH-60.
 
-**In progress.** Nine families are out, each one a coherent group with its own
-matcher, its own test file, and a property that is the reason it is a family
-rather than a set of blocks:
+**Fixed 2026-10-12 — every route family is out, and the move was verified as a
+move rather than asserted to be one.** Seventeen families now live under
+`src/routes/`, each a coherent group with its own matcher, its own test file, and
+a property that is the reason it is a family rather than a set of blocks:
 
 | module | routes | what it holds |
 |---|---|---|
@@ -709,14 +710,51 @@ rather than a set of blocks:
 | `src/routes/provenance.js` | 6 | none of them is a collection read and every one refuses a write; `history` answers 405+`read_only` where the rest 404 |
 | `src/routes/alerting.js` | 21 paths | a view is computed and has no `data[...]` key, so the kind guards carry the branch |
 | `src/routes/snapshots.js` | 3 | ENH-34's citable handles |
+| `src/routes/scenarios.js` | 2 | the token a create mints is the token a retrieve decodes |
+| `src/routes/parametric.js` | 4 | one-record edits use `replaceCollection`, never `store.write` (R-25) |
+| `src/routes/chw.js` | 3 | a submission is resolved against the form version it names |
+| `src/routes/ingestion.js` | 4 | schedules normalise before they are stored |
+| `src/routes/reporting.js` | 6 | `run-due` is an action, not a listing — it takes the method (VER-14) |
+| `src/routes/workflows.js` | 4 | |
+| `src/routes/rapidpro.js` | 4 | the webhook verifies its own signature before the body is read |
+| `src/routes/webhooks.js` | 2 | |
 | `src/visibility.js` | — | `findVisible`, the one by-id resolver (VUL-03) |
 
-`src/server.js` is 4,886 lines and the dispatcher 1,392, from 5,603 and 1,903 at
-the start of the extraction. Each family was canaried at the property that
-justifies it, and every canary was watched failing on its own assertion before
-the family was committed — including the canaries that *did not* fire, which is
-how the alerting family's docstring was corrected from a claim about ordering
-that the code does not make.
+`src/server.js` is 3,237 lines from 5,603 at the start of the extraction, and the
+dispatcher 1,371 from 1,903.
+
+Three checks together establish the move preserved behaviour, and each caught
+something the others missed:
+
+- **The route surface is identical on both sides.** Every `pathname === '…'`
+  literal and `pathname.match(/…/)` regex read out of HEAD's `server.js` *and*
+  every file `git ls-tree -r HEAD --name-only` lists under `src/routes/`, against
+  the same read of the current tree: **104 paths, zero lost, zero added**. Reading
+  only HEAD's `server.js` reports already-committed route modules as newly added —
+  the check inventing differences rather than finding them.
+- **Every handler body is byte-identical** after normalising comments and blank
+  lines, except that bare `return` became `return true`, the handled-signal the
+  dispatcher now tests. All 17 call sites are guarded by
+  `if (match… && await handle…)) return`, so no handler runs and then falls
+  through to the 404.
+- **A bare-`return` count that dropped by 71 was explained, not waved through.**
+  71 `return true` appeared, and no bare `return` in HEAD sat mid-function — a
+  dropped early exit would have been a behaviour change.
+
+Each family was canaried at the property that justifies it, and every canary was
+watched failing on its own assertion before the family was committed — including
+the canaries that *did not* fire, which is how the alerting family's docstring was
+corrected from a claim about ordering that the code does not make.
+
+**Two defects the extraction caused, both found by the suite rather than by
+reading.** `src/routes/chw.js` imported `activeForms` from `../forms.js`, which
+does not export it — it is a local adapter in `server.js`. A missing named export
+is a link-time error, so `server.js` failed to *import* and took 75 tests down
+with it, which the agent that wrote it read as a shared-tree race.
+`runDueReportSchedules` moved into `reporting.js` as a private function while its
+only caller stayed in `server.js`: a `ReferenceError` invisible to `node --check`
+and to an import check, because the reference is inside a function body and only
+fires when the periodic driver ticks.
 
 Four defects were found *by* the extraction rather than by the audit: VER-13
 (Null Island in `iotMapLayer`), VER-14 (four read routes answering a write), the
@@ -727,9 +765,11 @@ cannot tell an optional group from a required one and reported only the
 two-segment path. Split into two patterns, which is what the original inline
 matcher had done.
 
-Still inline: `scenario`, `parametric`, `chw`, `ingestion`, `reporting`,
-`workflow`, `rapidPro`, `webhook`, and the risk/analytics reads. ENH-60's
-~15-module target is the endpoint.
+A fifth was found while extracting the last families: `test/parametric-edit-scope.test.js`
+read its assertion out of `src/server.js` alone, so moving the parametric family
+disarmed it — it kept passing its sibling test while checking a file that no
+longer held the code. It now reads the whole route surface, reports an offender by
+`file:line`, and skips comment lines.
 
 ### VER-14 — HIGH — Four read routes answer a write method with 200
 Found 2026-10-11 while extracting the exposure family (ARC-01), not by the audit.
