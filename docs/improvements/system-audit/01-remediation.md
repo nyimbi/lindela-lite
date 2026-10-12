@@ -241,7 +241,7 @@ commit for each is on `fix/storage-and-ingestion-correctness`.
 | R-53 | `6f6be48` — fixed-rate next run; the lateness is measured and reported | `test/schedule-slip.test.js` |
 | R-65, ENH-41 | `55aaf01` — the precache closure reaches the lazy graph (45 → 74 paths) | `test/sw-bootstrap-assets.test.js` |
 | R-62, R-63 | `f7502a8` — the locale layer boots through the same two-step as a switch | `test/web-locale-boot.test.js` |
-| R-76 | `28512d9`..the CI commit — the self-contained tier runs in the `test` job. The audit found 7 of 17 gates unrun; the registry is now 18 gates and **all 18 run on every push**, which is the number that matters because it is the whole tier and not a subset someone chose. `check-workflows.mjs` validated the edit, and the step was canaried by planting a dead `/api/v1/…` literal in `public/sw.js` and watching `npm run gates` exit 1 before reverting it. | `.github/workflows/ci.yml` (`npm run gates`), `scripts/run-gates.mjs --tier self-contained` |
+| R-76 | `5cadf7c` — the self-contained tier runs in the `test` job. The audit found 7 of 17 gates unrun; the registry is now 18 gates and **all 18 run on every push**, which is the number that matters because it is the whole tier and not a subset someone chose. `check-workflows.mjs` validated the edit, and the step was canaried by planting a dead `/api/v1/…` literal in `public/sw.js` and watching `npm run gates` exit 1 before reverting it. | `.github/workflows/ci.yml` (`npm run gates`), `scripts/run-gates.mjs --tier self-contained` |
 
 ### Closed earlier on this branch, verified rather than re-done
 
