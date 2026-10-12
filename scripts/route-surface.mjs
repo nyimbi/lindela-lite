@@ -138,7 +138,16 @@ export function patternToPaths(literal) {
     paths.push(uniqueParams(base))
     for (const inner of optionals) {
       const isParam = inner.includes('[') || inner.includes('.+')
-      paths.push(`${base}/${isParam ? '{id}' : inner.replace(/[()?:]/g, '')}`)
+      // `uniqueParams` over the *whole* path, not the base alone. A route with a
+      // parameter and a parameterised optional tail — `/collections/([^/]+)/items/([^/]+)`
+      // — has two parameters, and renaming only the base emitted
+      // `/stac/collections/{id}/items/{id}`: a path item declaring the same
+      // parameter name twice, which OpenAPI forbids and which no document could
+      // match. It went unnoticed because the first optional-tail route here was
+      // the tile proxy's `/basemap/tiles/osm/{z}/{x}/{y}.png`, whose parameters
+      // are all in the base.
+      const tail = isParam ? '{id}' : inner.replace(/[()?:]/g, '')
+      paths.push(uniqueParams(`${base}/${tail}`))
     }
   }
   return paths

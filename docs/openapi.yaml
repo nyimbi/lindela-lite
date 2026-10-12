@@ -3338,6 +3338,104 @@ paths:
                 type: object
         '401':
           description: Unauthorized
+  /stac/collections/{id}:
+    get:
+      summary: A STAC collection, with links to its items
+      description: >-
+        One of the published spatial collections — hazard events, service
+        assets or risk scores — as a STAC Collection. Served since the catalogue
+        was written and documented nowhere: `handleStacRoute` matched it with an
+        inline `.match()`, a spelling `scripts/route-surface.mjs` could not read
+        outside the dispatcher body, so this route and its three siblings
+        appeared in no manifest, no document and no check while `check-openapi`
+        reported a clean 176 documented, 176 served.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Collection id, from `STAC_COLLECTIONS` in `src/stac.js`
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: STAC Collection
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Unauthorized
+        '404':
+          description: No such collection
+  /stac/collections/{id}/items:
+    get:
+      summary: A STAC FeatureCollection of a collection's items
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: STAC FeatureCollection
+          content:
+            application/geo+json:
+              schema:
+                type: object
+        '401':
+          description: Unauthorized
+        '404':
+          description: No such collection
+  /stac/collections/{id}/items/{id2}:
+    get:
+      summary: A single STAC item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: id2
+          in: path
+          required: true
+          schema: { type: string }
+          description: Record id
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: STAC Item
+          content:
+            application/geo+json:
+              schema:
+                type: object
+        '401':
+          description: Unauthorized
+        '404':
+          description: No such collection or item
+  /ogc/collections/{id}/items:
+    get:
+      summary: An OGC API Features FeatureCollection of a collection's items
+      description: >-
+        The OGC twin of the STAC items route. It shares `resolveStacCollection`
+        with the STAC family so a collection cannot be added to one and missed
+        by the other; the response shape differs.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: OGC FeatureCollection
+          content:
+            application/geo+json:
+              schema:
+                type: object
+        '401':
+          description: Unauthorized
+        '404':
+          description: No such collection
   /api/v1/metrics:
     get:
       summary: Prometheus-format request metrics

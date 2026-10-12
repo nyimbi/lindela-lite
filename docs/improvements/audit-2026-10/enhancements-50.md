@@ -36,7 +36,10 @@ PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 **five** tables checked against each other — the document, the manifest table,
 the method gating, the envelope shape and, since 2026-10-12, the client's call
 sites — and no single declaration they are generated from, and ENH-60's
-dispatcher is still one 411-line function with 33 families out of it. Reading a
+dispatcher is still one 367-line function with 34 modules under `src/routes/`
+(34 matchers, since `src/routes/stac.js` carries two — `matchStacRoute` and
+`matchOgcRoute` — and `auth-gate.js` is the one module with none, because it
+runs before matching). Reading a
 PARTIAL as done is the error this table exists to prevent: five cross-checks is
 a network that stops five tables disagreeing *silently*, which is a strictly
 weaker property than one source of truth, and the two are easy to conflate
@@ -1546,6 +1549,41 @@ testable in isolation. This unblocks every other substrate item.
 > PARTIAL — the dispatcher is smaller but it is not gone, and what remains is the
 > 367 lines of dispatch entries themselves, which is ENH-59's problem rather than
 > another extraction.
+>
+> **2026-10-12 — the last routes written inline, and four routes no table could
+> see.** `handleStacRoute` was the one route block still written out in
+> `server.js` rather than under `src/routes/`, and it was left there for a
+> reason that turned out to be the defect: it matched with inline `.match()`
+> calls inside a plain helper, and `scripts/route-surface.mjs` reads inline
+> matches only in the dispatcher body and in a named `match*Route` function. So
+> `/stac/collections/{id}`, `/stac/collections/{id}/items`,
+> `/stac/collections/{id}/items/{itemId}` and `/ogc/collections/{id}/items` were
+> served, called by no client, and present in **no** manifest, document or
+> check — while `check-openapi` reported a clean *176 documented, 176 served*.
+> Agreement by mutual blindness, which is the tile-proxy defect's exact shape,
+> found this time by asking the parser what it could see rather than by a
+> symptom. `src/routes/stac.js` carries both families now; the document gained
+> the four paths, `ROUTE_MANIFESTS` gained the four entries against
+> `STAC_READ_COLLECTIONS`, and `check-openapi` reports **180 documented, 180
+> served**. Thirteen tests in `test/stac-route-module.test.js`, one of which
+> asserts against the parser's own output, because the failure mode here is not
+> a wrong answer — it is a route no check can find.
+>
+> *Writing the matcher found a second bug in the parser.* `uniqueParams` renames
+> repeated parameters so OpenAPI can declare them — `{id}`, then `{id2}` — and it
+> was applied to a path's base but not to its optional tail. A route with a
+> parameter *and* a parameterised optional tail emitted
+> `/stac/collections/{id}/items/{id}`: the same parameter name twice, which the
+> spec forbids and no document could match. It went unnoticed because the first
+> optional-tail route in the tree was the tile proxy, whose parameters are all in
+> the base. Canaried by reverting the one line and watching the new test fail
+> 12/13.
+>
+> The dispatcher is unchanged at 367 lines because this was not a dispatcher
+> extraction — the block sat in `handleApi`, above it. What moved is
+> `server.js` 1,964 → **1,910** and `src/routes/` 33 → **34 modules, 34
+> matchers** (`auth-gate.js` is still the only one without a matcher, because it
+> runs before matching).
 >
 > Two stale figures in the paragraph above are corrected here rather than
 > silently replaced. It said "eight literal conditions exist in `server.js` as a

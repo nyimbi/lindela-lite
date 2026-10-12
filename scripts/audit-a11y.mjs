@@ -166,7 +166,16 @@ async function main() {
 
   session.close()
 
-  const outDir = path.join(root, 'docs/ux-improvements/findings')
+  // Where the findings land. In a working tree the two JSON files are tracked,
+  // so a run is a reviewable diff against the last one — that is the point of
+  // committing them. In CI there is no diff to review and a job that rewrites
+  // tracked files leaves the checkout dirty for whatever runs after it, so
+  // `RUNNER_TEMP` redirects the write to the job's scratch directory and the
+  // file becomes an artifact instead. Same measurement either way; the exit code
+  // and the printed roll-up do not depend on where the bytes went.
+  const outDir = process.env.RUNNER_TEMP
+    ? path.join(process.env.RUNNER_TEMP, 'lindela-a11y')
+    : path.join(root, 'docs/ux-improvements/findings')
   await mkdir(outDir, { recursive: true })
   await writeFile(path.join(outDir, 'a11y.json'), JSON.stringify({
     generatedAt: new Date().toISOString(),
@@ -198,7 +207,7 @@ async function main() {
 
   console.log(`\n${rollup.length} distinct rules violated across 8 surfaces × ${CONDITIONS.length} conditions.`)
   for (const v of rollup) console.log(`  [${(v.impact || '?').padEnd(8)}] ${v.id.padEnd(28)} ${v.where.length} occurrence(s)`)
-  console.log(`\nWritten to docs/ux-improvements/findings/a11y{,-rollup}.json`)
+  console.log(`\nWritten to ${path.relative(root, outDir) || outDir}/a11y{,-rollup}.json`)
 }
 
 main().catch((err) => { console.error(err.message); process.exit(1) })

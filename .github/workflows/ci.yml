@@ -194,12 +194,24 @@ jobs:
             scripts/check-live-sources.mjs
           retention-days: 7
 
-  dashboard:
-    # Manual and on-demand: needs a running server and a local Chrome, so it
-    # cannot gate a push the way the other jobs do. Catches what unit tests
-    # structurally cannot: whether the UI actually responds to a click.
+  browser:
+    # R-76. Seven gates need a running server and a real Chrome, and for the
+    # repository's whole history they ran on nobody's machine but the author's:
+    # `check-a11y` (842 lines), `check-responsive` (432), `audit-a11y` (214) and
+    # the four drills were green by assertion and unrun by construction. A gate
+    # that has never run is not a gate, and a job gated on `workflow_dispatch`
+    # is a gate that has never run.
+    #
+    # This ran as `dashboard`, `workflow_dispatch`-only, driving one of the
+    # seven. The tier is the unit that matters: `run-gates.mjs --tier
+    # needs-browser` runs exactly the gates that need a browser, so a gate added
+    # later joins this job by being classified, not by someone remembering to
+    # name it here.
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    # The seven gates take ~8 minutes warm. A hung browser would otherwise hold
+    # a runner for the six-hour default, so the ceiling is explicit and generous
+    # rather than absent.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -213,12 +225,24 @@ jobs:
         run: |
           LINDELA_LITE_STORE="$RUNNER_TEMP/store.json" npm start &
           npx --yes wait-on@9.5.1 http://127.0.0.1:4177/api/v1/health --timeout 60000
-      - name: Drive the dashboard in a headless browser
+      - name: Start a headless Chrome
         run: |
           google-chrome --headless --disable-gpu --no-sandbox \
             --remote-debugging-port=9222 --user-data-dir="$RUNNER_TEMP/cdp" about:blank &
           npx --yes wait-on@9.5.1 http://127.0.0.1:9222/json/version --timeout 60000
-          node scripts/check-dashboard-browser.mjs
+      - name: Run every gate that needs a browser
+        # `RUNNER_TEMP` redirects `audit-a11y`'s two tracked findings files out
+        # of the checkout, so the job measures without dirtying the tree.
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: node scripts/run-gates.mjs --tier needs-browser
+      - name: Upload the accessibility findings
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: a11y-findings
+          path: ${{ runner.temp }}/lindela-a11y/
+          retention-days: 30
 
   # The SLSA generator is a *reusable workflow*, so it is invoked at job level
   # with `uses:`. The previous form put it in `steps:`, where it resolved to

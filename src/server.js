@@ -28,7 +28,7 @@ import { createInboundLimiter } from './inbound-rate-limit.js'
 import { executeTriggerProtocols } from './protocols.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { collectionsForRequest, needsHistory } from './route-manifests.js'
-import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection, STAC_READ_COLLECTIONS } from './stac.js'
+import { matchStacRoute, matchOgcRoute, handleStacRoute } from './routes/stac.js'
 import { emit, emitMany, dispatchPending } from './outbox.js'
 import { createVintageIndex } from './vintage.js'
 import { matchExportRoute, handleExportRoute } from './routes/exports.js'
@@ -687,7 +687,18 @@ export function createServer(options = {}) {
         // Publishing the context is what lets the read below apply it, and it is
         // also what `filterRecords` reads if a future handler forgets to pass it.
         const stacStore = await storeProvider
-        await runWithRequestContext(stacAuth, () => handleStacRoute(stacStore, req, res, url))
+        const stacRoute = matchStacRoute(url.pathname, req.method) || matchOgcRoute(url.pathname, req.method)
+        // A `/stac/` or `/ogc/` path that matches neither matcher — an unknown
+        // collection shape, or a verb the two GET-only matchers refuse — is the
+        // 404 this branch has always answered. The prefix guard is wider than
+        // the matchers on purpose: it is what puts these requests through the
+        // auth gate, and narrowing it here would move the 404 in front of the
+        // 401 and tell an unauthenticated caller which paths exist.
+        if (!stacRoute) {
+          jsonResponse(res, 404, { success: false, error: 'Not found' })
+          return
+        }
+        await runWithRequestContext(stacAuth, () => handleStacRoute(stacRoute, { store: stacStore, req, res, jsonResponse }))
         return
       }
 
@@ -831,78 +842,13 @@ export function sanitizeRequestId(raw) {
   return /^[A-Za-z0-9._:-]+$/.test(trimmed) ? trimmed : null
 }
 
-async function handleStacRoute(store, req, res, url) {
-  // ARC-08. A manifest read, scoped to the caller — not `store.read()`.
-  //
-  // Two defects in one line. The whole-store read materialised all 63
-  // collections to answer a request that touches four, on the one surface many
-  // deployments deliberately leave open. And it ran with no partner scope, so a
-  // token for one organisation was served another's service assets. Both come
-  // from the same omission: this route is not an `/api/v1/` route, so it never
-  // went through the manifest-and-scope read every other route uses.
-  const data = await store.read({
-    collections: STAC_READ_COLLECTIONS,
-    partnerOrg: currentRequestAuth()?.partner_org || null,
-  })
-  const baseUrl = `http://${req.headers.host || 'localhost'}`
-
-  if (req.method === 'GET' && url.pathname === '/stac/catalog.json') {
-    jsonResponse(res, 200, stacCatalog(baseUrl))
-    return
-  }
-
-  const collectionMatch = url.pathname.match(/^\/stac\/collections\/([^/]+)(?:\/items(?:\/([^/]+))?)?$/)
-  if (collectionMatch && req.method === 'GET') {
-    const collectionId = collectionMatch[1]
-    const itemId = collectionMatch[2]
-
-    // One resolver, shared with the OGC route below. The same three-way
-    // if/else used to be written out in both places, and the catalog's child
-    // links and `stacCollection`'s id check were two further copies of the same
-    // list. Four copies of a collection list is four chances to add a
-    // collection to three of them — see STAC_COLLECTIONS in src/stac.js.
-    const records = resolveStacCollection(data, collectionId)
-    if (records === null) {
-      jsonResponse(res, 404, { success: false, error: 'Collection not found' })
-      return
-    }
-
-    if (!itemId) {
-      if (url.pathname.includes('/items')) {
-        const items = records.map((r) => stacItem(r, collectionId, baseUrl))
-        jsonResponse(res, 200, { type: 'FeatureCollection', features: items })
-        return
-      }
-      jsonResponse(res, 200, stacCollection(collectionId, records, baseUrl))
-      return
-    }
-
-    const record = records.find((r) => r.id === itemId)
-    if (!record) {
-      jsonResponse(res, 404, { success: false, error: 'Item not found' })
-      return
-    }
-
-    jsonResponse(res, 200, stacItem(record, collectionId, baseUrl), { 'content-type': 'application/geo+json; charset=utf-8' })
-    return
-  }
-
-  const ogcMatch = url.pathname.match(/^\/ogc\/collections\/([^/]+)\/items$/)
-  if (ogcMatch && req.method === 'GET') {
-    const collectionId = ogcMatch[1]
-
-    const records = resolveStacCollection(data, collectionId)
-    if (records === null) {
-      jsonResponse(res, 404, { success: false, error: 'Collection not found' })
-      return
-    }
-
-    jsonResponse(res, 200, ogcFeatureCollection(records), { 'content-type': 'application/geo+json; charset=utf-8' })
-    return
-  }
-
-  jsonResponse(res, 404, { success: false, error: 'Not found' })
-}
+// ENH-60. The STAC and OGC families, extracted to `src/routes/stac.js`. They
+// were the last routes still written inline in this file, and moving them is
+// what made three served paths visible to `scripts/route-surface.mjs` at all —
+// a parser that reads a family's paths out of its matcher body could not see a
+// `.match()` written in a helper, so `/stac/collections/{id}` and its two
+// siblings were in no manifest, no document and no check while `check-openapi`
+// reported a clean 176/176.
 
 /**
  * Scoped by caller, method and path before use.

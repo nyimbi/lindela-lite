@@ -35,5 +35,8 @@
   "license": "MIT",
   "dependencies": {
     "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "axe-core": "^4.13.0"
   }
 }

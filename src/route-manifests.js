@@ -166,6 +166,20 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/river-discharge': Object.freeze(["climate_observations"]),
   'GET /api/v1/webhooks': Object.freeze(["webhook_subscriptions"]),
   'GET /api/v1/webhooks/:id': Object.freeze(["webhook_subscriptions"]),
+  // The STAC and OGC catalogues. `STAC_READ_COLLECTIONS` is the manifest —
+  // four collections, declared beside the collections it names in `src/stac.js`,
+  // and identical for all four routes because they share one resolver. These
+  // were absent from this table and from every other, and the reason is the
+  // reason this file exists: `handleStacRoute` matched with an inline
+  // `.match()` that `scripts/route-surface.mjs` could not read outside the
+  // dispatcher, so the routes were not in the spec, not in this table, and not
+  // in any check — while `check-openapi` reported a clean 176 documented, 176
+  // served. They read four collections, so they belong here rather than in
+  // WIDE_ROUTES.
+  'GET /stac/collections/:id': Object.freeze(["hazard_events", "conflict_events", "service_assets", "risk_scores"]),
+  'GET /stac/collections/:id/items': Object.freeze(["hazard_events", "conflict_events", "service_assets", "risk_scores"]),
+  'GET /stac/collections/:id/items/:id': Object.freeze(["hazard_events", "conflict_events", "service_assets", "risk_scores"]),
+  'GET /ogc/collections/:id/items': Object.freeze(["hazard_events", "conflict_events", "service_assets", "risk_scores"]),
   // ENH-80. The registry routes and the operator's status read are narrow: the
   // registry, plus the heartbeat the status route reads for the last exchange.
   // The two *peer-facing* routes are not here — they serve every syncable
