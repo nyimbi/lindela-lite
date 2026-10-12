@@ -28,8 +28,8 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 45 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
-| PARTIAL | 6 | 42, 59, 60, 67, 71, 80 |
+| IMPLEMENTED | 46 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
+| PARTIAL | 5 | 42, 59, 60, 71, 80 |
 | ABSENT | 0 | none |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
@@ -1168,9 +1168,46 @@ deployment that would rather shed load. The `iterateRecords` fallback is taken o
 before the first record is yielded; after that the error propagates, because a
 mid-stream restart risks a duplicated or skipped record.
 
-**PARTIAL:** nothing calls these yet — `server.js` was not touched, and the caller
-contract is in both headers. Until it is wired the budget refuses an unmetered
-read rather than passing it, so the wiring cannot be forgotten silently.
+**Wired 2026-10-12.** `server.js` establishes the budget around the dispatch and
+chooses the allowance per route: `WIDE_ROUTES` gets the store's own ceiling, a
+manifest gets the narrow default. `createReplicaFromEnv` reads
+`LINDELA_LITE_REPLICA_URL`; unset, `readReplicaStore` returns the primary itself,
+so a deployment without one is unchanged.
+
+*Wiring the budget exposed a defect that had been invisible while a whole-store
+read cost only bandwidth.* `collectionsForRequest` blanked the first two path
+segments with a single regex before looking the route up — right for
+`incidents/123`, wrong three ways, each answering `null`, which is the
+whole-store read the table exists to replace:
+
+- a *fixed* second segment is not an id: `calibration/by-region`, `audit/head`,
+  `kpi/quarterly`, `ingest/status`, `rapidpro/escalations` — **27 entries** were
+  shadowed by their own `:id` sibling;
+- a *deeper* id is not the second segment: `/api/v1/ingest/schedules/:id` puts
+  its record one level further down, so `schedules/abc` rewrote to
+  `schedules/:id/abc` and matched nothing;
+- a *suffix on the id* is not a separate segment: `:id.cap` is a wildcard within
+  a segment.
+
+Measured: `GET /api/v1/calibration/by-region` enumerated all 64 collections
+through the budget while its handler reads `region_trust`. The matcher is now
+segment-wise — `:name` matches one segment, `:name.suffix` a suffixed one, fewest
+wildcards wins and a constrained suffix breaks the tie — and all 200 keys in
+`ROUTE_MANIFESTS` and `WIDE_ROUTES` round-trip through it.
+
+`measureRead` counts a scoped read by the collections it named rather than by
+enumerating the result. Same number — a scoped read returns the whole declared
+shape with the unnamed collections empty — different act, because enumerating is
+indistinguishable from having read them wherever the result is instrumented.
+
+Also fixed on the way: `src/routes/chw.js` read the entire store to compare a
+double submission against `field_reports` — 48,473 rows to look at 169, a 287×
+over-read on the route a health worker's phone hits.
+
+*Canaries, each watched to fail.* Restoring the single-regex matcher puts
+by-region and ingest/schedules back to `null` (14/15); removing the scoped-count
+branch trips the manifest-drift gate the same way (14/15). 4159 tests pass, 15/15
+gates ok.
 
 ---
 

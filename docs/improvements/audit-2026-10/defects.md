@@ -943,6 +943,40 @@ entry (reported as missing), making the dispatcher body unlocatable (fails
 loudly rather than silently checking nothing), and restoring the dead
 `readyz` entry (fails only the never-cached test).
 
+**A sixth disagreement, found 2026-10-12 while wiring ENH-67: the table and its
+own runtime lookup disagreed on 27 routes.** `ROUTE_MANIFESTS` is keyed on the
+spec path, and `collectionsForRequest` resolved a request to a key by blanking
+the first two segments after `/api/v1/` with one regex before looking it up —
+`incidents/123` becoming `incidents/:id`. That is right for a collection
+followed by a record and wrong for every route whose second segment is a fixed
+word, so `calibration/by-region` rewrote to `calibration/:id`, missed the entry
+that names it, and answered `null`. `null` is not "unmapped" in this design; it
+is **the whole-store read the table exists to replace**. Twenty-seven entries
+were shadowed by their own `:id` sibling, plus two shapes the regex could not
+express at all: a deeper id (`/api/v1/ingest/schedules/:id` puts its record one
+level down, so `schedules/abc` became `schedules/:id/abc`) and a suffix on the
+id (`:id.cap` is a wildcard *within* a segment).
+
+This is the same failure as the two `gate.py` copies and the tone gate that
+flagged real regulators: a lookup keyed on a *derived* spelling rather than the
+identity it is supposed to match. The table was correct and measured; the
+function that read it was not.
+
+It had been invisible for a reason worth naming. A whole-store read cost only
+bandwidth, and every one of the 27 handlers touched only the collections its
+manifest declared — so the drift gate, which compares *what the handler touched*
+against the declared entry, saw agreement. The read was wide and the access was
+narrow, and only a mechanism that charges for the read itself could tell the
+difference. ENH-67's budget is that mechanism: metered, `by-region` enumerated
+all 64 collections and the gate reported 64 undeclared reads on a route whose
+handler reads `region_trust`.
+
+The matcher is now segment-wise — `:name` matches one segment, `:name.suffix` a
+suffixed one, fewest wildcards wins with a constrained suffix breaking the tie —
+and all 200 keys in `ROUTE_MANIFESTS` and `WIDE_ROUTES` round-trip through it.
+Canaried by restoring the single-regex matcher: `by-region` and
+`ingest/schedules` return to `null` and the gate fails 14/15.
+
 What remains is ENH-59 itself: five tables still exist, and a route still
 touches several files. They now cannot disagree *silently* in the ways above,
 which is a different property from having one source.
