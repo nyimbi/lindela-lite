@@ -30,7 +30,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 |---|---|---|
 | IMPLEMENTED | 45 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
 | PARTIAL | 6 | 42, 59, 60, 67, 71, 80 |
-| ABSENT | 0 | — |
+| ABSENT | 0 | none |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
