@@ -789,20 +789,69 @@ async function main() {
   await evaluate(`document.getElementById('reportSymptomBtn').click(); true`)
   await new Promise((r) => setTimeout(r, 600))
 
+  // The walk follows the wizard's own order — who, type, severity, exposure,
+  // duration, location — and asserts the screen it expects is the active one.
+  //
+  // The earlier version listed four steps and checked only that each Next button
+  // *exists*, which it does on every screen whether or not that screen is
+  // showing: `showScreen` toggles a class and leaves every button bound. So the
+  // walk skipped severity and exposure, pressed the duration screen's Next with
+  // `durationValue` empty — which that screen refuses — and went on to press
+  // Submit on a screen it never reached. The body carried `duration_value: null`
+  // on a field `CHW_SYMPTOM_FORM` marks `required: true`, the server answered
+  // 400, no report was created, and the same 400 landed in `pageErrors` as "no
+  // unhandled page errors". Three checks, one cause, and the gate had been
+  // reporting it as three unrelated problems.
   const WIZARD = [
-    { pick: '[data-symptom-who]', next: 'symptomNextBtn' },
-    { pick: '[data-symptom-type]', next: 'symptomTypeNextBtn' },
-    { pick: '[data-symptom-duration]', next: 'symptomDurationNextBtn' },
-    { pick: '[data-symptom-location]', next: 'symptomLocationNextBtn' },
+    { pick: '[data-symptom-who]', next: 'symptomNextBtn', from: 'symptom', screen: 'symptomType' },
+    { pick: '[data-symptom-type]', next: 'symptomTypeNextBtn', from: 'symptomType', screen: 'symptomSeverity' },
+    // Skipping the danger-signs checklist is a legitimate answer; the screen's
+    // Next does not require one.
+    { next: 'severityNextBtn', from: 'symptomSeverity', screen: 'symptomExposure' },
+    // The exposure screen refuses to advance with every select empty, so the
+    // water source is chosen — the one a report without a location still needs.
+    { set: `document.getElementById('exposeWater').value = 'clean'`, next: 'exposureNextBtn', from: 'symptomExposure', screen: 'symptomDuration' },
+    // The count, not only the unit: `durationValue` is `required: true`.
+    { set: `document.getElementById('durationValue').value = '2'`, next: 'symptomDurationNextBtn', from: 'symptomDuration', screen: 'symptomLocation' },
+    { pick: '[data-symptom-location]' },
+    { next: 'symptomLocationNextBtn', from: 'symptomLocation', screen: 'symptomAboutWho' },
   ]
   let wizardStuck = null
   for (const step of WIZARD) {
-    const picked = await evaluate(`(() => { const b = document.querySelector('${step.pick}');
-      if (!b) return false; b.click(); return true; })()`)
-    const hasNext = await evaluate(`!!document.getElementById('${step.next}')`)
-    if (!picked || !hasNext) { wizardStuck = `${step.pick} -> ${step.next}`; break }
-    await evaluate(`document.getElementById('${step.next}').click(); true`)
-    await new Promise((r) => setTimeout(r, 500))
+    // The screen the step must *start* on, asserted before anything is pressed.
+    // Checking only the destination is not enough: a hidden screen's Next still
+    // navigates forward, so `durationNext` clicked from the exposure screen lands
+    // on the location screen and a destination-only check calls it a step taken.
+    // The step that proves the duration screen was reached is the one that fails
+    // here instead.
+    if (step.from) {
+      const here = await evaluate(`(document.querySelector('.screen.active') || {}).id || null`)
+      if (String(here).replace(/Screen$/, '') !== step.from) {
+        wizardStuck = `${step.next || step.pick} was pressed from ${here || 'no screen'}, expected ${step.from}`
+        break
+      }
+    }
+    if (step.set) await evaluate(`(() => { ${step.set}; return true; })()`)
+    if (step.pick) {
+      const picked = await evaluate(`(() => { const b = document.querySelector('${step.pick}');
+        if (!b) return false; b.click(); return true; })()`)
+      if (!picked) { wizardStuck = `${step.pick} is not on the page`; break }
+    }
+    if (step.next) {
+      const advanced = await evaluate(`(() => {
+        const b = document.getElementById('${step.next}')
+        if (!b) return 'no #${step.next}'
+        b.click()
+        return true
+      })()`)
+      if (advanced !== true) { wizardStuck = String(advanced); break }
+      await new Promise((r) => setTimeout(r, 500))
+      const actual = await evaluate(`(document.querySelector('.screen.active') || {}).id || null`)
+      if (String(actual).replace(/Screen$/, '') !== step.screen) {
+        wizardStuck = `${step.next} left the app on ${actual || 'no screen'}, expected ${step.screen}`
+        break
+      }
+    }
   }
   check('the CHW symptom wizard advances through every screen',
     wizardStuck === null, wizardStuck || 'all steps advanced')

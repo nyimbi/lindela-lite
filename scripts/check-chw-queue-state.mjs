@@ -88,21 +88,37 @@ class Session {
 // *backwards*. `symptomNextBtn` after the who screen, `symptomTypeNextBtn` after
 // the type, `symptomDurationNextBtn`, `symptomLocationNextBtn` — one button per
 // screen, and a walk that reuses the first one silently goes back three times.
+//
+// The order is the wizard's own — who, type, severity, exposure, duration,
+// location, about-who — and each step names the screen it must land on. Two
+// earlier versions of this walk omitted the severity and exposure screens and
+// never filled `durationValue`, which the duration screen refuses to advance
+// past; the submit press then fired from the duration screen, because
+// `symptomSubmitBtn`'s listener is bound whether or not its screen is showing
+// (`showScreen` only toggles a class). The report was queued with
+// `duration_value: null` on a field the form marks `required: true`, so the
+// server refused it — and this drill, which asserts on the toast and the queue
+// banner rather than on the report, reported a healthy queue the whole time.
 const WIZARD = [
-  [`document.getElementById('reportSymptomBtn').click()`, 'open symptom'],
-  [`document.querySelector('[data-symptom-who="child"]').click()`, 'choose who'],
-  [`document.getElementById('symptomNextBtn').click()`, 'next after who'],
+  [`document.getElementById('reportSymptomBtn').click()`, 'open symptom', 'symptom'],
+  [`document.querySelector('[data-symptom-who="child"]').click()`, 'choose who', 'symptom'],
+  [`document.getElementById('symptomNextBtn').click()`, 'next after who', 'symptomType'],
   [`document.querySelector('[data-symptom-type="fever"]')?.click()
-    || document.querySelector('[data-symptom-type]').click()`, 'choose symptom'],
-  [`document.getElementById('symptomTypeNextBtn').click()`, 'next after symptom'],
-  [`document.querySelector('[data-symptom-duration]')?.click()
-    || document.querySelectorAll('.icon-button')[0].click()`, 'choose duration'],
-  [`document.getElementById('symptomDurationNextBtn').click()`, 'next after duration'],
+    || document.querySelector('[data-symptom-type]').click()`, 'choose symptom', 'symptomType'],
+  [`document.getElementById('symptomTypeNextBtn').click()`, 'next after symptom', 'symptomSeverity'],
+  [`document.getElementById('severityNextBtn').click()`, 'skip danger signs', 'symptomExposure'],
+  [`(() => { const w = document.getElementById('exposeWater'); if (w) w.value = 'clean' })()`,
+    'choose water source', 'symptomExposure'],
+  [`document.getElementById('exposureNextBtn').click()`, 'next after exposure', 'symptomDuration'],
+  [`(() => { const v = document.getElementById('durationValue'); if (v) v.value = '2' })()`,
+    'type the duration count', 'symptomDuration'],
+  [`document.querySelector('[data-symptom-duration="days"]').click()`, 'choose duration unit', 'symptomDuration'],
+  [`document.getElementById('symptomDurationNextBtn').click()`, 'next after duration', 'symptomLocation'],
   [`document.querySelector('[data-symptom-location]')?.click()
-    || document.querySelectorAll('.icon-button')[0].click()`, 'choose location'],
-  [`document.getElementById('symptomLocationNextBtn').click()`, 'next after location'],
+    || document.querySelectorAll('.icon-button')[0].click()`, 'choose location', 'symptomLocation'],
+  [`document.getElementById('symptomLocationNextBtn').click()`, 'next after location', 'symptomAboutWho'],
   [`document.getElementById('symptomSubmitBtn')?.click()
-    || document.querySelector('.btn-primary')?.click()`, 'submit'],
+    || document.querySelector('.btn-primary')?.click()`, 'submit', 'home'],
 ]
 
 async function main() {
@@ -179,14 +195,22 @@ async function main() {
     Object.defineProperty(navigator, 'onLine', { get: () => false, configurable: true })
   })()`)
 
-  for (const [press, label] of WIZARD) {
+  for (const [press, label, expectScreen] of WIZARD) {
     try {
       await s.evaluate(press)
+      await sleep(400)
+      // Assert the screen, not just that the press did not throw. A click on a
+      // hidden screen's button throws nothing and changes nothing, so without
+      // this the walk reports steps it never took.
+      const actual = await s.evaluate(`(document.querySelector('.screen.active') || {}).id || ''`)
+      if (expectScreen && String(actual).replace(/Screen$/, '') !== expectScreen) {
+        failures.push(`wizard step "${label}": expected the ${expectScreen} screen, the app is on ${actual || 'none'}`)
+        break
+      }
     } catch (err) {
       failures.push(`wizard step "${label}": ${err.message}`)
       break
     }
-    await sleep(400)
   }
 
   await sleep(2500)
