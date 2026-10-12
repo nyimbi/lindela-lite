@@ -981,27 +981,39 @@ What remains is ENH-59 itself: five tables still exist, and a route still
 touches several files. They now cannot disagree *silently* in the ways above,
 which is a different property from having one source.
 
-**Three more families out, 2026-10-12, two of them extractions.** ENH-80 added
+**Four more families out, 2026-10-12, three of them extractions.** ENH-80 added
 `src/routes/federation.js` (7 paths) as new surface rather than an extraction.
 ENH-60 then took the **hazard-risk family** out into `src/routes/risk.js` — 6
 paths, 9 blocks, 146 lines: the two marginal rankings, the joint compound score,
-the model listing, the fit and the score — and the **district-and-equity family**
-into `src/routes/districts.js` — 5 paths over three scales of the same question.
-The dispatcher is 1,225 lines and `server.js` 3,116, from 1,903 and 5,603 at the
-start. `check-openapi` reads both new families as third-family route sources with
-no second list to keep in step — `parsed matchRiskRoute → handleRiskRoute: 6
-paths` and `parsed matchDistrictRoute → handleDistrictRoute: 5 paths`, still 174
-documented and 174 served — which is the property the entry above established and
-the reason neither extraction needed a table edit at all.
+the model listing, the fit and the score — the **district-and-equity family**
+into `src/routes/districts.js` — 5 paths over three scales of the same question
+— and the **ambient-layer family** into `src/routes/ambient.js` — 3 paths: the
+raw observation series, the weather roll-up and the modelled discharge per
+region. The dispatcher is 1,112 lines and `server.js` 3,001, from 1,903 and
+5,603 at the start. `check-openapi` reads all three new families as third-family
+route sources with no second list to keep in step — `parsed matchRiskRoute →
+handleRiskRoute: 6 paths`, `parsed matchDistrictRoute → handleDistrictRoute: 5
+paths` and `parsed matchAmbientRoute → handleAmbientRoute: 3 paths`, still 174
+documented and 174 served — which is the property the entry above established
+and the reason none of the extractions needed a table edit at all.
 
-The two moves also deleted four orphans rather than leaving them behind:
+The ambient move surfaced a live defect rather than only relocating code: the
+discharge roll-up's same-day tiebreak compared `existing.date`, a field the
+object it stores has never had (`as_of` is the key), so both date comparisons
+were against `undefined` and the map kept whichever record for a region arrived
+first. The existing assertion "the highest value for the latest date wins"
+passed because its fixture happens to order the two records high-then-low — the
+bug and the fixture agreed by luck.
+
+The moves also deleted seven orphans rather than leaving them behind:
 `contingencyByFeature` (22 lines) and the `flood-probability.js` import, which
-existed for the risk group and nothing else, and then both `./districts.js` and
+existed for the risk group and nothing else; both the `./districts.js` and
 `./equity.js` import lines, whose five symbols the district family now reaches
-through its own module. A stale duplicate of the "route planning requires a POST
-body" comment sat between two of the risk blocks describing a route handled a
-hundred lines below; it is gone. **30 inline literal conditions remain** and the
-consolidation is still ENH-59's.
+through its own module; and three more with the ambient move
+(`open-meteo-forecast.js`, `discharge-bands.js`, `weather-bands.js`). A stale
+duplicate of the "route planning requires a POST body" comment sat between two
+of the risk blocks describing a route handled a hundred lines below; it is gone.
+**27 inline literal conditions remain** and the consolidation is still ENH-59's.
 
 ### ARC-03 — HIGH — `/api/v1/demo/seed` imports `scripts/seed-demo.mjs` at request time
 `src/server.js:1269`. Production `src/` depends on `scripts/` — inverted layering.

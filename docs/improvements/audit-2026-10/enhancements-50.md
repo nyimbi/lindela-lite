@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 1,225-line function with 21
+generated from, and ENH-60's dispatcher is still one 1,112-line function with 22
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1087,11 +1087,11 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Twenty-one families are out; the dispatcher is not
+> **PARTIAL — 2026-10-12. Twenty-two families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 1,225 lines and `server.js` 5,603 →
-> 3,116.
+> set of blocks. The dispatcher went 1,903 → 1,112 lines and `server.js` 5,603 →
+> 3,001.
 > ENH-80 added the eighteenth family (`src/routes/federation.js`, 7 paths) and
 > moved the line count up rather than down: that family is new surface, not an
 > extraction. ENH-60 then took the **hazard-risk family**
@@ -1100,24 +1100,41 @@ testable in isolation. This unblocks every other substrate item.
 > and the **district-and-equity family** (`src/routes/districts.js`, 5 paths) —
 > the published registry, the per-district roll-up across eleven collections, and
 > the three equity routes that compare places to each other. Both are
-> extractions, and the first two since ENH-59's table landed.
+> extractions, and the first two since ENH-59's table landed. The **ambient-layer
+> family** (`src/routes/ambient.js`, 3 paths) followed — the raw observation
+> series, the per-district weather roll-up and the latest modelled discharge per
+> region, which are the three routes a *partner* reads rather than the browser,
+> so the band has to travel with the number in the JSON the overlay never sees.
+>
+> That last move surfaced a live defect rather than only relocating code. The
+> discharge roll-up's same-day tiebreak read `existing.date`, a field the object
+> it stores has never had — the stored key is `as_of` — so both date comparisons
+> were against `undefined`, always false, and the map kept whichever record for a
+> region arrived first. `test/river-discharge.test.js:94` asserts "the highest
+> value for the latest date wins" and passed anyway, because its two Mandera
+> records are ordered 250 then 180: the bug and the fixture agreed by luck, and
+> the assertion was true of the fixture rather than of the route. The comparison
+> now reads the field the map stores, and a canary restoring `existing.date` fails
+> it.
 >
 > The moves deleted four orphans as well as moving them: `contingencyByFeature`
 > (22 lines) and the `flood-probability.js` import existed for the risk group and
 > nothing else, and then both the `./districts.js` and `./equity.js` import lines,
-> whose five symbols the district family now reaches through its own module. A
-> stale duplicate of the "route planning requires a POST body" comment sat between
-> two of the risk blocks describing a route handled a hundred lines below.
+> whose five symbols the district family now reaches through its own module; the
+> ambient move took three more (`open-meteo-forecast.js`, `discharge-bands.js`,
+> `weather-bands.js`). A stale duplicate of the "route planning requires a POST
+> body" comment sat between two of the risk blocks describing a route handled a
+> hundred lines below.
 > `check-openapi` reads each family as a third route source with no second list to
-> keep in step — `parsed matchRiskRoute → handleRiskRoute: 6 paths` and `parsed
-> matchDistrictRoute → handleDistrictRoute: 5 paths`, still 174 documented and 174
-> served.
+> keep in step — `parsed matchRiskRoute → handleRiskRoute: 6 paths`, `parsed
+> matchDistrictRoute → handleDistrictRoute: 5 paths`, `parsed matchAmbientRoute →
+> handleAmbientRoute: 3 paths`, still 174 documented and 174 served.
 >
-> What is left is not more of the same. The dispatcher still holds **30 inline
+> What is left is not more of the same. The dispatcher still holds **27 inline
 > literal route conditions**, and they are one-off routes whose bodies *are* the
 > business logic: `routing/plan`, `analytics/bias-correct`, `upload` (111 lines on
 > its own), `demo/seed`, `maintenance/apply-retention`, `forms`, `service-assets`,
-> the climate trio, and the liveness pair remain. Extracting those is a move only
+> and the liveness pair remain. Extracting those is a move only
 > after ENH-59 has a route table to declare them in — otherwise it is relocating
 > branches and calling it architecture. The ~15-module target is reached when the
 > literal conditions are declarations.

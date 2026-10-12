@@ -34,7 +34,6 @@ import { collectionsForRequest, needsHistory } from './route-manifests.js'
 import { parseMultipart, validateUpload, UPLOAD_COLLECTIONS } from './upload.js'
 import { stacCatalog, stacCollection, stacItem, ogcFeatureCollection, resolveStacCollection, STAC_READ_COLLECTIONS } from './stac.js'
 import { emit, emitMany, dispatchPending, outboxRollup } from './outbox.js'
-import { districtWeatherReport } from './connectors/open-meteo-forecast.js'
 import { createVintageIndex } from './vintage.js'
 import { taxonomyDocument } from './taxonomy.js'
 import { matchExportRoute, handleExportRoute } from './routes/exports.js'
@@ -51,6 +50,7 @@ import { matchWebhookRoute, handleWebhookRoute } from './routes/webhooks.js'
 import { matchFederationRoute, handleFederationRoute } from './routes/federation.js'
 import { matchRiskRoute, handleRiskRoute } from './routes/risk.js'
 import { matchDistrictRoute, handleDistrictRoute } from './routes/districts.js'
+import { matchAmbientRoute, handleAmbientRoute } from './routes/ambient.js'
 import { runFederationSync } from './federation-peers.js'
 import { matchScenarioRoute, handleScenarioRoute } from './routes/scenarios.js'
 import { matchIngestionRoute, handleIngestionRoute } from './routes/ingestion.js'
@@ -62,7 +62,6 @@ import { matchWorkflowRoute, handleWorkflowRoute } from './routes/workflows.js'
 import {
   formCatalogue, formFor, latestForm, mergeForms, validateFormDefinition,
 } from './forms.js'
-import { dischargeBand, DISCHARGE_BANDS, DISCHARGE_MODEL_NOTE } from '../public/shared/discharge-bands.js'
 // ARC-05. The operational banding the browser draws with, applied on the server
 // too. These modules are pure and DOM-free by construction, so importing them
 // from `src/` is not reaching into the client — it is the same code the client
@@ -70,7 +69,6 @@ import { dischargeBand, DISCHARGE_BANDS, DISCHARGE_MODEL_NOTE } from '../public/
 // has to re-implement the thresholds, and the honesty claim ("0.3 m impedes
 // movement") is then enforced only for browser users.
 import { FLOOD_DEPTH_BANDS, floodDepthBand } from '../public/shared/flood-bands.js'
-import { precipBand, tempBand, weatherCodeLabel, PRECIP_BANDS, TEMP_BANDS } from '../public/shared/weather-bands.js'
 import { planDelivery } from './routing.js'
 import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { upstreamTileUrl, loadRasterTile } from './basemap-tiles.js'
@@ -1971,126 +1969,13 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/climate') {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.climate_observations, url.searchParams, { auth: req.__auth, data, collection: 'climate_observations' }) })
-    return
-  }
+  // ENH-60. The ambient-layer family, extracted to `src/routes/ambient.js`: the
+  // raw observation series, the per-district weather roll-up and the latest
+  // modelled discharge per region. Dispatched here, where the first of the three
+  // blocks was, so the order the dispatcher tries its routes in is unchanged.
+  const ambientRoute = matchAmbientRoute(url.pathname, req.method)
+  if (ambientRoute && handleAmbientRoute(ambientRoute, { data, req, res, url, jsonResponse })) return
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/weather') {
-    // The map overlay's roll-up: per pilot district, one current reading and
-    // the 7-day daily forecast, each batch-stamped with the forecast's issue
-    // time. Not paged — five districts, seven days each, is a fixed small
-    // payload, and `districtWeatherReport` states the absence of data rather
-    // than answering with an empty page that reads as "no weather".
-    //
-    // ARC-05. Every reading is banded server-side. The overlay bands today's
-    // total itself (`weatherLayerView`), but a partner reading this JSON gets
-    // 20 mm with no way to know it is the boundary where runoff starts cutting
-    // roads — and the thresholds are operational, not decorative. Each day
-    // carries its band; the current block carries its temperature band and
-    // condition label. The band table is published once so a consumer can audit
-    // the cut points without reading this repository.
-    const report = districtWeatherReport(data.weather_forecasts || [])
-    jsonResponse(res, 200, {
-      success: true,
-      ...report,
-      districts: report.districts.map((district) => ({
-        ...district,
-        current: district.current
-          ? {
-            ...district.current,
-            temperature_band: tempBand(district.current.temperature_c)?.key || null,
-            condition_label: weatherCodeLabel(district.current.weather_code),
-          }
-          : null,
-        forecast: (district.forecast || []).map((day) => ({
-          ...day,
-          band: precipBand(day.precipitation_mm)?.key || null,
-          band_label: precipBand(day.precipitation_mm)?.label || null,
-        })),
-      })),
-      precip_bands: PRECIP_BANDS.map((b) => ({
-        key: b.key, label: b.label, severity: b.severity,
-        max_mm: Number.isFinite(b.max) ? b.max : null,
-      })),
-      temp_bands: TEMP_BANDS.map((b) => ({ key: b.key, label: b.label, max_c: Number.isFinite(b.max) ? b.max : null })),
-    })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/river-discharge') {
-    // Latest non-null daily river discharge per region from the GloFAS model.
-    // The source stores a full daily series for each region; this route rolls it
-    // to one current point per region so the map overlay can draw it like the
-    // other ambient layers. No records at all is normal on a fresh deployment.
-    const note = 'Modelled river discharge from GloFAS; not gauged observations.'
-    const records = (data.climate_observations || []).filter((r) => r.source === 'open_meteo_flood')
-    if (!records.length) {
-      jsonResponse(res, 200, { success: true, data: [], as_of: null, note })
-      return
-    }
-
-    const latestByRegion = new Map()
-    for (const record of records) {
-      const days = Array.isArray(record.daily) ? record.daily : []
-      let latest = null
-      for (const day of days) {
-        if (!day || !Number.isFinite(day.river_discharge_m3s)) continue
-        if (!latest || day.date > latest.date) latest = day
-      }
-      if (!latest) continue
-      const existing = latestByRegion.get(record.region_name)
-      if (
-        !existing
-        || latest.date > existing.date
-        || (latest.date === existing.date && latest.river_discharge_m3s > existing.river_discharge_m3s)
-      ) {
-        latestByRegion.set(record.region_name, {
-          region_name: record.region_name,
-          latitude: record.latitude,
-          longitude: record.longitude,
-          river_discharge_m3s: latest.river_discharge_m3s,
-          as_of: latest.date,
-          model_limit: record.metadata?.model_limit ?? null,
-        })
-      }
-    }
-
-    const items = [...latestByRegion.values()].sort((a, b) => String(a.region_name).localeCompare(String(b.region_name)))
-    let asOf = null
-    for (const item of items) {
-      if (!asOf || item.as_of > asOf) asOf = item.as_of
-    }
-    // ARC-05. The band, its label and its severity travel with the number, so a
-    // partner reading this JSON gets the same operational reading the browser
-    // draws rather than a bare m³/s they must threshold themselves. The cut
-    // points are published alongside so the reading is auditable without the
-    // source: a consumer can see that 50 m³/s is where "moderate" begins.
-    const withBand = items.map((item) => {
-      const band = dischargeBand(item.river_discharge_m3s)
-      return {
-        ...item,
-        band: band?.key || 'unknown',
-        band_label: band?.label || null,
-        severity: band?.severity || 'ungraded',
-        // Null when the band is unknown: the number was reported but no band
-        // matched, which is a different state from "no reading".
-        band_max_m3s: band && Number.isFinite(band.max) ? band.max : null,
-      }
-    })
-    jsonResponse(res, 200, {
-      success: true,
-      data: withBand,
-      as_of: asOf,
-      note,
-      model_note: DISCHARGE_MODEL_NOTE,
-      bands: DISCHARGE_BANDS.map((b) => ({
-        key: b.key, label: b.label, severity: b.severity,
-        max_m3s: Number.isFinite(b.max) ? b.max : null,
-      })),
-    })
-    return
-  }
 
   // ENH-60. The hazard-risk family, extracted to `src/routes/risk.js`: the two
   // marginal rankings, the joint compound score, the model listing, the fit and
