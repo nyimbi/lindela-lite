@@ -527,8 +527,15 @@ against both adapters and asserts they refuse with the *same message*, so a
 caller can branch on either. Canaried: removing the check fails three of its
 five tests.
 
-This closes the store-read half of ENH-66. The unbounded outbound rate-limit
-queue (`src/rate-limit.js`) is the other half and remains open.
+This closes the store-read half of ENH-66. The other half — the outbound
+rate-limit queue — was recorded here as open and is **not** open: `src/rate-limit.js`
+bounds it with `maxQueue` (default 1,000) and past the bound `acquire` rejects
+with a `RateLimitQueueFullError` carrying `retryAfterMs` and a 503, so a stalled
+provider refuses new waiters rather than accumulating them. That is the
+ENH-66 entry's own remedy, and it had been shipped when this line was written.
+Corrected rather than left standing: a defect note that says something remains
+open when it does not is the failure this register exists to prevent, and it is
+worse than a missing note because a reader acts on it.
 
 ### SCL-02 — HIGH — `runPeriodicTick` reads the whole store once per driver item
 `src/server.js:229–263` `for (const item of DRIVER_ITEMS) { const data = await store.read() }`
