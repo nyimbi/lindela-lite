@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 1,391-line function with 19
+generated from, and ENH-60's dispatcher is still one 1,257-line function with 20
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1087,23 +1087,34 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Eighteen families are out; the dispatcher is not gone.**
+> **PARTIAL — 2026-10-12. Twenty families are out; the dispatcher is not gone.**
 > Every route *family* now lives under `src/routes/` with its own matcher, its own
 > test file, and a property that makes it a family rather than a set of blocks.
-> The dispatcher went 1,903 → 1,391 lines and `server.js` 5,603 → 3,313. ENH-80
-> added the eighteenth family (`src/routes/federation.js`, 7 paths) and moved the
-> line count up rather than down: the family is new surface, not an extraction,
-> and the table records the count it actually is.
+> The dispatcher went 1,903 → 1,257 lines and `server.js` 5,603 → 3,148.
+> ENH-80 added the eighteenth family (`src/routes/federation.js`, 7 paths) and
+> moved the line count up rather than down: that family is new surface, not an
+> extraction. ENH-60 then took the **hazard-risk family**
+> (`src/routes/risk.js`, 6 paths, 9 blocks, 146 lines) out — the two marginal
+> rankings, the joint compound score, the model listing, the fit and the score —
+> which is an extraction, and the first one since ENH-59's table landed.
 >
-> What is left is not more of the same. The dispatcher still holds **35 inline
-> literal route conditions** over 876 non-comment lines, and they are one-off
-> routes whose bodies *are* the business logic: flood/compound/conflict risk, the
-> `equity/*` scans, the `flood-probability/*` group, `routing/plan`,
-> `analytics/bias-correct`, `upload` (111 lines on its own), `demo/seed`,
-> `maintenance/apply-retention`, `forms`, and the liveness pair. Extracting those
-> is a move only after ENH-59 has a route table to declare them in — otherwise it
-> is relocating branches and calling it architecture. The ~15-module target is
-> reached when the literal conditions are declarations.
+> The move deleted two orphans as well as moving them: `contingencyByFeature`
+> (22 lines) and the `flood-probability.js` import existed for that group and
+> nothing else, and a stale duplicate of the "route planning requires a POST
+> body" comment sat between two of the blocks describing a route handled a
+> hundred lines below. `check-openapi` reads the family as a third route source
+> with no second list to keep in step — `parsed matchRiskRoute → handleRiskRoute:
+> 6 paths`, still 174 documented and 174 served.
+>
+> What is left is not more of the same. The dispatcher still holds **34 inline
+> literal route conditions**, and they are one-off routes whose bodies *are* the
+> business logic: flood/compound/conflict risk is now out, but the `equity/*`
+> scans, `routing/plan`, `analytics/bias-correct`, `upload` (111 lines on its
+> own), `demo/seed`, `maintenance/apply-retention`, `forms`, and the liveness
+> pair remain. Extracting those is a move only after ENH-59 has a route table to
+> declare them in — otherwise it is relocating branches and calling it
+> architecture. The ~15-module target is reached when the literal conditions are
+> declarations.
 >
 > The move itself is verified rather than asserted, and the three checks are in
 > ARC-01's entry.

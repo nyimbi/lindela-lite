@@ -981,6 +981,24 @@ What remains is ENH-59 itself: five tables still exist, and a route still
 touches several files. They now cannot disagree *silently* in the ways above,
 which is a different property from having one source.
 
+**Two more families out, 2026-10-12, and one of them is the first since the
+table landed.** ENH-80 added `src/routes/federation.js` (7 paths) as new surface
+rather than an extraction, and ENH-60 then took the **hazard-risk family** out
+into `src/routes/risk.js` — 6 paths, 9 blocks, 146 lines: the two marginal
+rankings, the joint compound score, the model listing, the fit and the score. The
+dispatcher is 1,257 lines and `server.js` 3,148, from 1,903 and 5,603 at the
+start. `check-openapi` reads the new family as a third route source with no
+second list to keep in step — `parsed matchRiskRoute → handleRiskRoute: 6 paths`,
+still 174 documented and 174 served — which is the property the entry above
+established and the reason this extraction needed no table edit at all.
+
+Two orphans went with the move rather than being left behind:
+`contingencyByFeature` (22 lines) and the `flood-probability.js` import existed
+for that group and nothing else. A stale duplicate of the "route planning
+requires a POST body" comment sat between two of the blocks describing a route
+handled a hundred lines below; it is gone. **34 inline literal conditions
+remain** and the consolidation is still ENH-59's.
+
 ### ARC-03 — HIGH — `/api/v1/demo/seed` imports `scripts/seed-demo.mjs` at request time
 `src/server.js:1269`. Production `src/` depends on `scripts/` — inverted layering.
 The 75 KB seed script is bundled into the runtime path; an import error there is a

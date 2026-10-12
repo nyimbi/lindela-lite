@@ -49,6 +49,7 @@ import { matchProvenanceRoute, handleProvenanceRoute } from './routes/provenance
 import { matchAlertingRoute, handleAlertingRoute } from './routes/alerting.js'
 import { matchWebhookRoute, handleWebhookRoute } from './routes/webhooks.js'
 import { matchFederationRoute, handleFederationRoute } from './routes/federation.js'
+import { matchRiskRoute, handleRiskRoute } from './routes/risk.js'
 import { runFederationSync } from './federation-peers.js'
 import { matchScenarioRoute, handleScenarioRoute } from './routes/scenarios.js'
 import { matchIngestionRoute, handleIngestionRoute } from './routes/ingestion.js'
@@ -69,11 +70,9 @@ import { dischargeBand, DISCHARGE_BANDS, DISCHARGE_MODEL_NOTE } from '../public/
 // movement") is then enforced only for browser users.
 import { FLOOD_DEPTH_BANDS, floodDepthBand } from '../public/shared/flood-bands.js'
 import { precipBand, tempBand, weatherCodeLabel, PRECIP_BANDS, TEMP_BANDS } from '../public/shared/weather-bands.js'
-import { explainRanking } from '../public/shared/rank-explain.js'
 import { planDelivery } from './routing.js'
 import { depthGrid, depthProfile, terrainContext } from './flood-depth.js'
 import { upstreamTileUrl, loadRasterTile } from './basemap-tiles.js'
-import { trainDistrictModels, predict } from './flood-probability.js'
 import { assertSafeWebhookUrl } from './webhooks.js'
 import { KNOWN_DISTRICTS, districtOverview } from './districts.js'
 import { equityByDistrict, detectAccuracyBreaches, createEquityAuditWorkflows } from './equity.js'
@@ -960,36 +959,6 @@ async function handleStacRoute(store, req, res, url) {
   }
 
   jsonResponse(res, 404, { success: false, error: 'Not found' })
-}
-
-/**
- * The trained model's contingency rows, keyed by the feature they describe.
- *
- * `contingency()` returns a flat array; a caller asking about max_7_day has no
- * reason to know that, and picking the first row would hand them the interval
- * for a different statistic than the one they supplied.
- */
-
-function contingencyByFeature(rows) {
-  if (!Array.isArray(rows)) return {}
-  const byFeature = {}
-  for (const row of rows) {
-    if (!row || typeof row.feature !== 'string') continue
-    byFeature[row.feature] = {
-      threshold_mm: row.threshold_mm,
-      months_above_threshold: row.months_above_threshold,
-      flood_months_above_threshold: row.flood_months_above_threshold,
-      conditional_probability: row.conditional_probability,
-      conditional_probability_wilson: row.conditional_probability_wilson,
-      // ENH-20. A wider interval with no stated reason is a number nobody trusts
-      // twice, so the design effect that produced it travels with it. Projecting
-      // the interval without this is how a corrected number would arrive looking
-      // like the uncorrected one.
-      clustering: row.clustering,
-      lift_over_base_rate: row.lift_over_base_rate,
-    }
-  }
-  return byFeature
 }
 
 /**
@@ -2124,151 +2093,17 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
     return
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/v1/flood-risk') {
-    // ENH-72. The ordering declared, not implied: these are ordered by `score`,
-    // which is a weighted index and not a probability, and a reader who assumes
-    // otherwise reads the ranking as a forecast.
-    jsonResponse(res, 200, { success: true, ranking: explainRanking('risk-scores'), ...collectionPage(data.risk_scores.filter((risk) => risk.type === 'flood_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/conflict-risk') {
-    jsonResponse(res, 200, { success: true, ranking: explainRanking('risk-scores'), ...collectionPage(data.risk_scores.filter((risk) => risk.type === 'climate_conflict_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
-    return
-  }
-
-  // ENH-56. The joint score, served beside the two marginals rather than
-  // replacing them. A region whose record is too thin answers with `score: null`
-  // and a `honesty.refused` sentence, not with a number.
-  if (req.method === 'GET' && url.pathname === '/api/v1/compound-risk') {
-    jsonResponse(res, 200, { success: true, ranking: explainRanking('risk-scores'), ...collectionPage(data.risk_scores.filter((risk) => risk.type === 'compound_hazard_risk'), url.searchParams, { auth: req.__auth, data, collection: 'risk_scores' }) })
-    return
-  }
-
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/flood-probability/models') {
-    jsonResponse(res, 200, {
-      success: true,
-      ...collectionPage(data.flood_probability_models || [], url.searchParams, { auth: req.__auth, data, collection: 'flood_probability_models' }),
-    })
-    return
-  }
-
-  // Route planning requires a POST body (origin plus one or more
-  // destinations), so it is handled by the mutating branch below rather than
-  // here in the GET-only section.
-  if (req.method === 'POST' && url.pathname === '/api/v1/flood-probability/train') {
-    // Training is pure compute over the store: open_meteo_archive rainfall
-    // series, plus either GDACS flood events (default label) or an
-    // open_meteo_flood discharge series (body label_source:
-    // 'glofas_discharge') already held. It writes trained models into
-    // flood_probability_models and never reaches the network. A district
-    // that cannot support a fit lands in refusals with the reason, not as a
-    // model with no sample.
-    const body = await readRequestJson(req)
-    const { trained, refusals } = trainDistrictModels(data, body || {})
-    if (trained.length) await store.merge({ flood_probability_models: trained })
-    jsonResponse(res, 200, { success: true, data: trained, refusals })
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/flood-probability/score') {
-    // A query param that is absent must not become Number(null) = 0 mm — one
-    // missing statistic would otherwise score against feature zeros that were
-    // never given. Absent or empty is unreadable and refused.
-    const featureValue = (name) => {
-      const raw = url.searchParams.get(name)
-      return raw === null || raw.trim() === '' ? Number.NaN : Number(raw)
-    }
-    const features = {
-      max_7_day: featureValue('max_7_day'),
-      sum_30_day: featureValue('sum_30_day'),
-      sum_90_day: featureValue('sum_90_day'),
-    }
-    const missing = Object.entries(features).filter(([, v]) => !Number.isFinite(v)).map(([k]) => k)
-    if (missing.length) {
-      jsonResponse(res, 400, { success: false, error: `missing or non-numeric rainfall features: ${missing.join(', ')}` })
-      return
-    }
-    const region = url.searchParams.get('region')
-    const models = (data.flood_probability_models || [])
-      .filter((m) => m.model)
-      .sort((a, b) => Date.parse(b.trained_at) - Date.parse(a.trained_at))
-
-    // With no region named, a single trained model is unambiguous and safe to
-    // use. More than one is not: the old behaviour took models[0], which is
-    // whichever district happened to train most recently, so a caller who
-    // omitted the parameter got an authoritative-looking number about a
-    // district they never asked about. Ask which one instead.
-    if (!region && models.length > 1) {
-      jsonResponse(res, 400, {
-        success: false,
-        error: 'region is required: more than one flood-probability model is trained, and scoring against whichever trained most recently would answer a question nobody asked',
-        available_regions: models.map((m) => m.region_name),
-      })
-      return
-    }
-
-    const latest = region
-      ? models.find((m) => String(m.region_name).toUpperCase() === region.toUpperCase())
-      : models[0]
-    if (!latest || !latest.model) {
-      // An absent model is an answer, not a 500: the refusal says what is
-      // missing, exactly as the training endpoint would have reported it.
-      jsonResponse(res, 200, {
-        success: true,
-        scored: false,
-        refusal: region
-          ? `no trained flood-probability model for ${region}; POST /api/v1/flood-probability/train first`
-          : 'no trained flood-probability model in the store; POST /api/v1/flood-probability/train first',
-        basis: latest?.basis || null,
-      })
-      return
-    }
-    const probability = predict(latest.model, features)
-    if (probability === null) {
-      jsonResponse(res, 200, { success: true, scored: false, refusal: 'cannot score: non-finite feature after standardization' })
-      return
-    }
-    jsonResponse(res, 200, {
-      success: true,
-      scored: true,
-      data: {
-        region_name: latest.region_name,
-        probability,
-        features,
-        trained_at: latest.trained_at,
-        model: latest.model,
-        folds: latest.folds,
-        // The uncertainty behind this number, which used to stay on the server.
-        // `probability` is a point estimate from the fitted logistic model; the
-        // contingency rows are the empirical rainfall-flood co-occurrence
-        // counts it was fit to, each with a Wilson interval and the number of
-        // months the count rests on. A caller reading only `probability` sees
-        // an authoritative-looking figure with no idea that it may rest on four
-        // events.
-        uncertainty: {
-          note: 'conditional_probability and its Wilson interval are the empirical co-occurrence count at each feature threshold, not a confidence interval on the fitted point estimate. Read months_above_threshold before quoting the probability.',
-          by_feature: contingencyByFeature(latest.contingency),
-        },
-        basis: latest.basis,
-        label_source: latest.label_source,
-        months_kept: latest.months_kept,
-        events_matched: latest.events_matched,
-        // ENH-49. `events_matched` reads as "this many events informed the fit"
-        // and only some of them did: an admitted event whose month the rainfall
-        // series could not sample is counted here and contributes nothing to
-        // the contingency table. The pair below is the monitor — a client that
-        // quotes the probability reads `label_coverage` beside it, and a
-        // coverage that falls is the VER-03 class failing visibly rather than
-        // an audit finding six months later.
-        events_unlabelled: latest.events_unlabelled ?? null,
-        label_coverage: latest.label_coverage ?? null,
-        metadata: latest.metadata,
-      },
-    })
-    return
-  }
+  // ENH-60. The hazard-risk family, extracted to `src/routes/risk.js`: the two
+  // marginal rankings, the joint compound score, the model listing, the fit and
+  // the score. Dispatched here, where the first of the nine blocks was, so the
+  // order the dispatcher tries its routes in is unchanged.
+  //
+  // The duplicated "route planning requires a POST body" comment that sat
+  // between these blocks is gone with them. It described `routing/plan`, which
+  // is handled a hundred lines below under the same comment — a stale note left
+  // where a block used to be.
+  const riskRoute = matchRiskRoute(url.pathname, req.method)
+  if (riskRoute && await handleRiskRoute(riskRoute, { store, data, req, res, url, jsonResponse })) return
 
   // Route planning requires a POST body (origin plus one or more
   // destinations), so it is handled by the mutating branch below rather than
