@@ -46,6 +46,11 @@ import { findVisible } from '../visibility.js'
  */
 export function matchIngestionRoute(pathname) {
   if (pathname === '/api/v1/ingest/status') return { kind: 'status' }
+  // `run` is the immediate sibling of `run-due`: the same work, triggered by a
+  // caller rather than by the clock. It sat inline in the dispatcher until
+  // 2026-10-12 — the family's matcher named every other path under `/ingest/`
+  // and this one, so the extraction had a hole exactly where the route was.
+  if (pathname === '/api/v1/ingest/run') return { kind: 'run' }
   if (pathname === '/api/v1/ingest/run-due') return { kind: 'run-due' }
   if (pathname === '/api/v1/ingest/schedules/defaults') return { kind: 'defaults' }
   const runOne = pathname.match(/^\/api\/v1\/ingest\/schedules\/([^/]+)\/run$/)
@@ -108,6 +113,38 @@ export async function handleIngestionRoute(route, { store, data, req, res, url, 
     const log = actionLog('ingestion_schedules', 'updated', record, body.actor, req.__auth?.subject)
     await store.merge({ ingestion_schedules: [record], action_logs: [log] })
     jsonResponse(res, 200, { success: true, data: record, action_log: log })
+    return true
+  }
+
+  if (req.method === 'POST' && route.kind === 'run') {
+    // The caller-triggered run. It is `run-due`'s sibling with the schedule
+    // resolution removed: the body names its own sources rather than the store
+    // naming them by what is due, so there is no schedule to advance and no
+    // alert evaluation behind it. Two properties are worth stating because the
+    // block is otherwise unremarkable:
+    //
+    //   - the status is 200, not the 201 `run-due` answers. A scheduled run
+    //     creates schedule state; this one reports what the sources returned and
+    //     creates nothing, so 201 would be a claim it does not make.
+    //   - `action_logs` is reported even when empty, and the merge is skipped
+    //     when it is. `merge({ action_logs: [] })` is a write that records
+    //     nothing, and the route is on the request path for every manual run.
+    const body = await readRequestJson(req)
+    const ingestion = await runIngestion(store, body)
+    const analytics = await refreshAnalytics(store)
+    const logs = ingestion.source_runs.map((run) => actionLog('source_runs', run.status, run, body.actor, req.__auth?.subject))
+    if (logs.length) await store.merge({ action_logs: logs })
+    jsonResponse(res, 200, {
+      success: true,
+      source_runs: ingestion.source_runs,
+      counts: ingestion.counts,
+      analytics: {
+        risk_scores: analytics.risk_scores.length,
+        impact_assessments: analytics.impact_assessments.length,
+        data_quality: analytics.data_quality.length,
+      },
+      action_logs: logs,
+    })
     return true
   }
 

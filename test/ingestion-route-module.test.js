@@ -160,8 +160,9 @@ const schedule = (over = {}) => ({
 })
 
 describe('ARC-01 — matchIngestionRoute', () => {
-  it('matches the six paths', () => {
+  it('matches the seven paths', () => {
     assert.deepEqual(matchIngestionRoute('/api/v1/ingest/status'), { kind: 'status' })
+    assert.deepEqual(matchIngestionRoute('/api/v1/ingest/run'), { kind: 'run' })
     assert.deepEqual(matchIngestionRoute('/api/v1/ingest/run-due'), { kind: 'run-due' })
     assert.deepEqual(matchIngestionRoute('/api/v1/ingest/schedules/defaults'), { kind: 'defaults' })
     assert.deepEqual(matchIngestionRoute('/api/v1/ingest/schedules'), { kind: 'schedules', id: null })
@@ -170,7 +171,7 @@ describe('ARC-01 — matchIngestionRoute', () => {
   })
 
   it('does not match a near miss', () => {
-    for (const pathname of ['/api/v1/ingest', '/api/v1/ingest/schedules/s1/x', '/api/v1/ingest/statuses']) {
+    for (const pathname of ['/api/v1/ingest', '/api/v1/ingest/run-now', '/api/v1/ingest/schedules/s1/x', '/api/v1/ingest/statuses']) {
       assert.equal(matchIngestionRoute(pathname), null, `${pathname} matched a route it should not`)
     }
   })
@@ -239,6 +240,69 @@ describe('ARC-01 — run-due closes the loop', () => {
     assert.equal(res.status, 201)
     const ranIds = res.json().schedules.map((s) => s.id)
     assert.deepEqual(ranIds, ['s1'], 'run-due ran a schedule that was not due')
+  })
+})
+
+describe('ARC-01 — a caller-triggered run', () => {
+  const CSV = 'event_date,event_type,latitude,longitude,country,fatalities,title\n2026-01-02,manual_run,3.12,35.62,KE,0,Manual run event\n'
+
+  it('runs the sources the body names, and answers 200 rather than 201', async () => {
+    // `run-due` answers 201 because it creates schedule state. This route
+    // creates nothing — it reports what the sources returned — so 201 would be
+    // a claim it does not make. The status is the assertion because it is the
+    // one observable that distinguishes the two siblings.
+    //
+    // `sources` is named explicitly, and that is not incidental: an absent
+    // `sources` resolves to `PUBLIC_INGESTION_SOURCES` — nine live connectors
+    // (`src/ingestion.js:160`). A test that omitted it would reach the network
+    // and hang rather than fail, which is what this test did on first write.
+    const store = await scratchStore()
+    const merges = observeMerges(store)
+    const { handled, res } = await call({ kind: 'run' }, {
+      method: 'POST', body: { sources: ['conflict_csv'], conflict_csv: CSV, actor: 'test' }, store,
+    })
+    assert.equal(handled, true)
+    assert.equal(res.status, 200, 'a caller-triggered run must not answer 201')
+    const body = res.json()
+    assert.equal(body.success, true)
+    assert.equal(body.source_runs.length, 1)
+    assert.equal(body.source_runs[0].source, 'conflict_csv')
+    assert.equal(body.counts.conflict_events, 1, 'the body’s CSV was not the thing ingested')
+    assert.ok(body.analytics, 'the run did not refresh analytics')
+    // The log is reported even when the merge is skipped for being empty, so
+    // the response shape does not depend on whether anything was written.
+    assert.equal(body.action_logs.length, 1)
+    assert.ok(merges.some((batch) => batch.action_logs?.length), 'the action log was never written')
+  })
+
+  it('reports a failed source as a run rather than throwing', async () => {
+    // A connector that throws is a run with `status: 'failed'`, not a 500 —
+    // the same contract `run-due` holds, because both answer "what did the
+    // sources do" and a source that errored did something. The CSV here is
+    // malformed so the connector itself succeeds and the *parse* is what fails,
+    // which is the path a caller actually hits.
+    const store = await scratchStore()
+    const { res } = await call({ kind: 'run' }, {
+      method: 'POST',
+      body: { sources: ['conflict_csv'], conflict_csv: 'not,a,valid,header\n1,2\n', actor: 'test' },
+      store,
+    })
+    assert.equal(res.status, 200, 'a source that could not be parsed is a run, not a 500')
+    const body = res.json()
+    assert.equal(body.source_runs.length, 1)
+    assert.equal(body.counts.conflict_events, 0)
+    assert.ok(body.action_logs.length >= 1, 'a failed run was not logged')
+  })
+
+  it('answers 405 for a verb it does not serve', async () => {
+    // The matcher is pathname-only, so the verb is refused inside the handler —
+    // the family's contract, the same one the `run-due` case asserts. A GET
+    // must not be handled as a silent no-op, which would let the dispatcher
+    // fall through to a 404 and report the route as missing.
+    const store = await scratchStore()
+    const { handled, res } = await call({ kind: 'run' }, { method: 'GET', store })
+    assert.equal(handled, true)
+    assert.equal(res.status, 405)
   })
 })
 

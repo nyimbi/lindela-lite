@@ -1501,26 +1501,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   const ingestionRoute = matchIngestionRoute(url.pathname)
   if (ingestionRoute && await handleIngestionRoute(ingestionRoute, { store, data, req, res, url, jsonResponse, evaluateAndPersistAlerts })) return
 
-  if (req.method === 'POST' && url.pathname === '/api/v1/ingest/run') {
-    const body = await readRequestJson(req)
-    const ingestion = await runIngestion(store, body)
-    const analytics = await refreshAnalytics(store)
-    const logs = ingestion.source_runs.map((run) => actionLog('source_runs', run.status, run, body.actor, req.__auth?.subject))
-    if (logs.length) await store.merge({ action_logs: logs })
-    jsonResponse(res, 200, {
-      success: true,
-      source_runs: ingestion.source_runs,
-      counts: ingestion.counts,
-      analytics: {
-        risk_scores: analytics.risk_scores.length,
-        impact_assessments: analytics.impact_assessments.length,
-        data_quality: analytics.data_quality.length,
-      },
-      action_logs: logs,
-    })
-    return
-  }
-
   // ENH-60. The taxonomy-and-forms family, extracted to `src/routes/forms.js`:
   // the vocabulary a client renders and the form definitions it validates
   // against. Dispatched here, where the taxonomy block was, so the order the

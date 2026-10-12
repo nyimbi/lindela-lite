@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 796-line function with 28
+generated from, and ENH-60's dispatcher is still one 776-line function with 28
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1090,8 +1090,8 @@ testable in isolation. This unblocks every other substrate item.
 > **PARTIAL — 2026-10-12. Twenty-eight families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 796 lines and `server.js` 5,603 →
-> 2,386. (The count is *matchers*, not files: 27 modules under `src/routes/`, one
+> set of blocks. The dispatcher went 1,903 → 776 lines and `server.js` 5,603 →
+> 2,366. (The count is *matchers*, not files: 27 modules under `src/routes/`, one
 > of which — `alerting.js` — carries two, `matchAlertingRoute` and the
 > non-exported `matchTriggeringRoute`. The 27 recorded here before this entry was
 > the file count, so it read one high for a day — the same off-by-one the
@@ -1232,19 +1232,35 @@ testable in isolation. This unblocks every other substrate item.
 > would hide the one row that matters. Canaried: planting that filter fails the
 > test with `a failed event was filtered out of the outbox listing`.
 >
-> What is left is not more of the same. The dispatcher still holds **12 inline
+> What is left is not more of the same. The dispatcher still holds **11 inline
 > literal route conditions** (measured from the dispatcher's own line range — the
 > 17 previously recorded here does not reproduce against the file), and they are
 > one-off routes whose bodies *are* the
 > business logic: `demo/seed`, `maintenance/apply-retention`, the two
-> `service-assets` verbs, `ingest/run`, the `events` read, the
+> `service-assets` verbs, the `events` read, the
 > `assessments` roll-up, and the liveness pair (`ready`, `health`) plus the two
 > `auth-info` answers — one on the authenticated path and one on the 401 path,
-> which is a different route that happens to share a path. Extracting those is a
-> move only
-> after ENH-59 has a route table to declare them in — otherwise it is relocating
-> branches and calling it architecture. The ~15-module target is reached when the
-> literal conditions are declarations.
+> which is a different route that happens to share a path.
+>
+> **`ingest/run` came off that list on 2026-10-12, and its removal corrects the
+> paragraph it left.** The entry above said extracting the remainder is "a move
+> only after ENH-59 has a route table to declare them in". `ingest/run` was a
+> counterexample already in the file: it is the immediate sibling of `run-due`,
+> both are the ingestion family's own clock, and `matchIngestionRoute` named
+> every other path under `/ingest/` and not this one. The family had a hole
+> exactly where the route was, so the extraction was a move — the module already
+> imported `runIngestion`, `refreshAnalytics`, `actionLog` and `readRequestJson`,
+> and the diff of the moved body is the old block verbatim. What remains is
+> genuinely different: those bodies are one-off logic with no sibling to join,
+> which is the argument for ENH-59 rather than against extracting them. The
+> distinction is *is there a family for it to be the missing member of*, and
+> `ingest/run` answered yes.
+>
+> Its one behaviour worth naming is the status: **200, not the 201 `run-due`
+> answers.** `run-due` creates schedule state; this route creates nothing and
+> reports what the sources returned, so 201 would be a claim it does not make.
+> Canaried by changing the literal to 201 and watching the test fail on that
+> line.
 >
 > The move itself is verified rather than asserted, and the three checks are in
 > ARC-01's entry.

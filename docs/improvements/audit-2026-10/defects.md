@@ -1072,7 +1072,7 @@ ever recorded. That move also settled a real inconsistency: `connectors` and
 used `new Date(completed_at).getTime()`, which is `NaN` for a run still in
 flight — and `NaN` compares equal to everything, so a running run sorted
 unpredictably against finished ones. Both now share one helper.
-The dispatcher is 796 lines and `server.js` 2,386, from 1,903 and 5,603 at the start.
+The dispatcher is 776 lines and `server.js` 2,366, from 1,903 and 5,603 at the start.
 `check-openapi` reads all six new families as third-family route sources with no
 second list to keep in step — `parsed matchRiskRoute → handleRiskRoute: 6 paths`,
 `parsed matchDistrictRoute → handleDistrictRoute: 5 paths`, `parsed
@@ -1135,7 +1135,7 @@ the catalogue move (`ingestionStatus`, the `GATE_ENV` table, `registryPath`, and
 the registry cache itself, whose only two readers are now in the new module). A stale
 duplicate of the "route planning requires a POST body" comment sat between two
 of the risk blocks describing a route handled a hundred lines below; it is gone.
-**12 inline literal route conditions remain inside the dispatcher** (14 in
+**11 inline literal route conditions remain inside the dispatcher** (13 in
 `server.js`; the two extra are the `/metrics` alias and one above dispatch). The
 sources/connectors group left with the family itself. The count was previously
 recorded as 17, which no reading of the file reproduces — the grep showed 18
@@ -1144,6 +1144,16 @@ own line range rather than carried forward. The outbox pair left next, which the
 paragraph above lists among the conditions that should wait for ENH-59; it did
 not, because its two bodies are each one call into `src/outbox.js` rather than
 business logic the dispatcher owns. The consolidation is still ENH-59's.
+
+`ingest/run` followed on 2026-10-12, and it is the case that tests the rule the
+paragraph above states. It is not one call into a module; it is real logic —
+run, refresh, log, respond. What made it a move is that it already had a family
+to be the missing member of: `matchIngestionRoute` named `ingest/status`,
+`ingest/run-due` and the whole `schedules` group, and skipped `ingest/run`, which
+is `run-due`'s immediate sibling. The module already imported every symbol the
+block used, so the diff is the old body verbatim. The rule is therefore *is there
+a family for it to be the missing member of* — not *is the body small* — and the
+eight conditions that remain answer no to it.
 
 ### ARC-03 — HIGH — `/api/v1/demo/seed` imports `scripts/seed-demo.mjs` at request time
 `src/server.js:1269`. Production `src/` depends on `scripts/` — inverted layering.
