@@ -208,8 +208,7 @@ async function main() {
 
   await s.send('Page.enable')
   await s.send('Runtime.enable')
-  await s.send('Network.enable')
-  // A phone, because the queue is a field feature and a desktop viewport would
+  await s.send('Network.enable')  // A phone, because the queue is a field feature and a desktop viewport would
   // let a layout-only pass read as evidence about a mobile one.
   await s.send('Emulation.setDeviceMetricsOverride', {
     width: 412, height: 915, deviceScaleFactor: 2, mobile: true,
@@ -238,6 +237,15 @@ async function main() {
     // without the queued string renders the key itself — a real localisation gap,
     // and not what this drill measures.
     await s.evaluate(`localStorage.setItem('lindela_lite_locale', 'en')`)
+
+    // Empty the queue too, for the same reason the store is deleted above.
+    // IndexedDB belongs to the browser profile, not the run, so a dead letter
+    // from an earlier run stays listed: the "permanently rejected" step read
+    // `listed=2` and `discarded=1` because a previous run's report was still
+    // there, and the count grew with every run. A drill that fails for the state
+    // of the machine rather than the state of the code is not measuring the code.
+    const cleared = await s.evaluate(`window.lindelaQueue ? window.lindelaQueue.clear().then(() => true).catch(() => false) : true`)
+    if (!cleared) console.log('  note  the offline queue could not be cleared before the walk')
 
     console.log('\nstop the server')
     await stopServer()
@@ -284,42 +292,86 @@ async function main() {
     await s.shot('01-cold-offline')
 
     console.log('\nfile a report with the server down')
-    // Each screen carries its own Next button — `symptomNextBtn`,
-    // `symptomTypeNextBtn`, `symptomDurationNextBtn`, `symptomLocationNextBtn` —
-    // and pressing the wrong one navigates *backwards*, which is how the first
-    // version of this walk sat on the type screen for six steps and reported a
-    // wizard that had submitted without ever reaching the submit button.
+    // The walk follows the wizard's own step order — who, type, severity,
+    // exposure, duration, location, about-who — and each step asserts the screen
+    // it expects is the active one before pressing anything.
+    //
+    // Two earlier versions of this walk were fiction, and both failed the same
+    // way. `showScreen` only toggles a class: a hidden screen's buttons stay
+    // bound, so `getElementById('symptomLocationNextBtn').click()` fires whether
+    // or not the location screen is showing. The first version pressed the wrong
+    // Next and walked *backwards*; the second skipped severity and exposure
+    // entirely, leaving `duration_value` null on a field the form marks
+    // `required: true` — so the server answered 400, the queue dead-lettered the
+    // report, and the drill reported "walked 10 steps" about a wizard that never
+    // left the duration screen. Asserting `state.currentScreen` is what makes a
+    // step a step rather than a click.
     const WIZARD = [
-      [`document.getElementById('reportSymptomBtn').click()`, 'open symptom'],
-      [`document.querySelector('[data-symptom-who="child"]').click()`, 'choose who'],
-      [`document.getElementById('symptomNextBtn').click()`, 'next after who'],
-      [`document.querySelector('[data-symptom-type="fever"]').click()`, 'choose symptom'],
-      [`document.getElementById('symptomTypeNextBtn').click()`, 'next after symptom'],
-      [`document.querySelector('[data-symptom-duration="days"]').click()`, 'choose duration'],
-      [`document.getElementById('symptomDurationNextBtn').click()`, 'next after duration'],
+      [`document.getElementById('reportSymptomBtn').click()`, 'open symptom', 'symptom'],
+      [`document.querySelector('[data-symptom-who="child"]').click()`, 'choose who', 'symptom'],
+      [`document.getElementById('symptomNextBtn').click()`, 'next after who', 'symptomType'],
+      [`document.querySelector('[data-symptom-type="fever"]').click()`, 'choose symptom', 'symptomType'],
+      [`document.getElementById('symptomTypeNextBtn').click()`, 'next after symptom', 'symptomSeverity'],
+      [`document.getElementById('severityNextBtn').click()`, 'skip danger signs', 'symptomExposure'],
+      // The exposure screen refuses to advance with every select empty, so the
+      // water source is chosen — it is the one a report without a location still
+      // needs, and the guard names it.
+      [`(() => {
+         const water = document.getElementById('exposeWater')
+         if (water) water.value = 'clean'
+       })()`, 'choose water source', 'symptomExposure'],
+      [`document.getElementById('exposureNextBtn').click()`, 'next after exposure', 'symptomDuration'],
+      // The count, not only the unit. `durationValue` is `required: true` in
+      // `CHW_SYMPTOM_FORM`, and the duration screen's Next returns early while it
+      // is empty — so a walk that sets the unit and moves on submits a report the
+      // server refuses.
+      [`(() => {
+         const v = document.getElementById('durationValue')
+         if (v) { v.value = '2'; v.dispatchEvent(new Event('input', { bubbles: true })) }
+       })()`, 'type the duration count', 'symptomDuration'],
+      [`document.querySelector('[data-symptom-duration="days"]').click()`, 'choose duration unit', 'symptomDuration'],
+      [`document.getElementById('symptomDurationNextBtn').click()`, 'next after duration', 'symptomLocation'],
       // Manual coordinates rather than auto-detect: geolocation cannot succeed in
       // a headless browser, and a drill whose location step waits on a permission
       // prompt fails for a reason that has nothing to do with the queue. A real
-      // handset takes the auto path, through the same code.
+      // handset takes the auto path, through the same code. "Use this location"
+      // is the press that records them — Next only reads `state.symptom.location`
+      // and writes `not_answered` when it is still null, so typing without
+      // pressing the button is a location nobody recorded.
       [`(() => {
          const lat = document.getElementById('manualLat'); const lon = document.getElementById('manualLon')
          if (lat && lon) { lat.value = '-3.1'; lon.value = '35.6' }
-       })()`, 'type a location'],
-      [`document.getElementById('symptomLocationNextBtn').click()`, 'next after location'],
-      [`document.getElementById('symptomSubmitBtn').click()`, 'submit'],
+       })()`, 'type a location', 'symptomLocation'],
+      [`document.getElementById('useManualLocationBtn').click()`, 'use this location', 'symptomLocation'],
+      [`document.getElementById('symptomLocationNextBtn').click()`, 'next after location', 'symptomAboutWho'],
+      [`document.getElementById('symptomSubmitBtn').click()`, 'submit', 'home'],
     ]
     const walked = []
-    for (const [press, label] of WIZARD) {
+    let walkFailed = null
+    for (const [press, label, expectScreen] of WIZARD) {
       try {
         await s.evaluate(`(() => { ${press}; return true })()`)
-        walked.push(label)
         await sleep(450)
+        const now = await s.evaluate(`window.__lindelaChwState?.currentScreen ?? document.querySelector('.screen.active')?.id ?? null`)
+        const actual = String(now || '').replace(/Screen$/, '')
+        if (expectScreen && actual !== expectScreen) {
+          walkFailed = `${label}: expected the ${expectScreen} screen, the app is on ${actual || 'none'}`
+          walked.push(`${label} (stuck on ${actual || 'none'})`)
+          break
+        }
+        walked.push(label)
       } catch (error) {
-        walked.push(`${label} (failed: ${String(error.message).slice(0, 50)})`)
+        walkFailed = `${label}: ${String(error.message).slice(0, 80)}`
+        walked.push(`${label} (threw)`)
         break
       }
     }
     console.log(`  note  walked ${walked.length} steps: ${walked.join(' → ')}`)
+    if (walkFailed) {
+      fail('the wizard can be walked to submission', walkFailed)
+    } else {
+      pass('the wizard can be walked to submission', `${walked.length} steps, ending on the home screen`)
+    }
 
     const stored = await waitFor(s, `window.lindelaQueue?.pendingCount?.().then(n => n > 0)`, {
       timeoutMs: 20_000, label: 'the report to be queued',
@@ -346,19 +398,30 @@ async function main() {
 
     console.log('\nbring the server back on the same store; nobody touches the app')
     await startServer()
-    const drained = await waitFor(s, `window.lindelaQueue?.pendingCount?.().then(n => n === 0)`, {
-      timeoutMs: 40_000, label: 'the queue to drain on its own',
+    // Wait for the report to *arrive*, not for the queue to look empty.
+    //
+    // `pendingCount() === 0` is true whether the report was delivered or thrown
+    // away: `pendingCount` filters `failed` records out, so a 4xx dead-letter
+    // empties the count exactly as a delivery does. The drill asserted the empty
+    // count, read 0 reports over HTTP, and called it "the queue drains" — the one
+    // outcome it exists to rule out, wearing the evidence of success.
+    const delivered = await waitFor(s, `fetch('${BASE}/api/v1/field-reports?limit=5000')
+      .then(r => r.json()).then(b => (b.data || []).length > 0).catch(() => false)`, {
+      timeoutMs: 40_000, label: 'the report to reach the server',
     }).then(() => true).catch(() => false)
-    if (drained) pass('the queue drains without anyone asking')
-    else fail('the queue drains without anyone asking', 'still holding records 40s after the server returned')
 
     const reports = await fieldReports()
     if (reports.length === 1) {
       pass('the server holds exactly one copy', `${reports.length} field report`)
       console.log(`  note  delivered: ${JSON.stringify(reports[0]).slice(0, 220)}`)
     } else {
-      fail('the server holds exactly one copy', `the server holds ${reports.length} copies of one report`)
+      const held = await s.evaluate(`(async () => JSON.stringify(await window.lindelaQueue.list({ failed: true })))()`)
+        .catch(() => 'unreadable')
+      fail('the server holds exactly one copy',
+        `the server holds ${reports.length} copies of one report; dead letters: ${String(held).slice(0, 400)}`)
     }
+    if (delivered) pass('the queue drains by delivering, not by discarding')
+    else fail('the queue drains by delivering, not by discarding', 'nothing reached the server')
 
     // A second flush must not send a second copy: the idempotency key is what
     // makes a retried drain safe, and this is where that is either true or not.
@@ -372,16 +435,46 @@ async function main() {
     await s.evaluate(`window.lindelaQueue.enqueue('/api/v1/field-reports', {
       method: 'POST', body: { title: 'Roundtrip rejected on purpose', type: 'field_report' },
     }, { what: 'a report the server will refuse' }).catch(e => e)`)
+    // Let the drain attempt it, so the record is actually a dead letter rather
+    // than a record that has not been tried. The assertion below is about the
+    // *failed* state, and an untried record would satisfy a bare length check
+    // while proving nothing about what happens after a permanent rejection.
     await sleep(1200)
-    const listed = await s.evaluate(`window.lindelaQueue.list().then(l => l.length)`).catch(() => null)
+    const poisoned = await s.evaluate(`(async () => {
+      const failed = await window.lindelaQueue.list({ failed: true })
+      const mine = failed.find((r) => r.what === 'a report the server will refuse')
+      return mine ? { id: mine.id, attempts: mine.attempts, lastError: mine.lastError, failed: mine.failed } : null
+    })()`).catch((e) => ({ error: e.message }))
+    if (!poisoned || poisoned.error) {
+      fail('a permanently rejected report becomes a dead letter',
+        `it was not listed as failed: ${JSON.stringify(poisoned)}`)
+    } else {
+      pass('a permanently rejected report becomes a dead letter',
+        `attempts=${poisoned.attempts} lastError=${poisoned.lastError}`)
+    }
+    // Discard *that* record and assert the store shrank by one, rather than
+    // asserting the queue is empty afterwards. The old form compared a raw length
+    // against a post-discard length, which is only equal when nothing else is
+    // held — so a leftover from an earlier run read as a broken discard.
     const discarded = await s.evaluate(`(async () => {
-      const all = await window.lindelaQueue.list()
-      if (!all.length) return 'nothing listed'
-      await window.lindelaQueue.discard(all[0].id)
-      return (await window.lindelaQueue.list()).length
-    })()`).catch((e) => `error: ${e.message}`)
-    if (listed >= 1 && discarded === 0) pass('it is visible and can be discarded', 'the queue is empty afterwards')
-    else fail('it is visible and can be discarded', `listed=${listed} after discard=${discarded}`)
+      const before = await window.lindelaQueue.list()
+      const target = before.find((r) => r.what === 'a report the server will refuse')
+      if (!target) return { error: 'the rejected report is not listed, so a worker cannot act on it' }
+      await window.lindelaQueue.discard(target.id)
+      const after = await window.lindelaQueue.list()
+      return {
+        before: before.length, after: after.length,
+        stillThere: after.some((r) => r.id === target.id),
+      }
+    })()`).catch((e) => ({ error: e.message }))
+    if (discarded?.error) {
+      fail('it is visible and can be discarded', discarded.error)
+    } else if (discarded.stillThere || discarded.after !== discarded.before - 1) {
+      fail('it is visible and can be discarded',
+        `before=${discarded.before} after=${discarded.after} stillThere=${discarded.stillThere}`)
+    } else {
+      pass('it is visible and can be discarded', `${discarded.before} → ${discarded.after} records`)
+    }
     await s.shot('04-dead-letter')
   } finally {
     await stopServer().catch(() => {})
