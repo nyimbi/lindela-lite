@@ -61,6 +61,18 @@ describe('fetchWithRetry honours a declared limit', () => {
     // Two tokens, 400ms window: the first two go at once, the third has to wait
     // ~200ms for the bucket to refill. A burst would show three identical
     // timestamps.
+    //
+    // The wait is measured from the *first* request, not the second, and that is
+    // the whole test. The bucket starts with two tokens at t0 and refills
+    // continuously at one per 200ms (`src/rate-limit.js:168`), so the third grant
+    // needs one full token's worth of refill measured from t0 — the moment the
+    // first request spent its token. The second request's grant time does not
+    // enter into it. Measuring `enteredAt[2] - enteredAt[1]` instead subtracts
+    // the second request's own processing delay: under a loaded suite that delay
+    // was 71ms and the "wait" read as 129ms, below the floor, on a limiter that
+    // was working perfectly. It failed once in the full 4,342-test run and
+    // passed alone, which is the signature of an assertion measuring the
+    // scheduler rather than the bucket.
     const stub = recordingFetch(() => new Response('ok', { status: 200 }))
     globalThis.fetch = stub
 
@@ -73,9 +85,9 @@ describe('fetchWithRetry honours a declared limit', () => {
 
     assert.equal(stub.enteredAt.length, 3, 'every request reached the network — a timing assertion below would be vacuous otherwise')
     assert.deepEqual(bodies, ['ok', 'ok', 'ok'])
-    const third = stub.enteredAt[2] - stub.enteredAt[1]
-    assert.ok(third >= 150, `third request waited ${third}ms for a token, expected ~200`)
-    assert.ok(third < 5000, `third request waited ${third}ms, which is a stall rather than a limit`)
+    const span = stub.enteredAt[2] - stub.enteredAt[0]
+    assert.ok(span >= 180, `the third request arrived ${span}ms after the first, expected ~200 (one token at 2/400ms)`)
+    assert.ok(span < 5000, `the third request waited ${span}ms, which is a stall rather than a limit`)
   })
 
   it('gives different hosts different budgets', async () => {

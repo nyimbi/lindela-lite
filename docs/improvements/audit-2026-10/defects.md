@@ -2026,6 +2026,36 @@ means a test mutated the repository, and the mutation is either the finding or
 the fixture. Neither of these two was found that way, which is the argument for
 running it anyway.
 
+**The second half of the class, found 2026-10-12: a wall-clock assertion that
+subtracts the machine's own latency.** `test/rate-limit-wiring.test.js` proved a
+token bucket waits by measuring `enteredAt[2] - enteredAt[1]` and requiring
+≥ 150 ms. It failed once in the full 4,342-test run, at **129 ms**, and passed
+alone — the signature of an assertion measuring the scheduler rather than the
+bucket. The mechanism, confirmed by probe rather than by reasoning:
+
+  - the bucket holds 2 tokens at `t0` and refills continuously at one per 200 ms
+    (`src/rate-limit.js:168`), so the third grant needs a full token measured
+    from `t0` — the moment the *first* request spent its token;
+  - `enteredAt[1]` is stamped after the second request's grant, so
+    `enteredAt[2] - enteredAt[1]` is that 200 ms **minus the second request's own
+    processing delay**;
+  - injecting 0/20/40/60/80 ms of latency into the fetch stub gave
+    `enteredAt[2] - enteredAt[1]` of 190/180/159/140/123 ms while
+    `enteredAt[2] - enteredAt[0]` held at 201/202/201/200/204 ms.
+
+The fix is the span from the first request, which is the quantity the bucket
+actually determines. The assertion's floor then does not move with machine load,
+and it was canaried the other way: with `limiterFor` returning `null` the span
+collapses to 11 ms and the test fails naming the bucket.
+
+The general rule this instance teaches: **a timing assertion must be anchored to
+the event the system under test schedules, not to a later observation of it.**
+Here the scheduled event is the token becoming available, and every millisecond
+between that and the fetch's own entry is the test's noise floor, subtracted
+from its own margin. `ratePerWindow: 1` cases are immune — the single token is
+spent at `t0`, so `enteredAt[1] - enteredAt[0]` *is* the refill — which is why
+only one assertion in the file had the shape and the rest were sound.
+
 ---
 
 ## What is done right (calibration)
