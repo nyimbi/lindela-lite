@@ -694,10 +694,11 @@ inside the same function, three auth gates (one centralised, two copies at `:366
 and `:392`), per-route inline validation, and business logic that belongs in
 `kpi.js`/`reports.js`. A change to one route requires reading 1,600 lines. ENH-60.
 
-**Fixed 2026-10-12 — every route family is out, and the move was verified as a
-move rather than asserted to be one.** Seventeen families now live under
-`src/routes/`, each a coherent group with its own matcher, its own test file, and
-a property that is the reason it is a family rather than a set of blocks:
+**PARTIAL — 2026-10-12. Every *family* is out; the god function is not gone.** The
+row's title is "1,597-line god function", and that is the claim to hold it to, so
+this is not Fixed. Seventeen families now live under `src/routes/`, each a
+coherent group with its own matcher, its own test file, and a property that is the
+reason it is a family rather than a set of blocks:
 
 | module | routes | what it holds |
 |---|---|---|
@@ -722,6 +723,18 @@ a property that is the reason it is a family rather than a set of blocks:
 
 `src/server.js` is 3,237 lines from 5,603 at the start of the extraction, and the
 dispatcher 1,371 from 1,903.
+
+**What remains, measured rather than described.** The dispatcher still carries
+**35 inline literal route conditions** over 876 non-comment lines, because they
+are not families: they are one-off routes whose bodies are the business logic
+itself — `/api/v1/flood-risk`, `/api/v1/compound-risk`, `/api/v1/conflict-risk`,
+the `equity/*` scans, the `flood-probability/*` group, `routing/plan`,
+`analytics/bias-correct`, `alerts/evaluate`, `upload` (which is 111 lines on its
+own), `demo/seed`, `maintenance/apply-retention`, `forms`, and the liveness pair.
+Extracting them is not a move: it is the ENH-59 route-table work plus a decision
+about which of them are really `reports.js`/`kpi.js` logic reached through a thin
+route. `ENH-60`'s ~15-module target is still the endpoint, and this row closes
+when the literal conditions are declarations rather than branches.
 
 Three checks together establish the move preserved behaviour, and each caught
 something the others missed:
