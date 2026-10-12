@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { describe, it } from 'node:test'
 import { createServer } from '../src/server.js'
 import { JsonStore } from '../src/store.js'
@@ -24,7 +24,26 @@ import { JsonStore } from '../src/store.js'
  * call comes back.
  */
 
-const SERVER = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8')
+/**
+ * The route surface, read from every file that can hold a route body.
+ *
+ * This was `src/server.js` alone until ARC-01/ENH-60 extracted the route
+ * families into `src/routes/*.js`. The assertion did not change — the code it
+ * is about moved, and a guard that keeps reading the old file checks nothing
+ * while still passing its sibling test, which is the exact failure mode this
+ * describe block was written to prevent. Read the directory, not a path.
+ */
+const ROUTE_SOURCES = [
+  'src/server.js',
+  ...readdirSync(new URL('../src/routes/', import.meta.url))
+    .filter((f) => f.endsWith('.js'))
+    .map((f) => `src/routes/${f}`),
+].map((rel) => ({
+  rel,
+  text: readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8'),
+}))
+
+const SERVER = ROUTE_SOURCES.map((s) => s.text).join('\n')
 
 async function withServer(fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-r25-'))
@@ -41,13 +60,20 @@ async function withServer(fn) {
 
 describe('R-25 — a one-record edit does not rewrite the store', () => {
   it('no route replaces the whole store to change a collection', () => {
-    const offenders = SERVER.split('\n')
-      .map((line, i) => ({ line: i + 1, text: line.trim() }))
-      .filter((entry) => /store\.write\(/.test(entry.text))
+    // Reported per file, because the surface is several files now and a bare
+    // line number would name a line in whichever file happened to be joined.
+    // Comment lines are skipped: a call site is the claim, and the modules that
+    // explain this fix in prose would otherwise fail the guard that made them
+    // explainable.
+    const isComment = (text) => /^(\/\/|\/\*|\*)/.test(text)
+    const offenders = ROUTE_SOURCES.flatMap(({ rel, text }) =>
+      text.split('\n')
+        .map((line, i) => ({ where: `${rel}:${i + 1}`, text: line.trim() }))
+        .filter((entry) => !isComment(entry.text) && /store\.write\(/.test(entry.text)))
     assert.deepEqual(offenders, [],
       'store.write() is a full-table DELETE plus reinsert on PostgreSQL. These lines ' +
       'use it for a single-collection change: ' +
-      offenders.map((o) => `${o.line}: ${o.text}`).join(' | '))
+      offenders.map((o) => `${o.where}: ${o.text}`).join(' | '))
   })
 
   it('the four parametric routes use the collection-scoped call', () => {
