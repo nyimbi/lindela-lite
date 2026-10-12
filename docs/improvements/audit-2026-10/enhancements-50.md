@@ -1098,6 +1098,32 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > and a route the parser cannot read is a route no check built on it can find —
 > which is the argument for one declaration rather than five tables, made from the
 > other end.
+>
+> **The fifth table is now checked too, 2026-10-12.** ARC-02 names five
+> descriptions of the route surface; four had a cross-check and the client's call
+> sites had none. `scripts/check-client-endpoints.mjs` is the eighteenth gate: it
+> reads the client's `/api/v1/…` literals out of `public/` — 143 of them — and
+> asks the same `route-surface.mjs` derivation the document check uses, so a
+> family that moves out of the dispatcher needs no edit in it. The failure it
+> prevents is the console swallowing a 404 into an empty panel, which reads as
+> "no data" rather than "no route" — QUA-07's silent-empty class reached from the
+> caller's end instead of the route's.
+>
+> Its scope took one correction worth recording, because the first draft had
+> exactly one finding on a clean tree and it was wrong. The finding was
+> `/api/v1/readyz` in `public/sw.js` — inside the comment explaining that the
+> entry was removed for being a route the server has never served. A gate whose
+> only finding on known-good input is a sentence about its own subject is a gate
+> that gets deleted, and this repository has that lesson written down four times
+> over. It strips comments now, and accepts a literal that is a proper prefix of a
+> served path, because the client completes built paths at call time
+> (`/api/v1/basemap/tiles/osm` + `/{z}/{x}/{y}.png`).
+>
+> So the position on this entry is now: **five tables, five cross-checks, still
+> five tables.** That is the honest state. A generator would replace the tables;
+> what has been built is the network that keeps them from disagreeing silently,
+> which is a strictly weaker property and a strictly cheaper one to reach. ENH-59
+> stays PARTIAL for the reason it always had.
 
 **ENH-60 — Router extraction.** `handleApiRequestInContext` is 1,597 lines
 (`src/server.js:763–2360`) and entangles routing, auth, validation, business logic

@@ -76,6 +76,17 @@ jobs:
       # Model boundaries: no flood-probability or return-period field may ship
       # without an agreed model basis. Runs inside validate as well.
       - run: npm run check:model-boundaries
+      # R-76. The self-contained gate tier had never run here. `validate` imports
+      # four checks and the rest of the registry was reachable only by typing
+      # `npm run gates` on a laptop — so eighteen gates, several of them the only
+      # check for a defect class this repository has shipped repeatedly, were
+      # decorative in CI. A gate that never runs is not a gate; that is the same
+      # failure VUL-05 records one level up, where the workflow itself never ran.
+      #
+      # The tier is self-contained by construction: file reads plus a few gates
+      # that bind an ephemeral port on 127.0.0.1. Measured at ~15s on the whole
+      # registry, so it is affordable in the job that already runs the suite.
+      - run: npm run gates
 
   coverage:
     runs-on: ubuntu-latest

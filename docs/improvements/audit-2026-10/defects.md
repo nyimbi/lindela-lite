@@ -1433,6 +1433,50 @@ coverage claimed): matchTileRoute` is what named the second half of this bug, an
 a run that prints no such line is the only evidence that the surface was read at
 all.
 
+**The fifth table now has a cross-check too.** This entry names five descriptions
+of the route surface and says the consolidation (ENH-59) is open. Four of them
+were cross-checked — the document by `check-openapi`, the manifest table by
+`test/route-manifests.test.js`, the method gating by `check-route-methods`, the
+envelope shape by `check-route-envelopes` — and the fifth, the client's call
+sites, had none. The one client-side check that existed asserted `public/sw.js`'s
+`NEVER_CACHED`, which is a hand-written inventory of three claim endpoints, not
+the surface.
+
+`scripts/check-client-endpoints.mjs` closes that: it reads the client's
+`/api/v1/…` literals out of `public/` — 143 of them today — and asks the *same*
+`route-surface.mjs` derivation, so the two checks cannot disagree about what the
+server serves and a family that moves out of the dispatcher needs no edit in
+either. The failure it prevents is the console swallowing a 404 into an empty
+panel: the fetch resolves, the panel renders its empty state, and the surface
+reads as "no data" rather than "no route" — QUA-07's silent-empty class, reached
+from the caller's end rather than the route's.
+
+Its scope took one correction, and the correction is the point. The first draft
+reported exactly one finding on a clean tree: `/api/v1/readyz`, in
+`public/sw.js`. It is inside the comment explaining that the entry was removed
+*for being a route the server has never served* — the gate had found a sentence
+about its own subject and called it a defect. That is the fourth time this
+repository has written the rule down (`check-absent-values` and the tone gate both
+fire on their own documentation; the citation gate flagged VER-20's canary
+number), so it is applied rather than rediscovered: comments are stripped before
+literals are read, and the stripper is string-aware because `'https://…'` is not
+a comment. A literal that is a proper prefix of a served path is accepted — the
+client completes built paths at call time (`/api/v1/basemap/tiles/osm` +
+`/{z}/{x}/{y}.png`), which is the same shape the tile-proxy story above turns on,
+from the caller's side.
+
+Canaried two ways: eleven fixtures with mixed expectations (so a constant scanner
+cannot satisfy them), and a dead literal planted in `public/sw.js` for real,
+which the gate named by file and line before being reverted from a backup.
+
+**Five tables, five cross-checks, still five tables.** That is the honest state of
+this entry, and the distinction is worth keeping: a generator (ENH-59) would
+replace the tables; what exists is the network that stops them disagreeing
+*silently*, which is a weaker property and a much cheaper one. Every entry above
+is a place where that network had a hole, and each hole was found by widening a
+check rather than by reading the code — which is the argument for the checks, and
+also the argument for the generator, made from opposite ends.
+
 ### ARC-03 — HIGH — `/api/v1/demo/seed` imports `scripts/seed-demo.mjs` at request time
 `src/server.js:1269`. Production `src/` depends on `scripts/` — inverted layering.
 The 75 KB seed script is bundled into the runtime path; an import error there is a
