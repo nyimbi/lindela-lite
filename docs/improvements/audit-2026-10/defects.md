@@ -960,9 +960,71 @@ particular wrong answer.
 served inline — it runs before the operational family and shadows the family's
 collection branch — and its private copy of the page construction had no
 `isDeleted` predicate, so a soft-deleted asset was listed while the by-id read
-404'd it. The list and the by-id read now agree. It is also why the inline handler
-and the matcher's entry are not the duplication they read as: the inline pair
-serves the collection, the family serves the by-id read.
+404'd it. The inline copy gained the predicate, and the two agreed on the
+**default** listing from that point. They still disagreed on
+`?include_deleted=true`, which the inline copy dropped — and the paragraph below
+originally concluded from the default that "the list and the by-id read now
+agree." That was one axis of two; see **VER-18**, which removed the duplication
+rather than reconciling the copies.
+
+---
+
+### VER-18 — MEDIUM — an inline dispatcher block shadowed the family that serves the same path
+
+Found 2026-10-12, by the ARC-01 work rather than by the audit, and it is the
+general case of the paragraph VER-17 closed with.
+
+VER-17's last paragraph recorded that `GET /api/v1/service-assets` "is served
+inline — it runs before the operational family and shadows the family's
+collection branch — and its private copy of the page construction had no
+`isDeleted` predicate," and concluded "the list and the by-id read now agree."
+Both halves of that are wrong, and each wrong half is a different lesson.
+
+**The duplication was not benign, and "now agree" was measured on one axis.** A
+probe against a live server, with one live and one soft-deleted asset:
+
+```
+GET /api/v1/service-assets/sa-gone                          → 404
+GET /api/v1/service-assets/sa-gone?include_deleted=true     → 200
+GET /api/v1/service-assets                                  → [sa-live]
+GET /api/v1/service-assets?include_deleted=true             → [sa-live]   ← wrong
+GET /api/v1/incidents?include_deleted=true                  → [in-gone, in-live]
+```
+
+The by-id read honoured `include_deleted`; the list did not. So the two agreed on
+the *default* — which is what the fix was verified against — and diverged on the
+parameter. `?include_deleted=true` is a documented read widening on all six
+sibling collections, and on the seventh it silently did nothing: a 200 with a
+shorter list, which is the failure shape that reads as an empty result rather
+than an error. The family's own contract test
+(`test/operational-route-module.test.js:133`) asserts the flag on the family and
+stayed green throughout, because the family was correct and unreachable.
+
+**The shadow was invisible to every check, and the reason is structural.**
+`check-openapi.mjs` reads three families of route discovery and compared the
+*set* of paths: 174 documented, 174 served. A path served twice contributes one
+member, so a shadow is not a difference it can see. Nothing compared the
+dispatcher's inline literals against the extracted families' matchers, so the
+only signal was a request — and no test made one to the shadowed path with the
+parameter that differed.
+
+**Fixed 2026-10-12.** Both inline blocks are deleted; the operational family
+serves the path, including the `POST` import verb, which is the one write that
+family performs that its builders cannot. `src/server.js` 2,366 → 2,331 lines,
+dispatcher 776 → 741, inline literals 11 → 9. The class is guarded, not the
+instance: `test/dispatch-shadow.test.js` asserts behaviourally that the flag
+widens this listing as it does its siblings, and structurally that no family
+matcher's path is also an inline dispatcher literal — with an allowlist of one,
+`/api/v1/rapidpro/field-report`, which is an auth precondition (buffer the body,
+verify the HMAC) that *falls through* to the family rather than a route that
+returns. Both halves canaried: ignoring the flag in the family fails the first
+with "did not widen", and replanting the inline block fails the second naming the
+line and the family.
+
+The rule this leaves: **an extraction is not finished when the module is correct,
+it is finished when the module is reached.** A family's tests cannot fail for a
+route the dispatcher answers first, so a path served in two places has exactly
+one tested implementation and it is the one nobody is calling.
 
 ---
 

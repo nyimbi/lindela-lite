@@ -33,6 +33,8 @@
  * must agree, and the earlier fix reached only one branch of the two.
  */
 
+import { refreshAnalytics } from '../analytics.js'
+import { runIngestion } from '../ingestion.js'
 import { WRITABLE_COLLECTIONS, actionLog, buildCreate, buildSoftDelete, buildUpdate, isDeleted } from '../operations.js'
 import { ERROR_CODES } from '../errors.js'
 import { logger, metrics } from '../observability.js'
@@ -89,6 +91,42 @@ export async function handleOperationalRoute(route, { data, req, res, url, jsonR
       return true
     }
     jsonResponse(res, 200, { success: true, data: record })
+    return true
+  }
+
+  // The one write this family serves that its builders cannot perform, and it is
+  // here rather than in the dispatcher because the dispatcher was the second
+  // place the path was written down. `GET /api/v1/service-assets` was served by
+  // an inline block *above* this family's dispatch, so the family's list branch
+  // was dead code for the life of the extraction — and the inline copy had
+  // dropped `?include_deleted=true`, which every sibling list honours. The
+  // import verb was the other half of the same duplication.
+  //
+  // So both halves are one route in one place now. The refusal below still names
+  // `POST /api/v1/service-assets` as where the collection is written; that
+  // sentence is now this branch rather than a route somewhere else.
+  if (req.method === 'POST' && route.collection === 'service_assets' && !route.id) {
+    // `sources: ['service_assets']` is forced rather than taken from the body:
+    // this route imports assets and nothing else, so a caller cannot use it to
+    // trigger the nine public connectors.
+    const body = await readRequestJson(req)
+    const ingestion = await runIngestion(store, { ...body, sources: ['service_assets'] })
+    const run = ingestion.source_runs[0]
+    if (run.errors.length) {
+      jsonResponse(res, 400, { success: false, error: 'Invalid service asset input', errors: run.errors, accepted: ingestion.counts.service_assets })
+      return true
+    }
+    const analytics = await refreshAnalytics(store)
+    jsonResponse(res, 201, {
+      success: true,
+      imported: ingestion.counts.service_assets,
+      source_run: run,
+      analytics: {
+        risk_scores: analytics.risk_scores.length,
+        impact_assessments: analytics.impact_assessments.length,
+        data_quality: analytics.data_quality.length,
+      },
+    })
     return true
   }
 

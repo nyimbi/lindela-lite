@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 776-line function with 28
+generated from, and ENH-60's dispatcher is still one 741-line function with 28
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1090,8 +1090,8 @@ testable in isolation. This unblocks every other substrate item.
 > **PARTIAL — 2026-10-12. Twenty-eight families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 776 lines and `server.js` 5,603 →
-> 2,366. (The count is *matchers*, not files: 27 modules under `src/routes/`, one
+> set of blocks. The dispatcher went 1,903 → 741 lines and `server.js` 5,603 →
+> 2,331. (The count is *matchers*, not files: 27 modules under `src/routes/`, one
 > of which — `alerting.js` — carries two, `matchAlertingRoute` and the
 > non-exported `matchTriggeringRoute`. The 27 recorded here before this entry was
 > the file count, so it read one high for a day — the same off-by-one the
@@ -1232,15 +1232,31 @@ testable in isolation. This unblocks every other substrate item.
 > would hide the one row that matters. Canaried: planting that filter fails the
 > test with `a failed event was filtered out of the outbox listing`.
 >
-> What is left is not more of the same. The dispatcher still holds **11 inline
+> What is left is not more of the same. The dispatcher still holds **9 inline
 > literal route conditions** (measured from the dispatcher's own line range — the
 > 17 previously recorded here does not reproduce against the file), and they are
 > one-off routes whose bodies *are* the
-> business logic: `demo/seed`, `maintenance/apply-retention`, the two
-> `service-assets` verbs, the `events` read, the
+> business logic: `demo/seed`, `maintenance/apply-retention`, the
+> `events` read, the
 > `assessments` roll-up, and the liveness pair (`ready`, `health`) plus the two
 > `auth-info` answers — one on the authenticated path and one on the 401 path,
-> which is a different route that happens to share a path.
+> which is a different route that happens to share a path. A tenth literal,
+> `/api/v1/rapidpro/field-report`, is an auth precondition rather than a route:
+> it buffers the body and verifies the HMAC, then falls through to the family.
+>
+> **`service-assets` came off that list on 2026-10-12, and it was not a
+> candidate — it was a live defect.** The list above named "the two
+> `service-assets` verbs" as one-off logic with no family to join. Both were
+> inline copies of routes the operational family already served, dispatched
+> *above* it, so the family's own list branch had been dead code since the
+> extraction. The copy had dropped `?include_deleted=true`, which the six sibling
+> collections honour — a 200 with a shorter list, which reads as an empty result
+> rather than a bug. Removed rather than reconciled: the family serves both verbs
+> now, including the `POST` import, which is the one write that family performs
+> that its builders cannot. Register entry **VER-18**, and
+> `test/dispatch-shadow.test.js` guards the class — no family matcher's path may
+> also be an inline dispatcher literal — because the set comparison in
+> `check-openapi.mjs` cannot see a path served twice.
 >
 > **`ingest/run` came off that list on 2026-10-12, and its removal corrects the
 > paragraph it left.** The entry above said extracting the remainder is "a move

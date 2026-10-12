@@ -16,7 +16,7 @@ import {
   runDueIngestionSchedules,
   runIngestion,
 } from './ingestion.js'
-import { actionLog, counts, isDeleted, operationalSummary } from './operations.js'
+import { actionLog, counts, operationalSummary } from './operations.js'
 import { verifyRapidProWebhook } from './rapidpro.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
@@ -1620,41 +1620,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
       })
       jsonResponse(res, 500, { success: false, error: e.message })
     }
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/v1/service-assets') {
-    // Soft-deleted assets are filtered out, as every sibling collection list
-    // does. This list is served inline rather than by the operational family
-    // (the family's collection branch is shadowed by this one, which runs
-    // first), so it had kept its own copy of the page construction — and the
-    // copy had no `isDeleted` predicate. An asset removed from the console was
-    // still returned by the list while `GET /api/v1/service-assets/<id>` 404'd
-    // it, so a caller paging the collection could not resolve half its rows.
-    const live = data.service_assets.filter((item) => !isDeleted(item))
-    jsonResponse(res, 200, { success: true, ...collectionPage(live, url.searchParams, { auth: req.__auth, data, collection: 'service_assets' }) })
-    return
-  }
-
-  if (req.method === 'POST' && url.pathname === '/api/v1/service-assets') {
-    const body = await readRequestJson(req)
-    const ingestion = await runIngestion(store, { ...body, sources: ['service_assets'] })
-    const run = ingestion.source_runs[0]
-    if (run.errors.length) {
-      jsonResponse(res, 400, { success: false, error: 'Invalid service asset input', errors: run.errors, accepted: ingestion.counts.service_assets })
-      return
-    }
-    const analytics = await refreshAnalytics(store)
-    jsonResponse(res, 201, {
-      success: true,
-      imported: ingestion.counts.service_assets,
-      source_run: run,
-      analytics: {
-        risk_scores: analytics.risk_scores.length,
-        impact_assessments: analytics.impact_assessments.length,
-        data_quality: analytics.data_quality.length,
-      },
-    })
     return
   }
 
