@@ -29,8 +29,8 @@ shipped and unmarked, and the register was the last place anyone looked.
 | Verdict | Count | Items |
 |---|---|---|
 | IMPLEMENTED | 44 | 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 81 |
-| PARTIAL | 6 | 38, 42, 59, 67, 71, 80 |
-| ABSENT | 1 | 60 |
+| PARTIAL | 7 | 38, 42, 59, 60, 67, 71, 80 |
+| ABSENT | 0 | — |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
@@ -1033,6 +1033,24 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 (`src/server.js:763–2360`) and entangles routing, auth, validation, business logic
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
+
+> **PARTIAL — 2026-10-12. Seventeen families are out; the dispatcher is not gone.**
+> Every route *family* now lives under `src/routes/` with its own matcher, its own
+> test file, and a property that makes it a family rather than a set of blocks.
+> The dispatcher went 1,903 → 1,371 lines and `server.js` 5,603 → 3,237.
+>
+> What is left is not more of the same. The dispatcher still holds **35 inline
+> literal route conditions** over 876 non-comment lines, and they are one-off
+> routes whose bodies *are* the business logic: flood/compound/conflict risk, the
+> `equity/*` scans, the `flood-probability/*` group, `routing/plan`,
+> `analytics/bias-correct`, `upload` (111 lines on its own), `demo/seed`,
+> `maintenance/apply-retention`, `forms`, and the liveness pair. Extracting those
+> is a move only after ENH-59 has a route table to declare them in — otherwise it
+> is relocating branches and calling it architecture. The ~15-module target is
+> reached when the literal conditions are declarations.
+>
+> The move itself is verified rather than asserted, and the three checks are in
+> ARC-01's entry.
 
 **ENH-61 — Streaming cursor reads.** `PostgresStore.read()` issues
 `SELECT collection, body FROM lite_records WHERE …` with no `LIMIT`
