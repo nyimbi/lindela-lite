@@ -209,6 +209,8 @@ follows, and the gate now reports `parsed matchSnapshotRoute → handleSnapshotR
 products are served bespoke. OGC API Features and a STAC catalogue make them
 discoverable by QGIS, GDAL and any geospatial client without custom code.
 
+> **Shipped — verified 2026-10-12; the note was missing.** `src/stac.js` exports `stacCatalog`, `stacItem`, `stacCollection` and `ogcFeatureCollection`, served at `/stac/catalog.json` and `/ogc/collections` — the latter two named in `test/route-envelope-gate.test.js`. `test/lite.test.js` imports all four. `src/inbound-rate-limit.js` carries a deliberate exemption for the `/stac/` and `/ogc/` prefixes, because they look like unbounded reads and are not.
+
 **ENH-36 — CAP 1.2 profile validation and feed permalinks.** `src/cap.js` emits CAP
 XML. Add strict 1.2 profile validation (so a consumer's parser does not reject it)
 and a stable `/feed` permalink per alert, which is how GDACS and FEWS NET are
@@ -404,6 +406,8 @@ idempotency requires a client `Idempotency-Key` the service worker does not
 generate (see CON-06). Mint one per queued mutation so a retry after a process
 restart is deduped rather than duplicated, and make the store durable rather than
 in-process-capped at 1,000 entries.
+
+> **Shipped — verified 2026-10-12; the note was missing.** `src/idempotency.js` is the durable store: one row per key, written under the same cross-replica lock the outbox uses (`store.withLock`, ENH-63), holding the outcome as `{status, body}`. The in-process `Map` with a 24-hour TTL and a 1,000-entry cap is gone. The client half is `public/sw.js`, where every queued write carries an `idempotency-key` equal to its queue entry, so a retry after a process restart is deduped rather than duplicated.
 
 **ENH-41 — Field-level two-way sync.** Vector-clock or per-field last-writer-wins
 so an edit made offline on a phone and an edit made online in the console converge
@@ -655,6 +659,8 @@ not two — and the third is the one that mattered:
 `observed_at` and `payload_hash` (the record already stores the hash —
 `src/ingestion.js:392`). An export a partner cannot trace is an export they cannot
 defend; the stamp is what makes ENH-34 citable.
+
+> **Shipped — verified 2026-10-12; the note was missing.** `provenanceAnnotatedRows` in `src/provenance.js` stamps `source_id`, `observed_at` and `payload_hash` on each exported row, and `test/export-narrative.test.js` has a describe block titled "every exported row carries its own provenance" asserting the stamp and the `source_id=unattributed` case.
 
 **ENH-49 — Contingency-table integrity monitor.** VER-03 is a filter and a labeller
 reading different date fields (`src/flood-probability.js:101` vs `:194`), so an
@@ -985,6 +991,21 @@ drift: `src/server.js` (68 literal conditions + 16 helpers), `src/route-manifest
 and the client's 29 endpoints. Generate all five from one declaration. Adding a
 route then touches one file, and "nine live routes went undocumented" cannot recur.
 
+> **PARTIAL — still no generator, and the reason is worth stating.** The five
+> tables still exist and are still hand-kept. What landed instead (ARC-02, and the
+> same entry's remedy is *not* what shipped) is the repair of the cross-checks:
+> every existing check had the same blind spot, and it was that blind spot rather
+> than the duplication that let `/api/v1/districts/{id}` be served, fetched by the
+> district portal on every page, and documented nowhere. `check-openapi.mjs` now
+> reads the dispatcher body as a third route family, so an inline `.match()`
+> written directly in the request handler is no longer invisible.
+>
+> A generator is a larger change than it reads as: it has to own `docs/openapi.yaml`
+> (1,000+ lines with prose descriptions that no declaration carries), the auth
+> scopes, and the client's endpoint list — and the client's 29 endpoints are
+> *call sites*, not declarations, so generating them means rewriting the callers.
+> That is the honest reason it is still partial rather than an oversight.
+
 **ENH-60 — Router extraction.** `handleApiRequestInContext` is 1,597 lines
 (`src/server.js:763–2360`) and entangles routing, auth, validation, business logic
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
@@ -1039,20 +1060,28 @@ is an in-process `WeakMap` (`src/outbox.js:129`) and the idempotency store is
 in-process (`src/server.js:637`). Two replicas both POST the same outbox row.
 `pg_advisory_lock` plus a durable key table makes exactly-once real across a fleet.
 
+> **Shipped — verified 2026-10-12; the note was missing.** The shape is **claim-deliver-record**, not lock-deliver-record: under `store.withLock` the due rows are read and marked `dispatching` with a timestamp, delivery happens outside the lock (a webhook POST is network I/O with a 5 s timeout, and holding a global write lock across it would serialise every write behind the slowest subscriber), then the outcomes are written under the lock again. A second replica's read, taken after the claim commits, no longer sees the rows as pending — that is the whole cross-replica guarantee. `src/postgres-store.js:220` takes the session-scoped `pg_advisory_lock`; `src/outbox.js:218` records that the comment there used to say this was *not* done.
+
 **ENH-64 — End-to-end request/correlation id.** No request id exists anywhere
 (`grep request_id|correlation src/` is empty). Mint one at ingress, put it on every
 log line and every response, and propagate it into the ingestion run id — so a 500
 returned to a client joins to the log entry for that request.
+
+> **Shipped — verified 2026-10-12; the note was missing.** `src/server.js:591` mints the id: an inbound `x-request-id` is sanitised and reused where present, otherwise `randomUUID()`, and it is set on the response as `x-request-id`, put on `res.locals`, and installed for the dispatch through `runWithRequestId`.
 
 **ENH-65 — Per-server state.** `idempotency` (`src/server.js:637`), the driver
 timers (`:225`) and the metrics registry are module-global, so two servers in one
 test process share them and tests are order-dependent. Threading them through
 `createServer` makes isolation the default.
 
+> **Shipped — verified 2026-10-12; the note was missing.** `createServer` (`src/server.js:519`) owns the state: `idempotencyFor` is a per-server `let` built from `options.idempotencyOptions`, and the periodic driver is owned by whoever creates it rather than by a module-level timer. `test/server-isolation.test.js` asserts the property directly — two drivers tick their own stores and stopping one leaves the other armed, one server's failures do not appear in another's uptime, and the process ring is not consulted when a server has its own.
+
 **ENH-66 — Backpressure and admission control.** The outbound rate-limit queue is
 unbounded (`src/rate-limit.js:213`) and the store read is unbounded (SCL-01).
 Bounded queues with a 503 + `Retry-After` under sustained load convert a
 memory-exhaustion failure into a refusal, which is the platform's own idiom.
+
+> **Shipped — verified 2026-10-12; the note was missing.** `src/rate-limit.js`'s `maxQueue` is the bound, and past it `acquire` rejects with `RateLimitQueueFullError` carrying `retryAfterMs` and `statusCode: 503` — a refusal, never a drop, because a dropped waiter is a silently missing country. The default of 1,000 is deliberately generous: the point is to bound the pathological case (a connector fanning out over 46 countries while the provider stalls), not to ration normal fan-out.
 
 **ENH-67 — Read-replica split with a query budget.** Analytical reads
 (`filterRecords`, `refreshAnalytics`, `/ready`) go to a replica; writes stay on the
