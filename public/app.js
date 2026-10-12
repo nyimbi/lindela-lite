@@ -3758,7 +3758,17 @@ async function refresh({ first = false, force = false } = {}) {
               has_more: walk.truncated, next_cursor: null,
             },
             alertsWalkTruncated: walk.truncated,
-            failed: null,
+            // A walk that never reached the server returns no rows with
+            // `failed: true`. Treating that as a successful empty set is R-64's
+            // headline defect back at the top of the page: `state.data.alerts`
+            // gets `[]`, `alertListOutcome` reads it as `empty`, and the rail
+            // prints "No alerts. All rules quiet." over a dead endpoint. Name
+            // the failure so the rail renders the unchecked state instead.
+            //
+            // Only when there is nothing to show: rows already collected before
+            // a mid-walk failure are real, and `alertsWalkTruncated` is what
+            // tells the scope line the set may be incomplete.
+            failed: walk.failed && !walk.rows.length ? 'alerts' : null,
           }
         } catch {
           return { alerts: null, failed: 'alerts' }
@@ -5686,7 +5696,7 @@ function alertAuthorisationBlock(alert) {
 const _protocolOutcomeCache = new Map()
 const _protocolOutcomeAsked = new Set()
 
-async function hydrateProtocolOutcomes(alerts) {
+export async function hydrateProtocolOutcomes(alerts) {
   const needing = (alerts || []).filter((a) =>
     a?.approval?.pre_authorised === true
     && !Array.isArray(a?.metadata?.playbook_results)

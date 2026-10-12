@@ -32,22 +32,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { before, describe, it } from 'node:test'
 import { installBrowserEnv } from './browser-env.mjs'
-import { installModuleResolution } from './browser-env.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC_ROOT = new URL('../public/', import.meta.url)
-const APP = readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8')
-
-/**
- * Source with comments and template strings stripped.
- *
- * app.js documents each of these decisions at length, and the prose quotes the
- * very strings the assertions forbid — including "No alerts. All rules quiet."
- * A scan that reads comments tests the documentation, not the program.
- */
-const code = APP
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/^\s*\/\/.*$/gm, '')
+const EN = JSON.parse(readFileSync(path.join(ROOT, 'public', 'i18n', 'en.json'), 'utf8'))
 
 /* ------------------------------------------------------------ sandbox */
 
@@ -65,6 +53,51 @@ before(async () => {
   const mod = await import(new URL('app.js', PUBLIC_ROOT).href)
   alertListOutcome = mod.alertListOutcome
 })
+
+/**
+ * Boot the console against a store the caller describes, and hand back the rail.
+ *
+ * QUA-02. The three tests below used to read `app.js` as text and assert on the
+ * *shape* of the code — `assert.match(code, /renderAlertsBadge\(\[\], \{ checked:
+ * false \}\)/)`, ordering by `indexOf` on source substrings. Every one of those
+ * passes when the branch exists and is dead, and fails on a rename that changes
+ * nothing. The failure branch is reachable through the real boot, so what is
+ * asserted now is the markup the rail actually renders and the badge it actually
+ * sets when the alerts endpoint is dead.
+ *
+ * A fresh specifier per call: ESM caches by URL, and two scenarios sharing one
+ * `app.js` URL would run the second against the first's module state. The
+ * English catalogue is served so the reassuring string and the error state
+ * render as words rather than as key names.
+ */
+const realSetTimeout = globalThis.setTimeout.bind(globalThis)
+let boots = 0
+async function boot({ alertsRespond } = {}) {
+  boots += 1
+  const elements = new Map()
+  installBrowserEnv({
+    elements,
+    respond: (url) => {
+      if (url.includes('/i18n/en.json')) return { body: EN }
+      if (url.includes('/api/v1/alert-events')) return alertsRespond
+      return undefined
+    },
+  })
+  await import(new URL(`app.js?rail=${boots}`, PUBLIC_ROOT).href)
+  // `hydrateProtocolOutcomes` and the outcome-coverage line are not awaited by
+  // the refresh; let their own promises drain before reading the rail.
+  await new Promise((r) => realSetTimeout(r, 5))
+  return {
+    rail: elements.get('alertsList')?.innerHTML || '',
+    badge: elements.get('alertsBadge'),
+  }
+}
+
+/** A dead alerts endpoint: a 503, which `apiFetch` throws on. */
+const deadAlerts = () => ({ ok: false, status: 503, body: { success: false } })
+
+/** The endpoint answered, with no rows. */
+const emptyAlerts = () => ({ body: { success: true, data: [], returned: 0, limit: 200, total: 0, has_more: false, next_cursor: null } })
 
 
 
@@ -135,47 +168,51 @@ describe('R-64 — the alert rail distinguishes failed / unchecked / genuinely e
 })
 
 describe('R-64 — the reassuring string is unreachable when nothing was checked', () => {
-  it('the empty-state branch is guarded by the outcome, not by row count alone', () => {
-    // The old branch was `if (!filtered.length)` with nothing before it. The
-    // check must come first, or the reassurance still renders.
-    const outcomeIdx = code.indexOf('const outcome = alertListOutcome(state)')
-    const branchIdx = code.indexOf("if (outcome.state !== 'ok' && outcome.state !== 'empty')")
-    const emptyIdx = code.indexOf("escapeHtml(t('state.empty_alerts'))")
-    assert.ok(outcomeIdx > 0, 'the outcome decision is present')
-    assert.ok(branchIdx > outcomeIdx, 'the outcome branch follows the decision')
-    assert.ok(emptyIdx > branchIdx,
-      'the reassuring empty-state string must be downstream of the failure branch, ' +
-      'or a dead endpoint still prints "No alerts. All rules quiet."')
+  it('a dead alerts endpoint renders the failure state, not the reassurance', async () => {
+    // The headline defect, driven through the real boot: `/api/v1/alert-events`
+    // answers 503, and the rail must say so rather than print the reassuring
+    // "No alerts. All rules quiet." The old branch was `if (!filtered.length)`
+    // with nothing before it.
+    const { rail } = await boot({ alertsRespond: deadAlerts() })
+    assert.doesNotMatch(rail, /No alerts\. All rules quiet\./,
+      'a dead endpoint must not render the reassuring empty-state string')
+    assert.match(rail, /empty-state-error/,
+      'the rail must render the error variant, not the plain empty state')
+    assert.match(rail, /Could not reach the server/,
+      'the rail must describe its own error state with the shared vocabulary')
   })
 
-  it('the failure branch returns before the empty branch can run', () => {
-    const start = code.indexOf("if (outcome.state !== 'ok' && outcome.state !== 'empty')")
-    const slice = code.slice(start, start + 2000)
-    const retIdx = slice.indexOf('return')
-    const emptyIdx = slice.indexOf("t('state.empty_alerts')")
-    assert.ok(retIdx > 0, 'the failure branch returns')
-    if (emptyIdx > 0) {
-      assert.ok(retIdx < emptyIdx, 'it returns before reaching the empty-state markup')
-    }
+  it('an endpoint that answered with no alerts still renders the reassurance', async () => {
+    // The other half of the distinction: a server that *did* answer and has no
+    // alerts is genuinely empty, and the reassuring string is correct there. A
+    // failure state that swallowed this case would be as wrong as the reverse.
+    const { rail } = await boot({ alertsRespond: emptyAlerts() })
+    assert.match(rail, /No alerts\. All rules quiet\./,
+      'a checked, quiet queue must still say so')
+    assert.doesNotMatch(rail, /empty-state-error/,
+      'a checked, quiet queue is not an error')
   })
 
-  it('the tab badge gains an unchecked state, since it is a claim too', () => {
+  it('the tab badge shows unchecked on a dead endpoint, since the count is a claim too', async () => {
     // The badge took an array and nothing else, so every upstream failure
     // arrived as [] and it hid itself — indistinguishable from a quiet queue.
-    // An operator scanning the tab strip saw no badge on a dead console.
-    assert.match(code, /function renderAlertsBadge\([^)]*checked\s*=/,
-      'renderAlertsBadge must take a `checked` flag')
-    assert.match(code, /renderAlertsBadge\(\[\],\s*\{\s*checked:\s*false\s*\}\)/,
-      'the failure branch must render the badge as unchecked')
+    // An operator scanning the tab strip saw no badge on a dead console. The
+    // unchecked state is a visible dash, not a hidden badge.
+    const { badge } = await boot({ alertsRespond: deadAlerts() })
+    assert.ok(badge, 'the badge host exists')
+    assert.equal(badge.hidden, false, 'an unchecked badge must be visible, not hidden like a quiet one')
+    assert.equal(badge.textContent, '—', 'the unchecked badge must render the dash, not a count')
+    assert.match(String(badge.title ?? badge.getAttribute?.('title') ?? ''), /not checked/i,
+      'the badge must say why it has no number')
   })
 
-  it('the rail uses the shipped vocabulary rather than inventing its own wording', () => {
+  it('the rail uses the shipped vocabulary rather than inventing its own wording', async () => {
     // shared/states.js is the shared contract, adopted by three surfaces
     // already. A fourth copy of "could not reach the server" is a fourth
-    // wording to keep in sync.
-    assert.match(APP, /import \{[^}]*describeState[^}]*\} from '\/shared\/states\.js'/,
-      'app.js should import the shared state vocabulary')
-    assert.match(code, /describeState\(ERROR,\s*\{\s*subject:\s*'Alerts'/,
+    // wording to keep in sync. Observed rather than grepped: the sentence the
+    // rail renders is the one `describeState(ERROR, …)` returns.
+    const { rail } = await boot({ alertsRespond: deadAlerts() })
+    assert.match(rail, /Could not reach the server/,
       'the rail should describe its own error state with the shared helper')
   })
 })

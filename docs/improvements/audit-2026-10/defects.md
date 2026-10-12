@@ -2053,6 +2053,35 @@ count in this row's title (44) is by call and still counts the other files; it i
 left as stated rather than decremented by one, because a per-call count that
 moves by one per fix reports the count of calls, not the progress of the class.
 
+**Two more converted 2026-10-12, and the conversion found R-64 again.**
+`test/alert-card-authorisation.test.js` (19 source-text assertions → 0) and
+`test/web-alert-rail-honesty.test.js` (4 → 0) now drive the real boot through
+`browser-env.mjs` and read the rendered DOM, the same harness as
+`test/outcome-surface.test.js`. Converting the second exposed a live defect the
+source-text assertions had covered for the life of the file — and it is R-64's
+headline defect, reintroduced at the data layer:
+
+  - `public/app.js`'s alerts walk in `refresh` discarded `walk.failed` and
+    returned `failed: null`. `fetchAllPages` (`public/shared/paging.js`) reports a
+    dead endpoint as `{ rows: [], failed: true }`; the walk threw that away, so
+    `state.data.alerts` became `[]`, `alertListOutcome` read it as `empty`, and
+    **the rail printed "No alerts. All rules quiet." over a 503.** The
+    error-branch R-64 added was intact and simply never entered — the paging
+    refactor (ARC-06) moved the failure above it. Fixed with
+    `failed: walk.failed && !walk.rows.length ? 'alerts' : null`, guarded so rows
+    collected before a mid-walk failure still render.
+
+The source-text assertions all passed throughout, because the branch *is* correct;
+they asserted the branch existed, not that a dead endpoint reaches it. This is
+the row's thesis a second time: a test that pins source text cannot see a defect
+in the path between two correct pieces of code.
+
+`test/explain-alert-panel.test.js` and `test/explain-asset-panel.test.js` were
+surveyed and are **already behavioural** — their `readFileSync` is an
+import-rewriting loader, and every assertion reads `host.innerHTML` from a driven
+render. The 44 count is by `readFileSync` call and counts the loader as an
+assertion; it is left as stated for the reason above.
+
 ### QUA-03 — HIGH — CLOSED — `public/app.js` cannot be imported; tested through a hand-rolled DOM stub
 `test/web-console.test.js` states it: it runs a boot sequence at import time. 6,324
 lines of console logic are exercised via `test/browser-env.mjs` stubs. No unit test
