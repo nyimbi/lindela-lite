@@ -16,13 +16,13 @@ alert rules; `E` the alert-event history for a rule; `I` the driver-item count (
 | Postgres `read()` | `src/postgres-store.js:267` | O(N) bytes + O(N log N) sort | none — no `LIMIT`, no cursor | materialises every requested row into the heap |
 | `filterRecords` | `src/utils.js:207–241` | O(filters × N) allocations, then O(limit) | `limit` ≤ 5000 after the slice | ~18 full-collection passes per request |
 | `runPeriodicTick` | `src/server.js:229–263` | O(I × N) | none | ~10+ full-store reads per tick |
-| `evaluateAndPersistAlerts` | `src/server.js:3337–3363` | O(raised × N) | none | one read + one merge per raised alert |
+| `evaluateAndPersistAlerts` | `src/server.js` `evaluateAndPersistAlerts` | O(raised × N) | none | one read + one merge per raised alert |
 | `isSuppressed` | `src/alerts.js` (per rule) | O(R × E) | none | re-filters all events per rule per evaluation |
 | `Math.max(...seen)` | `src/alerts.js` | O(E) args | engine argument limit | `RangeError` on a long history |
 | `backtestTriggerProtocol` | `src/alerts.js:408–486` | O(runs × hazards) + O(runs × N) | none | `pointInTimeContext` re-scans per run |
 | `refreshAnalytics` | `src/analytics.js:226, 283` | O(regions × N) + 2 full reads | none | recomputes 8 derived collections |
 | `jsonResponse` | `src/utils.js` | O(B) sync serialize + sha256 | none | full body hash per 200 |
-| `sendFile` | `src/server.js:4610, 4624, 4658` | O(B) sync read + sha1 + gzip | none — no gzip cache | blocks the loop per static request |
+| `sendFile` | `src/server.js` `sendFile` / `preparedStatic` | O(B) sync read + sha1 + gzip | none — no gzip cache | blocks the loop per static request |
 | `computeApiUptime` | `src/kpi.js:97–102` | O(1) | — | returns 100.0 on zero observations |
 | `/ready` | `src/server.js:839, 861` | 2 × O(N) + O(n log n) chain verify | none | paid per readiness poll |
 

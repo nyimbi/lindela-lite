@@ -109,6 +109,12 @@ const GATES = [
     why: 'ENH-46. Flags a numeric fallback on a field the module itself declares nullable — decided by the `<subject>_refusal` convention in the tree, not by a hand-written field list that goes stale. Reads files only, and carries eleven canaries plus a self-test, because the class it checks (VER-02, VER-09, VER-12) shipped four times and was found by audit each time.',
   },
   {
+    name: 'check-doc-citations',
+    script: 'scripts/check-doc-citations.mjs',
+    tier: 'self-contained',
+    why: 'The audit register cites code by `path:line`, and the line numbers rot as the tree moves — ARC-08 was rewritten on 2026-10-11 and rotted again within a day, and 29 citations across the register named a line past EOF when this gate was written, three of them in VUL-01 (CRITICAL). Fails on a citation past EOF or to a missing file; an entry that means to quote a stale number says so with `line-drift-ok:`. Scoped to past-EOF only: an in-bounds-but-drifted line is often a correctly-stale quote in a "Fixed" entry, and a gate that fires on correct input gets turned off. Reads files only; carries eight canaries.',
+  },
+  {
     name: 'check-aggregation-kinds',
     script: 'scripts/check-aggregation-kinds.mjs',
     tier: 'self-contained',

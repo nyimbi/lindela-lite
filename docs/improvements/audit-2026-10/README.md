@@ -5,8 +5,8 @@ implemented. The first asked whether the platform is honest and whether its clai
 work. This one asks two different questions:
 
 - **What can it not yet do?** — fifty non-incremental enhancements (`ENH-31..80`).
-- **What is wrong right now?** — sixty-eight defects across eight domains, eight
-  more found since (`VER-13..VER-19` and `QUA-08`; each says where it was found,
+- **What is wrong right now?** — sixty-eight defects across eight domains, nine
+  more found since (`VER-13..VER-20` and `QUA-08`; each says where it was found,
   and the ones not found by the audit say so).
 
 | Document | What it contains |
@@ -25,7 +25,7 @@ The first audit's enhancements are `ENH-01..ENH-30`; its defect prefixes are
 |---|---|---|
 | Enhancements | `ENH-31 .. ENH-80` | `ENH-01 .. ENH-30` |
 | Security | `VUL-01 .. VUL-07` | `SEC-01 .. SEC-13` |
-| Data veracity | `VER-01 .. VER-19` | `DATA-01 .. DATA-15` |
+| Data veracity | `VER-01 .. VER-20` | `DATA-01 .. DATA-15` |
 | Concurrency | `CON-01 .. CON-08` | — (new domain) |
 | Scalability | `SCL-01 .. SCL-09` | — (new domain) |
 | Observability | `OBS-01 .. OBS-07` | — (new domain) |
@@ -48,7 +48,8 @@ by the first.
 ## The three findings that matter most
 
 **VUL-01 — the distribution SSRF.** `POST /api/v1/reports/<id>/distribute` fetches
-`channel.url` from the request body with no guard (`src/server.js:2909`), while the
+`channel.url` from the request body with no guard (`src/routes/reporting.js`
+`distributeReport`), while the
 webhook path has had `assertSafeWebhookUrl` since the first audit. The guarded twin
 exists; this is the copy that never got it. A reports-scope token can reach the
 cloud metadata endpoint and the internal network.

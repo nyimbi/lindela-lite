@@ -18,15 +18,15 @@ behaviour, real but bounded. LOW = latent or cosmetic-with-teeth.
 ## Security
 
 ### VUL-01 — CRITICAL — SSRF in report distribution; `channel.url` is fetched unguarded
-`src/server.js:2909` `await fetch(required(channel.url, 'url'), { method: 'POST', … })`.
+`src/server.js:2909` `await fetch(required(channel.url, 'url'), { method: 'POST', … })`. <!-- line-drift-ok: quoted as it was before the fix moved it -->
 `channel.url` arrives from the request body via `normalizeDistributionChannels`
-(`src/server.js:3030`, `url: channel.url || null`) and is used as-is.
+(`src/server.js:3030`, `url: channel.url || null`) and is used as-is. <!-- line-drift-ok: quoted as it was before the fix moved it -->
 `assertSafeWebhookUrl` is **never called in `src/server.js`** — the guarded path is
 `src/webhooks.js:164` (shape + DNS re-check), called only from the outbox.
 
 **Exploit.** `POST /api/v1/reports/<id>/distribute` with
 `{"channels":[{"channel":"webhook","url":"http://169.254.169.254/latest/meta-data/iam/security-credentials/"}]}`.
-The server fetches the metadata endpoint; `readExternalResponse` (`src/server.js:3072`)
+The server fetches the metadata endpoint; `readExternalResponse` (`src/server.js:3072`) <!-- line-drift-ok: quoted as it was before the fix moved it -->
 parses the body, which is persisted into `report_distribution_runs` and returned in
 the 201 response. The same primitive scans RFC-1918 hosts. Requires the reports
 write scope — a lower bar than admin.
@@ -35,7 +35,7 @@ write scope — a lower bar than admin.
 does. ENH-78 turns this into a regression spec.
 
 **Fixed 2026-10-11.** `POST` report distribution resolves `channel.url` through
-`checkWebhookUrl` (`src/server.js:3376`) before the fetch, so the SSRF guard the
+`checkWebhookUrl` (`src/routes/reporting.js` `distributeReport`) before the fetch, so the guard the
 registration route already applied now covers the send. The registration path and
 the delivery path answer to the same predicate.
 
@@ -54,7 +54,7 @@ trusted, because a URL is logged by every proxy between the sender and here.
 `scopeToPartnerOrg` (`src/auth.js:455`) has zero callers. `filterRecords` scopes
 only when a record carries the field (`src/utils.js` `item?.partner_org === partnerOrg`),
 and `normalizeReport` (`src/reports.js`) never sets `partner_org`. The by-id read
-(`src/server.js:2617` `data.reports.find(…)`) does not pass through `filterRecords`
+(`src/server.js:2617` `data.reports.find(…)`) does not pass through `filterRecords` <!-- line-drift-ok: quoted as it was before the fix moved it -->
 at all. A token scoped to partner org A reads org B's reports and any record lacking
 the field. This is a per-object authorization gap that holds for an authenticated,
 scoped caller — distinct from the unauthenticated-GET class the prior audit covered.
@@ -76,7 +76,7 @@ about a record carrying no partner claim. Records written by a path that sets no
 `src/auth.js:550` documents, which fails visibly rather than handing over the store.
 
 ### VUL-04 — MEDIUM — Dead role checks imply authorization that does not exist
-`src/server.js:3908–3909` compute `isAdmin` and `isOperator`; neither is referenced
+`src/server.js:3908–3909` compute `isAdmin` and `isOperator`; neither is referenced <!-- line-drift-ok: quoted as it was before the fix moved it -->
 again in the file. The parametric routes read as if they gate on role but gate only
 on scope. A reviewer trusting these variables assumes an admin/operator distinction
 that is not enforced.
@@ -162,7 +162,7 @@ a different base than the one the SBOM attests.
 with the tag kept in the comment and the one-liner that resolves a new digest.
 
 ### VUL-07 — LOW — CSP permits inline scripts
-`src/server.js:4702` `script-src 'self' 'unsafe-inline'`. The surfaces are static
+`src/server.js:4702` `script-src 'self' 'unsafe-inline'`. The surfaces are static <!-- line-drift-ok: quoted as it was before the fix moved it -->
 today, so this is latent, not live — but it removes the primary XSS mitigation for
 any future dynamic content.
 
@@ -414,7 +414,7 @@ but the same hash** both persist, defeating the dedupe.
 `payload_hash` SELECT is serialised against concurrent merges. Cited at the site.
 
 ### CON-04 — HIGH — `evaluateAndPersistAlerts` fans out N full read-modify-write cycles
-`src/server.js:3337–3363`: one `store.merge`, then `for (const event of raised) await emit(…)`.
+`src/server.js:3337–3363`: one `store.merge`, then `for (const event of raised) await emit(…)`. <!-- line-drift-ok: quoted as it was before the fix moved it -->
 Each `emit` does its own `store.read()` + `store.merge()`. A storm raising 200
 alerts is 200 sequential whole-store reads and 200 merges, serialised, on the
 request/periodic path. O(raised × N).
@@ -471,7 +471,7 @@ POSTing the same pending row. The in-process `WeakMap` remains as a per-process
 fast path, not as the guarantee.
 
 ### CON-08 — LOW — `reportedHeads` Set grows for the process lifetime
-`src/audit-chain.js:458` `const reportedHeads = new Set()`, added to and never
+`src/audit-chain.js:458` `const reportedHeads = new Set()`, added to and never <!-- line-drift-ok: quoted as it was before the fix moved it -->
 trimmed (only the test seam `resetAuditChainWarnings` clears it). Unbounded memory
 proportional to distinct tamper warnings seen.
 
@@ -550,7 +550,7 @@ early filter leaves three rows. O(filters × N) allocations per request.
 expensive ones and stops allocating a new array per filter. Cited at the site.
 
 ### SCL-04 — HIGH — `sendFile` reads, sha1-hashes and gzip-syncs on every static request
-`src/server.js:4610` `fs.readFile`, `:4624` `etagFor(content)` = sha1 over the whole
+`src/server.js:4610` `fs.readFile`, `:4624` `etagFor(content)` = sha1 over the whole <!-- line-drift-ok: quoted as it was before the fix moved it -->
 body, `:4658` `gzipSync(content)` — synchronous CPU compression on the request path,
 no gzip cache. `:4632` `last-modified = new Date().toUTCString()` is *now* on every
 response, so `If-Modified-Since` can never 304 (only the ETag path can). Concurrent
@@ -578,7 +578,7 @@ accumulates every distinct `z/x/y` for the process lifetime — tens to hundreds
 
 ### SCL-07 — MEDIUM — `/ready` does two full-store reads and a full chain verification per probe
 `src/server.js:839` `await withTimeout(store.read(), …)` for reachability, `:861` a
-second read, then `auditRollup(snapshot.action_logs)` (`src/audit-chain.js:493`)
+second read, then `auditRollup(snapshot.action_logs)` (`src/audit-chain.js:493`) <!-- line-drift-ok: quoted as it was before the fix moved it -->
 which re-hashes every `action_logs` entry (O(n log n) + O(n) sha256). A load balancer
 polling readiness pays this every few seconds — amplification on the endpoint
 designed to be polled most.
@@ -609,8 +609,8 @@ site.
 ### OBS-01 — HIGH — Logger argument order inverted at five call sites; those log lines are malformed
 `logger.error`/`info`/`warn` are `(event, fields)` (`src/observability.js:40`,
 `logEvent` at `:43` spreads `fields`). These pass `(fieldsObject, 'message')`:
-`src/protocols.js:467`, `src/server.js:1276`, `src/server.js:3264`,
-`src/server.js:3499`, `src/server.js:3690`, `src/analytics.js:417`. `logEvent` sets
+`src/protocols.js:467`, `src/server.js:1276`, `src/server.js:3264`, <!-- line-drift-ok: quoted as it was before the fix moved it -->
+`src/server.js:3499`, `src/server.js:3690`, `src/analytics.js:417`. `logEvent` sets <!-- line-drift-ok: quoted as it was before the fix moved it -->
 `event = <object>` then spreads a string as `fields`, producing numeric keys
 `{0:'o',1:'u',…}`. The emitted JSON has no string `event` field, so any pipeline
 keyed on `event` cannot match — including the outbox-emit-failure path an operator
@@ -622,7 +622,7 @@ order `logEvent` expects (`src/observability.js:40-43`). The inverted form set
 string `event` — which is the field an incident pipeline greps.
 
 ### OBS-02 — HIGH — Outbox emit failures on two report paths are swallowed silently
-`src/server.js:2631` `try { await emit(store, 'report.created', record) } catch {}`
+`src/server.js:2631` `try { await emit(store, 'report.created', record) } catch {}` <!-- line-drift-ok: quoted as it was before the fix moved it -->
 and `:2751` the same for `report.distributed`. Every other emit site logs and
 counters. If the store write fails the event is never enqueued, no webhook fires,
 and the handler returns 201 `success: true` — a distributed SITREP reports success
@@ -665,7 +665,7 @@ production consumer. `/metrics` calls only `metrics.render()`.
 **Fixed 2026-10-11.** The observability values are surfaced. Cited at the site.
 
 ### OBS-06 — MEDIUM — Periodic and failure paths bypass the structured logger
-`src/server.js:241`, `:260` (`runPeriodicTick`), `:3359`, `:4782` use `console.error`,
+`src/server.js:241`, `:260` (`runPeriodicTick`), `:3359`, `:4782` use `console.error`, <!-- line-drift-ok: quoted as it was before the fix moved it -->
 not `logger`. Plain text on stderr: `LINDELA_LITE_LOG_LEVEL` filtering and JSON
 aggregation do not apply, so a JSON pipeline loses exactly the messages — a failing
 tick, a dead driver — an operator most needs.
@@ -1116,6 +1116,64 @@ from a directory listing.
 
 ---
 
+### VER-20 — MEDIUM — the register cites code by line number, and 29 of them named a line past EOF
+
+The audit register cites the code it describes by `path:line`. A line number is a
+claim about the tree, and the tree moves: the ENH-60 extraction took
+`src/server.js` from 5,603 lines to 2,133, and every citation below a moved family
+shifted with it. Measured across the four documents in this directory when the
+gate below was written: **29 citations named a line past EOF** — 27 in
+`src/server.js` (19 of them after the file had already shrunk below the cited
+number once), 2 in `src/audit-chain.js`. Three were in VUL-01, the CRITICAL SSRF
+entry, whose evidence for "`assertSafeWebhookUrl` is never called here" was a line
+that no longer exists.
+
+This is ARC-08's finding generalised, and the reason it is a separate entry is
+that ARC-08 was *fixed* — its citations were rewritten to fresh numbers on
+2026-10-11 — and they rotted again within a day. Rewriting the numbers is not a
+fix; it resets the clock. The defect is the citation *form*.
+
+**Why nothing caught it.** No gate read this directory. `check-doc-links` resolves
+links and anchors, not `file:line`; `check-openapi` reads the tree, not the prose
+about it. The register's own text had catalogued the failure twice (ARC-08, ARC-02)
+without either instance producing a check.
+
+**Fix.** `scripts/check-doc-citations.mjs`, registered as the 17th gate. It fails
+on a citation whose line is past that file's EOF or names a file that does not
+exist. It is deliberately **not** scoped to "the number is wrong" — only to "the
+number names nothing". An in-bounds citation that has drifted onto other code is
+usually correct: an entry marked *Fixed* quotes the code as it was, and the fix
+moved it, so flagging that would fire on entries that are right. The scope is the
+one that cannot produce a false positive.
+
+**What the fix did to the register, per entry.** The 29 fell into two groups:
+
+- **Historical quotes** — the *Fixed* entries (VUL-01, VUL-03, VUL-04, VUL-07,
+  CON-04, CON-08, SCL-04, SCL-07, OBS-01, OBS-02, OBS-06, QUA-06) print the
+  pre-fix line to show what the defect was. The code they quote no longer exists
+  to re-anchor to, so the citation is marked `line-drift-ok:`, which is the
+  honest statement: *this is what it was*. ARC-02 and ARC-08's own citations of
+  their rotted numbers are the same case — the rot is the evidence.
+- **Live claims** — five citations described code that is *currently* there and
+  can be named. These were re-anchored to the **symbol** rather than a fresh line
+  (`src/routes/reporting.js` `distributeReport`, `src/routes/districts.js`
+  `matchDistrictRoute`, `src/routes/catalogue.js`, `src/server.js`
+  `evaluateAndPersistAlerts`, `src/server.js` `sendFile`/`preparedStatic`). A name
+  survives a refactor that a line number does not, which is the whole point.
+
+**The canary.** Planted `src/server.js:99999` into a live entry: the gate exited 1 <!-- line-drift-ok: a deliberately fictitious number, the canary itself -->
+and named it. Removed, it exits 0. The self-test's eight canaries include the two
+jurisdiction boundaries (an in-bounds citation is clean; a marked one is clean),
+the sibling-run case (`:4610, 4624` must not hide behind a valid first number),
+and the file-that-does-not-exist case.
+
+**The rule.** *A citation is a claim with an expiry, and nothing in the build knew
+it.* When a document cites code by position, something must resolve the position
+or the citation rots silently — and the rotted number is worse than no number,
+because it reads as verified.
+
+---
+
 ### ARC-02 — HIGH — Five parallel route tables, no single source of truth
 
 `src/server.js` (68 conditions + 16 helpers), `src/route-manifests.js` (183 entries),
@@ -1133,7 +1191,7 @@ one in each.
 families — literal `pathname === '…'` conditions, and `.match(/…/)` inside a
 *named* `match*Route` function. An inline `.match()` written directly in the
 request handler was invisible to both. `/api/v1/districts/{id}` is exactly that
-shape: served (`src/server.js:2670`), fetched by the district portal on every
+shape: served (`src/routes/districts.js` `matchDistrictRoute`), fetched by the district portal on every
 district page (`public/districts/app.js:622,936`), and documented nowhere. The
 gate now reads the dispatcher body as a third family.
 
@@ -1241,7 +1299,7 @@ recorded rather than fixed — deduplicating it would touch the CHW family in th
 same commit, and a move that also refactors is a move nobody can review.
 
 It also exposed a class of drift the ledger test could not see. `_status-de.json`
-named ENH-26's rapidpro routes as `src/server.js:2841-2845` and the inbound
+named ENH-26's rapidpro routes as `src/server.js:2841-2845` and the inbound <!-- line-drift-ok: quoted as it was before the fix moved it -->
 webhook as `src/server.js:2036-2050`. The extraction moved both into
 `src/routes/rapidpro.js`; `2841` fell past the end of the shortened file and
 failed the reference check loudly, but `2036` still *resolved* — it now points at
@@ -1253,7 +1311,7 @@ repointed at the module the routes now live in, and status.md regenerated.
 
 The compute extraction repeated it, which is what makes it a class rather than an
 incident: the three parametric action-log writes and the three read-only guards
-on `action_logs` were cited at `src/server.js:2521/2553/2633` and
+on `action_logs` were cited at `src/server.js:2521/2553/2633` and <!-- line-drift-ok: quoted as it was before the fix moved it -->
 `2275/2295/2313`, and they now live in `src/routes/parametric.js` and
 `src/routes/operational.js`. All six fell past the end of the shortened file this
 time, so all six failed loudly — the ENH-26 case, where a citation kept resolving
@@ -1546,7 +1604,7 @@ reads remain at `src/server.js:260` and `:265` (the driver tick's `tickStore`),
 `src/routes/alerting.js:480` (the trigger-protocol execution).
 
 **The citations above were rewritten twice, and the second time is the lesson.**
-They first read `src/server.js:234, 490, 839, 861, 2424, 4344` — in a file that
+They first read `src/server.js:234, 490, 839, 861, 2424, 4344` — in a file that <!-- line-drift-ok: quoted as it was before the fix moved it -->
 was then 2,366 lines, so two of those numbers named nothing at all, and
 `handleProtocolRoute:4344` had already moved to `src/routes/alerting.js:480` when
 the alerting family was extracted. They were rewritten on 2026-10-11 to fresh
@@ -2130,7 +2188,7 @@ It found three real defects on its first run, which is the point of it:
 - `/api/v1/connectors/status` returned `total` beside an array with none of the
   other four paging keys — a partial paging envelope, the shape the finding names.
   `total` is now `count`, matching the file's convention for a bounded catalogue
-  (`src/server.js:2336`).
+  (`src/routes/catalogue.js`, the `connectors/status` handler).
 - `/api/v1/road-access` returned the whole set unpaged, so a caller could not tell
   a complete answer from a truncated one and there was no second page to ask for —
   the same defect R-27 fixed for its food-security sibling. It now pages via
