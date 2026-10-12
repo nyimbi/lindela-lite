@@ -1495,41 +1495,51 @@ Guarded by four cases in `test/stac-authz.test.js`.
 The remaining whole-store reads are **not** this defect and are left as they
 are, each for a reason the code now states:
 
-- `src/ingestion.js:177` — the run needs the whole store: it seeds per-source
-  watermarks and writes nine output collections.
-- `src/analytics.js:227`, `:286` — `refreshAnalytics` reads every input
-  collection; `readDerived` reads exactly the two it compares against, which is
-  already a manifest and needs no helper.
-- `src/kpi.js:431` — `computeMonthlyKpiSeries` reads five collections, and the
-  route is already mapped to the wider of the two KPI surfaces.
-- `src/server.js` `/api/v1/health` (`:1433`) and `/api/v1/assessments` (`:1794`),
-  and `evaluateAndPersistAlerts` (`:1860`) — all three call `counts()`
+- `runIngestion` (`src/ingestion.js:177`) — the run needs the whole store: it
+  seeds per-source watermarks and writes nine output collections.
+- `refreshAnalytics` (`src/analytics.js:430`) and `readDerived`
+  (`src/analytics.js:564`) — the first reads every input collection; the second
+  reads exactly the two it compares against, which is already a manifest and
+  needs no helper.
+- `computeMonthlyKpiSeries` (`src/kpi.js:467`, inside `kpiSnapshot`) — reads five
+  collections, and the route is already mapped to the wider of the two KPI
+  surfaces.
+- `/api/v1/health` (now `src/routes/liveness.js`), `/api/v1/assessments`
+  (`src/server.js`), and `evaluateAndPersistAlerts` — all three call `counts()`
   (`src/operations.js:448`), which touches 22 collections by construction. This
   bullet previously read "`/health`, `/metrics`, and the trigger-protocol run".
   Two of the three were wrong: `/metrics` answers `metrics.render()` and reads no
   collection at all, and the trigger run moved to `src/routes/alerting.js` when
   the family was extracted. `/assessments` — the third `counts()` caller, and the
   only one still inline in the dispatcher — was not mentioned.
-- `src/server.js:2759` — a deliberate re-read after ingestion and
+- `summary` (`src/demo-seed.js:891`) — a deliberate re-read after ingestion and
   `refreshAnalytics` have written, so a narrow manifest would be answering from
   a snapshot the route knows is stale.
 
 `store.read({collections: collectionsForRequest(…)})` is the dispatcher's own read
-(`src/server.js:1305`), and every `/api/v1/` route inherits it. Direct whole-store
-reads remain at `src/server.js:261` and `:266` (the driver tick's `tickStore`),
+(`src/server.js:1136`), and every `/api/v1/` route inherits it. Direct whole-store
+reads remain at `src/server.js:260` and `:265` (the driver tick's `tickStore`),
 `src/kpi.js:467`, `src/analytics.js:430, 564`, `src/ingestion.js:177`,
 `src/routes/ingestion.js:161` (the `run-due` alert evaluation) and
 `src/routes/alerting.js:480` (the trigger-protocol execution).
 
-**The citations above were rewritten 2026-10-12 because they had rotted past the
-end of the file.** The block read `src/server.js:234, 490, 839, 861, 2424, 4344`
-— in a file that is now 2,366 lines, so two of those numbers name nothing at all.
-`handleProtocolRoute:4344` had moved to `src/routes/alerting.js:480` when the
-alerting family was extracted, and `handleStacRoute` — the one reader the fixed
-paragraph above describes as *already* migrated — was still listed as an
-un-migrated whole-store reader. Three of the seven citations were wrong in three
-different ways, and none of it was checkable by a test, which is the point: this
-is the register's own cautionary case, an evidence cell that is a line number.
+**The citations above were rewritten twice, and the second time is the lesson.**
+They first read `src/server.js:234, 490, 839, 861, 2424, 4344` — in a file that
+was then 2,366 lines, so two of those numbers named nothing at all, and
+`handleProtocolRoute:4344` had already moved to `src/routes/alerting.js:480` when
+the alerting family was extracted. They were rewritten on 2026-10-11 to fresh
+line numbers, and **rotted again within a day**: the ENH-60 extractions of
+2026-10-12 moved `/health` into `src/routes/liveness.js` and shifted every line
+below it, so `:1305` (the dispatcher's own read) came to name an upload-family
+comment and `:2759` (the deliberate re-read) came to name nothing at all — the
+file is now 2,150 lines.
+
+That is the same failure twice in two days, which makes the *line number* the
+defect rather than any one citation. Every entry above is now anchored by the
+function or symbol that performs the read — `runIngestion`, `refreshAnalytics`,
+`readDerived`, `summary` — with the line as a hint that may drift. A line number
+is an evidence cell that goes wrong on its own; a name is checked by the parser
+that reads the file.
 
 `handleStacRoute` (`src/server.js:827`) reads through `STAC_READ_COLLECTIONS` and
 the caller's partner scope; the two remaining `store.read()` calls in `server.js`
