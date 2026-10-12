@@ -5,12 +5,14 @@ implemented. The first asked whether the platform is honest and whether its clai
 work. This one asks two different questions:
 
 - **What can it not yet do?** — fifty non-incremental enhancements (`ENH-31..80`).
-- **What is wrong right now?** — sixty-eight defects across eight domains.
+- **What is wrong right now?** — sixty-eight defects across eight domains, five
+  more found since (`VER-13..VER-17`, each marked "not by the audit" where it
+  sits).
 
 | Document | What it contains |
 |---|---|
 | [enhancements-50.md](enhancements-50.md) | Fifty enhancements in seven groups, each with its order-of-magnitude claim and a weighted Impact-Effort score |
-| [defects.md](defects.md) | Sixty-eight defects, eight domains, each with verified file:line evidence and a severity |
+| [defects.md](defects.md) | Sixty-eight defects from the audit, eight domains, each with verified file:line evidence and a severity — plus five found later, `VER-13..VER-17` |
 | [roadmap.md](roadmap.md) | Phased sequencing, the dependency graph, the critical path, and resource allocation |
 | [verification.md](verification.md) | Asymptotic complexity of every hot path, and how each line number was confirmed |
 
@@ -23,7 +25,7 @@ The first audit's enhancements are `ENH-01..ENH-30`; its defect prefixes are
 |---|---|---|
 | Enhancements | `ENH-31 .. ENH-80` | `ENH-01 .. ENH-30` |
 | Security | `VUL-01 .. VUL-07` | `SEC-01 .. SEC-13` |
-| Data veracity | `VER-01 .. VER-12` | `DATA-01 .. DATA-15` |
+| Data veracity | `VER-01 .. VER-17` | `DATA-01 .. DATA-15` |
 | Concurrency | `CON-01 .. CON-08` | — (new domain) |
 | Scalability | `SCL-01 .. SCL-09` | — (new domain) |
 | Observability | `OBS-01 .. OBS-07` | — (new domain) |

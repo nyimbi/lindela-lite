@@ -1087,7 +1087,7 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Twenty-six families are out; the dispatcher is not
+> **PARTIAL — 2026-10-12. Twenty-seven families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
 > set of blocks. The dispatcher went 1,903 → 795 lines and `server.js` 5,603 →

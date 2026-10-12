@@ -165,6 +165,62 @@ describe('ARC-01 — include_deleted is honoured on the reads and ignored on the
   })
 })
 
+describe('ARC-01 — service_assets is readable by id but refuses every write', () => {
+  it('refuses PATCH and DELETE with METHOD_NOT_ALLOWED, not a 500', async () => {
+    // The defect this guards: the matcher serves `service_assets` because
+    // `GET /api/v1/service-assets/<id>` had no other way to resolve a record,
+    // but the three builders know five collections. A by-id PATCH or DELETE fell
+    // through to `buildUpdate` / `buildSoftDelete` and threw a bare
+    // `Unsupported operational collection` — so a path OpenAPI documents as
+    // GET-only answered 500 to a verb it never claimed, and the client read
+    // "this deployment is broken" where the answer is "this verb is not offered".
+    const data = { service_assets: [{ id: 'sa-1', name: 'Clinic A' }] }
+    for (const method of ['PATCH', 'DELETE']) {
+      const { res } = await call({ collection: 'service_assets', id: 'sa-1' }, { data, method, body: {} })
+      assert.equal(res.status, 405, `${method} service_assets/<id> was not refused`)
+      assert.equal(res.json().code, 'method_not_allowed')
+    }
+  })
+
+  it('still resolves one asset by id', async () => {
+    // The reason the entry is in the matcher at all. A refusal that also closed
+    // the read would undo the fix the entry was added for.
+    const data = { service_assets: [{ id: 'sa-1', name: 'Clinic A' }] }
+    const { res } = await call({ collection: 'service_assets', id: 'sa-1' }, { data })
+    assert.equal(res.status, 200)
+    assert.equal(res.json().data.id, 'sa-1')
+  })
+
+  it('refuses the write before it reads a body, as action_logs does', async () => {
+    // Same ordering property as the audit trail: a malformed body must not
+    // surface as a 400 from the reader before the 405.
+    const req = {
+      method: 'PATCH',
+      __auth: { subject: 't', partner_org: null },
+      async *[Symbol.asyncIterator]() { throw new Error('body must not be read') },
+    }
+    const res = fakeResponse()
+    const handled = await handleOperationalRoute({ collection: 'service_assets', id: 'sa-1' }, {
+      data: { service_assets: [{ id: 'sa-1' }] }, res, req, store: fakeStore(),
+      url: new URL('http://127.0.0.1/x'), jsonResponse,
+    })
+    assert.equal(handled, true)
+    assert.equal(res.status, 405)
+  })
+
+  it('leaves action_logs answering READ_ONLY, not METHOD_NOT_ALLOWED', async () => {
+    // The order of the two refusals is load-bearing: `action_logs` is not in
+    // `WRITABLE_COLLECTIONS` either, so a guard that tested writability first
+    // would reclassify the audit trail's refusal and break a client that keys
+    // on `read_only`.
+    const { res } = await call({ collection: 'action_logs', id: null }, {
+      data: { action_logs: [] }, method: 'POST', body: {},
+    })
+    assert.equal(res.status, 405)
+    assert.equal(res.json().code, 'read_only')
+  })
+})
+
 describe('ARC-01 — action_logs is served like a collection and refuses every write', () => {
   it('refuses POST, PATCH and DELETE with READ_ONLY', async () => {
     // It is the system's own audit trail. It is reachable as a collection, so a

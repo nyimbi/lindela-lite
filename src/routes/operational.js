@@ -19,13 +19,21 @@
  *     a PATCH reaches the same branch as any other and is refused with 405 and
  *     `READ_ONLY`, rather than being quietly accepted into an audit trail the
  *     system writes itself.
+ *   - `service_assets` is readable by id but *not* writable here. It is in the
+ *     matcher because a caller holding an asset id — the subject panel, the
+ *     routing endpoint's own error text — had no way to resolve one record. But
+ *     the collection is written by the ingestion path (`POST
+ *     /api/v1/service-assets`), and the builders that back this family's three
+ *     write verbs know nothing about it. Without the guard below, a by-id PATCH
+ *     or DELETE fell through to `buildUpdate` and died on a bare `Error`, so a
+ *     documented GET-only path answered 500 to a verb it never claimed.
  *
  * VUL-03 lives here too: every by-id read goes through `findVisible`, which
  * carries the partner-organisation predicate. The list form and the by-id form
  * must agree, and the earlier fix reached only one branch of the two.
  */
 
-import { actionLog, buildCreate, buildSoftDelete, buildUpdate, isDeleted } from '../operations.js'
+import { WRITABLE_COLLECTIONS, actionLog, buildCreate, buildSoftDelete, buildUpdate, isDeleted } from '../operations.js'
 import { ERROR_CODES } from '../errors.js'
 import { logger, metrics } from '../observability.js'
 import { emit } from '../outbox.js'
@@ -84,11 +92,42 @@ export async function handleOperationalRoute(route, { data, req, res, url, jsonR
     return true
   }
 
-  if (req.method === 'POST' && !route.id) {
+  // The two refusals this family owes a write verb, in one place and in this
+  // order. Both are checked before any body is read, because a refusal must not
+  // depend on the request being well-formed.
+  //
+  // `action_logs` first: it is served like a collection and is the system's own
+  // audit trail, so it answers `READ_ONLY` rather than `METHOD_NOT_ALLOWED` —
+  // the collection is readable, the verb is what the system reserves for itself.
+  // It is not in `WRITABLE_COLLECTIONS` either, so the order is load-bearing.
+  if (!['GET', 'HEAD'].includes(req.method)) {
     if (route.collection === 'action_logs') {
       jsonResponse(res, 405, { success: false, error: 'Action logs are read-only', code: ERROR_CODES.READ_ONLY })
       return true
     }
+    // A collection the matcher serves but the builders cannot write.
+    // `service_assets` is readable by id — the subject panel and the routing
+    // endpoint's own error text both hold an id — but it is written by the
+    // ingestion path (`POST /api/v1/service-assets`), not one record at a time.
+    // Without this, a by-id PATCH or DELETE fell through to a normaliser that
+    // knows five collections and died on a bare `Error`, so a path OpenAPI
+    // documents as GET-only answered 500 to a verb it never claimed.
+    //
+    // The path in the message is derived rather than written out, so the refusal
+    // stays true for the next collection that is readable before it is writable
+    // — the same reason `WRITABLE_COLLECTIONS` is derived from the builders'
+    // table rather than listed here.
+    if (!WRITABLE_COLLECTIONS.has(route.collection)) {
+      jsonResponse(res, 405, {
+        success: false,
+        error: `${route.collection} is written by its import route (POST /api/v1/${route.collection.replace(/_/g, '-')}), not one record at a time`,
+        code: ERROR_CODES.METHOD_NOT_ALLOWED,
+      })
+      return true
+    }
+  }
+
+  if (req.method === 'POST' && !route.id) {
     const body = await readRequestJson(req)
     const record = buildCreate(route.collection, body, data)
     const log = actionLog(route.collection, 'created', record, body.actor, req.__auth?.subject)
@@ -112,10 +151,6 @@ export async function handleOperationalRoute(route, { data, req, res, url, jsonR
   }
 
   if (req.method === 'PATCH' && route.id) {
-    if (route.collection === 'action_logs') {
-      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only', code: ERROR_CODES.READ_ONLY })
-      return true
-    }
     const body = await readRequestJson(req)
     // `includeDeleted` unconditionally here, unlike the read branch. A write
     // has to see the soft-deleted record to answer 409 rather than 404: the
@@ -136,10 +171,6 @@ export async function handleOperationalRoute(route, { data, req, res, url, jsonR
   }
 
   if (req.method === 'DELETE' && route.id) {
-    if (route.collection === 'action_logs') {
-      jsonResponse(res, 405, { success: false, error: 'Action logs are read-only', code: ERROR_CODES.READ_ONLY })
-      return true
-    }
     const body = await readRequestJson(req)
     // Same reason as PATCH above: a second DELETE answers 409, which needs the
     // already-deleted record in hand.

@@ -16,7 +16,7 @@ import {
   runDueIngestionSchedules,
   runIngestion,
 } from './ingestion.js'
-import { actionLog, counts, operationalSummary } from './operations.js'
+import { actionLog, counts, isDeleted, operationalSummary } from './operations.js'
 import { verifyRapidProWebhook } from './rapidpro.js'
 import { publicSourceCatalog } from './schema.js'
 import { createStoreFromEnv } from './storage.js'
@@ -1650,7 +1650,15 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   }
 
   if (req.method === 'GET' && url.pathname === '/api/v1/service-assets') {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.service_assets, url.searchParams, { auth: req.__auth, data, collection: 'service_assets' }) })
+    // Soft-deleted assets are filtered out, as every sibling collection list
+    // does. This list is served inline rather than by the operational family
+    // (the family's collection branch is shadowed by this one, which runs
+    // first), so it had kept its own copy of the page construction — and the
+    // copy had no `isDeleted` predicate. An asset removed from the console was
+    // still returned by the list while `GET /api/v1/service-assets/<id>` 404'd
+    // it, so a caller paging the collection could not resolve half its rows.
+    const live = data.service_assets.filter((item) => !isDeleted(item))
+    jsonResponse(res, 200, { success: true, ...collectionPage(live, url.searchParams, { auth: req.__auth, data, collection: 'service_assets' }) })
     return
   }
 

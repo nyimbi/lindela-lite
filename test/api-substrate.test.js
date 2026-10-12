@@ -147,6 +147,52 @@ describe('a collection says how much of itself it is not showing', () => {
       assert.equal(filtered.total, 0, 'the total counts what matched the filters, not what exists')
     })
   })
+
+  it('leaves a soft-deleted asset out of the list, as every sibling collection does', async () => {
+    // `service_assets` is the one collection whose list is served inline rather
+    // than by the operational family — this route runs first and shadows the
+    // family's collection branch — so it carried its own copy of the page
+    // construction, and the copy had no `isDeleted` predicate. An asset removed
+    // from the console was still listed while `GET /api/v1/service-assets/<id>`
+    // 404'd it, so a caller paging the collection could not resolve half its
+    // rows: the list said the record was there and the by-id read said it was
+    // not. Asserted over HTTP because the divergence is between two routes, and
+    // a unit test of either one alone cannot see it.
+    await withServer(async (base, store) => {
+      await store.merge({
+        service_assets: [
+          ...ASSETS,
+          { id: 'gone', name: 'Closed clinic', district: 'Nairobi', service_type: 'health', deleted_at: '2026-10-01T00:00:00Z' },
+        ],
+      })
+      const list = await (await fetch(`${base}/api/v1/service-assets`)).json()
+      assert.equal(list.total, 12, 'the soft-deleted asset was counted')
+      assert.ok(!list.data.some((row) => row.id === 'gone'), 'a soft-deleted asset was listed')
+
+      const byId = await fetch(`${base}/api/v1/service-assets/gone`)
+      assert.equal(byId.status, 404, 'the by-id read and the list disagree about a deleted asset')
+    })
+  })
+
+  it('refuses a by-id write rather than failing on the normaliser', async () => {
+    // A path OpenAPI documents as GET-only. The matcher serves the collection
+    // because the by-id read needs it, and the write verbs used to fall through
+    // to builders that know five collections — so PATCH answered 500 with
+    // `Unsupported operational collection`, which a client reads as a broken
+    // deployment rather than as a verb that is not offered.
+    await withServer(async (base, store) => {
+      await store.merge({ service_assets: ASSETS })
+      for (const method of ['PATCH', 'DELETE']) {
+        const res = await fetch(`${base}/api/v1/service-assets/a01`, {
+          method,
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        })
+        assert.equal(res.status, 405, `${method} was not refused`)
+        assert.equal((await res.json()).code, 'method_not_allowed')
+      }
+    })
+  })
 })
 
 describe('a response can be revalidated instead of re-downloaded', () => {

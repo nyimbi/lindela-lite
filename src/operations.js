@@ -22,6 +22,24 @@ const OPERATIONAL_COLLECTIONS = Object.freeze({
   response_resources: 'resource',
 })
 
+/**
+ * The collections the three builders below can write.
+ *
+ * Derived from the table rather than listed again, because it is the same fact:
+ * a collection is writable here exactly when one of `buildCreate`,
+ * `buildUpdate` or `buildSoftDelete` knows how to normalise it. A sixth entry
+ * added above is writable at the route without a second edit — and, more to the
+ * point, a collection that is *not* here cannot reach a normaliser that will
+ * throw on it.
+ *
+ * `src/routes/operational.js` reads this to answer 405 rather than 500. The
+ * matcher there names `service_assets`, which is readable by id but written
+ * through `POST /api/v1/service-assets` on the ingestion path instead, so a
+ * by-id PATCH or DELETE used to fall through to `buildUpdate` and die on a bare
+ * `Error`.
+ */
+export const WRITABLE_COLLECTIONS = new Set(Object.keys(OPERATIONAL_COLLECTIONS))
+
 export function operationalSummary(data) {
   // Soft-deleted records are retained for history but must not drive live counts.
   const liveIncidents = data.incidents.filter((item) => !isDeleted(item))

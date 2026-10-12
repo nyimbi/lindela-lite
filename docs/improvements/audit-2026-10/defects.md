@@ -707,7 +707,7 @@ reason it is a family rather than a set of blocks:
 | `src/routes/field-signals.js` | 11 kinds / 8 paths | both map layers read coordinates through `readCoordinate` (VER-13) |
 | `src/routes/exposure.js` | 7 | the roll-up describes the *matched* set, not the page (VER-14) |
 | `src/routes/derived.js` | 5 | a refusal travels beside the figure, not instead of it |
-| `src/routes/operational.js` | 7 collections × 4 verbs | `include_deleted` on the reads, ignored on the writes; `action_logs` read-only (VUL-03) |
+| `src/routes/operational.js` | 7 collections × 4 verbs | `include_deleted` on the reads, ignored on the writes; `action_logs` read-only (VUL-03); a collection outside `WRITABLE_COLLECTIONS` refuses a write rather than reaching a normaliser (VER-17) |
 | `src/routes/provenance.js` | 6 | none of them is a collection read and every one refuses a write; `history` answers 405+`read_only` where the rest 404 |
 | `src/routes/alerting.js` | 21 paths | a view is computed and has no `data[...]` key, so the kind guards carry the branch |
 | `src/routes/snapshots.js` | 3 | ENH-34's citable handles |
@@ -900,7 +900,60 @@ never serialised passed for as long as the route existed.
 
 ---
 
-### ARC-02 — HIGH — Five parallel route tables, no single source of truth
+### VER-17 — MEDIUM — `service-assets` serves a by-id read but its write verbs answer 500
+
+Found 2026-10-12 while finishing the ARC-01 dispatcher work, not by the audit and
+not by the VER-14 sweep.
+
+`GET /api/v1/service-assets/<id>` was added to the operational matcher
+(`src/routes/operational.js`) because the collection listed fine while no single
+asset was addressable — the subject panel and the routing endpoint's own error
+text both hold an asset id. The matcher serves a *collection*, not a verb, so the
+same entry also routed PATCH and DELETE by id into the family's write branches.
+Those branches call `buildUpdate` / `buildSoftDelete`, and `src/operations.js`
+knows five collections; `service_assets` is written by the ingestion path
+(`POST /api/v1/service-assets`), not one record at a time. Both threw a bare
+`Error: Unsupported operational collection: service_assets`, which the surface
+turns into **500**.
+
+Verified through a live server, not inferred:
+
+```
+DELETE /api/v1/service-assets/sa-1  →  500  Unsupported operational collection: service_assets
+PATCH  /api/v1/service-assets/sa-1  →  500  Unsupported operational collection: service_assets
+```
+
+`docs/openapi.yaml` declares that path `get:` alone, so a client reading the
+contract has no reason to send either verb; one that does is told the deployment
+is broken. This is VER-14's class — a served surface wider than the published
+contract — one severity worse, because the wrong verb does not merely succeed, it
+fails loudly and blames the server.
+
+**Fixed 2026-10-12.** `WRITABLE_COLLECTIONS` is derived from the builders' own
+table (`src/operations.js:41`) and the handler refuses any write to a collection
+outside it with 405 + `method_not_allowed`, before reading a body, in one guard
+placed above all three write verbs. Deriving the set rather than listing it is the
+point: a collection becomes writable at the route when — and only when — a
+normaliser exists for it.
+
+**Why the sweep missed it.** The VER-14 sweep tested whether an undeclared method
+answered **200**; this one answered **500**. The sweep's own summary records the
+other non-404 codes it saw as "405s and six 400s" — a 500 was not a category it
+was looking for, so the same over-wide surface sat in a code path the sweep had no
+predicate for. A class sweep must assert *what the right answer is*, not one
+particular wrong answer.
+
+**Fixed alongside, same route.** The collection list at `src/server.js:1652` is
+served inline — it runs before the operational family and shadows the family's
+collection branch — and its private copy of the page construction had no
+`isDeleted` predicate, so a soft-deleted asset was listed while the by-id read
+404'd it. The list and the by-id read now agree. It is also why the inline handler
+and the matcher's entry are not the duplication they read as: the inline pair
+serves the collection, the family serves the by-id read.
+
+---
+
+
 `src/server.js` (68 conditions + 16 helpers), `src/route-manifests.js` (183 entries),
 `docs/openapi.yaml` (150 paths), `src/auth.js:431` scopes (91 entries), and the
 client's 29 endpoints. `scripts/check-openapi.mjs` exists precisely because nine
