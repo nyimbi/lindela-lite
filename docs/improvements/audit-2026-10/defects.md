@@ -1779,6 +1779,35 @@ checking, and under file-level parallelism it makes every other test's result a
 function of scheduling. A suite whose verdict depends on how many workers
 overlap is evidence for nothing — including the things it says are fine.
 
+**The class recurred twice more, found 2026-10-12 by fixing the instance above
+rather than by searching for it, and both are closed.**
+
+- `test/budget-walker.test.js` wrote `public/shared/__budget_canary.js` and an
+  import into `basemap.js`, restoring both in a `finally`. It surfaced as an
+  unrelated failure: `docs/improvements/_build-status.mjs` lists files and then
+  reads them, its read landed inside the window, and the whole generator died
+  with `ENOENT: public/shared/__budget_canary.js` — taking
+  `test/enhancement-status.test.js` with it. `scripts/check-budget.mjs` now takes
+  a root argument and the canary measures a private copy of `public/`.
+- `test/outbound-fetch.test.js` removed guards from `src/connectors/dhis2.js`,
+  `src/connectors/kobo.js` and `src/rapidpro.js` to require the gate to fail.
+  This one is worse than the asset case and had not failed yet: Node caches a
+  module at first import, so a parallel worker that imported `dhis2.js` inside
+  the window kept the *unguarded* body for the rest of its run, and no test in
+  the suite would have said so. `scripts/check-outbound-fetch.mjs` takes a root
+  argument and the canaries mutate a private copy of `src/`.
+
+Both seams are canaried by making the gate ignore its argument: the gate then
+scans the real tree, finds the guard present, exits 0, and the canary reports
+"the gate passed with the guard removed". A seam a caller can ignore silently is
+not a seam.
+
+The detector for this class is not a lint — a test writing a file is legitimate.
+It is `git status` after a suite run: a dirty tree that was clean before the run
+means a test mutated the repository, and the mutation is either the finding or
+the fixture. Neither of these two was found that way, which is the argument for
+running it anyway.
+
 ---
 
 ## What is done right (calibration)
