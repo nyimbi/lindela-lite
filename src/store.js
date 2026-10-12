@@ -996,7 +996,7 @@ export function sortRecords(records) {
   })
 }
 
-function recordTimestamp(record) {
+export function recordTimestamp(record) {
   // Presence, not truthiness. A record whose only timestamp field is 0 is a
   // record with a timestamp, and treating it as absent is the falsy-zero bug
   // this repo has already paid for twice in a different column.
