@@ -29,6 +29,9 @@
  * **Refuse to guess.** An unknown role or an unknown intent shows *everything*
  * and says so in the header. Hiding on an unrecognised input is exactly how a
  * control disappears for the one operator whose role was spelled differently.
+ * An *absent* intent — the console's state before anyone has chosen one — is
+ * the same refusal, and deliberately not the role's `defaultIntent`: see
+ * `absentIntentHeader`.
  *
  * Pure, DOM-free, no imports: importable by the console and by Node alike.
  */
@@ -172,6 +175,16 @@ export const INTENTS = Object.freeze({
 export const ROLE_KEYS = Object.freeze(Object.keys(ROLES))
 export const INTENT_KEYS = Object.freeze(Object.keys(INTENTS))
 
+/**
+ * The intents a picker offers, in the order they read: every declared intent.
+ *
+ * Exported rather than left to the console to enumerate, because a picker built
+ * from its own list is a second description of the intent set, and the two drift
+ * the moment either changes — the exact drift this module's registry exists to
+ * avoid one level down. The console renders this; it does not decide it.
+ */
+export const INTENT_OPTIONS = Object.freeze(INTENT_KEYS.map((key) => Object.freeze({ key, label: INTENTS[key].label })))
+
 const ALL_CONTROLS = Object.freeze(Object.keys(CONTROLS))
 
 function idsInGroups(groups) {
@@ -183,6 +196,23 @@ function idsInGroups(groups) {
 function fallbackHeader(kind, value) {
   return `Unrecognised ${kind} "${String(value)}" — showing every control rather than hiding by default. `
     + 'Hiding on an unrecognised input is how a control disappears for the one operator who needed it.'
+}
+
+/**
+ * The header the console boots with, before any intent is chosen.
+ *
+ * The console opens with no intent, and the decided default is that it shows
+ * everything. The role's `defaultIntent` is *not* applied on boot: `operator`
+ * defaults to `triage`, whose `show` list is the alert rail alone, so opening
+ * on the role default would hide 30 of 39 controls — every map filter among
+ * them — before the operator has said what they came to do. A console that
+ * opens with its map filters gone is the failure this feature exists to
+ * prevent, so an absent intent is a refusal to guess like any other, and it
+ * shows the whole console and says so.
+ */
+function absentIntentHeader() {
+  return 'No intent chosen — showing every control. '
+    + 'Pick one from the intent control to narrow the console to the task at hand.'
 }
 
 /**
@@ -205,13 +235,24 @@ export function decideSurface(role, intent) {
   const intentRule = INTENTS[intent]
   const unknownRole = !roleRule
   const unknownIntent = !intentRule
+  // An absent intent is a distinct case from an unknown one, and it is the
+  // console's opening state rather than an error: no intent has been chosen
+  // yet, so the honest answer is the whole console, not the role's default.
+  const absentIntent = intent === null || intent === undefined || intent === ''
 
-  if (unknownRole || unknownIntent) {
-    const header = unknownRole ? fallbackHeader('role', role) : fallbackHeader('intent', intent)
+  if (unknownRole || unknownIntent || absentIntent) {
+    // The header names the first thing wrong, in the order that matters: an
+    // unreadable role is a bug worth surfacing even when the intent is also
+    // absent, and an absent intent is not an error at all.
+    const header = unknownRole
+      ? fallbackHeader('role', role)
+      : absentIntent
+        ? absentIntentHeader()
+        : fallbackHeader('intent', intent)
     return {
       role,
       intent,
-      known: { role: !unknownRole, intent: !unknownIntent },
+      known: { role: !unknownRole, intent: !unknownIntent && !absentIntent },
       mode: 'fallback',
       header,
       shown: ALL_CONTROLS.slice(),

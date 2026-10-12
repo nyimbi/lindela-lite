@@ -6480,6 +6480,12 @@ await loadLocale(state.locale).catch((err) => {
 // `autoMarkScrollableRegions`.
 autoMarkScrollableRegions()
 restoreFiltersFromUrl()
+// ENH-71: the intent bar. `lazy()` keeps the module and its renderer off the
+// measured first-load graph; the module owns the intent state and render loop.
+// With no intent chosen it shows every control, so the map filters are present
+// from the first paint.
+lazy('/shared/intent-console.js').then((m) => m.mountConsoleIntent())
+  .catch((err) => console.error('Intent bar failed to render', err))
 // The alerts panel is the boot panel, but nothing calls switchTab to reach it —
 // the markup ships with `active` on it. Mount its escalation section here, or
 // it waits for a tab switch the operator never makes.

@@ -1359,7 +1359,7 @@ the fold; the command band reclaimed the pixels. The deeper fix is to show contr
 for the task the operator is doing, not all controls at once — a role-and-intent
 driven surface rather than a layout one.
 
-**Shipped 2026-10-12, as the model — not yet wired to the console.** HX-05 counted
+**Shipped 2026-10-12, wired to the console.** HX-05 counted
 144 controls above the fold; the command band reclaimed the pixels, and this is the
 deeper fix. `public/shared/intent.js` maps a (role, intent) pair to the controls a
 surface shows, over the 39 interactive elements `public/index.html` actually
@@ -1383,18 +1383,41 @@ who needed it, and the failure is invisible to everyone else. A hidden control
 carries the reason it is hidden and, when it is the only route to a capability, the
 way back.
 
-**PARTIAL:** the module is pure and nothing imports it, so it costs no first-load
-bytes and changes no surface. Wiring it needs an importer in `app.js`, a role
-source, and a renderer that toggles `hidden` and shows the reasons — named in the
-module's report rather than guessed at here.
+**Wired 2026-10-12 — IMPLEMENTED.** The module is no longer inert.
+`public/shared/intent-console.js` is the surface: it injects its own `#intentBar`
+section and stylesheet, renders a picker built from the module's own
+`INTENT_OPTIONS`, the header `decideSurface` returns, and the hidden controls with
+the reason each is hidden — an only-route control's reason carries the way back.
+The picker is the only thing that may hide a control. `public/app.js` reaches it
+with one line, `lazy('/shared/intent-console.js').then((m) => m.mountConsoleIntent())`,
+and the module owns the intent state and the render loop.
 
-**Two measured blockers, 2026-10-12.** Neither is a guess.
+*Both blockers below are closed, and the first closed itself.* The 4.8 KB module
+never had to touch the budget: `scripts/check-budget.mjs` walks only the static
+`from '…'`/`import '…'` graph, so anything reached through `lazy()` is outside the
+measurement. The renderer is a module of its own for the same reason — written
+into `app.js` it cost 0.6 KB gzipped and put the tree 1.3 KB over; behind `lazy()`
+the whole feature costs the console 141 bytes, and the gate reports 229.6 KB of
+230.0. The default-intent problem is answered in the module rather than the
+console: an *absent* intent is a fallback — the same shape an unrecognised role
+returns — so the console opens with every control and a header saying so, and
+`ROLES.operator.defaultIntent` is deliberately not applied on boot.
+`decideSurface('operator', null)` returns `mode: 'fallback'` with all 39 controls;
+`test/intent-wiring.test.js` drives the real picker's `change` handler to `triage`
+and reads the map filters' reasons back out of the rendered markup. The budget
+test asserts neither intent module is in the gate's asset list *and* neither is
+statically imported — canaried by adding the static import and watching it fail.
 
-1. **The budget has no room.** `public/shared/intent.js` is **4.8 KB gzipped**;
+**Two measured blockers, 2026-10-12 — both resolved the same day.**
+
+1. **The budget had no room.** `public/shared/intent.js` is **4.8 KB gzipped**;
    `scripts/check-budget.mjs` sits at **229.5 KB of 230.0**, so there is 0.5 KB of
    headroom. Wiring this means paying down the panel-handler debt in `public/app.js`
    first (89.3 KB gzipped of the first load on its own). That extraction is a
    precondition for wiring anything else into the console, not merely a debt.
+   **Resolved without the extraction:** the walker follows static specifiers only,
+   so `lazy()` keeps the module off the measured graph and the debt stays unpaid
+   for now.
 2. **The default intent would gut the console.** `ROLES.operator.defaultIntent` is
    `triage`, whose `show` is `['rail']` — so `decideSurface('operator','triage')`
    hides **30 of 39 controls**, including all six map filters (`mapTimeRange`,
@@ -1403,6 +1426,8 @@ module's report rather than guessed at here.
    failure this feature is supposed to prevent. Intent must therefore come from an
    explicit control, not default to the role's; the model's own "unknown input shows
    everything" rule is the right shape and should extend to "no intent chosen yet".
+   **Resolved:** absent intent now returns `mode: 'fallback'` with every control
+   shown, and the picker's empty option returns to that state.
 
 
 **ENH-72 — Explainable ranking everywhere.** `viz-explain.js` explains a record's
