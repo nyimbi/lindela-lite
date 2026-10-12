@@ -33,10 +33,15 @@ shipped and unmarked, and the register was the last place anyone looked.
 | ABSENT | 0 | none |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
-three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 511-line function with 32
-families out of it. Reading a PARTIAL as done is the error this table exists to
-prevent.
+**five** tables checked against each other — the document, the manifest table,
+the method gating, the envelope shape and, since 2026-10-12, the client's call
+sites — and no single declaration they are generated from, and ENH-60's
+dispatcher is still one 511-line function with 32 families out of it. Reading a
+PARTIAL as done is the error this table exists to prevent: five cross-checks is
+a network that stops five tables disagreeing *silently*, which is a strictly
+weaker property than one source of truth, and the two are easy to conflate
+precisely because the first is what you build when you cannot yet build the
+second.
 
 **Two rows were wrong in opposite directions, found 2026-10-12 by checking the
 code rather than the note.** ENH-32 was marked PARTIAL against a summary line
