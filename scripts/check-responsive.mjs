@@ -209,9 +209,14 @@ function collect(minTap) {
     'button, input:not([type=hidden]), select, textarea, a[href], [data-tap-target], .filter-label',
   )) {
     if (!shown(el)) continue
-    // `.visually-hidden` sits at margin:-1px by design and `.skip-link` at
-    // top:-100%. Neither is a clipped control; both would fail on every surface
-    // forever if they were counted.
+    // `.visually-hidden` sits at margin:-1px by design. It is not a clipped
+    // control and would fail on every surface forever if it were counted.
+    //
+    // This comment used to add "and `.skip-link` at top:-100%" — a claim with no
+    // code under it, since the guard named one class and tested it. Corrected to
+    // say what the code does rather than what it was meant to do: whether the
+    // skip-link should also be excluded is a question about a real element, and
+    // it is not answered by asserting it in a comment.
     if (el.classList.contains('visually-hidden') || el.closest('[aria-hidden="true"]')) continue
     // A marker inside the map is not a clipped control. The map is a panning
     // surface: the viewBox is scaled to `slice` the element and the operator
@@ -224,11 +229,19 @@ function collect(minTap) {
     const rect = el.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) continue
     if (rect.left < -1) {
+      // The text and the parent are what make the report actionable. CI's first
+      // run of this gate on Linux printed `a#. at -4px` on five surfaces: an
+      // element with no id and no class, named by neither, on a machine the
+      // author does not have. Reproducing it meant guessing which of the eight
+      // surfaces' anchors it was, and every guess cost a full browser run. A
+      // finding nobody can act on is not a finding.
       clippedStart.push({
         tag: el.tagName.toLowerCase(),
         id: el.id || '',
         cls: clsOf(el),
         left: Math.round(rect.left),
+        text: (el.textContent || '').trim().slice(0, 40),
+        parent: el.parentElement ? `${el.parentElement.tagName.toLowerCase()}.${clsOf(el.parentElement)}` : '',
       })
     }
   }
@@ -421,7 +434,9 @@ async function main() {
           failures.push(`${label}: horizontal overflow ${r.overflow}px — ${worst}`)
         }
         if (r.clippedStartCount > 0) {
-          const worst = r.clippedStart.map((o) => `${o.tag}#${o.id}.${o.cls} at ${o.left}px`).join(', ') || 'unknown'
+          const worst = r.clippedStart
+            .map((o) => `${o.tag}#${o.id}.${o.cls} at ${o.left}px (in ${o.parent || '?'}, "${o.text}")`)
+            .join(', ') || 'unknown'
           failures.push(
             `${label}: ${r.clippedStartCount} control(s) off the start edge — ${worst}. `
             + 'A browser will not scroll to overflow from the start, so scrollWidth cannot see this.',
