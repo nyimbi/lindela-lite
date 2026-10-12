@@ -2633,6 +2633,107 @@ paths:
           description: >-
             The bbox or zoom range is unusable, or the pack is over budget. The
             `reason` names which.
+  /api/v1/basemap/tiles/osm/{z}/{x}/{y}.png:
+    get:
+      summary: Proxy one raster basemap tile from the deployment's upstream (ADR-013)
+      description: >-
+        Same-origin raster tile for the console's situation map. The browser
+        cannot fetch the upstream directly — OSM's and CARTO's policies require a
+        descriptive `User-Agent`, and a `<img src>` sends the browser's own — so
+        the server fetches and re-serves it, adding the attribution the upstream
+        requires.
+
+        The route shape is deliberately strict. Every coordinate is range-checked
+        before the upstream is contacted, so a malformed `z/x/y` is a `400` rather
+        than a fetch against a public tile service with a nonsense path. The
+        response is immutable imagery: `max-age`, no ETag revalidation, the same
+        caching rule the browser's own HTTP layer applies to a tile it fetched
+        itself.
+
+        This route was served, fetched by the console on every map render, and
+        documented nowhere until 2026-10-12 — it is written
+        `/<literal>/.exec(url.pathname)`, a spelling the route-surface parser read
+        only as `.match(/…/)`, so `check-openapi` reported "174 documented, 174
+        served" while a 175th route existed on both sides of the comparison. The
+        parser now reads both spellings.
+      parameters:
+        - name: z
+          in: path
+          required: true
+          description: Slippy-map zoom
+          schema:
+            type: integer
+        - name: x
+          in: path
+          required: true
+          description: Slippy-map tile column at this zoom
+          schema:
+            type: integer
+        - name: y
+          in: path
+          required: true
+          description: Slippy-map tile row at this zoom
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: The tile as `image/png`, with a long `max-age`
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: >-
+            A coordinate is out of range for its zoom, or the source is not one of
+            the two the proxy serves
+        '502':
+          description: The upstream answered nothing usable for this tile
+  /api/v1/basemap/tiles/carto/{z}/{x}/{y}.png:
+    get:
+      summary: Proxy one CARTO raster basemap tile (ADR-013)
+      description: >-
+        The CARTO half of the basemap proxy. Same route, same contract, same
+        coordinate range checks and caching rule as the OSM path above; the only
+        difference is which upstream is contacted and that CARTO's attribution
+        line is added on top of OSM's.
+
+        It is a separate path item because the source is a literal in the route
+        regex, `(osm|carto)`, and this document spells an alternation as one path
+        per branch — the same reason `/alert-events/{id}/approve` and
+        `/alert-events/{id}/reject` are two entries rather than one with a
+        `{decision}` parameter. A client generator needs the concrete path.
+      parameters:
+        - name: z
+          in: path
+          required: true
+          description: Slippy-map zoom
+          schema:
+            type: integer
+        - name: x
+          in: path
+          required: true
+          description: Slippy-map tile column at this zoom
+          schema:
+            type: integer
+        - name: y
+          in: path
+          required: true
+          description: Slippy-map tile row at this zoom
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: The tile as `image/png`, with a long `max-age`
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: A coordinate is out of range for its zoom
+        '502':
+          description: The upstream answered nothing usable for this tile
   /api/v1/tile-packs:
     get:
       summary: Build a PMTiles archive for a bbox, from the deployment's tile server

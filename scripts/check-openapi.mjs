@@ -61,10 +61,30 @@ try {
 }
 
 // ── Compare ─────────────────────────────────────────────────────────────────
-const documented = new Set([...spec.matchAll(/^ {2}(\/[^:\n]*):\s*$/gm)].map((m) => m[1]))
+/**
+ * Canonicalise a path to its shape, so parameter *names* do not decide the
+ * comparison.
+ *
+ * The server's routes are regexes, and a regex capture has no name — the parser
+ * can only report position (`{id}`, `{id2}`, …). The document names its
+ * parameters for a reader (`{source}`, `{z}`, `{x}`, `{y}`). Those are two
+ * spellings of one route, and a check that compared them literally would demand
+ * the document be written in the parser's positional dialect — which no client
+ * generator can use and no human wants to read.
+ *
+ * So the comparison is on shape, which is what this check's own jurisdiction is:
+ * a wrong *path* is a client that cannot call the endpoint, a differently-named
+ * parameter is not. Same reasoning as the module's decision not to model method
+ * gating.
+ */
+const shape = (route) => route.replace(/\{[^}]*\}/g, '{}')
 
-const undocumented = [...servedPaths].filter((route) => !documented.has(route)).sort()
-const ghosts = [...documented].filter((route) => !servedPaths.has(route)).sort()
+const documented = new Set([...spec.matchAll(/^ {2}(\/[^:\n]*):\s*$/gm)].map((m) => m[1]))
+const documentedShapes = new Set([...documented].map(shape))
+const servedShapes = new Set([...servedPaths].map(shape))
+
+const undocumented = [...servedPaths].filter((route) => !documentedShapes.has(shape(route))).sort()
+const ghosts = [...documented].filter((route) => !servedShapes.has(shape(route))).sort()
 
 // Printed before the verdict, not after: the failure message points a reader at
 // the coverage line, and a coverage line that only appears on success is not

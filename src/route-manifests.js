@@ -336,6 +336,19 @@ export const WIDE_ROUTES = Object.freeze([
   // happens.
   'GET /api/v1/tile-packs',
   'GET /api/v1/tile-packs/plan',
+  // ADR-013. The raster basemap tile proxy reads no collection either — it
+  // fetches one PNG from the tile upstream the deployment is configured with —
+  // so there is no manifest to declare. Wide is the vocabulary's only word for
+  // "not measured against a collection set".
+  //
+  // The difference from every other wide entry is that this one was *not*
+  // declared while the route was live: it was written
+  // `/<literal>/.exec(url.pathname)`, a spelling `scripts/route-surface.mjs`
+  // did not read, so it appeared in no manifest and no document at once. Two
+  // paths rather than one because the source is a literal alternation in the
+  // route regex, `(osm|carto)`, and the table keys on the path a caller writes.
+  'GET /api/v1/basemap/tiles/osm/:id/:id/:id.png',
+  'GET /api/v1/basemap/tiles/carto/:id/:id/:id.png',
 ])
 /** How much of the API is still on the whole-store read, as one number. */
 export const UNMAPPED_COUNT = WIDE_ROUTES.length

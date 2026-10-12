@@ -62,7 +62,7 @@ import { matchReportingRoute, handleReportingRoute, runDueReportSchedules } from
 import { matchParametricRoute, handleParametricRoute } from './routes/parametric.js'
 import { matchChwRoute, handleChwRoute } from './routes/chw.js'
 import { matchWorkflowRoute, handleWorkflowRoute } from './routes/workflows.js'
-import { upstreamTileUrl, loadRasterTile } from './basemap-tiles.js'
+import { matchTileRoute, handleTileRoute } from './routes/basemap-tiles.js'
 import { assertSafeWebhookUrl } from './webhooks.js'
 import { createRequestRing } from './observability.js'
 
@@ -1197,6 +1197,21 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   const tilePackRoute = matchTilePackRoute(url.pathname, req.method)
   if (tilePackRoute && await handleTilePackRoute(tilePackRoute, { req, res, url, jsonResponse })) return
 
+  // ARC-01. The raster basemap tile proxy (ADR-013), extracted to
+  // `src/routes/basemap-tiles.js` and dispatched *here*, above the store read,
+  // where the tile-pack family beside it already sits.
+  //
+  // The route reads no collection, and it was below this line for as long as it
+  // existed — so every pan of the map materialised the whole store to answer a
+  // request that reads none of it. It went unseen because the route was written
+  // `/<literal>/.exec(url.pathname)`, a spelling `scripts/route-surface.mjs` did
+  // not read, which kept it out of every manifest, the document, and the checks
+  // at once. `test/route-manifests.test.js` found it the moment the parser
+  // learned the spelling, which is the whole argument for the table being
+  // measured rather than reviewed.
+  const tileRoute = matchTileRoute(url.pathname, req.method)
+  if (tileRoute && await handleTileRoute(tileRoute, { req, res, url, jsonResponse })) return
+
   const data = await store.read(readRequest)
 
   // ARC-01. The KPI family, extracted to `src/routes/kpi.js`. Dispatched here,
@@ -1474,36 +1489,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   if (computeRoute && await handleComputeRoute(computeRoute, {
     store, data, req, res, url, jsonResponse, evaluateAndPersistAlerts,
   })) return
-
-  // Raster basemap tiles (ADR-013). The route shape is deliberately strict —
-  // `upstreamTileUrl` range-checks every field, so a malformed z/x/y is a 400
-  // rather than a fetch against a public tile service with a nonsense path.
-  // The response is immutable imagery: max-age, no ETag revalidation, the same
-  // caching rule the browser's own HTTP layer applies to a tile it fetched itself.
-  const rasterTileMatch = req.method === 'GET' &&
-    /^\/api\/v1\/basemap\/tiles\/(osm|carto)\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(url.pathname)
-  if (rasterTileMatch) {
-    const source = rasterTileMatch[1]
-    const z = Number(rasterTileMatch[2])
-    const x = Number(rasterTileMatch[3])
-    const y = Number(rasterTileMatch[4])
-    if (!upstreamTileUrl(source, z, x, y)) {
-      jsonResponse(res, 400, { success: false, error: `Invalid basemap tile: ${url.pathname}` })
-      return
-    }
-    const tile = await loadRasterTile(source, z, x, y)
-    if (!tile) {
-      jsonResponse(res, 502, { success: false, error: 'Basemap tile upstream fetch failed' })
-      return
-    }
-    res.writeHead(200, {
-      'content-type': 'image/png',
-      'content-length': tile.bytes.length,
-      'cache-control': 'public, max-age=86400, immutable',
-    })
-    res.end(req.method === 'HEAD' ? undefined : tile.bytes)
-    return
-  }
 
   // ARC-01. The RapidPro family, extracted to `src/routes/rapidpro.js`.
   const rapidProRoute = matchRapidProRoute(url.pathname)

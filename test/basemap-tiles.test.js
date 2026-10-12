@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, it } from 'node:test'
 import { clearRasterTileCache, loadPackTile, packTileTemplate, packTileUrl, upstreamTileUrl } from '../src/basemap-tiles.js'
+import { matchTileRoute } from '../src/routes/basemap-tiles.js'
 import { createServer } from '../src/server.js'
 import { JsonStore } from '../src/store.js'
 
@@ -79,6 +80,55 @@ describe('basemap tile proxy route', () => {
 			const res = await fetch(`${base}/api/v1/basemap/tiles/carto/6/64/31.png`)
 			assert.equal(res.status, 400)
 		})
+	})
+
+	// The matcher, called directly. The three tests above prove the route answers
+	// through the server; this one proves the *shape* the rest of the surface
+	// depends on — that the two spellings of the source are two paths, and that a
+	// non-GET is refused here rather than reaching a fetch. It is also what keeps
+	// the module reachable from the suite (check-module-coverage), which is the
+	// cheap half of the argument: a route module nobody imports is a route whose
+	// behaviour is asserted only through a server that might not dispatch it.
+	it('parses both sources into their own path, and refuses every other verb', () => {
+		assert.deepEqual(matchTileRoute('/api/v1/basemap/tiles/osm/6/38/31.png'),
+			{ kind: 'basemap-tile', source: 'osm', z: 6, x: 38, y: 31 })
+		assert.deepEqual(matchTileRoute('/api/v1/basemap/tiles/carto/6/38/31.png'),
+			{ kind: 'basemap-tile', source: 'carto', z: 6, x: 38, y: 31 })
+		// Coordinates are numbers, not the strings the regex captured: a handler
+		// that range-checked `'6' > 2 ** '38'` would coerce and pass anything.
+		assert.equal(typeof matchTileRoute('/api/v1/basemap/tiles/osm/6/38/31.png').z, 'number')
+		// The closed source set. `stamen` is not a malformed tile, it is not a route.
+		assert.equal(matchTileRoute('/api/v1/basemap/tiles/stamen/6/38/31.png'), null)
+		assert.equal(matchTileRoute('/api/v1/basemap/tiles/osm/6/38/31.jpg'), null, 'the extension is part of the route')
+		assert.equal(matchTileRoute('/api/v1/basemap/tiles/osm/6/38/31.png', 'POST'), null)
+		assert.equal(matchTileRoute('/api/v1/basemap/tiles/osm/6/38/31.png', 'head'), null, 'HEAD arrives as GET; the pipeline rewrites it')
+	})
+
+	it('answers without reading the store, on a store too small to read', async () => {
+		// The route reads no collection, and it sat below `store.read` for its
+		// whole life — so every pan of the map materialised the store to answer a
+		// request that reads none of it. The budget here is 10 rows against 100, so
+		// a materialising read refuses *by name* rather than quietly succeeding on
+		// a fixture small enough to hide the cost. Same instrument
+		// `test/streaming-export.test.js` uses for the export family, for the same
+		// reason: the route's own guarantee is the only thing that can be asserted
+		// about a cost, and a store that refuses to be read is how you assert it.
+		//
+		// A 400 rather than a 200 on purpose: the coordinate is out of range, so
+		// the answer is this route's own refusal and provably not a store read
+		// that happened to be cheap. Reaching the range check at all is the proof.
+		const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-tile-budget-'))
+		const store = new JsonStore(path.join(dir, 'store.json'), { readRowBudget: 10 })
+		await store.merge({ hazard_events: Array.from({ length: 100 }, (_, i) => ({ id: `h${i}` })) })
+		const listener = createServer({ store }).listen(0)
+		const base = `http://127.0.0.1:${listener.address().port}`
+		try {
+			const res = await fetch(`${base}/api/v1/basemap/tiles/osm/99/999999/999999.png`)
+			assert.equal(res.status, 400, 'the tile route must not read the store it does not use')
+		} finally {
+			await new Promise((resolve) => listener.close(resolve))
+			await fs.rm(dir, { recursive: true, force: true })
+		}
 	})
 })
 

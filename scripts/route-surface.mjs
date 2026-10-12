@@ -19,8 +19,18 @@
  * Three syntactic families, all read:
  *
  *   1. literal `pathname === '…'` conditions, in any source file;
- *   1b. inline `.match(/…/)` inside the dispatcher body;
+ *   1b. inline regex matches inside the dispatcher body, in **both** spellings —
+ *       `pathname.match(/…/)` and `/<literal>/.exec(url.pathname)`;
  *   2. named `match*Route` matchers, paired to their `handle*Route` handlers.
+ *
+ * Family 1b reads both spellings because it read only the first until the tile
+ * proxy proved the cost. `/api/v1/basemap/tiles/{osm,carto}/{z}/{x}/{y}.png` is
+ * written `/<literal>/.exec(url.pathname)`, is fetched by the console on every
+ * map render, and was served, called and documented nowhere — while
+ * `check-openapi` reported "174 documented, 174 served" and passed, because a
+ * route both sides miss is a route the set comparison cannot see. The mirror of
+ * ARC-02's finding: not a route documented and unserved, but one served and
+ * *invisible to the parser that would have demanded it be documented*.
  *
  * What is *not* modelled is method gating: a handler serving GET on the list and
  * POST on the detail is modelled as serving both methods on both paths. Callers
@@ -58,8 +68,14 @@ export const openapiPath = (raw) => raw.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, '{
  * a group, and `(approve|reject)` is two. Reading either as a parameter yields
  * `/api/v1/report-templates/{id}/{id}` — a route that does not exist — and, in
  * the other direction, silently hides the two that do. So: a body containing a
- * character class or `.+` is a parameter; anything else is a literal, expanded
- * once per alternative because OpenAPI has no way to express a choice.
+ * character class, `\d`, `\w` or `.+` is a parameter; anything else is a literal,
+ * expanded once per alternative because OpenAPI has no way to express a choice.
+ *
+ * `\d` is in that set because the tile proxy spells its coordinates
+ * `(\d+)/(\d+)/(\d+)`, and reading them as literals produced the path
+ * `/api/v1/basemap/tiles/osm/d+/d+/d+.png` — a route that exists in no document
+ * and no server, reported as a missing one. A parameter that renders as its own
+ * regex is a finding nobody can act on.
  */
 export function resolveGroups(source) {
   const variants = [source]
@@ -70,7 +86,7 @@ export function resolveGroups(source) {
       const match = variants[i].match(/\(([^()]*)\)/)
       if (!match) continue
       const body = match[1]
-      if (body.includes('[') || body.includes('.+')) {
+      if (body.includes('[') || body.includes('.+') || body.includes('\\d') || body.includes('\\w')) {
         variants[i] = variants[i].replace(match[0], '{id}')
       } else {
         const alternatives = body.split('|')
@@ -119,13 +135,33 @@ export function patternToPaths(literal) {
       .split('\u0000')[0]
       .trim()
     if (!base.startsWith('/')) continue
-    paths.push(base)
+    paths.push(uniqueParams(base))
     for (const inner of optionals) {
       const isParam = inner.includes('[') || inner.includes('.+')
       paths.push(`${base}/${isParam ? '{id}' : inner.replace(/[()?:]/g, '')}`)
     }
   }
   return paths
+}
+
+/**
+ * Name repeated parameters so a path can hold more than one.
+ *
+ * Every parameter is `{id}`, which is right for a path with one and illegal in
+ * OpenAPI for a path with two — a path item may not declare the same parameter
+ * name twice. The tile proxy is the first route here with four
+ * (`/basemap/tiles/{source}/{z}/{x}/{y}.png`), so it is the first that needed
+ * this: the parser produced `{id}/{id}/{id}/{id}`, which is neither a path a
+ * document may declare nor a path a client generator can name.
+ *
+ * The scheme is positional and the first keeps its name, so every existing
+ * single-parameter path is byte-identical: `{id}`, then `{id2}`, `{id3}`, … A
+ * document written against this must use the same spelling, which the
+ * comparison enforces.
+ */
+function uniqueParams(pathShape) {
+  let n = 0
+  return pathShape.replace(/\{id\}/g, () => (n++ === 0 ? '{id}' : `{id${n}}`))
 }
 
 /**
@@ -229,6 +265,12 @@ export function servedRoutePaths(root) {
   for (const m of dispatcherBody.matchAll(/\.match\((\/.+?\/[gimsuy]*)\)/g)) {
     for (const route of patternToPaths(m[1].slice(1, m[1].lastIndexOf('/')))) addPath(route)
   }
+  // The other spelling: the literal first, `.exec` after. `/(\/a\/b)/.exec(url.pathname)`
+  // is the same statement as `url.pathname.match(/\/a\/b/)` and was invisible to
+  // the line above — the gap that hid the tile proxy.
+  for (const m of dispatcherBody.matchAll(/(\/.+?\/[gimsuy]*)\.exec\(\s*(?:url|req)\.pathname\s*\)/g)) {
+    for (const route of patternToPaths(m[1].slice(1, m[1].lastIndexOf('/')))) addPath(route)
+  }
 
   // ── Family 2: match*Route dispatchers ─────────────────────────────────────
   // The pairing is by name (`matchFooRoute` ↔ `handleFooRoute`), so a new family
@@ -254,6 +296,18 @@ export function servedRoutePaths(root) {
       // trailing segment is written `(?:\/([^/]+))?` — the group inside it closes
       // before the literal does.
       for (const m of matcherBody.matchAll(/\.match\((\/.+?\/[gimsuy]*)\)/g)) {
+        for (const route of patternToPaths(m[1].slice(1, m[1].lastIndexOf('/')))) matcherPaths.add(route)
+      }
+      // The other spelling, read here for the same reason family 1b reads it:
+      // `/(\/a\/b)/.exec(pathname)` is the same statement as
+      // `pathname.match(/\/a\/b/)`. Family 1b learned it when the tile proxy —
+      // written that way inline in the dispatcher — turned out to be invisible
+      // to every check at once; a family that then *moves* out of the dispatcher
+      // into a module hits the identical gap in family 2, which is how this line
+      // was found. Both spellings, both families, or the blindness just changes
+      // address.
+      for (const m of matcherBody.matchAll(/(\/.+?\/[gimsuy]*)\.exec\(([^)]*)\)/g)) {
+        if (!m[2].includes('pathname')) continue
         for (const route of patternToPaths(m[1].slice(1, m[1].lastIndexOf('/')))) matcherPaths.add(route)
       }
 

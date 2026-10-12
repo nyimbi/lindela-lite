@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 526-line function with 31
+generated from, and ENH-60's dispatcher is still one 511-line function with 32
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1081,17 +1081,34 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > scopes, and the client's endpoint list — and the client's 29 endpoints are
 > *call sites*, not declarations, so generating them means rewriting the callers.
 > That is the honest reason it is still partial rather than an oversight.
+>
+> **2026-10-12, and the blind spot had a twin.** The paragraph above is about the
+> *documented-and-unserved* direction. Chasing the tile proxy found the mirror:
+> a route served by the server, called by the console on every map render, and
+> absent from every table — invisible to `check-openapi` from both sides at once,
+> so the check reported a clean `174 documented, 174 served` straight over it. The
+> cause was a spelling, `/(\/a\/b)/.exec(url.pathname)` against the
+> `pathname.match(/…/)` the parser read, and the consequence was larger than a
+> missing document entry: the route also sat *below* the dispatcher's store read,
+> so every tile of every pan materialised the whole store to answer a request that
+> reads no collection. The parser reads both spellings in both families now, the
+> family is `src/routes/basemap-tiles.js` above the read, and the table named it
+> unmapped the moment the parser could see it. Recorded in full under ARC-02; the
+> lesson for this entry is that the cross-checks are only as wide as the parser,
+> and a route the parser cannot read is a route no check built on it can find —
+> which is the argument for one declaration rather than five tables, made from the
+> other end.
 
 **ENH-60 — Router extraction.** `handleApiRequestInContext` is 1,597 lines
 (`src/server.js:763–2360`) and entangles routing, auth, validation, business logic
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Thirty-one families are out; the dispatcher is not
+> **PARTIAL — 2026-10-12. Thirty-two families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 526 lines and `server.js` 5,603 →
-> 2,117. (The count is *matchers*, not files: 30 modules under `src/routes/`, one
+> set of blocks. The dispatcher went 1,903 → 511 lines and `server.js` 5,603 →
+> 2,102. (The count is *matchers*, not files: 31 modules under `src/routes/`, one
 > of which — `alerting.js` — carries two, `matchAlertingRoute` and the
 > non-exported `matchTriggeringRoute`. An earlier version of this line recorded
 > the file count as the matcher count, so it read one high for a day — the same
@@ -1377,6 +1394,31 @@ testable in isolation. This unblocks every other substrate item.
 > sibling to join, which is the argument for ENH-59 rather than for extracting
 > them. The fourth literal, `/api/v1/rapidpro/field-report`, is still the auth
 > precondition rather than a route.
+>
+> **The tile proxy followed on 2026-10-12, and it is the one that paid for
+> itself.** `src/routes/basemap-tiles.js` is the thirty-second family — the raster
+> basemap proxy (ADR-013), 1 route over 2 literal paths because the source is an
+> alternation in the route regex. What makes it more than a move is where the
+> block *was*: below `const data = await store.read(readRequest)`, in a route that
+> reads no collection at all. Every tile of every pan materialised the whole store
+> — the map is the console's default view — and it had done so since it shipped.
+> The dispatcher went 526 → 511 lines and `server.js` 2,117 → 2,102; the family is
+> dispatched above the read beside the tile-pack pair, which was hoisted for the
+> same reason under ENH-42.
+>
+> It was found by widening the route-surface parser, not by reading the
+> dispatcher: the route was written `/<literal>/.exec(url.pathname)`, a spelling
+> the parser did not read, so it was absent from the manifest table, the document
+> and every check at once. The moment the parser read the spelling,
+> `test/route-manifests.test.js` reported it unmapped and the missing document
+> entry followed. Recorded in full under ARC-02; the extraction is ENH-60's, the
+> finding is ARC-02's, and neither would have happened without the other.
+>
+> **Seven inline literal route conditions remain**, and the count in the
+> paragraph above is now stale by one for the ordinary reason: it was measured
+> before this move. The figure here is read from the dispatcher's own line range
+> rather than carried forward — the same correction the 17-conditions figure
+> needed, and the reason the number is stated with how it was measured.
 
 **ENH-61 — Streaming cursor reads.** `PostgresStore.read()` issues
 `SELECT collection, body FROM lite_records WHERE …` with no `LIMIT`

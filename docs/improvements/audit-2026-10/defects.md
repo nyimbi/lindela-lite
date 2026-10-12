@@ -1363,6 +1363,76 @@ block used, so the diff is the old body verbatim. The rule is therefore *is ther
 a family for it to be the missing member of* — not *is the body small* — and the
 eight conditions that remain answer no to it.
 
+**The mirror of this entry, found 2026-10-12: a route served by the server,
+called by the client, and absent from every table at once.** Everything above
+concerns the *documented-and-unserved* direction — a path in the spec that no
+matcher answers. The raster basemap tile proxy (ADR-013) is the other one. It is
+served at `src/server.js` and documented nowhere, and it was invisible to
+`check-openapi` from *both* sides at the same time, which is why the check
+reported a clean `174 documented, 174 served` over it.
+
+The reason is a spelling. The route was written
+
+    /^\/api\/v1\/basemap\/tiles\/(osm|carto)\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(url.pathname)
+
+and `scripts/route-surface.mjs` read two families: literal `pathname === '…'`
+conditions, and `.match(/…/)` *inside a named `match*Route` function*. The
+literal-first `.exec` spelling is the same statement as
+`pathname.match(/…/)` — `RegExp.prototype.exec` and `String.prototype.match` are
+the two ways to ask the identical question — and the parser read neither form of
+it inline in the dispatcher. So the route was served, and the check that exists
+to catch exactly this saw nothing on either side: not as undocumented (it never
+parsed it) and not as a ghost (it was never in the spec to begin with). A blind
+spot that hides a route from both directions is the one shape a two-way check
+cannot catch, because both of its comparisons are empty over the same element.
+
+The fix is in two parts, and the second is the one that found a live defect:
+
+  1. `route-surface.mjs` reads both spellings, in both families — the inline
+     dispatcher body and a moved-out `match*Route` body. Widening only the first
+     would have relocated the blindness rather than removing it: the extraction
+     below moves the regex into a module, where family 2 reads the body, and a
+     family-2-only reader would have lost the route a second time. Both
+     spellings, both families, or the gap just changes address.
+  2. `test/route-manifests.test.js` then reported it as **unmapped** — a route
+     absent from `ROUTE_MANIFESTS`, `WIDE_ROUTES` and the recorded remainder,
+     which is the "silently expensive" state that table exists to make loud.
+
+The defect that fix exposed is the one worth recording. The tile route reads **no
+collection at all** — it fetches one PNG from a public tile service — and it was
+dispatched *below* `const data = await store.read(readRequest)`. So every pan of
+the map, every tile at every zoom, materialised the entire store: every
+collection, every row, to answer a request that reads none of it. The map is the
+console's default view. This is the ENH-42 cost the tile-pack family was hoisted
+above the read to avoid, in a route that had been doing it since it shipped, and
+it was invisible for the same reason the route was: a whole-store read costs only
+bandwidth, and nothing in the tree was watching.
+
+The family is now `src/routes/basemap-tiles.js`, dispatched above the store read
+beside the tile-pack pair, and declared in `WIDE_ROUTES` with its reason — wide is
+the vocabulary's word for "not measured against a collection set", the same word
+`GET /api/v1/health` uses. Both paths are documented in `docs/openapi.yaml`,
+because the source is a literal alternation in the route regex and this document
+spells an alternation as one path per branch, the way `alert-events/{id}/approve`
+and `/reject` are two entries rather than one with a `{decision}` parameter.
+
+Canaried both ways. Moving the dispatch back below the store read fails
+`test/basemap-tiles.test.js`'s budget test — a store with a 10-row
+`readRowBudget` and 100 rows, where a materialising read refuses *by name* rather
+than succeeding quietly on a fixture too small to show the cost; the instrument is
+the one `test/streaming-export.test.js` uses for the same class. And removing the
+new module from `WIDE_ROUTES` restores the unmapped-route failure with both paths
+named.
+
+The general shape: **a route invisible to the parser is a route invisible to every
+check built on the parser**, and there is no second opinion to catch it, because
+the parser is the single source of the route surface for the document comparison,
+the manifest table, the envelope gate and the method gate at once. `check-openapi`
+prints its coverage precisely so this is checkable — the line `NOT PARSED (no
+coverage claimed): matchTileRoute` is what named the second half of this bug, and
+a run that prints no such line is the only evidence that the surface was read at
+all.
+
 ### ARC-03 — HIGH — `/api/v1/demo/seed` imports `scripts/seed-demo.mjs` at request time
 `src/server.js:1269`. Production `src/` depends on `scripts/` — inverted layering.
 The 75 KB seed script is bundled into the runtime path; an import error there is a
