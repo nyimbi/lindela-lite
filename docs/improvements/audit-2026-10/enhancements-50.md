@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 1,112-line function with 22
+generated from, and ENH-60's dispatcher is still one 993-line function with 23
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1087,11 +1087,11 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Twenty-two families are out; the dispatcher is not
+> **PARTIAL — 2026-10-12. Twenty-three families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 1,112 lines and `server.js` 5,603 →
-> 3,001.
+> set of blocks. The dispatcher went 1,903 → 993 lines and `server.js` 5,603 →
+> 2,882.
 > ENH-80 added the eighteenth family (`src/routes/federation.js`, 7 paths) and
 > moved the line count up rather than down: that family is new surface, not an
 > extraction. ENH-60 then took the **hazard-risk family**
@@ -1105,6 +1105,20 @@ testable in isolation. This unblocks every other substrate item.
 > series, the per-district weather roll-up and the latest modelled discharge per
 > region, which are the three routes a *partner* reads rather than the browser,
 > so the band has to travel with the number in the JSON the overlay never sees.
+> The **upload family** (`src/routes/upload.js`, 1 path, 2 routes, 124 lines)
+> followed — the column contract a client reads before it sends anything, and the
+> one validator all three content types converge on. It is the largest single
+> block taken out so far and the one where a partial write is most tempting, so
+> the three rules that prevent one now live together: a failed batch writes
+> nothing, a dry run writes no rows but still logs what it would have done, and a
+> malformed multipart body is a 400 rather than a 500.
+>
+> Its matcher was written first as a guard (`if (pathname !== '…') return null`)
+> and `check-openapi` refused it: the gate parses the positive `===` form only, so
+> a negated one is a family it reads as *no paths*, which passes the comparison by
+> contributing nothing. That is the quietest failure the check has, and it is the
+> second time this entry has recorded it — the matcher was rewritten positively
+> and the gate now reads `parsed matchUploadRoute → handleUploadRoute: 1 paths`.
 >
 > That last move surfaced a live defect rather than only relocating code. The
 > discharge roll-up's same-day tiebreak read `existing.date`, a field the object
@@ -1128,13 +1142,14 @@ testable in isolation. This unblocks every other substrate item.
 > `check-openapi` reads each family as a third route source with no second list to
 > keep in step — `parsed matchRiskRoute → handleRiskRoute: 6 paths`, `parsed
 > matchDistrictRoute → handleDistrictRoute: 5 paths`, `parsed matchAmbientRoute →
-> handleAmbientRoute: 3 paths`, still 174 documented and 174 served.
+> handleAmbientRoute: 3 paths` and `parsed matchUploadRoute → handleUploadRoute: 1
+> paths`, still 174 documented and 174 served.
 >
-> What is left is not more of the same. The dispatcher still holds **27 inline
+> What is left is not more of the same. The dispatcher still holds **25 inline
 > literal route conditions**, and they are one-off routes whose bodies *are* the
-> business logic: `routing/plan`, `analytics/bias-correct`, `upload` (111 lines on
-> its own), `demo/seed`, `maintenance/apply-retention`, `forms`, `service-assets`,
-> and the liveness pair remain. Extracting those is a move only
+> business logic: `routing/plan`, `analytics/bias-correct`, `demo/seed`,
+> `maintenance/apply-retention`, `forms`, `service-assets`, and the liveness pair
+> remain. Extracting those is a move only
 > after ENH-59 has a route table to declare them in — otherwise it is relocating
 > branches and calling it architecture. The ~15-module target is reached when the
 > literal conditions are declarations.
