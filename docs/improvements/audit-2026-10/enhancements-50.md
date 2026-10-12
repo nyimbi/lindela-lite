@@ -34,7 +34,7 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 three tables checked against each other and no single declaration they are
-generated from, and ENH-60's dispatcher is still one 906-line function with 25
+generated from, and ENH-60's dispatcher is still one 863-line function with 26
 families out of it. Reading a PARTIAL as done is the error this table exists to
 prevent.
 
@@ -1087,11 +1087,11 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
-> **PARTIAL — 2026-10-12. Twenty-four families are out; the dispatcher is not
+> **PARTIAL — 2026-10-12. Twenty-six families are out; the dispatcher is not
 > gone.** Every route *family* now lives under `src/routes/` with its own
 > matcher, its own test file, and a property that makes it a family rather than a
-> set of blocks. The dispatcher went 1,903 → 906 lines and `server.js` 5,603 →
-> 2,779.
+> set of blocks. The dispatcher went 1,903 → 863 lines and `server.js` 5,603 →
+> 2,509.
 > ENH-80 added the eighteenth family (`src/routes/federation.js`, 7 paths) and
 > moved the line count up rather than down: that family is new surface, not an
 > extraction. ENH-60 then took the **hazard-risk family**
@@ -1128,6 +1128,25 @@ testable in isolation. This unblocks every other substrate item.
 > family in the same commit and a move that also refactors is a move nobody can
 > review.
 >
+> The **compute family** (`src/routes/compute.js`, 4 routes) closed the day's
+> extractions: the four routes that run a model over the request's own
+> arguments — `flood-depth` at a point or over a box, `routing/plan` between two
+> service assets, `analytics/bias-correct` over supplied observations and
+> stations, and `alerts/evaluate` over the rule engine. They are one family
+> because they share a failure mode rather than a subject: the *input* is the
+> thing most likely to be wrong, and a wrong input does not throw — it returns a
+> confident answer to a question nobody asked. So the module is mostly refusals,
+> and the refusals are the assertions. Its matcher is deliberately asymmetric:
+> the two POST-only routes are narrowed, because for them a wrong verb is
+> genuinely "no such route", while `flood-depth` and `alerts/evaluate` match on
+> *any* verb because both handlers answer a wrong verb with a documented `405`
+> and a narrowed matcher would turn that into a `404` — a different statement
+> about a different thing. Four orphans came out with the move:
+> `validateRouteEndpoints`, `parseLevels`, the three `bandedDepth*` helpers and
+> `FLOOD_BAND_TABLE`, plus the four imports that existed only for them
+> (`planDelivery`, `flood-depth.js`, `downscaling.js`, and the ARC-05
+> `flood-bands.js` import whose comment now lives in the module).
+>
 > Its matcher was written first as a guard (`if (pathname !== '…') return null`)
 > and `check-openapi` refused it: the gate parses the positive `===` form only, so
 > a negated one is a family it reads as *no paths*, which passes the comparison by
@@ -1158,14 +1177,15 @@ testable in isolation. This unblocks every other substrate item.
 > keep in step — `parsed matchRiskRoute → handleRiskRoute: 6 paths`, `parsed
 > matchDistrictRoute → handleDistrictRoute: 5 paths`, `parsed matchAmbientRoute →
 > handleAmbientRoute: 3 paths`, `parsed matchUploadRoute → handleUploadRoute: 1
-> paths` and `parsed matchFormsRoute → handleFormsRoute: 3 paths`, still 174
-> documented and 174 served.
+> paths`, `parsed matchFormsRoute → handleFormsRoute: 3 paths` and `parsed
+> matchComputeRoute → handleComputeRoute: 4 paths`, still 174 documented and 174
+> served.
 >
-> What is left is not more of the same. The dispatcher still holds **21 inline
+> What is left is not more of the same. The dispatcher still holds **17 inline
 > literal route conditions**, and they are one-off routes whose bodies *are* the
-> business logic: `routing/plan`, `analytics/bias-correct`, `demo/seed`,
-> `maintenance/apply-retention`, `service-assets`, and the liveness pair
-> remain. Extracting those is a move only
+> business logic: `demo/seed`, `maintenance/apply-retention`, `service-assets`,
+> the sources/connectors/outbox group, and the liveness pair remain. Extracting
+> those is a move only
 > after ENH-59 has a route table to declare them in — otherwise it is relocating
 > branches and calling it architecture. The ~15-module target is reached when the
 > literal conditions are declarations.
