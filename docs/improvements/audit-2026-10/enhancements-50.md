@@ -1445,11 +1445,20 @@ testable in isolation. This unblocks every other substrate item.
 > entry followed. Recorded in full under ARC-02; the extraction is ENH-60's, the
 > finding is ARC-02's, and neither would have happened without the other.
 >
-> **Seven inline literal route conditions remain**, and the count in the
-> paragraph above is now stale by one for the ordinary reason: it was measured
-> before this move. The figure here is read from the dispatcher's own line range
-> rather than carried forward — the same correction the 17-conditions figure
-> needed, and the reason the number is stated with how it was measured.
+> **Three inline literal route conditions remain**, and the figure is measured
+> rather than carried forward: reading `handleApiRequestInContext`'s own body
+> through `route-surface.mjs`'s `functionBody` and matching `pathname === '…'`
+> returns exactly three — `/api/v1/demo/seed`,
+> `/api/v1/maintenance/apply-retention` and `/api/v1/rapidpro/field-report`.
+> (Eight literal conditions exist in `server.js` as a whole; the other five —
+> `/metrics`, `/api/v1/metrics`, `/stac/catalog.json`, `/docs`, and one more —
+> are outside the dispatcher, in the static-file and metrics blocks.)
+>
+> This paragraph said *seven* an hour ago, written from the count the previous
+> move left behind rather than from the file. That is the fourth time in this
+> entry that a number was carried forward and wrong, which is why the figure now
+> comes with the command that produces it. A count nobody re-measures is a
+> sentence, not a measurement.
 
 **ENH-61 — Streaming cursor reads.** `PostgresStore.read()` issues
 `SELECT collection, body FROM lite_records WHERE …` with no `LIMIT`
