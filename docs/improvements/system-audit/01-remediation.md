@@ -253,6 +253,37 @@ R-01, R-02, R-06, R-07, R-08, R-16, R-17 (`mergeWatermarkForward`), R-19
 (async-local fetch recording), R-20 (`next_attempt_at` consulted), R-23, R-24,
 R-26, R-28, R-29, R-41, R-42, R-44, R-67.
 
+### Closed but never marked — found 2026-10-13
+
+The row tables above carry the audit's own text and were never updated as the
+fixes landed, so a row with no closure marker is not evidence the defect is open.
+Sixteen were re-checked against the tree on 2026-10-13 and each has both an
+implementation that names the id and a test that fails without it. They are
+recorded here rather than by editing the audit's rows, because the row is a
+statement about the tree *as audited* and rewriting it would destroy the only
+record of what was found. WEB-04 was the same shape one layer down: the fix had
+shipped and only the index had not caught up.
+
+| id | what it was | the guard that fails without it |
+| --- | --- | --- |
+| R-05 | A run's records lived in RAM until every source finished; now committed per source inside the loop, with a skip written as a run | `src/ingestion.js:496`; `test/ingestion-silence.test.js` |
+| R-32 | `upsertCollection` shipped every `payload_hash` in a collection to Node to build a Set; it now asks only about the batch's hashes | `src/postgres-store.js:936`; `test/store-cost.test.js` |
+| R-35 | The two adapters returned different orders; `sortRecords` is applied at read time on both | `src/store.js:752`; `test/store-cost.test.js` |
+| R-36 | `CAPTURE_COLLECTION` was outside `SCHEMA`, so `assertDeclaredCollections` threw on capture; `payload_captures` is declared | `src/store.js:232`; `test/store-cost.test.js` |
+| R-37 | Metric label cardinality was unbounded; `MAX_METRIC_SERIES` evicts and counts the eviction | `src/observability.js:169`; `test/observability-bounds.test.js` |
+| R-38 | `histogram()` retained every sample forever and re-walked the array per scrape; a bounded trailing window of 20, bucketed at observation time | `src/observability.js:284`; `test/observability-bounds.test.js` |
+| R-39 | Label-less histograms rendered invalid Prometheus text (`''.slice(0,-1)`); the label string is built, not sliced | `src/observability.js:364`; `test/observability-bounds.test.js` |
+| R-43 | The assertion report was computed and dropped; it is persisted | `src/ingestion.js:450`; `test/ingestion-silence.test.js` |
+| R-45 | A connector returning 200 with an empty body was `quiet` forever; a consecutive-zero-run streak makes it `stale` | `src/freshness.js:74`; `test/freshness-verdicts.test.js` |
+| R-47 | Outbox retries had no dead-letter surface; the rollup and `/api/v1/outbox` expose it | `src/outbox.js:507`; `test/outbox-route-module.test.js` |
+| R-51 | Audit-chain verification was on-demand only; `/ready` reports `audit.valid` and fails closed, and `auditChainWarning` logs it once per broken head | `src/routes/liveness.js:220`; `test/liveness-route-module.test.js` |
+| R-55 | `logger` had no `debug`, so `LINDELA_LITE_LOG_LEVEL=debug` changed nothing; the method exists | `src/observability.js:99`; `test/observability-bounds.test.js` |
+| R-56 | `hidden` was defeated by an author `display` rule on the console chrome | `test/web-hidden-display.test.js` |
+| R-64 | The alert rail asserted "all rules quiet" while the same screen said nothing had been evaluated | `test/web-alert-rail-honesty.test.js` |
+| R-87 | `computePopulationAtRisk` returned 0 for a null population; it returns null | `src/analytics/metrics.js:113`; `test/numeric-veracity.test.js` |
+| R-89 | `pearson`/`spearman` filtered the two series independently and zipped by index | `src/agreement.js:47`; `test/agreement-alignment.test.js` |
+| R-90 | A null correlation was read as agreeing (`?? 0` / `?? 1`) | `src/agreement.js:393`; `test/agreement-alignment.test.js` |
+
 ### Open, with the measurement or the blocker
 
 | id | why it is still open |
