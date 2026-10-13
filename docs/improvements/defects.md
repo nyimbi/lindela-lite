@@ -525,9 +525,11 @@ everything.
   `'rejected'`/`'cancelled'`, but `ALERT_EVENT_STATUSES` (`src/schema.js:127`) is
   `open`/`acknowledged`/`resolved`. Rejected alerts keep publishing as live
   alerts to national systems.
-- **ALERT-02 — The CAP endpoint has no approval gate.** `src/server.js:1649-1661`
-  renders and serves CAP without the approval check that the SMS path enforces at
-  `:1582`, despite `README.md` committing to human review of high-impact actions.
+- **ALERT-02 — The CAP endpoint has no approval gate.** The CAP route (then
+  `src/server.js:1649-1661`; it moved to `src/routes/alerting.js`) renders and <!-- line-drift-ok: quoted as it was before the move -->
+  serves CAP without the approval check that the SMS path enforces (then
+  `src/server.js:1582`; now `src/routes/rapidpro.js`), despite `README.md`
+  committing to human review of high-impact actions.
 - **ALERT-03 — Alert suppression is a calendar bucket, not a rolling window.**
   `src/alerts.js:227-230`. **Reproduced:** evaluations two minutes apart across a
   bucket boundary produce buckets 248751 and 248752, hence a duplicate alert.

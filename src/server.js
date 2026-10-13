@@ -11,7 +11,6 @@ import { enforceAuthGate } from './routes/auth-gate.js'
 import { corsResponseHeaders, isPreflight, preflightResponse } from './cors.js'
 import { ERROR_CODES } from './errors.js'
 import { logger, metrics, timer, runWithRequestId } from './observability.js'
-import { refreshAnalytics } from './analytics.js'
 import { evaluateAlertRules } from './alerts.js'
 import {
   runDueIngestionSchedules,
@@ -29,41 +28,11 @@ import { executeTriggerProtocols } from './protocols.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { collectionsForRequest, needsHistory } from './route-manifests.js'
 import { matchStacRoute, matchOgcRoute, handleStacRoute } from './routes/stac.js'
+import { ROUTE_FAMILIES, dispatchFamily } from './route-families.js'
 import { emit, emitMany, dispatchPending } from './outbox.js'
 import { createVintageIndex } from './vintage.js'
-import { matchExportRoute, handleExportRoute } from './routes/exports.js'
-import { matchLivenessRoute, handleLivenessRoute } from './routes/liveness.js'
-import { matchAuthInfoRoute, handleAuthInfoRoute } from './routes/auth-info.js'
-import { matchTilePackRoute, handleTilePackRoute } from './routes/tile-packs.js'
-import { matchKpiRoute, handleKpiRoute } from './routes/kpi.js'
-import { matchMaintenanceRoute, handleMaintenanceRoute } from './routes/maintenance.js'
-import { matchFieldSignalRoute, handleFieldSignalRoute } from './routes/field-signals.js'
-import { matchExposureRoute, handleExposureRoute } from './routes/exposure.js'
-import { matchDerivedRoute, handleDerivedRoute } from './routes/derived.js'
-import { matchOperationalRoute, handleOperationalRoute } from './routes/operational.js'
-import { matchSnapshotRoute, handleSnapshotRoute } from './routes/snapshots.js'
-import { matchProvenanceRoute, handleProvenanceRoute } from './routes/provenance.js'
-import { matchAlertingRoute, handleAlertingRoute } from './routes/alerting.js'
-import { matchWebhookRoute, handleWebhookRoute } from './routes/webhooks.js'
-import { matchFederationRoute, handleFederationRoute } from './routes/federation.js'
-import { matchOutboxRoute, handleOutboxRoute } from './routes/outbox.js'
-import { matchRiskRoute, handleRiskRoute } from './routes/risk.js'
-import { matchDistrictRoute, handleDistrictRoute } from './routes/districts.js'
-import { matchAmbientRoute, handleAmbientRoute } from './routes/ambient.js'
-import { matchEventsRoute, handleEventsRoute } from './routes/events.js'
-import { matchUploadRoute, handleUploadRoute } from './routes/upload.js'
-import { matchFormsRoute, handleFormsRoute } from './routes/forms.js'
-import { matchComputeRoute, handleComputeRoute } from './routes/compute.js'
 import { runFederationSync } from './federation-peers.js'
-import { matchCatalogueRoute, handleCatalogueRoute } from './routes/catalogue.js'
-import { matchScenarioRoute, handleScenarioRoute } from './routes/scenarios.js'
-import { matchIngestionRoute, handleIngestionRoute } from './routes/ingestion.js'
-import { matchRapidProRoute, handleRapidProRoute } from './routes/rapidpro.js'
-import { matchReportingRoute, handleReportingRoute, runDueReportSchedules } from './routes/reporting.js'
-import { matchParametricRoute, handleParametricRoute } from './routes/parametric.js'
-import { matchChwRoute, handleChwRoute } from './routes/chw.js'
-import { matchWorkflowRoute, handleWorkflowRoute } from './routes/workflows.js'
-import { matchTileRoute, handleTileRoute } from './routes/basemap-tiles.js'
+import { runDueReportSchedules } from './routes/reporting.js'
 import { assertSafeWebhookUrl } from './webhooks.js'
 import { createRequestRing } from './observability.js'
 
@@ -1040,322 +1009,40 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   }
   req.__auth = auth
 
-  // ENH-60. The liveness family, extracted to `src/routes/liveness.js`: `/health`
-  // ("is this process running") and `/ready` ("can it serve a request right
-  // now"). Dispatched above the store read, where the `/ready` block was, so the
-  // order the dispatcher tries its routes in is unchanged.
+  // ENH-60 / ENH-59. The dispatch table. `src/route-families.js` declares every
+  // family — its matcher, its handler, the context keys it is handed, whether its
+  // matcher takes the verb, whether its handler is async, and which side of the
+  // store read it sits on. The thirty-two `match`/`handle` blocks that used to be
+  // written out here were that same declaration written as statements; the table
+  // is now the one place they are kept, and `test/dispatch-order.test.js` checks
+  // the order against a frozen recording rather than against this file.
   //
-  // The read is a thunk, and that is load-bearing rather than tidy. The two
-  // routes sat on opposite sides of `const data = await store.read(...)`:
-  // `/ready` above it — its whole point is that it probes the store with one
-  // *scoped* read and must not materialise the store — and `/health` below it,
-  // because it reads `system_heartbeat` and counts the collections. Passing
-  // `data` directly to a single dispatch site put the binding in its own
-  // temporal dead zone and answered 500 on the liveness routes, which
-  // `check-route-methods` caught. The thunk keeps both properties exactly:
-  // `/ready` never calls it, `/health` gets the one read it had. It must sit
-  // below the `readRequest` declaration for the same reason.
-  //
-  // `withTimeout`, `pipelineIsHealthy` and `driverIntervalSeconds` are passed
-  // in rather than imported: all three live in this file, and importing them
-  // from a module this file imports would be a cycle.
-  const livenessRoute = matchLivenessRoute(url.pathname)
-  if (livenessRoute && await handleLivenessRoute(livenessRoute, {
-    store, req, res, url, jsonResponse, loadData: () => store.read(readRequest),
-    withTimeout, pipelineIsHealthy, driverIntervalSeconds, appVersion: APP_VERSION, idempotency,
-  })) return
-
-  // ARC-01. The export family, extracted to `src/routes/exports.js`, dispatched
-  // *before* the store read rather than after it.
-  //
-  // The order is the whole point of `export.ndjson`. That route walks the store
-  // with `iterateRecords` so its peak heap is one batch regardless of table size
-  // — and the dispatcher's read below materialises every collection before any
-  // handler runs. Placed after it, the one route built for the store that does
-  // not fit in memory 503s at SCL-01's read-row budget before its first byte.
-  // That is not a hypothetical; it is what the route did until the read was
-  // hoisted above it, and the test at `test/streaming-export.test.js:178` is the
-  // one that caught this extraction reintroducing it.
-  //
-  // So the family gets `loadData` — the read, as a thunk — and calls it only
-  // where the route genuinely needs the whole set: `export.csv` and
-  // `export.geojson` materialise and hash it, and the DHIS2 push defaults to
-  // `climate_observations`. The stream never calls it.
-  //
-  // `req.__auth` is stamped first because `export.csv` hands the authenticated
-  // caller to `filterRecords`; a route above that line would export the whole
-  // store to a partner-scoped token.
-  const exportRoute = matchExportRoute(url.pathname, req.method)
-  if (exportRoute && await handleExportRoute(exportRoute, {
-    store,
-    req,
-    res,
-    url,
-    jsonResponse,
+  // The families above the read run first. The split is a correctness property,
+  // not tidiness: `/ready` must not materialise the store, `export.ndjson`
+  // streams within SCL-01's read-row budget, and the two tile families read no
+  // collection. Each entry's note in `route-families.js` says why it is where it
+  // is. `loadData` is the read as a thunk, so the two families that need the
+  // whole set call it and the ones that do not never pay for it.
+  const familyCtx = {
+    store, req, res, url, auth, jsonResponse, checkWebhookUrl, idempotency,
+    requestRing, withTimeout, readRequestJson, evaluateAndPersistAlerts,
+    appVersion: APP_VERSION, pipelineIsHealthy, driverIntervalSeconds,
     vintageIndex: processVintageIndex,
     loadData: () => store.read(readRequest),
-  })) return
-
-  // ENH-42. The offline tile-pack family, extracted to `src/routes/tile-packs.js`.
-  // Dispatched above the store read because neither route reads the store: the
-  // plan route is arithmetic over a bbox, and the pack route fetches from the
-  // tile server the deployment is configured with. Reading every collection to
-  // answer "how many tiles is this bbox" is the same waste the export family was
-  // hoisted to avoid, one step less severe.
-  const tilePackRoute = matchTilePackRoute(url.pathname, req.method)
-  if (tilePackRoute && await handleTilePackRoute(tilePackRoute, { req, res, url, jsonResponse })) return
-
-  // ARC-01. The raster basemap tile proxy (ADR-013), extracted to
-  // `src/routes/basemap-tiles.js` and dispatched *here*, above the store read,
-  // where the tile-pack family beside it already sits.
-  //
-  // The route reads no collection, and it was below this line for as long as it
-  // existed — so every pan of the map materialised the whole store to answer a
-  // request that reads none of it. It went unseen because the route was written
-  // `/<literal>/.exec(url.pathname)`, a spelling `scripts/route-surface.mjs` did
-  // not read, which kept it out of every manifest, the document, and the checks
-  // at once. `test/route-manifests.test.js` found it the moment the parser
-  // learned the spelling, which is the whole argument for the table being
-  // measured rather than reviewed.
-  const tileRoute = matchTileRoute(url.pathname, req.method)
-  if (tileRoute && await handleTileRoute(tileRoute, { req, res, url, jsonResponse })) return
+  }
+  for (const family of ROUTE_FAMILIES) {
+    if (!family.pre) continue
+    if (await dispatchFamily(family, familyCtx)) return
+  }
 
   const data = await store.read(readRequest)
-
-  // ARC-01. The KPI family, extracted to `src/routes/kpi.js`. Dispatched here,
-  // after the store read, because these are ordinary reads — none of them is the
-  // reason the read order was reworked above, and `export.ndjson` is the only
-  // route in the surface that has to precede the read.
-  const kpiRoute = matchKpiRoute(url.pathname, req.method)
-  if (kpiRoute && await handleKpiRoute(kpiRoute, {
-    store, data, req, res, url, jsonResponse, requestRing,
-  })) return
-
-  // ARC-01. The field-signal family, extracted to `src/routes/field-signals.js`.
-  const fieldSignalRoute = matchFieldSignalRoute(url.pathname, req.method)
-  if (fieldSignalRoute && await handleFieldSignalRoute(fieldSignalRoute, {
-    store, data, req, res, url, jsonResponse,
-  })) return
-
-  // ARC-01. The exposure family, extracted to `src/routes/exposure.js`. Nine
-  // reads over seven paths whose roll-ups must describe the matched set rather
-  // than the page. Four of those paths had no verb test at all, so
-  // `DELETE /api/v1/road-access` answered 200 with the full listing while
-  // `docs/openapi.yaml` documented `get:` alone; the matcher now takes the
-  // method and the wrong verb falls through to the 404.
-  const exposureRoute = matchExposureRoute(url.pathname, req.method)
-  if (exposureRoute && await handleExposureRoute(exposureRoute, {
-    data, req, res, url, jsonResponse,
-  })) return
-
-  // ARC-01. The derived-collection reads, extracted to `src/routes/derived.js`.
-  // Five reads over what `refreshAnalytics` recomputes, three of which carry a
-  // refusal that has to travel beside the figure rather than replace it.
-  const derivedRoute = matchDerivedRoute(url.pathname, req.method)
-  if (derivedRoute && await handleDerivedRoute(derivedRoute, {
-    data, req, res, url, jsonResponse,
-  })) return
-
-  // ENH-34. Citable dataset snapshots. Dispatched beside the derived reads
-  // because a snapshot is a read frozen — it takes the same materialised store
-  // and stores a copy of what a vintage already identifies.
-  const snapshotRoute = matchSnapshotRoute(url.pathname, req.method)
-  if (snapshotRoute && await handleSnapshotRoute(snapshotRoute, {
-    data, req, res, url, jsonResponse, store,
-  })) return
-
-  // ENH-60. The auth-info family, extracted to `src/routes/auth-info.js`. One
-  // path answered from two places — here, and on the 401 path above — which is
-  // the shape VER-18 recorded. The two copies agreed by coincidence; they are
-  // now one handler, called at both points with `auth` null at the first.
-  //
-  // The partner portal rendered its organisation from localStorage — a value
-  // the user typed, never checked against anything — so the interface showed an
-  // isolation that the server had no opinion about. This is the route that
-  // answers it from the server's side.
-  const authInfoRoute = matchAuthInfoRoute(url.pathname, req.method)
-  if (authInfoRoute && handleAuthInfoRoute(authInfoRoute, { auth, res, jsonResponse })) return
-
-
-  // ENH-60. The source-catalogue family, extracted to `src/routes/catalogue.js`:
-  // the source list, the connector registry, and the connector gate status. All
-  // three join a static catalogue against `source_runs`, and all three resolve
-  // absence to a named state rather than to a healthy-looking default.
-  //
-  // The third route's block sat far below this one, in the connector-status
-  // position. The family is dispatched in two places rather than moved, so the
-  // order the dispatcher tries its routes in is unchanged.
-  const catalogueRoute = matchCatalogueRoute(url.pathname, req.method)
-  if (catalogueRoute && catalogueRoute.kind !== 'connectors-status'
-    && await handleCatalogueRoute(catalogueRoute, { data, req, res, url, jsonResponse })) return
-
-  // ARC-01. The webhook-subscription family, extracted to `src/routes/webhooks.js`.
-  const webhookRoute = matchWebhookRoute(url.pathname)
-  if (webhookRoute && await handleWebhookRoute(webhookRoute, { store, data, req, res, url, jsonResponse })) return
-
-  // ENH-80. The federation family, extracted to `src/routes/federation.js`.
-  // Dispatched after the store read, because every route in it reads a
-  // collection: the status and peer routes read the registry, and the two peer-
-  // facing routes serve this node's syncable collections. The one route that
-  // writes — the receiving merge — takes the read as its snapshot rather than
-  // re-reading, which is what keeps the merge comparison against the state the
-  // request began from.
-  const federationRoute = matchFederationRoute(url.pathname)
-  if (federationRoute && await handleFederationRoute(federationRoute, { store, data, req, res, url, jsonResponse })) return
-
-  // ENH-60. The outbox family, extracted to `src/routes/outbox.js`: the queue's
-  // own listing and the operator's "deliver it now". Dispatched here, where the
-  // pair was, so the order the dispatcher tries its routes in is unchanged.
-  const outboxRoute = matchOutboxRoute(url.pathname, req.method)
-  if (outboxRoute && await handleOutboxRoute(outboxRoute, { store, data, req, res, url, jsonResponse })) return
-
-  // ENH-60. The upload family, extracted to `src/routes/upload.js`: the column
-  // contract a client reads before it sends anything, and the one validator all
-  // three content types converge on. Dispatched here, where the contract block
-  // was, so the order the dispatcher tries its routes in is unchanged.
-  const uploadRoute = matchUploadRoute(url.pathname, req.method)
-  if (uploadRoute && await handleUploadRoute(uploadRoute, { store, data, req, res, url, jsonResponse })) return
-
-  // ARC-01. The scenario family, extracted to `src/routes/scenarios.js`.
-  const scenarioRoute = matchScenarioRoute(url.pathname)
-  if (scenarioRoute && await handleScenarioRoute(scenarioRoute, { data, req, res, jsonResponse })) return
-
-  // ARC-01. The ingestion family, extracted to `src/routes/ingestion.js`.
-  // `evaluateAndPersistAlerts` is passed in: it is the driver's own entry point
-  // and lives in this file, so the module takes it as a dependency rather than
-  // importing back into `server.js`.
-  const ingestionRoute = matchIngestionRoute(url.pathname)
-  if (ingestionRoute && await handleIngestionRoute(ingestionRoute, { store, data, req, res, url, jsonResponse, evaluateAndPersistAlerts })) return
-
-  // ENH-60. The taxonomy-and-forms family, extracted to `src/routes/forms.js`:
-  // the vocabulary a client renders and the form definitions it validates
-  // against. Dispatched here, where the taxonomy block was, so the order the
-  // dispatcher tries its routes in is unchanged.
-  const formsRoute = matchFormsRoute(url.pathname, req.method)
-  if (formsRoute && await handleFormsRoute(formsRoute, { store, data, req, res, url, jsonResponse })) return
-
-  // ENH-60. The operator-maintenance family, extracted to
-  // `src/routes/maintenance.js`: the retention sweep an operator triggers by
-  // hand, and the demo seed. They are one family because `src/auth.js` already
-  // treats them as one — both prefixes resolve to `admin:maintenance`.
-  //
-  // Dispatched here, where the retention block was, so the order the dispatcher
-  // tries its routes in is unchanged. That matters for the seed: it reads and
-  // writes the whole store, and it sat below the store read for the reason the
-  // export family sat above it — the two are opposite cases and both are
-  // deliberate.
-  const maintenanceRoute = matchMaintenanceRoute(url.pathname, req.method)
-  if (maintenanceRoute && await handleMaintenanceRoute(maintenanceRoute, {
-    store, data, req, res, url, jsonResponse, withTimeout, readRequestJson,
-  })) return
-
-  // ENH-60. The events-and-assessments family, extracted to `src/routes/events.js`:
-  // `/api/v1/events` is the merged hazard-and-conflict list, and
-  // `/api/v1/assessments` publishes that same list as `recent_events` beside the
-  // risk roll-ups derived from it.
-  //
-  // The family dispatches once, here, where the `/events` block was — so
-  // `/assessments` is now tried earlier than it was. That is order-preserving in
-  // effect and only because no route between here and its old site matches
-  // either path: the ambient, risk, compute, rapidpro, provenance, reporting,
-  // alerting, catalogue, parametric, operational, chw and workflow families all
-  // name paths that are neither. Verified by grepping the whole dispatcher for
-  // both literals, not by reading the blocks.
-  const eventsRoute = matchEventsRoute(url.pathname, req.method)
-  if (eventsRoute && handleEventsRoute(eventsRoute, { data, req, res, url, jsonResponse })) return
-
-  // ENH-60. The ambient-layer family, extracted to `src/routes/ambient.js`: the
-  // raw observation series, the per-district weather roll-up and the latest
-  // modelled discharge per region. Dispatched here, where the first of the three
-  // blocks was, so the order the dispatcher tries its routes in is unchanged.
-  const ambientRoute = matchAmbientRoute(url.pathname, req.method)
-  if (ambientRoute && handleAmbientRoute(ambientRoute, { data, req, res, url, jsonResponse })) return
-
-
-  // ENH-60. The hazard-risk family, extracted to `src/routes/risk.js`: the two
-  // marginal rankings, the joint compound score, the model listing, the fit and
-  // the score. Dispatched here, where the first of the nine blocks was, so the
-  // order the dispatcher tries its routes in is unchanged.
-  //
-  // The duplicated "route planning requires a POST body" comment that sat
-  // between these blocks is gone with them. It described `routing/plan`, which
-  // is handled a hundred lines below under the same comment — a stale note left
-  // where a block used to be.
-  const riskRoute = matchRiskRoute(url.pathname, req.method)
-  if (riskRoute && await handleRiskRoute(riskRoute, { store, data, req, res, url, jsonResponse })) return
-
-  // Route planning requires a POST body (origin plus one or more
-  // destinations), so it is handled by the mutating branch below rather than
-  // here in the GET-only section.
-  // ENH-60. The compute family, extracted to `src/routes/compute.js`: the four
-  // routes that run a model over the request's own arguments. Dispatched here,
-  // where the routing-plan block was, so the order the dispatcher tries its
-  // routes in is unchanged. `evaluateAndPersistAlerts` is passed in — it lives
-  // in this file, so the module takes it as a dependency rather than importing
-  // back into `server.js`.
-  const computeRoute = matchComputeRoute(url.pathname, req.method)
-  if (computeRoute && await handleComputeRoute(computeRoute, {
-    store, data, req, res, url, jsonResponse, evaluateAndPersistAlerts,
-  })) return
-
-  // ARC-01. The RapidPro family, extracted to `src/routes/rapidpro.js`.
-  const rapidProRoute = matchRapidProRoute(url.pathname)
-  if (rapidProRoute && await handleRapidProRoute(rapidProRoute, { store, data, req, res, url, jsonResponse })) return
-
-
-  // ARC-01. The provenance reads: where a record came from, what the platform
-  // believed over time, what its own chain shows, and how far each source has
-  // been read. One matcher refuses the wrong verb for the whole family.
-  const provenanceRoute = matchProvenanceRoute(url.pathname, req.method)
-  if (provenanceRoute && await handleProvenanceRoute(provenanceRoute, {
-    data, req, res, url, jsonResponse,
-  })) return
-
-  // ARC-01. The reporting family, extracted to `src/routes/reporting.js`.
-  // `checkWebhookUrl` is passed in rather than defaulted, so the SSRF guard the
-  // deployment configured is the one the distribution path uses.
-  const reportingRoute = matchReportingRoute(url.pathname, req.method)
-  if (reportingRoute && await handleReportingRoute(reportingRoute, { store, data, req, res, url, jsonResponse, checkWebhookUrl })) return
-
-  // ARC-01. The alerting family: rules, events, determinations, triage, the CAP
-  // feed, and the trigger protocols whose executions record one firing.
-  const alertingRoute = matchAlertingRoute(url.pathname)
-  if (alertingRoute && await handleAlertingRoute(alertingRoute, {
-    data, req, res, url, jsonResponse, store,
-  })) return
-
-  // ENH-60. The third catalogue route. `connectors/status` sits here rather than
-  // with its two siblings above because this is where its block was; the family
-  // is dispatched in two places so the order the dispatcher tries its routes in
-  // is unchanged.
-  if (catalogueRoute?.kind === 'connectors-status'
-    && await handleCatalogueRoute(catalogueRoute, { data, req, res, url, jsonResponse })) return
-
-  // ARC-01. The parametric family, extracted to `src/routes/parametric.js`.
-  const parametricRoute = matchParametricRoute(url.pathname)
-  if (parametricRoute && await handleParametricRoute(parametricRoute, { store, data, req, res, jsonResponse })) return
-
-  const operationalRoute = matchOperationalRoute(url.pathname)
-  if (operationalRoute && await handleOperationalRoute(operationalRoute, { data, req, res, url, jsonResponse, store })) return
-
-  // ARC-01. The CHW family, extracted to `src/routes/chw.js`.
-  const chwRoute = matchChwRoute(url.pathname)
-  if (chwRoute && await handleChwRoute(chwRoute, { store, data, req, res, jsonResponse })) return
-
-  // ARC-01. The workflow family, extracted to `src/routes/workflows.js`.
-  const workflowRoute = matchWorkflowRoute(url.pathname)
-  if (workflowRoute && await handleWorkflowRoute(workflowRoute, { store, data, req, res, url, jsonResponse })) return
-
-  // ENH-60. The district-and-equity family, extracted to `src/routes/districts.js`.
-  const districtRoute = matchDistrictRoute(url.pathname, req.method)
-  if (districtRoute && await handleDistrictRoute(districtRoute, { store, data, req, res, url, jsonResponse })) return
-
-  // ENH-60. The assessments half of the events family, extracted to
-  // `src/routes/events.js` and dispatched above with `/api/v1/events`, which is
-  // the same union this route publishes as `recent_events`.
-
-
-
+  // The families below the read. `data` is the one read every one of them shares,
+  // so it is spread onto the same context rather than passed again per family.
+  const postCtx = { ...familyCtx, data }
+  for (const family of ROUTE_FAMILIES) {
+    if (family.pre) continue
+    if (await dispatchFamily(family, postCtx)) return
+  }
 
   // Nothing matched. The label becomes one bucket rather than one series
   // per path, which is the whole point: a scanner sending 2,000 unique

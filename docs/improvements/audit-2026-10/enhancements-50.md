@@ -28,18 +28,21 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 49 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81 |
-| PARTIAL | 2 | 59, 60 |
+| IMPLEMENTED | 50 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81 |
+| PARTIAL | 1 | 59 |
 | ABSENT | 0 | none |
 
 PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 **five** tables checked against each other — the document, the manifest table,
 the method gating, the envelope shape and, since 2026-10-12, the client's call
-sites — and no single declaration they are generated from, and ENH-60's
-dispatcher is still one 362-line function with 34 modules under `src/routes/`
-(34 matchers, since `src/routes/stac.js` carries two — `matchStacRoute` and
-`matchOgcRoute` — and `auth-gate.js` is the one module with none, because it
-runs before matching). Reading a
+sites — and no single declaration they are generated from. ENH-60 was the other
+one until 2026-10-13: the dispatcher's thirty-two hand-written `match`/`handle`
+blocks are now `src/route-families.js`'s `ROUTE_FAMILIES` table, iterated by
+`handleApiRequestInContext`, which went **367 → 80 lines**. That is ENH-59's
+declaration at the dispatch layer — one of the five tables now exists as a single
+source the dispatcher reads rather than statements a test reads back — but the
+other four are still hand-kept, so ENH-59 stays PARTIAL for its own reason.
+Reading a
 PARTIAL as done is the error this table exists to prevent: five cross-checks is
 a network that stops five tables disagreeing *silently*, which is a strictly
 weaker property than one source of truth, and the two are easy to conflate
@@ -1670,6 +1673,59 @@ testable in isolation. This unblocks every other substrate item.
 > of what a loop over the dispatcher needs: matcher, handler, and the bag each
 > handler is handed. ENH-59's generator has one table to read rather than three
 > conventions to re-derive.
+>
+> **2026-10-13 — the statements became a loop, and the table moved into `src/`.**
+> The paragraph above ended with the shape the residue had: thirty-two
+> `const X = matchYRoute(…)` blocks written out in the dispatcher, read back by a
+> test. That is a declaration wearing statements' clothes, and it is what both this
+> entry's "the dispatcher is smaller but it is not gone" and ENH-59's "no single
+> declaration" were pointing at. `src/route-families.js` is now the declaration:
+> `ROUTE_FAMILIES`, 33 entries (32 families, `matchCatalogueRoute` twice because it
+> is dispatched at two points split by a `kind` guard), each carrying its matcher,
+> its handler, its dependency keys, whether its matcher takes the verb, whether its
+> handler is async, and which side of `store.read(readRequest)` it sits on.
+> `handleApiRequestInContext` iterates it in two loops — `pre` above the read,
+> `post` below — and the dispatcher went **367 → 80 lines**; `server.js`
+> **1,926 → 1,613**.
+>
+> **The table is checked, not trusted.** `test/dispatch-order.test.js` keeps its
+> frozen recordings — the 33-row sequence, the four-above/29-below split, the
+> `[matcher, handler, keys]` bindings — and now reads the table at runtime instead
+> of regexing statements out of `server.js`, so there is no parser left to drift
+> from the code it reads. Two new checks make it non-circular, because a table that
+> certified itself would be the "gate scoped to its own input" failure: every key a
+> family is handed must be one its handler **actually destructures** (parsed from
+> `src/routes/`), and every key must be one the dispatcher's context **actually
+> provides** (parsed from `src/server.js`). Canaried three ways: planting a
+> `noSuchKey` fails both cross-checks; flipping `matchTilePackRoute` to `post`
+> fails the split; replacing `postCtx` with `familyCtx` in the second loop fails the
+> "the dispatcher actually loops over the table" assertion. A fourth asserts both
+> loops exist and filter on `family.pre` in opposite directions — a table that is
+> imported and never iterated would satisfy every other assertion and serve
+> nothing, which is the "mechanism shipped, caller missing" shape this register
+> catalogues.
+>
+> **What this does not do.** It is ENH-60's residue removed and ENH-59's *first*
+> table generated-in-spirit, not ENH-59 finished. The other four tables —
+> `docs/openapi.yaml`, `src/route-manifests.js`, `src/auth.js` scopes, and the
+> client's 29 call sites — are still hand-kept, and this table does not yet produce
+> them. What changed is that the dispatcher's own declaration now exists in one
+> place and is enforced, so a generator for the other four has something to read
+> that is not a person's memory of the order.
+>
+> Three findings came out of the move rather than the code. Removing the 32 blocks
+> left `refreshAnalytics` imported in `server.js` and used nowhere — its only
+> non-import mention was a comment the splice deleted, and the three route modules
+> that need it import it themselves; the dead binding was deleted, not
+> re-commented into life to satisfy `unused-imports`. That test's own canary named
+> `refreshAnalytics` as a known-bound anchor and had to be repointed at a real
+> dependency (`filterRecords`), which is the canary doing its job — a known-present
+> string that stops being present should fail loudly, not silently widen. And seven
+> register citations to `src/server.js` lines past the new EOF (`1652`, `1694`,
+> `1832`, `1649-1661`, `1637`, `1714`) failed `check-doc-citations`; each was
+> re-anchored to the route module the code moved to, or marked `line-drift-ok:`
+> where the entry means to quote the tree as audited. The citation gate caught the
+> move, which is the second time this session it has earned its keep.
 
 **ENH-61 — Streaming cursor reads.** `PostgresStore.read()` issues
 `SELECT collection, body FROM lite_records WHERE …` with no `LIMIT`

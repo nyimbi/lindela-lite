@@ -996,7 +996,9 @@ was looking for, so the same over-wide surface sat in a code path the sweep had 
 predicate for. A class sweep must assert *what the right answer is*, not one
 particular wrong answer.
 
-**Fixed alongside, same route.** The collection list at `src/server.js:1652` is
+**Fixed alongside, same route.** The collection list (then inline in the
+dispatcher at `src/server.js:1652`; it moved with the operational family to <!-- line-drift-ok: quoted as it was before the block moved -->
+`src/routes/operational.js`) is
 served inline — it runs before the operational family and shadows the family's
 collection branch — and its private copy of the page construction had no
 `isDeleted` predicate, so a soft-deleted asset was listed while the by-id read
@@ -1546,7 +1548,9 @@ The 75 KB seed script is bundled into the runtime path; an import error there is
 runtime 500 on a live route, and the script cannot be moved without touching the server.
 
 **Fixed 2026-10-11.** The implementation moved to `src/demo-seed.js` and the
-handler now `await import('./demo-seed.js')` (`src/server.js:1694`). The
+<!-- line-drift-ok: quoted as it was; the handler moved to src/routes/maintenance.js -->
+handler now `await import('../demo-seed.js')` (then `src/server.js:1694`; the
+handler moved to `src/routes/maintenance.js`). The
 `scripts/` file remains, as a thin wrapper that re-exports the three functions
 and keeps its own `main()` — `package.json`, `run.sh` and `docs/demo-guide.md`
 all name `node scripts/seed-demo.mjs`, so the command has to keep working, and
@@ -2400,7 +2404,8 @@ It found three real defects on its first run, which is the point of it:
   the same defect R-27 fixed for its food-security sibling. It now pages via
   `matchedAndPage`, with the roll-up computed from `matched` rather than the page,
   so `impassable` describes the network rather than the window
-  (`src/server.js:1832`). `public/app.js:1449` asks for `?limit=5000` explicitly,
+  (then `src/server.js:1832`; the route moved to `src/routes/exposure.js`). <!-- line-drift-ok: quoted as it was before the move -->
+  `public/app.js:1449` asks for `?limit=5000` explicitly,
   since a road network larger than the default 500 would silently lose its tail.
 - `summarizeRoadAccess` threw on a record with no `obstructions` field, turning a
   dashboard roll-up into a 500. Now `|| []`, matching the `|| 0` beside it

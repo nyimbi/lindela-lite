@@ -95,7 +95,7 @@ describe('every import in shipped code is used', () => {
 			.flatMap(([, clause]) => clause.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()))
 			.filter(Boolean)
 		assert.ok(bound.length > 40, `expected server.js to bind dozens of names, found ${bound.length}`)
-		assert.ok(bound.includes('refreshAnalytics'), 'and one of them is a real dependency it names in prose above')
+		assert.ok(bound.includes('filterRecords'), 'and one of them is a real dependency it names in prose above')
 	})
 
 	it('finds the files it claims to scan', () => {

@@ -111,8 +111,9 @@ is worse than none, because it produces evidence.
 send path.*
 
 The state machine shipped in `src/alerts.js` and `src/workflows.js`, and the SMS
-path is gated at `src/server.js:1582`. The CAP endpoint at
-`src/server.js:1649-1661` has **no approval gate**, so a human review requirement
+path is gated (then `src/server.js:1582`; now `src/routes/rapidpro.js`). The CAP
+endpoint (then `src/server.js:1649-1661`; now `src/routes/alerting.js`) has <!-- line-drift-ok: quoted as it was before the move -->
+**no approval gate**, so a human review requirement
 enforced on SMS is bypassed by requesting CAP XML instead — the stricter channel is
 the ungated one.
 
