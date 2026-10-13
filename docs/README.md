@@ -27,6 +27,15 @@ then [platform.md](platform.md) for the complete platform guide.
 - [Flood Probability Model Basis](flood-probability-model-basis.md): **proposal for review, not implemented.** Why rainfall-to-flood-probability is absent, what data is and is not reachable, three candidate approaches, and the decisions needed before any coefficients are fitted.
 - [How Lindela Lite Uses AI and ML](ai-ml-usage.md): the one fitted model and its refusal floors, the statistical composites where ML would be fabrication, MLOps governance (calibration, drift, backtests), the boundary where no model scores, and the two opt-in model surfaces — the report narrator and the query slot-filler.
 - [Open-Source Boundary](open-source-boundary.md): what is included in Lite and what remains outside it.
+- [Internationalisation](i18n.md): the translation workflow, coverage floors, and how a surface declares the languages it can render.
+- [Connector SDK](connectors-sdk.md): how to write a source connector — the contract, the declaration, and the tests a new one needs.
+- [DHIS2 Integration](dhis2-integration.md): connecting a DHIS2 instance for data-quality aggregates.
+- [Parametric Disbursement Simulator](parametric.md): the parametric trigger simulator and what its payout figures are and are not.
+- [Scenario Workbench](scenarios.md): building, comparing and replaying intervention scenarios.
+- [Platform JTBD Catalogue](platform-jtbd-catalogue.md): every job-to-be-done the platform serves, with the route and test that discharges it.
+- [Demo Guide](demo-guide.md): what the seeded demo store contains and how to walk it.
+- [Demo Audit, 2026-10-02](demo-audit-2026-10-02.md): what the demo claimed at that date and what the tree supported.
+- [Outbreak Map Overlay Plan](plan.md): the completed implementation plan for the basemap, weather, flood and outbreak overlays — **all phases done**, superseded by [docs/plans/](plans/).
 
 ## Common Entry Points
 

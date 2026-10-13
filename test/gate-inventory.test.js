@@ -1,24 +1,26 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 /**
- * The README's gate inventory is checked against the runner, not maintained by hand.
+ * The README's stated build inventory — the gate count and the test count — is
+ * checked against the tree, not maintained by hand.
  *
  * The README said "seven repository gates (budget, OpenAPI, accessibility,
  * offline, i18n coverage, schema, license)" while `run-gates.mjs` held
  * twenty-five in two tiers. Six of the seven named gates do not exist under
  * those names, and the one count in the sentence — seven — was right only by
- * coincidence: it happened to match the browser tier. A reader sizing up the
- * build got a number that described nothing.
+ * coincidence: it happened to match the browser tier. The same sentence said
+ * "over two thousand automated tests" when the suite ran over four thousand.
+ * A reader sizing up the build got numbers that described nothing.
  *
  * The class is the one this repository keeps re-finding: **a hand-typed count
  * beside a machine-maintained set drifts silently, and the drift is invisible
- * because the sentence still reads well.** So the count is read off the runner
- * here and asserted against the README, and the next gate added either updates
+ * because the sentence still reads well.** So both counts are measured here and
+ * asserted against the README, and the next gate or test file either updates
  * the README or fails this test.
  *
  * Why `--list` rather than importing `GATES`: the runner is a script with a
@@ -51,6 +53,32 @@ function claimSentence() {
   return line
 }
 
+/**
+ * Statically declared tests across `test/*.test.js`.
+ *
+ * A line beginning with `it(` or `test(` is a declaration. `describe(` is not
+ * counted: it groups, it does not assert. The count is a **lower bound** on
+ * what `node --test` reports, because a declaration inside a loop runs more
+ * than once — which is the property the README's "over N thousand" claim needs,
+ * and the only one that can be measured without running the suite (a test that
+ * ran the suite to count itself would not terminate).
+ */
+function declaredTests() {
+  const dir = path.join(ROOT, 'test')
+  let n = 0
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.test.js')) continue
+    const source = readFileSync(path.join(dir, name), 'utf8')
+    for (const line of source.split('\n')) {
+      if (/^\s*it\(/.test(line) || /^\s*test\(/.test(line)) n += 1
+    }
+  }
+  return n
+}
+
+/** English for a thousands figure, the way the README spells it. */
+const THOUSANDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+
 describe('the README gate inventory', () => {
   it('states the counts the runner actually reports', () => {
     const counts = tierCounts()
@@ -73,6 +101,25 @@ describe('the README gate inventory', () => {
       `README's self-contained count is not ${counts['self-contained']}`)
     assert.match(sentence, new RegExp(`\\b${spelled(counts['needs-browser'])}\\b[^.]*browser`),
       `README's browser count is not ${counts['needs-browser']}`)
+  })
+
+  it('states a test count the declarations support', () => {
+    // "Over N thousand" is true exactly when N*1000 <= declared < (N+1)*1000.
+    // Both directions matter: too low understates the suite, and too high is a
+    // claim the tree cannot support.
+    const declared = declaredTests()
+    assert.ok(declared > 3000,
+      `only ${declared} test declarations found — the counter or the glob is wrong, not the suite`)
+
+    const sentence = claimSentence()
+    const m = /\bover\s+([a-z]+)\s+thousand automated tests\b/i.exec(sentence)
+    assert.ok(m, 'the README no longer states a test count in the form "over <word> thousand automated tests"')
+    const words = THOUSANDS.indexOf(m[1].toLowerCase())
+    assert.notEqual(words, -1, `"${m[1]}" is not a thousands word this test knows`)
+    const claimed = words * 1000
+    assert.ok(declared >= claimed && declared < claimed + 1000,
+      `README says "over ${m[1]} thousand" tests but the tree declares ${declared} — ` +
+      `the true figure is "${THOUSANDS[Math.floor(declared / 1000)]} thousand"`)
   })
 
   it('names no gate that does not exist', () => {
