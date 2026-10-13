@@ -31,7 +31,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
@@ -347,6 +347,79 @@ describe('R-70 — inline CSS is a shrinking share, not a growing one', () => {
     }
     assert.ok(total < 59000,
       `inline <style> totals ${total} bytes across the surfaces; the audit measured 59,460`)
+  })
+})
+
+describe('WEB-12 — every surface links the shared sheets, and the claim is checked', () => {
+  // The defect this guards is not a missing stylesheet. It is a *claim* that
+  // went stale: `docs/plans/ui-ux-world-class.md` recorded "the console links
+  // `styles.css` only" and `defects.md` WEB-12 repeated it, while the console
+  // gained `<link href="/components.css">` on 2026-10-03 (`2a247f5`) and nothing
+  // failed. A documentation claim about the code is only as good as the check
+  // behind it, and there was none — the component-layer suite asserts that a
+  // class is not *duplicated*, never that a surface *loads* the layer it shares.
+  const SURFACES = {
+    'the console': 'public/index.html',
+    chw: 'public/chw/index.html',
+    co: 'public/co/index.html',
+    districts: 'public/districts/index.html',
+    'focal-point': 'public/focal-point/index.html',
+    parametric: 'public/parametric/index.html',
+    portal: 'public/portal/index.html',
+    scenarios: 'public/scenarios/index.html',
+  }
+
+  /** `<link href>` targets in a surface, comments stripped. */
+  const linked = (html) => [...html.replace(/<!--[\s\S]*?-->/g, '')
+    .matchAll(/<link[^>]*href="([^"]+)"/g)].map((m) => m[1])
+
+  it('all eight surfaces are present — the enumeration is not silently short', () => {
+    assert.equal(Object.keys(SURFACES).length, 8)
+    for (const [name, file] of Object.entries(SURFACES)) {
+      assert.ok(read(file).includes('<html'), `${name}: ${file} did not read as a document`)
+    }
+  })
+
+  it('every surface links styles.css and components.css', () => {
+    // The two layers Phase 2's claim names. A surface that links one and not the
+    // other is the console's old state: components reach seven of eight.
+    const missing = []
+    for (const [name, file] of Object.entries(SURFACES)) {
+      const hrefs = linked(read(file))
+      for (const sheet of ['/styles.css', '/components.css']) {
+        if (!hrefs.includes(sheet)) missing.push(`${name} (${file}) does not link ${sheet}`)
+      }
+    }
+    assert.deepEqual(missing, [],
+      'a surface is missing a shared layer; the plan document claims all eight link both')
+  })
+
+  it('the token layer is reachable from every surface', () => {
+    // `tokens.css` may be linked directly or reached through `@import` — the
+    // console does the latter, and WEB-12's own note records that as the reason
+    // the defect was "a missing component layer, not an unstyled console". The
+    // property that matters is reachability, not the spelling, so this walks
+    // the imports rather than testing whether a linked sheet is itself an import.
+    const importsOf = (href) => {
+      const rel = `public${href}`
+      if (!existsSync(path.join(ROOT, rel))) return []
+      return [...read(rel).matchAll(/@import\s+url\(['"]?([^'")]+)/g)].map((m) => m[1])
+    }
+    const reachesTokens = (href, seen = new Set()) => {
+      if (href === '/tokens.css') return true
+      if (seen.has(href)) return false
+      seen.add(href)
+      return importsOf(href).some((next) => reachesTokens(next, seen))
+    }
+    assert.ok(reachesTokens('/styles.css'),
+      'styles.css must reach tokens.css, or a surface linking it is token-less')
+    const missing = []
+    for (const [name, file] of Object.entries(SURFACES)) {
+      if (!linked(read(file)).some((h) => reachesTokens(h))) {
+        missing.push(`${name} (${file}) reaches neither tokens.css nor a sheet that imports it`)
+      }
+    }
+    assert.deepEqual(missing, [], 'a surface can render without the token layer')
   })
 })
 

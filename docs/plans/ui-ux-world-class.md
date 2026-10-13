@@ -957,10 +957,15 @@ and the corrections are recorded here rather than quietly edited away
   and asserts it reaches the three files it used to miss. Forgetting the worker
   again is now a test failure, not an offline boot failure.
 - Phase 2's "all 8 surfaces link `tokens.css` + `styles.css` + `components.css`"
-  is **still false**. Seven of eight do; the console (`public/index.html:9`) links
-  only `/styles.css`. It resolves the tokens transitively, because `styles.css:6`
-  does `@import url('/tokens.css')`, so the defect is a missing component layer,
-  not an unstyled console. Phase 2 stays open for this reason.
+  was **false when written**, and became true the same day: seven of eight linked
+  it, and the console (`public/index.html:13`) gained
+  `<link href="/components.css">` on 2026-10-03 (`2a247f5`). This block went on
+  recording the console as the one surface that did not, for ten days, because no
+  check asserted the linkage — every assertion in
+  `test/web-component-layer.test.js` was about a class being *duplicated*, none
+  about a surface *loading* the layer. Corrected 2026-10-13, and the test asserts
+  it now: all eight link both sheets, and all eight reach `tokens.css` (the
+  console transitively, through `styles.css`'s `@import`).
 
 | Phase | State | Evidence |
 |---|---|---|

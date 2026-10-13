@@ -69,7 +69,7 @@ under **Unreleased**; this table is the index into them.
 | WEB-09 | fixed | no `setInterval`; the cadence is owned by visibility and idle | `web-console.test.js` |
 | WEB-10 | not yet measured | fix is in the CSS; the 24px floor needs a real Chrome run on :9222 | — |
 | WEB-11 | fixed | every surface has a layer; 217 keys added to `en.json` | `check-i18n.mjs` |
-| WEB-12 | partly fixed | the derivation claims were corrected; Phase 2 remains open at 7 of 8 surfaces | — |
+| WEB-12 | fixed | Phase 0 is true for a reason that cannot rot; Phase 2's "7 of 8" was stale when written — the console linked `components.css` the same day — and the linkage is now asserted | `test/web-component-layer.test.js` |
 
 Two findings were found while fixing these and are also fixed, without
 original IDs: a dead second authorization path (`isAuthorizedMutation`,
@@ -599,7 +599,7 @@ against the working tree; the guard named in each row is what keeps it fixed.
 | WEB-09 | unconditional 12+ endpoint poll | **fixed** | backoff with failure memory, and a hidden document is not polled (`public/app.js:1964,2125,2143`) |
 | WEB-10 | markers below the touch-target floor | **fixed and measured** | `hitRadiusUnits` (`public/app.js:1150`) derives a hit radius from the rendered width; the gate queries `[data-tap-target]` and checks width as well as height (`scripts/check-responsive.mjs`). Measured 2026-10-03 against Chrome 154 on :9222 with a live server on :4177: **8 surfaces x 3 viewports, all clean, 24px floor met.** Getting a truthful number required two fixes to the gate itself — see below |
 | WEB-11 | i18n 17–92%, three surfaces none | **fixed** | `scripts/check-i18n.mjs` gates all eight surfaces and enforces coverage floors that may only rise. `districts/`, `scenarios/` and `parametric/` each gained a full layer — 217 keys, `en.json` 227 → 444. `chw`+`so` still lack `footer.powered`, named in `KNOWN_UNTRANSLATED` and printed every run rather than guessed |
-| WEB-12 | two plan claims are false | **partly fixed** | Phase 0 is now true for a reason that cannot rot; Phase 2 stays open — the console links `styles.css` only (`public/index.html:9`) |
+| WEB-12 | two plan claims are false | **fixed** | Phase 0 is true for a reason that cannot rot (WEB-06). Phase 2's "7 of 8" claim went stale the day it was written: the console gained `<link href="/components.css">` on 2026-10-03 (`2a247f5`), the same day the correction block recorded it as missing, and nothing failed because no check asserted the *linkage*. `test/web-component-layer.test.js` asserts it now — all eight surfaces link `styles.css` and `components.css`, and every one reaches `tokens.css` transitively |
 
 WEB-10 is the one to distrust: the fix is in the code and the gate that would
 confirm it was widened in the same session, but nothing has run the gate. A
@@ -765,16 +765,32 @@ boot failure nobody sees. `cache.add()` rejects per item, so one missing asset
 costs one entry instead of the whole shell; a worker that installs with a hole is
 never repaired, because the next install runs only on a version bump.
 
-The stylesheet half is narrower than it looks and **remains open**. The console
-(`public/index.html:9`) links only `/styles.css`, so `components.css` is genuinely
-absent — but `public/styles.css:6` does `@import url('/tokens.css')`, so the
-console does resolve the tokens transitively. The defect is a missing component
-layer, not an unstyled or token-less page.
+The stylesheet half was narrower than it looked and **is now closed**. The console
+(`public/index.html:9`) linked only `/styles.css` at the time of writing, so
+`components.css` was genuinely absent — but `public/styles.css:6` does
+`@import url('/tokens.css')`, so the console always resolved the tokens
+transitively. The defect was a missing component layer, not an unstyled or
+token-less page.
 
-`docs/plans/ui-ux-world-class.md` records the correction visibly rather than
-editing it silently: Phase 0 returns to `done` on the strength of the derived
-graph, Phase 2 stays `in progress` with "7 of 8", and a dated note above the
-table explains both.
+**Closed 2026-10-13, and the closing is the finding.** `public/index.html:13`
+gained `<link rel="stylesheet" href="/components.css">` on **2026-10-03**
+(`2a247f5`, "link the console's components") — the same day this block was
+written, and this block went on recording the console as the one surface that
+did not link it. `docs/plans/ui-ux-world-class.md` did too, for ten days. Nothing
+failed, because every check in `test/web-component-layer.test.js` asserted that a
+class is not *duplicated*; none asserted that a surface *loads* the layer it
+shares. A documentation claim about the code is only as good as the check behind
+it, and there was none — so the claim rotted while the code was correct. The test
+now asserts the linkage: all eight surfaces link `styles.css` and
+`components.css`, and every one reaches `tokens.css` either directly or through a
+sheet that imports it. Canaried by removing the console's `components.css` link
+(fails the linkage assertion alone) and by dropping the `@import` from
+`styles.css` (fails the reachability assertion alone).
+
+`docs/plans/ui-ux-world-class.md` records the corrections visibly rather than
+editing them silently: Phase 0 returns to `done` on the strength of the derived
+graph, Phase 2's "7 of 8" is corrected to "all 8" with the date the console
+gained the link, and a dated note above the table explains both.
 ---
 
 ## Medium and low, grouped
