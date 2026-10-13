@@ -733,8 +733,21 @@ export class JsonStore {
     // pretty-printed against 17.6 ms compact — indentation is 84% of merge
     // cost, for a file whose bytes are machine-read. It also inflates the file
     // ~40%, and every one of those bytes is re-parsed on a cold read.
-    await fs.writeFile(tmp, `${JSON.stringify(next)}\n`)
-    await fs.rename(tmp, this.filePath)
+    //
+    // R-49. The temp file is cleaned up on *any* failure, not only a successful
+    // rename. It is the store's full size, so a write that failed at `ENOSPC`
+    // used to leave it behind — the disk did not merely stay full, it lost
+    // another store's worth of space at the moment it had none, and the next
+    // write had less room than the one that failed. `unlink` in the catch is
+    // best-effort (the file may not exist if the write itself failed) and
+    // cannot mask the original error: its own rejection is swallowed.
+    try {
+      await fs.writeFile(tmp, `${JSON.stringify(next)}\n`)
+      await fs.rename(tmp, this.filePath)
+    } catch (error) {
+      await fs.unlink(tmp).catch(() => {})
+      throw error
+    }
     // The cache is refreshed here rather than left to be invalidated by the next
     // `stat`. Doing it at the write means a read immediately after a write
     // cannot race the filesystem's timestamp granularity and serve the previous
