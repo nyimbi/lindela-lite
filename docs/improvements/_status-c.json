@@ -5,7 +5,7 @@
       "id": "ENH-16",
       "title": "A chart component library, shared by all eight surfaces",
       "status": "shipped",
-      "detail": "`public/shared/charts.js` (640 lines) exists with all five named primitives plus `sparkline` and the scale helpers, and is exercised by `test/charts.test.js` (50 tests). It is imported by 2 of 8 surfaces — `public/co/app.js:11` (static) and `public/app.js:1010` (lazy) — and only `barChart`, `sparkline` and `smallMultiples` have call sites anywhere outside the library; `lineChart`, `stackedBar` and `heatmap` have none.",
+      "detail": "`public/shared/charts.js` (786 lines) exists with all five named primitives plus `sparkline` and the scale helpers, and is exercised by `test/charts.test.js` (50 tests). It reaches 2 of the 8 surfaces — `public/co/app.js:11` (static) and `public/app.js` (lazy, at `:1280` and `:1705`, the latter also pulling the workflow wires that import it). Of the primitives the audit named as uncalled, `heatmap` now has a call site (`public/app.js:1300`, the seasonal calendar); `lineChart` and `stackedBar` still have none outside the library. `barChart` has three (`public/app.js:1745`, `public/co/app.js:415`, `public/workflow/wire-playback.js:168`), `sparkline` one (`public/co/app.js:478`) and `smallMultiples` one (`public/app.js:1766`).",
       "evidence": [
         "public/shared/charts.js:204",
         "public/shared/charts.js:341",
@@ -102,7 +102,7 @@
       "id": "ENH-22",
       "title": "Offline-first drill-down and cached map tiles",
       "status": "shipped",
-      "detail": "Three of the five changes shipped: the precache list is now a computed breadth-first closure of the real import graph (`public/sw.js:111`, guarded by `test/web-chw-offline.test.js:437-513`); the queue throws unless IndexedDB confirms the write (`public/shared/runtime.js:66-95`, `submitOrQueue` at `:251`, guarded by 12 tests); and `/api/v1/*` GETs are network-first with an API cache fallback and an `x-lindela-offline` header (`public/sw.js:210-240`, read at `public/shared/runtime.js:217`) under a tested eviction cap. Missing: there is no tile cache of any kind in `public/sw.js`, and no \"last synced\" indicator — no surface reads the offline header or renders per-panel staleness.",
+      "detail": "All five changes shipped. The precache list is a computed breadth-first closure of the real import graph (`public/sw.js:111`, guarded by `test/web-chw-offline.test.js:437`); the queue throws unless IndexedDB confirms the write (`submitOrQueue` at `public/shared/runtime.js:424`); `/api/v1/*` GETs are network-first with an API cache fallback under a tested eviction cap; the offline marker is read on the success path (`public/shared/runtime.js:348`, which also reads `x-lindela-stored-at`), so a cached success is distinguishable from a live one; and raster basemap tiles have their own bucket (`CACHE_POLICIES.tiles`, `public/sw.js:66`, 400 entries / 7-day TTL, routed at `:165`). The audit's before-state: three of the five had shipped, there was no tile cache, and no surface read the offline header. Per-panel staleness is rendered (the CHW and focal-point staleness banners).",
       "evidence": [
         "public/sw.js:111",
         "public/sw.js:167",
@@ -116,7 +116,7 @@
         "test/sw-cache-eviction.test.js:22"
       ],
       "guarded_by": "test/sw-offline-detail.test.js, test/sw-cache-eviction.test.js, test/web-chw-offline.test.js",
-      "note": "Three read buckets in the service worker: a named record gets its own (60 entries, 7-day TTL) so the console's 30-second poll cannot evict the districts a health worker visited; the map's hazard/flood/road layers get a third (48, 2-day). basemap.js is inline polygons and fetches nothing, so there are no tiles to cache. A miss is never an empty panel: 503 with a code, and `cached: false` distinguishes 'no data' from 'no data because I never fetched any'. Hits carry x-lindela-stored-at and x-lindela-stale-seconds stamped when written, not read off Date. Two defects fixed en route: activate would have deleted the detail bucket on every version bump, and stale hits were rewrapped under the stored response's own content-encoding."
+      "note": "Four read buckets in the service worker: a named record gets its own (60 entries, 7-day TTL) so the console's 30-second poll cannot evict the districts a health worker visited; the map's hazard/flood/road layers get a third (48, 2-day); and raster basemap tiles get a fourth (400 entries, 7-day TTL) routed on the `/api/v1/basemap/tiles/` prefix, because a pan paints about two dozen tiles and they would flood the 48-entry map bucket. A miss is never an empty panel: 503 with a code, and `cached: false` distinguishes 'no data' from 'no data because I never fetched any'. Hits carry x-lindela-stored-at and x-lindela-stale-seconds stamped when written, not read off Date. Two defects fixed en route: activate would have deleted the detail bucket on every version bump, and stale hits were rewrapped under the stored response's own content-encoding."
     },
     {
       "id": "ENH-23",
