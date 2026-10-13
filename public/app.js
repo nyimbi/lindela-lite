@@ -6496,6 +6496,8 @@ restoreFiltersFromUrl()
 // from the first paint.
 lazy('/shared/intent-console.js').then((m) => m.mountConsoleIntent())
   .catch((err) => console.error('Intent bar failed to render', err))
+lazy('/workflow/ask.js').then((m) => m.mountAskPanel())
+  .catch((err) => console.error('Ask panel failed to render', err))
 // The alerts panel is the boot panel, but nothing calls switchTab to reach it —
 // the markup ships with `active` on it. Mount its escalation section here, or
 // it waits for a tab switch the operator never makes.
