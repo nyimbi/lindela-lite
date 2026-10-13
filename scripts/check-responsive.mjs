@@ -204,6 +204,25 @@ function collect(minTap) {
   // reads zero and passes. The console toolbar was doing exactly this — twelve
   // controls at x = -84 inside a 360px viewport, present, focusable, invisible,
   // and reported clean by this gate for as long as it existed. WCAG 2.2 §1.4.10.
+  //
+  // The premise holds for overflow the *document* cannot scroll to. It does not
+  // hold for a control clipped by an ancestor with `overflow-x: auto`: that
+  // ancestor scrolls it into view, and focusing it does too. Without the
+  // `scrollableAncestor` guard below, the gate flagged the RTL navbar on five
+  // surfaces at 768px — `a "Districts"` at -4px on Linux, -18px here — while the
+  // identical LTR overflow, which spills right instead of left, was never
+  // flagged at all. Measured at 721px: `scrollWidth` 559 against `clientWidth`
+  // 433 in both directions, and `el.focus()` moves the RTL item from -18 to 107,
+  // inside the strip. A reader reaches it by scrolling or by tabbing, so it is
+  // not a control they cannot reach, and the gate was asserting a symmetry the
+  // layout does not have.
+  const scrollableAncestor = (el, axis = 'x') => {
+    for (let node = el.parentElement; node && node !== doc.documentElement; node = node.parentElement) {
+      const overflow = getComputedStyle(node)[axis === 'x' ? 'overflowX' : 'overflowY']
+      if ((overflow === 'auto' || overflow === 'scroll') && node.scrollWidth > node.clientWidth) return node
+    }
+    return null
+  }
   const clippedStart = []
   for (const el of doc.querySelectorAll(
     'button, input:not([type=hidden]), select, textarea, a[href], [data-tap-target], .filter-label',
@@ -229,6 +248,8 @@ function collect(minTap) {
     const rect = el.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) continue
     if (rect.left < -1) {
+      const scroller = scrollableAncestor(el)
+      if (scroller) continue
       // The text and the parent are what make the report actionable. CI's first
       // run of this gate on Linux printed `a#. at -4px` on five surfaces: an
       // element with no id and no class, named by neither, on a machine the
