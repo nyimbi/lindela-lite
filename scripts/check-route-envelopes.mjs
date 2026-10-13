@@ -228,7 +228,12 @@ export async function scanRoutes() {
     }
   } finally {
     listener.close()
-    await fs.rm(dir, { recursive: true, force: true })
+    // Same teardown race `check-route-methods.mjs` documents: a probe that
+    // mutated the store can leave `#writeFile`'s temp file landing while this
+    // walks the directory, and `ENOTEMPTY` out of a `finally` replaces a
+    // clean result with a thrown one. Retry the burst, then let the verdict
+    // stand on the findings.
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }).catch(() => {})
   }
   return { findings, checked }
 }

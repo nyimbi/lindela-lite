@@ -268,7 +268,11 @@ for (const route of routes) {
   }
 }
 listener.close()
-await fs.rm(dir, { recursive: true, force: true })
+// The probes above POST and DELETE, so the store has writes in flight when this
+// runs; see the teardown note in `check-route-methods.mjs`. A temp directory
+// that will not empty must not fail the collector, which writes its output on
+// the next line.
+await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }).catch(() => {})
 
 /* ----------------------------------------------------------------- the union */
 

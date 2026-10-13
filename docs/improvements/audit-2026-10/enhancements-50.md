@@ -1917,6 +1917,28 @@ this collapses that.
 > The window genuinely scopes the event collections, whose records carry
 > timestamps. A per-record history was not invented to make the question's wording
 > come true.
+>
+> **Widened 2026-10-13 — a model for recall, not for truth.** The parser's one
+> real cost is recall: a question phrased outside the seven subject phrases
+> refuses, correctly but unhelpfully. `src/needle.js` adds Cactus Needle 3
+> (121M params, 8-29 MB, Apache-2.0, no Node binding — so a sidecar over HTTP,
+> the `narrator.js` shape) asked for one grammar-constrained `parse_question`
+> tool call whose argument enums are *generated from* `SUBJECTS`, `PREDICATES`,
+> `WINDOWS` and the district list. Every returned slot is then re-validated
+> against that same vocabulary by code, and a proposal below the confidence
+> floor is refused whole. The disposal stays deterministic: the model widens
+> recall and cannot invent a subject. `parseQueryWithModel` consults it only
+> where `parseQuery` already refused with `unknown_subject`, so off,
+> unreachable or unconfident leaves the deterministic refusal byte-identical.
+> Opt-in via `LINDELA_LITE_NEEDLE=1`. Research and the archived model card:
+> `docs/research/needle3/`.
+>
+> **And the limit that was already true, now written down:** ENH-68 is marked
+> IMPLEMENTED and `nl-query.js` is reached by nothing — no route, no console
+> control, no caller outside its own test. The parser is real, tested and
+> grounded; the surface that would expose it is a product decision this entry
+> does not make. Recorded here rather than implied, because "IMPLEMENTED" on a
+> module with zero callers reads as a live feature and is not one.
 
 **ENH-69 — Expected-value alert triage.** Rank alerts by cost-weighted expected
 loss, not recency. The alert engine raises events; the triage surface should order

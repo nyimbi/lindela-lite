@@ -176,7 +176,17 @@ export async function scanRoutes() {
     }
   } finally {
     listener.close()
-    await fs.rm(dir, { recursive: true, force: true })
+    // A probe that mutated the store leaves a write in flight — `#writeFile`
+    // writes a temp file and renames it, and the handler that issued it has
+    // already answered by the time this runs. `fs.rm` walking the directory
+    // while that rename lands is `ENOTEMPTY`, which surfaced as the gate
+    // reporting a clean tree roughly one run in ten: the throw escaped the
+    // `finally`, so the CLI exited 1 with no findings printed and the
+    // documented-path count read as 0. The retries cover the burst. A
+    // teardown that still cannot empty a temp directory must not decide the
+    // verdict — the findings are what this run produced, and losing them to a
+    // stray temp file is the failure this gate exists to avoid.
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }).catch(() => {})
   }
   return { findings, checked, paths: routes.length }
 }
