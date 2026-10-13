@@ -192,7 +192,7 @@ Undeclared collections refuse to write rather than dropping silently. Rejected r
 
 ### Tests
 
-Over two thousand automated tests, plus seven repository gates (budget, OpenAPI, accessibility, offline, i18n coverage, schema, license). The tests are the specification: refusal semantics, offline delivery, USSD/IVR grammar, i18n coverage floors.
+Over four thousand automated tests, plus twenty-five repository gates in two tiers: eighteen run self-contained, and seven drive a real browser (`npm run gates` and `npm run gates:browser`). They guard the first-load budget, the OpenAPI contract, accessibility, offline delivery, i18n coverage, route scope and method coverage, and the claim surfaces — a forbidden term in the README fails the build. `test/gate-inventory.test.js` keeps this count honest. The tests are the specification: refusal semantics, offline delivery, USSD/IVR grammar, i18n coverage floors.
 
 ---
 
