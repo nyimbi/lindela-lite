@@ -125,6 +125,53 @@ export const READ_SCOPES = Object.freeze([
   // Parametric insurance instruments and disbursements: financial, not hazard.
   ['/api/v1/parametric-rules', 'read:parametric'],
   ['/api/v1/parametric-disbursements', 'read:parametric'],
+
+  // ENH-15 / R-08, the half that never landed. The read fallback became a
+  // denial, which closed the leak and — because nothing classified the routes
+  // the fallback had been serving — turned it into an outage for every caller
+  // already using them. `test/route-scope-coverage.test.js` only enumerated
+  // *mutating* routes, so nothing noticed: the console's own map overlay
+  // (`/api/v1/weather`, `/api/v1/basemap/tiles/*`) returned 403 on any
+  // deployment issuing a scoped token instead of the single `*` key
+  // `LINDELA_LITE_API_KEY` grants. Verified against a running server, not the
+  // table: a `read:hazards` token got 403 on `/api/v1/weather` and on every
+  // basemap tile the map fetches on each pan.
+  //
+  // Classified by what each serves, not by prefix shape. Where a route has a
+  // write row, the read mirrors its scope, so one audience does not need two
+  // grants for the same surface; the rest take the scope of the reader they
+  // answer — the map overlays the hazard scope, provenance the analytics scope,
+  // source high-water marks the integrations scope.
+  ['/api/v1/weather', 'read:hazards'],
+  ['/api/v1/river-discharge', 'read:hazards'],
+  // The tile proxy and the pack builder: map imagery, so the map's own scope.
+  ['/api/v1/basemap/tiles', 'read:hazards'],
+  ['/api/v1/tile-packs', 'read:hazards'],
+  // Bitemporal history is the six observation collections in
+  // `BITEMPORAL_COLLECTIONS`, and it is a hazard reader who asks what the
+  // platform believed. Two rows because the matcher counts segments: the bare
+  // series and the single-record form are different depths, not a prefix.
+  ['/api/v1/history/:collection', 'read:hazards'],
+  ['/api/v1/history/:collection/record', 'read:hazards'],
+  // Field-collected observations; their write row is `write:incidents`, so the
+  // read is the incident scope and one grant covers submitting and reviewing.
+  ['/api/v1/iot-observations', 'read:incidents'],
+  ['/api/v1/school-attendance', 'read:incidents'],
+  ['/api/v1/upload', 'read:incidents'],
+  // Alert determinations, the executions they produced, and the protocols that
+  // produced them — the alert scope, which is what already reads the triggers.
+  ['/api/v1/alert-outcomes', 'read:alerts'],
+  ['/api/v1/protocol-executions', 'read:alerts'],
+  ['/api/v1/trigger-protocols', 'read:alerts'],
+  // Report distribution and its schedule history; the write rows are
+  // `write:reports`, so reading them is the report scope.
+  ['/api/v1/report-distributions', 'read:reports'],
+  ['/api/v1/report-schedule-runs', 'read:reports'],
+  // Where a computed number came from: it reads `data_lineage`, `risk_scores`
+  // and `source_runs`, which is the analytics scope.
+  ['/api/v1/explain', 'read:analytics'],
+  // Every source's high-water mark — an integration surface, not a hazard one.
+  ['/api/v1/watermarks', 'read:integrations'],
 ])
 
 /**

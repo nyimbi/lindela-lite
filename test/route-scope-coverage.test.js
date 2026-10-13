@@ -85,6 +85,17 @@ for (const pathMatch of SPEC.matchAll(/^ {2}(\/[^:\n]*):\s*$/gm)) {
 const MUTATING = ROUTES.filter((r) => r.method !== 'GET' && r.method !== 'HEAD')
 
 /**
+ * Prefixes `src/server.js` answers *before* the auth gate, so no scope applies.
+ *
+ * A route here authenticates and returns without ever calling `scopeForRoute`,
+ * which makes it correct for it to have no scope row — and makes a row for it
+ * policy nothing reads. Kept as a list rather than a comment because the read
+ * coverage test below excludes these, and an exclusion that cannot be checked is
+ * how a failing coverage test gets made to pass.
+ */
+const BEFORE_GATE = ['/stac/', '/ogc/', '/metrics', '/api/v1/metrics']
+
+/**
  * The scope the gate would require.
  *
  * This used to reimplement the match — `table.find(([prefix]) => …)` — with a
@@ -215,6 +226,69 @@ describe('every mutating route is on the list', () => {
     assert.equal(scopeForRoute('GET', '/api/v1/nonexistent'), DENIED_SCOPE,
       'an unclassified read route is closed, exactly as an unclassified write is')
     assert.equal(scopeForRoute('GET', '/api/v1/nonexistent/deep'), DENIED_SCOPE)
+  })
+
+  it('maps every documented read that the gate checks', () => {
+    // The half that was missing. The suite above enumerates *mutating* routes,
+    // so when ENH-15 turned the read fallback from `read:hazards` into a denial
+    // nothing failed — the routes the fallback had been quietly serving were
+    // never enumerated. They 403'd instead, and the first caller to notice was
+    // the console's own map overlay: `/api/v1/weather` and every basemap tile
+    // return 403 to a `read:hazards` token, verified against a running server.
+    //
+    // The document is the enumeration source for the same reason the mutating
+    // test uses it: reconstructing `(method, path)` pairs from the dispatcher's
+    // text is not possible, and `check-openapi` already fails the build when the
+    // document and the served surface disagree in either direction. So "every
+    // documented GET the gate would check has a scope" is a real statement about
+    // the served surface.
+    //
+    // Excluded, and each for a reason rather than to make the list pass:
+    //   * the two shipped public paths, which never reach `scopeForRoute`;
+    //   * STAC, OGC and `/api/v1/metrics`, which `src/server.js` answers in
+    //     front of the gate — they call `authenticate` and then return, so a
+    //     scope row for them would be policy nothing consults, which is the
+    //     failure mode this whole file exists to catch.
+    //
+    // The second exclusion is checked rather than asserted. `BEFORE_GATE` names
+    // the paths the dispatcher answers early, and the test below proves each is
+    // really written above the `enforceAuthGate` call — so the list cannot grow
+    // to hide a route that is genuinely scope-checked, which is exactly how an
+    // exclusion list becomes a way to make a failing check pass.
+    const PUBLIC = new Set(['/api/v1/health', '/api/v1/ready'])
+    const checked = ROUTES.filter((r) => (r.method === 'GET' || r.method === 'HEAD')
+      && !PUBLIC.has(r.pathname)
+      && !BEFORE_GATE.some((p) => r.pathname.startsWith(p)))
+    assert.ok(checked.length > 100, `expected the documented read surface, parsed ${checked.length}`)
+    const unmapped = checked.filter((r) => scopeFor(r.method, r.pathname) === null)
+    assert.deepEqual(
+      unmapped.map((r) => `${r.method} ${r.pathname}`),
+      [],
+      'these reads fail closed to admin:* — a 403 for every scoped token, not a leak',
+    )
+  })
+
+  it('answers every before-gate exclusion in front of the scope check', () => {
+    // The exclusion above is a claim about dispatch order, and dispatch order is
+    // not readable at runtime. So it is read from the source, once, and the
+    // claim is narrow: every mention of an excluded prefix in `src/server.js`
+    // sits above the line that calls `enforceAuthGate`. A path moved below the
+    // gate stops being an exclusion and starts being an unmapped read the test
+    // above must catch.
+    //
+    // *Every* mention, not the first. `findIndex` reads the first occurrence,
+    // and a prefix answered above the gate and again below it would pass while
+    // the second copy served an unchecked read — the "path served twice" shape
+    // this codebase has been bitten by before. So the assertion is on the last
+    // occurrence: if any mention is below the gate, the last one is too.
+    const server = fs.readFileSync(path.join(ROOT, 'src', 'server.js'), 'utf8').split('\n')
+    const gateLine = server.findIndex((line) => line.includes('enforceAuthGate(req, res, url'))
+    assert.ok(gateLine > 0, 'the gate call is still in src/server.js')
+    for (const prefix of BEFORE_GATE) {
+      const at = server.reduce((last, line, i) => (line.includes(`'${prefix}`) ? i : last), -1)
+      assert.ok(at >= 0, `${prefix} is still answered somewhere in src/server.js`)
+      assert.ok(at < gateLine, `${prefix} must be answered above the auth gate (last mention line ${at + 1} vs gate ${gateLine + 1})`)
+    }
   })
 
   it('does not let a GET reach a write scope by sharing a prefix', () => {

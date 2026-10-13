@@ -253,6 +253,33 @@ R-01, R-02, R-06, R-07, R-08, R-16, R-17 (`mergeWatermarkForward`), R-19
 (async-local fetch recording), R-20 (`next_attempt_at` consulted), R-23, R-24,
 R-26, R-28, R-29, R-41, R-42, R-44, R-67.
 
+**R-08, re-opened and closed for real, 2026-10-13.** The row above lists ~20 GET
+routes readable by the narrowest scope, and it was closed when the *fallback*
+changed — `scopeForRoute` now returns `DENIED_SCOPE` for an unmapped read instead
+of `read:hazards`. That closed the leak and left the second half of ENH-15 undone:
+"classify the ~20 current routes into `READ_SCOPES`". Nothing classified them, so
+every route the fallback had been serving started returning **403** instead. The
+coverage test could not see it because it enumerated *mutating* routes only — the
+same shape as R-07, one layer over: the check existed and its jurisdiction was
+half the surface.
+
+Found by probing a running server rather than reading the table, which is the
+only way this class shows up: a `read:hazards` token got **403 on
+`/api/v1/weather`** and on every `/api/v1/basemap/tiles/*` the console's map
+fetches on each pan. Ten console routes 403'd to a token carrying every read
+scope; all ten answer now, re-probed against the same server. Twenty-one rows
+were added to `READ_SCOPES`, classified by what each route serves rather than by
+prefix shape — a route with a write row takes the read that mirrors it, so one
+audience does not need two grants for one surface. The guard is
+`test/route-scope-coverage.test.js`'s "maps every documented read that the gate
+checks": it enumerates documented GET routes, excludes the four prefixes
+`src/server.js` answers in front of the gate, and proves each exclusion really is
+above the gate by its *last* mention in the file — a prefix answered above and
+again below would otherwise pass while the second copy served an unchecked read.
+Canaried twice: removing the `/api/v1/weather` row fails it with that path named,
+and planting a second `/api/v1/metrics` mention below the gate fails the ordering
+assertion at the line numbers.
+
 ### Closed but never marked — found 2026-10-13
 
 The row tables above carry the audit's own text and were never updated as the

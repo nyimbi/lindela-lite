@@ -144,6 +144,23 @@ What remains here is genuinely the performance half, bounded by the collections 
 **Change:** `src/auth.js:300` returns `DENIED_SCOPE` for unmapped reads too; classify the ~20 current routes into `READ_SCOPES`. Inverts `test/route-scope-coverage.test.js:161`.
 **Why not incremental:** turns ENH-01's "deny-by-default" from true-for-writes into true, and makes a route added next year closed rather than silently widened.
 
+> **Both halves done, 2026-10-13 — and the second one a day after the first was
+> called closed.** The denial half landed and was recorded here as the metric met.
+> The classification half did not: the ~20 routes the fallback had been serving
+> were never added to `READ_SCOPES`, so the metric above was wrong in the
+> direction that hurts — `readable by the narrowest scope: ~20 → 0` was true, and
+> `reachable by *any* scoped token: ~20 → 0` was true with it, which is not the
+> same claim. Ten of the console's own calls 403'd, including `/api/v1/weather`
+> and the basemap tile proxy on every map pan; verified against a running server,
+> because the table reads as though the routes were simply classified elsewhere.
+>
+> The reason it went unnoticed is the one worth keeping: the guard enumerated
+> **mutating** routes, and this is a read. A check scoped to half its jurisdiction
+> reports clean on the other half forever. The guard now enumerates documented GET
+> routes as well, excludes the four prefixes answered in front of the gate, and
+> proves each exclusion is genuinely above it. Twenty-one rows were added. The
+> full account is under R-08 in `01-remediation.md`.
+
 ### ENH-16 — Inbound cost is bounded per caller
 **Metric:** unbounded-cost endpoints → **bounded per principal**, with separate budgets for `/upload`, `/ingest/run`, `/kpi/quarterly.pdf` · **Score: 8.3/2 = 4.2**
 **Change:** a limiter keyed on `req.__auth?.subject || req.socket.remoteAddress`, applied before `store.read()`, with an evicting key map. `createRateLimiter` exists and is tested; it needs a per-caller backing store.
