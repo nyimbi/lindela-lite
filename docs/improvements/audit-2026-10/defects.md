@@ -1104,13 +1104,29 @@ to `/api/v1/helth-typo` made `check-openapi.mjs` exit 1 naming
 Reverted from a file backup (`cp /tmp/liveness.bak src/routes/liveness.js`), not
 `git checkout`.
 
-**Not fixed, recorded:** `scripts/collect-route-manifests.mjs:42` reads
-`src/server.js` alone for the same purpose. It is a manual generator, not a gate
-(absent from `run-gates.mjs`), and its consumer `src/route-manifests.js` is
-verified behaviourally by `test/route-manifests.test.js` against a live server —
-so its blindness is latent rather than live. It should read `routeSources()` too
-the next time it is run; a generator whose output a behavioural test checks is
-one regeneration away from being wrong, not wrong now.
+**Fixed 2026-10-13 (commit `b30a30c`):** `scripts/collect-route-manifests.mjs`
+read `src/server.js` alone for the same purpose, and the note here named the
+trigger — "it should read `routeSources()` too the next time it is run". It was
+run, and the source-closure pass was **dead**: it reported `0 matcher families
+closed over the source` and exited 0, so every write route fell to the probe and
+was recorded wide. Wide is fail-safe (a whole-store read, not a 500), which is
+why the zero survived. Three further causes sat under the recorded one:
+`familyClosures` was keyed by handler and queried by prefix (pre-existing since
+the file was written, proved against revision `cdadc811`); the prefix scrape read
+only the escaped-slash spelling inside regex literals, missing every plain-string
+condition and all of `stac.js`; and `bodyOf` brace-matched from the first `{`,
+which for a destructured parameter is the parameter object — `handleReportingRoute`
+measured 110 characters of a 33 KB file. The last was a fifth copy of a parser
+`route-surface.mjs` already consolidated, carrying the same defect the
+consolidation fixed. Fixes 1–3 produced a byte-identical table; only replacing
+`bodyOf` with the shared `functionBody` moved it (wide 114 → 108). A pre-probe
+self-check now exits 1 when fewer than 20 families parse or when the `kpi` canary
+prefix has no closure, canaried in all three failure modes.
+
+The regenerated table is deliberately not committed: the closure is per handler
+family by design, the committed table is per route and passes
+`test/route-manifests.test.js` at 15/15, and regenerating would widen 78 entries
+against that passing check. The tool was wrong, not the table.
 
 The rule: **a guard scoped to a file goes blind when the surface moves, and goes
 blind silently.** This is the checker-side twin of VER-18 — there the dispatcher
