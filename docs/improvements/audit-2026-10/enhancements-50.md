@@ -1595,6 +1595,35 @@ testable in isolation. This unblocks every other substrate item.
 > carried-forward number in this entry, which is why every figure here now names
 > the expression that produces it.
 
+> **2026-10-13 — the ordering claim became a guard, and the guard found its own
+> jurisdiction.** Every extraction note in this entry ends with "dispatched here,
+> where the block was, so the order the dispatcher tries its routes in is
+> unchanged", and the events family's note records how that was ever checked:
+> "verified by grepping the whole dispatcher for both literals, not by reading the
+> blocks". A grep run once by a person is a fact that was true when it was typed.
+> `test/dispatch-order.test.js` (7 tests) makes it checkable: it reads the 32
+> `const X = matchYRoute(…)` statements out of `handleApiRequestInContext` in
+> order, asserts the sequence against a table recorded in the test, and asserts
+> the four-above / twenty-eight-below split of `store.read(readRequest)`.
+>
+> The table is **ENH-59's missing declaration in miniature** — the dispatcher's
+> own order, in one place, checked against the source rather than produced from
+> it. It is kept in the test rather than in `src/` because it must not change
+> behaviour: it records the order, it does not generate it. When ENH-59's generator
+> lands the generator reads this table and the dispatcher's statements become a
+> loop over it; until then the two are compared, so a reorder is a failure naming
+> the diff. Two canaries: moving `matchTileRoute` below the store read fails 2/7
+> (the split assertion), and swapping two families within one phase fails 2/7 (the
+> sequence assertion).
+>
+> The orphan check was scoped to the dispatcher body first and **reported two
+> correct families as orphans** — `matchStacRoute` and `matchOgcRoute` are
+> dispatched from `handleApi`, above the function. A check scoped narrower than
+> its subject names a defect that is not there, which is the same error as one
+> scoped wider, and it is why the check now reads the whole server source while
+> the *order* check stays on the dispatcher body: the two questions have different
+> jurisdictions and one scope cannot serve both.
+>
 > **2026-10-13 — two comments outlived their blocks.** The removal is five lines
 > and the finding is that neither comment was wrong when written. `// Field
 > outcomes: the confirmations a responder sends with DONE` sat directly above
