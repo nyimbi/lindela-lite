@@ -32,7 +32,7 @@
       "id": "ENH-08",
       "title": "Watermarks, incremental fetch, resumable backfill",
       "status": "shipped",
-      "detail": "`src/watermarks.js` (27 tests) implements the per-source watermark, incremental fetch windows, resumable backfill cursors and the resume-after-crash case, but nothing calls it. The two archive connectors still default `endDate` to today and re-walk from 1981 on every run, and both still mint their record id from `endDate`, so a fresh id is minted daily and the whole backfill is re-downloaded forever. `gdacs-archive.js` remains a synchronous loop with no progress and no resume. This is the module-built-but-uncalled shape described under the patterns below: the logic is right and unreachable, and the work left is plumbing it into the three connectors.",
+      "detail": "Shipped. `src/watermarks.js` (27 tests) implements the per-source watermark, incremental fetch windows, resumable backfill cursors and the resume-after-crash case, and it is now wired into three consumers: `src/connectors/open-meteo-flood.js:14`, `src/connectors/open-meteo-archive.js:14` and `src/routes/provenance.js:36` (`describeWatermarkState`). Watermark state is a declared collection, read once at the start of a run and written back only for sources that reported a position, so an interrupted run keeps its cursor (`test/watermark-persistence.test.js`). The audit's before-state: nothing called the module, the two archive connectors defaulted `endDate` to today and re-walked from 1981 on every run, minting a fresh id daily, and `gdacs-archive.js` was a synchronous loop with no progress or resume.",
       "evidence": [
         "src/watermarks.js",
         "src/connectors/open-meteo-archive.js:47",
@@ -110,7 +110,7 @@
       "id": "ENH-14",
       "title": "Completeness tripwires for capped pagination",
       "status": "shipped",
-      "detail": "`src/completeness.js` (26 tests) implements the pagination bookkeeping the item asks for: pages fetched, records seen, provider-declared total, whether the last page was full, and a `possibly_incomplete` flag when a cap bit before a floor rather than after one. Nothing calls it. `gdacs-archive` still walks quarter windows and keeps nothing about each page except the feature count, and `chirps` still applies its 30-record cap without recording what it dropped, so a truncated walk is indistinguishable from a quiet upstream — which is the entire finding.",
+      "detail": "Shipped. `src/completeness.js` implements the pagination bookkeeping the item asks for — pages fetched, records seen, provider-declared total, whether the last page was full, and a `possibly_incomplete` flag when a cap bit before a floor rather than after one — and three consumers read it: `src/ingestion.js:21` (`COMPLETENESS_VERDICTS`, `completenessVerdictName`), `src/connectors/gdacs-archive.js:5` (`assessPagination`, `mergeCompleteness`) and `src/connectors/chirps.js:3` (`assessPagination`, `recordCap`). The verdict is a run-record field, a scanned flag and a status-route verdict, read before the assertion pass can replace the output (`test/pagination-completeness.test.js`). The audit's before-state: nothing called the module, `gdacs-archive` walked quarter windows keeping only the feature count, and `chirps` applied its 30-record cap without recording what it dropped, so a truncated walk was indistinguishable from a quiet upstream.",
       "evidence": [
         "src/completeness.js",
         "src/connectors/gdacs-archive.js:51",
