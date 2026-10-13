@@ -38,6 +38,14 @@ export const LOADING = 'loading'
  * says "you have done nothing", the other says "something went wrong".
  */
 export const QUEUED = 'queued'
+/**
+ * The queue tried, the server refused, and it has stopped trying.
+ *
+ * Not QUEUED: `pendingCount()` excludes failed records, so a phone holding two
+ * refused reports rendered as a phone holding none — and the worker's answer to
+ * that is to file the observation again. Not ERROR: nothing was lost.
+ */
+export const HELD = 'held'
 
 /**
  * Decide which state a render is allowed to claim.
@@ -126,7 +134,7 @@ export function staleReadNote(payload, { storedAt = null, subject = 'These recor
   }
 }
 
-export function describeState(state, { subject = 'These records', noun, queuedCount = 0, what = 'they', holdsWork = false } = {}) {
+export function describeState(state, { subject = 'These records', noun, queuedCount = 0, what = 'they', holdsWork = false, heldCount = 0 } = {}) {
   switch (state) {
     case LOADING:
       return {
@@ -185,6 +193,30 @@ export function describeState(state, { subject = 'These records', noun, queuedCo
           : one
             ? `One item is stored on this device and has not reached the server. It will be sent automatically when the connection returns. Nothing has been lost.`
             : `${count} items are stored on this device and have not reached the server. ${what} are sent automatically when the connection returns. Nothing has been lost.`,
+        tone: 'warning',
+        retryable: false,
+        action: null,
+      }
+    }
+
+    // "Two reports have not been sent" and "one was refused" are true at once;
+    // showing only the first tells the worker to wait for a link that will
+    // never move the second.
+    case HELD: {
+      const held = Number.isFinite(heldCount) ? heldCount : 0
+      return {
+        // Zero reads as a sentence, like QUEUED's zero branch: a state whose
+        // copy is null at zero is one a renderer must guard.
+        title: held === 0
+          ? 'Nothing has been refused'
+          : held === 1 ? '1 report was refused' : `${held} reports were refused`,
+        // "No signal" would be a lie: a record reaches this state only after
+        // MAX_QUEUE_ATTEMPTS rejections, every one of them answered.
+        body: held === 0
+          ? 'Everything filed on this device has been accepted by the server.'
+          : held === 1
+            ? 'Refused after several attempts, so it has stopped retrying on its own. It is still on this device — send it again, or remove it.'
+            : 'Refused after several attempts, so they have stopped retrying on their own. They are still on this device — send one again, or remove it.',
         tone: 'warning',
         retryable: false,
         action: null,

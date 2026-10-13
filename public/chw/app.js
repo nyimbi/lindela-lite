@@ -1,7 +1,7 @@
 import { initI18n, t, apiFetch, initOfflineBanner, initOfflineQueue, initServiceWorker, submitOrQueue, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { mountNavbar } from '/shared/navbar.js'
-import { esc as escapeHtml } from '/shared/fmt.js'
-import { ERROR, LOADING, QUEUED, createLoadSequence, describeActionFailure, describeState, distinguishFailure, staleReadNote } from '/shared/states.js'
+import { esc as escapeHtml, formatRelative } from '/shared/fmt.js'
+import { ERROR, HELD, LOADING, QUEUED, createLoadSequence, describeActionFailure, describeState, distinguishFailure, staleReadNote } from '/shared/states.js'
 import { CHW_SYMPTOM_FORM, RENDERABLE_TYPES, fieldHook, renderForm, readField, validateFormDefinition } from '/shared/forms.js'
 mountNavbar({ activePath: '/chw' })
 
@@ -333,6 +333,10 @@ async function init() {
   setupReferenceScreen()
 
   refreshQueueStatus()
+  // Bound once, here, rather than inside `refreshQueueStatus`: that runs on
+  // every queue change, and a listener added per render would fire N times on
+  // the Nth change — retrying one dead letter N times.
+  wireQueueStatus()
   // No location request here. `init` used to call `requestUserLocation()`, which
   // popped a browser permission dialog the moment the app opened — before the
   // health worker had tapped anything, and on a screen that might not even be
@@ -555,21 +559,99 @@ let toastTimer = null
  * first one is still unsent — and an app that looks identical whether it is
  * holding two reports or none is indistinguishable from one that has thrown
  * them away.
+ *
+ * R-60. This read only `pendingCount()`, which excludes failed records by
+ * construction — so the one case the worker most needs told, a report the
+ * server has refused and the queue has stopped retrying, rendered as an app
+ * holding nothing. The dead-letter mechanism (`markRetry`, `MAX_QUEUE_ATTEMPTS`,
+ * `claimBatch` skipping `failed`) and the API to act on it (`list({failed:true})`,
+ * `retry`, `discard`) had existed and been tested for a while with no caller at
+ * all. A refusal that nothing surfaces is a refusal the worker re-files by hand,
+ * and a duplicate field report is worse than a visible failure.
+ *
+ * Both counts render together rather than one replacing the other, because both
+ * are true at once and a phone showing only "2 not sent yet" tells a worker to
+ * wait for a link that will never move the third one.
  */
 async function refreshQueueStatus() {
   const el = $('queueStatus')
   if (!el) return
-  const count = await window.lindelaQueue?.pendingCount?.() ?? 0
-  if (!count) {
+  const queue = window.lindelaQueue
+  const [count, failed] = await Promise.all([
+    queue?.pendingCount?.() ?? 0,
+    queue?.list?.({ failed: true }) ?? [],
+  ])
+  const held = Array.isArray(failed) ? failed : []
+  if (!count && !held.length) {
     el.hidden = true
     el.dataset.state = 'none'
     el.textContent = ''
     return
   }
-  const copy = describeState(QUEUED, { queuedCount: count, what: 'They' })
   el.hidden = false
-  el.dataset.state = 'queued'
-  el.innerHTML = `<strong>${escapeHtml(copy.title)}</strong>${escapeHtml(copy.body)}`
+  el.innerHTML = [
+    count ? queuedBlock(count) : '',
+    held.length ? heldBlock(held) : '',
+  ].join('')
+  el.dataset.state = held.length ? 'held' : 'queued'
+}
+
+function queuedBlock(count) {
+  const copy = describeState(QUEUED, { queuedCount: count, what: 'They' })
+  return `<strong>${escapeHtml(copy.title)}</strong>${escapeHtml(copy.body)}`
+}
+
+/**
+ * The dead letters, one row each, with the two things a person can do about it.
+ *
+ * Per record, not one retry-all: the reason a record is here is usually a 4xx
+ * the server will refuse identically, and re-sending a batch of them at once
+ * buries the one that would have gone. The noun comes from what was stored at
+ * enqueue time — "POST /api/v1/chw/report" is not a name a health worker
+ * recognises as the observation they took this morning.
+ *
+ * `aria-live` is on the host element, so a list that appears while the worker is
+ * on another screen is announced rather than silently present.
+ */
+function heldBlock(records) {
+  const note = describeState(HELD, { heldCount: records.length })
+  const rows = records.map((record) => {
+    const what = record?.what || 'Report'
+    const when = formatRelative(record?.queuedAt || record?.timestamp)
+    const status = record?.lastErrorStatus ? ` (server said ${record.lastErrorStatus})` : ''
+    const label = `${escapeHtml(what)} — ${escapeHtml(when)}${escapeHtml(status)}`
+    return `<li class="held-row" data-id="${escapeHtml(String(record?.id ?? ''))}">`
+      + `<span class="held-what">${label}</span>`
+      + `<button type="button" class="retry-btn held-send" data-action="retry">Send again</button>`
+      + `<button type="button" class="retry-btn held-drop" data-action="discard">Remove</button>`
+      + `</li>`
+  }).join('')
+  return `<strong>${escapeHtml(note.title)}</strong>${escapeHtml(note.body)}<ul class="held-list">${rows}</ul>`
+}
+
+/**
+ * One delegated listener for the whole block, so a re-render cannot leave a
+ * stale handler bound to a node that no longer exists — and so `discard`, which
+ * deletes, is only ever reached by a press on the row it names.
+ */
+function wireQueueStatus() {
+  const el = $('queueStatus')
+  if (!el || el.dataset.wired === '1') return
+  el.dataset.wired = '1'
+  el.addEventListener('click', async (event) => {
+    const button = event.target.closest?.('button[data-action]')
+    if (!button) return
+    const id = button.closest('.held-row')?.dataset?.id
+    if (!id) return
+    const queue = window.lindelaQueue
+    if (button.dataset.action === 'retry') await queue?.retry?.(id)
+    // No confirm() on the discard: the record has already been refused by the
+    // server several times, and a modal on a field phone is a worse instrument
+    // than an undoable press. It is removed, the queue announces the change, and
+    // the list re-renders without it.
+    else await queue?.discard?.(id)
+    await refreshQueueStatus()
+  })
 }
 
 window.addEventListener('lindela-queue-changed', () => { refreshQueueStatus() })

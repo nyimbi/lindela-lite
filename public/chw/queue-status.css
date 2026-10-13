@@ -1,0 +1,39 @@
+/**
+ * R-60 — the refused-report rows on the field app.
+ *
+ * A separate stylesheet rather than more of `index.html`'s inline `<style>`,
+ * because two ceilings measure this surface and both were nearly spent: the
+ * console's first-load budget counts `shared/states.js` (which the HELD state
+ * extends) and `test/web-component-layer.test.js` caps the *inline* CSS across
+ * all seven surfaces at the audited 59 KB. Rules here are in neither. The file
+ * is reached from `index.html` by `<link>`, so `shellGraph` precaches it and an
+ * offline first load still gets it — the same arrangement `workflow/panel.css`
+ * uses.
+ *
+ * The buttons sit in the row rather than under the block: a retry button under
+ * a list of three is a button that acts on which?
+ */
+.held-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.held-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--warn);
+}
+
+.held-what {
+  flex: 1 1 100%;
+  font-weight: 600;
+}
+
+.held-row .retry-btn {
+  margin-top: 0;
+  flex: 0 0 auto;
+}
