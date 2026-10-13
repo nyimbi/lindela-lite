@@ -35,33 +35,60 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { createServer } from '../src/server.js'
 import { JsonStore } from '../src/store.js'
 import { emptyStore } from '../src/schema.js'
+import { routeSources, functionBody } from './route-surface.mjs'
 
-const SERVER = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8')
+/**
+ * The whole surface, not `src/server.js`.
+ *
+ * This read `src/server.js` alone, and the extraction moved every matcher and
+ * every handler out from under it: the source-closure pass below found **zero
+ * families** on the tree as of 2026-10-13, so every write route fell to the
+ * probe and was recorded wide. That is the fail-safe direction — a wide manifest
+ * costs a whole-store read, not a 500 — which is exactly why nobody noticed.
+ *
+ * The note in `defects.md` under ARC-02 recorded this and named the trigger:
+ * "It should read `routeSources()` too the next time it is run." It was run on
+ * 2026-10-13, and the pass was dead.
+ */
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
+const SOURCES = routeSources(ROOT)
 const WIDE = 12
 const KNOWN = new Set(Object.keys(emptyStore()))
 
 /* ------------------------------------------------------------ source closure */
 
+/**
+ * Every top-level function across the surface, keyed by name.
+ *
+ * The body comes from `functionBody` in `route-surface.mjs` — the shared parser
+ * — rather than from a local brace match, and that is a correctness fix rather
+ * than tidiness. The local version took the body to be everything from the first
+ * `{`, which for a handler whose signature destructures its dependencies is the
+ * **parameter object**: `handleReportingRoute(route, { store, data, … })` matched
+ * 110 characters of a 33 KB file and read no collection at all. Every closure was
+ * empty for that reason, so the pass below contributed nothing to any route even
+ * once it was finding the families.
+ *
+ * That is the fifth copy of a parser the repository already consolidated, and it
+ * had the same defect the consolidation was written to fix. `activeForms` is the
+ * one name defined twice — a local adapter in `chw.js` and again in `forms.js` —
+ * and first-wins is right for it: both are the same adapter over the same
+ * collection, so whichever body is scanned closes over the same reads.
+ */
 const FUNCTIONS = new Map()
-for (const m of SERVER.matchAll(/^(?:export )?(?:async )?function ([A-Za-z0-9_]+)\(/gm)) {
-  FUNCTIONS.set(m[1], '')
+for (const source of SOURCES) {
+  for (const m of source.text.matchAll(/^(?:export )?(?:async )?function ([A-Za-z0-9_]+)\(/gm)) {
+    if (!FUNCTIONS.has(m[1])) FUNCTIONS.set(m[1], source.text)
+  }
 }
 function bodyOf(name) {
-  if (FUNCTIONS.get(name)) return FUNCTIONS.get(name)
-  const start = SERVER.search(new RegExp(`^(?:export )?(?:async )?function ${name}\\(`, 'm'))
-  if (start < 0) return ''
-  let i = SERVER.indexOf('{', start)
-  let depth = 0
-  for (; i < SERVER.length; i += 1) {
-    if (SERVER[i] === '{') depth += 1
-    else if (SERVER[i] === '}') { depth -= 1; if (depth === 0) break }
-  }
-  const body = SERVER.slice(start, i)
-  FUNCTIONS.set(name, body)
-  return body
+  const source = FUNCTIONS.get(name)
+  if (!source) return ''
+  return functionBody(name, source) || ''
 }
 
 /** Every `data.<collection>` a function, and everything it calls, reads. */
@@ -82,16 +109,94 @@ function closureOf(name, seen = new Set()) {
   return out
 }
 
-/** Path prefix → handler family, from the `matchXRoute` convention. */
+/**
+ * Path prefix → handler family, from the `matchXRoute` convention.
+ *
+ * Three things this got wrong, each making the pass a no-op rather than a wrong
+ * answer:
+ *
+ *   - It read `SERVER` — `src/server.js` alone — so after ENH-60 moved the
+ *     matchers out it found none. It reads the whole surface now.
+ *   - The prefix was scraped with `/api\\\/v1\\\/([a-z-]+)/`, which matches only
+ *     the **escaped** spelling inside a regex literal. Every `pathname ===
+ *     '/api/v1/kpi/…'` condition is a plain string and matched nothing, so even
+ *     before the extraction the map held only the regex-spelled families —
+ *     15 of them, missing `kpi`, `districts`, `exposure` and the rest.
+ *   - It required the `api/v1/` segment, so `src/routes/stac.js` — whose paths
+ *     are `/stac/…` and `/ogc/…` — contributed nothing at all. Its matcher
+ *     matched the pattern `function match*Route(` and then scraped zero
+ *     prefixes from it, which is indistinguishable from a matcher that names no
+ *     path.
+ *
+ * The prefix is derived the same way the lookup derives it (the first segment
+ * after the mount point), so the two cannot disagree again — which is the bug
+ * the closure map had in the other direction.
+ */
 const families = new Map()
-for (const m of SERVER.matchAll(/function (match[A-Za-z]+Route)\(/g)) {
-  const handler = `handle${m[1].slice('match'.length)}`
-  const block = SERVER.slice(m.index, m.index + 6000)
-  for (const r of block.matchAll(/api\\\/v1\\\/([a-z-]+)/g)) families.set(r[1], handler)
+const prefixOf = (routePath) => routePath.replace(/^\/(?:api\/v1|stac|ogc)\//, '').split('/')[0] || ''
+for (const source of SOURCES) {
+  for (const m of source.text.matchAll(/function (match[A-Za-z]+Route)\(/g)) {
+    const handler = `handle${m[1].slice('match'.length)}`
+    const block = source.text.slice(m.index, m.index + 6000)
+    // Every path literal the matcher names, in either spelling: a plain string
+    // (`pathname === '/api/v1/x'`) or a regex literal (`pathname.match(/^\/…/)`).
+    // The capture keeps its leading slash, because `prefixOf` strips the mount
+    // point by matching it — a capture without the slash makes every API path
+    // normalise to the single prefix `api`, which is one key for sixty routes.
+    for (const r of block.matchAll(/((?:\\?\/)(?:api(?:\\?\/)v1|stac|ogc)(?:\\?\/)[a-z][a-z-]*)/g)) {
+      const prefix = prefixOf(r[1].replace(/\\\//g, '/'))
+      if (prefix) families.set(prefix, handler)
+    }
+  }
 }
+
+/**
+ * The transitive read closure, **keyed by the prefix the lookup uses**.
+ *
+ * It was keyed by handler name and queried by path prefix — `get('kpi')` against
+ * a map holding `handleKpiRoute` — so every lookup missed and the closure
+ * contributed nothing to any route. The two passes were each individually
+ * plausible, which is why the mismatch survived: the bug is in the join between
+ * them, and neither half reads as wrong on its own.
+ */
 const familyClosures = new Map()
+const closuresByHandler = new Map()
 for (const [prefix, handler] of families) {
-  if (!familyClosures.has(handler)) familyClosures.set(handler, [...closureOf(handler)].sort())
+  if (!closuresByHandler.has(handler)) closuresByHandler.set(handler, [...closureOf(handler)].sort())
+  familyClosures.set(prefix, closuresByHandler.get(handler))
+}
+
+/* ------------------------------------------------------- the self-check first */
+
+/**
+ * Refuse to run the probe on a tree where the source pass measured nothing.
+ *
+ * The summary line reported `0 matcher families closed over the source` and
+ * exited **0**, and the table it wrote was consumed by hand. A generator whose
+ * measurement found nothing must fail rather than print a number nobody reads:
+ * the same rule as a reconciliation script that reports "0 mismatches" because
+ * its query matched nothing. It is checked here, before the probe, because the
+ * probe takes minutes and a dead pass makes every one of them pointless.
+ *
+ * Both floors are structural, not tuned. There are 34 matchers under
+ * `src/routes/` and every one names at least one path, so `families` cannot be
+ * near-empty on a tree where the extraction happened. `kpi` is the canary: it is
+ * a plain-string matcher, which is the spelling the old prefix regex could not
+ * read, so a regression to escaped-slash-only fails here by name.
+ */
+const CANARY_PREFIX = 'kpi'
+if (families.size < 20) {
+  console.error(`collect-route-manifests: parsed only ${families.size} matcher families from the surface. `
+    + 'The source-closure pass is dead, and every write route would be recorded wide — '
+    + 'which is fail-safe, and therefore silent. Check that routeSources() still finds '
+    + 'src/routes/ and that the prefix scrape reads plain-string conditions.')
+  process.exit(1)
+}
+if (!familyClosures.has(CANARY_PREFIX)) {
+  console.error(`collect-route-manifests: no closure for prefix '${CANARY_PREFIX}', which is a matcher family. `
+    + 'Either the closure map is keyed by something the lookup does not use, or the prefix '
+    + 'scrape did not read the spelling this matcher is written in. Both have happened here.')
+  process.exit(1)
 }
 
 /* ------------------------------------------------------------------ the probe */
@@ -169,7 +274,15 @@ await fs.rm(dir, { recursive: true, force: true })
 
 const out = {}
 for (const { path: routePath, methods } of routes) {
-  const prefix = routePath.split('/').filter(Boolean)[2] || ''
+  // The family prefix, derived from the mount point rather than from position.
+  //
+  // This was `split('/').filter(Boolean)[2]`, which is the third segment — right
+  // only for `/api/v1/<family>/…`. STAC and OGC are mounted at `/stac/…` and
+  // `/ogc/…`, so position 2 is their *parameter*: `/stac/collections/{id}`
+  // derived the prefix `{id}`, which matched no family, and the four STAC/OGC
+  // routes silently lost their closure. `stac.js` is exactly the module the
+  // matcher map already reads, so the family was there to be found.
+  const prefix = routePath.replace(/^\/(?:api\/v1|stac|ogc)\//, '').split('/')[0] || ''
   const closure = familyClosures.get(prefix) || []
   for (const method of methods) {
     const key = `${method} ${routePath}`
