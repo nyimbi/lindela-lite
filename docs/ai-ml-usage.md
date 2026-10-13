@@ -74,8 +74,14 @@ basins' cells, and the model basis says so (`MODEL_BASIS` in
   inventing a decomposition.
 ## 4. Where the boundary is drawn
 
-- **No LLMs, no black-box scoring, no unsupervised anything** anywhere in the
-  pipeline. Zero runtime dependencies beyond `pg`.
+- **No LLMs, no black-box scoring, no unsupervised anything** in the scoring
+  path. Nothing that produces a number, a score, a classification or an action
+  is a model. Zero runtime dependencies beyond `pg`.
+- **Two model surfaces exist, both opt-in and both outside the scoring path**:
+  the report narrator (§5) and the query slot-filler (§6). Neither may write a
+  fact, and each refuses rather than guesses. They are described here rather
+  than omitted, because "no LLMs" is a claim about the pipeline and a reader who
+  finds a model in the tree should not have to decide whether the document lied.
 - **Models don't act.** A fitted or threshold signal produces action only
   through **pre-authorised trigger protocols** — condition sets
   (`AND`/`OR`/`XOR`/`NOT`, fail-closed on unresolvable terms) that humans
@@ -87,7 +93,8 @@ basins' cells, and the model basis says so (`MODEL_BASIS` in
 
 ## 5. The report narrator — generated text, audited like a figure
 
-`src/narrator.js` is the one place a language model writes product text: a
+`src/narrator.js` is the one place a language model writes product text (§6 is
+the other model surface, and it writes none — it proposes slots): a
 **commentary paragraph** attached to a generated report via
 `POST /api/v1/reports/:id/narrate`, written by the smallest Qwen served
 locally — Ollama, default `qwen3:0.6b` (0.6B parameters), temperature 0,
@@ -106,6 +113,34 @@ explicitly opt-in via `LINDELA_LITE_NARRATOR=1`.
   reports panel labels it "AI narration ({model})"; the count of figures the
   model restated ships with the text (`numbers_checked`) so the audit is a
   fact, not an assurance.
+
+## 6. The query slot-filler — a model that proposes, a vocabulary that disposes
+
+`src/nl-query.js` parses a natural-language question against a **declared
+vocabulary** — seven subjects, a predicate set, a window set, the district list
+— and refuses a question it cannot ground. Its design rule is that there is no
+model in it. `src/needle.js` adds one to the *recall* of that parse without
+changing the rule, using Cactus Needle 3 (121M parameters at 2.125 bits per
+weight, 8-29 MB, Apache-2.0), opt-in via `LINDELA_LITE_NEEDLE=1`.
+
+- **The model proposes slots; the vocabulary disposes.** Needle returns one
+  grammar-constrained tool call carrying `{subject, region, window, predicates,
+  threshold}`. The argument grammar is *generated from* the vocabulary, so the
+  enums cannot drift from it — and every returned slot is then re-validated
+  against that same vocabulary by code, because the grammar is the model's
+  promise and this is the platform's, and the platform does not take the
+  model's. A proposed subject not in `SUBJECTS` is refused, and the question
+  refuses exactly as it does with no model present.
+- **A low-confidence proposal is refused whole, not partly applied.** Half a
+  parse is the failure mode this module exists to avoid. Below
+  `NEEDLE_CONFIDENCE_FLOOR` the call is refused and the score is named.
+- **Refusals are data, never thrown.** Off, unreachable, HTTP error, malformed
+  JSON, empty `function_calls`, low confidence, unknown subject — each is a
+  refusal with its own code, the narrator's contract.
+- **It has no production caller.** `nl-query.js` is tested and reachable from
+  nothing; wiring a route is a product decision, not a model one, and the
+  research note (`docs/research/needle3/README.md`) records that rather than
+  implying a live surface.
 
 **One line**: *statistically grounded models (transparent contingency counts +
 a regularised fit) score flood risk; every score is recomputable and

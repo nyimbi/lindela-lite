@@ -385,6 +385,72 @@ export function parseQuery(question, { now = new Date().toISOString() } = {}) {
   }
 }
 
+/**
+ * Parse a question, falling back to the Needle sidecar when the declared
+ * vocabulary does not carry a subject.
+ *
+ * The deterministic parse runs first and its answer wins whenever it succeeds —
+ * the model is not consulted for a question the vocabulary already grounds, so
+ * its cost is paid only on the questions that would otherwise refuse. When the
+ * parse refuses with `unknown_subject` *and* Needle is configured, Needle is
+ * asked to propose the slots; its proposal is validated against the same
+ * vocabulary by `src/needle.js` before it is used here.
+ *
+ * Two properties this keeps, and the reason it is written this way:
+ *
+ * 1. **Needle never invents a subject.** `proposeSlots` accepts a subject only
+ *    from `SUBJECTS`, so a proposal that survives carries a key this module
+ *    already knows. The `subject_label` is read off the vocabulary here, not
+ *    taken from the model, so the label cannot drift from the subject.
+ * 2. **Off, unreachable, or unconfident is the deterministic refusal.** Every
+ *    failure of the model path returns the original refusal unchanged, so a
+ *    deployment with no sidecar behaves exactly as one that never had this
+ *    function — which is what makes the fallback safe to ship enabled.
+ *
+ * The returned object is the same shape `parseQuery` returns, with
+ * `proposed_by: 'needle'` added so a caller can tell a model-assisted parse from
+ * a deterministic one. Nothing downstream branches on it; it is there to be
+ * audited.
+ */
+export async function parseQueryWithModel(question, {
+  now = new Date().toISOString(), needle = null, env = process.env, http = undefined,
+} = {}) {
+  const parsed = parseQuery(question, { now })
+  if (parsed.status === 'parsed' || parsed.code !== 'unknown_subject') return parsed
+
+  const { proposeSlots } = await import('./needle.js')
+  const proposal = await proposeSlots(question, http === undefined ? { env, needle } : { env, needle, http })
+  if (proposal.status !== 'proposed') {
+    return { ...parsed, needle: { code: proposal.code, reason: proposal.reason } }
+  }
+
+  const subject = SUBJECTS[proposal.subject]
+  // `proposeSlots` already refused an unknown subject, so this is a guard against
+  // the vocabulary changing between the two reads rather than a live branch.
+  if (!subject) return { ...parsed, needle: { code: 'unknown_subject', reason: `'${proposal.subject}' is not a subject this layer carries` } }
+
+  // The window is resolved to the vocabulary's own entry, so a proposal naming a
+  // real window key carries that window's phrases and `assumed: false`; a
+  // proposal naming none keeps the deterministic default, stamped assumed.
+  const window = proposal.window
+    ? { ...WINDOWS.find((w) => w.key === proposal.window), assumed: false }
+    : parsed.window
+
+  return {
+    status: 'parsed',
+    question: String(question ?? ''),
+    subject: proposal.subject,
+    subject_label: subject.label,
+    region: proposal.region ? (resolveDistrict(proposal.region) ?? null) : null,
+    window,
+    predicates: proposal.predicates,
+    threshold: proposal.threshold,
+    now,
+    proposed_by: 'needle',
+    needle: { confidence: proposal.confidence, slots_validated: proposal.slots_validated },
+  }
+}
+
 /** The district or country a record belongs to, or null when it names none. */
 function recordRegion(record, data) {
   if (!record || typeof record !== 'object') return null

@@ -40,6 +40,26 @@ const ROOTS = ['README.md', 'CHANGELOG.md', 'llms.txt', 'docs']
 const EXCLUDED = new Set(['docs/old-readme.md'])
 
 /**
+ * Archived third-party documents, excluded for the same reason and one more.
+ *
+ * `docs/research/<slug>/sources/` holds verbatim copies of external documents
+ * this repository cites, required by the sources rule so a citation does not
+ * rest on a URL that rots. Their relative links point into the *originating*
+ * tree — a model card's `assets/banner.svg` lives on HuggingFace, not here — and
+ * rewriting them to satisfy this check would falsify the archive, which is worse
+ * than the dangling link. The distinction is the one `docs/old-readme.md`
+ * already draws: this check governs the repository's own prose, not documents it
+ * preserves.
+ *
+ * Scoped to the `sources/` directory rather than all of `docs/research/`. A
+ * research README is this repository's own writing and its links must resolve;
+ * only the copies it archives are exempt. An exclusion as wide as
+ * `docs/research/**` would silently stop checking every research note written
+ * from here on, which is how an exclusion becomes a blind spot.
+ */
+const isArchivedSource = (relative) => /^docs\/research\/[^/]+\/sources\//.test(relative)
+
+/**
  * Markdown link and bare reference. Skips fenced code, where a bracket is a
  * character rather than a link — a doc about CSV or JSON is full of them, and
  * a checker that trips over an example is a checker people disable.
@@ -83,6 +103,7 @@ function isIgnored(absolute) {
 for (const rootEntry of ROOTS) {
 	for (const relative of documentsIn(rootEntry)) {
 		if (EXCLUDED.has(relative)) continue
+		if (isArchivedSource(relative)) continue
 		const file = path.join(root, relative)
 		const text = stripFences(fs.readFileSync(file, 'utf8'))
 		const links = [
