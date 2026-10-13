@@ -1,5 +1,5 @@
 import { emptyStore } from './schema.js'
-import { COLLECTIONS, DERIVED_COLLECTIONS, HISTORY_COLLECTION, assertDeclaredCollection, assertDeclaredCollections, normaliseReadOptions, readRowBudget, sortRecords, supersededVersions, StoreReadBudgetExceeded } from './store.js'
+import { COLLECTIONS, DERIVED_COLLECTIONS, HISTORY_COLLECTION, assertDeclaredCollection, assertDeclaredCollections, normaliseReadOptions, readRowBudget, sortRecords, stampRequestId, supersededVersions, StoreReadBudgetExceeded } from './store.js'
 import { BITEMPORAL_COLLECTIONS, VERSIONS_PER_RECORD } from './bitemporal.js'
 import { nowIso } from './utils.js'
 import { pendingMigrations, targetVersion } from './migrations.js'
@@ -678,6 +678,11 @@ export class PostgresStore {
 
   async merge(partial) {
     assertDeclaredCollections(partial)
+    // R-40, the Postgres half of the same stamp. Applied in both adapters
+    // because a caller cannot tell which one an environment variable gave it,
+    // and a token present on one backend and absent on the other is the ARC-10
+    // divergence class: correct in the tests, missing in production.
+    partial = stampRequestId(partial)
     await this.ensureSchema()
     const writes = []
     for (const collection of COLLECTIONS) {
@@ -820,6 +825,12 @@ export class PostgresStore {
   /** The merge validation `merge()` does, without the transaction it owns. */
   async #mergeLocked(client, partial) {
     assertDeclaredCollections(partial)
+    // R-40. The locked funnel is a *second* way into the same write, and the
+    // outbox's read-modify-write takes it — so the third row of the audit's
+    // example, the outbox row, would have gone unstamped while every test that
+    // used the unlocked path passed. Stamped in both, or the stamp is a gate at
+    // the sites that happen to route through the first one.
+    partial = stampRequestId(partial)
     const writes = []
     for (const collection of COLLECTIONS) {
       const incoming = (partial[collection] || []).filter((item) => item?.id)

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 
 import { PostgresStore, WRITE_LOCK_KEY, withWriteRetry } from '../src/postgres-store.js'
+import { runWithRequestId } from '../src/observability.js'
 import { postgresCluster } from './pg-harness.mjs'
 
 /**
@@ -205,6 +206,24 @@ describe('CON-02 / CON-03 — every write takes the same advisory lock', () => {
     await store.replaceCollection('field_reports', [{ id: 'after-2' }])
     assert.equal(await holdersOf(WRITE_LOCK_KEY), 0,
       'a write transaction left the advisory lock held after it finished')
+  })
+
+  it('stamps the request id through the locked funnel too', async (t) => {
+    // R-40. `#mergeLocked` is a *second* way into the same write, and the
+    // outbox's read-modify-write takes it — so a stamp applied only to the
+    // unlocked `merge()` would leave the outbox row, the third row of the
+    // audit's own example, without a token, while every test that used the
+    // unlocked path passed. Asserted against the locked path specifically,
+    // because that is the one a reader would not think to check.
+    if (needsPostgres(t)) return
+    await runWithRequestId('corr-locked-1', () => store.withLock(async (locked) => {
+      await locked.merge({ field_reports: [{ id: 'r-locked-stamp', note: 'through the lock' }] })
+    }))
+    const data = await store.read(['field_reports'])
+    const row = data.field_reports.find((r) => r.id === 'r-locked-stamp')
+    assert.ok(row, 'the locked merge wrote nothing')
+    assert.equal(row._request_id, 'corr-locked-1',
+      'a row written through the locked funnel does not carry the request that wrote it')
   })
 })
 

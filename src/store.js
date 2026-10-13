@@ -5,6 +5,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { emptyStore } from './schema.js'
 import { nowIso } from './utils.js'
 import { BITEMPORAL_COLLECTIONS, isRevision, pruneVersions, versionRow } from './bitemporal.js'
+import { currentRequestId } from './observability.js'
 
 /**
  * Names the store whose write chain the current async flow is running inside.
@@ -475,6 +476,53 @@ export function assertDeclaredCollections(payload, declared = COLLECTIONS) {
 }
 
 /**
+ * R-40 — the field a row carries to name the request that wrote it.
+ *
+ * Underscore-prefixed because it is the store's own bookkeeping, like
+ * `_source_run_id`, not something a caller sets. ENH-64 minted a correlation id
+ * and put it on every log line; this is the same id on the *row*, which is what
+ * makes "one approval wrote a workflow row, an outbox row and an action_log row
+ * — show me all three" answerable.
+ */
+export const REQUEST_ID_FIELD = '_request_id'
+
+/**
+ * Stamp the current request's id onto every record a write is about to land.
+ *
+ * Applied at the merge funnel rather than in `actionLog()` and `emit()`. Those
+ * two would cover two of the three rows the audit names and miss the workflow
+ * row; more to the point, there are forty-odd merge call sites and a stamp at
+ * the three somebody remembered is a gate at three of them. The store is the one
+ * funnel every write passes through.
+ *
+ * Ambient, for the reason ENH-64 gave when it made the log id ambient: an
+ * opt-in parameter omitted at one call site is invisible, because a row with no
+ * token looks like a row from a process that has no request.
+ *
+ * Returns the payload unchanged when there is no request — a driver tick, a
+ * migration, a one-off script. It does *not* write `_request_id: null`: that
+ * says "this row belongs to a request we failed to record", which is a
+ * different and false claim, and it is the same reason the logger omits the
+ * field rather than writing it as null.
+ *
+ * A caller that already set the field wins. Re-stamping would be wrong for a
+ * row replayed from a queue, where the request that produced it is the one that
+ * matters, not the tick that re-emitted it.
+ */
+export function stampRequestId(partial, requestId = currentRequestId()) {
+  if (!requestId || !partial || typeof partial !== 'object') return partial
+  const stamped = {}
+  for (const [collection, records] of Object.entries(partial)) {
+    if (!Array.isArray(records)) { stamped[collection] = records; continue }
+    stamped[collection] = records.map((record) =>
+      record && typeof record === 'object' && record[REQUEST_ID_FIELD] === undefined
+        ? { ...record, [REQUEST_ID_FIELD]: requestId }
+        : record)
+  }
+  return stamped
+}
+
+/**
  * Throws on one undeclared collection. The `remove()` guard, which has always
  * been explicit there, kept for the same reason `remove()` kept it.
  */
@@ -852,6 +900,11 @@ export class JsonStore {
 
   async merge(partial) {
     assertDeclaredCollections(partial)
+    // R-40. Stamped here, at the one funnel every write passes through, rather
+    // than in the two or three constructors somebody remembered. See
+    // `stampRequestId` for why it is ambient and why an absent request stamps
+    // nothing.
+    partial = stampRequestId(partial)
     // Re-entrant only for the chain body itself, which is what `AsyncLocalStorage`
     // expresses and a boolean cannot. A flag set for the duration of a task also
     // matches an unrelated caller that arrives while that task is awaiting — and

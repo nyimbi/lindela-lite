@@ -49,6 +49,13 @@ const NON_SEMANTIC_FIELDS = new Set([
   'ingested_at',
   'generated_at',
   'last_run_at',
+  // R-40. The store stamps the writing request's id onto every row. It is not
+  // content, and leaving it out of this set would make a re-write of an
+  // unchanged record open a new bitemporal version every time — the history
+  // would fill with revisions whose only difference is which request happened to
+  // touch the row. `isRevision` short-circuits on `payload_hash` for ingested
+  // records; this is the branch for the ones that have none.
+  '_request_id',
 ])
 
 /**
