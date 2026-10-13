@@ -1623,6 +1623,22 @@ export function fillAppVersionMarker(html, version = APP_VERSION) {
 }
 
 /**
+ * R-66. The service worker's cache name, filled from the release.
+ *
+ * `CACHE_NAME` has to change with every release or a fix never reaches a device
+ * that has the app open — and it was a hand-maintained literal nothing checked
+ * against `package.json`. Same mechanism as the version marker above, same
+ * reason: a value that must track the release should be *derived* from it, not
+ * typed beside it, because the literal drifts and the drift is silent.
+ *
+ * A plain string replace, not a regex: the placeholder is a fixed token and a
+ * regex would invite it to match something it does not own.
+ */
+export function fillCacheVersionMarker(source, version = APP_VERSION) {
+  return source.split('__CACHE_VERSION__').join(version)
+}
+
+/**
  * SCL-04. Static assets, prepared once per (path, mtime, size).
  *
  * `sendFile` read the file, sha1-hashed the whole body for its ETag and
@@ -1691,6 +1707,11 @@ async function preparedStatic(filePath) {
   // module was written to end, reintroduced one layer down. The ETag is computed
   // from the injected bytes, so a revalidated client gets the new ETag too.
   if (/\.html$/.test(filePath)) content = Buffer.from(fillAppVersionMarker(content.toString('utf8')))
+  // R-66. The worker carries the release in its cache name, so the name moves
+  // with the version rather than with a hand-edited literal. Filled on the way
+  // out for the same reason the version marker is: the ETag is computed from
+  // the injected bytes, so a revalidating client gets the new one.
+  if (filePath.endsWith('sw.js')) content = Buffer.from(fillCacheVersionMarker(content.toString('utf8')))
   const entry = {
     content,
     type: contentType(filePath),

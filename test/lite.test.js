@@ -2218,6 +2218,18 @@ describe('Lindela Lite PWA and i18n', () => {
       assert.equal(res.headers.get('content-type'), 'text/javascript; charset=utf-8')
       const text = await res.text()
       assert.ok(text.includes('CACHE_NAME'))
+      // R-66, asserted where it is applied rather than where it is computed.
+      //
+      // The unit test for `fillCacheVersionMarker` proves the function fills a
+      // placeholder; it passes just as well when the server never calls it, and
+      // it did — the canary that removed the `preparedStatic` call left all four
+      // of its assertions green. This reads the bytes the browser actually
+      // fetches, which is the only place the wiring is observable.
+      const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'))
+      assert.ok(text.includes(`lindela-lite-v${pkg.version}`),
+        `the served worker does not carry the release version ${pkg.version} in its cache name, so a deploy cannot invalidate it`)
+      assert.ok(!text.includes('__CACHE_VERSION__'),
+        'the served worker still carries the unfilled placeholder')
     } finally {
       listener.close()
     }

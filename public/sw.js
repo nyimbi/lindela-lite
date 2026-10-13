@@ -1,7 +1,20 @@
 // Bumped with every release. Cache-first static assets are only safe while
 // this changes: with a fixed name, a deployed fix never reaches an operator
 // who has the app open, because the old app.js is served from cache forever.
-const CACHE_NAME = 'lindela-lite-v6'
+//
+// R-66. The version is a placeholder the server fills from `package.json` on
+// the way out — `fillCacheVersionMarker` in `src/server.js` — rather than a
+// literal bumped by hand. It was `lindela-lite-v4` and nothing validated it, so
+// the rule above was a promise the release process had to remember: a deploy
+// that edited `app.js` without editing this line left the old worker installed
+// with no re-precache trigger, and a mixed module set loads *silently* when the
+// exports happen to line up. The bump is now a consequence of the release, not
+// a step in it.
+//
+// `__CACHE_VERSION__` is deliberately not a valid cache name: if the server
+// ever fails to fill it, the worker opens a cache that is obviously wrong
+// rather than one that looks plausible and serves stale bytes.
+const CACHE_NAME = `lindela-lite-v__CACHE_VERSION__`
 const API_CACHE_NAME = 'lindela-lite-api-v1'
 const DETAIL_CACHE_NAME = 'lindela-lite-detail-v1'
 const MAP_CACHE_NAME = 'lindela-lite-map-v1'
