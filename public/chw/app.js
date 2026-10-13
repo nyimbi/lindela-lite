@@ -539,7 +539,18 @@ async function queueReport(path, options, what) {
   // only "POST /api/v1/chw/report, queued 4 days ago" tells a health worker
   // nothing about which of their reports it is.
   const result = await window.lindelaQueue.enqueue(path, options, { what })
-  if (!result?.queued) throw new Error('the offline queue did not confirm the report')
+  if (!result?.queued) {
+    // R-60. A full queue is a refusal, not a fault. `!result.queued` also covers
+    // a store that wrote nothing, and the two need different words.
+    if (result?.reason === 'full') {
+      const full = t('chw.queue_full', { cap: result.cap })
+      showToast(full, 'warning')
+      // Thrown as well as shown: the caller's catch leaves the wizard standing
+      // with everything typed still in it.
+      throw new Error(full)
+    }
+    throw new Error('the offline queue did not confirm the report')
+  }
   // "Saved on this phone. It will send when you have signal." — now literally
   // true, because the record is written before this line is reached. It was
   // shown on a path where nothing had been written.

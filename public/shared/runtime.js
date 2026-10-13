@@ -2,6 +2,7 @@ import { applyLocaleToDocument } from './fmt.js'
 import { stampSubmissionId } from './submission-id.js'
 import {
   openQueueDb, put, del, readAll, listRecords, clearRecords, drainQueue, requestPersistence,
+  enqueueRecord,
   MAX_QUEUE_ATTEMPTS as CORE_MAX_QUEUE_ATTEMPTS,
 } from './queue-core.js'
 let _swRegistration = null
@@ -172,7 +173,12 @@ export async function initOfflineQueue() {
         claimed_by: null,
         claimed_at: 0,
       }
-      await put(this.db, record)
+      // R-60. Bounded, and checked before the write: a refusal that arrives as
+      // a quota error arrives after the worker was told the report was saved.
+      const written = await enqueueRecord(this.db, record)
+      if (!written.queued) {
+        return { queued: false, reason: 'full', count: written.count, cap: written.cap }
+      }
       announce('lindela-queue-changed')
 
       // Registering a background sync is an optimisation on top of the write,

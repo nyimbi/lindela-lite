@@ -58,6 +58,7 @@
   "chw.reply_sent": "Jibu limetumwa na kuthibitishwa na seva.",
   "chw.report_incident": "Ripoti tukio",
   "chw.report_queued": "{what} imehifadhiwa kwenye simu hii. Itatuma utakapopata mtandao.",
+  "chw.queue_full": "Simu hii imejaa (ripoti {cap} zimehifadhiwa). Tuma au ondoa ripoti kabla ya kuwasilisha nyingine.",
   "chw.report_sent": "{what} imetumwa na kuthibitishwa na seva.",
   "chw.report_symptom": "Ripoti dalili",
   "chw.save_failed": "Haikuweza kutuma {what}. Hakuna kilichohifadhiwa na hakuna kilichopotea — ikiwa hakuna mtandao, itasubiri kwenye simu hii mpaka utakapopata.",

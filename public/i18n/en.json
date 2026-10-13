@@ -58,6 +58,7 @@
   "chw.reply_sent": "Reply sent and confirmed by the server.",
   "chw.report_incident": "Report incident",
   "chw.report_queued": "{what} saved on this phone. It will send when you have signal.",
+  "chw.queue_full": "This phone is full ({cap} reports stored). Send or remove a report before filing another.",
   "chw.report_sent": "{what} sent and confirmed by the server.",
   "chw.report_symptom": "Report symptom",
   "chw.save_failed": "Could not send the {what}. Nothing was saved and nothing was lost — if there is no connection, it will wait on this phone until there is one.",

@@ -2,27 +2,16 @@
  * The offline queue's mechanics, shared by the page and the service worker.
  *
  * Both used to own a drain, and two drains is how one field report becomes two:
- * the worker's `replayQueue` and the page's `flush` could read the same record,
- * both POST it, and both delete it. So the worker's drain was deleted, and with
- * it the only drain that could run while nobody had the app open — a report
- * filed on Friday reached the server whenever the worker next happened to open
- * the app on Monday.
- *
- * Deleting one half of a race is a mitigation. This is the fix: a drain now
- * *claims* the records it is about to send, inside the same transaction that
- * reads them, and skips anything another drainer holds a live claim on. Two
- * drains are then safe by construction rather than by not happening, which is
- * what lets the worker drain on `sync` while the page drains on `online`.
- *
- * The lease is the part that keeps a claim from stranding a record: a drainer
- * that is killed mid-flight — a tab closed, the worker evicted, the phone dying
- * — leaves its claim behind, and a claim with no heartbeat becomes claimable
- * again. Nothing is lost by a crash; nothing is duplicated by a race.
+ * each could read a record, POST it, and delete it. Deleting one drain was a
+ * mitigation; the fix is the *claim* — a drain claims what it is about to send
+ * and skips anything another drainer holds, so two drains are safe by
+ * construction. The lease keeps a claim from stranding a record when a drainer
+ * dies mid-flight: a claim with no heartbeat becomes claimable again, so nothing
+ * is lost by a crash and nothing duplicated by a race.
  *
  * Schema note: no version bump. The claim lives on the record as two ordinary
- * fields, because a version bump on a store holding a health worker's unsent
- * reports is a migration with a failure mode that loses the reports — and the
- * alternative costs one pass over records the drain already reads.
+ * fields — a version bump on a store holding a health worker's unsent reports is
+ * a migration with a failure mode that loses the reports.
  */
 
 export const QUEUE_DB_NAME = 'lindela_queue'
@@ -32,6 +21,17 @@ export const QUEUE_STORE = 'requests'
 export const CLAIM_LEASE_MS = 60_000
 
 export const MAX_QUEUE_ATTEMPTS = 8
+
+/** Records per device. Failed records count: they never leave (R-60). */
+export const MAX_QUEUE_RECORDS = 500
+
+/** Write unless full. Returns rather than throws: "full" is a state to render. */
+export async function enqueueRecord(db, record, { cap = MAX_QUEUE_RECORDS } = {}) {
+  const held = await readAll(db)
+  if (held.length >= cap) return { queued: false, reason: 'full', count: held.length, cap }
+  await put(db, record)
+  return { queued: true, count: held.length + 1, cap }
+}
 
 /**
  * Open the queue store.
@@ -72,14 +72,11 @@ export const put = (db, record) => new Promise((resolve, reject) => {
   const tx = db.transaction([QUEUE_STORE], 'readwrite')
   tx.objectStore(QUEUE_STORE).put(record)
   tx.oncomplete = () => resolve(record)
-  // `onabort` as well as `onerror`, and both must reject.
-  //
-  // IndexedDB reports a rolled-back transaction — a quota refusal, a blocked
-  // upgrade, a `requestError` — through `onabort`. A version listening only for
-  // `oncomplete` and `onerror` therefore *never settles* in that case: the
-  // health worker's submit waits on a promise that cannot resolve, and the
-  // surface never says their report was not saved. The one path where a stuck
-  // promise is worst is the one that is stuck.
+  // `onabort` as well as `onerror`, and both must reject: IndexedDB reports a
+  // rolled-back transaction (a quota refusal, a blocked upgrade, a
+  // `requestError`) through `onabort`, and a version listening only for
+  // `oncomplete`/`onerror` never settles — the health worker's submit waits on a
+  // promise that cannot resolve and is never told the report was not saved.
   const fail = (error) => reject(error || tx.error || new Error('the offline queue write was aborted'))
   tx.onerror = () => fail(tx.error)
   tx.onabort = () => fail(tx.error)
@@ -285,10 +282,9 @@ export async function sendRecord(record, { fetchImpl = globalThis.fetch, timeout
  * possible failure for this product — the worker was told it was saved, and it
  * was not — and nothing in the app can detect it, because the record is gone.
  *
- * Best effort by construction: the browser grants this on engagement, and
- * refusing is a normal answer rather than a fault. The result is returned so a
- * surface can say so, because "your stored reports may be evicted" is something
- * a person can act on and "we asked" is not.
+ * Best effort by construction: refusing is a normal answer, not a fault. The
+ * result is returned because "your stored reports may be evicted" is something a
+ * person can act on and "we asked" is not.
  */
 export async function requestPersistence({ storage = globalThis.navigator?.storage } = {}) {
   if (!storage?.persist) return { supported: false, persisted: false }

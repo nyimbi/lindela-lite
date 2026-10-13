@@ -62,6 +62,7 @@
   "chw.reply_sent": "Jawaabtii waa laheeyay oo server-kuu xaqiijiyay.",
   "chw.report_incident": "Nabad wakhtiyad",
   "chw.report_queued": "{what} waa la keydiyay taleefanka. Wuxuu uu soo bixi doonaa marka aad helo signal.",
+  "chw.queue_full": "Taleefankan waa buuxa ({cap} warbixin ayaa kaydsan). Dir ama tirtir warbixin ka hor inta aadan mid kale diiwaangelin.",
   "chw.report_sent": "{what} waa la diray oo server-kuu xaqiijiyay.",
   "chw.report_symptom": "Nabad calool",
   "chw.save_failed": "Ma dirin karo {what}. Waxba lama keydin, waxba lama lumin — haddii aysan jirto signal, wuxuu uu sugeli doonaa taleefanka ilaa aad helo.",
