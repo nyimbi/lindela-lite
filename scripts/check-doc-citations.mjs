@@ -206,10 +206,15 @@ function resolveCitation(name) {
  * that wraps can put the marker on the preceding line and the numbers on the
  * next.
  */
-export function scanText(text, { doc = '<memory>' } = {}) {
+export function scanText(text, { doc = '<memory>', allowSnapshot = true } = {}) {
   // A dated snapshot is a quote of a tree that is gone; every citation in it is
   // historical by construction. See `DOC_SNAPSHOT` for why the date is required.
-  if (isSnapshot(text)) return []
+  //
+  // `allowSnapshot` is false for the `_status-*.json` files, which carry no
+  // front matter and so cannot declare one — and should not be able to. The
+  // declaration is read from a document's head; a JSON file has no head to read,
+  // so the exemption would be reachable by accident.
+  if (allowSnapshot && isSnapshot(text)) return []
   const lines = text.split('\n')
   const findings = []
   for (let i = 0; i < lines.length; i += 1) {
@@ -253,6 +258,29 @@ export function scanText(text, { doc = '<memory>' } = {}) {
   return findings
 }
 
+/**
+ * Which register files this gate reads.
+ *
+ * `.md` is the register prose. `_status-*.json` is the same prose in a
+ * machine-readable envelope, and it was outside the gate until 2026-10-13 —
+ * the one-level-up scope gap this gate's own docstring already records fixing
+ * once, coming back one layer down. The builder renders a *shipped* item's
+ * `detail` nowhere (only open ones reach `status.md`), so for 29 of the 30
+ * items the only reader of those citations is this gate, and it read neither.
+ * ENH-30's detail named `src/utils.js:210` for a function at 369 and "27 call
+ * sites in `src/server.js`" for 29 in `src/routes/`; nothing failed.
+ *
+ * The `_status-` prefix is load-bearing: it is what makes a JSON file here a
+ * claim about the tree rather than data. A future JSON register must opt in by
+ * that name, which is a decision someone makes, not a directory that grows.
+ */
+export function isScannedFile(name) {
+  return name.endsWith('.md') || (name.startsWith('_status-') && name.endsWith('.json'))
+}
+
+/** A JSON file is walked into only when it carries a citation at all. */
+const CITATION_HINT = /\.(?:js|mjs):\d/
+
 export function scanTree(root = ROOT) {
   const findings = []
   const dirs = DOC_DIRS.map((rel) => path.join(root, rel))
@@ -266,10 +294,11 @@ export function scanTree(root = ROOT) {
       // `_research/` is walked (it is the reason the scope widened); nothing
       // dot-prefixed is, for the same reason the basename index skips them.
       if (entry.isDirectory()) { if (!entry.name.startsWith('.')) walk(abs); continue }
-      if (!entry.name.endsWith('.md')) continue
+      if (!isScannedFile(entry.name)) continue
       const rel = path.relative(root, abs)
       const text = fs.readFileSync(abs, 'utf8')
-      findings.push(...scanText(text, { doc: rel }))
+      if (entry.name.endsWith('.json') && !CITATION_HINT.test(text)) continue
+      findings.push(...scanText(text, { doc: rel, allowSnapshot: !entry.name.endsWith('.json') }))
     }
   }
   for (const dir of dirs) walk(dir)
@@ -356,12 +385,37 @@ export const CANARIES = [
     source: `# Live register\n${'\nfiller'.repeat(1)}\n${Array.from({ length: 45 }, (_, i) => `line ${i}`).join('\n')}\ncitations-are-historical: 2026-10-03\n\nsee \`src/server.js:999999\`.`,
     expect: 1,
   },
+  {
+    // `_status-*.json` is the register prose in an envelope. It carried a
+    // past-EOF citation (`src/server.js:1807` in a 1,613-line file) that no gate
+    // read, because the walk was `.md`-only.
+    name: 'a _status-*.json file is scanned',
+    expect: 1,
+    scan: () => scanText('{"detail":"calibrationReport is routed (`src/server.js:999999`)."}', { doc: 'docs/improvements/_status-c.json', allowSnapshot: false }).length,
+  },
+  {
+    // A JSON file has no head to read, so a `citations-are-historical:` string
+    // inside its data must not exempt it — the declaration is a document
+    // header, and reachable by accident otherwise.
+    name: 'a snapshot declaration inside a JSON file does not exempt it',
+    expect: 1,
+    scan: () => scanText('{"note":"citations-are-historical: 2026-10-03","detail":"see `src/server.js:999999`"}', { doc: 'docs/improvements/_status-c.json', allowSnapshot: false }).length,
+  },
+  {
+    name: 'the file predicate reads .md and _status-*.json only',
+    expect: 0,
+    scan: () => {
+      const wanted = ['a.md', '_status-a.json', '_status-de.json']
+      const refused = ['a.json', 'package.json', 'status.json', 'notes.txt', '_status-a.js']
+      return wanted.every(isScannedFile) && refused.every((n) => !isScannedFile(n)) ? 0 : 1
+    },
+  },
 ]
 
 function selfTest() {
   let failed = 0
   for (const canary of CANARIES) {
-    const got = scanText(canary.source).length
+    const got = canary.scan ? canary.scan() : scanText(canary.source).length
     const ok = got === canary.expect
     if (!ok) failed += 1
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${canary.name} — expected ${canary.expect}, got ${got}`)

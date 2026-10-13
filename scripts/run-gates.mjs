@@ -112,7 +112,7 @@ const GATES = [
     name: 'check-doc-citations',
     script: 'scripts/check-doc-citations.mjs',
     tier: 'self-contained',
-    why: 'The audit register cites code by `path:line`, and the line numbers rot as the tree moves — ARC-08 was rewritten on 2026-10-11 and rotted again within a day, and 29 citations across the register named a line past EOF when this gate was written, three of them in VUL-01 (CRITICAL). Fails on a citation past EOF or to a missing file; an entry that means to quote a stale number says so with `line-drift-ok:`. Scoped to past-EOF only: an in-bounds-but-drifted line is often a correctly-stale quote in a "Fixed" entry, and a gate that fires on correct input gets turned off. Reads files only; carries eight canaries.',
+    why: 'The audit register cites code by `path:line`, and the line numbers rot as the tree moves — ARC-08 was rewritten on 2026-10-11 and rotted again within a day, and 29 citations across the register named a line past EOF when this gate was written, three of them in VUL-01 (CRITICAL). Fails on a citation past EOF or to a missing file; an entry that means to quote a stale number says so with `line-drift-ok:`. Scoped to past-EOF only: an in-bounds-but-drifted line is often a correctly-stale quote in a "Fixed" entry, and a gate that fires on correct input gets turned off. Reads `.md` and `_status-*.json` — the latter is register prose in an envelope, and for a shipped item its `detail` reaches no rendered document, so this gate is its only reader; it was outside the walk until 2026-10-13. Reads files only; carries eighteen canaries, driven by test/doc-citation-gate.test.js.',
   },
   {
     name: 'check-client-endpoints',
