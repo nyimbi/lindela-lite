@@ -1595,6 +1595,20 @@ testable in isolation. This unblocks every other substrate item.
 > carried-forward number in this entry, which is why every figure here now names
 > the expression that produces it.
 
+> **2026-10-13 — two comments outlived their blocks.** The removal is five lines
+> and the finding is that neither comment was wrong when written. `// Field
+> outcomes: the confirmations a responder sends with DONE` sat directly above
+> `// Parametric disbursement routes`, and both had lost their code: the
+> field-outcome pair moved to `src/routes/field-signals.js` and the `DONE` merge
+> to `src/routes/rapidpro.js`, while the parametric family carries its own ARC-01
+> header on the line below. A comment whose block has moved is worse than no
+> comment — it names the routes handled *here*, so the reader who trusts it looks
+> for `field-outcomes` in the dispatcher and finds `matchFieldSignalRoute`
+> instead. Measured after the removal: the dispatcher is **362 lines**
+> (`functionBody('handleApiRequestInContext', src)`, line 1004 to 1365),
+> `server.js` **1,905**. The 367 recorded above is that figure before this
+> removal, left standing as the before-state rather than overwritten.
+
 **ENH-61 — Streaming cursor reads.** `PostgresStore.read()` issues
 `SELECT collection, body FROM lite_records WHERE …` with no `LIMIT`
 (`src/postgres-store.js:267`) and materialises every row into the heap. A cursor

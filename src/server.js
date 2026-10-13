@@ -1331,11 +1331,6 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   if (catalogueRoute?.kind === 'connectors-status'
     && await handleCatalogueRoute(catalogueRoute, { data, req, res, url, jsonResponse })) return
 
-  // Field outcomes: the confirmations a responder sends with `DONE`. Served from
-  // here rather than from handleRapidProRoute because the path is not under
-  // /api/v1/rapidpro — a confirmation is a first-class record with its own
-  // collection, its own manifest and its own scopes, not a view of the reply log.
-  // Parametric disbursement routes
   // ARC-01. The parametric family, extracted to `src/routes/parametric.js`.
   const parametricRoute = matchParametricRoute(url.pathname)
   if (parametricRoute && await handleParametricRoute(parametricRoute, { store, data, req, res, jsonResponse })) return
