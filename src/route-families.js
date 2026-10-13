@@ -73,6 +73,7 @@ import { matchOperationalRoute, handleOperationalRoute } from './routes/operatio
 import { matchChwRoute, handleChwRoute } from './routes/chw.js'
 import { matchWorkflowRoute, handleWorkflowRoute } from './routes/workflows.js'
 import { matchDistrictRoute, handleDistrictRoute } from './routes/districts.js'
+import { matchAskRoute, handleAskRoute } from './routes/ask.js'
 
 export const ROUTE_FAMILIES = Object.freeze([
   // `/health` ("is this process running") and `/ready` ("can it serve a request
@@ -343,6 +344,16 @@ export const ROUTE_FAMILIES = Object.freeze([
     handle: handleDistrictRoute,
     method: true,
     deps: ['data', 'jsonResponse', 'req', 'res', 'store', 'url'],
+  },
+  // ENH-68. The grounded natural-language query. Below the read because the
+  // answer is resolved from `data`; a question the declared vocabulary does not
+  // carry falls through to the model-assisted parse, which is why this family
+  // sits last rather than early.
+  {
+    match: matchAskRoute,
+    handle: handleAskRoute,
+    method: true,
+    deps: ['data', 'jsonResponse', 'req', 'res'],
   },
 ])
 

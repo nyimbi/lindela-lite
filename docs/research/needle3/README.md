@@ -91,11 +91,18 @@ deterministic path is unchanged and remains the default.
 
 ## What this is not
 
-It is not a claim that Needle is wired into a served route. `nl-query.js` has no
-production caller today — it is tested and reachable from nothing — and this
-integration does not change that, because inventing a caller is a product decision
-rather than a model decision. The adapter is real, tested, and canaried; the route
-that would expose it is a separate item, and the register says so.
+It is not a claim that Needle is *enabled*. It is off unless
+`LINDELA_LITE_NEEDLE=1` and a `cactus-needle` sidecar answers on
+`NEEDLE_BASE_URL`; with it off, unreachable or unconfident, the deterministic
+refusal is returned byte-identical and the route behaves as though the adapter
+did not exist. That is the property that makes it safe to ship the caller.
+
+**Wired 2026-10-13.** `nl-query.js` is no longer reachable from nothing:
+`POST /api/v1/ask` (`src/routes/ask.js`) serves it, calling
+`answerQueryWithModel` so a Needle-proposed subject runs the same grounding audit
+as a deterministically parsed one. The console reaches the route through
+`public/workflow/ask.js`. The route that would expose it was the separate item
+this section used to name, and it is now built.
 
 ## Sources
 

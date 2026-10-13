@@ -1933,12 +1933,25 @@ this collapses that.
 > Opt-in via `LINDELA_LITE_NEEDLE=1`. Research and the archived model card:
 > `docs/research/needle3/`.
 >
-> **And the limit that was already true, now written down:** ENH-68 is marked
-> IMPLEMENTED and `nl-query.js` is reached by nothing — no route, no console
-> control, no caller outside its own test. The parser is real, tested and
-> grounded; the surface that would expose it is a product decision this entry
-> does not make. Recorded here rather than implied, because "IMPLEMENTED" on a
+> **And the limit that was already true, now written down:** ENH-68 was marked
+> IMPLEMENTED while `nl-query.js` was reached by nothing — no route, no console
+> control, no caller outside its own test. The parser was real, tested and
+> grounded; the surface that would expose it was a product decision this entry
+> did not make. Recorded here rather than implied, because "IMPLEMENTED" on a
 > module with zero callers reads as a live feature and is not one.
+>
+> **Wired 2026-10-13 — the surface.** `src/routes/ask.js` serves
+> `POST /api/v1/ask`, declared in `src/route-families.js`, scoped
+> `admin:analytics` in `src/auth.js`, and wide in `src/route-manifests.js`
+> (the collection is chosen by the question, so no static manifest can be
+> narrower than the union of the seven subjects). The route calls
+> `answerQueryWithModel`, which runs the *same* resolve-render-audit tail as
+> `answerQuery` — a subject Needle proposed is held to the same fact set, and
+> the handler cannot tell the two apart. **A refusal is a 200**, because a
+> question the layer cannot ground is an answer about the data and not a fault
+> in the request; the one 400 is a body with no question in it. The console
+> reaches it through `public/workflow/ask.js`, mounted by one `lazy()` line in
+> `app.js` so the panel stays off the first-load graph.
 
 **ENH-69 — Expected-value alert triage.** Rank alerts by cost-weighted expected
 loss, not recency. The alert engine raises events; the triage surface should order

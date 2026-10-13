@@ -81,6 +81,48 @@ paths:
             application/json:
               schema: { type: object }
 
+  /api/v1/ask:
+    post:
+      summary: Ask a grounded question over the store in natural language
+      description: |
+        Parses the question against a declared vocabulary of subjects, districts,
+        windows and predicates, resolves it against the store's derived
+        collections, and renders a sentence from the values it read — then checks
+        the sentence against that fact set before returning it. A digit the facts
+        do not contain is refused, not published.
+
+        A question the declared vocabulary does not carry is a refusal with a
+        `code` naming the term it could not ground, and the refusal is returned
+        as a 200: a question the layer declines to answer is an answer about the
+        data, not a fault in the request. When `LINDELA_LITE_NEEDLE=1` and a
+        `cactus-needle` sidecar is reachable, a question refused for an unknown
+        subject is offered to the model, whose proposal is re-validated against
+        the same vocabulary and whose answer is held to the same audit.
+
+        The store holds the latest value per district, not a history, so a
+        question about a window is answered as the current reading where the
+        collection carries no timestamps, and the answer says so.
+      tags: [analytics]
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question:
+                  type: string
+                  description: The question to answer, in the declared vocabulary
+      responses:
+        '200':
+          description: The answer, or the refusal and the term that could not be grounded
+          content:
+            application/json:
+              schema: { type: object }
+        '400':
+          description: No `question` string in the body
   /api/v1/explain/{id}:
     get:
       summary: Where a computed number came from

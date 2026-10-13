@@ -101,6 +101,7 @@ const DISPATCH_ORDER = Object.freeze([
   ['matchChwRoute', 'post'],
   ['matchWorkflowRoute', 'post'],
   ['matchDistrictRoute', 'post'],
+  ['matchAskRoute', 'post'],
 ].map(Object.freeze))
 
 /**
@@ -154,6 +155,7 @@ const BINDINGS = Object.freeze([
   ['matchChwRoute', 'handleChwRoute', ['data', 'jsonResponse', 'req', 'res', 'store']],
   ['matchWorkflowRoute', 'handleWorkflowRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
   ['matchDistrictRoute', 'handleDistrictRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchAskRoute', 'handleAskRoute', ['data', 'jsonResponse', 'req', 'res']],
 ].map(Object.freeze))
 
 const serverSource = () => fs.readFileSync(SERVER, 'utf8')
@@ -299,7 +301,7 @@ describe('the dispatcher tries its families in a known order', () => {
       'matchTilePackRoute', // arithmetic over a bbox; reads no collection
       'matchTileRoute', // the raster proxy; reads no collection
     ])
-    assert.equal(found.filter(([, p]) => p === 'post').length, 29)
+    assert.equal(found.filter(([, p]) => p === 'post').length, 30)
   })
 
   it('leaves no matcher orphaned — every family module is dispatched', () => {

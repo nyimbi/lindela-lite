@@ -247,6 +247,14 @@ export const WIDE_ROUTES = Object.freeze([
   'GET /api/v1/reports/:id/export.geojson',
   'GET /api/v1/scenarios/:id',
   'GET /api/v1/upload',
+  // ENH-68. The collection is chosen by the question — `runQuery` reads
+  // `data[subject.collection]` where the subject comes from the parse, and the
+  // subjects span risk scores, flood models, population, alerts, dispatches,
+  // region trust and hazard events. A static manifest cannot be narrower than
+  // that union without lying about a subject it omits, so this is the honest
+  // entry rather than a measured one that would be wrong for six questions in
+  // seven.
+  'POST /api/v1/ask',
   'GET /stac/catalog.json',
   'PATCH /api/v1/action-logs/:id',
   'PATCH /api/v1/alert-events/:id',

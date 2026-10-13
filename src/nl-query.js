@@ -741,15 +741,14 @@ export function auditAnswer(text, facts) {
 }
 
 /**
- * Answer a question, grounded, or refuse it.
+ * Resolve a parsed query, render it, and audit the sentence before returning it.
  *
- * `options.render` exists so a test can inject a sentence and watch the audit
- * refuse it — the enforcement path is exercised, not asserted about. `now` is
- * injectable so a window is reproducible.
+ * The tail every entry point shares. It is split out rather than duplicated
+ * because the audit is the module's whole claim: a second copy of this function
+ * is a second place the audit can be forgotten, and a caller that skipped it
+ * would publish a sentence no fact set backs.
  */
-export function answerQuery(question, data = {}, options = {}) {
-  const now = options.now ?? new Date().toISOString()
-  const parsed = parseQuery(question, { now })
+function finishAnswer(question, parsed, data, options, now) {
   if (parsed.status === 'refused') return refusedResult(question, parsed, null, now)
 
   const resolved = runQuery(parsed, data)
@@ -771,6 +770,51 @@ export function answerQuery(question, data = {}, options = {}) {
     basis: NL_QUERY_BASIS,
     answered_at: now,
   }
+}
+
+/**
+ * Answer a question, grounded, or refuse it.
+ *
+ * `options.render` exists so a test can inject a sentence and watch the audit
+ * refuse it — the enforcement path is exercised, not asserted about. `now` is
+ * injectable so a window is reproducible.
+ *
+ * Synchronous, and it stays synchronous: the deterministic parser is the whole
+ * path here, so a caller that wants the model-assisted parse asks for it by name
+ * (`answerQueryWithModel`). Reaching for the network from a function that reads
+ * as pure is how a route ends up waiting on a sidecar it never meant to call.
+ */
+export function answerQuery(question, data = {}, options = {}) {
+  const now = options.now ?? new Date().toISOString()
+  return finishAnswer(question, parseQuery(question, { now }), data, options, now)
+}
+
+/**
+ * Answer a question, widening recall with the Needle sidecar when the declared
+ * vocabulary does not carry the subject.
+ *
+ * The disposal is identical to `answerQuery`'s — the same `finishAnswer` runs the
+ * same resolve, render and audit — so a model-proposed subject is held to the
+ * same grounding rule as a deterministically parsed one. That is the property
+ * that makes the model safe to enable: it may widen which questions parse, and
+ * it may not put a number in the answer that the facts do not contain.
+ *
+ * `options.parse` mirrors `options.render`: a test injects a parse (a
+ * model-shaped one, or a broken one) and watches the audit act on what it
+ * produced. With Needle off, unreachable or unconfident, `parseQueryWithModel`
+ * returns the deterministic refusal byte-identical, so this function is
+ * `answerQuery` plus a network call that did not happen.
+ */
+export async function answerQueryWithModel(question, data = {}, options = {}) {
+  const now = options.now ?? new Date().toISOString()
+  const parse = options.parse || parseQueryWithModel
+  const parsed = await parse(question, {
+    now,
+    needle: options.needle ?? null,
+    env: options.env ?? process.env,
+    http: options.http,
+  })
+  return finishAnswer(question, parsed, data, options, now)
 }
 
 function refusedResult(question, refusal, query, now) {

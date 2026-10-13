@@ -292,6 +292,15 @@ export const WRITE_SCOPES = Object.freeze([
   ['/api/v1/trigger-protocols', 'admin:alerts'],
   ['/api/v1/report-distributions', 'write:reports'],
   ['/api/v1/report-schedule-runs', 'write:reports'],
+  // ENH-68. A read-shaped POST, but the write table admits only write, admin
+  // and role scopes (`test/route-scope-coverage.test.js` asserts it, because a
+  // read scope in this table is how a route reads as policy while granting a
+  // different thing). `admin:analytics` is the honest fit and not a widening:
+  // it already reaches `flood-probability/train` and `kpi/refresh-snapshots`,
+  // both strictly more than answering a question. Deny-by-default would
+  // otherwise close this to every scoped token, which is what an unmapped POST
+  // gets — and the console holds `*`, so it is unaffected.
+  ['/api/v1/ask', 'admin:analytics'],
 ])
 
 /**
