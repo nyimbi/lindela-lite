@@ -70,12 +70,14 @@
       "id": "ENH-11",
       "title": "Enforce the rate limits that are already declared",
       "status": "shipped",
-      "detail": "Unchanged from before and still the item's own words: the token bucket, concurrency cap, jitter and `Retry-After` handling exist as `src/rate-limit.js` with 30 tests, and nothing enforces them. `src/connectors/http.js` is still plain exponential backoff, and the declared `rateLimit` fields — `src/connectors/ipc-hdx.js:417` declares perMinute 20 against the unbounded `Promise.all` at ipc-hdx.js:265 — remain documentation. The webhook branch of `distributeReport` still fetches with no timeout and no AbortSignal (src/routes/reporting.js:527-560), and there is still no API rate limiter. Only the RapidPro client timeout from the previous round is actually live (src/rapidpro.js:370-379).",
+      "detail": "Shipped, with two named remainders. `src/rate-limit.js` (578 lines) — the token bucket, concurrency cap, jitter, `parseRetryAfter` and `createBudget` — is enforced rather than exported: `fetchWithRetry` acquires from a per-source, per-host limiter before every attempt and releases it in a `finally` (`src/connectors/http.js:256`), so a retry takes a second token instead of holding the only one across its backoff. The IPC fan-out is capped at the declared `concurrency: 2` (`src/connectors/ipc-hdx.js:278`, read from `RATE_LIMIT_POLICIES.ipc_hdx`), which is what its `rateLimit: { perMinute: 20 }` at `:443` now means; the audit's 'unbounded `Promise.all` at ipc-hdx.js:265' is that comment line, and `:311` is the bounded worker pool. The API limits itself through `src/inbound-rate-limit.js`, wired at `src/server.js:484` and answering 429 with a `retry-after` header at `:620`. Two things the item named are still open, and both are in `distributeReport`'s neighbourhood rather than the connector seam: its webhook branch fetches with no `AbortSignal` (`src/routes/reporting.js:561`), and `createBudget` — the per-source wall-clock budget that was to bound ING-06's ~4.2-hour `gdacs-archive` run — has no call site outside `test/rate-limit.test.js`. The RapidPro client timeout it also asked for is live (`src/rapidpro.js:417-423`).",
       "evidence": [
         "src/rate-limit.js",
-        "src/connectors/http.js:42",
-        "src/connectors/ipc-hdx.js:265",
-        "src/routes/reporting.js:527"
+        "src/connectors/http.js:256",
+        "src/connectors/ipc-hdx.js:278",
+        "src/inbound-rate-limit.js",
+        "src/server.js:620",
+        "src/routes/reporting.js:561"
       ],
       "guarded_by": "test/rate-limit.test.js, test/rate-limit-wiring.test.js, test/rapidpro-webhook-auth.test.js",
       "note": "fetchWithRetry acquires from a per-source, per-host token bucket before every request (src/connectors/http.js), so the rateLimit blocks in the connector specs and connectors.registry.json stop being documentation. A headerless 429 now waits for whichever is longest of Retry-After, the bucket's next token, or the backoff — a 500 says nothing about anyone's rate budget, so only 429 consults the limiter. ratePerWindow and windowMs can be overridden per call, which is what makes a refill assertable without waiting out a 60-second window. test/rate-limit-wiring.test.js: bursting, per-host budgets, holding a budget across calls, releasing the slot when a request fails, and refusing an unreadable declaration rather than inventing a limit."
