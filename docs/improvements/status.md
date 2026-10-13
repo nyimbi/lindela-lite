@@ -18,7 +18,7 @@ shipped.
 | ENH-01 | Deny-by-default authorization from an explicit route→scope table | shipped | `test/route-scope-coverage.test.js`, `test/auth-deny-by-default.test.js` |
 | ENH-02 | Honesty envelopes on every numeric response, policed in CI | shipped | `test/flood-score-honesty.test.js` |
 | ENH-03 | Per-region calibration and a trust score | shipped | `test/calibration-trust.test.js` |
-| ENH-04 | Three tiers of uncertainty on every number | shipped | `test/flood-score-honesty.test.js` |
+| ENH-04 | Three tiers of uncertainty on every number | shipped | `test/flood-score-honesty.test.js`, `test/honesty-envelope.test.js` |
 | ENH-05 | Model-drift monitoring | shipped | `test/drift-monitoring.test.js` |
 
 ## Group B — Ingestion fidelity, quality, timeliness
@@ -57,7 +57,7 @@ shipped.
 | ENH-25 | Bulk upload with a validation report | shipped | `test/upload.test.js` |
 | ENH-26 | Two-way SMS acknowledgement, escalation, and delivery tracking | shipped | `test/rapidpro-two-way.test.js` |
 | ENH-27 | Export that carries the narrative | shipped | `scripts/check-no-flood-probability.mjs` |
-| ENH-28 | A donor-inspectable, hash-chained audit trail | shipped | `test/parametric-trigger.test.js` |
+| ENH-28 | A donor-inspectable, hash-chained audit trail | shipped | `test/audit-chain.test.js`, `test/parametric-trigger.test.js` |
 
 ## Group E — Platform foundations
 
