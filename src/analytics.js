@@ -7,7 +7,7 @@ import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/im
 import { meanMeasured } from '../public/shared/units.js'
 import { compoundHazardScore, MIN_COMPOUND_MONTHS } from './compound-hazard.js'
 import { computeRoadAccess } from './road-access.js'
-import { logger } from './observability.js'
+import { logger, metrics } from './observability.js'
 import { calibrationByRegion } from './calibration.js'
 import { driftReport } from './drift.js'
 
@@ -487,13 +487,27 @@ export async function refreshAnalytics(store) {
   rememberDigests(store, digestsAfter(plan, data, previousDigests))
 
   // Persist calibration snapshot (best-effort, don't fail refresh)
+  //
+  // R-50. "Best-effort" means the refresh does not fail when the snapshot
+  // cannot be written. It does not mean the failure is invisible, and that is
+  // what `catch { }` made it: a full disk, a `data/calibration` that lost its
+  // write bit, a path that is a file where a directory was expected — each left
+  // a stale `latest.json` and no log line, no counter, no field. An operator
+  // reading a three-week-old snapshot had no way to learn it was three weeks
+  // old. Tolerating a failure is a decision; being unable to observe it is a
+  // defect, and only the first is intentional here.
   if (process.env.LINDELA_LITE_CALIBRATION_DIR !== 'off' && process.env.NODE_ENV !== 'test') {
+    const calibDir = path.resolve(process.env.LINDELA_LITE_CALIBRATION_DIR || 'data/calibration')
     try {
-      const calibDir = path.resolve(process.env.LINDELA_LITE_CALIBRATION_DIR || 'data/calibration')
       await fs.mkdir(calibDir, { recursive: true })
       await fs.writeFile(path.join(calibDir, 'latest.json'), JSON.stringify({ risk_scores: payload.risk_scores, data_quality: payload.data_quality, generated_at: new Date().toISOString() }, null, 2))
-    } catch {
-      // swallow errors
+    } catch (error) {
+      // Reported, not rethrown: the refresh succeeded and its payload is
+      // returned below. `error.code` rather than the message, because the code
+      // is the stable half (`ENOSPC`, `EACCES`, `ENOTDIR`) and the message
+      // carries the path, which varies per deployment.
+      metrics.counter('calibration_snapshot_write_failed_total', { code: error?.code || 'unknown' })
+      logger.warn('calibration_snapshot_write_failed', { dir: calibDir, code: error?.code || null, error: String(error?.message || error) })
     }
   }
 
