@@ -67,7 +67,7 @@ under **Unreleased**; this table is the index into them.
 | WEB-01, WEB-02 | fixed | coordinate and severity filters test `== null`, not truthiness | `web-console.test.js` |
 | WEB-07 | fixed | the redraw preserves focus and the poll is gone | `web-console.test.js` |
 | WEB-09 | fixed | no `setInterval`; the cadence is owned by visibility and idle | `web-console.test.js` |
-| WEB-10 | not yet measured | fix is in the CSS; the 24px floor needs a real Chrome run on :9222 | — |
+| WEB-10 | measured | the 24px floor holds across 48 combinations on Chrome 154 / :9222; the gate canaried to exit 1 | `check-responsive.mjs` |
 | WEB-11 | fixed | every surface has a layer; 217 keys added to `en.json` | `check-i18n.mjs` |
 | WEB-12 | fixed | Phase 0 is true for a reason that cannot rot; Phase 2's "7 of 8" was stale when written — the console linked `components.css` the same day — and the linkage is now asserted | `test/web-component-layer.test.js` |
 
@@ -597,13 +597,15 @@ against the working tree; the guard named in each row is what keeps it fixed.
 | WEB-07 | 30s redraw destroys focus | **fixed** | focus and scroll are preserved across a rebuild (`public/app.js:1578,2458`) |
 | WEB-08 | CO charts under the wrong quarter's tiles | **fixed** | the window is anchored to the selected quarter and labelled with the range actually plotted. `test/web-co-i18n.test.js` |
 | WEB-09 | unconditional 12+ endpoint poll | **fixed** | backoff with failure memory, and a hidden document is not polled (`public/app.js:1964,2125,2143`) |
-| WEB-10 | markers below the touch-target floor | **fixed and measured** | `hitRadiusUnits` (`public/app.js:1150`) derives a hit radius from the rendered width; the gate queries `[data-tap-target]` and checks width as well as height (`scripts/check-responsive.mjs`). Measured 2026-10-03 against Chrome 154 on :9222 with a live server on :4177: **8 surfaces x 3 viewports, all clean, 24px floor met.** Getting a truthful number required two fixes to the gate itself — see below |
+| WEB-10 | markers below the touch-target floor | **fixed and measured, twice** | `hitRadiusUnits` (`public/app.js:1150`) derives a hit radius from the rendered width; the gate queries `[data-tap-target]` and checks width as well as height (`scripts/check-responsive.mjs`). Measured 2026-10-03 against Chrome 154 on :9222 with a live server on :4177: **8 surfaces x 3 viewports, all clean, 24px floor met.** Re-measured 2026-10-13 on the same Chrome: **48 combinations clean** (8 surfaces x 3 viewports x ltr/rtl), exit 0, and canaried by shrinking `--tap-target-min` to 8px in `tokens.css` — **34 FAILs, exit 1**, reverted from a file backup. The "24" this row carried was viewports-without-direction; the gate covers both directions and has for a while |
 | WEB-11 | i18n 17–92%, three surfaces none | **fixed** | `scripts/check-i18n.mjs` gates all eight surfaces and enforces coverage floors that may only rise. `districts/`, `scenarios/` and `parametric/` each gained a full layer — 217 keys, `en.json` 227 → 444. `chw`+`so` still lack `footer.powered`, named in `KNOWN_UNTRANSLATED` and printed every run rather than guessed |
 | WEB-12 | two plan claims are false | **fixed** | Phase 0 is true for a reason that cannot rot (WEB-06). Phase 2's "7 of 8" claim went stale the day it was written: the console gained `<link href="/components.css">` on 2026-10-03 (`2a247f5`), the same day the correction block recorded it as missing, and nothing failed because no check asserted the *linkage*. `test/web-component-layer.test.js` asserts it now — all eight surfaces link `styles.css` and `components.css`, and every one reaches `tokens.css` transitively |
 
-WEB-10 is the one to distrust: the fix is in the code and the gate that would
-confirm it was widened in the same session, but nothing has run the gate. A
-defect marked "fixed, not yet measured" is a claim, not a result.
+WEB-10 is the one that had to be distrusted: the fix was in the code and the
+gate that would confirm it had never been run — a defect marked "fixed, not yet
+measured" is a claim, not a result. **Measured 2026-10-13:** 48 combinations
+clean, and the gate was canaried to exit 1 (34 failures) before that number was
+believed. The earlier "24" counted viewports without direction.
 
 ### WEB-01 — A district map drops every record on the equator or prime meridian
 
