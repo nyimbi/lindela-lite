@@ -62,7 +62,7 @@ flowchart LR
   subgraph compose["docker compose"]
     direction TB
     DB[("db<br/>postgres:16-alpine<br/>pg_isready healthcheck, 10s/5s/10")]
-    APP["app<br/>node src/server.js<br/>:4177, curl /api/v1/health"]
+    APP["app<br/>node src/server.js<br/>:4177, curl /api/v1/ready"]
     SCH["scheduler<br/>sh -c 'while true; … '<br/>no healthcheck at all"]
   end
 
@@ -165,20 +165,31 @@ and the vocabularies in `schema.js`. It is idempotent and runs on every boot.
 `getDefaultStore()` is called eagerly inside `createServer`, which *starts* the
 async store construction. It is **not awaited** before `listen`. Consequences:
 
-- The port is accepting before the store is proven reachable. `/metrics` and
-  `/api/v1/health` — neither of which needs the store — answer `200` while the
-  database is still down.
+- The port is accepting before the store is proven reachable. `/metrics` answers
+  `200` while the database is still down; `/api/v1/ready` is the probe that
+  reports it.
 - A store construction failure (missing `DATABASE_URL`, pg0 refusing to start, an
   unreachable host) surfaces as a rejected promise awaited inside the request
   handler, i.e. a **500 on the first request that needs the store**, not a boot
-  failure. The container stays up. Compose's healthcheck, which curls
-  `/api/v1/health`, passes.
+  failure. The container stays up. Compose's healthcheck curls `/api/v1/ready`,
+  which answers **503** in exactly this state — that is the fix for R-33, below.
 - `APP_VERSION` is read once at startup and a failure to read `package.json` **is**
   fatal. That asymmetry is deliberate: an unknown version must not be invented, but
   an unreachable database is a runtime condition the app can report on.
 
 **This is why `/api/v1/ready` exists** and why `/api/v1/health` alone is not a
 readiness signal. See §7.
+
+**R-33 — the probe used to be the load generator.** Both healthchecks curled
+`/api/v1/health`, and `/api/v1/health` reads the store: it reports `counts` and
+the pipeline verdict, so `collectionsForRequest` returns `null` for it — a
+whole-store read, 38 of the 65 collections and 97.8% of the bytes. On a 30-second
+clock that made the most-frequent request in the deployment, one whose answer no
+person reads, walk nearly every row forever. Both probes now curl
+`/api/v1/ready`: one scoped read of the two collections its rollups need, behind
+a 2000 ms timeout, answering `503` rather than `500` when the store cannot be
+read. `test/deployment-probe.test.js` reads the two deployment files and fails if
+any probe they carry asks for a route that materialises the whole store.
 
 ## 4. Configuration
 
@@ -262,7 +273,7 @@ binary it would otherwise fall back on is the one already in the image.
 
 ```
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
-  CMD curl -fsS "http://127.0.0.1:${LINDELA_LITE_PORT}/api/v1/health" >/dev/null || exit 1
+  CMD curl -fsS "http://127.0.0.1:${LINDELA_LITE_PORT}/api/v1/ready" >/dev/null || exit 1
 EXPOSE 4177
 CMD ["npm", "start"]
 ```
@@ -426,34 +437,48 @@ Pipe both.
 Two endpoints answering two different questions, and the distinction is the whole
 point.
 
-**`GET /api/v1/health`** — *is this process running?* Answers `200` unconditionally
-once the socket is bound. It reads the store snapshot it already holds and reports:
+**`GET /api/v1/health`** — *is the process running, and is its pipeline working?*
+Reads the store and reports:
 
 ```json
 { "success": true, "status": "ok", "version": "…", "updated_at": "…",
   "counts": { … }, "sources": [ … ], "exclusions": ["gdelt"],
-  "storage": { "mode": "postgres" }, "auth_configured": true }
+  "storage": { "mode": "postgres" }, "auth": { "configured": true, … },
+  "pipeline": { "healthy": true, "last_success_age_seconds": 42, … } }
 ```
 
 `version` comes from `package.json`, read once at startup, and boot fails loudly if
 it cannot be read — the UI used to hardcode it in two HTML files and one translation
 file and it drifted behind the package. `storage.mode` is the only way to tell
 whether the `auto` fallback quietly chose JSON. `exclusions` is the intentional
-GDELT exclusion, listed rather than hidden.
+GDELT exclusion, listed rather than hidden. `pipeline` is the verdict the endpoint
+was extended to carry: it reads `system_heartbeat` and reports whether the periodic
+driver has completed a cycle recently, so a process that is up and serving `200`
+while its pipeline died is no longer indistinguishable from a healthy one.
 
-**Health does not check the database.** It is public (in `publicPaths`), which is
-what makes it usable by a load balancer or a container healthcheck.
+**`/health` reads the store, and that is why it is not the container probe.**
+Reporting `counts` needs 38 of the 65 collections — `collectionsForRequest` returns
+`null` for it, a whole-store read — and it is the store read that makes it answer
+`500`, not `503`, when the database is unreachable. Both facts disqualify it as a
+healthcheck, which is R-33 below.
 
 **`GET /api/v1/ready`** — *can it serve a request right now?* Times an actual
-`store.read()` against a `timeout_ms` query parameter, default **2000 ms**, and
-reports the probe result and the measured latency. Public, and deliberately carries
-no records: store mode, reachability and latency, because anything more would be a
-map of the deployment's internals for anyone who can reach the port.
+**scoped** `store.read()` — the two collections its rollups need, `action_logs` and
+`events_outbox` — against a `timeout_ms` query parameter, default **2000 ms**, and
+reports the probe result and the measured latency. It answers `503` when the store
+cannot be read or when a rollup is degraded (a tampered action log, a dead-lettered
+outbox), which is the signal a load balancer routes around. Public, and deliberately
+carries no records: store mode, reachability and latency, because anything more
+would be a map of the deployment's internals for anyone who can reach the port.
 
-**A load balancer polling only `/health` will keep a broken instance in rotation**
-and hand every user a 500 it could have routed around — which is precisely what
-happened when the store construction was reordered ahead of the listen. Point the
-balancer at `/api/v1/ready`.
+**Both are public** (in `publicPaths`), which is what makes either usable by a load
+balancer or a container healthcheck. **The container probes `/ready`**, not
+`/health` — see R-33 below.
+
+**A load balancer polling only `/health` pays for a whole-store read on every
+probe** and gets a `500` rather than a clean `503` when the store is down — which
+is precisely what happened when the store construction was reordered ahead of the
+listen. Point the balancer, and any container healthcheck, at `/api/v1/ready`.
 
 ## 8. Triage
 
@@ -477,7 +502,7 @@ flowchart TD
   A1 --> F2["If it is running: curl -fsS by hand.<br/>Both curl lines end in `|| true`, so a<br/>401 from a wrong x-api-key is swallowed<br/>every cycle and nothing is logged."]
 
   Q2 --> A2{"GET /api/v1/health"}
-  A2 -->|"200 with counts"| A2b["The process is fine. The store is<br/>not — /health reads a snapshot it<br/>already holds. Use /api/v1/ready,<br/>which times store.read() at 2000 ms<br/>and reports latency."]
+  A2 -->|"200 with counts"| A2b["The process and the store are<br/>both answering. /health reads the<br/>store, so a 200 here means the read<br/>succeeded. Check /api/v1/ready for<br/>a degraded rollup and latency."]
   A2 -->|"connection refused"| A2c["The process is not listening.<br/>docker compose logs app.<br/>APP_VERSION is read at boot and a<br/>failure to read it is fatal, deliberately."]
 
   Q3 --> A3{"status"}

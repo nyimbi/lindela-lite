@@ -46,7 +46,16 @@ ENV LINDELA_LITE_PORT=4177
 ENV LINDELA_LITE_HOST=0.0.0.0
 EXPOSE 4177
 
+# R-33. Readiness, not health. `/api/v1/health` reads the store to report
+# `counts`, and `collectionsForRequest` returns `null` for it — a whole-store
+# read, 38 of 65 collections and 97.8% of the bytes. Curled here every 30
+# seconds, that made the probe the deployment's load generator: the
+# most-frequent request in the system, whose answer no person reads, walking
+# nearly every row forever. `/api/v1/ready` is the endpoint written for this
+# caller — one scoped read of the two collections its rollups need, behind a
+# 2000 ms timeout — and it answers 503 rather than 500 when the store cannot be
+# read, which is the signal a healthcheck exists to carry.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
-  CMD curl -fsS "http://127.0.0.1:${LINDELA_LITE_PORT}/api/v1/health" >/dev/null || exit 1
+  CMD curl -fsS "http://127.0.0.1:${LINDELA_LITE_PORT}/api/v1/ready" >/dev/null || exit 1
 
 CMD ["npm", "start"]

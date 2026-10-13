@@ -67,7 +67,10 @@ services:
     ports:
       - "${LINDELA_LITE_PORT:-4177}:4177"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4177/api/v1/health >/dev/null"]
+      # R-33. Readiness, not health — `/health` reads the whole store to report
+      # `counts`, and polling it every 30s made the probe the load generator.
+      # `/ready` is one scoped read and fails closed (503) when the store is down.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4177/api/v1/ready >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 10
