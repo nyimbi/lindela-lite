@@ -67,6 +67,7 @@ under **Unreleased**; this table is the index into them.
 | WEB-01, WEB-02 | fixed | coordinate and severity filters test `== null`, not truthiness | `web-console.test.js` |
 | WEB-07 | fixed | the redraw preserves focus and the poll is gone | `web-console.test.js` |
 | WEB-09 | fixed | no `setInterval`; the cadence is owned by visibility and idle | `web-console.test.js` |
+| WEB-04 | fixed | type → shape (`hazardShape`), severity → radius *and* stroke dash (`severityDash`); colour is no longer load-bearing, and the legend names every shape | `web-console.test.js` |
 | WEB-10 | measured | the 24px floor holds across 48 combinations on Chrome 154 / :9222; the gate canaried to exit 1 | `check-responsive.mjs` |
 | WEB-11 | fixed | every surface has a layer; 217 keys added to `en.json` | `check-i18n.mjs` |
 | WEB-12 | fixed | Phase 0 is true for a reason that cannot rot; Phase 2's "7 of 8" was stale when written — the console linked `components.css` the same day — and the linkage is now asserted | `test/web-component-layer.test.js` |
