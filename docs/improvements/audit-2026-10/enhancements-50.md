@@ -1637,6 +1637,39 @@ testable in isolation. This unblocks every other substrate item.
 > (`functionBody('handleApiRequestInContext', src)`, line 1004 to 1365),
 > `server.js` **1,905**. The 367 recorded above is that figure before this
 > removal, left standing as the before-state rather than overwritten.
+>
+> **2026-10-13 — the order table recorded the sequence and not the wiring.** The
+> guard above asserts that `matchKpiRoute` runs sixth; it did not assert that
+> `matchKpiRoute` is paired with `handleKpiRoute`. Those are two facts about one
+> line — `if (kpiRoute && await handleKpiRoute(kpiRoute, { … }))` — and a matcher
+> wired to the wrong handler, with the same dependency shape, passed all seven
+> tests. The table is `BINDINGS` now: 32 `[matcher, handler, keys]` rows, the keys
+> a sorted set because their order in the object literal is unobservable (the
+> handler destructures by name) while a key added, dropped or misspelled is
+> exactly what a missing `loadData` thunk or a lost `vintageIndex` would be. Three
+> more tests, canaried both ways: pairing `matchKpiRoute` with `handleExposureRoute`
+> fails the binding assertion alone (9/10), and dropping `readRequestJson` from the
+> maintenance call fails the key assertion alone (9/10).
+>
+> Building it found a defect in the table before it found one in the code, which
+> is the useful direction. `handleParametricRoute` takes **no `url`** — five keys,
+> not six — and the first draft of `BINDINGS` recorded six from the reading rather
+> than from the source. The parser that reads the dispatcher disagreed, and it was
+> right: `if (parametricRoute && await handleParametricRoute(parametricRoute, {
+> store, data, req, res, jsonResponse }))`. A hand-written table is a claim about
+> the source, and this one was wrong in the same commit that introduced it, which
+> is the case for the parser checking the table rather than a person maintaining
+> it. Two smaller self-inflicted ones on the way: a global `, key` match that
+> *consumed* the separating comma and so read every other key, and a window that
+> ended at the first `} return` and truncated the four-key families that wrap
+> their literal across lines. Both were the parser being wrong about a shape the
+> source uses, not the source being wrong.
+>
+> The keys are still not a declaration the source is generated from — the
+> dispatcher writes them, and this reads them back. But `BINDINGS` is now the whole
+> of what a loop over the dispatcher needs: matcher, handler, and the bag each
+> handler is handed. ENH-59's generator has one table to read rather than three
+> conventions to re-derive.
 
 **ENH-61 — Streaming cursor reads.** `PostgresStore.read()` issues
 `SELECT collection, body FROM lite_records WHERE …` with no `LIMIT`

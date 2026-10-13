@@ -741,20 +741,31 @@ family rather than a set of blocks:
 | `src/routes/auth-info.js` | 1 | one path the dispatcher wrote twice; one handler called at both points |
 | `src/visibility.js` | — | `findVisible`, the one by-id resolver (VUL-03) |
 
-`src/server.js` is **2,133 lines** from 5,603 at the start of the extraction, and
-the dispatcher **543** from 1,903.
+`src/server.js` is **1,905 lines** from 5,603 at the start of the extraction, and
+the dispatcher **362** from 1,903 — 111 of those lines are code, the other 251
+comments and blank lines.
 
-**What remains, measured rather than described.** The dispatcher still carries
-**5 inline literal route conditions** over 251 non-comment lines, and they are not
-families: they are one-off routes whose bodies are the business logic itself —
-`demo/seed`, `maintenance/apply-retention`, the `events` read, and the
-`assessments` roll-up. (A sixth literal, `/api/v1/rapidpro/field-report`, is an
-auth precondition rather than a route: it buffers the body and verifies the HMAC,
-then falls through to the family.) Extracting these is not a move: it is the
-ENH-59 route-table work plus a decision about which of them are really
-`reports.js`/`kpi.js` logic reached through a thin route. `ENH-60`'s ~15-module
-target was passed long ago; this row closes when the literal conditions are
-declarations rather than branches.
+**What remains, measured 2026-10-13.** The dispatcher carries **zero inline
+literal route conditions** — `grep` for `pathname === '` and `.match(` over
+`functionBody('handleApiRequestInContext', …)` both return nothing. The five
+recorded here (`demo/seed`, `maintenance/apply-retention`, the `events` read, the
+`assessments` roll-up) and the `rapidpro/field-report` auth precondition were all
+extracted into their families by the ENH-60 work, so the row's stated closing
+condition — "the literal conditions are declarations rather than branches" — is
+met by absence.
+
+What the dispatcher is now is **32 dispatch branches** and nothing else: 18
+non-dispatch lines (the signature, `res.locals`, the auth gate, the `readRequest`
+construction, `req.__auth`, the store read, the second catalogue dispatch, the 404
+tail) and 32 `const X = matchYRoute(…) / if (X && await handleXRoute(X, {…}))`
+pairs. Those branches are not a god function — each is three lines and the body is
+in its family — but they are still branches where a table would do, and that
+conversion is ENH-59's, not another extraction. `test/dispatch-order.test.js`
+records the order, the side of the store read, and (as of 2026-10-13) the
+matcher→handler binding and dependency bag for all 32, so the table ENH-59's
+generator would read now exists and is checked against the source. This row is
+**substantially closed**: the 1,597-line function is gone, and what is left is a
+dispatch list whose correctness is asserted rather than reviewed.
 
 **The counts in this row were stale by a factor of seven and nobody noticed, which
 is the row's own subject.** It read "35 inline literal route conditions over 876

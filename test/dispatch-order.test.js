@@ -96,6 +96,59 @@ const DISPATCH_ORDER = Object.freeze([
   ['matchDistrictRoute', 'post'],
 ].map(Object.freeze))
 
+/**
+ * Which handler each matcher is bound to, and the dependency keys it is given.
+ *
+ * The order table above records that `matchKpiRoute` runs sixth. It does not
+ * record that `matchKpiRoute` is paired with `handleKpiRoute` — and a matcher
+ * wired to the wrong handler, with the same dependency shape, passes every
+ * assertion above. The dispatcher's statement is `if (kpiRoute && await
+ * handleKpiRoute(kpiRoute, { … }))`, and the two names in it are independent
+ * facts about the same line.
+ *
+ * The dependency keys are a sorted set rather than a sequence, because their
+ * order in the object literal is not observable: the handler destructures by
+ * name. A key added, removed, or misspelled is what matters, and that is what
+ * the set catches. `loadData` and `vintageIndex` are the entries that are passed
+ * in rather than imported — the thunks and the one binding that lives in this
+ * file — so a family that stopped receiving its thunk would answer 500 on a
+ * route built not to materialise the store, which is the liveness defect's shape.
+ */
+const BINDINGS = Object.freeze([
+  ['matchLivenessRoute', 'handleLivenessRoute', ['appVersion', 'driverIntervalSeconds', 'idempotency', 'jsonResponse', 'loadData', 'pipelineIsHealthy', 'req', 'res', 'store', 'url', 'withTimeout']],
+  ['matchExportRoute', 'handleExportRoute', ['jsonResponse', 'loadData', 'req', 'res', 'store', 'url', 'vintageIndex']],
+  ['matchTilePackRoute', 'handleTilePackRoute', ['jsonResponse', 'req', 'res', 'url']],
+  ['matchTileRoute', 'handleTileRoute', ['jsonResponse', 'req', 'res', 'url']],
+  ['matchKpiRoute', 'handleKpiRoute', ['data', 'jsonResponse', 'req', 'requestRing', 'res', 'store', 'url']],
+  ['matchFieldSignalRoute', 'handleFieldSignalRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchExposureRoute', 'handleExposureRoute', ['data', 'jsonResponse', 'req', 'res', 'url']],
+  ['matchDerivedRoute', 'handleDerivedRoute', ['data', 'jsonResponse', 'req', 'res', 'url']],
+  ['matchSnapshotRoute', 'handleSnapshotRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchAuthInfoRoute', 'handleAuthInfoRoute', ['auth', 'jsonResponse', 'res']],
+  ['matchCatalogueRoute', 'handleCatalogueRoute', ['data', 'jsonResponse', 'req', 'res', 'url']],
+  ['matchWebhookRoute', 'handleWebhookRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchFederationRoute', 'handleFederationRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchOutboxRoute', 'handleOutboxRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchUploadRoute', 'handleUploadRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchScenarioRoute', 'handleScenarioRoute', ['data', 'jsonResponse', 'req', 'res']],
+  ['matchIngestionRoute', 'handleIngestionRoute', ['data', 'evaluateAndPersistAlerts', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchFormsRoute', 'handleFormsRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchMaintenanceRoute', 'handleMaintenanceRoute', ['data', 'jsonResponse', 'readRequestJson', 'req', 'res', 'store', 'url', 'withTimeout']],
+  ['matchEventsRoute', 'handleEventsRoute', ['data', 'jsonResponse', 'req', 'res', 'url']],
+  ['matchAmbientRoute', 'handleAmbientRoute', ['data', 'jsonResponse', 'req', 'res', 'url']],
+  ['matchRiskRoute', 'handleRiskRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchComputeRoute', 'handleComputeRoute', ['data', 'evaluateAndPersistAlerts', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchRapidProRoute', 'handleRapidProRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchProvenanceRoute', 'handleProvenanceRoute', ['data', 'jsonResponse', 'req', 'res', 'url']],
+  ['matchReportingRoute', 'handleReportingRoute', ['checkWebhookUrl', 'data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchAlertingRoute', 'handleAlertingRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchParametricRoute', 'handleParametricRoute', ['data', 'jsonResponse', 'req', 'res', 'store']],
+  ['matchOperationalRoute', 'handleOperationalRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchChwRoute', 'handleChwRoute', ['data', 'jsonResponse', 'req', 'res', 'store']],
+  ['matchWorkflowRoute', 'handleWorkflowRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+  ['matchDistrictRoute', 'handleDistrictRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
+].map(Object.freeze))
+
 const serverSource = () => fs.readFileSync(SERVER, 'utf8')
 
 /** The body of `handleApiRequestInContext`, by the parser that already owns it. */
@@ -130,6 +183,43 @@ function dispatched(body) {
     if (m) found.push([m[1], i < readAt ? 'pre' : 'post'])
   }
   return found
+}
+
+/**
+ * Every matcher/handler pair the dispatcher actually writes, with its keys.
+ *
+ * Anchored on the `const X = matchYRoute(…)` line and the `if` that guards the
+ * handler call. The `if` is the *next* line that mentions the variable rather
+ * than literally the next line, because two families' conditions span two lines
+ * (the catalogue's kind guard). This is a small parser, and it exists because a
+ * regex that tried to match the whole statement in one expression read the
+ * catalogue's compound condition as the *following* family — which is the same
+ * class of mistake the table it feeds is meant to catch.
+ */
+function bindings(body) {
+  const text = body.join('\n')
+  const out = []
+  for (const m of text.matchAll(/^\s*const (\w+) = (match\w+)\(/gm)) {
+    const matcher = m[2]
+    // From the declaration to the end of the guarded statement. The handler call
+    // is found in that window, so the catalogue's two-line condition and every
+    // multi-line dependency literal are read by construction rather than by a
+    // regex tuned to the current line breaks.
+    const from = m.index
+    const end = text.indexOf(') return', from)
+    const window = text.slice(from, end < 0 ? from + 600 : end + 8)
+    const h = window.match(/(handle\w+)\(\s*\w+\s*,\s*\{([\s\S]*?)\}\s*\)/)
+    if (!h) { out.push([matcher, null, null]); continue }
+    // Split on the separators rather than matching `, key`. A global match that
+    // *consumes* the leading comma skips the next key — the comma after `store`
+    // is eaten, so the scan resumes mid-`req` and reads `res` instead. Every
+    // other key vanished, which is a defect the table would then have recorded.
+    const keys = h[2].split(',')
+      .map((part) => part.match(/^\s*(\w+)/)?.[1])
+      .filter(Boolean)
+    out.push([matcher, h[1], [...new Set(keys)].sort()])
+  }
+  return out
 }
 
 /** Every matcher a module under `src/routes/` exports. */
@@ -216,5 +306,31 @@ describe('the dispatcher tries its families in a known order', () => {
     assert.ok(declaredMatchers().some(([, m]) => m === planted), 'canary target must exist')
     const found = dispatched(body).map(([n]) => n)
     assert.ok(found.includes(planted), `the scan must find ${planted}, which is dispatched`)
+  })
+})
+
+describe('the dispatcher binds each matcher to its own handler', () => {
+  it('pairs every matcher with the handler the table records', () => {
+    const found = bindings(dispatcherLines(serverSource()))
+    assert.deepEqual(
+      found.map(([m, h]) => [m, h]),
+      BINDINGS.map(([m, h]) => [m, h]),
+      'a matcher is wired to a different handler than recorded',
+    )
+  })
+
+  it('gives every handler the dependency keys the table records', () => {
+    const found = bindings(dispatcherLines(serverSource()))
+    assert.deepEqual(
+      found.map(([m, , k]) => [m, k]),
+      BINDINGS.map(([m, , k]) => [m, k]),
+      'a handler gained or lost a dependency key',
+    )
+  })
+
+  it('found a handler for every matcher — the scan is not silently empty', () => {
+    const found = bindings(dispatcherLines(serverSource()))
+    const missing = found.filter(([, h]) => !h).map(([m]) => m)
+    assert.deepEqual(missing, [], 'a dispatched matcher had no readable handler call')
   })
 })
