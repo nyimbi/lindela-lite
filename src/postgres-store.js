@@ -364,6 +364,10 @@ export class PostgresStore {
     await this.ensureSchema()
     const current = await this.readSchemaVersion()
     return {
+      // R-48. The same shape the JSON store answers with, so a readiness probe
+      // asks both adapters one question and reads one answer. `supported` is
+      // what tells them apart: this backend has a ledger, the other does not.
+      supported: true,
       current,
       expected: targetVersion(),
       pending: pendingMigrations(current).map((m) => ({ version: m.version, name: m.name })),
@@ -372,6 +376,46 @@ export class PostgresStore {
       // avoiding — reading rows written by a newer schema — is the newer
       // schema's job to guard, not this build's.
       current_build_is_ahead: current > targetVersion(),
+      error: null,
+    }
+  }
+
+  /**
+   * R-49. The size of the database, and what this client can honestly say about
+   * the disk underneath it.
+   *
+   * `pg_database_size` is the store's size and it is one cheap catalogue
+   * lookup. Free space on the *server's* filesystem is a different matter: this
+   * is a client, it may be on another host entirely, and there is no SQL
+   * function that reports a volume's free blocks. Reporting `free_bytes: null`
+   * with the reason is the honest answer, and the readiness probe treats an
+   * unobservable number as unknown rather than as failing — the alternative is
+   * a Postgres deployment that is permanently unready because a client cannot
+   * see a disk it was never given.
+   */
+  async storageUsage() {
+    try {
+      const { rows } = await this.pool.query('SELECT pg_database_size(current_database()) AS bytes')
+      return {
+        supported: true,
+        backend: 'postgres',
+        store_bytes: Number(rows[0]?.bytes ?? 0),
+        free_bytes: null,
+        total_bytes: null,
+        used_ratio: null,
+        error: null,
+        note: 'the database server filesystem is not visible from this client; only the database size is reported',
+      }
+    } catch (error) {
+      return {
+        supported: false,
+        backend: 'postgres',
+        store_bytes: null,
+        free_bytes: null,
+        total_bytes: null,
+        used_ratio: null,
+        error: String(error?.message || error),
+      }
     }
   }
 

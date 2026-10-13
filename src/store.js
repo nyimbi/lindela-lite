@@ -595,6 +595,84 @@ export class JsonStore {
   }
 
   /**
+   * R-48. There is no schema version here, and saying so is the answer.
+   *
+   * `PostgresStore.schemaStatus()` reports what the database is at against what
+   * the build expects, because migrations are a Postgres concern — the JSON
+   * store has one file and no ledger. A readiness probe asks both stores the
+   * same question and gets an honest `supported: false` from this one, which
+   * must not degrade readiness: a backend that has no schema cannot be behind
+   * one, and reporting it as drift would make every JSON deployment permanently
+   * unready.
+   */
+  async schemaStatus() {
+    return {
+      supported: false,
+      current: null,
+      expected: null,
+      pending: [],
+      current_build_is_ahead: false,
+      reason: 'the JSON store has no schema ledger; migrations apply to the Postgres backend',
+    }
+  }
+
+  /**
+   * R-49. Free space on the filesystem the store is written to, and its size.
+   *
+   * The two numbers are reported together because the failure they predict is a
+   * relationship between them, not a threshold on either: `#writeFile` rewrites
+   * the whole store through a temp file of its own size, so the next write needs
+   * `store_bytes` free on top of what the rename frees. A disk at 2% free is
+   * fine for a 40 KB store and fatal for a 40 MB one, and nothing was measuring
+   * either — an `ENOSPC` surfaced as a cascading 500 with no warning that the
+   * disk had been filling.
+   *
+   * `statfs` is the syscall for this and `fs.stat` is not: the latter reports
+   * the file's own size and says nothing about the volume. Both are cheap and
+   * neither reads the store, so this is safe on a probe polled every 30 seconds.
+   * A store that does not exist yet has no size; its directory still has free
+   * space, and that is the number that matters for the write about to create it.
+   */
+  async storageUsage() {
+    const dir = path.dirname(this.filePath)
+    try {
+      // A `file://` URL is what `fs.statfs` takes, and it wants the directory
+      // that exists — `dirname` of a store that has never been written may not.
+      let target = dir
+      let storeBytes = 0
+      try {
+        const stat = await fs.stat(this.filePath)
+        storeBytes = stat.size
+        target = this.filePath
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+      const fsStat = await fs.statfs(target)
+      const freeBytes = fsStat.bavail * fsStat.bsize
+      const totalBytes = fsStat.blocks * fsStat.bsize
+      return {
+        supported: true,
+        backend: 'json',
+        store_bytes: storeBytes,
+        free_bytes: freeBytes,
+        total_bytes: totalBytes,
+        used_ratio: totalBytes > 0 ? Number(((totalBytes - freeBytes) / totalBytes).toFixed(4)) : null,
+        error: null,
+      }
+    } catch (error) {
+      return {
+        supported: false,
+        backend: 'json',
+        store_bytes: null,
+        free_bytes: null,
+        total_bytes: null,
+        used_ratio: null,
+        error: String(error?.message || error),
+      }
+    }
+  }
+
+  /**
    * The same read as `read()`, one batch at a time.
    *
    * ENH-61 / ENH-37. The contract `PostgresStore.iterateRecords` implements:

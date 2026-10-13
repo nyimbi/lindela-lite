@@ -229,7 +229,55 @@ export async function handleLivenessRoute(route, {
         outbox = { degraded: null, error: String(rollupError?.message || rollupError) }
       }
     }
-    const degraded = audit?.valid === false || outbox?.degraded === true
+    // R-48 and R-49. Two more things an operator cannot otherwise see.
+    //
+    // `schemaStatus()` computed `{current, expected, pending}` and had zero
+    // callers, so a database a migration behind surfaced only as a 500 on every
+    // request — the first person to learn the schema was wrong was a user who
+    // could not use the product. And nothing anywhere reported free space, so
+    // `ENOSPC` was a cascading 500 with no warning that the disk had been
+    // filling: R-49's temp-file leak made that worse, and this is the other
+    // half of the same row.
+    //
+    // Both probes are raced against the *same* timeout the store read was
+    // given, not one each. SCL-07's rule holds here too: an unresponsive store
+    // must cost one timeout, not four. A probe that throws or a backend that
+    // cannot answer reports `supported: false` and is *not* a readiness
+    // failure — a JSON store has no schema to be behind, and a Postgres client
+    // cannot see the database server's disk. Only an observed defect degrades.
+    let schema = { supported: false, error: null, pending: [], current: null, expected: null, current_build_is_ahead: false }
+    let storage = { supported: false, error: null, store_bytes: null, free_bytes: null, total_bytes: null, used_ratio: null }
+    try {
+      const [schemaProbe, storageProbe] = await withTimeout(Promise.all([
+        typeof store.schemaStatus === 'function' ? store.schemaStatus() : Promise.resolve(schema),
+        typeof store.storageUsage === 'function' ? store.storageUsage() : Promise.resolve(storage),
+      ]), timeoutMs)
+      schema = schemaProbe
+      storage = storageProbe
+    } catch (probeError) {
+      const reason = probeError?.name === 'TimeoutError'
+        ? `the store's schema and disk probes did not answer within ${timeoutMs}ms`
+        : String(probeError?.message || probeError)
+      schema = { ...schema, error: reason }
+      storage = { ...storage, error: reason }
+    }
+
+    // A database behind the build is missing columns this code writes to, so
+    // every request that touches them 500s. A database *ahead* of it is not an
+    // error — refusing to serve would push an operator into a manual downgrade,
+    // and guarding newer rows is the newer schema's job.
+    const schemaBehind = Array.isArray(schema.pending) && schema.pending.length > 0
+    // The predicate is the one that predicts the failure. `#writeFile` rewrites
+    // the whole store through a temp file of its own size, so the next write
+    // needs `store_bytes` free — a disk at 2% is fine for a 40 KB store and
+    // fatal for a 40 MB one. `free_bytes === null` is a client that cannot see
+    // the disk, which is unknown, not broken.
+    const diskFull = storage.supported === true
+      && typeof storage.free_bytes === 'number'
+      && typeof storage.store_bytes === 'number'
+      && storage.free_bytes < storage.store_bytes
+
+    const degraded = audit?.valid === false || outbox?.degraded === true || schemaBehind || diskFull
 
     const ready = probe.ok && !degraded
     jsonResponse(res, ready ? 200 : 503, {
@@ -273,6 +321,16 @@ export async function handleLivenessRoute(route, {
       metrics: metricsOverflow(),
       uptime: uptimeStats(),
       pii: piiSaltStatus(),
+      // R-48. What the database is at against what this build expects, on the
+      // endpoint that already answers "can this instance serve a request". A
+      // database behind the build is `ready: false`; one ahead of it is
+      // reported and served.
+      schema,
+      // R-49. Store bytes and free bytes, because the write that fails needs
+      // both to predict. `free_bytes < store_bytes` is `ready: false` — the
+      // next write cannot land, which is the state that produces the cascading
+      // 500s this row is about.
+      storage,
       checked_at: new Date().toISOString(),
     })
     return true

@@ -47,9 +47,16 @@ const jsonResponse = (res, status, body) => {
 
 const req = (method = 'GET') => ({ method, headers: {} })
 
-/** A store double whose `read` resolves with `snapshot`, or rejects. */
-function storeDouble({ snapshot = {}, mode = 'json', fail = null, onRead } = {}) {
-  return {
+/**
+ * A store double whose `read` resolves with `snapshot`, or rejects.
+ *
+ * `schemaStatus` and `storageUsage` are deliberately *absent* unless a test
+ * supplies them, because absent is a real backend state: a store that cannot
+ * answer for its schema or its disk must be reported as unsupported rather than
+ * degrade readiness. A double that always implemented them would hide that.
+ */
+function storeDouble({ snapshot = {}, mode = 'json', fail = null, onRead, schemaStatus, storageUsage } = {}) {
+  const store = {
     mode,
     reads: 0,
     async read() {
@@ -59,6 +66,9 @@ function storeDouble({ snapshot = {}, mode = 'json', fail = null, onRead } = {})
       return snapshot
     },
   }
+  if (schemaStatus) store.schemaStatus = schemaStatus
+  if (storageUsage) store.storageUsage = storageUsage
+  return store
 }
 
 /** A stored audit chain with one row's hash overwritten, so `valid` is false. */
@@ -233,6 +243,116 @@ describe('ENH-60 — readiness fails closed on a degraded rollup', () => {
     assert.equal(json.idempotency.mode, 'durable')
     assert.equal(json.idempotency.durable, true)
     assert.equal(json.idempotency.ttl_hours, 1)
+  })
+})
+
+describe('R-48/R-49 — the probe reports schema drift and free space', () => {
+  it('reports the schema version the database is at against the one this build wants', async () => {
+    // R-48. `schemaStatus()` computed `{current, expected, pending}` and had zero
+    // callers, so a database a migration behind surfaced only as a 500 on every
+    // request — the operator learned the schema was wrong from the first user
+    // who hit it. `/ready` is already the operator surface that carries `audit`,
+    // `outbox` and `idempotency`, is public, and returns no records.
+    const { json } = await call({ kind: 'ready' }, {
+      store: storeDouble({
+        snapshot: { action_logs: [], events_outbox: [] },
+        schemaStatus: async () => ({
+          current: 1,
+          expected: 3,
+          pending: [{ version: 2, name: 'indexes' }, { version: 3, name: 'generated columns' }],
+          current_build_is_ahead: false,
+        }),
+      }),
+    })
+    assert.equal(json.schema.current, 1)
+    assert.equal(json.schema.expected, 3)
+    assert.deepEqual(json.schema.pending.map((m) => m.version), [2, 3])
+  })
+
+  it('fails closed when the database is behind the build', async () => {
+    // The build expects columns the database does not have, so every request
+    // that touches them 500s. That is not ready.
+    const { res, json } = await call({ kind: 'ready' }, {
+      store: storeDouble({
+        snapshot: { action_logs: [], events_outbox: [] },
+        schemaStatus: async () => ({ current: 1, expected: 3, pending: [{ version: 2, name: 'indexes' }], current_build_is_ahead: false }),
+      }),
+    })
+    assert.equal(res.status, 503, 'a database behind the build answered ready')
+    assert.equal(json.ready, false)
+  })
+
+  it('does not fail closed when the database is newer than the build', async () => {
+    // The module's own decision, restated at the probe: refusing to serve pushes
+    // an operator into a manual downgrade, and reading rows written by a newer
+    // schema is that schema's job to guard. `current_build_is_ahead` is
+    // *reported*, and it is not a readiness failure.
+    const { res, json } = await call({ kind: 'ready' }, {
+      store: storeDouble({
+        snapshot: { action_logs: [], events_outbox: [] },
+        schemaStatus: async () => ({ current: 4, expected: 3, pending: [], current_build_is_ahead: true }),
+      }),
+    })
+    assert.equal(res.status, 200, 'a newer database than the build was refused')
+    assert.equal(json.schema.current_build_is_ahead, true)
+  })
+
+  it('reports free space and store size, and fails closed when the next write cannot land', async () => {
+    // R-49. `ENOSPC` on a store write is a cascading 500 with no warning: the
+    // disk fills, the next write fails, and nothing had said the disk was
+    // filling. The predicate is the one that actually predicts the failure —
+    // `JsonStore` rewrites the whole store through a temp file of its own size,
+    // so the next write needs `store_bytes` free. Below that, the store cannot
+    // accept a write at all.
+    const { res, json } = await call({ kind: 'ready' }, {
+      store: storeDouble({
+        snapshot: { action_logs: [], events_outbox: [] },
+        storageUsage: async () => ({ supported: true, backend: 'json', store_bytes: 900, free_bytes: 100, total_bytes: 1000, used_ratio: 0.9, error: null }),
+      }),
+    })
+    assert.equal(json.storage.free_bytes, 100)
+    assert.equal(json.storage.store_bytes, 900)
+    assert.equal(res.status, 503, 'a store whose next write cannot fit answered ready')
+    assert.equal(json.ready, false)
+  })
+
+  it('stays ready while there is room for the next write', async () => {
+    const { res, json } = await call({ kind: 'ready' }, {
+      store: storeDouble({
+        snapshot: { action_logs: [], events_outbox: [] },
+        storageUsage: async () => ({ supported: true, backend: 'json', store_bytes: 900, free_bytes: 5000, total_bytes: 10000, used_ratio: 0.5, error: null }),
+      }),
+    })
+    assert.equal(res.status, 200)
+    assert.equal(json.storage.free_bytes, 5000)
+  })
+
+  it('does not invent a schema or a disk for a store that cannot answer for one', async () => {
+    // The JSON store has no schema version and the Postgres client cannot see
+    // the database server's filesystem. Both say so rather than reporting a
+    // number they made up — and an unsupported probe must not degrade readiness,
+    // or every deployment on that backend is permanently unready.
+    const { res, json } = await call({ kind: 'ready' }, {
+      store: storeDouble({ snapshot: { action_logs: [], events_outbox: [] } }),
+    })
+    assert.equal(res.status, 200)
+    assert.equal(json.schema.supported, false)
+    assert.equal(json.storage.supported, false)
+  })
+
+  it('reports a probe that threw rather than failing the whole route', async () => {
+    // A store that answers the read and then throws from the schema probe is a
+    // real state — a dropped connection between the two — and it must not turn
+    // the readiness body into a 500 with no diagnosis.
+    const { res, json } = await call({ kind: 'ready' }, {
+      store: storeDouble({
+        snapshot: { action_logs: [], events_outbox: [] },
+        schemaStatus: async () => { throw new Error('connection terminated unexpectedly') },
+      }),
+    })
+    assert.equal(res.status, 200)
+    assert.equal(json.schema.supported, false)
+    assert.match(json.schema.error, /connection terminated/)
   })
 })
 

@@ -3780,7 +3780,7 @@ components:
               nullable: true
     ReadinessResponse:
       type: object
-      required: [success, ready, store, idempotency, metrics, uptime, pii, checked_at]
+      required: [success, ready, store, idempotency, metrics, uptime, pii, schema, storage, checked_at]
       properties:
         success:
           type: boolean
@@ -3892,6 +3892,75 @@ components:
               description: Short public fingerprint, not the salt.
             digestBits:
               type: integer
+        schema:
+          type: object
+          description: >-
+            R-48. What the database is at against what this build expects.
+            `supported: false` means the backend has no schema ledger (the JSON
+            store), which is not drift and does not degrade readiness. A
+            non-empty `pending` means the database is missing migrations this
+            build writes against, so every request that touches them 500s —
+            that is `ready: false`. A database *newer* than the build is
+            reported via `current_build_is_ahead` and is deliberately not a
+            readiness failure: refusing to serve would push an operator into a
+            manual downgrade, and guarding newer rows is the newer schema's job.
+          properties:
+            supported:
+              type: boolean
+            current:
+              type: integer
+              nullable: true
+            expected:
+              type: integer
+              nullable: true
+            pending:
+              type: array
+              items:
+                type: object
+                properties:
+                  version:
+                    type: integer
+                  name:
+                    type: string
+            current_build_is_ahead:
+              type: boolean
+            error:
+              type: string
+              nullable: true
+        storage:
+          type: object
+          description: >-
+            R-49. Store bytes and free bytes on the volume the store is written
+            to. The two are reported together because the failure they predict
+            is a relationship between them, not a threshold on either: the store
+            rewrites itself through a temp file of its own size, so the next
+            write needs `store_bytes` free. `free_bytes < store_bytes` is
+            `ready: false`. `free_bytes: null` with `supported: true` means the
+            size is known but the disk is not — a Postgres client cannot see the
+            database server's filesystem — which is unknown, not broken.
+          properties:
+            supported:
+              type: boolean
+            backend:
+              type: string
+              enum: [json, postgres]
+            store_bytes:
+              type: integer
+              nullable: true
+            free_bytes:
+              type: integer
+              nullable: true
+            total_bytes:
+              type: integer
+              nullable: true
+            used_ratio:
+              type: number
+              nullable: true
+            error:
+              type: string
+              nullable: true
+            note:
+              type: string
         checked_at:
           type: string
     AuthInfoResponse:

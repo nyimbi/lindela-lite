@@ -85,6 +85,47 @@ describe('R-49 — a write that fails leaves no temp file behind', () => {
       'a write that could not even land its temp file left one behind')
   })
 
+  it('reports free space and the store size, which is what predicts the next failure', async () => {
+    // R-49's other half. The temp file is gone; nothing yet says the disk is
+    // filling. The predicate the write path actually obeys is
+    // `free_bytes < store_bytes` — the rewrite needs a second copy of the store
+    // to land — so both numbers are reported and neither alone is the answer.
+    const storeDir = await fs.mkdtemp(path.join(dir, 'usage-'))
+    const target = path.join(storeDir, 'store.json')
+    const store = new JsonStore(target)
+    await store.write({ incidents: [{ id: 'i1', title: 'x' }] })
+
+    const usage = await store.storageUsage()
+    assert.equal(usage.supported, true, 'a real filesystem must answer statfs')
+    assert.equal(usage.backend, 'json')
+    assert.ok(usage.store_bytes > 0, 'the store has been written and must report a size')
+    assert.ok(usage.free_bytes > 0, 'a tmpdir has free space')
+    assert.ok(usage.free_bytes < usage.total_bytes, 'free space cannot exceed the volume')
+  })
+
+  it('reports a size for a store that has never been written', async () => {
+    // A store about to be created has no size, but its directory has free space,
+    // and that is the number the write about to create it needs. Returning
+    // `supported: false` here would make a fresh deployment permanently unable
+    // to answer the probe.
+    const storeDir = await fs.mkdtemp(path.join(dir, 'fresh-'))
+    const store = new JsonStore(path.join(storeDir, 'not-yet.json'))
+    const usage = await store.storageUsage()
+    assert.equal(usage.supported, true)
+    assert.equal(usage.store_bytes, 0)
+    assert.ok(usage.free_bytes > 0)
+  })
+
+  it('says it has no schema ledger rather than inventing a version', async () => {
+    // R-48, the JSON half. A backend with no migrations cannot be behind them,
+    // and reporting drift here would make every JSON deployment unready.
+    const store = new JsonStore(path.join(dir, 'schema.json'))
+    const status = await store.schemaStatus()
+    assert.equal(status.supported, false)
+    assert.equal(status.current, null)
+    assert.deepEqual(status.pending, [])
+  })
+
   it('still writes normally, and renames the temp into place', async () => {
     // The cleanup must not have broken the success path: a good write lands the
     // store and leaves no temp file, which is the behaviour the temp file exists
