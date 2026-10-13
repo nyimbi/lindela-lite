@@ -36,7 +36,7 @@ PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
 **five** tables checked against each other — the document, the manifest table,
 the method gating, the envelope shape and, since 2026-10-12, the client's call
 sites — and no single declaration they are generated from, and ENH-60's
-dispatcher is still one 367-line function with 34 modules under `src/routes/`
+dispatcher is still one 362-line function with 34 modules under `src/routes/`
 (34 matchers, since `src/routes/stac.js` carries two — `matchStacRoute` and
 `matchOgcRoute` — and `auth-gate.js` is the one module with none, because it
 runs before matching). Reading a
