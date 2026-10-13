@@ -1,5 +1,7 @@
 # Lindela Lite — Backend Security & Architecture Audit
 
+citations-are-historical: 2026-10-03 — every `path:line` below is a quote of the tree as audited, and the fixes since have moved the code it names. Re-anchoring them would rewrite the audit's own evidence.
+
 Audit of `src/server.js`, `src/auth.js`, `src/pii.js`, `src/store.js`, `src/postgres-store.js`,
 `src/utils.js`, `src/outbox.js`, `src/webhooks.js`, `src/routing.js`, `src/cap.js`, `src/stac.js`,
 the connectors, and `docs/architecture/request-lifecycle.md`.

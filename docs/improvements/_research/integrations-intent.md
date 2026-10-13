@@ -1,5 +1,7 @@
 # Integrations & Stated-Intent Audit — Lindela Lite
 
+citations-are-historical: 2026-10-03 — every `path:line` below is a quote of the tree as audited, and the fixes since have moved the code it names. Re-anchoring them would rewrite the audit's own evidence.
+
 Audit date: 2026-10-03. Commit under audit: `b07bbe4` (working tree has uncommitted
 changes to `docs/architecture/ingestion.md`, `src/ingestion.js`, `src/postgres-store.js`;
 none of those files are in scope here, so findings are against `b07bbe4` for the

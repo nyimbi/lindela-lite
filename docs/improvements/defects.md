@@ -329,10 +329,10 @@ incidence of hazards, not trigger performance.
 `src/parametric.js:46-49` persists `trigger_metric`, `trigger_threshold` and
 `disbursement_amount_local_currency`. Neither the metric nor the threshold is
 ever read. `simulateDisbursement` copies the static amount.
-`src/server.js:2160` gates on `Boolean(body.focal_point_approved)`, a
+`src/server.js:2160` gates on `Boolean(body.focal_point_approved)`, a <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 self-asserted field, while the workflow machinery that could carry a real
 approval (`src/workflows.js`) is unused. All three parametric write paths
-(`src/server.js:2073, 2095, 2162`) write no action log.
+(`src/server.js:2073, 2095, 2162`) write no action log. <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 
 The money path is unaudited, unruled, and self-approved.
 
@@ -395,7 +395,7 @@ everything.
 ### Privacy
 
 - **PRIV-01 — CHW reporter name and phone stored unredacted.**
-  `src/server.js:2240-2241` sets `contact_urn: body.reporter_phone` and
+  `src/server.js:2240-2241` sets `contact_urn: body.reporter_phone` and <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
   `contact_name: body.reporter_name` on the `record`, while `redactPii` is
   applied to an object that never receives those fields. The RapidPro path
   redacts correctly; the HTTP path does not. **Reproduced:** name and phone
@@ -405,7 +405,7 @@ everything.
   truncated to 32 bits, dictionary-reversible for a bounded name set;
   `src/pii.js:34` guards with `if (record.latitude && record.longitude)`, so a
   coordinate at exactly 0° is treated as absent and skips geo-coarsening. This is
-  precisely the null-vs-zero conflation `src/server.js:2205` warns against
+  precisely the null-vs-zero conflation `src/server.js:2205` warns against <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
   elsewhere in the same codebase.
 - **PRIV-03 — Soft delete retains PII permanently** (`src/operations.js:81`), and
   community feedback is in no retention list at all.
@@ -455,15 +455,15 @@ everything.
   `src/ingestion.js:181-188` rebuilds a run-wide `allRecords` union inside the
   per-source loop, so a nine-source run writes nine identical lineage records with
   the same `record_count` and `upstream_checksum`. `upstream_url_or_endpoint` is
-  always null and `transform_version` is a constant (`src/lineage.js:14-15`).
+  always null and `transform_version` is a constant (`src/lineage.js:14-15`). <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
   IPC and WHO collections are excluded from lineage entirely.
 - **DATA-11 — There is no migration path.** `src/postgres-store.js:47` issues a
   single hardcoded `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`; the `version: 1`
   written by `ensureSchema` is never read. A deployment that has been running
   when a record shape changes has no upgrade route.
 - **DATA-12 — Record ids mix the current timestamp into the hash**
-  (`src/operations.js:104`, `src/lineage.js:9`, `src/reports.js:187`,
-  `src/workflows.js:98`, `src/community.js:36`, `src/server.js:2213`), so
+  (`src/operations.js:104`, `src/lineage.js:9`, `src/reports.js:187`, <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
+  `src/workflows.js:98`, `src/community.js:36`, `src/server.js:2213`), so <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
   re-submitting identical content produces a different id and defeats dedup.
 - **DATA-13 — `payload_hash` dedup is not namespaced** (`src/store.js:114`): two
   records differing only by id collide, and a re-imported GeoJSON is silently
@@ -823,7 +823,7 @@ connector. HTTP error bodies are discarded at `src/connectors/http.js:6`, so
 `Retry-After` is never seen. RapidPro outbound is likewise unbounded.
 
 **Reports** — `markdown_download` records a byte count rather than the artefact
-(`src/reports.js:1373`), so the exported report is not retrievable later. Report
+(`src/reports.js:1373`), so the exported report is not retrievable later. Report <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 webhooks are unsigned and untimed. `src/pdf.js:11` computes a "signature" that is
 a self-referential 64-bit digest. Export returns only the record appendix;
 the narrative exists solely in `export.md` with nothing saying so.
@@ -918,7 +918,7 @@ by executing a file, and behavioural tests for the adapters.
 
 **A sixth, cross-cutting — and the easiest to eliminate:** falsy-zero conflation,
 in both directions, in a codebase that has explicitly written down not to do it.
-`src/server.js:2205` warns against it. `src/analytics.js` carries the comment
+`src/server.js:2205` warns against it. `src/analytics.js` carries the comment <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 *"an absent forecast is not a 0% chance of rain"*, and `4a1ce17` was a commit
 whose entire purpose was fixing it. Yet:
 

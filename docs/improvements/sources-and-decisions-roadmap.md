@@ -37,7 +37,7 @@ The instruction was no duplication and no contradiction. Here is every item in t
 | SRC-02 Fix or retire CHIRPS | **new** | — | Appears in `docs/ingestion.md:47` as a known failure with no disposition. A dead connector that still appears in `SOURCE_POLICIES` is worse than an absent one: it reports a source that cannot succeed. |
 | SRC-03 NASA FIRMS → keyless GIBS fire tiles | **extends** | ENH-22 | `src/connectors/nasa-firms.js` already returns fire points. ENH-22 asks for cached map tiles offline; this asks for the *hazard layer* to be drawn at all. Different deliverable, shared substrate. |
 | SRC-04 OSM roads and water via Overpass | **new** | extension 4 | Extension 4 is about downscaling *rainfall*. Roads and water bodies are static vector geometry with nothing to do with precipitation. |
-| SRC-05 Health facilities from HDX or Overpass | **new** | — | `SERVICE_TYPES` includes `health` and the demo seeds eight facilities by hand (`scripts/seed-demo.mjs:360`). Real deployments have none of them. |
+| SRC-05 Health facilities from HDX or Overpass | **new** | — | `SERVICE_TYPES` includes `health` and the demo seeds eight facilities by hand (`scripts/seed-demo.mjs:360`). Real deployments have none of them. | <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 | SRC-06 IOM DTM displacement | **new** | — | No connector matches `displacement` in `src/connectors/`. |
 | SRC-07 SPI/SPEI from the stored ERA5 series | **new** | — | The ERA5 reanalysis series is already fetched (`src/connectors/open-meteo-archive.js`, 1981 onward). The drought indices are arithmetic on data already in hand; only the code is missing. |
 | SRC-08 Soil moisture and evapotranspiration | **new** | — | No connector matches either term. |
@@ -102,7 +102,7 @@ Two options, one of which must be chosen deliberately: repair against the curren
 
 ### SRC-05 — Health facilities from HDX or Overpass
 
-**Now.** Eight facilities, all hand-seeded (`scripts/seed-demo.mjs:360`), each with a `beds` count and a `beneficiaries` count that exist nowhere but the seed file.
+**Now.** Eight facilities, all hand-seeded (`scripts/seed-demo.mjs:360`), each with a `beds` count and a `beneficiaries` count that exist nowhere but the seed file. <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 
 **Then.** Real facilities. HDX first (it carries the humanitarian-specific attributes — organisation, facility type, status), Overpass as the fallback.
 
@@ -284,7 +284,7 @@ Cold chain is a **workflow type**, not a data model:
 
 - `src/workflows.js:5` — `cold_chain_protection` is one of the workflow types, with a state machine at `:16` (`temperature_breach_forecast → moh_notified → action_taken → closed`).
 - `src/kpi.js:165` and `src/districts.js:144` — the same three lines, duplicated: filter workflow instances by type, filter again for terminal state, divide.
-- `scripts/seed-demo.mjs:360` — eight health facilities with `meta: { cold_chain: true }`, and a seeded trigger protocol `tp-cold` keyed on `temperature_max_c >= 34`.
+- `scripts/seed-demo.mjs:360` — eight health facilities with `meta: { cold_chain: true }`, and a seeded trigger protocol `tp-cold` keyed on `temperature_max_c >= 34`. <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 
 So the platform can tell you a district ran a cold-chain workflow and closed the ticket.
 

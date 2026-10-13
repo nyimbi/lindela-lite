@@ -1,5 +1,7 @@
 # Lindela Lite — frontend & visualization audit
 
+citations-are-historical: 2026-10-03 — every `path:line` below is a quote of the tree as audited, and the fixes since have moved the code it names. Re-anchoring them would rewrite the audit's own evidence.
+
 Scope: `public/` (8 PWA surfaces, no build step), `public/shared/`, `public/i18n/`,
 `scripts/check-*.mjs`. Vanilla JS + hand-rolled SVG. Audited 2026-10-03.
 

@@ -59,7 +59,7 @@ not an early-warning system.
 
 ### ENH-04 — The pipeline raises its own alerts
 **Metric:** MTTD for "a threshold was crossed and no alert exists": **never → one ingestion cycle**; alerts raised per automated cycle: **0 → n** · **Score: 10/1 = 10**
-**Change:** extract the body of `handleAlertEvaluation` (`src/server.js:2338`) into one function that `POST /api/v1/ingest/run-due` also calls, so "evaluate and persist" has one implementation and cannot drift.
+**Change:** extract the body of `handleAlertEvaluation` (`src/server.js:2338`) into one function that `POST /api/v1/ingest/run-due` also calls, so "evaluate and persist" has one implementation and cannot drift. <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 **Why not incremental:** this is the system's core function, currently reachable only by hand. `suppression_bucket` already bounds duplicates and hysteresis bounds flapping.
 **Depends:** R-02. **Aligns:** ADR-009 (external scheduler) is unchanged — this is the scheduler calling more of the API.
 

@@ -70,7 +70,7 @@ This is the single most consequential finding in the audit, and it is one line t
 
 ### 2. Nothing raises an alert unless a human asks
 
-`evaluateAlertRules` has exactly one call site: `src/server.js:2349`, inside
+`evaluateAlertRules` has exactly one call site: `src/server.js:2349`, inside <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 `handleAlertEvaluation`, reachable only via `POST /api/v1/alerts/evaluate`
 (`src/server.js:1104-1105`).
 

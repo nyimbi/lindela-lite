@@ -1,5 +1,7 @@
 # Ops, Deployment, Supply Chain and Security Audit — Lindela Lite
 
+citations-are-historical: 2026-10-03 — every `path:line` below is a quote of the tree as audited, and the fixes since have moved the code it names. Re-anchoring them would rewrite the audit's own evidence.
+
 Audit date 2026-10-03. Threat model: a district-office server or a laptop, in a
 humanitarian response, on flaky power and intermittent internet, in a country
 where the operator may be physically at risk. Physical and operational

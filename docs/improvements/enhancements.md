@@ -625,7 +625,7 @@ architecture doc already describes it as.
 return only the source-record appendix. The narrative, the data-quality warnings
 and the caveats exist solely in `export.md`, with nothing on the export endpoints
 saying so. No KMZ, no XLSX. `markdown_download` records a byte count rather than
-the artefact (`src/reports.js:1373`), so the exported report is not retrievable
+the artefact (`src/reports.js:1373`), so the exported report is not retrievable <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 later.
 
 **The change.** XLSX and KMZ export; a signed PDF that carries the report *and* its
@@ -644,7 +644,7 @@ are uncertain, and a narrative they have to request separately.
 **Evidence.** `action_logs` exists but is self-asserted (DATA-15), carries 8
 characters of the bearer token as its actor (SEC-09), is written on some paths and
 not others, has no UI, no export, and **none of the three parametric write paths
-write one at all** (`src/server.js:2073, 2095, 2162`) — the money path is
+write one at all** (`src/server.js:2073, 2095, 2162`) — the money path is <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 unaudited.
 
 **The change.** Append-only action log, hash-chained (`prev_hash` in each row, so

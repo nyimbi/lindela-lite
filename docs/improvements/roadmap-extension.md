@@ -228,7 +228,7 @@ data.*
 Neither is wired:
 
 - `redactPii` is never called from the HTTP field-report path
-  (`src/server.js:2240-2248`); reporter name and phone are stored in cleartext.
+  (`src/server.js:2240-2248`); reporter name and phone are stored in cleartext. <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
   **Reproduced** in unauthenticated `GET /rapidpro/inbound` and in `export.csv`.
   The RapidPro path *does* redact. The two paths disagree.
 - `redactNames` defaults to **false**; the hash is unsalted and truncated to 32

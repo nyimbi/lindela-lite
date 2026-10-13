@@ -1,5 +1,7 @@
 # Analytical and modelling core — audit
 
+citations-are-historical: 2026-10-03 — every `path:line` below is a quote of the tree as audited, and the fixes since have moved the code it names. Re-anchoring them would rewrite the audit's own evidence.
+
 Scope: `src/flood-probability.js`, `src/flood-depth.js`, `src/terrain.js`,
 `src/road-access.js`, `src/analytics.js`, `src/analytics/{downscaling,ensemble,impact}.js`,
 `src/kpi.js`, `src/alerts.js`, `src/equity.js`, `src/scenarios.js`, `src/districts.js`,

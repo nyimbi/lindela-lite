@@ -1,5 +1,7 @@
 # Audit baseline — measured, not asserted
 
+citations-are-historical: 2026-10-03 — every `path:line` below is a quote of the tree as audited, and the fixes since have moved the code it names. Re-anchoring them would rewrite the audit's own evidence.
+
 Findings produced by the reviewer directly, independent of the domain agents.
 Everything here is reproducible from the current tree.
 

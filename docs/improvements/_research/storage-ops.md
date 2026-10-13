@@ -1,5 +1,7 @@
 # Storage, operations and reporting audit
 
+citations-are-historical: 2026-10-03 — every `path:line` below is a quote of the tree as audited, and the fixes since have moved the code it names. Re-anchoring them would rewrite the audit's own evidence.
+
 Scope: `src/store.js`, `src/postgres-store.js`, `src/pg0.js`, `src/storage.js`, `src/schema.js`,
 `src/lineage.js`, `src/operations.js`, `src/outbox.js`, `src/workflows.js`, `src/webhooks.js`,
 `src/reports.js`, `src/pdf.js`, `src/cap.js`, `src/rapidpro.js`, `src/community.js`,

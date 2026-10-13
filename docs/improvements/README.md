@@ -107,7 +107,7 @@ fails today.
 
 And one that is not about wiring at all: **falsy-zero conflation, in both
 directions, in a codebase that has written the rule down twice.**
-`src/server.js:2205` warns against it, `src/analytics.js` carries the comment
+`src/server.js:2205` warns against it, `src/analytics.js` carries the comment <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 *"an absent forecast is not a 0% chance of rain"*, and commit `4a1ce17` exists
 solely to fix one instance. Yet `src/pii.js:34` treats a coordinate at 0° as absent,
 `public/districts/app.js:208` drops every record on the equator and prime meridian
