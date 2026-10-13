@@ -71,6 +71,24 @@ const DOC_DIRS = Object.freeze([
 const RUN = /([\w./-]+\.(?:js|mjs)):(\d+(?:\s*,\s*:?\d+)*)/g
 const CONTINUATION = /`:(\d+(?:\s*,\s*:?\d+)*)`/g
 
+/**
+ * A range citation, `path:START–END`.
+ *
+ * `RUN` cannot see these: it matches `src/server.js:763` and stops at the dash,
+ * so only the *start* of a range was ever checked. That left the one direction
+ * that matters unguarded — a range whose **end** is past EOF names a line that
+ * does not exist, which is exactly the failure this gate is scoped to. It was
+ * found on ARC-01, whose evidence read `src/server.js:763–2360` in a file that
+ * had shrunk to 1,613 lines: the citation named a line 747 past the end and the
+ * gate reported clean. The dash is written three ways (`-`, `–`, `—`) and all
+ * three are read, because a checker that enumerates one spelling of a thing is
+ * the bug wearing the gate's clothes.
+ *
+ * Only the **end** is checked. The start is already checked by `RUN`, and
+ * checking it here too would double-report the same number on the same line.
+ */
+const RANGE = /([\w./-]+\.(?:js|mjs)):(\d+)\s*[–—-]\s*(\d+)/g
+
 /** A citation the author has declared historical. Same line or the one above. */
 const DRIFT_OK = /line-drift-ok:/
 
@@ -210,6 +228,9 @@ export function scanText(text, { doc = '<memory>' } = {}) {
         for (const n of m[1].split(/\s*,\s*:?/)) cited.push([file, Number(n)])
       }
     }
+    // The end of a range. `RUN` reads the start (`:763`), not the end (`:2360`),
+    // so a range whose end is past EOF was invisible until this line existed.
+    for (const m of line.matchAll(RANGE)) cited.push([m[1], Number(m[3])])
     for (const [file, num] of cited) {
       const resolved = resolveCitation(file)
       if (resolved.missing) {
@@ -294,6 +315,26 @@ export const CANARIES = [
     name: 'a citation to a file that does not exist is a finding',
     source: 'see `src/not-a-real-module.js:12`.',
     expect: 1,
+  },
+  {
+    name: 'a range whose end is past EOF is a finding — the blind spot RUN left',
+    source: 'held the surface (`src/server.js:100-999999`).',
+    expect: 1,
+  },
+  {
+    name: 'a range written with an en-dash is read too',
+    source: 'held the surface (`src/server.js:100–999999`).',
+    expect: 1,
+  },
+  {
+    name: 'a range wholly in bounds is clean',
+    source: 'the block (`src/server.js:100-200`).',
+    expect: 0,
+  },
+  {
+    name: 'the marker exempts a past-EOF range end',
+    source: '// line-drift-ok: quoted as it was\nheld the surface (`src/server.js:100-999999`).',
+    expect: 0,
   },
   {
     name: 'a non-source backtick is ignored',

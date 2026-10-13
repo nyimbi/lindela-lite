@@ -695,18 +695,24 @@ requests. No correctness issue found; noted for completeness.
 watch the sweep work.
 
 ### ARC-01 — CRITICAL — `handleApiRequestInContext` is a 1,597-line god function
-`src/server.js:763–2360` holds the entire `/api/v1` surface: 68 literal
+`src/server.js:763–2360` held the entire `/api/v1` surface <!-- line-drift-ok: the range as audited, before the extraction; the file is 1,613 lines now -->
+at the time of the audit: 68 literal
 `url.pathname === …` tests plus 16 `match*Route()` helpers dispatched from 16 points
 inside the same function, three auth gates (one centralised, two copies at `:366`
 and `:392`), per-route inline validation, and business logic that belongs in
 `kpi.js`/`reports.js`. A change to one route requires reading 1,600 lines. ENH-60.
 
-**PARTIAL — 2026-10-12. Every *family* is out; the god function is not gone.** The
-row's title is "1,597-line god function", and that is the claim to hold it to, so
-this is not Fixed. **Thirty families** now live under `src/routes/` (29 modules,
-one of which — `alerting.js` — carries two matchers), each a coherent group with
-its own matcher, its own test file, and a property that is the reason it is a
-family rather than a set of blocks:
+**Closed 2026-10-13 at the row's stated claim.** The title is "1,597-line god
+function", and the function is **80 lines** of table iteration with zero route
+logic in it — the claim is met, so this is Fixed. Every *family* lives under
+`src/routes/`: **34 modules, 35 matchers**, of which 32 are dispatched by
+`src/route-families.js`'s table. Three matchers are correctly outside it —
+`matchStacRoute` and `matchOgcRoute` (called from `handleApi`, above the
+dispatcher) and `alerting.js`'s `matchTriggeringRoute` (reached through
+`matchAlertingRoute`) — and `auth-gate.js` is the one module with no matcher,
+because it runs before matching and returns a verdict. Each family is a coherent
+group with its own matcher, its own test file, and a property that is the reason
+it is a family rather than a set of blocks:
 
 | module | routes | what it holds |
 |---|---|---|
@@ -739,13 +745,19 @@ family rather than a set of blocks:
 | `src/routes/tile-packs.js` | 2 | ENH-42; the pack is bounded and the refusal is by name |
 | `src/routes/liveness.js` | 2 | `/health` and `/ready` are one question at two depths; the read is a thunk, so `/ready` never materialises the store |
 | `src/routes/auth-info.js` | 1 | one path the dispatcher wrote twice; one handler called at both points |
+| `src/routes/basemap-tiles.js` | 1 | the raster proxy reads no collection, so it sits above the read; it was invisible to the route-surface parser until ARC-02 taught it the `/<literal>/.exec(...)` spelling |
+| `src/routes/events.js` | 2 | `/events` and `/assessments` are one union expression at two depths; the copy written twice in the dispatcher is now one `recentEvents()` (VER-18) |
+| `src/routes/maintenance.js` | 2 | `apply-retention` and the driver's `retention` item are two implementations of one operation — the family is one file because `src/auth.js` gives both the same scope |
+| `src/routes/stac.js` | — | `matchStacRoute` and `matchOgcRoute`, called from `handleApi` above the dispatcher, so neither is in the table |
+| `src/routes/auth-gate.js` | — | the one module with no matcher: it runs before matching and returns a verdict, which is why it exports a `gate` rather than a `match`/`handle` pair |
 | `src/visibility.js` | — | `findVisible`, the one by-id resolver (VUL-03) |
 
-`src/server.js` is **1,905 lines** from 5,603 at the start of the extraction, and
-the dispatcher **362** from 1,903 — 111 of those lines are code, the other 251
-comments and blank lines.
+`src/server.js` was **1,905 lines** at that point, from 5,603 at the start of the
+extraction, and the dispatcher **362** from 1,903 — 111 of those lines were code,
+the other 251 comments and blank lines. Both figures are the before-state of the
+change below; the current ones are measured under it.
 
-**What remains, measured 2026-10-13.** The dispatcher carries **zero inline
+**What closed it, measured 2026-10-13.** The dispatcher carries **zero inline
 literal route conditions** — `grep` for `pathname === '` and `.match(` over
 `functionBody('handleApiRequestInContext', …)` both return nothing. The five
 recorded here (`demo/seed`, `maintenance/apply-retention`, the `events` read, the
@@ -754,25 +766,35 @@ extracted into their families by the ENH-60 work, so the row's stated closing
 condition — "the literal conditions are declarations rather than branches" — is
 met by absence.
 
-What the dispatcher is now is **32 dispatch branches** and nothing else: 18
-non-dispatch lines (the signature, `res.locals`, the auth gate, the `readRequest`
-construction, `req.__auth`, the store read, the second catalogue dispatch, the 404
-tail) and 32 `const X = matchYRoute(…) / if (X && await handleXRoute(X, {…}))`
-pairs. Those branches are not a god function — each is three lines and the body is
-in its family — but they are still branches where a table would do, and that
-conversion is ENH-59's, not another extraction. `test/dispatch-order.test.js`
-records the order, the side of the store read, and (as of 2026-10-13) the
-matcher→handler binding and dependency bag for all 32, so the table ENH-59's
-generator would read now exists and is checked against the source. This row is
-**substantially closed**: the 1,597-line function is gone, and what is left is a
-dispatch list whose correctness is asserted rather than reviewed.
+And the branches that remained became a table. The thirty-two `const X =
+matchYRoute(…)` / `if (X && await handleXRoute(X, {…}))` pairs are now
+`src/route-families.js`'s `ROUTE_FAMILIES`, and `handleApiRequestInContext`
+iterates it in two loops — `pre` above the store read, `post` below. Measured now:
+the dispatcher is **80 lines** (`functionBody('handleApiRequestInContext', src)`,
+line 973 to 1052) whose route logic is two `for` loops and a `dispatchFamily` call,
+with no inline validation and no business logic; `src/server.js` is **1,613
+lines**. That conversion was ENH-60's last move, not ENH-59's generator: the table
+declares the dispatch, and `test/dispatch-order.test.js` reads it at runtime and
+checks the order, the side of the read, the matcher→handler binding and the
+dependency bag against the *handlers' own destructuring* rather than against a
+regex of the dispatcher, so it cannot certify itself. What replaced the function is
+a declaration, not a shorter list of statements.
 
-**The counts in this row were stale by a factor of seven and nobody noticed, which
-is the row's own subject.** It read "35 inline literal route conditions over 876
-non-comment lines" and "3,237 lines" while the file was 2,133 and the literals
-were 5 — every extraction since the paragraph was written updated ENH-60's entry
-and not this one. A CRITICAL row whose evidence is a number nobody re-measures is
-the ARC-08 failure in a second place, so the numbers here are now taken from
+**The counts in this row were stale twice, and the second time is the row's own
+subject demonstrated on itself.** The first: it read "35 inline literal route
+conditions over 876 non-comment lines" and "3,237 lines" while the file was 2,133
+and the literals were 5 — every extraction since the paragraph was written updated
+ENH-60's entry and not this one. The second: the "32 dispatch branches" figure
+that stood here was written by the ENH-60 *extraction* work and superseded by the
+ENH-60 *table* work inside the same 24 hours, and the table commit again updated
+`enhancements-50.md` and not this row — so for a day a CRITICAL entry described a
+dispatcher that no longer existed. A CRITICAL row whose evidence is a number
+nobody re-measures is the ARC-08 failure in a second place. No gate catches it:
+`check-doc-citations` reads `file:line` and the citation here is in-bounds, and
+nothing compares a prose count against the tree. What catches it is reading the row
+against the code, which is the only method the row's own lesson prescribes. Every
+figure here is re-measured as of this edit, and the before-states are left standing
+rather than overwritten, because the drift is the evidence. The figures come from
 `scripts/check-openapi.mjs`'s own output and the dispatcher's line range rather
 than recalled.
 
@@ -1316,7 +1338,11 @@ ever recorded. That move also settled a real inconsistency: `connectors` and
 used `new Date(completed_at).getTime()`, which is `NaN` for a run still in
 flight — and `NaN` compares equal to everything, so a running run sorted
 unpredictably against finished ones. Both now share one helper.
-The dispatcher is 776 lines and `server.js` 2,366, from 1,903 and 5,603 at the start.
+The dispatcher was 776 lines and `server.js` 2,366 at that point, from 1,903 and
+5,603 at the start. (Superseded 2026-10-13 by the ENH-60 table move: the
+dispatcher is now **80 lines** and `server.js` **1,613** — see ARC-01. The figure
+is left standing as the before-state, not overwritten, because this entry's
+subject is a number that was right when written.)
 `check-openapi` reads all six new families as third-family route sources with no
 second list to keep in step — `parsed matchRiskRoute → handleRiskRoute: 6 paths`,
 `parsed matchDistrictRoute → handleDistrictRoute: 5 paths`, `parsed

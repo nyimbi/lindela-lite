@@ -62,7 +62,7 @@ sharpest instance of a class — a nullable or non-additive field treated as a p
 number — that VER-02 and VER-12 also belong to.
 
 **ARC-01 — the 1,597-line god function.** `handleApiRequestInContext`
-(`src/server.js:763–2360`) is the whole API surface. Every substrate enhancement
+(`src/server.js:763–2360` <!-- line-drift-ok: the range as audited; the extraction is done and the dispatcher is 80 lines now -->) was the whole API surface. Every substrate enhancement
 (streaming reads, request ids, per-server state, a route seam) is harder to land
 because there is no seam to land it in. It is the highest-leverage refactor in the
 set, and the reason ENH-59/60 sit at the front of the roadmap.

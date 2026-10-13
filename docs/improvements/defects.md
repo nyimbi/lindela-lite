@@ -133,7 +133,7 @@ is only consulted at `src/server.js:230-234`, and that branch short-circuits the
 entire auth block, so `authenticate()` and `requireScope()` are never reached.
 
 **Failure.** Anyone who can reach the port can POST a fabricated field report.
-It becomes an incident, a task and an action-log entry (`src/server.js:1609-1615`).
+It becomes an incident, a task and an action-log entry (`src/server.js:1609-1615`). <!-- line-drift-ok: quoted as it was; SEC-02 is fixed and the extraction moved the block -->
 The tool that field staff rely on to escalate can be written into by a stranger.
 
 ### SEC-03 — A read-only token can perform every unnamed mutation

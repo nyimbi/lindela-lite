@@ -1139,8 +1139,8 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > which is a strictly weaker property and a strictly cheaper one to reach. ENH-59
 > stays PARTIAL for the reason it always had.
 
-**ENH-60 — Router extraction.** `handleApiRequestInContext` is 1,597 lines
-(`src/server.js:763–2360`) and entangles routing, auth, validation, business logic
+**ENH-60 — Router extraction.** `handleApiRequestInContext` was 1,597 lines
+(`src/server.js:763–2360` <!-- line-drift-ok: the range as audited; ENH-60 is IMPLEMENTED and the dispatcher is 80 lines now -->) and entangled routing, auth, validation, business logic
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
