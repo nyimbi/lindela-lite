@@ -25,6 +25,7 @@ then [platform.md](platform.md) for the complete platform guide.
 - [Developer Guide](developer-guide.md): local setup, extension workflows, testing, and documentation maintenance.
 - [Outbreak and Food-Security Scoping](outbreak-and-food-security-scoping.md): **scoping only, nothing implemented.** What was verified about IPC licensing and WHO outbreak data, why the keyless data does not match district-level need, and the policy decisions required before any of it is built.
 - [Flood Probability Model Basis](flood-probability-model-basis.md): **proposal for review, not implemented.** Why rainfall-to-flood-probability is absent, what data is and is not reachable, three candidate approaches, and the decisions needed before any coefficients are fitted.
+- [How Lindela Lite Uses AI and ML](ai-ml-usage.md): the one fitted model and its refusal floors, the statistical composites where ML would be fabrication, MLOps governance (calibration, drift, backtests), the boundary where no model scores, and the two opt-in model surfaces — the report narrator and the query slot-filler.
 - [Open-Source Boundary](open-source-boundary.md): what is included in Lite and what remains outside it.
 
 ## Common Entry Points

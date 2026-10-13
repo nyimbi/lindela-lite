@@ -196,6 +196,27 @@ Over two thousand automated tests, plus seven repository gates (budget, OpenAPI,
 
 ---
 
+## How We Use AI and ML
+
+The word "AI" oversells what is here, and the restraint is deliberate: this platform issues numbers that decide where responders and money go, so every fitted thing carries its sample, its refusal conditions, and its honest failure modes.
+
+**One genuinely fitted model.** `src/flood-probability.js` trains an empirical rainfall-to-flood probability per district from ERA5 reanalysis precipitation and GDACS flood-event labels, over three features (7-day intensity, 30-day and 90-day antecedent wetness). Every probability publishes in two forms, both required — raw contingency counts with a Wilson interval, and an L2-regularised logistic fit with leave-one-year-out skill scores. Fewer than 60 months of data, fewer than 5 events, or all-one-class data returns **no probability at all** rather than a number with no footing. The agreed basis, and the reporting-conditioned caveat it carries, are in [docs/flood-probability-model-basis.md](docs/flood-probability-model-basis.md).
+
+**Everything else that scores is arithmetic, not a model.** Risk scores are transparent weighted and capped formulas re-derivable in the browser — a build gate fails when the transcription drifts from the source. Bias correction is empirical-CDF quantile mapping; forecast uncertainty is ensemble spread. Nothing in the scoring path is a language model, a black-box model, or an unsupervised method, and there are zero runtime dependencies beyond `pg`.
+
+**Two model surfaces exist, both opt-in and both outside the scoring path.** Neither may write a fact, and each refuses rather than guesses:
+
+| Surface | Model | Enabled by | What it may do |
+|---|---|---|---|
+| Report narrator (`src/narrator.js`) | Qwen 3 0.6B, served locally by Ollama | `LINDELA_LITE_NARRATOR=1` | Write one commentary paragraph over figures the deterministic report sections already computed. Code audits every digit before publication; an unlisted figure is a refusal, not cleanup. |
+| Query slot-filler (`src/needle.js`) | [Cactus Needle 3](https://huggingface.co/Cactus-Compute/needle3) — 121M parameters at 2.125 bits per weight, 8–29 MB, Apache-2.0 — served locally as a sidecar | `LINDELA_LITE_NEEDLE=1` | Propose `{subject, region, window, predicates, threshold}` for `POST /api/v1/ask` when the deterministic parser cannot ground a question. Every slot is re-validated against the declared vocabulary by code: the model proposes, the vocabulary disposes. |
+
+**Models don't act.** A fitted or threshold signal produces action only through pre-authorised trigger protocols — condition sets that humans signed with `approvers` and an `agreed_at` date — and the audit chain names the protocol version and its approvers.
+
+The complete account — MLOps governance (calibration, drift watch, point-in-time backtests), the explainability surface, and every refusal condition — is in [docs/ai-ml-usage.md](docs/ai-ml-usage.md).
+
+---
+
 ## Run
 
 ```bash

@@ -120,8 +120,9 @@ explicitly opt-in via `LINDELA_LITE_NARRATOR=1`.
 vocabulary** — seven subjects, a predicate set, a window set, the district list
 — and refuses a question it cannot ground. Its design rule is that there is no
 model in it. `src/needle.js` adds one to the *recall* of that parse without
-changing the rule, using Cactus Needle 3 (121M parameters at 2.125 bits per
-weight, 8-29 MB, Apache-2.0), opt-in via `LINDELA_LITE_NEEDLE=1`.
+changing the rule, using [Cactus Needle
+3](https://huggingface.co/Cactus-Compute/needle3) (121M parameters at 2.125 bits
+per weight, 8-29 MB, Apache-2.0), opt-in via `LINDELA_LITE_NEEDLE=1`.
 
 - **The model proposes slots; the vocabulary disposes.** Needle returns one
   grammar-constrained tool call carrying `{subject, region, window, predicates,
@@ -137,10 +138,15 @@ weight, 8-29 MB, Apache-2.0), opt-in via `LINDELA_LITE_NEEDLE=1`.
 - **Refusals are data, never thrown.** Off, unreachable, HTTP error, malformed
   JSON, empty `function_calls`, low confidence, unknown subject — each is a
   refusal with its own code, the narrator's contract.
-- **It has no production caller.** `nl-query.js` is tested and reachable from
-  nothing; wiring a route is a product decision, not a model one, and the
-  research note (`docs/research/needle3/README.md`) records that rather than
-  implying a live surface.
+- **Its production surface is one route.** `POST /api/v1/ask`
+  (`src/routes/ask.js`) serves `answerQueryWithModel`, so a Needle-proposed
+  subject runs the same grounding audit as a deterministically parsed one, and
+  the console reaches it through `public/workflow/ask.js`. A refusal is a **200
+  carrying the reason**, not a 4xx: a question the layer cannot ground is a fact
+  about the data, and the console renders that reason rather than an error. The
+  route answers with the deterministic refusal byte-identical when Needle is
+  off, unreachable or unconfident, so a deployment with no sidecar behaves
+  exactly as though the adapter did not exist.
 
 **One line**: *statistically grounded models (transparent contingency counts +
 a regularised fit) score flood risk; every score is recomputable and
