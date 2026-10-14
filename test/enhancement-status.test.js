@@ -58,4 +58,47 @@ describe('enhancement status', () => {
     assert.equal(verifyRef('src/server.js:1', ROOT).ok, true)
     assert.equal(verifyRef('src/does-not-exist.js', ROOT).ok, false)
   })
+
+  it('a count stated in a shipped item\'s detail matches the set it counts', async () => {
+    // `verifyRef` resolves `path:line` and guard names, and for a **shipped**
+    // item nothing else reads `detail` — the generator emits it only for open
+    // items, so a stale sentence there reaches no rendered document. ENH-29 said
+    // "40 record entries plus 6 quarantines" for a `SCHEMA` that holds 66
+    // entries, 57 records and 9 quarantines: a hand-typed count of a
+    // machine-maintained set, in the one field no check reads.
+    //
+    // Measured against the live declaration, not grepped. The counts are read
+    // out of `detail` only where the sentence names the thing counted, so a
+    // figure that is not a count of a tree object (a seeded record total, a
+    // test's own tally) is left alone rather than guessed at.
+    const { SCHEMA, QUARANTINE_SOURCES } = await import('../src/store.js')
+    const entries = [...SCHEMA]
+    const quarantines = entries.filter((e) => e.kind === 'quarantine').length
+    // The predicate is a subset check on itself, so prove it partitions: if
+    // `kind` were renamed, every entry would fall to one side and the two
+    // figures would still sum, hiding the break.
+    assert.ok(quarantines > 0 && quarantines < entries.length,
+      `the SCHEMA kind predicate matched ${quarantines} of ${entries.length} — it is wrong, not the ledger`)
+    assert.equal(quarantines, QUARANTINE_SOURCES.length,
+      'the quarantine entries no longer correspond one-to-one with QUARANTINE_SOURCES')
+
+    // The sentence must state the figures the tree holds. `[^.]*` keeps the
+    // match inside the clause, so "66" has to be the number attached to
+    // "entries" rather than any 66 elsewhere in the paragraph.
+    const detail = ledgerItem('ENH-29')
+    assert.match(detail, new RegExp(`\\b${entries.length}\\b[^.]*entr`),
+      `ENH-29's detail does not state ${entries.length} entries — it says the tree holds something else`)
+    assert.match(detail, new RegExp(`\\b${quarantines}\\b[^.]*quarantines`),
+      `ENH-29's detail does not state ${quarantines} quarantines`)
+  })
 })
+
+/** One ledger item by id, read from whichever group file holds it. */
+function ledgerItem(id) {
+  for (const g of ['a', 'b', 'c', 'de']) {
+    const file = path.join(ROOT, `docs/improvements/_status-${g}.json`)
+    const item = JSON.parse(readFileSync(file, 'utf8')).items.find((i) => i.id === id)
+    if (item) return item.detail
+  }
+  throw new Error(`no ledger item ${id} — this test names an item the register does not hold`)
+}
