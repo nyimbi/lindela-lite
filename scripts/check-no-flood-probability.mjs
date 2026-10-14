@@ -32,7 +32,23 @@ const AGREED_MODEL_BASIS = 'docs/flood-probability-model-basis.md'
  * ahead of the code, so it is scanned too.
  */
 const SURFACE_GLOBS = ['src', 'public', 'scripts', 'test', 'docs']
-const SURFACE_FILES = ['README.md', 'CHANGELOG.md', 'connectors.registry.json']
+const SURFACE_FILES = ['connectors.registry.json']
+
+/**
+ * Every markdown file at the repository root, discovered rather than listed.
+ *
+ * `README.md` and `CHANGELOG.md` used to be named here by hand, and that is the
+ * failure this replaced. An enumerated list is silent about the file nobody
+ * added to it: `PRODUCT.md` and `DESIGN.md` were written at the root and the
+ * gate scanned neither, so "does the claim guard cover the product record?" had
+ * a confident answer that was wrong.
+ *
+ * A root markdown file is a claim surface by position — it is the first thing a
+ * visitor or an agent reads. So the walk takes all of them and a new one needs
+ * no edit here. This is the same rule the rest of the guard already follows:
+ * discover the set, do not enumerate it.
+ */
+const SURFACE_ROOT_MD = /^[^/]+\.md$/
 
 const SURFACE_EXTS = /\.(js|mjs|ts|md|yaml|yml|html|json)$/
 
@@ -130,6 +146,9 @@ function surfaceFiles() {
   }
   for (const file of SURFACE_FILES) {
     if (fs.existsSync(file)) files.push(file)
+  }
+  for (const entry of fs.readdirSync('.', { withFileTypes: true })) {
+    if (entry.isFile() && SURFACE_ROOT_MD.test(entry.name)) files.push(entry.name)
   }
   return files
 }

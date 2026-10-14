@@ -28,8 +28,22 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-/** Documentation an agent is likely to be sent to by a link. */
-const ROOTS = ['README.md', 'CHANGELOG.md', 'llms.txt', 'docs']
+/**
+ * Documentation an agent is likely to be sent to by a link.
+ *
+ * The root markdown files are discovered rather than listed. They were named by
+ * hand — `README.md`, `CHANGELOG.md` — and an enumerated list is silent about
+ * the file nobody added to it: `PRODUCT.md` and `DESIGN.md` were written at the
+ * root and this walk never read them. A root markdown file is documentation by
+ * position, so the set is whatever is there.
+ */
+const ROOTS = [
+	...fs.readdirSync(root, { withFileTypes: true })
+		.filter((e) => e.isFile() && /^[^/]+\.md$/.test(e.name))
+		.map((e) => e.name),
+	'llms.txt',
+	'docs',
+]
 
 /**
  * Files walked but not link-checked. `docs/old-readme.md` is an archival
