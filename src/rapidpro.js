@@ -1,6 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
 import { logger } from './observability.js'
+import { mergeForms } from './forms.js'
+import { parseSmsSubmission } from './sms-grammar.js'
 import { stableId, toNumber } from './utils.js'
 
 const DEFAULT_BASE_URL = 'https://rapidpro.io/api/v2'
@@ -1444,6 +1446,28 @@ export function parseRapidProReply(payload = {}, data = null, options = {}) {
     if (raw != null) text = String(raw).trim()
   }
   const parsed = channelVerb || parseReplyVerb(text)
+  // ENH-43. `SUBMIT` is disjoint from every reply verb, so until now it fell
+  // through `parseReplyVerb` and was stored as an unrecognised reply — the
+  // report a health worker typed became prose in the inbound log and reached no
+  // aggregation. The submission grammar is tried only where it can apply, and
+  // only after the reply grammar has declined: the SMS channel, no USSD/IVR
+  // digit map already having answered the message, and `parsed.recognised`
+  // false. A message that is not a submission comes back
+  // `{recognised: false, refusal: null}` and nothing about the reply path
+  // changes — which is what keeps this one extended verb rather than a second
+  // grammar standing beside the first.
+  //
+  // The form vocabulary is the deployment's, not the built-in: a submission is
+  // validated against the exact `(form_id, form_version)` this deployment
+  // serves, the same way the wizard's HTTP path validates one (CAP-01).
+  const submission = !parsed.recognised && channel === 'sms'
+    ? parseSmsSubmission(text, {
+        forms: mergeForms(data?.form_definitions || []),
+        from: correlation.from,
+        sourceId: payload.id || payload.uuid || payload.message?.uuid || payload.run?.uuid || null,
+        observedAt: payload.observed_at || payload.created_on || payload.created_at || now,
+      })
+    : { recognised: false, verb: null, refusal: null, submission: null }
   const sourceId = payload.id || payload.uuid || payload.message?.uuid || payload.run?.uuid || stableId('rapidpro_reply', [correlation.from, text, payload.received_on || now])
 
   return {
@@ -1462,6 +1486,16 @@ export function parseRapidProReply(payload = {}, data = null, options = {}) {
     reason_raw: parsed.reason_raw,
     note: parsed.note,
     recognised: parsed.recognised,
+    // ENH-43. `kind` stays `reply` — this is a message on the reply webhook and
+    // `test/rapidpro-two-way.test.js` pins that. `verb: null, recognised: false`
+    // is the honest pair for a submission: it carries no reply verb, and the
+    // reply grammar did not read it. A submission that was *refused* (an
+    // ungroundable district, an unknown answer) is still a submission — it is
+    // recorded as a reply whose `submission_refusal` says why, because a report
+    // that arrived and could not be filed is exactly the gap an operator needs
+    // to see, and dropping it would make the refusal invisible.
+    submission: submission.submission,
+    submission_refusal: submission.refusal,
     status: 'processed',
     alert_event_id: correlation.alert_event_id,
     dispatch_id: correlation.dispatch_id,

@@ -66,6 +66,40 @@ export function redactPii(record, config = {}) {
     }
   }
 
+  // `reported_by` is identity-shaped by design — `src/kpi.js` counts distinct
+  // reporters over it — and which shape depends on the door: a subject id on the
+  // CHW route (`token_…`, already a pseudonym), the literal `'operator'` from
+  // `normalizeFieldReport`, `'rapidpro'` from the webhook, a contact *name* from
+  // the field-report parser (`src/rapidpro.js:197`), and the sender's *number*
+  // on the SMS path ENH-43 adds. It sat outside both blocks above because it is
+  // not one kind of thing.
+  //
+  // Both rules therefore apply, in order of specificity: a phone number is
+  // masked, and anything else is pseudonymised like the other name fields.
+  // Hashing `'operator'` along with a real name costs nothing — a distinct count
+  // over the column is unchanged, because a constant hashed is still one value —
+  // and the alternative was a hand-typed allowlist of system labels, which is
+  // the defect class this repository keeps re-finding.
+  if (cfg.redactPhone && phoneShaped(record.reported_by)) {
+    result.reported_by = maskPhone(record.reported_by)
+  } else if (cfg.redactNames && typeof record.reported_by === 'string' && record.reported_by.trim()) {
+    result.reported_by = hashString(record.reported_by)
+  }
+
+  // The raw provider payload is echoed onto the record, and it is the one field
+  // this function could not reach: the rules above read named keys on the record
+  // itself, and a RapidPro payload nests the sender under `contact.name` and
+  // `contact.urn`. So a record could be redacted field by field and still store
+  // `payload.contact.name` in cleartext — which is what it did, on both webhook
+  // doors, while every assertion about the top-level fields passed.
+  //
+  // Redacted rather than dropped: the payload is the evidence a connector defect
+  // is diagnosed from, and deleting it to fix a leak trades one problem for
+  // another.
+  if (record.payload && typeof record.payload === 'object') {
+    result.payload = redactPayload(record.payload, cfg)
+  }
+
   if (cfg.coarsenGeoToH3Cell !== null && cfg.coarsenGeoToH3Cell !== undefined) {
     // 0° is a place. `record.latitude && record.longitude` skipped coarsening
     // for every record on the equator or the prime meridian, so the privacy
@@ -83,6 +117,74 @@ export function redactPii(record, config = {}) {
   }
 
   return result
+}
+
+/**
+ * A value that is plausibly a phone number: an optional `+`, then digits.
+ *
+ * The same rule `src/residency.js` applies to `from`, kept here rather than
+ * imported because the dependency runs the other way — residency reads `pii.js`.
+ * Two copies of one predicate is the drift this file has already paid for once,
+ * so it is written once and named here for a reader comparing the two.
+ */
+function phoneShaped(value) {
+  if (typeof value !== 'string') return false
+  const bare = value.trim().startsWith('tel:') ? value.trim().slice(4) : value.trim()
+  return /^\+?\d[\d\s-]{4,}$/.test(bare)
+}
+
+/**
+ * The same redaction, one level down: a provider payload's own nested keys.
+ *
+ * A shallow walk with an explicit depth cap, not a general recursive redactor.
+ * The failure this exists for is two levels deep (`payload.contact.name`), and a
+ * walker that descends without a bound is a denial-of-service on a webhook an
+ * attacker controls. Keys are matched on the same vocabulary as the top level,
+ * which is what makes a payload with a `from` or a `contact_urn` at its root —
+ * the RapidPro field-report shape — redacted too.
+ *
+ * An array is walked element-wise rather than passed through: `payload.urns` is
+ * an array of addresses in the real webhook, and treating it as an opaque value
+ * would leave the sender in it.
+ */
+const PAYLOAD_MAX_DEPTH = 6
+const PAYLOAD_NAME_KEYS = new Set(['reporter_name', 'contact_name', 'name'])
+const PAYLOAD_PHONE_KEYS = new Set(['phone', 'urn', 'contact_urn', 'from', 'msisdn', 'tel', 'telephone', 'reported_by'])
+
+function redactPayload(payload, cfg, depth = 0) {
+  // A phone-shaped string at any position is masked, whatever the key was.
+  // `payload.urns` is an array of addresses in the real webhook and its elements
+  // are bare strings with no key to match on, so a key-driven walk left the
+  // sender in it. This is the one rule that does not need the key: a string that
+  // is a phone number is a phone number, and no provider payload carries a
+  // field where that is the wrong reading. Checked before the type guard below,
+  // which would otherwise return every string untouched.
+  if (typeof payload === 'string') return cfg.redactPhone && phoneShaped(payload) ? maskPhone(payload) : payload
+  if (depth >= PAYLOAD_MAX_DEPTH || payload === null || typeof payload !== 'object') return payload
+  if (Array.isArray(payload)) return payload.map((item) => redactPayload(item, cfg, depth + 1))
+
+  const out = {}
+  for (const [key, value] of Object.entries(payload)) {
+    const lower = key.toLowerCase()
+    // `reported_by` carries the same two shapes one level down as it does at the
+    // top: the field-report payload sets it from `contact.name`
+    // (`src/rapidpro.js:197`), so a name here is the same PII a name anywhere
+    // else is.
+    if (lower === 'reported_by' && typeof value === 'string' && value.trim()) {
+      out[key] = cfg.redactPhone && phoneShaped(value) ? maskPhone(value) : (cfg.redactNames ? hashString(value) : value)
+      continue
+    }
+    if (cfg.redactNames && PAYLOAD_NAME_KEYS.has(lower) && typeof value === 'string' && value.trim()) {
+      out[key] = hashString(value)
+      continue
+    }
+    if (cfg.redactPhone && PAYLOAD_PHONE_KEYS.has(lower) && typeof value === 'string' && phoneShaped(value)) {
+      out[key] = maskPhone(value)
+      continue
+    }
+    out[key] = redactPayload(value, cfg, depth + 1)
+  }
+  return out
 }
 
 export function applyRetention(records, retentionDays, now = Date.now()) {

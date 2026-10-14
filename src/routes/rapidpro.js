@@ -46,6 +46,8 @@ import { ERROR_CODES } from '../errors.js'
 import { logger } from '../observability.js'
 import { actionLog, buildCreate } from '../operations.js'
 import { loadPolicy, redactPii } from '../pii.js'
+import { stampQuality } from '../quality.js'
+import { assertCategory } from '../taxonomy.js'
 import { collectionPage, readRawBody, readRequestJson, stableId } from '../utils.js'
 import { findVisible } from '../visibility.js'
 import { DONE_OUTCOME_CODES, normalizeFieldOutcome } from '../field-outcomes.js'
@@ -61,6 +63,30 @@ import {
   sendRapidProAlert,
   verifyRapidProWebhook,
 } from '../rapidpro.js'
+
+/**
+ * A one-line summary for a submission that arrived as structured answers.
+ *
+ * `field_reports.summary` is the free-text field every reader of the collection
+ * shows — the report list, the district drill-down, the narrative's field-report
+ * section — and a submission filed over SMS has no prose in it. Writing the raw
+ * text into it would put `SUBMIT Turkana who=child symptom=fever` in a column
+ * the console renders as a sentence; writing `null` would make every SMS report
+ * a blank row in that list.
+ *
+ * So it is composed from the answers, in the order the form declares them, and
+ * it is deliberately plain: this is a label, not a narrative, and nothing
+ * downstream should read it as one. The `raw_text` field beside it keeps the
+ * message exactly as it was sent, which is the thing an audit reads.
+ */
+function summariseSubmission(submission) {
+  const parts = Object.entries(submission.answers || {})
+    .filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== '')
+    .map(([name, value]) => `${name.replace(/_/g, ' ')} ${Array.isArray(value) ? value.join('/') : value}`)
+  const district = submission.district_name || submission.district || 'unknown district'
+  const body = parts.length ? parts.join(', ') : 'no answers'
+  return `${district}: ${body}`.slice(0, 500)
+}
 
 /**
  * Which RapidPro route a request is, or null.
@@ -176,6 +202,114 @@ export async function handleRapidProRoute(route, { store, data, req, res, url, j
       // this line, which is how an unrunnable endpoint survived.
       correlationWindowMinutes: Number(process.env.RAPIDPRO_REPLY_WINDOW_MINUTES || 1440),
     })
+
+    // ENH-43. A submission is handled before the correlation branch, and the
+    // order is the whole design. A `SUBMIT` is not a reply to an alert: it
+    // answers nothing, closes no SLA, and a health worker filing a symptom
+    // report from a feature phone has no dispatch to correlate against. Left to
+    // fall through, every submission would be an *orphan* — recorded as an
+    // unmatched reply, which is the branch that exists for wrong numbers.
+    //
+    // The refusal path is here too. A submission that arrived and could not be
+    // filed (a district the registry does not know, an answer the form does not
+    // declare) is recorded with its refusal and answered 200, because the
+    // message *did* arrive and the sender needs a sentence they can act on, not
+    // a 4xx they will read as "the network dropped it". It is the same rule the
+    // orphan branch applies to a wrong number: an inbound message the platform
+    // received is information, and dropping it makes the gap invisible.
+    if (parsed.submission || parsed.submission_refusal) {
+      const policy = await loadPolicy()
+      const now = new Date().toISOString()
+      // The inbound record is built from the parsed reply with the `submission`
+      // object *removed*, and the removal is the point. That object is the whole
+      // field report — every answer, the district, the sender under two names —
+      // and leaving it on the inbound stored a second copy of the report inside
+      // the message log, with its own `from` and `reported_by` that no top-level
+      // redaction rule reaches. A record that exists twice is a record whose two
+      // copies drift; the report lives in `field_reports` and the inbound points
+      // at it by id, which is what every other inbound record does.
+      const { submission: _filed, ...inboundFields } = parsed
+      const writes = {
+        rapidpro_inbound_messages: [redactPii(inboundFields, policy)],
+        action_logs: [],
+      }
+
+      if (parsed.submission) {
+        // The report is written straight into `field_reports`, as
+        // `src/routes/chw.js` writes it, and *not* through
+        // `normalizeFieldReport`: that normalizer refuses a report with no
+        // incident or intervention linkage (400, `src/operations.js:266`), which
+        // is every symptom report a CHW files. The CHW route exists for exactly
+        // that reason and this is the same door, reached by text instead of by
+        // the wizard.
+        //
+        // The taxonomy call is not decoration. `category` is what every
+        // aggregation groups on, and a report whose category is the free text
+        // `symptom` is a report nothing can count (CAP-05). The answer the form
+        // already collected is mapped to the vocabulary, and an answer the
+        // vocabulary does not know is refused rather than stored.
+        const submission = parsed.submission
+        const record = {
+          id: submission.id,
+          submission_id: submission.external_id || null,
+          external_id: submission.external_id || null,
+          form_id: submission.form_id,
+          form_version: submission.form_version,
+          summary: summariseSubmission(submission),
+          category: assertCategory(submission.answers?.symptom ?? null),
+          status: 'new',
+          source: 'rapidpro_sms',
+          district: submission.district,
+          district_code: submission.district_code,
+          district_name: submission.district_name,
+          // A text message carries no fix. `null` says so; `0,0` would place
+          // every SMS report in the ocean off West Africa, which is the defect
+          // the CHW route's `hasFix` guard was written for.
+          latitude: null,
+          longitude: null,
+          location_source: 'none',
+          // The sender, which `redactPii` masks below — this is the one field on
+          // the record that is a phone number, and it is masked rather than
+          // hashed so an operator can recognise a reporter who has called before.
+          reported_by: submission.reported_by,
+          answers: submission.answers,
+          note: submission.note,
+          body: submission.body,
+          observed_at: submission.submitted_at,
+          channel: submission.channel,
+          raw_text: submission.raw_text,
+          created_at: now,
+          updated_at: now,
+        }
+        // Stamped after redaction and against the store rather than the
+        // dispatcher's snapshot, for the reason the CHW route gives: a double
+        // submission is two reports minutes apart, and the snapshot was taken
+        // before the first of them was written. Scoped to `field_reports`,
+        // because an unscoped read materialises every collection.
+        const redacted = redactPii(record, policy)
+        const candidates = (await store.read({ collections: ['field_reports'] }))?.field_reports || []
+        const stamped = stampQuality(redacted, { candidates, received_at: now })
+        writes.field_reports = [stamped]
+        writes.rapidpro_inbound_messages = [redactPii({ ...inboundFields, field_report_id: stamped.id }, policy)]
+        writes.action_logs.push(actionLog('field_reports', 'created', stamped, 'rapidpro', req.__auth?.subject))
+      } else {
+        writes.action_logs.push(actionLog('rapidpro_inbound_messages', 'created', writes.rapidpro_inbound_messages[0], 'rapidpro', req.__auth?.subject))
+      }
+
+      await store.merge(writes)
+      jsonResponse(res, parsed.submission ? 201 : 200, {
+        success: true,
+        kind: 'submission',
+        filed: Boolean(parsed.submission),
+        field_report_id: parsed.submission ? writes.field_reports[0].id : null,
+        // The sentence a person holding a phone can act on. Null when the report
+        // was filed, because a success does not need a reason.
+        refusal: parsed.submission_refusal,
+        inbound_id: writes.rapidpro_inbound_messages[0].id,
+      })
+      return true
+    }
+
     if (!parsed.correlated) {
       // Recorded anyway. An unrecognised sender is information — it is what a
       // wrong number looks like — and dropping it makes the gap invisible.
@@ -216,10 +350,23 @@ export async function handleRapidProRoute(route, { store, data, req, res, url, j
     // So the writes are built here, and the descriptor is used for what it is: the
     // decision about whether this reply is new.
     const reconciled = reconcileInbound(data, parsed)
+    // Redacted, and this line was the leak. The orphan branch above redacts its
+    // record and this branch did not, so a *correlated* reply — the common case,
+    // the one a real dispatch produces — was stored with the sender's number in
+    // `from`, the contact's name in `contact_name`, and the whole raw webhook in
+    // `payload` including `contact.name` and `contact.urn`. All three were
+    // readable through `GET /api/v1/rapidpro/inbound` and in `export.csv`.
+    //
+    // The direction of the asymmetry is what made it survive: an unrecognised
+    // sender is the case someone remembers to redact, because a wrong number is
+    // obviously a stranger's data. A correlated reply is the case the platform
+    // was built for, and being expected made it look already-handled.
+    const policy = await loadPolicy()
+    const redactedInbound = redactPii(reconciled.inbound, policy)
     const writes = reconciled.applied
       ? {
-          rapidpro_inbound_messages: [reconciled.inbound],
-          action_logs: [actionLog('rapidpro_inbound_messages', 'created', reconciled.inbound, 'rapidpro', req.__auth?.subject)],
+          rapidpro_inbound_messages: [redactedInbound],
+          action_logs: [actionLog('rapidpro_inbound_messages', 'created', redactedInbound, 'rapidpro', req.__auth?.subject)],
         }
       : {}
 
