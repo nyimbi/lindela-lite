@@ -47,10 +47,21 @@ export function verifyRef(ref, root) {
  * helper, which names the file as a string — so a scanner that only knows `from`
  * reports lazily-loaded modules as uncalled. `.` is passed explicitly: with a
  * piped stdin and no path, rg reads stdin instead of the tree.
+ *
+ * The specifier is matched whole — an optional directory prefix, then the stem,
+ * then the closing quote — and that anchoring is load-bearing. The pattern used
+ * to be `[^'"]*` immediately followed by the stem, which lets the stem match the
+ * *tail* of a longer name:
+ * `source-agreement.js` contains `agreement.js`, `basemap-tiles.js` contains
+ * `tiles.js`, `org-units.js` contains `units.js`. Six modules were affected, and
+ * the direction of the error is the one that hides findings — every one of them
+ * was reported as having a production caller it does not have, so the "Built,
+ * tested, called by nothing" section could not fire for them. A scanner that
+ * over-reports callers reads as a clean tree.
  */
 export function callers(modulePath, root) {
-  const stem = path.basename(modulePath, path.extname(modulePath))
-  const pattern = new RegExp(`(from|import\\(|lazy\\(|require\\()\\s*['"][^'"]*${stem}(\\.js)?['"]`)
+  const stem = path.basename(modulePath, path.extname(modulePath)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const pattern = new RegExp(`(from|import\\(|lazy\\(|require\\()\\s*['"](?:[^'"]*/)?${stem}(\\.js)?['"]`)
   const found = []
   for (const file of walkFiles(root)) {
     if (file === modulePath || file.startsWith('test/')) continue

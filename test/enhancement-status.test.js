@@ -49,8 +49,32 @@ describe('enhancement status', () => {
       'scanner found no caller for escalation.js — it is loaded via lazy(), and a scanner that misses that is broken')
     // And the converse, so the assertion above is not passed by a scanner that
     // returns a non-empty list for everything.
-    assert.equal(callers('src/agreement.js', ROOT).length, 0,
-      'scanner claims agreement.js has a production caller; it is imported only by tests')
+    //
+    // The subject used to be `src/agreement.js`, on the grounds that only tests
+    // imported it. ENH-09 gave it a real caller (`src/source-agreement.js`), so
+    // it stopped being the negative case — which is the point of the assertion,
+    // not a reason to weaken it. `src/replay.js` is the current example: a
+    // module with a test file and no import from anywhere outside `test/`.
+    assert.equal(callers('src/replay.js', ROOT).length, 0,
+      'scanner claims replay.js has a production caller; it is imported only by tests')
+    // And the boundary the old pattern got wrong, asserted where it is decidable.
+    //
+    // `agreement.js` is a strict *suffix* of `source-agreement.js`, and the two
+    // have different importers: `src/source-agreement.js` imports `agreement.js`,
+    // while `src/routes/derived.js` imports `source-agreement.js` and never
+    // `agreement.js`. So the derived route must not appear among agreement.js's
+    // callers. Under the old unanchored `[^'"]*${stem}` it did — the pattern let
+    // the stem match the tail of the longer specifier — which is a scanner
+    // reporting a caller that does not exist, and it is the direction that hides
+    // the "called by nothing" finding rather than raising a false one.
+    //
+    // Asserted on the set, not a count: both spellings agree on how many callers
+    // `source-agreement.js` has, so only naming the file that must be absent
+    // separates them.
+    assert.ok(callers('src/source-agreement.js', ROOT).includes('src/routes/derived.js'),
+      'scanner found no caller for source-agreement.js — the derived route imports it')
+    assert.ok(!callers('src/agreement.js', ROOT).includes('src/routes/derived.js'),
+      'scanner matched source-agreement.js against the stem agreement.js — the specifier is not anchored')
   })
 
   it('a reference past the end of its file is rejected', () => {
