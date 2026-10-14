@@ -28,6 +28,7 @@
  */
 
 import { explainRanking } from '../../public/shared/rank-explain.js'
+import { dataGaps } from '../data-gaps.js'
 import { operationalSummary } from '../operations.js'
 import { qualityTally } from '../quality.js'
 import { sourceAgreement } from '../source-agreement.js'
@@ -54,6 +55,11 @@ export function matchDerivedRoute(pathname, method = 'GET') {
   // read like the rest: nothing writes it, and the verdict is computed from the
   // observations an ingestion run already stored.
   if (pathname === '/api/v1/source-agreement') return { kind: 'source-agreement' }
+  // ENH-54. Every gap the platform is honest about, ordered by what closing it
+  // would buy. Derived over two other derived reads — the refused drift
+  // verdicts and the freshness verdicts — so it reads `model_drift` and
+  // `source_runs` rather than any ingested collection.
+  if (pathname === '/api/v1/data-gaps') return { kind: 'data-gaps' }
   return null
 }
 
@@ -152,6 +158,27 @@ export async function handleDerivedRoute(route, { data, req, res, url, jsonRespo
     // comparison list, and an empty list with no count reads as "these products
     // agree" when it means "there was nothing to compare".
     jsonResponse(res, 200, { success: true, ...sourceAgreement(data) })
+    return true
+  }
+
+  if (kind === 'data-gaps') {
+    // ENH-54. The refusals this platform already publishes, ordered by what
+    // closing each would buy. `model-drift` reports seven regions refused with
+    // a reason and `ingest/status` reports feeds that are not arriving; both
+    // are honest and neither is a priority. This is the ordering.
+    //
+    // `refused` travels beside the ranking for the same reason it does on the
+    // three routes above: a gap whose threshold cannot be grounded is refused
+    // rather than ranked at zero, and a payload showing only the ranked rows
+    // would render "we could not price this" as "this is worth nothing".
+    //
+    // The loss weights are not supplied, and that is deliberate rather than an
+    // omission: this route is a GET with no body, and it holds no population or
+    // funding envelope to weight by. So every gap is worth the same per unit of
+    // decision error and the ranking follows the gap's geometry against its
+    // threshold alone. A caller with a real cost calls `dataGaps(data, {
+    // lossByRegion, lossBySource })` directly rather than through this route.
+    jsonResponse(res, 200, { success: true, ...dataGaps(data) })
     return true
   }
 

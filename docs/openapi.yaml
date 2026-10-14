@@ -109,6 +109,37 @@ paths:
             application/json:
               schema: { type: object }
 
+  /api/v1/data-gaps:
+    get:
+      summary: The data gaps this deployment carries, ranked by what closing each would buy
+      description: |
+        Every gap the platform is already honest about — a region whose drift
+        verdict was refused for too short a window, a feed that has never run,
+        broke, or returned empty twice running — ordered by the expected
+        reduction in decision loss its closure would buy.
+
+        The measure is expected value of perfect information over a uniform
+        prior on each gap's candidate range, weighted by the decision loss per
+        unit. It is denominated in the decision's own loss, so a gap in a
+        district and a gap in a feed are commensurable and can be ranked in one
+        list — which an information-theoretic measure could not do.
+
+        A gap whose decision threshold cannot be grounded in something the
+        repository states is returned in `refused` with the reason rather than
+        ranked at zero. A zero EVPI and an uncomputable EVPI are opposite claims
+        about a gap.
+
+        No loss weights are supplied: this route holds no population or funding
+        envelope, so every gap is worth the same per unit of decision error.
+      tags: [analytics]
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: The ranked gaps, the refusals, and the thresholds the ranking used
+          content:
+            application/json:
+              schema: { type: object }
+
   /api/v1/ask:
     post:
       summary: Ask a grounded question over the store in natural language

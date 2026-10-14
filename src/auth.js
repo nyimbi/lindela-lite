@@ -84,6 +84,10 @@ export const READ_SCOPES = Object.freeze([
   // about how much the number feeding a score can be trusted, which is the same
   // privilege that reads the model's calibration.
   ['/api/v1/source-agreement', 'read:analytics'],
+  // ENH-54. The ranked data gaps name which districts and which feeds the
+  // platform cannot measure — the same evidence base the drift verdicts and the
+  // calibration trust scores are read under.
+  ['/api/v1/data-gaps', 'read:analytics'],
   ['/api/v1/data-lineage', 'read:analytics'],
   ['/api/v1/data-quality', 'read:analytics'],
   // CAP-04. The vintage manifest is an inventory of this deployment's exports.

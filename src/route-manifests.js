@@ -122,6 +122,11 @@ export const ROUTE_MANIFESTS = Object.freeze({
   // products' series arrive as `climate_observations` records, told apart by
   // `source`, so there is no join out to a second collection.
   'GET /api/v1/source-agreement': Object.freeze(["climate_observations"]),
+  // ENH-54. Two derived reads feed it and nothing else: the refused drift
+  // verdicts and the freshness verdicts, which are computed from the source
+  // runs. Naming a third collection here would claim a read the handler does
+  // not make, and the manifest is what the access check trusts.
+  'GET /api/v1/data-gaps': Object.freeze(["model_drift", "source_runs"]),
   'GET /api/v1/operations/summary': Object.freeze(["field_reports", "incidents", "intervention_tasks", "interventions", "response_resources"]),
   'GET /api/v1/outbox': Object.freeze(["events_outbox"]),
   'GET /api/v1/parametric-disbursements': Object.freeze(["parametric_disbursements"]),

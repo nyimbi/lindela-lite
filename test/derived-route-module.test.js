@@ -56,7 +56,7 @@ const call = (route, { data = {}, search = '', method = 'GET' } = {}) => {
 }
 
 describe('ARC-01 — matchDerivedRoute takes the method', () => {
-  it('matches each of the six derived reads', () => {
+  it('matches each of the seven derived reads', () => {
     const expected = [
       ['/api/v1/data-quality', 'data-quality'],
       ['/api/v1/data-lineage', 'data-lineage'],
@@ -64,6 +64,7 @@ describe('ARC-01 — matchDerivedRoute takes the method', () => {
       ['/api/v1/calibration/by-region', 'calibration-by-region'],
       ['/api/v1/model-drift', 'model-drift'],
       ['/api/v1/source-agreement', 'source-agreement'],
+      ['/api/v1/data-gaps', 'data-gaps'],
     ]
     for (const [pathname, kind] of expected) {
       assert.deepEqual(matchDerivedRoute(pathname, 'GET'), { kind }, `GET ${pathname} did not match as ${kind}`)
@@ -76,6 +77,7 @@ describe('ARC-01 — matchDerivedRoute takes the method', () => {
     for (const pathname of [
       '/api/v1/data-quality', '/api/v1/data-lineage', '/api/v1/operations/summary',
       '/api/v1/calibration/by-region', '/api/v1/model-drift', '/api/v1/source-agreement',
+      '/api/v1/data-gaps',
     ]) {
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
         assert.equal(matchDerivedRoute(pathname, method), null, `${method} ${pathname} matched a read route`)
@@ -87,7 +89,8 @@ describe('ARC-01 — matchDerivedRoute takes the method', () => {
     for (const pathname of [
       '/api/v1/data-quality/', '/api/v1/data-qualitys', '/api/v1/calibration',
       '/api/v1/calibration/by-region/extra', '/api/v1/model-drift/', '/api/v1/operations',
-      '/api/v1/data-lineages', '/api/v1/source-agreements', '/api/v1/source-agreement/', '',
+      '/api/v1/data-lineages', '/api/v1/source-agreements', '/api/v1/source-agreement/',
+      '/api/v1/data-gap', '/api/v1/data-gaps/', '',
     ]) {
       assert.equal(matchDerivedRoute(pathname, 'GET'), null, `${pathname} matched a route it should not`)
     }
@@ -178,10 +181,10 @@ describe('ARC-01 — the module answers, or declines, without inventing a respon
 
   it('answers the collections the store always supplies', async () => {
     // What `store.read()` guarantees, so the module never sees an absent key.
-    for (const kind of ['data-lineage', 'calibration-by-region', 'model-drift', 'operations-summary', 'source-agreement']) {
+    for (const kind of ['data-lineage', 'calibration-by-region', 'model-drift', 'operations-summary', 'source-agreement', 'data-gaps']) {
       const { handled, res } = await call({ kind }, {
         data: {
-          data_lineage: [], region_trust: [], model_drift: [], climate_observations: [],
+          data_lineage: [], region_trust: [], model_drift: [], climate_observations: [], source_runs: [],
           incidents: [], interventions: [], intervention_tasks: [], response_resources: [],
           field_reports: [],
         },
