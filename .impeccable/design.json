@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-14T00:00:00.000Z",
+  "title": "Design System: Lindela Lite",
+  "extensions": {
+    "colorMeta": {
+      "brand": {
+        "role": "primary",
+        "displayName": "Instrument Cyan",
+        "canonical": "oklch(70% 0.16 205)",
+        "tonalRamp": ["oklch(20% 0.06 205)", "oklch(30% 0.10 205)", "oklch(40% 0.13 205)", "oklch(50% 0.15 205)", "oklch(60% 0.16 205)", "oklch(70% 0.16 205)", "oklch(82% 0.13 205)", "oklch(94% 0.05 205)"]
+      },
+      "accent": {
+        "role": "secondary",
+        "displayName": "Signal Amber",
+        "canonical": "oklch(78% 0.15 90)",
+        "tonalRamp": ["oklch(20% 0.05 90)", "oklch(32% 0.09 90)", "oklch(44% 0.12 90)", "oklch(56% 0.14 90)", "oklch(66% 0.15 90)", "oklch(78% 0.15 90)", "oklch(86% 0.11 90)", "oklch(95% 0.04 90)"]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Deep Field",
+        "canonical": "oklch(15% 0.02 260)",
+        "tonalRamp": ["oklch(15% 0.02 260)", "oklch(22% 0.02 260)", "oklch(30% 0.01 260)", "oklch(40% 0.015 260)", "oklch(55% 0.02 260)", "oklch(72% 0.02 260)", "oklch(85% 0.01 260)", "oklch(96% 0.005 260)"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Reading Ink",
+        "canonical": "oklch(96% 0.005 260)",
+        "tonalRamp": ["oklch(15% 0.02 260)", "oklch(24% 0.015 260)", "oklch(34% 0.018 260)", "oklch(46% 0.02 260)", "oklch(60% 0.02 260)", "oklch(75% 0.02 260)", "oklch(88% 0.01 260)", "oklch(96% 0.005 260)"]
+      },
+      "ok": {
+        "role": "tertiary",
+        "displayName": "Ok Green",
+        "canonical": "oklch(72% 0.16 155)",
+        "tonalRamp": ["oklch(18% 0.05 155)", "oklch(30% 0.09 155)", "oklch(42% 0.12 155)", "oklch(54% 0.14 155)", "oklch(64% 0.16 155)", "oklch(72% 0.16 155)", "oklch(84% 0.12 155)", "oklch(94% 0.04 155)"]
+      },
+      "warn": {
+        "role": "tertiary",
+        "displayName": "Warn Yellow",
+        "canonical": "oklch(78% 0.15 75)",
+        "tonalRamp": ["oklch(20% 0.05 75)", "oklch(32% 0.09 75)", "oklch(46% 0.12 75)", "oklch(58% 0.14 75)", "oklch(68% 0.15 75)", "oklch(78% 0.15 75)", "oklch(86% 0.11 75)", "oklch(95% 0.04 75)"]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Danger Red",
+        "canonical": "oklch(65% 0.22 25)",
+        "tonalRamp": ["oklch(18% 0.07 25)", "oklch(28% 0.13 25)", "oklch(38% 0.18 25)", "oklch(48% 0.21 25)", "oklch(57% 0.22 25)", "oklch(65% 0.22 25)", "oklch(74% 0.20 25)", "oklch(88% 0.08 25)"]
+      },
+      "sev-critical": {
+        "role": "tertiary",
+        "displayName": "Severity Critical",
+        "canonical": "oklch(65% 0.22 25)",
+        "tonalRamp": ["oklch(18% 0.07 25)", "oklch(28% 0.13 25)", "oklch(38% 0.18 25)", "oklch(48% 0.21 25)", "oklch(57% 0.22 25)", "oklch(65% 0.22 25)", "oklch(74% 0.20 25)", "oklch(88% 0.08 25)"]
+      },
+      "sev-high": {
+        "role": "tertiary",
+        "displayName": "Severity High",
+        "canonical": "oklch(72% 0.18 45)",
+        "tonalRamp": ["oklch(20% 0.06 45)", "oklch(32% 0.11 45)", "oklch(44% 0.15 45)", "oklch(56% 0.17 45)", "oklch(65% 0.18 45)", "oklch(72% 0.18 45)", "oklch(84% 0.12 45)", "oklch(94% 0.05 45)"]
+      },
+      "sev-medium": {
+        "role": "tertiary",
+        "displayName": "Severity Medium",
+        "canonical": "oklch(80% 0.15 85)",
+        "tonalRamp": ["oklch(20% 0.05 85)", "oklch(33% 0.09 85)", "oklch(47% 0.12 85)", "oklch(60% 0.14 85)", "oklch(70% 0.15 85)", "oklch(80% 0.15 85)", "oklch(88% 0.11 85)", "oklch(96% 0.04 85)"]
+      },
+      "sev-low": {
+        "role": "tertiary",
+        "displayName": "Severity Low",
+        "canonical": "oklch(75% 0.10 190)",
+        "tonalRamp": ["oklch(20% 0.04 190)", "oklch(33% 0.06 190)", "oklch(46% 0.08 190)", "oklch(58% 0.09 190)", "oklch(68% 0.10 190)", "oklch(75% 0.10 190)", "oklch(86% 0.07 190)", "oklch(95% 0.03 190)"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Page titles only, one per view." },
+      "title": { "displayName": "Title", "purpose": "Panel and dialog headings." },
+      "body": { "displayName": "Body", "purpose": "The default reading size." },
+      "label": { "displayName": "Label", "purpose": "Field labels, tab text, chips, badges." },
+      "mono": { "displayName": "Mono", "purpose": "Identifiers, coordinates, raw values, code — read character by character, not compared as quantities." }
+    },
+    "shadows": [
+      { "name": "ambient-low", "value": "0 1px 2px oklch(5% 0.02 260 / 0.35)", "purpose": "The lightest separation, for a control that detaches slightly from its row. Rare." },
+      { "name": "raised", "value": "0 4px 8px oklch(5% 0.02 260 / 0.4)", "purpose": "Dropdowns and popovers." },
+      { "name": "floating", "value": "0 16px 48px oklch(5% 0.02 260 / 0.6)", "purpose": "Dialogs and toasts — the only elements unambiguously above the page plane." },
+      { "name": "inset-ring", "value": "inset 0 0 0 1px var(--sev-critical)", "purpose": "Status chips keep their exact outer dimensions when state changes colour." },
+      { "name": "contrast-ring", "value": "0 0 0 1px oklch(50% 0 0)", "purpose": "High-contrast theme replaces every soft shadow with a hard ring." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "The only easing curve in the system. Fast-out, settled-in." },
+      { "name": "dur-fast", "value": "120ms", "purpose": "Colour and background state changes on controls." },
+      { "name": "dur-normal", "value": "180ms", "purpose": "Rail tab colour and border transitions." },
+      { "name": "dur-slow", "value": "200ms", "purpose": "The longest transition the system permits." }
+    ],
+    "breakpoints": [
+      { "name": "wide", "value": "900px" },
+      { "name": "shell", "value": "800px", "note": "Below this the fixed app shell releases its height and the page becomes the scroller." },
+      { "name": "md", "value": "768px" },
+      { "name": "sm", "value": "640px" },
+      { "name": "xs", "value": "480px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "One per view. The committed action.",
+      "html": "<button class=\"ds-btn-primary\">Approve dispatch</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem; padding: 0.35rem 0.7rem; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.8125rem; font-weight: 600; background: var(--brand, oklch(70% 0.16 205)); color: var(--on-brand, oklch(14% 0.02 205)); border: 1px solid var(--brand, oklch(70% 0.16 205)); border-radius: 6px; cursor: pointer; white-space: nowrap; transition: background 120ms cubic-bezier(0.16,1,0.3,1), border-color 120ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-primary:hover { background: var(--brand-hover, oklch(74% 0.16 205)); border-color: var(--brand-hover, oklch(74% 0.16 205)); } .ds-btn-primary:active { background: var(--bg-elevated, oklch(19% 0.02 260)); } .ds-btn-primary:focus-visible { outline: 2px solid var(--focus-ring, oklch(85% 0.14 205)); outline-offset: 2px; border-radius: 3px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A visible boundary with no fill. The default for every action that is not the committed one.",
+      "html": "<button class=\"ds-btn-secondary\">Export CSV</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem; padding: 0.35rem 0.7rem; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.8125rem; font-weight: 500; background: transparent; color: var(--ink-muted, oklch(75% 0.02 260)); border: 1px solid var(--stroke-strong, oklch(40% 0.015 260)); border-radius: 6px; cursor: pointer; white-space: nowrap; transition: background 120ms cubic-bezier(0.16,1,0.3,1), color 120ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-secondary:hover { background: var(--surface, oklch(22% 0.02 260)); color: var(--ink, oklch(96% 0.005 260)); } .ds-btn-secondary:focus-visible { outline: 2px solid var(--focus-ring, oklch(85% 0.14 205)); outline-offset: 2px; border-radius: 3px; }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "The resting button: a surface ground and a visible hairline.",
+      "html": "<button class=\"ds-btn\">Refresh</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem; padding: 0.35rem 0.7rem; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.8125rem; font-weight: 500; background: var(--surface, oklch(22% 0.02 260)); color: var(--ink, oklch(96% 0.005 260)); border: 1px solid var(--stroke-strong, oklch(40% 0.015 260)); border-radius: 6px; cursor: pointer; white-space: nowrap; transition: background 120ms cubic-bezier(0.16,1,0.3,1); } .ds-btn:hover { background: var(--surface-hover, oklch(26% 0.02 260)); } .ds-btn:active { background: var(--bg-elevated, oklch(19% 0.02 260)); } .ds-btn:disabled { opacity: 0.38; cursor: not-allowed; } .ds-btn:focus-visible { outline: 2px solid var(--focus-ring, oklch(85% 0.14 205)); outline-offset: 2px; border-radius: 3px; }"
+    },
+    {
+      "name": "Outcome Button",
+      "kind": "button",
+      "refersTo": "button-approve",
+      "description": "The dispatch controls. Deliberately not solid — a button that shouts is a button pressed by accident.",
+      "html": "<button class=\"ds-btn-approve\">Approve</button>\n<button class=\"ds-btn-reject\">Reject</button>",
+      "css": ".ds-btn-approve, .ds-btn-reject { display: inline-flex; align-items: center; justify-content: center; padding: 0.35rem 0.7rem; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.8125rem; font-weight: 500; background: transparent; border-width: 1px; border-style: solid; border-radius: 6px; cursor: pointer; white-space: nowrap; transition: background 120ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-approve { color: var(--ok, oklch(72% 0.16 155)); border-color: color-mix(in oklch, var(--ok, oklch(72% 0.16 155)) 35%, transparent); } .ds-btn-approve:hover { background: color-mix(in oklch, var(--ok, oklch(72% 0.16 155)) 10%, transparent); } .ds-btn-reject { color: var(--danger, oklch(65% 0.22 25)); border-color: color-mix(in oklch, var(--danger, oklch(65% 0.22 25)) 35%, transparent); } .ds-btn-reject:hover { background: color-mix(in oklch, var(--danger, oklch(65% 0.22 25)) 10%, transparent); } .ds-btn-approve:focus-visible, .ds-btn-reject:focus-visible { outline: 2px solid var(--focus-ring, oklch(85% 0.14 205)); outline-offset: 2px; border-radius: 3px; }"
+    },
+    {
+      "name": "Severity Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "The signature component. Word, glyph shape and hatch density — three independent channels, because each fails differently.",
+      "html": "<span class=\"ds-sev ds-sev-critical\">critical</span>\n<span class=\"ds-sev ds-sev-high\">high</span>\n<span class=\"ds-sev ds-sev-medium\">medium</span>\n<span class=\"ds-sev ds-sev-low\">low</span>\n<span class=\"ds-sev ds-sev-unknown\">not determined</span>",
+      "css": ".ds-sev { display: inline-flex; align-items: center; padding: 2px 8px; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.75rem; font-weight: 500; border-radius: 999px; white-space: nowrap; } .ds-sev::before { font-size: 0.85em; line-height: 1; margin-right: 0.25em; } .ds-sev-critical { background: color-mix(in oklch, var(--sev-critical, oklch(65% 0.22 25)) 22%, transparent); color: var(--ink, oklch(96% 0.005 260)); box-shadow: inset 0 0 0 1px var(--sev-critical, oklch(65% 0.22 25)); background-image: repeating-linear-gradient(45deg, color-mix(in oklch, var(--sev-critical, oklch(65% 0.22 25)) 28%, transparent) 0 2px, transparent 2px 5px); } .ds-sev-critical::before { content: '\\25B2\\25B2'; } .ds-sev-high { background: color-mix(in oklch, var(--sev-high, oklch(72% 0.18 45)) 22%, transparent); color: var(--ink, oklch(96% 0.005 260)); box-shadow: inset 0 0 0 1px var(--sev-high, oklch(72% 0.18 45)); background-image: repeating-linear-gradient(45deg, color-mix(in oklch, var(--sev-high, oklch(72% 0.18 45)) 28%, transparent) 0 2px, transparent 2px 7px); } .ds-sev-high::before { content: '\\25B2'; } .ds-sev-medium { background: color-mix(in oklch, var(--sev-medium, oklch(80% 0.15 85)) 22%, transparent); color: var(--ink, oklch(96% 0.005 260)); box-shadow: inset 0 0 0 1px var(--sev-medium, oklch(80% 0.15 85)); background-image: repeating-linear-gradient(90deg, color-mix(in oklch, var(--sev-medium, oklch(80% 0.15 85)) 28%, transparent) 0 2px, transparent 2px 9px); } .ds-sev-medium::before { content: '\\25A0'; } .ds-sev-low { background: color-mix(in oklch, var(--sev-low, oklch(75% 0.10 190)) 22%, transparent); color: var(--ink, oklch(96% 0.005 260)); box-shadow: inset 0 0 0 1px var(--sev-low, oklch(75% 0.10 190)); } .ds-sev-low::before { content: '\\25CF'; } .ds-sev-unknown { background: var(--surface, oklch(22% 0.02 260)); color: var(--ink-muted, oklch(75% 0.02 260)); box-shadow: inset 0 0 0 1px var(--stroke, oklch(30% 0.01 260)); } .ds-sev-unknown::before { content: '\\2014'; }"
+    },
+    {
+      "name": "Filter Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "A toggle in a filter row. Pill-shaped so it reads as a token of state, not a button to press.",
+      "html": "<button class=\"ds-chip\">Flood</button>\n<button class=\"ds-chip ds-chip-active\">Conflict</button>",
+      "css": ".ds-chip { padding: 2px 8px; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.75rem; font-weight: 500; border-radius: 999px; background: var(--surface, oklch(22% 0.02 260)); color: var(--ink-muted, oklch(75% 0.02 260)); border: 1px solid var(--stroke, oklch(30% 0.01 260)); cursor: pointer; transition: background 120ms cubic-bezier(0.16,1,0.3,1), color 120ms cubic-bezier(0.16,1,0.3,1); } .ds-chip:hover { background: var(--surface-hover, oklch(26% 0.02 260)); color: var(--ink, oklch(96% 0.005 260)); } .ds-chip-active { background: color-mix(in oklch, var(--brand, oklch(70% 0.16 205)) 18%, transparent); color: var(--brand, oklch(70% 0.16 205)); border-color: color-mix(in oklch, var(--brand, oklch(70% 0.16 205)) 38%, transparent); } .ds-chip:focus-visible { outline: 2px solid var(--focus-ring, oklch(85% 0.14 205)); outline-offset: 2px; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A raised tonal step, never a shadow. Depth here is grouping, not a light source.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">Districts at risk</div><div class=\"ds-card-value\">5</div><div class=\"ds-card-meta\">of 5 monitored</div></div>",
+      "css": ".ds-card { padding: 0.75rem 1rem; border: 1px solid var(--stroke, oklch(30% 0.01 260)); border-radius: 6px; background: var(--bg-elevated, oklch(19% 0.02 260)); } .ds-card-title { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.75rem; font-weight: 500; color: var(--ink-muted, oklch(75% 0.02 260)); } .ds-card-value { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 1.125rem; font-weight: 600; color: var(--ink, oklch(96% 0.005 260)); font-variant-numeric: tabular-nums; line-height: 1.35; } .ds-card-meta { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.8125rem; color: var(--ink-muted, oklch(75% 0.02 260)); }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Focus is drawn inside the control so a dense filter bar does not shift its layout.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">District</span><input class=\"ds-input\" type=\"search\" placeholder=\"Turkana\"></label>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 0.25rem; } .ds-field-label { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.75rem; font-weight: 500; color: var(--ink-muted, oklch(75% 0.02 260)); } .ds-input { background: var(--bg, oklch(15% 0.02 260)); color: var(--ink, oklch(96% 0.005 260)); border: 1px solid var(--stroke-strong, oklch(40% 0.015 260)); border-radius: 3px; padding: 0.35rem 0.5rem; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.8125rem; min-height: 30px; width: 100%; transition: border-color 120ms cubic-bezier(0.16,1,0.3,1); } .ds-input::placeholder { color: var(--ink-faint, oklch(72% 0.02 260)); } .ds-input:focus-visible { outline: 2px solid var(--focus-ring, oklch(85% 0.14 205)); outline-offset: -1px; border-color: var(--brand, oklch(70% 0.16 205)); }"
+    },
+    {
+      "name": "Rail Tabs",
+      "kind": "nav",
+      "refersTo": "chip",
+      "description": "The alert rail's tab strip. Active state is cyan text on a 2px cyan underline.",
+      "html": "<div class=\"ds-rail-tabs\" role=\"tablist\"><button class=\"ds-rail-tab ds-rail-tab-active\" role=\"tab\" aria-selected=\"true\">Alerts</button><button class=\"ds-rail-tab\" role=\"tab\">Incidents</button><button class=\"ds-rail-tab\" role=\"tab\">Tasks</button></div>",
+      "css": ".ds-rail-tabs { display: flex; border-bottom: 1px solid var(--stroke, oklch(30% 0.01 260)); } .ds-rail-tab { flex: 1 0 auto; display: flex; align-items: center; justify-content: center; gap: 0.25rem; padding: 0.75rem 0.5rem; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.75rem; font-weight: 500; color: var(--ink-muted, oklch(75% 0.02 260)); background: transparent; border: none; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; transition: color 180ms cubic-bezier(0.16,1,0.3,1), border-color 180ms cubic-bezier(0.16,1,0.3,1); } .ds-rail-tab:hover { color: var(--ink, oklch(96% 0.005 260)); background: var(--surface-hover, oklch(26% 0.02 260)); } .ds-rail-tab-active { color: var(--brand, oklch(70% 0.16 205)); border-bottom-color: var(--brand, oklch(70% 0.16 205)); } .ds-rail-tab:focus-visible { outline: 2px solid var(--focus-ring, oklch(85% 0.14 205)); outline-offset: 2px; border-radius: 3px; }"
+    },
+    {
+      "name": "Empty / Not-Determined Note",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "How the platform says it does not know. Rendered as content, in the same voice as any answer — never as an error state.",
+      "html": "<p class=\"ds-empty-note\">Not determined — no rainfall observation for this district in the last 30 days.</p>",
+      "css": ".ds-empty-note { color: var(--ink-muted, oklch(75% 0.02 260)); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.8125rem; line-height: 1.6; max-width: 45ch; margin: 0; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Situation Room",
+    "overview": "A room where a decision gets made and recorded. The picture is shared, so nothing is private about how a number was reached — every figure on screen carries where it came from and when. Surfaces stay calm because the content is not: this is a screen an operator reads while deciding whether to move resources, and a screen that competes for attention is a screen that loses the argument for attention when it matters.\n\nThe system is dark by decision, not by fashion, and that decision is load-bearing rather than aesthetic. A district office runs this on the laptop it does everything else on, in rooms where power is a contingency; a dark ground holds legibility when the panel is dim and does not blind the operator who has been reading it for six hours. Light and high-contrast sit beside it as first-class themes, each one measured rather than derived.\n\nWhat distinguishes the system is that it treats honesty as a visual property. The states an operator most needs to read — \"not ingested\", \"never run\", \"not determined\" — are the ones a light treatment erases first, so --ink-faint was raised twice until it cleared 4.5:1 on the surfaces it actually lands on. Severity never rests on colour alone. Where the platform cannot compute a number it prints the reason instead, and the interface renders that reason as content rather than as an error.",
+    "keyCharacteristics": [
+      "Dark-first, with light and high-contrast as measured equals, not afterthoughts.",
+      "Flat at rest. Depth is tonal — a four-step ground ramp — not shadowed.",
+      "Every colour pair is verified by arithmetic in test/theme-tokens.test.js.",
+      "Severity is encoded three times over: word, glyph shape, hatch density.",
+      "Dense and quiet. This is an instrument surface, not a marketing surface.",
+      "Tabular numerals and monospace where figures must align and compare."
+    ],
+    "rules": [
+      { "name": "The Measured-Not-Chosen Rule", "body": "No colour enters this system by eye. Every text/surface pair is verified by test/theme-tokens.test.js, which re-runs the gate's own OKLCH→sRGB arithmetic across every combination the three themes can paint. A value that has not been through that arithmetic is a proposal.", "section": "colors" },
+      { "name": "The One Channel Allowed to Fail Rule", "body": "Severity colour may fail — under colour vision deficiency, in greyscale print, on a projector with no colour left. It is permitted to fail because two other channels carry the same information, and those do not.", "section": "colors" },
+      { "name": "The No-Webfont Rule", "body": "No font is fetched. If a surface needs a weight or width the system stack does not have, the answer is a different composition, not a different download.", "section": "typography" },
+      { "name": "The Tabular Figures Rule", "body": "Any figure appearing in a column, or compared against a neighbouring figure, uses tabular-nums. Proportional digits are for prose.", "section": "typography" },
+      { "name": "The Shell-Is-The-Scroller Rule", "body": "On a viewport too short for the fixed shell, the page scrolls. Content is never trapped inside a region the viewport cannot reach.", "section": "layout" },
+      { "name": "The Flat-By-Default Rule", "body": "Surfaces are flat at rest. A shadow appears only when an element genuinely leaves the page plane — it is never decoration and never a hover effect.", "section": "elevation" },
+      { "name": "The Inset-Ring Rule", "body": "A component that changes colour on state changes only its colour. Geometry that moves when state changes is a layout bug wearing a style's clothes.", "section": "shapes" },
+      { "name": "The Three-Channel Rule", "body": "Severity is word, glyph and hatch, on every surface, without exception — dense tables and map layers included. low takes no hatch because a texture meaning \"slightly less bad\" is worse than one meaning \"nothing here\".", "section": "components" },
+      { "name": "The No-Borrowed-Glyph Rule", "body": "Sentiment chips (.chip-ok) get no severity marker. Borrowing low's ● for \"positive\" would put two unrelated meanings on one glyph — the exact collision the ramp exists to prevent.", "section": "components" },
+      { "name": "The Focus-Is-Not-Optional Rule", "body": "Every focusable element has a visible focus state. A surface without one is not shippable, and scripts/check-a11y.mjs walks all eight surfaces in all three themes to prove it.", "section": "components" }
+    ],
+    "dos": [
+      "Do verify every new colour pair with the OKLCH→sRGB arithmetic in test/theme-tokens.test.js before it ships. An unmeasured value is a proposal, not a token.",
+      "Do carry word, glyph and hatch on every severity surface, dense tables included.",
+      "Do reach for a tonal step (--bg-elevated, --surface) before a shadow.",
+      "Do give every focusable element a --focus-ring outline, drawn inside the control when it sits in a dense row.",
+      "Do use tabular-nums for any figure in a column.",
+      "Do render a refusal as content. When the platform cannot ground a number, it prints the reason — and the interface shows that reason in the same voice as any other answer, not as an error state.",
+      "Do declare a token in every theme block, including both prefers-color-scheme mirrors. A token present in one and not another resolves to nothing, and fill: var(--undefined) is invalid — which is how the map's landmass once fell back to black.",
+      "Do make each button variant standalone, so class=\"btn-primary\" alone renders a complete control."
+    ],
+    "donts": [
+      "Don't pick a colour by eye, or by what looks right on your monitor in one theme.",
+      "Don't encode severity in colour alone, on any surface, ever.",
+      "Don't add a webfont. The no-build, no-request constraint is the product's deployment model, not a preference.",
+      "Don't use a shadow as a hover effect or as decoration. Shadows are for elements that leave the page plane.",
+      "Don't reuse --ok for a cold or negative-reading data pole. It asserts a value judgement the data does not support.",
+      "Don't change a component's geometry when its state changes. Fill, ink and ring may move; box size may not.",
+      "Don't compress the shell to fit a short viewport. Release the fixed height and let the page scroll.",
+      "Don't use proportional digits in a numeric column.",
+      "Don't apply the CHW surface's 44px tap targets or 1.125rem base to the console. Density is the console's job; reach is the CHW surface's."
+    ]
+  }
+}
