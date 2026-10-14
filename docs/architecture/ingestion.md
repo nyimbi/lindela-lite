@@ -17,14 +17,19 @@ path.
 
 | Path | Handler | Notes |
 |---|---|---|
-| `POST /api/v1/ingest/run` | `src/server.js:353` → `runIngestion` | Body may carry `sources`, `timeout_ms`, `retries`. Defaults to `PUBLIC_INGESTION_SOURCES`. |
-| `POST /api/v1/ingest/run-due` | `runDueIngestionSchedules` (`src/ingestion.js:245`) | The scheduled path. Driven by the compose sidecar every 900 s (`docker-compose.yml:60`, `LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS`). Only schedules with `status === 'active'` and `next_run_at <= now` run (`ingestionScheduleIsDue`). |
-| `POST /api/v1/ingest/schedules/{id}/run` | `src/server.js:982` | Runs one schedule immediately, ignoring `next_run_at`. |
-| `POST /api/v1/service-assets` | `src/server.js:415` | **Implicit fourth path.** The body *is* the connector input; it calls `runIngestion(store, { ...body, sources: ['service_assets'] })`, so a request-body boolean gates the run, not a route check. |
+| `POST /api/v1/ingest/run` | `src/routes/ingestion.js:119` → `runIngestion` | Body may carry `sources`, `timeout_ms`, `retries`. Defaults to `PUBLIC_INGESTION_SOURCES`. |
+| `POST /api/v1/ingest/run-due` | `runDueIngestionSchedules` (`src/routes/ingestion.js:151`) | The scheduled path. Driven by the in-process periodic driver every 900 s (`src/server.js:112`, `LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS`, `src/server.js:374`). Only schedules with `status === 'active'` and `next_run_at <= now` run (`ingestionScheduleIsDue`, `src/ingestion.js:862`). |
+| `POST /api/v1/ingest/schedules/{id}/run` | `src/routes/ingestion.js:185` | Runs one schedule immediately, ignoring `next_run_at`. |
+| `POST /api/v1/service-assets` | `src/routes/operational.js:113` | **Implicit fourth path.** The body *is* the connector input; it calls `runIngestion(store, { ...body, sources: ['service_assets'] })`, so a request-body boolean gates the run, not a route check. |
 
 `run-due` fires `runIngestion` once **per due schedule**, each with `sources: [schedule.source]`
-(`src/ingestion.js:251`). Nine default schedules means nine separate single-source
+(`src/ingestion.js:829`). Nine default schedules means nine separate single-source
 `runIngestion` calls, each with its own `merged` accumulator and its own write.
+
+The periodic driver is a `setInterval` inside the server process (`createPeriodicDriver`,
+`src/server.js:408`), not a sidecar container: `docker-compose.yml` runs two services, `db`
+and `app`, and the shell loop that used to call `run-due` from outside was retired when the
+driver took over report schedules too.
 
 ## The connector contract
 
@@ -34,27 +39,32 @@ path.
 
 `ingest(options)` returns `Promise<{ <collection>: Record[], errors: string[] }>`.
 
-There are 16 connectors (`CONNECTORS`, `src/ingestion.js:20`), matching the 16
-entries in `connectors.registry.json`.
+There are 18 connectors in `CONNECTORS` (`src/ingestion.js:44`), the map
+`runIngestion` reads. `connectors.registry.json` holds 20 entries over 18
+modules: `kobo` and `iot` are listed there and absent from the map, so
+`getConnector` refuses them — built and tested, not registered. The registry is
+what `GET /api/v1/connectors` serves, so the difference is visible over HTTP and
+`test/connector-registry-parity.test.js` holds it by name.
 
 ## Sources
 
-Sources run **sequentially** in a `for` loop (`src/ingestion.js:114`), never
+Sources run **sequentially** in a `for` loop (`src/ingestion.js:177`), never
 concurrently. Consequences: a full default run's wall-clock is the *sum* of every
 source's latency, and one slow source delays every alert downstream of it. The
 `duration_ms` recorded per run is that source's own slice.
 
-The nine sources in `PUBLIC_INGESTION_SOURCES` are the default run set. The three
-archive backfills are deliberately excluded from it (`src/ingestion.js:49`):
+The nine sources in `PUBLIC_INGESTION_SOURCES` (`src/ingestion.js:68`) are the
+default run set. The three archive backfills are deliberately excluded from it
+(their `regular: false` rows start at `src/ingestion.js:113`):
 `gdacs_archive` is a quarter-by-quarter crawl of 40 years, and putting it on a
 recurring schedule would be abuse of a free service. They carry
 `interval_minutes: 0` and `regular: false`, and `computeNextIngestionRunAt` returns
-`null` for a zero interval (`src/ingestion.js:281`), so a default-seeded schedule can
+`null` for a zero interval (`src/ingestion.js:882`), so a default-seeded schedule can
 never pick them up.
 
 ```mermaid
 graph LR
-  subgraph domains["Domain grouping — 16 connectors"]
+  subgraph domains["Domain grouping — the 18 runnable connectors"]
     direction LR
     subgraph clim["Climate &amp; weather → climate_observations"]
       om["open_meteo"]
@@ -62,6 +72,7 @@ graph LR
       enso["noaa_enso"]
       oma["open_meteo_archive<br/>backfill"]
       omf["open_meteo_flood<br/>backfill"]
+      omfc["open_meteo_forecast<br/>→ weather_forecasts"]
       dhis2["dhis2"]
     end
     subgraph haz["Hazards → hazard_events"]
@@ -74,6 +85,7 @@ graph LR
     subgraph hfs["Health &amp; food security"]
       ipc["ipc_hdx<br/>→ food_security_records"]
       gho["who_gho<br/>→ disease_observations"]
+      rweb["reliefweb_epidemics<br/>→ disease_observations"]
     end
     subgraph ops["Operator-supplied"]
       assets["service_assets<br/>→ service_assets"]
@@ -89,18 +101,19 @@ graph LR
 Marks that matter more than the grouping:
 
 - **`glofas` is broken.** Its RSS URL serves the EFAS single-page app, not a feed.
-  The connector detects this with `looksLikeFeed(text)` and pushes a descriptive
-  error rather than reporting an empty success (`src/connectors/glofas.js:20`).
+  The connector detects this with `looksLikeFeed(text)` (`src/connectors/glofas.js:104`)
+  and pushes a descriptive error rather than reporting an empty success
+  (`src/connectors/glofas.js:23`).
   Every run is `degraded` with zero records. It stays in the default set.
-- **`gdelt` is hard-blocked** in `BLOCKED_SOURCE_IDS` (`src/schema.js:20`);
+- **`gdelt` is hard-blocked** in `BLOCKED_SOURCE_IDS` (`src/schema.js:24`);
   `getConnector` and `runIngestion` both throw on it, and `/api/v1/health` reports
-  it under `exclusions` (`src/server.js:268`). It has no connector and no code path.
+  it under `exclusions` (`src/routes/liveness.js:145`). It has no connector and no code path.
 - **`acled_csv` is gated on a request-body boolean**, not a verified licence
   (`src/connectors/uploads.js:35`). `acled_license_accepted: true` in the POST body
   is the entire gate; the data is user-supplied and the record carries
   `license: 'user_supplied_acled_license'`.
 - **`rateLimit.perMinute` is declared and never enforced.** Every spec carries it
-  (`src/connectors/glofas.js:79` and 12 others) and `connectors.registry.json`
+  (`src/connectors/glofas.js:86` and 12 others) and `connectors.registry.json`
   repeats it. Nothing reads it. There is no throttle, limiter, or token bucket
   anywhere in `src/`. It is documentation shaped like configuration.
 
@@ -108,11 +121,11 @@ Marks that matter more than the grouping:
 
 These are independent and they multiply.
 
-`fetchWithRetry` (`src/connectors/http.js:1`) wraps a single HTTP request:
+`fetchWithRetry` (`src/connectors/http.js:234`) wraps a single HTTP request:
 `retries + 1` attempts, backoff `150 * 2^attempt` ms, 20 s default timeout,
 `AbortSignal.timeout`.
 
-`runConnectorWithRetries` (`src/ingestion.js:318`) wraps the whole connector:
+`runConnectorWithRetries` (`src/ingestion.js:1112`) wraps the whole connector:
 `policy.retries + 1` attempts, backoff `min(1000 * 2^attempt, 5000)`.
 
 Worst case for `open_meteo` (`retries: 2`) is **9 HTTP attempts across 3 connector
@@ -137,7 +150,7 @@ flowchart TD
   H --> K["append reason:<br/>'Expected at least N records for S; received M.'"]
 ```
 
-Status resolution is three-valued (`src/ingestion.js:128`):
+Status resolution is three-valued (`src/ingestion.js:232`):
 
 - **`failed`** — the connector threw after all retries. No records.
 - **`degraded`** — it returned, but with any `errors`, **or** fewer than
@@ -145,99 +158,93 @@ Status resolution is three-valued (`src/ingestion.js:128`):
 - **`success`** — no errors and the record count met the floor.
 
 `minimum_records` is `1` for every remote source and `0` for the operator-supplied
-and `dhis2` ones (`SOURCE_POLICIES`, `src/ingestion.js:55`). The comment records why:
+and `dhis2` ones (`SOURCE_POLICIES`, `src/ingestion.js:90`). The comment records why:
 with `0`, a connector that silently parses nothing still reports success, "which is
 how CHIRPS, GloFAS, and NASA FIRMS all hid broken ingestion."
 
-## Known defect: `countRecords` under-counts, and two collections are exempt from the floor
+## One collection list, three counters
 
-`countRecords` (`src/ingestion.js:334`) sums only:
+`OUTPUT_COLLECTIONS` (`src/ingestion.js:1152`) is the single list of the nine
+collections a run can accumulate, and three things read it rather than spelling
+their own: the merged accumulator that `runIngestion` builds
+(`src/ingestion.js:185`), `countRecords` (`src/ingestion.js:1164`) and
+`countRecordsByCollection` (`src/ingestion.js:1169`). So the floor check that
+compares `countRecords` against `minimum_records` sees the same set the connector
+writes to.
 
-```
-climate_observations, hazard_events, conflict_events, service_assets
-```
+**What this replaced.** Each of the three carried its own hand-typed list, and they
+had drifted: `countRecords` summed four collections and omitted
+**`food_security_records`** and **`disease_observations`**, so `ipc_hdx` and
+`who_gho` counted `0` on every run, `0 < minimum_records: 1` always fired, and a
+healthy run ingesting 500 IPC classifications reported `degraded` with
+*"Expected at least 1 records for ipc_hdx; received 0."* — a confident, specific
+and false statement. `countRecordsByCollection` had the identical omission, so
+`diagnostics.records_by_collection` was wrong the same way. The list is exported
+and asserted on rather than grepped, because a guard that greps source text for a
+collection name passes with the bug fully present — this repository's signature
+defect, and the reason the comment above the list says so.
 
-It omits **`food_security_records`** and **`disease_observations`**, which the merged
-accumulator at `src/ingestion.js:110` does carry. Two consequences, both wrong in the
-direction that hides failure:
+## Lineage is per-source-run, written inside the loop
 
-1. **`ipc_hdx` and `who_gho` can never report `success`.** Both connectors write only
-   to a collection `countRecords` does not sum, so their count is *always* `0`, and
-   `0 < minimum_records: 1` is always true. A healthy run that ingests 500 IPC
-   classifications reports `status: 'degraded'` with
-   `"Expected at least 1 records for ipc_hdx; received 0."` — a confident, specific,
-   and false statement. The floor cannot distinguish "returned nothing" from "returned
-   plenty"; for these two sources it is a constant that always fires.
-2. **`records_processed` under-reports for every source.** The number shown in run
-   history is a partial sum. A successful `who_gho` run ingesting 200 disease
-   observations records `records_processed: 0`.
-
-The direction matters. `ingestionStatus` derives health from the latest run, and
-`ipc_hdx` / `who_gho` are therefore permanently `degraded` or `stale` — permanently
-raised as broken sources by the one check meant to catch silently broken ones.
-
-`countRecordsByCollection` (`src/ingestion.js:340`) has the identical omission, so
-`diagnostics.records_by_collection` also omits both collections. The top-level
-`counts` returned from `runIngestion` (`src/ingestion.js:201`) omits them too.
-
-## Known defect: every lineage record in a batch describes the whole batch
-
-`src/ingestion.js:186`:
+`recordLineageRow` (`src/provenance.js:239`) builds one `data_lineage` row for one
+source run, over *that run's own records*, and `commitSource`
+(`src/ingestion.js:619`) writes it as part of the same per-source merge as the
+records, the quarantine rows and the watermark:
 
 ```js
-for (let i = 0; i < source_runs.length; i++) {
-  const run = source_runs[i]
-  const allRecords = [
-    ...merged.climate_observations,
-    ...merged.hazard_events,
-    ...merged.conflict_events,
-    ...merged.service_assets,
-  ]
-  const lineageRecord = recordLineage(store, run, allRecords)
-  data_lineage.push(lineageRecord)
-}
+lineage: recordLineageRow({
+  sourceRun: source_runs[source_runs.length - 1],
+  records: runRecords,
+  provenance,
+}),
 ```
 
-`allRecords` is invariant across the loop — it is the *final* merged state of all
-sources, computed after every source has already run. Every lineage record in a batch
-therefore carries:
+So `record_count` and `payload_hashes` describe the run the row names, and the row
+id is derived from `[source, source_run_id]` with no clock in it, so a re-run
+replaces its row rather than adding a second one.
 
-- the full concatenated `payload_hashes` of **all** sources, not its own,
-- the same `upstream_checksum` (`canonicalHash({ hashes })`) as its siblings, since
-  `recordLineage` derives it solely from those hashes (`src/lineage.js:6`),
-- `record_count` equal to the batch total,
-- and only `source` / `source_run_id` / `retrieval_time` to distinguish it.
-
-Lineage cannot currently answer "which records did *this* source produce?" — the
-honest reading is that each record is a batch checksum with a source label attached.
-Downstream, this makes `upstream_checksum` useless for identifying a divergent run
-of a single source: it only detects that *something* in the batch changed.
-
-`upstream_url_or_endpoint` is hardcoded `null` (`src/lineage.js:13`).
+**What this replaced (ENH-15).** The loop it superseded — which this document
+described as a live defect — rebuilt `allRecords` as the union of every source's
+records and wrote that union once per source run, after every source had already
+run. A nine-source run therefore produced nine rows whose `record_count` and
+`payload_hashes` each described the whole batch, attributed to nine different
+sources, and `stableId(..., now)` gave each a fresh id so the store kept all nine.
+`upstream_url_or_endpoint` was a hardcoded `null` and `transform_version` a
+constant `'0.1.0'` typed once and never revisited; `transformVersionFor` now
+derives the version from the source of the function that did the work
+(`src/provenance.js:112`), and `upstream_url_or_endpoint` carries the first
+retrieval URL (`src/provenance.js:254`).
 
 ## Idempotency
 
 Two mechanisms, both needed:
 
 - **`canonicalHash(record)` → `record.payload_hash`**, assigned in `runIngestion` if
-  the connector did not set it (`src/ingestion.js:147`). This is *content* identity:
+  the connector did not set it (`src/ingestion.js:409`). This is *content* identity:
   the same upstream record fetched twice hashes the same and is recognised as
   unchanged.
 - **`stableId(...)`** in each connector gives a deterministic `id` from source and
   natural key (e.g. `stableId('hazard', ['glofas', link, title])`). This is *entity*
   identity across updates.
 
-`mergeById` (`src/store.js:100`) keys on `id`, and skips an incoming record whose
+`mergeById` (`src/store.js:1123`) keys on `id`, and skips an incoming record whose
 `payload_hash` is already in the collection — a no-op re-fetch costs no rows.
 Otherwise it merges `{ ...existing, ...incoming }`, so a corrected upstream value
 overwrites. Records are then sorted by `recordTimestamp`, which walks a fixed
 precedence of date fields and falls back to `''`.
 
-`first_seen_at` is stamped once, at first ingest (`src/ingestion.js:149`), and is
+`first_seen_at` is stamped once, at first ingest (`src/ingestion.js:412`), and is
 never refreshed on later merges.
 
-`postgres-store.js` mirrors this in SQL with a unique index on
-`(collection, payload_hash)` (`src/postgres-store.js:52`).
+`postgres-store.js` mirrors this without a unique constraint: the dedup is an
+application-level check, a `SELECT payload_hash … WHERE collection = $1 AND
+payload_hash = ANY($2::text[])` over just the batch's hashes
+(`src/postgres-store.js:955`), backed by a non-unique partial index
+`lite_records_collection_hash_idx ON lite_records (collection, payload_hash)
+WHERE payload_hash IS NOT NULL` (`src/migrations.js:117`). The index is a lookup
+structure, not a guard — two concurrent writers can each pass the check and both
+insert. What the write itself relies on is `ON CONFLICT (collection, id)`
+(`src/postgres-store.js:978`), which is keyed on `id`, not on the hash.
 
 ## End-to-end
 
@@ -292,7 +299,7 @@ mid-run leaves no partial records from the sources that already succeeded — th
 ## Idempotency of a run itself
 
 `source_runs[].id` is `stableId('run', [source, startedAt, status, errors])`
-(`src/ingestion.js:161`). It includes the wall-clock `startedAt`, so two runs of the
+(`src/ingestion.js:361`). It includes the wall-clock `startedAt`, so two runs of the
 same source in the same millisecond with the same outcome collapse, and two runs a
 second apart never collapse. Run history is append-only in practice.
 
@@ -300,10 +307,10 @@ second apart never collapse. Run history is append-only in practice.
 
 Every run emits `metrics.counter('ingestion_runs_total', { source, status })` and
 `metrics.histogram('ingestion_duration_ms', durationMs, { source })`
-(`src/ingestion.js:181`). Note that the counter is emitted for `failed` and
+(`src/ingestion.js:509`). Note that the counter is emitted for `failed` and
 `degraded` alike — there is no separate error counter.
 
-`ingestionStatus(data)` (`src/ingestion.js:286`) derives per-source health:
+`ingestionStatus(data)` (`src/ingestion.js:926`) derives per-source health:
 `never_run` → `failed` → `stale` (older than `stale_after_minutes`) → `degraded` →
 `fresh`. Staleness is checked *before* `degraded`, so a degraded run that also aged
 out reports `stale` and the degradation is only visible on the run itself.

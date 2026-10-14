@@ -545,9 +545,9 @@ Who calls it:
 |---|---|
 | `refreshAnalytics` (`src/analytics.js:21`) | **No** — `PostgresStore.replaceAnalytics` forwards to `merge()`, which upserts only the collections passed |
 | `JsonStore.replaceAnalytics` | Yes — on the JSON backend this *is* a full-file rewrite |
-| `POST /api/v1/parametric/rules` (`src/server.js:2073`) | Yes |
-| `PATCH /api/v1/parametric/rules/<id>` (`src/server.js:2099`) | Yes |
-| `POST /api/v1/parametric/.../disburse` (`src/server.js:2162`) | Yes |
+| `POST /api/v1/parametric-rules` (`src/routes/parametric.js:125`) | Yes |
+| `PATCH /api/v1/parametric-rules/<id>` (`src/routes/parametric.js:160`) | Yes |
+| `POST /api/v1/parametric-rules/<id>/simulate` (`src/routes/parametric.js:195`) | Yes |
 
 So the "an analytics refresh rewrites the entire table" claim holds on the JSON
 backend and, on Postgres, for the three parametric endpoints — not for

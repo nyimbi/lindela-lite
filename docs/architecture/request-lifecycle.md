@@ -87,7 +87,7 @@ flowchart TD
 
 Two of those annotations are judgement calls the code records rather than
 enforces. The traversal check is **fail-closed**: `hasTraversalSegment`
-(`src/server.js:2619`) catches the `decodeURIComponent` throw and returns `true`,
+(`src/server.js:1554`) catches the `decodeURIComponent` throw and returns `true`,
 so a URL that will not decode is treated as a traversal attempt rather than
 passed through.
 
@@ -170,10 +170,10 @@ What this means in practice:
 
 ## A full write: `POST /api/v1/incidents`
 
-`matchOperationalRoute` (`src/server.js:2280`) maps the first path segment
+`matchOperationalRoute` (`src/routes/operational.js:53`) maps the first path segment
 against a fixed table, so `/api/v1/incidents` resolves to
 `{ collection: 'incidents', id: null }` and dispatches to
-`handleOperationalRoute` (`src/server.js:1809`).
+`handleOperationalRoute` (`src/routes/operational.js:75`).
 
 ```mermaid
 sequenceDiagram
@@ -217,8 +217,9 @@ sequenceDiagram
   CB->>MX: "finally — http_requests_total, http_request_duration_ms, recordRequestOutcome, logger.info"
 ```
 
-The `emit` failure is deliberately swallowed (`src/server.js:1838-1842`): an
-outbox write must not be able to fail a create that already committed.
+The `emit` failure is deliberately swallowed (`src/server.js:1108-1124`, in
+`evaluateAndPersistAlerts`): an outbox write must not be able to fail a create
+that already committed.
 
 ## Inside `handleApi`
 
@@ -311,7 +312,7 @@ does anyway.
 
 `handleStatic` resolves the path through `safeJoin`, falls back to
 `public/index.html` for an unknown bare directory, and serves through `sendFile`
-(`src/server.js:2540`). `sendFile` returns `false` rather than throwing when the
+(`src/server.js:1426`). `sendFile` returns `false` rather than throwing when the
 file cannot be read, so the caller keeps control of the 404.
 
 Headers it sets:

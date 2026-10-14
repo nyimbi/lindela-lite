@@ -1,5 +1,8 @@
 # Demo Polish + Deploy — implementation plan
 
+citations-are-historical: 2026-10-09 — bare `app.js:NNN` below is `public/app.js`
+as it stood when the step was written; the plan records what each step read.
+
 > **Progress log**
 >
 > - 2026-10-09, Task 1 DONE: root cause was the test importing **callback-based**

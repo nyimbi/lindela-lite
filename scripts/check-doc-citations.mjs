@@ -41,26 +41,29 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /**
- * The register tree. Widened 2026-10-13 from `docs/improvements/audit-2026-10`
- * alone.
+ * The documentation tree the gate reads.
  *
- * The narrow scope was the same defect the gate exists to catch, one level up:
- * the citation form `path:NNN` runs through every register in `docs/improvements`
- * — the system audit's own row tables, the earlier `defects.md`, the research
- * dossiers — and only one directory was read. Measured when this widened: 247
- * citations past EOF or naming a file that does not exist across 15 documents,
- * none of which any gate could see. The directory that *was* covered had 0,
- * because its authors used the marker; the directory beside it had 29 and had
- * never been asked.
+ * **Discovery, not enumeration.** This was `DOC_DIRS = ['docs/improvements']`
+ * until 2026-10-14: a hand-typed one-element list standing for the set of
+ * documents that cite code. The set is discoverable (`docs/`), so a list could
+ * only ever be wrong in one direction, and it was. `docs/architecture/` held 15
+ * past-EOF citations no gate could see, including two to `src/lineage.js` — a
+ * file replaced by `src/provenance.js` under ENH-15 and named by nothing since.
+ * The directory that *was* covered had 0 findings; the one beside it had 15 and
+ * had never been asked. That is the same defect the widening recorded below fixed
+ * one level up, arriving again one level down.
  *
- * The scope rule is unchanged and is what keeps this honest: only a citation
- * that names nothing at all fails. `_research/` is included on the same terms —
- * a dossier quoting a line that no longer exists is a claim a reader cannot
- * check, and the fix is the same marker the registers already use.
+ * The scope rule is unchanged and is what keeps this honest: only a citation that
+ * names nothing at all fails — past EOF, or a file that does not exist. An
+ * in-bounds citation to the wrong line is a judgement about whether the citation
+ * is live or historical, and that judgement is the author's.
+ *
+ * A document that *means* to quote a tree that is gone declares it —
+ * `citations-are-historical: <date>` in its head — rather than being exempted by
+ * where it happens to live. That is what lets the walk be the whole tree: a dated
+ * audit opts out in writing, and a live document has no way to.
  */
-const DOC_DIRS = Object.freeze([
-  'docs/improvements',
-])
+const DOC_ROOT = 'docs'
 
 /**
  * Citations are `path:NNN` inside backticks, and one backtick may hold a run of
@@ -283,16 +286,15 @@ const CITATION_HINT = /\.(?:js|mjs):\d/
 
 export function scanTree(root = ROOT) {
   const findings = []
-  const dirs = DOC_DIRS.map((rel) => path.join(root, rel))
-  // A recursive walk, so a register that gains a subdirectory is covered without
-  // anyone remembering to add it. The directory-scoped version of this is the bug
-  // the widening above fixes, and re-introducing it one level down is how it
-  // comes back.
+  // A recursive walk from the documentation root, so a directory that gains a
+  // document is covered without anyone remembering to add it. Enumerating
+  // directories by hand is the bug the widening above fixes, and re-introducing
+  // it one level down is how it comes back.
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const abs = path.join(dir, entry.name)
-      // `_research/` is walked (it is the reason the scope widened); nothing
-      // dot-prefixed is, for the same reason the basename index skips them.
+      // Nothing dot-prefixed is walked, for the same reason the basename index
+      // skips them: a hidden tree is not documentation.
       if (entry.isDirectory()) { if (!entry.name.startsWith('.')) walk(abs); continue }
       if (!isScannedFile(entry.name)) continue
       const rel = path.relative(root, abs)
@@ -301,7 +303,7 @@ export function scanTree(root = ROOT) {
       findings.push(...scanText(text, { doc: rel, allowSnapshot: !entry.name.endsWith('.json') }))
     }
   }
-  for (const dir of dirs) walk(dir)
+  walk(path.join(root, DOC_ROOT))
   return findings
 }
 

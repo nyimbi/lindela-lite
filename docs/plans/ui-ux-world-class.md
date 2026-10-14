@@ -2,6 +2,9 @@
 
 Status: proposed · Scope: `public/` (8 surfaces, ~10,800 lines) · Date: 2026-10-02
 
+citations-are-historical: 2026-10-02 — every `file.js:NNN` below quotes the tree as
+it stood on the audit date, and the `app.js` citations resolve against `public/`.
+
 ---
 
 ## Context

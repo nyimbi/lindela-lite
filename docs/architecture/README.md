@@ -59,7 +59,10 @@ built for one-handed offline use rather than for feature parity.
 - **Diagrams** are Mermaid, rendered by any Mermaid-capable viewer. Every diagram is
   generated from the code paths named beside it; where a diagram and the code
   disagree, the code is right and the diagram is a bug.
-- **`file.js:123`** refers to a line in the current tree. Line numbers drift; symbol
-  names do not.
+- **A citation is `path/to/module.js:<line>`** and refers to a line in the current
+  tree. Line numbers drift; symbol names do not, so a citation names the function
+  that performs the read beside the number. `scripts/check-doc-citations.mjs`
+  fails a citation that names a line past the end of its file, or a file that does
+  not exist; a citation that resolves to the wrong line is the author's to fix.
 - **"Must"** means a constraint enforced in code. **"Should"** means convention.
   Where the two conflict, the comment in the code wins.

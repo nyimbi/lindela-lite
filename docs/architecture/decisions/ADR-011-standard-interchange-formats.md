@@ -1,6 +1,6 @@
 # ADR-011: STAC, OGC Features and CAP rather than a bespoke export
 
-**Status:** Accepted — the CAP defects below are recorded in `src/cap.js:5-27` and `src/cap.js:44-61`
+**Status:** Accepted — the CAP defects below are recorded in `src/cap.js:5-23` and `src/cap.js:41-62`
 **Applies to:** `src/stac.js`, `src/cap.js`, `src/server.js` (`handleStacRoute`,
 `matchAlertRoute`), `docs/openapi.yaml`
 **Deciders:** anyone adding an export format, or changing what an external system reads
@@ -18,10 +18,10 @@ product already integrates RapidPro for SMS, and the next hop is always a system
 vocabulary.
 
 **The flood products** are the most easily misread. Two of them exist and both are conditional
-terrain questions, not forecasts. `src/flood-depth.js:4-19` states the boundary in its own header:
+terrain questions, not forecasts. `src/flood-depth.js:4-35` states the boundary in its own header:
 static inundation from a supplied water-surface elevation, `depth = L - elevation`, *"not a hydraulic
 simulation… not forecast. L is an input, not a prediction."* Its vertical reference is
-`SOURCE_DATUM = 'terrarium_mean_sea_level'` (`src/flood-depth.js:52`) and every response says so.
+`SOURCE_DATUM = 'terrarium_mean_sea_level'` (`src/flood-depth.js:53`) and every response says so.
 The other, the empirical co-occurrence model in `src/flood-probability.js`, has its own basis
 document ([ADR-005](ADR-005-flood-probability-basis.md)) and refuses to produce a number below its
 sample floors. Publishing these as GeoJSON properties is right. Publishing them *under a standard
@@ -36,27 +36,29 @@ consumers are other people's systems.** The API is good for the operator and bad
 
 | Format | Where | Spec level |
 |---|---|---|
-| STAC catalogue | `src/stac.js:1` `stacCatalog` → `GET /stac/catalog.json` (`src/server.js:200`) | `stac_version: '1.0.0'` |
-| STAC collections and items | `src/stac.js:43`, `:127` → `/stac/collections/{id}[/items[/{itemId}]]` (`src/server.js:205`) | 1.0.0 |
-| OGC Features | `src/stac.js:188` `ogcFeatureCollection` → `GET /ogc/collections/{id}/items` (`src/server.js:242`) | GeoJSON envelope, `application/geo+json` |
-| CAP alert | `src/cap.js:61` `renderCapXml` → `GET /api/v1/alert-events/{id}.cap` (`src/server.js:2675`, served at `:1953`) | CAP 1.2, `urn:oasis:names:tc:emergency:cap:1.2` |
+| STAC catalogue | `stacCatalog` (`src/stac.js:67`) → `GET /stac/catalog.json` (`src/routes/stac.js:124`) | `stac_version: '1.0.0'` |
+| STAC collections and items | `stacCollection` / `stacItem` (`src/stac.js:97, 160`) → `/stac/collections/{id}[/items[/{itemId}]]` (`src/routes/stac.js:141-154`) | 1.0.0 |
+| OGC Features | `ogcFeatureCollection` (`src/stac.js:229`) → `GET /ogc/collections/{id}/items` (`src/routes/stac.js:135`) | GeoJSON envelope, `application/geo+json` |
+| CAP alert | `renderCapXml` (`src/cap.js:63`) → `GET /api/v1/alert-events/{id}.cap` (`src/routes/alerting.js:74`, rendered at `:212`) | CAP 1.2, `urn:oasis:names:tc:emergency:cap:1.2` |
 
-The route surface is matched before the API gate (`src/server.js:100`), so `/stac/` and `/ogc/` are
-reachable without a token; the content is public-domain source data and risk scores derived from it.
-`docs/openapi.yaml:1511` documents the catalogue; `docs/api.md:633` documents OGC Features;
-`docs/api.md:503` documents CAP.
+`/stac/` and `/ogc/` are matched on the path prefix **ahead of** `handleApi`
+(`src/server.js:635`) but no longer ahead of every gate: ARC-08 found the branch served clinic,
+water-point and road locations to anyone who could reach the port, and the prefix now runs the same
+auth gate as everything else (`src/server.js:645`). An operator who wants an open catalogue adds
+`/stac` to `LINDELA_LITE_PUBLIC_PATHS`. `docs/openapi.yaml` documents the catalogue; `docs/api.md`
+documents OGC Features and CAP.
 
 **The store does not get serialised twice.** STAC items and OGC Features are rendered from the same
 in-memory records the console reads ([ADR-002](ADR-002-single-table-jsonb-store.md)), so there is no
 export job, no snapshot to go stale, and no second shape to keep in sync. Records without finite
 coordinates are filtered out rather than emitted as null geometries
-(`src/stac.js:189`, `src/utils.js:405`).
+(`src/utils.js:637` `readCoordinate`).
 
 **Adopting the standard is not the same as filling it in correctly**, and the two CAP defects are
 why that distinction is written here. Both are in the source because the format was valid while the
 content was false:
 
-- **Every alert published as live.** `CAP_MSG_TYPES` (`src/cap.js:23-27`) was previously the literal
+- **Every alert published as live.** `CAP_MSG_TYPES` (`src/cap.js:24-27`) was previously the literal
   `['resolved', 'rejected', 'cancelled']`. Two of those three are not in `ALERT_EVENT_STATUSES`
   (`open` / `acknowledged` / `resolved`) and cannot be stored on an alert event, so the branch meant
   to retire a rejected alert was unreachable: a rejected alert rendered
@@ -71,7 +73,7 @@ content was false:
   at all** — *"an absent location is honest, a fabricated one is not."*
 
 `CAP_MSG_TYPES` is now checked against `ALERT_EVENT_STATUSES` at import time
-(`src/cap.js:29-35`), so a status added to the schema without a classification here throws on load
+(`src/cap.js:30-35`), so a status added to the schema without a classification here throws on load
 rather than defaulting to live.
 
 ## Options considered
@@ -90,9 +92,9 @@ who has to write a second parser, and the cost lands outside the repository wher
 
 ### GeoJSON only — the internal export, no STAC or OGC
 
-**What already existed.** `GET /api/v1/export.geojson` (`src/server.js:1154`) and
-`GET /api/v1/reports/{id}/export.geojson` (`src/server.js:1428`) both render `toGeoJson`
-(`src/utils.js:401`) over stored records.
+**What already existed.** `GET /api/v1/export.geojson` (`src/routes/exports.js:83`) and
+`GET /api/v1/reports/{id}/export.geojson` both render `toGeoJson`
+(`src/utils.js:682`) over stored records.
 
 **Rejected as sufficient, kept as internal.** GeoJSON is a shape, not an API: it has no catalogue,
 no item addressing, and no way for a client to discover what exists. STAC adds the catalogue and the
@@ -134,28 +136,29 @@ renderer rather than in a validator.
 - **The specification is a partial implementation, and the code does not pretend otherwise.**
   `handleStacRoute` serves `/ogc/collections/{id}/items` and nothing else: there is no
   `/ogc/collections` listing, no CQL filter, no pagination, no CRS negotiation, and `/stac/catalog.json`
-  advertises three fixed collections (`src/stac.js:11-32`). A client that expects the full OGC
+  advertises three fixed collections (`src/stac.js:18-47`). A client that expects the full OGC
   Features API will find the paths absent rather than empty.
-- **The collection mapping is written twice.** `src/server.js:211-220` and `src/server.js:247-256`
-  are the same three-branch `if/else` over the same collection ids, one for STAC and one for OGC.
+- **The collection mapping is written twice.** `matchStacRoute` and `matchOgcRoute`
+  (`src/routes/stac.js:45`, `:88`) are the same three-branch `if/else` over the same collection ids.
   They are identical today and nothing enforces that; adding a fourth collection means editing both,
   and forgetting one produces a catalogue that advertises a collection whose OGC endpoint 404s.
-- **The GeoJSON shape is written twice.** `ogcFeatureCollection` (`src/stac.js:188`) and
-  `toGeoJson` (`src/utils.js:401`) are near-identical, differing only in the filter's defensive
+- **The GeoJSON shape is written twice.** `ogcFeatureCollection` (`src/stac.js:229`) and
+  `toGeoJson` (`src/utils.js:682`) are near-identical, differing only in the filter's defensive
   `?.` handling. Same class of drift as above.
-- **The OpenAPI contract misdescribes CAP.** `docs/openapi.yaml:1587-1598` documents
-  `/api/v1/alert-events/{id}.cap` as *"GeoJSON alert cap for an alert event"* returning
-  `application/json` with a `GeoJsonFeatureCollection` schema. The route returns
-  `application/xml` (`src/server.js:1960`) containing CAP 1.2. `scripts/check-openapi.mjs` passes
-  because it compares *path presence* and served-route counts — 121 documented paths against 121
-  parsed routes — and does not compare media types or response schemas. A generated client from this
-  spec would parse an XML document as JSON.
+- **The OpenAPI contract misdescribed CAP, and was corrected 2026-10-03.**
+  `docs/openapi.yaml:3547` now documents `/api/v1/alert-events/{id}.cap` as *"CAP 1.2 alert message
+  for an alert event"* returning `application/xml`, with the old
+  `application/json` / `GeoJsonFeatureCollection` description kept in a comment recording why it was
+  wrong. The general gap remains: `scripts/check-openapi.mjs` compares *path presence* and
+  served-route counts, not media types or response schemas, so the next media-type drift is
+  invisible to it and this one was found by a reader rather than by a gate.
 - **Publishing outside the product means the vocabulary leaves with it.** `msgType`, `scope`,
   `severity`, `urgency`, `certainty` and `<circle>` are read by systems this repository cannot see.
   A schema-level mistake is a support call, not a failing test.
-- The public-path carve-out (`src/server.js:100`) is a deliberate widening of the auth gate for
-  `/stac/` and `/ogc/`. It is correct for public-domain source data and would not be correct for the
-  collections that are not public.
+- The public-path carve-out (`src/server.js:645`, via `LINDELA_LITE_PUBLIC_PATHS`) is a deliberate
+  widening of the auth gate for `/stac/` and `/ogc/`, and it is opt-in rather than the default. It
+  is correct for public-domain source data and would not be correct for the collections that are
+  not public.
 
 **Revisit when**
 

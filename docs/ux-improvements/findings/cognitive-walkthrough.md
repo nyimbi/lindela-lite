@@ -42,7 +42,7 @@ Starting state at 1440×960: `74 on map · 15 reported areas too large to place`
 
 **What blocked me, exactly.** Two of the three pending cards cannot be approved at all. `GET /api/v1/workflows` shows the three `anticipatory_alert` instances as `wf-aa-1` (Turkana, `focal_point_review`), `wf-aa-2` (Bor, `dispatched`), `wf-aa-3` (Aweil, `closed`). The pending-review list surfaces all three; only the one in `focal_point_review` is transitionable. I confirmed this by calling the transition endpoint directly for each id — `wf-aa-1` accepts `to`, `wf-aa-2` and `wf-aa-3` reject with 409. I worked around it by approving the one card that works and reading the rest as un-actionable.
 
-**Attribution.** Every approval on this deployment is recorded as `Approved by anonymous` in `Recent decisions`, next to two seeded entries reading `Approved by Nyabuot Chan` and `Approved by Peter Deng`. A focal-point decision log that cannot distinguish a real approver from an anonymous one is not an audit trail. (Mechanism, from reading `src/server.js:3160-3175`: the actor is taken from `req.__auth?.subject`, which is absent on an unauthenticated deployment.)
+**Attribution.** Every approval on this deployment is recorded as `Approved by anonymous` in `Recent decisions`, next to two seeded entries reading `Approved by Nyabuot Chan` and `Approved by Peter Deng`. A focal-point decision log that cannot distinguish a real approver from an anonymous one is not an audit trail. (Mechanism, from reading the approval path at `src/routes/workflows.js:108`: the actor is taken from `req.__auth?.subject || claimedActor || 'anonymous'`, and `req.__auth?.subject` is absent on an unauthenticated deployment, so the row records `anonymous`.)
 
 ---
 

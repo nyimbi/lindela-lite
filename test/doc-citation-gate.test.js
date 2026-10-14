@@ -108,4 +108,38 @@ describe('the doc-citation gate is scoped to citations that name nothing', () =>
     assert.ok(fs.readFileSync(status, 'utf8').includes('src/routes/provenance.js:54'),
       'the status file no longer carries the citation the walk is scoped to read')
   })
+
+  it('reads the whole docs tree, not the one directory it was first pointed at', () => {
+    // The walk was `DOC_DIRS = ['docs/improvements']` — a hand-typed one-element
+    // list standing for the set of documents that cite code. `docs/architecture/`
+    // held 15 past-EOF citations no gate could see, including two to a file
+    // (`src/lineage.js`) that no longer exists. The scope is now discovered, so
+    // this asserts the discovery rather than a second list.
+    // Assert the declaration, not the word: the gate's docstring *names* the old
+    // `DOC_DIRS` list to explain why it went, so a bare grep for the word matches
+    // the comment that documents the fix. `^const` is what distinguishes a
+    // reintroduced list from prose about the removed one.
+    const source = fs.readFileSync(GATE, 'utf8')
+    assert.ok(!/^const DOC_DIRS\b/m.test(source),
+      'the gate enumerates directories again — the walk must discover them under docs/')
+    assert.ok(/^const DOC_ROOT\b/m.test(source), 'the gate no longer names a documentation root to walk')
+    const cite = (rel) => {
+      const text = fs.readFileSync(path.join(ROOT, rel), 'utf8')
+      return /\.(?:js|mjs):\d/.test(text)
+    }
+    for (const rel of ['docs/architecture/ingestion.md', 'docs/architecture/request-lifecycle.md']) {
+      assert.ok(cite(rel), `${rel} should carry a citation for this check to mean anything`)
+    }
+    // A planted past-EOF citation in a live architecture document is a finding.
+    const live = path.join(ROOT, 'docs/architecture/README.md')
+    const original = fs.readFileSync(live, 'utf8')
+    try {
+      fs.writeFileSync(live, `${original}\nplanted (\`src/server.js:999999\`).\n`)
+      const { code, output } = runGate()
+      assert.notEqual(code, 0, 'a past-EOF citation in docs/architecture/ passed — the walk is still scoped to one directory')
+      assert.match(output, /docs\/architecture\/README\.md/, 'the finding does not name the file it read')
+    } finally {
+      fs.writeFileSync(live, original)
+    }
+  })
 })
