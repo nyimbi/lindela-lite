@@ -20,6 +20,13 @@ const DEFAULT_POLICY = {
   // hazard and a community comment is a person exercising the right to be heard.
   // A deployment that wants them equal sets this to the same number.
   communityFeedbackDays: 180,
+  // ENH-74. An annotation is the same kind of object: free text a person typed
+  // about a place and a hazard, not field-mapped, so `redactPii` cannot reach
+  // inside it. `src/annotations.js` states the consequence in its own header —
+  // a deployment wiring the collection should give it a window of its own rather
+  // than fall through to the general one. Same default as community feedback,
+  // and separately settable, because a district may want one and not the other.
+  annotationDays: 180,
 }
 
 export function redactPii(record, config = {}) {
@@ -270,11 +277,34 @@ export function retentionWindowDays(policy) {
  * operational record is kept, `communityFeedbackDays` is how long a person's
  * own words are kept, and a deployment that never thought about the second was
  * keeping it forever.
+ *
+ * **A table, not a ternary.** This read `collection === 'community_feedback'`
+ * and nothing else, so the second collection of a person's free text — ENH-74's
+ * annotations — had no way to be named here without a second ternary beside the
+ * first, and the third would have been added the same way. `PERSONAL_WINDOW_KEYS`
+ * is the list; adding a collection to it is one line, and the comment above each
+ * key says which policy field it reads.
  */
+const PERSONAL_WINDOW_KEYS = Object.freeze({
+  community_feedback: 'communityFeedbackDays',
+  annotations: 'annotationDays',
+})
+
+/**
+ * Which policy field carries a collection's own window, or undefined.
+ *
+ * Exported because the refusal message names the fields it found unset, and a
+ * second copy of this mapping in the route would be a copy that drifts the day a
+ * third collection is added — the operator would be told about two windows when
+ * three exist.
+ */
+export function personalWindowKey(collection) {
+  return PERSONAL_WINDOW_KEYS[collection]
+}
+
 export function retentionWindowFor(policy, collection) {
-  const specific = collection === 'community_feedback'
-    ? policy?.communityFeedbackDays
-    : undefined
+  const key = PERSONAL_WINDOW_KEYS[collection]
+  const specific = key ? policy?.[key] : undefined
   const days = Number.isFinite(specific) && specific > 0 ? specific : policy?.retentionDays
   if (!Number.isFinite(days) || days <= 0) return null
   return days

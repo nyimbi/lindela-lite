@@ -289,6 +289,25 @@ export const SCHEMA = Object.freeze([
   // Declared, and deliberately **not** synced — see
   // `FEDERATION_PEERS_COLLECTION` above, which carries the reason.
   { key: FEDERATION_PEERS_COLLECTION },
+  // ENH-74. Annotations: a person's words attached to a record, threaded. The
+  // module (`src/annotations.js`) named this as its own requirement — it owns
+  // the record shape and does not edit the registry — and the pair is the point:
+  // `JsonStore.merge` keys strictly off COLLECTIONS, so an annotation written to
+  // a collection not listed here is dropped silently, while `emptyStore()` in
+  // schema.js needs the matching key or `read()` spreads a missing default and
+  // the first `store.annotations` access throws on a fresh file.
+  //
+  // Deliberately **not** a bitemporal collection in `BITEMPORAL_COLLECTIONS`:
+  // that set is versioned by `mergeById`'s in-place revision, and an annotation's
+  // edit is a *new record* linked by `supersedes`/`superseded_by`, which the
+  // module builds itself. Listing it there would write a second, competing
+  // history row for the same edit.
+  //
+  // It **is** syncable (nothing gives it a `NON_SYNCABLE_REASONS` entry): two
+  // replicas serving one district must show each other's conversation, and the
+  // merge is by id over immutable version rows, which is exactly what the
+  // federation path already does for append-only records.
+  { key: 'annotations' },
   // ENH-07. Quarantine homes are declared, not hand-named: one per
   // QUARANTINE_SOURCES entry, appended below.
 ].map((entry) => Object.freeze({ kind: 'records', ...entry })).concat(

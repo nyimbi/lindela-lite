@@ -52,6 +52,11 @@ export const READ_SCOPES = Object.freeze([
   ['/api/v1/field-outcomes', 'read:incidents'],
   ['/api/v1/chw', 'read:incidents'],
   ['/api/v1/community-feedback', 'read:incidents'],
+  // ENH-74. An annotation is a person's words attached to an incident-class
+  // record — the same class of object as community feedback, read by the same
+  // audience, so the same scope rather than one of its own that would make a
+  // thread unreadable to whoever can already read the record it annotates.
+  ['/api/v1/annotations', 'read:incidents'],
   ['/api/v1/reports', 'read:reports'],
   ['/api/v1/report-templates', 'read:reports'],
   ['/api/v1/report-schedules', 'read:reports'],
@@ -217,6 +222,12 @@ export const WRITE_SCOPES = Object.freeze([
   ['/api/v1/chw/reply', 'role:chw|write:incidents'],
   ['/api/v1/chw', 'write:incidents'],
   ['/api/v1/community-feedback', 'role:chw|write:incidents'],
+  // ENH-74. Writing an annotation is writing evidence about a record: the same
+  // privilege that reads the thread writes into it. A CHW is included for the
+  // reason `/chw/reply` includes one — a field worker who can answer an alert
+  // must be able to answer the question asked on it, and a thread only an
+  // operator can join is not a conversation.
+  ['/api/v1/annotations', 'role:chw|write:incidents'],
   ['/api/v1/service-assets', 'write:incidents'],
   // Field signals. A school attendance observation and a sensor reading are both
   // evidence someone was present somewhere — which is what makes them

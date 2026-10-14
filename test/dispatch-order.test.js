@@ -17,7 +17,7 @@
  *      dispatched at *two* points for exactly this reason — the sequence decides
  *      the answer.
  *   2. **Which side of the store read each family sits on.** Four families run
- *      before `store.read(readRequest)` and twenty-eight after, and that split is
+ *      before `store.read(readRequest)` and thirty-one after, and that split is
  *      a correctness property, not a tidiness one: `export.ndjson` streams and
  *      must not materialise the store (SCL-01), `/ready` probes with one scoped
  *      read, and the tile routes read no collection at all. A family that drifts
@@ -102,6 +102,7 @@ const DISPATCH_ORDER = Object.freeze([
   ['matchWorkflowRoute', 'post'],
   ['matchDistrictRoute', 'post'],
   ['matchAskRoute', 'post'],
+  ['matchAnnotationRoute', 'post'],
 ].map(Object.freeze))
 
 /**
@@ -156,6 +157,7 @@ const BINDINGS = Object.freeze([
   ['matchWorkflowRoute', 'handleWorkflowRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
   ['matchDistrictRoute', 'handleDistrictRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
   ['matchAskRoute', 'handleAskRoute', ['data', 'jsonResponse', 'req', 'res']],
+  ['matchAnnotationRoute', 'handleAnnotationRoute', ['data', 'jsonResponse', 'req', 'res', 'store', 'url']],
 ].map(Object.freeze))
 
 const serverSource = () => fs.readFileSync(SERVER, 'utf8')
@@ -269,7 +271,7 @@ function contextKeys() {
 describe('the dispatcher tries its families in a known order', () => {
   it('finds the families at all', () => {
     // A scan that matches nothing reports no diff and passes. This is the guard
-    // on the guard: the table has 33 entries (32 families, the catalogue twice),
+    // on the guard: the table has 34 entries (33 families, the catalogue twice),
     // and a table that lost them must fail here rather than certify an empty
     // dispatcher.
     const found = fromTable()
@@ -301,7 +303,7 @@ describe('the dispatcher tries its families in a known order', () => {
       'matchTilePackRoute', // arithmetic over a bbox; reads no collection
       'matchTileRoute', // the raster proxy; reads no collection
     ])
-    assert.equal(found.filter(([, p]) => p === 'post').length, 30)
+    assert.equal(found.filter(([, p]) => p === 'post').length, 31)
   })
 
   it('leaves no matcher orphaned — every family module is dispatched', () => {

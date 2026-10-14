@@ -352,6 +352,12 @@ export function emptyStore() {
     // ENH-80. The peer registry. Must match COLLECTIONS in store.js — see
     // record_versions above.
     federation_peers: [],
+    // ENH-74. Annotations. Must match COLLECTIONS in store.js — see
+    // record_versions above: an emptyStore key with no SCHEMA entry is
+    // harmless, but a SCHEMA entry with no key here means read() spreads a
+    // missing default over a fresh file and the first `store.annotations`
+    // access throws. The two are added together or not at all.
+    annotations: [],
   }
 }
 

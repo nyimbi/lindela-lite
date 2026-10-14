@@ -100,6 +100,16 @@ const ARRAY_IS_COMPLETE = new Map([
   ['/api/v1/data-gaps', 'one row per refused drift region and one per feed that is not arriving, ranked — bounded by the region registry and the source id list, not by the store'],
   ['/api/v1/kpi/snapshots', 'one row per quarter in the window the route names'],
   ['/api/v1/data-lineage', 'lineage edges for the records in the store; the whole graph is the answer'],
+  // ENH-74. Both are complete by construction, and the reason is checkable
+  // rather than asserted: neither handler applies a limit. A record's thread is
+  // every live annotation attached to it, and a version chain is every version
+  // of one annotation — a paged thread is not a thread, and a paged version
+  // chain cannot be read as a correction history. `summary` on the first and
+  // `count` on the second carry the size, so a caller still has the number.
+  // `test/annotations-route-module.test.js` drives both with more rows than the
+  // list route's page size and asserts every one comes back.
+  ['/api/v1/annotations/record/{id}', 'a record\'s whole conversation, with no limit applied — `summary` carries the counts'],
+  ['/api/v1/annotations/{id}/versions', 'the full version chain of one annotation, with no limit applied — `count` carries the size'],
 ])
 
 /** The five keys a paginated response carries. */

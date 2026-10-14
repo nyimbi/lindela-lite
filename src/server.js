@@ -35,6 +35,10 @@ import { runFederationSync } from './federation-peers.js'
 import { runDueReportSchedules } from './routes/reporting.js'
 import { assertSafeWebhookUrl } from './webhooks.js'
 import { createRequestRing } from './observability.js'
+// The retention set belongs to the route module that owns the operation; the
+// driver reads it rather than writing the same names out again. A re-export
+// binds nothing locally, so the driver's loop needs its own import.
+import { RETENTION_COLLECTIONS } from './routes/maintenance.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const publicDir = path.resolve(__dirname, '../public')
@@ -165,16 +169,23 @@ export async function reconcileUndeliveredDispatches(store, data, { now = new Da
  * A policy with no positive window purges nothing and says so in the heartbeat
  * rather than silently — the DAT-07 failure mode was a retention job that
  * reported success forever.
+ *
+ * The collection set is `RETENTION_COLLECTIONS`, imported from the route module
+ * rather than written out again here. It was a three-key object literal in this
+ * function and a three-element array 1,200 lines away in
+ * `src/routes/maintenance.js`, and the two disagreed once already (R-12): the
+ * route refused on the general window while this expired each collection's own.
+ * The test that caught it compared the two lists, which is a check standing in
+ * for a derivation — one list is the fix, and the failure mode it removes is the
+ * one nothing can detect, where one call site purges a collection and the other
+ * keeps it forever.
  */
 export async function applyScheduledRetention(store, data, { now = Date.now() } = {}) {
   const policy = await loadPolicy()
   const perCollection = {}
   const removals = {}
-  for (const [collection, records] of Object.entries({
-    field_reports: data.field_reports || [],
-    rapidpro_inbound_messages: data.rapidpro_inbound_messages || [],
-    community_feedback: data.community_feedback || [],
-  })) {
+  for (const collection of RETENTION_COLLECTIONS) {
+    const records = data[collection] || []
     const days = retentionWindowFor(policy, collection)
     if (days === null) {
       perCollection[collection] = { window_days: null, expired: 0, kept: records.length }

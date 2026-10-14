@@ -5,7 +5,7 @@ import path from 'node:path'
 import { describe, it } from 'node:test'
 
 import { JsonStore } from '../src/store.js'
-import { loadPolicy } from '../src/pii.js'
+import { loadPolicy, personalWindowKey } from '../src/pii.js'
 import {
   RETENTION_COLLECTIONS,
   applyRetentionForRequest,
@@ -59,6 +59,23 @@ const policy = (over = {}) => ({
   communityFeedbackDays: 180,
   ...over,
 })
+
+/**
+ * A config that leaves *every* collection without a window, derived rather than
+ * hand-listed.
+ *
+ * `RETENTION_COLLECTIONS` grows — `annotations` joined it under ENH-74 — and a
+ * test that spells out `{retentionDays: 0, communityFeedbackDays: 0}` is a
+ * policy where the new collection still has its default and therefore still has
+ * a window. The refusal would never fire and the test would report that the
+ * route refused nothing, which reads as a defect in the route. Every key the
+ * set names is zeroed here instead, so adding a collection cannot silently
+ * retire this case.
+ */
+const NO_WINDOW = {
+  retentionDays: 0,
+  ...Object.fromEntries(RETENTION_COLLECTIONS.map((c) => [personalWindowKey(c), 0]).filter(([k]) => k)),
+}
 
 /**
  * Run `fn` with the process policy set to `config`, the way a deployment sets it.
@@ -137,7 +154,7 @@ describe('ENH-60 the route and the driver agree about which window applies', () 
     // The condition the 400 was always about: nothing can be applied. Removing
     // the refusal would be the opposite defect — a route that reports success
     // over a policy that purges nothing, which is DAT-07.
-    const none = policy({ retentionDays: 0, communityFeedbackDays: 0 })
+    const none = policy(NO_WINDOW)
     await withStore(async (store) => {
       await store.merge({ community_feedback: [record('fb-old', 'community_feedback', 900)] })
       const data = await store.read()
@@ -176,7 +193,7 @@ describe('ENH-60 the route and the driver agree about which window applies', () 
 
       // Neither set: every collection has no rule, and each says so rather than
       // being skipped out of the response.
-      const none = await applyRetentionForRequest(store, data, policy({ retentionDays: 0, communityFeedbackDays: 0 }))
+      const none = await applyRetentionForRequest(store, data, policy(NO_WINDOW))
       assert.deepEqual(Object.keys(none).sort(), [...RETENTION_COLLECTIONS].sort())
       assert.ok(Object.values(none).every((c) => c.window_days === null),
         'a collection reported a window under a policy that has none')
@@ -229,7 +246,7 @@ describe('ENH-60 the route answers over HTTP the way the module does', () => {
 
   it('a policy with no window at all is still a 400 over HTTP', async () => {
     // The other side of the same boundary: the refusal must survive the fix.
-    await withPolicyEnv({ retentionDays: 0, communityFeedbackDays: 0 }, async () => {
+    await withPolicyEnv(NO_WINDOW, async () => {
       await withStore(async (store) => {
         const listener = createServer({ store }).listen(0)
         const base = `http://localhost:${listener.address().port}`

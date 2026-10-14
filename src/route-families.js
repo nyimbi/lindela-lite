@@ -74,6 +74,7 @@ import { matchChwRoute, handleChwRoute } from './routes/chw.js'
 import { matchWorkflowRoute, handleWorkflowRoute } from './routes/workflows.js'
 import { matchDistrictRoute, handleDistrictRoute } from './routes/districts.js'
 import { matchAskRoute, handleAskRoute } from './routes/ask.js'
+import { matchAnnotationRoute, handleAnnotationRoute } from './routes/annotations.js'
 
 export const ROUTE_FAMILIES = Object.freeze([
   // `/health` ("is this process running") and `/ready` ("can it serve a request
@@ -354,6 +355,20 @@ export const ROUTE_FAMILIES = Object.freeze([
     handle: handleAskRoute,
     method: true,
     deps: ['data', 'jsonResponse', 'req', 'res'],
+  },
+  // ENH-74. Annotation threads on a record — the collection and the routes the
+  // module asked for in its own header. Last, and the position is free rather
+  // than load-bearing: no family above matches an `/api/v1/annotations` path on
+  // any verb, which is checkable and was checked by running every matcher in
+  // this table against all four of the paths this one serves. It sits here
+  // because appending is the only placement that cannot reorder an existing
+  // family, and the recorded order in `test/dispatch-order.test.js` is what
+  // would have to be justified if it moved.
+  {
+    match: matchAnnotationRoute,
+    handle: handleAnnotationRoute,
+    method: true,
+    deps: ['data', 'jsonResponse', 'req', 'res', 'store', 'url'],
   },
 ])
 

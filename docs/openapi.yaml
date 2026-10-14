@@ -182,6 +182,179 @@ paths:
               schema: { type: object }
         '400':
           description: No `question` string in the body
+  /api/v1/annotations:
+    get:
+      summary: Annotation threads on a record
+      description: |
+        ENH-74. A page of annotations with the thread structure beside it. `thread`
+        is the depth-first walk carrying each annotation's `depth`, and `summary`
+        is the reply and author counts. Both are computed over the whole matched
+        set rather than over the page — a roll-up that described the page would
+        read as a count of the conversation and be a count of the first fifty.
+
+        `?record_id=` scopes the read to one record's thread. An annotation with
+        no record is a comment in a void, so the create route refuses one.
+      tags: [annotations]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: record_id
+          in: query
+          schema: { type: string }
+          description: Return only the annotations attached to this record
+      responses:
+        '200':
+          description: The page, the whole-set thread and the summary
+          content:
+            application/json:
+              schema: { type: object }
+    post:
+      summary: Annotate a record
+      description: |
+        Stores a person's words against a record, threaded when `parent_id` names
+        an existing annotation.
+
+        The author is the token's subject — the fingerprint `actorFor` derives —
+        and the body's own `actor`/`author` is read only when the request carries
+        no token subject. A client that could name its own author could attribute
+        its words to somebody else, and attribution is the whole of the provenance
+        claim.
+
+        Refusals are the module's own and arrive with their status: a `parent_id`
+        naming no annotation is a 404, and an empty body, a missing author or a
+        parent that would close a cycle is a 400. The record and the action log
+        land in one merge, so an outbox event cannot announce an annotation that
+        was never written.
+      tags: [annotations]
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [record_id, body]
+              properties:
+                record_id:
+                  type: string
+                record_collection:
+                  type: string
+                  description: Which collection the annotated record belongs to
+                parent_id:
+                  type: string
+                  description: The annotation this one replies to
+                body:
+                  type: string
+                client_annotation_id:
+                  type: string
+                  description: A client-minted id, recorded for deduplication
+      responses:
+        '201':
+          description: The stored annotation and the outbox event that carries it
+        '400':
+          description: An empty body, a missing author, an unknown record, or an edit that would close a cycle
+        '404':
+          description: The `parent_id` names no annotation
+  /api/v1/annotations/record/{id}:
+    get:
+      summary: One record's whole conversation
+      description: |
+        Every live annotation attached to the record, nested by `buildThread`,
+        with the summary counts. Live versions only: an edited annotation is one
+        row per version and the superseded text is readable at
+        `/api/v1/annotations/{id}/versions`.
+      tags: [annotations]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The `record_id` the annotations are attached to
+          schema: { type: string }
+      responses:
+        '200':
+          description: The nested thread, its live rows and its summary
+          content:
+            application/json:
+              schema: { type: object }
+  /api/v1/annotations/{id}:
+    patch:
+      summary: Edit an annotation, as a new version
+      description: |
+        An edit is a new version, not an overwrite. The current version is closed
+        and a new annotation is opened carrying the new text, `supersedes` naming
+        the version it replaced — both records land in one merge, so a reader can
+        never see the chain with a hole in it. The prior text survives verbatim.
+
+        An edit that changes `parent_id` walks the prospective parent's ancestor
+        chain and is refused if it meets the annotation being moved: `parent_id`
+        is a plain field, and a cycle makes `flattenThread` recurse forever, so
+        every read of the thread would hang.
+      tags: [annotations]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                body: { type: string }
+                parent_id: { type: string }
+      responses:
+        '200':
+          description: The new version and the one it superseded
+        '400':
+          description: An edit that would close a cycle, or an empty body
+        '404':
+          description: No annotation with that id
+        '409':
+          description: The annotation is retracted and cannot be edited
+    delete:
+      summary: Retract an annotation
+      description: |
+        Sets `retracted_at`/`retracted_by` and closes the valid interval. The body
+        is kept: ADR-007's soft delete applied to a person's words, so the thread
+        structure and the audit trail stay resolvable and a reply does not point
+        at a row that is gone.
+      tags: [annotations]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The retracted annotation
+        '404':
+          description: No annotation with that id
+  /api/v1/annotations/{id}/versions:
+    get:
+      summary: The version chain of an annotation
+      description: |
+        Every version of the annotation, oldest first, linked by
+        `supersedes`/`superseded_by`. The chain is the answer rather than a
+        pointer to it: a reader checking what a claim said before it was corrected
+        needs the text, not a list of ids to fetch.
+      tags: [annotations]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The version chain, with `count`
+          content:
+            application/json:
+              schema: { type: object }
+        '404':
+          description: No annotation with that id
   /api/v1/explain/{id}:
     get:
       summary: Where a computed number came from

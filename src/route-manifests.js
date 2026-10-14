@@ -51,6 +51,19 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/alert-outcomes/tally': Object.freeze(["alert_events", "alert_outcomes"]),
   'GET /api/v1/alert-rules': Object.freeze(["alert_rules"]),
   'GET /api/v1/alert-rules/:id': Object.freeze(["alert_rules"]),
+  // ENH-74. Six routes over one collection. Every one of them reads only
+  // `annotations`: the writes carry the record and its action log in a single
+  // `emit` merge, and `emit`'s own `events_outbox` lookup happens inside
+  // `withLock` on a locked read of that one collection, which is not the
+  // request's read and cannot be narrowed by a manifest here. `record/:id` and
+  // `:id/versions` are declared explicitly rather than left to their `:id`
+  // sibling — the lookup is segment-exact, so neither is covered by it.
+  'GET /api/v1/annotations': Object.freeze(["annotations"]),
+  'GET /api/v1/annotations/record/:id': Object.freeze(["annotations"]),
+  'GET /api/v1/annotations/:id/versions': Object.freeze(["annotations"]),
+  'POST /api/v1/annotations': Object.freeze(["annotations"]),
+  'PATCH /api/v1/annotations/:id': Object.freeze(["annotations"]),
+  'DELETE /api/v1/annotations/:id': Object.freeze(["annotations"]),
   'GET /api/v1/audit/head': Object.freeze(["action_logs"]),
   'GET /api/v1/audit/verify': Object.freeze(["action_logs"]),
   'GET /api/v1/calibration/by-region': Object.freeze(["region_trust"]),

@@ -40,19 +40,28 @@
  */
 
 import { refreshAnalytics } from '../analytics.js'
-import { applyRetention, loadPolicy, retentionWindowFor } from '../pii.js'
+import { applyRetention, loadPolicy, personalWindowKey, retentionWindowFor } from '../pii.js'
 import { logger } from '../observability.js'
 
 /**
  * The collections retention applies to, and the window each is measured by.
  *
  * Named once, here, because the route and the driver must agree about the set.
- * `community_feedback` is last and carries a window of its own — R-12's point
- * was that a person's words are not an operational record, and being the only
- * collection without a rule was what made its omission an oversight rather than
- * a decision.
+ * `community_feedback` carries a window of its own — R-12's point was that a
+ * person's words are not an operational record, and being the only collection
+ * without a rule was what made its omission an oversight rather than a decision.
+ * `annotations` is the second collection of a person's own free text (ENH-74),
+ * and it is here for the same reason.
+ *
+ * The driver imports this list rather than repeating it. It used to write the
+ * same three names out as an object literal 1,200 lines away in `src/server.js`,
+ * which is the repo's signature defect with the worst possible consequence: a
+ * collection named in one list and not the other is purged by one call site and
+ * kept forever by the other, and nothing fails. `test/maintenance-route-module
+ * .test.js` asserted the two agreed, which is a test standing in for a
+ * derivation that removes the drift rather than detecting it.
  */
-export const RETENTION_COLLECTIONS = Object.freeze(['field_reports', 'rapidpro_inbound_messages', 'community_feedback'])
+export const RETENTION_COLLECTIONS = Object.freeze(['field_reports', 'rapidpro_inbound_messages', 'community_feedback', 'annotations'])
 
 /** The default deadline for `POST /api/v1/demo/seed`'s live-ingestion half. */
 export const DEMO_SEED_BUDGET_MS = 45_000
@@ -132,9 +141,15 @@ export async function handleMaintenanceRoute(route, { store, data, req, res, url
     // a 400 here told the operator the opposite of the truth.
     const anyWindow = Object.values(perCollection).some((c) => c.window_days !== null)
     if (!anyWindow) {
+      // Every field the policy could have set, named with its value, so the
+      // operator sees which knob is missing rather than a single window that was
+      // never the only one. Built from the policy's own keys: a hand-typed list
+      // here is how `annotationDays` would go unmentioned the day it is added.
+      const windows = RETENTION_COLLECTIONS
+        .map((collection) => `${personalWindowKey(collection) || 'retentionDays'} is ${JSON.stringify(retentionWindowFor(policy, collection))}`)
       jsonResponse(res, 400, {
         success: false,
-        error: `no retention window is configured (retentionDays is ${JSON.stringify(policy.retentionDays)}, communityFeedbackDays is ${JSON.stringify(policy.communityFeedbackDays)}); set one in data/pii-policy.json or LINDELA_LITE_PII_POLICY. Nothing was deleted.`,
+        error: `no retention window is configured (${windows.join(', ')}); set one in data/pii-policy.json or LINDELA_LITE_PII_POLICY. Nothing was deleted.`,
       })
       return true
     }
