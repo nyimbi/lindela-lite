@@ -31,6 +31,7 @@ import { COLLECTIONS, JsonStore } from '../src/store.js'
 import { emptyStore } from '../src/schema.js'
 import { quarantineCollectionName } from '../src/assertions.js'
 import { FRESHNESS_VERDICTS } from '../src/freshness.js'
+import { payloadHashFor } from '../src/provenance.js'
 
 /** A connector that returns `records` and can be told to throw. */
 const fake = (id, records, extra = {}) => ({
@@ -178,6 +179,61 @@ describe('provenance reaches the records', () => {
     for (const record of data.hazard_events) {
       assert.equal(record._source_run_id, runId, 'a record with no run cannot be attributed')
     }
+  })
+
+  it('carries the provenance envelope onto the record, not only onto the lineage row', async () => {
+    // ENH-15 built the envelopes and ENH-51 reads them off the *record*: the
+    // reconciliation ledger traces on `record._provenance`, and its four
+    // outcomes all sit behind that trace. Until this stamp existed the
+    // envelopes reached `data_lineage` and stopped there, so every derived
+    // number reconciled to `cannot_trace: no_provenance` — a refusal that
+    // aggregates into something indistinguishable from a clean ledger.
+    //
+    // Asserted on the record the store actually holds, not on the run's return
+    // value: a stamp applied to the in-memory rows and dropped on the way to
+    // disk would pass a check on the wrong side of the write.
+    const store = freshStore()
+    const connectors = { gdacs: fake('gdacs', [hazard(62)]) }
+    const result = await runIngestion(store, { sources: ['gdacs'] }, { connectors })
+    const data = await store.read()
+    const runId = result.source_runs[0].id
+    const record = data.hazard_events.find((row) => row.id === 'h-62')
+    assert.ok(record, 'the fixture record must have been published')
+    assert.ok(record._provenance, 'a number with no envelope reconciles to cannot_trace')
+    assert.equal(record._provenance.source_run_id, runId, 'the envelope must name the run that produced it')
+    assert.ok(record._provenance.transform_version, 'and the transform, which is the half a run id cannot answer')
+  })
+
+  it('gives each record its own envelope rather than one shared object', async () => {
+    // The alignment failure. `runRecords` is a flatMap over the collections and
+    // the stamping loop walks the same collections, so an index-based stamp is
+    // correct today and silently wrong the moment either walk is reordered —
+    // and wrong attribution is worse than none, because it is checkable and it
+    // passes. Two records must therefore carry two envelopes naming two
+    // upstream ids, not two references to one.
+    const store = freshStore()
+    const connectors = { gdacs: fake('gdacs', [hazard(63), hazard(64)]) }
+    await runIngestion(store, { sources: ['gdacs'] }, { connectors })
+    const data = await store.read()
+    const [first, second] = ['h-63', 'h-64'].map((id) => data.hazard_events.find((row) => row.id === id))
+    assert.notEqual(first._provenance, second._provenance, 'two records sharing one envelope is an index bug')
+    assert.notEqual(first._provenance.upstream_id, second._provenance.upstream_id,
+      'each envelope must describe its own record')
+  })
+
+  it('does not let the envelope change the hash the record is deduplicated on', async () => {
+    // `payloadHashFor` strips `_provenance` before hashing, so a record's hash
+    // must be the same whether or not the stamp has landed. If it were not,
+    // `mergeById` would see a corrected record on every re-ingest and the
+    // history would fill with revisions whose only difference is the envelope.
+    const store = freshStore()
+    const connectors = { gdacs: fake('gdacs', [hazard(65)]) }
+    await runIngestion(store, { sources: ['gdacs'] }, { connectors })
+    const data = await store.read()
+    const record = data.hazard_events.find((row) => row.id === 'h-65')
+    const { _provenance, ...withoutEnvelope } = record
+    assert.equal(payloadHashFor(record), payloadHashFor(withoutEnvelope),
+      'the envelope must not be part of the hashed payload')
   })
 
   it('writes one lineage row per source run, about that run', async () => {

@@ -382,6 +382,16 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     // afterwards from whatever survived. `transform_version` comes from the
     // hashing of the code that did the transforming, so editing a connector's
     // mapping changes the version it stamps.
+    //
+    // The envelopes are built over `output` *after* the assertions have run, and
+    // that ordering is the whole reason this is not one line earlier. A batch
+    // that fails an assertion is quarantined: `assertionReport.published` holds
+    // the surviving rows and the rest move to `quarantine_*`. Building over the
+    // pre-assertion `output` would align the envelopes against rows that are
+    // about to be split apart, and the survivors would then carry the envelope
+    // of whichever record happened to sit at the same index — an attribution
+    // that is not merely absent but wrong, which is worse than no attribution at
+    // all because it is checkable and passes.
     const runRecords = OUTPUT_COLLECTIONS.flatMap((key) => output[key] || [])
     const retrievalUrl = retrieval[0]?.url || null
     provenance = buildProvenance({
@@ -391,6 +401,14 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
       retrieval: { url: retrievalUrl, retrieved_at: startedAt },
       transform: connector.transform || connector.ingest || null,
     })
+    // Index the envelopes by record identity rather than by position.
+    //
+    // `runRecords` is a flatMap over the collections, and the stamping loop
+    // below walks those same collections in the same order, so the two are
+    // aligned today. Keying on the record object instead of a running counter
+    // means they stay aligned if either walk is ever reordered — and it is the
+    // alignment, not the envelopes, that nothing would notice breaking.
+    const envelopeByRecord = new Map(runRecords.map((record, index) => [record, provenance[index]]))
 
     // ENH-07. Assertions run before anything is published. A batch that fails
     // them is quarantined rather than merged, and rather than reported as zero:
@@ -432,6 +450,21 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
         // source run rather than nine rows describing all of them.
         record._source_run_id = runId
         record._source = source
+        // ENH-15 / ENH-51. The envelope itself, which is what makes a published
+        // number reconcilable. `_source_run_id` answers "which run wrote this
+        // row"; `_provenance` answers "which run produced this *number*, from
+        // what, under which transform" — and `src/reconciliation.js` traces on
+        // the second. Without it every derived number reconciles to
+        // `cannot_trace: no_provenance`, which is a refusal that reads exactly
+        // like a clean ledger once it is aggregated.
+        //
+        // Stamped after `payload_hash` deliberately. `payloadHashFor` strips
+        // `_provenance` before hashing, so the two orders agree for a record
+        // that carries its hash; but a connector that supplied one itself is
+        // never re-hashed here, and stamping first would leave the two paths
+        // hashing different preimages.
+        const envelope = envelopeByRecord.get(record)
+        if (envelope) record._provenance = envelope
       }
       thisSourceRecords[key] = records
       merged[key].push(...records)
