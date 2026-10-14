@@ -200,9 +200,22 @@ export function buildStatus({ root = process.cwd(), write = true } = {}) {
     }
     // A module named in the evidence that nothing outside test/ imports is the
     // "built, tested, called by nothing" shape — measured here, not asserted.
+    //
+    // The pattern used to be `[\w-]+\.js$`, one directory level, so every nested
+    // module was skipped — 61 of them under `src/` alone. `src/analytics/ensemble.js`
+    // is evidence for ENH-21 and has no production caller, and this check could
+    // not see it: a hand-typed pattern standing for a discoverable set, in the
+    // one place whose whole job is to notice that. Nested modules are now in
+    // jurisdiction, and `.+` rather than `[\w-]+` admits the `/`.
+    // A module can be cited more than once (a `path:line` per interesting site),
+    // and it is one finding however many times it is named — the same file listed
+    // twice reads as two dead modules.
+    const seenUncalled = new Set()
     for (const ref of i.evidence) {
       const file = ref.replace(/:\d+(-\d+)?$/, '')
-      if (/^(src|public\/shared)\/[\w-]+\.js$/.test(file) && callers(file, root).length === 0) {
+      if (seenUncalled.has(file)) continue
+      if (/^(src|public\/shared)\/.+\.js$/.test(file) && callers(file, root).length === 0) {
+        seenUncalled.add(file)
         uncalled.push(`${i.id} \`${file}\``)
       }
     }

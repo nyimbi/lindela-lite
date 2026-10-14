@@ -75,7 +75,7 @@ this file is generated; a claim that cannot be checked is not written. What the
 current tree says:
 
 - **30 items**, each with evidence and a status.
-- **0 broken references** among the 176 evidence paths and guard names.
+- **0 broken references** among the 172 evidence paths and guard names.
 - **0 modules named here with no production caller.**
 - **0 items naming no guard test.**
 

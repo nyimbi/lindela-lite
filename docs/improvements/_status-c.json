@@ -88,15 +88,11 @@
       "status": "shipped",
       "detail": "Shipped as `public/shared/viz-verify.js`. `pairForecasts` joins 54 `precipitation_forecast` records against flattened archive dailies on region-day; `reliability` and `reliabilityDiagram` (`public/shared/viz-verify.js:294`) render the result. **The store holds zero archive records, so all 54 pairs are `pending` (28) or `no_outcome` (26) and none is verified.** The console renders 'Not yet measured' with the per-status counts, why the gap is missing outcomes rather than a good result, and the event definition it will use — and draws no diagram. An honest empty state is the deliverable here; a chart of invented data would not be. Guarded by `test/viz-verify.test.js`.",
       "evidence": [
-        "src/analytics/ensemble.js:1",
-        "src/analytics/ensemble.js:49",
-        "src/connectors/open-meteo.js:49",
-        "src/connectors/glofas.js:56",
-        "test/lite.test.js:924",
-        "public/workflow/ops.js:43"
+        "public/shared/viz-verify.js",
+        "public/workflow/wire-verify.js"
       ],
       "guarded_by": "test/viz-verify.test.js",
-      "note": "public/shared/viz-verify.js. pairForecasts joins 54 precipitation_forecast records against flattened archive dailies on region-day; reliability and reliabilityDiagram render the result. **The store holds zero archive records, so all 54 pairs are `pending` (28) or `no_outcome` (26) and none is verified.** The console renders 'Not yet measured' with the per-status counts, why the gap is missing outcomes rather than a good result, and the event definition it will use — and draws no diagram. An honest empty state is the deliverable here; a chart of invented data would not be."
+      "note": "public/shared/viz-verify.js. pairForecasts joins 54 precipitation_forecast records against flattened archive dailies on region-day; reliability and reliabilityDiagram render the result. **The store holds zero archive records, so all 54 pairs are `pending` (28) or `no_outcome` (26) and none is verified.** The console renders 'Not yet measured' with the per-status counts, why the gap is missing outcomes rather than a good result, and the event definition it will use — and draws no diagram. An honest empty state is the deliverable here; a chart of invented data would not be. `src/analytics/ensemble.js` is not part of this item and is not cited as such: it was the alternative route to the same chart and it is unreachable — `spreadSkillIndex` needs `ensemble_p90` and non-empty `ensemble_members`, and both forecast connectors write `ensemble_members: []`, so no record can satisfy it. That is recorded as a defect (`docs/improvements/defects.md`) and deleting or wiring it is a separate call; it is named here so the omission is a decision rather than an oversight."
     },
     {
       "id": "ENH-22",
