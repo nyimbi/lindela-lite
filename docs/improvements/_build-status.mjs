@@ -48,20 +48,27 @@ export function verifyRef(ref, root) {
  * reports lazily-loaded modules as uncalled. `.` is passed explicitly: with a
  * piped stdin and no path, rg reads stdin instead of the tree.
  *
- * The specifier is matched whole — an optional directory prefix, then the stem,
- * then the closing quote — and that anchoring is load-bearing. The pattern used
- * to be `[^'"]*` immediately followed by the stem, which lets the stem match the
- * *tail* of a longer name:
- * `source-agreement.js` contains `agreement.js`, `basemap-tiles.js` contains
- * `tiles.js`, `org-units.js` contains `units.js`. Six modules were affected, and
- * the direction of the error is the one that hides findings — every one of them
- * was reported as having a production caller it does not have, so the "Built,
- * tested, called by nothing" section could not fire for them. A scanner that
- * over-reports callers reads as a clean tree.
+ * A caller is a file whose specifier **resolves to this module**, not one whose
+ * specifier happens to end in the same basename. The pattern used to be built
+ * from the stem alone, and that produced two kinds of false positive with the
+ * same failure direction — over-reporting callers, which hides the "Built,
+ * tested, called by nothing" finding the section exists to raise:
+ *
+ *   - `[^'"]*` immediately before the stem let it match the *tail* of a longer
+ *     name: `source-agreement.js` counted for `agreement.js`,
+ *     `basemap-tiles.js` for `tiles.js`, `org-units.js` for `units.js`.
+ *   - Anchoring the prefix fixed that but not the second: the stem still matched
+ *     a *different file with the same basename*. `src/routes/upload.js` and
+ *     `src/upload.js` are different modules, and so are `src/forms.js` and
+ *     `public/shared/forms.js`; 44 callers were reported that way.
+ *
+ * So the specifier is captured and **resolved** — relative to the importing file,
+ * or as a public-root path — and the candidate is a caller only when the resolved
+ * path is this module.
  */
 export function callers(modulePath, root) {
   const stem = path.basename(modulePath, path.extname(modulePath)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const pattern = new RegExp(`(from|import\\(|lazy\\(|require\\()\\s*['"](?:[^'"]*/)?${stem}(\\.js)?['"]`)
+  const pattern = new RegExp(`(?:from|import\\(|lazy\\(|require\\()\\s*['"]([^'"]*)${stem}(\\.js)?['"]`, 'g')
   const found = []
   for (const file of walkFiles(root)) {
     if (file === modulePath || file.startsWith('test/')) continue
@@ -79,9 +86,38 @@ export function callers(modulePath, root) {
       if (error.code === 'ENOENT') continue
       throw error
     }
-    if (pattern.test(text)) found.push(file)
+    // `lastIndex` is state on a `/g` regex; reset it so a file is not skipped
+    // because a previous iteration left the cursor mid-string.
+    pattern.lastIndex = 0
+    for (const match of text.matchAll(pattern)) {
+      if (resolvesTo(match[1], stem, file, modulePath)) { found.push(file); break }
+    }
   }
   return found
+}
+
+/**
+ * Does a specifier resolve to the module being asked about?
+ *
+ * The specifier's directory part is the capture; the basename is `stem`. A
+ * relative specifier resolves against the importing file's directory, which is
+ * what makes `./forms.js` from `src/routes/chw.js` a different module than
+ * `./forms.js` from `src/sms-grammar.js`. A root-absolute specifier resolves
+ * against the served root, so `/shared/forms.js` names `public/shared/forms.js`
+ * and never `src/forms.js`. Anything else — a bare package name — cannot name a
+ * file in this tree.
+ *
+ * `public/` is the served root, so a `/…` specifier resolves there from any
+ * file; `lazy('/shared/x.js')` in `public/app.js` is the case that matters,
+ * since the helper names the file as a string the browser resolves.
+ */
+function resolvesTo(dirPart, stem, importer, modulePath) {
+  const specifier = `${dirPart}${stem}.js`
+  let resolved
+  if (specifier.startsWith('/')) resolved = path.join('public', specifier)
+  else if (specifier.startsWith('.')) resolved = path.join(path.dirname(importer), specifier)
+  else return false
+  return path.normalize(resolved) === path.normalize(modulePath)
 }
 
 /**

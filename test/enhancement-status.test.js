@@ -75,6 +75,18 @@ describe('enhancement status', () => {
       'scanner found no caller for source-agreement.js — the derived route imports it')
     assert.ok(!callers('src/agreement.js', ROOT).includes('src/routes/derived.js'),
       'scanner matched source-agreement.js against the stem agreement.js — the specifier is not anchored')
+    // The other root cause, which anchoring does not fix: two different files
+    // that share a basename. `src/upload.js` and `src/routes/upload.js` are
+    // separate modules, and each is imported by the other's neighbour with an
+    // ordinary relative specifier — `src/routes/upload.js` writes `../upload.js`
+    // and `src/route-families.js` writes `./routes/upload.js`. Both are anchored
+    // correctly and both end in `upload.js`, so only resolving the specifier
+    // against the importing file's directory tells them apart. Stated as the set
+    // each module has, because that is the only thing that separates them.
+    assert.deepEqual(callers('src/upload.js', ROOT).sort(), ['src/routes/upload.js'],
+      'the scanner confused src/upload.js with src/routes/upload.js')
+    assert.deepEqual(callers('src/routes/upload.js', ROOT).sort(), ['src/route-families.js'],
+      'the scanner confused src/routes/upload.js with src/upload.js')
   })
 
   it('a reference past the end of its file is rejected', () => {
