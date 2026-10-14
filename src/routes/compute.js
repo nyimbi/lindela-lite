@@ -1,14 +1,20 @@
 /**
  * ENH-60 — the compute family, out of the dispatcher.
  *
- * Four routes that run one of the platform's models over the request's own
+ * Seven routes that run one of the platform's models over the request's own
  * arguments and the store's snapshot, and answer with the result:
  *
  *   - `flood-depth` runs the terrain model at a point or over a box;
  *   - `routing/plan` runs the road-network model between two service assets;
  *   - `analytics/bias-correct` runs the downscaling correction over supplied
  *     observations and stations;
- *   - `alerts/evaluate` runs the rule engine and persists what crossed.
+ *   - `alerts/evaluate` runs the rule engine and persists what crossed;
+ *   - `anticipatory/evaluate` runs the trigger engine over a declared trigger
+ *     set and a forecast, and records what fired;
+ *   - `prepositioning/plan` runs the stochastic allocator over the store's road
+ *     network and the caller's staging sites;
+ *   - `scenario-comparisons` differences two or more supplied scenarios and
+ *     reports whether the data supports ranking them.
  *
  * They are one family because they share a failure mode rather than a subject:
  * each is a computation whose *inputs* are the thing most likely to be wrong,
@@ -33,6 +39,13 @@
  *   - **A null is not a zero.** A missing `lat` is refused rather than read as
  *     0, and a depth the terrain model cannot supply is `data_available: false`
  *     rather than a fabricated 0 m.
+ *   - **A refusal is a 200 with a named reason, not a 4xx.** The three decision
+ *     routes below carry a refusal vocabulary of their own — the model refusing
+ *     for a region, a budget that cannot allocate, two scenarios whose intervals
+ *     overlap — and every one of those is an *answer* the caller asked for.
+ *     Only a malformed request (a missing trigger, an unreadable forecast) is a
+ *     400. The distinction is the whole reason the modules return `refusal`
+ *     beside their result rather than throwing.
  *
  * `evaluateAndPersistAlerts` is injected rather than imported: it is the
  * driver's own entry point and lives in `server.js`, so importing it here would
@@ -43,6 +56,11 @@ import { FLOOD_DEPTH_BANDS, floodDepthBand } from '../../public/shared/flood-ban
 import { planDelivery } from '../routing.js'
 import { depthGrid, depthProfile, terrainContext } from '../flood-depth.js'
 import { biasCorrectClimate } from '../analytics/downscaling.js'
+import { actionEvent, actionLogEntry, evaluateTriggerSet, normalizeAnticipatoryTrigger } from '../anticipatory-action.js'
+import { planPrepositioning } from '../prepositioning.js'
+import { compareScenarios } from '../scenario-compare.js'
+import { actorFor } from '../audit-chain.js'
+import { emit } from '../outbox.js'
 import { readRequestJson } from '../utils.js'
 
 /**
@@ -63,6 +81,18 @@ export function matchComputeRoute(pathname, method = 'GET') {
   if (method === 'POST') {
     if (pathname === '/api/v1/routing/plan') return { kind: 'routing-plan' }
     if (pathname === '/api/v1/analytics/bias-correct') return { kind: 'bias-correct' }
+    // ENH-52. The trigger engine over a declared set and one forecast. POST
+    // because the trigger set is the request's, not the store's: a caller
+    // evaluates the protocols it is proposing before any of them are saved.
+    if (pathname === '/api/v1/anticipatory/evaluate') return { kind: 'anticipatory-evaluate' }
+    // ENH-53. The allocator, over the store's road network and the caller's
+    // sites. POST for the same reason `routing/plan` is: the sites and the
+    // budget are the question.
+    if (pathname === '/api/v1/prepositioning/plan') return { kind: 'prepositioning-plan' }
+    // ENH-55. Two or more scenarios, differenced. POST because a comparison is
+    // over scenarios the caller is holding, and the same scenarios are the
+    // request rather than a stored collection.
+    if (pathname === '/api/v1/scenario-comparisons') return { kind: 'scenario-compare' }
   }
   return null
 }
@@ -347,6 +377,97 @@ export async function handleComputeRoute(route, {
 
   if (kind === 'alerts-evaluate') {
     await handleAlertEvaluation(store, data, req, res, jsonResponse, evaluateAndPersistAlerts)
+    return true
+  }
+
+  if (kind === 'anticipatory-evaluate') {
+    const body = await readRequestJson(req)
+    const declared = body.triggers
+    if (!Array.isArray(declared)) {
+      jsonResponse(res, 400, {
+        success: false,
+        error: 'triggers is required and must be an array: an empty set evaluates nothing, and a missing one is a typo rather than a deployment with no triggers',
+      })
+      return true
+    }
+    // Declared triggers are normalised before any of them is evaluated, so a
+    // trigger that could never fire is a 400 naming the field rather than a
+    // verdict sitting in the results that reads like one that did not cross.
+    const triggers = declared.map((input) => normalizeAnticipatoryTrigger(input))
+    const forecast = body.forecast || {}
+    const firedCrossings = Array.isArray(body.fired_crossings) ? body.fired_crossings : []
+    const { verdicts, firedCrossings: nowFired } = evaluateTriggerSet(triggers, forecast, { firedCrossings })
+
+    // Only what fired is written. A trigger that did not cross wrote nothing,
+    // which is the same rule the protocol engine follows: the log shows actions,
+    // not heartbeats.
+    const fired = verdicts.filter((verdict) => verdict.fired)
+    if (fired.length) {
+      const { actor } = actorFor(body.actor ?? req.__auth?.subject ?? null)
+      const logs = fired.map((verdict) => actionLogEntry(verdict, actor))
+      await store.merge({ action_logs: logs })
+      // The event is emitted after the merge, in a counted try/catch, exactly
+      // like every other write path: the state is already true, so a missing
+      // notification is a gap to count rather than a reason to abandon a record
+      // the operator has already been told about.
+      for (const verdict of fired) {
+        try {
+          await emit(store, actionEvent(verdict).event, actionEvent(verdict).payload)
+        } catch {
+          // The action is recorded; no subscriber was told. The verdict travels
+          // in the response either way, so this is not a silent loss.
+        }
+      }
+    }
+
+    jsonResponse(res, 200, {
+      success: true,
+      data: {
+        verdicts,
+        fired_crossings: nowFired,
+        fired_count: fired.length,
+        evaluated_count: verdicts.length,
+        // Named rather than left to the caller to count: a run in which every
+        // trigger refused and one in which none crossed both report `fired: 0`,
+        // and the two are different facts about the deployment.
+        refused_count: verdicts.filter((verdict) => verdict.refusal).length,
+        basis: 'each trigger is checked against its model card and its funding window before its threshold, so a trigger that fires on a refusal is reported as the model\'s refusal rather than as a crossing',
+      },
+    })
+    return true
+  }
+
+  if (kind === 'prepositioning-plan') {
+    const body = await readRequestJson(req)
+    const plan = planPrepositioning({
+      demandSites: body.demand_sites || [],
+      stagingSites: body.staging_sites || [],
+      budget: body.budget ?? null,
+      data,
+      scenarios: body.scenarios || null,
+      seed: Number.isFinite(body.seed) ? Number(body.seed) : undefined,
+      draws: Number.isFinite(body.draws) ? Number(body.draws) : undefined,
+      steps: Number.isFinite(body.steps) ? Number(body.steps) : undefined,
+    })
+    // A refusal is a 200. The allocator's refusals are all statements about the
+    // question — no budget, no staging site, a road that carries no access level
+    // — and each is an answer to a request that was well-formed. Only the
+    // model's own contract decides, and it already decided.
+    jsonResponse(res, 200, { success: true, data: plan })
+    return true
+  }
+
+  if (kind === 'scenario-compare') {
+    const body = await readRequestJson(req)
+    const comparison = compareScenarios({
+      scenarios: body.scenarios || [],
+      region: body.region ?? null,
+      window: body.window ?? null,
+      metric: body.metric ?? null,
+      direction: body.direction,
+      level: Number.isFinite(body.level) ? Number(body.level) : undefined,
+    })
+    jsonResponse(res, 200, { success: true, data: comparison })
     return true
   }
 

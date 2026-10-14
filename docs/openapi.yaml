@@ -339,6 +339,83 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListResponse'
+  /api/v1/anticipatory/evaluate:
+    post:
+      summary: Evaluate a declared anticipatory-action trigger set against one forecast
+      operationId: postanticipatory_evaluate
+      description: |
+        A forecast crossing a declared threshold fires a pre-agreed action inside
+        a funding window, with the trigger, the crossing and the action recorded.
+
+        Two things are checked before the threshold, and both are refusals rather
+        than warnings. The model must not refuse for the region — its own refusal
+        or a missed floor is returned as-is, so the operator reads the model's
+        sentence rather than a comparison against a number nobody computed. The
+        crossing must fall inside the funding window, checked first because `NaN`
+        compares false in both directions and an unreadable bound would otherwise
+        fall through to the fire branch.
+
+        A refusal is a `200` carrying `refusal` and `reason`: it is an answer
+        about the forecast, not a malformed request. A `400` names a trigger that
+        could not be declared at all. Only a firing writes — one `action_logs`
+        entry and one outbox event per crossing, so re-evaluating the same
+        forecast is idempotent on the crossing id.
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+        '400':
+          description: A trigger that could not be declared, named by field
+  /api/v1/prepositioning/plan:
+    post:
+      summary: Plan where to stage stock to minimise expected unmet demand
+      operationId: postprepositioning_plan
+      description: |
+        A stochastic allocation over the forecast distribution the platform
+        already carries, against the road network it already scores — not a point
+        estimate.
+
+        Transport is a reliability rather than a distance: a road the flood has
+        cut delivers nothing (`route_reliability: 0`), and an optimiser that
+        treats it as a slow road stages stock behind a severed route. Every
+        refusal — no budget, no staging site, a demand site with no coordinate,
+        a road carrying no access level — is a `200` with a named `refusal`,
+        because each is an answer about the question rather than a bad request.
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+  /api/v1/scenario-comparisons:
+    post:
+      summary: Compare two or more scenarios over the same region and window
+      operationId: postscenario-comparisons
+      description: |
+        Each scenario carries its own uncertainty, and the comparison differences
+        the intervals rather than the point estimates: two numbers compared
+        without their intervals is a comparison of two draws. A pair whose
+        intervals overlap is reported as an unresolved order, not resolved by the
+        means.
+
+        Nothing is read from the store and nothing is written. A comparison that
+        cannot be made — fewer than two scenarios, an unnamed or duplicated
+        scenario, scenarios over different regions — is a `200` carrying
+        `refusal` and `reason`.
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
   /api/v1/chw/reply:
     post:
       summary: Record a community health worker reply to an alert

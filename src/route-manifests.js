@@ -285,6 +285,27 @@ export const WIDE_ROUTES = Object.freeze([
   'POST /api/v1/alert-rules',
   'POST /api/v1/alerts/evaluate',
   'POST /api/v1/analytics/bias-correct',
+  // ENH-52. Wide, and it has to be. The compute family's measured closure is
+  // `alert_rules` and `data_quality` — what `handleAlertEvaluation` reads — and
+  // the collector reads that closure off the *route module's* source, so a
+  // handler that delegates to an imported model (`planPrepositioning`,
+  // `evaluateTriggerSet`) contributes nothing to it. A manifest written from
+  // that closure would hand this route a store with no `service_assets` and no
+  // `hazard_events`, and the allocator would answer every plan from an empty
+  // road network — a confident plan over a network it never saw. Wide is the
+  // safe direction and it is also the honest one: the set is the model's, not
+  // the route's.
+  'POST /api/v1/anticipatory/evaluate',
+  // ENH-53. Reads `service_assets` and `hazard_events` through
+  // `computeRoadAccess`, which is three calls deep from this handler. Same
+  // reasoning as above.
+  'POST /api/v1/prepositioning/plan',
+  // ENH-55. Reads nothing and writes nothing — a pure function of its body — and
+  // is wide rather than declared empty, because `ROUTE_MANIFESTS` has no way to
+  // say "reads nothing" without also being the shape of a mistake: an empty
+  // manifest hands the handler a store with no collections in it, and
+  // `test/route-manifests.test.js` refuses one for exactly that reason.
+  'POST /api/v1/scenario-comparisons',
   'POST /api/v1/chw/reply',
   'POST /api/v1/chw/report',
   'POST /api/v1/community-feedback',

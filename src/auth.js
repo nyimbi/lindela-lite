@@ -309,6 +309,24 @@ export const WRITE_SCOPES = Object.freeze([
   // otherwise close this to every scoped token, which is what an unmapped POST
   // gets — and the console holds `*`, so it is unaffected.
   ['/api/v1/ask', 'admin:analytics'],
+  // ENH-52. The trigger engine *records* what fired — an `action_logs` row per
+  // firing and an outbox event per firing — so it is a write, not a
+  // computation the caller reads and discards. `admin:alerts` is the scope that
+  // already writes `trigger-protocols`, which is the same pre-authorisation
+  // decision reached by a different engine: a token that may sign off a
+  // protocol is the token that may fire one.
+  ['/api/v1/anticipatory', 'admin:alerts'],
+  // ENH-53. A pure computation over the caller's own sites and the store's road
+  // network. It writes nothing, and `admin:workflows` is the scope that already
+  // covers `routing/plan`, which reads the same network to answer a smaller
+  // question. An operator planning a delivery is the operator planning a
+  // staging plan.
+  ['/api/v1/prepositioning', 'admin:workflows'],
+  // ENH-55. A pure computation over scenarios the caller supplied; nothing is
+  // read from the store and nothing is written. `admin:scenarios` is the scope
+  // that already covers `POST /api/v1/scenarios`, and a comparison of two
+  // perturbations is the same act one step further on.
+  ['/api/v1/scenario-comparisons', 'admin:scenarios'],
 ])
 
 /**

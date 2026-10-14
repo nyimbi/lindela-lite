@@ -881,6 +881,14 @@ anticipatory action exists as a field.
 > crossing id is content-only, so re-evaluating is idempotent. 27 tests; disabling
 > the window check drops the run to 22/27, so the window tests fire on their own
 > defect.
+>
+> **Served since 2026-10-14.** `POST /api/v1/anticipatory/evaluate` in the compute
+> family — the module was a library with no caller, which made every property above
+> unobservable. The route normalises every trigger *before* evaluating any, so a
+> malformed declaration is a 400 naming the field rather than a half-run trigger
+> set; a fired crossing writes one `action_logs` row and emits one outbox event,
+> both counted. A refusal stays a 200 with the model's own sentence beside it.
+> `test/compute-route-module.test.js` drives all of it.
 
 **ENH-53 — Resource pre-positioning optimiser.** Given the forecast distribution
 and the road network (`src/road-access.js`), compute where to stage stock to
@@ -904,6 +912,11 @@ and the mean access is a number no single dispatch ever experiences.
 *Measured, not asserted:* the optimised plan leaves `expected_unmet` 75 against the
 naive allocation's 87.5 — 12.5 units, 14.29%. Nine refusals, including a staging
 site that cannot reach any demand site and a budget that buys nothing.
+
+**Served since 2026-10-14.** `POST /api/v1/prepositioning/plan` in the compute
+family. Every refusal is a 200 carrying its reason, never a 4xx — an unusable
+budget or an unlocatable demand site is an answer the caller asked for, and only a
+malformed request is a 400. `test/compute-route-module.test.js`.
 
 **ENH-54 — Value-of-information estimator.** Rank the *data gaps* by how much
 closing each would reduce decision loss. Turns the honesty about what is not
@@ -929,6 +942,10 @@ refusal.
 decision boundary; without one there is nothing to be uncertain *about*, and
 reporting a large number for it would rank a gap that closing cannot change.
 
+**Served since 2026-10-13.** `GET /api/v1/data-gaps` in the derived family, over
+`src/data-gaps.js` — the store adapter that reads the refusals and hands them to
+the estimator. `test/data-gaps-route.test.js`.
+
 **ENH-55 — Scenario comparison workbench.** Side-by-side interventions with their
 uncertainty, over the same region and window, so a coordinator compares rather
 than reads one number at a time.
@@ -937,6 +954,12 @@ than reads one number at a time.
 > interventions over the same ground and carries each one's uncertainty rather
 > than a point difference — a comparison of two numbers without their intervals
 > is a comparison of two draws. 20 tests.
+>
+> **Served since 2026-10-14.** `POST /api/v1/scenario-comparisons` in the compute
+> family. Two scenarios whose intervals overlap come back as an unresolved order
+> with a reason rather than resolved by the means, which is the property the
+> module exists for and which no test could reach through the product until now.
+> `test/compute-route-module.test.js`.
 
 **ENH-56 — Compound-hazard risk model.** Flood, conflict and disease interact
 (`computeClimateConflictRisk` exists in isolation). A joint model with explicit
