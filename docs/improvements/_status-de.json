@@ -40,7 +40,7 @@
       "id": "ENH-27",
       "title": "Export that carries the narrative",
       "status": "shipped",
-      "detail": "Shipped as `renderExportMarkdown` (`src/reports.js:1072`), which composes with `renderReportMarkdown` rather than reimplementing it, so the export and the `GET /api/v1/reports/:id/export.md` route cannot disagree. Refusal vocabulary is imported from `MODEL_BASIS` rather than retyped. A withheld figure prints as 'not measured', never a dash in a column of numbers. `scripts/check-no-flood-probability.mjs` gained the rule the term list cannot catch \u2014 a null rendered, or a refusal named without its reason beside it \u2014 and fails the build on it. Served at `GET /api/v1/kpi/quarterly.md` (`src/routes/kpi.js:47`); the PDF carries the same narrative page. Guarded by `scripts/check-no-flood-probability.mjs`.",
+      "detail": "Shipped as `renderExportMarkdown` (`src/reports.js:1027`), which composes with `renderReportMarkdown` rather than reimplementing it, so the export and the `GET /api/v1/reports/:id/export.md` route cannot disagree. Refusal vocabulary is imported from `MODEL_BASIS` rather than retyped. A withheld figure prints as 'not measured', never a dash in a column of numbers. `scripts/check-no-flood-probability.mjs` gained the rule the term list cannot catch \u2014 a null rendered, or a refusal named without its reason beside it \u2014 and fails the build on it. Served at `GET /api/v1/kpi/quarterly.md` (`src/routes/kpi.js:47`); the PDF carries the same narrative page. Guarded by `scripts/check-no-flood-probability.mjs`.",
       "evidence": [
         "src/routes/exports.js:83",
         "src/routes/exports.js:84",

@@ -8,6 +8,7 @@ import {
 } from './schema.js'
 import { filterRecords, stableId, toNumber, haversineKm } from './utils.js'
 import { resolveDistrict } from './districts.js'
+import { plainLanguage } from './i18n.js'
 import { payloadHashFor } from './provenance.js'
 import {
   MATCH_RADIUS_KM,
@@ -308,53 +309,7 @@ export function renderReportMarkdown(report, { locale = 'en', plain = false } = 
 }
 
 function plainLanguageText(text) {
-  const maxLength = 25
-  const notes = []
-  let result = text
-
-  const sentences = text.split(/(?<=[.!?])\s+/)
-  const simplified = []
-
-  for (const sentence of sentences) {
-    const words = sentence.split(/\s+/)
-    if (words.length > maxLength) {
-      const chunks = []
-      let chunk = []
-      for (const word of words) {
-        chunk.push(word)
-        if (chunk.join(' ').split(/\s+/).length >= maxLength - 2) {
-          chunks.push(chunk.join(' '))
-          chunk = []
-        }
-      }
-      if (chunk.length) chunks.push(chunk.join(' '))
-      simplified.push(...chunks)
-      notes.push(`Simplified long sentence into ${chunks.length} parts`)
-    } else {
-      simplified.push(sentence)
-    }
-  }
-
-  result = simplified.join('. ')
-
-  const abbreviations = {
-    'SITREP': 'situation report',
-    'IBF': 'impact-based forecasting',
-    'GIS': 'geographic information system',
-    'API': 'application programming interface',
-    'SMS': 'text message',
-    'URL': 'web address',
-  }
-
-  for (const [abbr, expanded] of Object.entries(abbreviations)) {
-    const regex = new RegExp(`\\b${abbr}\\b`, 'g')
-    if (regex.test(result)) {
-      result = result.replace(regex, expanded)
-      notes.push(`Expanded ${abbr} to ${expanded}`)
-    }
-  }
-
-  return { text: result, notes }
+  return plainLanguage(text, { readingLevel: 'basic' })
 }
 
 export function recordsForReportSources(report, data) {
