@@ -846,10 +846,22 @@ at `src/analytics.js:113` is unreachable in practice while being correctly
 guarded for a feed that does not exist. The dead part is the two functions, not
 the read path.
 
+**Fixed 2026-10-15.** `src/connectors/open-meteo.js` now fetches the real
+ensemble endpoint (`ensemble-api.open-meteo.com/v1/ensemble`) behind its
+`include_ensemble` option, parses members off the response's own `_memberNN`
+keys, and computes p10/p50/p90 with `computeEnsembleStats` — so
+`ensemble_source` is set from fetched members and `drivers.ensemble_used` is
+reachable. The research, the measured response shape and the rejected options are
+in `docs/research/open-meteo-ensemble/`. `spreadSkillIndex` remains without a
+caller: the console's reliability view (`public/shared/viz-verify.js`) is the
+route to that chart and it is still blocked on archive records, not on members.
+
 `computeEnsembleStats` also returns `{p10: 0, p50: 0, p90: 0, mean: 0, stddev: 0,
 count: 0}` for an empty input. A percentiles-of-nothing reported as five zeros is
 this repository's own founding defect — an absent value is not a zero — written
-into the function that would compute them.
+into the function that would compute them. **Fixed**: it returns all-null with
+`count: 0`, which is what the connector relies on for a day the ensemble does not
+cover.
 
 `calibrationReport` was exported at `src/analytics.js:258`, routed nowhere, and
 cited in the JTBD catalogue as evidence that `GET /api/v1/assessments` "includes

@@ -3,11 +3,14 @@
     "id": "open_meteo",
     "module": "src/connectors/open-meteo.js",
     "description": "Open-Meteo weather forecasts and observations",
+    "source": "Open-Meteo (forecast API and ensemble API)",
+    "license": "CC BY 4.0, per open-meteo.com terms - attribution required",
     "schemas": {
       "input": {
         "regions": "array of {name, country, lat, lon}",
         "forecast_days": "number",
-        "include_ensemble": "boolean",
+        "include_ensemble": "boolean - fetches real ensemble members and their percentiles; costs 4x an ordinary call per region",
+        "ensemble_model": "string - the ensemble model id; required by the API, which refuses an unknown one rather than falling back",
         "timeout_ms": "number",
         "retries": "number"
       },

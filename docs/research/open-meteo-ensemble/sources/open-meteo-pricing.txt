@@ -1,0 +1,227 @@
+💰 Pricing | Open-Meteo.com
+Open-Meteo
+Home
+Features
+Pricing
+API Docs
+Animations
+GitHub
+X
+Toggle theme
+Pricing
+Commercial use licence, support and dedicated API capacity
+API Plans
+API Docs
+30+ Weather Models
+Weather models from ECMWF, DWD, NOAA, Météo-France, JMA, KMA, KNMI, DMI, MeteoSwiss, UK Met
+Office, BOM, CMA, GeoSphere Austria, and more. The
+best_match
+option automatically
+selects the highest-resolution model for any coordinates.
+Resolution ranges from 1–2 km (regional mesoscale) to 9–11 km (global). All output is
+normalised to hourly resolution.
+Commercial Use Licence
+A subscription grants a commercial use licence and an API key for the dedicated customer
+endpoint at
+customer-api.open-meteo.com
+. The API syntax is identical to the
+free tier — only the domain and key parameter differ.
+Use the free tier for evaluation and prototyping. For custom volume requirements or
+enterprise contracts, contact
+info@open-meteo.com
+.
+High-Volume Usage
+Plans are priced on a monthly call budget, not per individual request. Standard: 1M
+calls/month. Professional: 5M calls/month. Enterprise: 50M+ calls/month.
+For workloads in the billions, self-hosting the open-source server is the practical path.
+Contact us for guidance on deployment and infrastructure sizing.
+Uptime and Latency
+Paid plans run on reserved server instances with a 99.9% uptime target. Live status and
+incident history are at
+status.open-meteo.com
+.
+Servers are located in Europe and North America for low-latency access across both regions.
+Payment Options
+Payments via credit card, Apple Pay, Google Pay, SOFORT, or SEPA — processed through Stripe.
+A PDF invoice is issued on each billing cycle. Subscription details and payment method are
+managed in the
+customer portal
+.
+Predictable Pricing
+Fixed monthly price — no per-call overages or surprise charges. Upgrade or downgrade at any
+time via the
+customer portal
+.
+Cancellation takes effect at the end of the current billing period.
+Free / Open-Access
+API Standard
+API Professional
+API Enterprise
+Commercial use
+❌
+✅
+✅
+✅
+Minutely Limit
+⚠️ 600 calls / min
+✅ Unlimited
+✅ Unlimited
+✅ Unlimited
+Hourly Limit
+⚠️ 5.000 calls / hour
+✅ Unlimited
+✅ Unlimited
+✅ Unlimited
+Daily Limit
+⚠️ 10.000 calls / day
+✅ Unlimited
+✅ Unlimited
+✅ Unlimited
+Monthly Limit
+⚠️ 300.000 calls / month
+⚠️ 1M calls / month
+⚠️ 5M calls / month
+✅ >50M calls / month
+Air Quality API
+Elevation API
+Flood API
+Geocoding API
+Marine API
+✅
+✅
+✅
+✅
+Satellite Radiation API
+Climate API
+Seasonal Forecast API
+Ensemble
+Weather API
+Historical Weather API
+Historical Forecast API
+Previous Model
+Runs API
+Single Runs API
+✅
+❌
+✅
+✅
+Reserved Servers With Higher Reliability
+❌
+✅
+✅
+✅
+Custom Solutions
+❌
+❌
+❌
+✅
+Priority Support
+❌
+❌
+❌
+✅
+Frequently Asked Questions
+How does the subscription process work?
+Click a plan above to subscribe via Stripe. After checkout, an API key and PDF invoice are
+issued immediately. The key grants access to
+customer-api.open-meteo.com
+. Cancel, upgrade, or update payment details at
+any time in the
+customer portal
+.
+What happens if I exceed my monthly call volume?
+Email alerts are sent at 80%, 90%, and 100% of your monthly budget. A usage dashboard is
+in development — until it is live, no hard cutoffs are enforced.
+svg]:grid-cols-[calc(var(--spacing)*4)_1fr] has-[>svg]:gap-x-2 [&>svg]:min-w-4.75 [&>svg]:max-w-4.75 text-warning-dark bg-warning border-warning-dark/25 *:data-[slot=alert-description]:text-warning-dark [&>svg]:text-current/75">
+A usage statistics portal is under development. Until it is available, monthly limits
+are not enforced.
+What sets apart the free API from the customer API?
+The free API is for non-commercial use, rate-limited to 10,000 calls/day, and carries no
+uptime guarantee. The customer API runs on dedicated servers, has no daily rate limit, and
+includes a commercial use licence.
+The customer endpoint is
+customer-api.open-meteo.com
+; requests include
+&apikey=abc123
+. All parameters and response formats are otherwise identical
+to the free API.
+Using the
+Standard API Plan
+can I use historical, climate and ensemble data?
+Historical, climate, ensemble, and satellite radiation APIs require the
+Professional API Plan
+or higher. Upgrade via the
+customer portal
+.
+How is one API call defined?
+Typically, one API call corresponds to one HTTP API request. However, if you select 200
+weather variables simultaneously and make extensive use of the API, the number of API
+calls can increase. Requests for data covering more than 10 weather variables or extending
+over a period of more than 2 weeks for a single location are considered multiple API
+calls.
+To calculate the number of API calls accurately, fractional counts are used. For example,
+a request for 2 weeks of data with 15 weather variables will be calculated as 1.5 API
+calls, while 4 weeks of data equals 3.0 API calls.
+This distinction is crucial for developing future features such as APIs for multiple
+locations simultaneously.
+A request with the parameters selected below will cost
+1.0
+API
+call
+Variables
+14 days
+Time length
+Models
+Locations
+Is it necessary to provide attribution to Open-Meteo?
+Open-Meteo relies on open data that is licenced under
+Attribution 4.0 International (CC BY 4.0)
+. This licence mandates giving appropriate credit and indicating any modifications made
+to the data. While you are permitted to utilise and distribute the data, including for
+commercial purposes, attribution is a requirement under this licence. For more
+information, please refer to the
+licence page
+.
+Unlock the Power of Open-Source Weather Data!
+Subscriptions fund the infrastructure, data ingestion pipelines, and ongoing development
+behind the API. The server code is open-source under AGPLv3; the weather data is CC BY 4.0.
+Commercial plans add a dedicated endpoint, an API key, and a 99.9% uptime target. For custom
+volume requirements or enterprise contracts, contact
+info@open-meteo.com
+.
+API Plans
+Email us
+Open-Meteo
+Features
+Pricing
+About us & Contact
+Licence
+Terms & Privacy
+Weather APIs
+Weather Forecast API
+Historical Weather API
+ECMWF API
+GFS & HRRR Forecast API
+Météo-France API
+DWD ICON API
+GEM API
+JMA API
+Met Norway API
+Other APIs
+Ensemble API
+Climate Change API
+Marine Weather API
+Air Quality API
+Geocoding API
+Elevation API
+Flood API
+External
+X
+Blog
+GitHub
+Mastodon
+Service status and uptime
+Model Updates Overview
+Animations
+© 2022-2026 Copyright:
+Open-Meteo.com
