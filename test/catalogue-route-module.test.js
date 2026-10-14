@@ -154,10 +154,36 @@ describe('ENH-60 — a connector with no gate is always-on, not gated', () => {
   it('names the variable to set for a gated-off connector', async () => {
     // A gated-off connector is a deliberate choice, so it says what to set
     // rather than just reporting false.
+    //
+    // Only for a connector the runtime can actually run. An unwired one is off
+    // for a different reason — its gate flag does nothing — and naming the flag
+    // there is the lie this route was telling: `kobo` and `iot` are in the
+    // registry and absent from `CONNECTORS`, so setting the variable the reason
+    // printed changed nothing. Those rows are asserted separately below.
     const { res } = await call({ kind: 'connectors-status' }, { data: { source_runs: [] } })
-    for (const row of res.json().data.filter((r) => !r.enabled)) {
+    const gatedOff = res.json().data.filter((r) => !r.enabled && r.wired)
+    assert.ok(gatedOff.length > 0, 'no wired, gated-off connector to check — the fixture or the gate table changed')
+    for (const row of gatedOff) {
       assert.ok(row.gate, `${row.id} was reported off with no gate named`)
       assert.match(row.reason, new RegExp(`${row.gate}=on`), 'the reason did not name the variable to set')
+    }
+  })
+
+  it('reports a registry entry the runtime cannot run as unwired, not as a switch', async () => {
+    // `kobo` and `iot` are built, tested, registry-listed and carry a `GATE_ENV`
+    // flag, but neither is in `CONNECTORS`, so `getConnector` throws
+    // `Unknown source`. The status route's own contract is "which connectors
+    // this deployment can actually run, and why not" — so it may not report one
+    // as enabled, and it may not tell an operator to set a flag that changes
+    // nothing. This is the assertion that would have caught it.
+    const { res } = await call({ kind: 'connectors-status' }, { data: { source_runs: [] } })
+    const rows = res.json().data
+    const unwired = rows.filter((row) => !row.wired)
+    assert.ok(unwired.length > 0, 'every registry entry was reported wired — did the registry and CONNECTORS converge?')
+    for (const row of unwired) {
+      assert.equal(row.enabled, false, `${row.id} is advertised as runnable but is not in CONNECTORS`)
+      assert.doesNotMatch(row.reason, /=on/, `${row.id} names a flag to set, but its flag has no effect`)
+      assert.match(row.reason, /not registered for ingestion/, `${row.id}'s reason does not say why it is off`)
     }
   })
 

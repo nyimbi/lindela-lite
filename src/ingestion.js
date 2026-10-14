@@ -25,7 +25,23 @@ import { explainVerdict, freshnessReportBySource } from './freshness.js'
 import { fetchRecording, resetFetchRecordings, withFetchRecording } from './connectors/http.js'
 import { isDeclared } from './store.js'
 
-const CONNECTORS = Object.freeze({
+/**
+ * The runtime connector map: the sources `runIngestion` can actually run.
+ *
+ * Exported so a test can compare it against `connectors.registry.json` — the
+ * file `GET /api/v1/connectors` serves and `/connectors/status` advertises. The
+ * two are not the same set, and nothing said so: the registry carries entries
+ * the map has never held, so the status route offers an operator a gate flag to
+ * enable a source that `getConnector` then refuses as `Unknown source`. A
+ * registry entry with no connector is a capability advertised and unreachable;
+ * a connector with no registry entry is one nothing can discover.
+ *
+ * The comparison is behavioural because the alternative is not: a guard that
+ * greps this file for an id passes with the entry missing, which is this
+ * repository's most-repeated mistake (see the `OUTPUT_COLLECTIONS` comment
+ * below).
+ */
+export const CONNECTORS = Object.freeze({
   open_meteo: openMeteoConnector,
   gdacs: gdacsConnector,
   glofas: glofasConnector,

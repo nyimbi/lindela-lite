@@ -520,12 +520,33 @@ export function publicSourceCatalog() {
         outputs: ['conflict_events'],
       }
     }
-    return {
-      ...common,
-      name: 'Lite conflict event CSV',
-      type: 'csv_upload',
-      requires_credentials: false,
-      outputs: ['conflict_events'],
+    if (id === 'conflict_csv') {
+      return {
+        ...common,
+        name: 'Lite conflict event CSV',
+        type: 'csv_upload',
+        requires_credentials: false,
+        outputs: ['conflict_events'],
+      }
     }
+    if (id === 'dhis2') {
+      return {
+        ...common,
+        name: 'DHIS2 dataValueSets',
+        type: 'dhis2_api',
+        requires_credentials: true,
+        credential_hint: 'A self-hosted DHIS2 instance: base_url plus an API token or username/password. Off until LINDELA_LITE_DHIS2_ENABLED=on.',
+        status_note: 'Maps configured data elements to climate observations and, from enrolled/present pairs, to school attendance. Refuses a single aggregate headcount rather than inventing present counts.',
+        outputs: ['climate_observations', 'school_attendance_observations'],
+      }
+    }
+    // The fallthrough used to be reached by any id without a case above, and it
+    // returned the conflict-CSV row — so `dhis2` was served as "Lite conflict
+    // event CSV", type `csv_upload`, emitting `conflict_events`. Every field was
+    // wrong, and wrong in the direction that matters: a reader of
+    // `GET /api/v1/sources` was told a field-system integration was a CSV upload.
+    // A named refusal is the honest default for an id nobody described; a
+    // placeholder that reads as a real answer is not.
+    throw new Error(`publicSourceCatalog has no entry for source '${id}' — add one rather than inheriting a placeholder`)
   })
 }

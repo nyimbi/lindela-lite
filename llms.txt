@@ -76,7 +76,7 @@ it reaches the caller. Half of them historically did not.
 | `src/postgres-store.js` | `PostgresStore`. Same contract, different backend. |
 | `src/schema.js` | Normalized record shapes and `emptyStore()`. |
 | `src/ingestion.js` | `runIngestion`, `OUTPUT_COLLECTIONS`, source policies. |
-| `src/connectors/` | 17 connectors; `spec.js` is the SDK (`defineConnector`). |
+| `src/connectors/` | The connectors, one module each; `spec.js` is the SDK (`defineConnector`). `connectors.registry.json` lists 20 entries over 18 modules and is what `GET /api/v1/connectors` serves; `CONNECTORS` in `src/ingestion.js` is the 18 `runIngestion` can run. The two differ by `kobo` and `iot`, which are built and tested but not registered — `test/connector-registry-parity.test.js` holds the difference by name. |
 | `public/shared/charts.js` | Five chart primitives + `sparkline`. **Pure**: every function returns strings, no DOM, so `test/charts.test.js` asserts on what was drawn without a browser. Rules: an absent value is never a zero, every chart ships an `aria-hidden` SVG plus a table sibling, one shared data-derived extent, colour only from tokens. |
 | `src/upload.js` | `POST /api/v1/upload`. Bulk CSV import: per-collection column contract, row-level validation report, `dry_run`. A batch with any rejected row writes nothing — see `docs/api.md` § Bulk Upload. |
 | `src/analytics/` | Flood probability, impact, downscaling, ensemble. |

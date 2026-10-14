@@ -40,7 +40,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { ingestionStatus } from '../ingestion.js'
+import { CONNECTORS, ingestionStatus } from '../ingestion.js'
 import { logger } from '../observability.js'
 import { publicSourceCatalog } from '../schema.js'
 
@@ -186,16 +186,28 @@ export async function handleCatalogueRoute(route, { data, req, res, url, jsonRes
     const runs = data.source_runs || []
     const rows = entries.map((connector) => {
       const gateVar = GATE_ENV[connector.id] || null
-      const enabled = gateVar ? process.env[gateVar] === 'on' : true
+      // A registry entry with no connector is advertised, not runnable. `kobo`
+      // and `iot` are exactly this: built, tested, registry-listed and
+      // gate-flagged, and absent from `CONNECTORS`, so `getConnector` refuses
+      // them as `Unknown source`. Reporting the gate flag here would tell an
+      // operator to set a variable that changes nothing — the flag reads as the
+      // switch and is not one. `wired: false` says what is true, and the reason
+      // names the gap rather than implying a missing credential.
+      const wired = Object.hasOwn(CONNECTORS, connector.id)
+      const enabled = wired && (gateVar ? process.env[gateVar] === 'on' : true)
       const lastRun = latestRunFor(runs, connector.id)
       return {
         id: connector.id,
         description: connector.description || '',
         gate: gateVar,
         enabled,
+        wired,
         // A gated-off connector is a deliberate choice by an operator, so it says
-        // what to set rather than just reporting false.
-        reason: enabled ? null : `set ${gateVar}=on and provide its credentials to enable this source`,
+        // what to set rather than just reporting false. An unwired one has no
+        // switch to offer, and saying "set X=on" would be a lie about the flag.
+        reason: !wired
+          ? 'this connector is built and tested but not registered for ingestion; its gate flag has no effect yet'
+          : enabled ? null : `set ${gateVar}=on and provide its credentials to enable this source`,
         output: connector.schemas?.output || [],
         last_run: lastRun ? {
           id: lastRun.id,
