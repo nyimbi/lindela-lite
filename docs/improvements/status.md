@@ -4,7 +4,7 @@ What has actually shipped, verified against the tree rather than against the com
 Regenerate with `node docs/improvements/_build-status.mjs` after editing any
 `_status-*.json`.
 
-**29 shipped, 1 partial, 0 not started,** of 30.
+**30 shipped, 0 partial, 0 not started,** of 30.
 
 A status is **partial** when some of the described change is in the tree and the rest is
 not, and the detail says which is which. An exported function with no call site is not
@@ -28,7 +28,7 @@ shipped.
 | ENH-06 | Freshness SLAs by cadence, with an `ok \| quiet \| stale \| broken` verdict | shipped | `test/freshness-verdicts.test.js`, `test/ingestion-wiring.test.js` |
 | ENH-07 | Per-source data assertions with quarantine-on-fail | shipped | `test/source-assertions.test.js`, `test/ingestion-wiring.test.js` |
 | ENH-08 | Watermarks, incremental fetch, resumable backfill | shipped | `test/watermarks.test.js`, `test/watermark-persistence.test.js` |
-| ENH-09 | Source-agreement cross-validation | partial | `test/source-agreement.test.js` |
+| ENH-09 | Source-agreement cross-validation | shipped | `test/source-agreement.test.js`, `test/geotiff.test.js`, `test/source-agreement-route.test.js` |
 | ENH-10 | Connector health scoring and circuit breaking | shipped | `test/connector-circuit.test.js`, `test/ingestion-wiring.test.js` |
 | ENH-11 | Enforce the rate limits that are already declared | shipped | `test/rate-limit.test.js`, `test/rate-limit-wiring.test.js`, `test/rapidpro-webhook-auth.test.js` |
 | ENH-12 | Raw payload retention, replay, and fixture seeding | shipped | `test/payload-capture.test.js` |
@@ -68,19 +68,6 @@ shipped.
 
 ---
 
-## What each open item is missing
-
-### ENH-09 — Source-agreement cross-validation
-
-**partial.** `src/agreement.js` computes what the item asks for — Pearson and Spearman correlation with `minPearson: 0.5`, a paired-month count floor, a sign-disagreement rate capped at 0.25, and a four-value verdict of `agree | marginal | disputed | unavailable` — and it pairs on `period`, never on array index, which is the mistake that makes naive cross-product comparison meaningless. `unavailable` is returned rather than a fabricated verdict when either side is flat (`dx === 0 || dy === 0`), because a flat product carries no ordering information. Two things are missing: there is still no GeoTIFF reader (CHIRPS declines to decode pixels at src/connectors/chirps.js:23), so the two products cannot actually be compared in production; and no route surfaces `agreementReport` — the module is a library with no caller, which is the same defect ENH-16 has.
-
-Evidence:
-
-- `src/agreement.js`
-- `src/connectors/chirps.js:23`
-
----
-
 ## Verification
 
 Every `path:line` above and every guard filename is resolved against the tree when
@@ -88,15 +75,7 @@ this file is generated; a claim that cannot be checked is not written. What the
 current tree says:
 
 - **30 items**, each with evidence and a status.
-- **0 broken references** among the 173 evidence paths and guard names.
-- **1 module named here with no production caller.**
+- **0 broken references** among the 176 evidence paths and guard names.
+- **0 modules named here with no production caller.**
 - **0 items naming no guard test.**
-
-### Built, tested, called by nothing
-
-The module is in the tree and has tests, but nothing outside `test/` imports it.
-The status of the item it belongs to should say so — an exported function with no
-call site is not shipped.
-
-- ENH-09 `src/agreement.js`
 

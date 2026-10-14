@@ -118,6 +118,10 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/kpi/quarterly': Object.freeze(["alert_events", "field_outcomes", "field_reports", "hazard_events", "interventions", "rapidpro_dispatches", "report_templates", "workflow_instances"]),
   'GET /api/v1/kpi/snapshots': Object.freeze(["kpi_snapshots"]),
   'GET /api/v1/model-drift': Object.freeze(["model_drift"]),
+  // ENH-09. The agreement check reads the observations and nothing else: both
+  // products' series arrive as `climate_observations` records, told apart by
+  // `source`, so there is no join out to a second collection.
+  'GET /api/v1/source-agreement': Object.freeze(["climate_observations"]),
   'GET /api/v1/operations/summary': Object.freeze(["field_reports", "incidents", "intervention_tasks", "interventions", "response_resources"]),
   'GET /api/v1/outbox': Object.freeze(["events_outbox"]),
   'GET /api/v1/parametric-disbursements': Object.freeze(["parametric_disbursements"]),

@@ -81,6 +81,34 @@ paths:
             application/json:
               schema: { type: object }
 
+  /api/v1/source-agreement:
+    get:
+      summary: Whether two independent rainfall products tell the same story
+      description: |
+        Pearson and rank correlation, mean absolute difference and sign
+        disagreement rate between two products' monthly rainfall, per region and
+        per year.
+
+        `disputed` is a finding, not an error: where a satellite blend and a
+        reanalysis disagree, the disagreement is evidence about how much to trust
+        the number feeding a score. No winner is declared — that is a separate
+        judgement with its own error modes.
+
+        A region with one product present, or with no month both products
+        reported, returns a row carrying `refusal_reason` rather than an empty
+        list, so "one product is missing" and "nothing was comparable" are
+        distinguishable. Sources in `climate_observations` that are not rainfall
+        products — a forecast, a discharge series, a Pacific SST index — are
+        named in `sources_ignored` with the reason each was left out.
+      tags: [analytics]
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Per-region agreement, with the refusals and the declarations
+          content:
+            application/json:
+              schema: { type: object }
+
   /api/v1/ask:
     post:
       summary: Ask a grounded question over the store in natural language

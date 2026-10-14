@@ -7,7 +7,7 @@ import { handleDerivedRoute, matchDerivedRoute } from '../src/routes/derived.js'
 /**
  * ARC-01 — the derived-collection reads as a module, asserted where they live.
  *
- * Five reads over what `refreshAnalytics` recomputes. No caller writes them, so
+ * Six reads over what `refreshAnalytics` recomputes. No caller writes them, so
  * the family's whole job is to hand back a figure *and* the reason to doubt it.
  * That is the property this file asserts, because it is the one that is easy to
  * lose without noticing:
@@ -20,8 +20,10 @@ import { handleDerivedRoute, matchDerivedRoute } from '../src/routes/derived.js'
  *     features all came back `not_measurable` cannot read as a clean bill.
  *   - `data-quality` carries the ranking explanation, so the confidence is not
  *     read as an accuracy measurement.
+ *   - `source-agreement` (ENH-09) reports `refused` and a `verdicts` tally per
+ *     region for the same reason, and names the sources it left out.
  *
- * And the VER-14 class at the point of extraction: all five are reads, so every
+ * And the VER-14 class at the point of extraction: all six are reads, so every
  * non-GET verb falls through rather than answering 200.
  */
 
@@ -54,13 +56,14 @@ const call = (route, { data = {}, search = '', method = 'GET' } = {}) => {
 }
 
 describe('ARC-01 — matchDerivedRoute takes the method', () => {
-  it('matches each of the five derived reads', () => {
+  it('matches each of the six derived reads', () => {
     const expected = [
       ['/api/v1/data-quality', 'data-quality'],
       ['/api/v1/data-lineage', 'data-lineage'],
       ['/api/v1/operations/summary', 'operations-summary'],
       ['/api/v1/calibration/by-region', 'calibration-by-region'],
       ['/api/v1/model-drift', 'model-drift'],
+      ['/api/v1/source-agreement', 'source-agreement'],
     ]
     for (const [pathname, kind] of expected) {
       assert.deepEqual(matchDerivedRoute(pathname, 'GET'), { kind }, `GET ${pathname} did not match as ${kind}`)
@@ -72,7 +75,7 @@ describe('ARC-01 — matchDerivedRoute takes the method', () => {
     // VER-14 at the point of extraction rather than by the next sweep.
     for (const pathname of [
       '/api/v1/data-quality', '/api/v1/data-lineage', '/api/v1/operations/summary',
-      '/api/v1/calibration/by-region', '/api/v1/model-drift',
+      '/api/v1/calibration/by-region', '/api/v1/model-drift', '/api/v1/source-agreement',
     ]) {
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
         assert.equal(matchDerivedRoute(pathname, method), null, `${method} ${pathname} matched a read route`)
@@ -84,7 +87,7 @@ describe('ARC-01 — matchDerivedRoute takes the method', () => {
     for (const pathname of [
       '/api/v1/data-quality/', '/api/v1/data-qualitys', '/api/v1/calibration',
       '/api/v1/calibration/by-region/extra', '/api/v1/model-drift/', '/api/v1/operations',
-      '/api/v1/data-lineages', '',
+      '/api/v1/data-lineages', '/api/v1/source-agreements', '/api/v1/source-agreement/', '',
     ]) {
       assert.equal(matchDerivedRoute(pathname, 'GET'), null, `${pathname} matched a route it should not`)
     }
@@ -175,10 +178,10 @@ describe('ARC-01 — the module answers, or declines, without inventing a respon
 
   it('answers the collections the store always supplies', async () => {
     // What `store.read()` guarantees, so the module never sees an absent key.
-    for (const kind of ['data-lineage', 'calibration-by-region', 'model-drift', 'operations-summary']) {
+    for (const kind of ['data-lineage', 'calibration-by-region', 'model-drift', 'operations-summary', 'source-agreement']) {
       const { handled, res } = await call({ kind }, {
         data: {
-          data_lineage: [], region_trust: [], model_drift: [],
+          data_lineage: [], region_trust: [], model_drift: [], climate_observations: [],
           incidents: [], interventions: [], intervention_tasks: [], response_resources: [],
           field_reports: [],
         },

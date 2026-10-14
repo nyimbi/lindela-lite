@@ -80,6 +80,10 @@ export const READ_SCOPES = Object.freeze([
   ['/api/v1/equity', 'read:analytics'],
   ['/api/v1/analytics', 'read:analytics'],
   ['/api/v1/model-drift', 'read:analytics'],
+  // ENH-09. Whether two rainfall products tell the same story is a statement
+  // about how much the number feeding a score can be trusted, which is the same
+  // privilege that reads the model's calibration.
+  ['/api/v1/source-agreement', 'read:analytics'],
   ['/api/v1/data-lineage', 'read:analytics'],
   ['/api/v1/data-quality', 'read:analytics'],
   // CAP-04. The vintage manifest is an inventory of this deployment's exports.

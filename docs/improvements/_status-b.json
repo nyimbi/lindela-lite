@@ -44,14 +44,17 @@
     {
       "id": "ENH-09",
       "title": "Source-agreement cross-validation",
-      "status": "partial",
-      "detail": "`src/agreement.js` computes what the item asks for — Pearson and Spearman correlation with `minPearson: 0.5`, a paired-month count floor, a sign-disagreement rate capped at 0.25, and a four-value verdict of `agree | marginal | disputed | unavailable` — and it pairs on `period`, never on array index, which is the mistake that makes naive cross-product comparison meaningless. `unavailable` is returned rather than a fabricated verdict when either side is flat (`dx === 0 || dy === 0`), because a flat product carries no ordering information. Two things are missing: there is still no GeoTIFF reader (CHIRPS declines to decode pixels at src/connectors/chirps.js:23), so the two products cannot actually be compared in production; and no route surfaces `agreementReport` — the module is a library with no caller, which is the same defect ENH-16 has.",
+      "status": "shipped",
+      "detail": "Shipped in three parts, because the item named three gaps and each was a different kind of work. `src/agreement.js` computes what the item asks for — Pearson and Spearman correlation, a paired-month floor of three, a sign-disagreement rate capped at 0.25, and a four-value verdict of `agree | marginal | disputed | unavailable` — and pairs on `period`, never on array index, so a one-sided hole does not shift every later month against the wrong partner. `src/geotiff.js` is the minimal GeoTIFF reader the item's own text calls for: stripped, single-band, uncompressed or deflate, with the horizontal predictor undone, and it refuses every combination it does not implement by naming the tag rather than returning a plausible grid. `src/connectors/chirps.js` reads pixels through it and writes a real `precipitation_mm` per region per day (the record used to carry `null` on every row, so there was nothing to compare), bounded by a decode cap that counts attempts rather than successes. `src/source-agreement.js` is the half that was missing between the engine and the store: it knows which `source` values are two measurements of the same rain (`chirps` against `open_meteo_archive` as ERA5), turns the daily records into monthly totals while dropping a month reported too thinly to be one, and serves it at `GET /api/v1/source-agreement` in the derived family, which reports its refusals and names the sources it left out and why. No winner is declared between the products, by the spec's own words.",
       "evidence": [
         "src/agreement.js",
-        "src/connectors/chirps.js:23"
+        "src/geotiff.js",
+        "src/connectors/chirps.js",
+        "src/source-agreement.js",
+        "src/routes/derived.js"
       ],
-      "guarded_by": "test/source-agreement.test.js",
-      "note": "src/agreement.js. Coverage is its own axis with its own vocabulary, one-sided months named rather than counted: `unmatched_months` compared two sizes, so two products covering twelve disjoint months each differ by zero — a clean bill of health for a comparison that never happened. 'these two disagree' and 'only one covers this' no longer both arrive as `unavailable`. No winner is declared, by the spec's own words. test/source-trust.test.js."
+      "guarded_by": "test/source-agreement.test.js, test/geotiff.test.js, test/source-agreement-route.test.js",
+      "note": "src/agreement.js, src/geotiff.js, src/connectors/chirps.js, src/source-agreement.js. Coverage is its own axis with its own vocabulary, one-sided months named rather than counted: `unmatched_months` compared two sizes, so two products covering twelve disjoint months each differ by zero — a clean bill of health for a comparison that never happened. 'these two disagree' and 'only one covers this' no longer both arrive as `unavailable`. The route reports `refused` per region and a verdict tally, so a region with one product present cannot read as agreement, and it names each skipped source (a forecast, a discharge series, a Pacific SST index) with the reason rather than dropping it silently. No winner is declared, by the spec's own words. test/source-trust.test.js, test/source-agreement-route.test.js."
     },
     {
       "id": "ENH-10",

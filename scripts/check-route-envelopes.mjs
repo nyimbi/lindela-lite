@@ -96,6 +96,7 @@ const ARRAY_IS_COMPLETE = new Map([
   ['/api/v1/rapidpro/response-metrics', 'one row per response-time bucket, bounded by the bucket list'],
   ['/api/v1/calibration/by-region', 'one row per region in the registry; `returned` and `refused` are the split'],
   ['/api/v1/model-drift', 'one row per region, same bounded registry'],
+  ['/api/v1/source-agreement', 'one row per region carrying a comparable product, plus the pair-year verdicts inside each — the set is bounded by the region registry, not by the store'],
   ['/api/v1/kpi/snapshots', 'one row per quarter in the window the route names'],
   ['/api/v1/data-lineage', 'lineage edges for the records in the store; the whole graph is the answer'],
 ])

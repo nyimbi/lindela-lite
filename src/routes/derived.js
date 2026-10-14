@@ -1,11 +1,12 @@
 /**
  * ARC-01 — the derived-collection reads, out of the god function.
  *
- * Five routes over the collections `refreshAnalytics` recomputes: source data
+ * Six routes over the collections `refreshAnalytics` recomputes: source data
  * quality, the lineage rows, the operational roll-up, per-region calibration
- * trust and model drift. They are one family because they are all *derived* —
- * no caller writes them, an ingestion or refresh run does — and because three of
- * them carry a refusal that has to travel beside the figure rather than replace
+ * trust, model drift, and — ENH-09 — whether two rainfall products tell the same
+ * story. They are one family because they are all *derived* — no caller writes
+ * them, an ingestion or refresh run does — and because three of them carry a
+ * refusal that has to travel beside the figure rather than replace
  * it.
  *
  * That is the property the family exists to hold, and it is the same mistake
@@ -21,7 +22,7 @@
  *     features all came back `not_measurable` cannot read as a clean bill of
  *     health from a bare empty `data` array.
  *
- * All five are reads, so the matcher takes the method and refuses everything
+ * All six are reads, so the matcher takes the method and refuses everything
  * but GET — the VER-14 class, applied at the point of extraction rather than
  * found by the next sweep.
  */
@@ -29,6 +30,7 @@
 import { explainRanking } from '../../public/shared/rank-explain.js'
 import { operationalSummary } from '../operations.js'
 import { qualityTally } from '../quality.js'
+import { sourceAgreement } from '../source-agreement.js'
 import { collectionPage } from '../utils.js'
 
 /**
@@ -48,6 +50,10 @@ export function matchDerivedRoute(pathname, method = 'GET') {
   // verdict is stamped on each field report at write time and this only counts
   // what is there.
   if (pathname === '/api/v1/field-reports/quality') return { kind: 'field-report-quality' }
+  // ENH-09. Do two independent rainfall products tell the same story? A derived
+  // read like the rest: nothing writes it, and the verdict is computed from the
+  // observations an ingestion run already stored.
+  if (pathname === '/api/v1/source-agreement') return { kind: 'source-agreement' }
   return null
 }
 
@@ -127,6 +133,25 @@ export async function handleDerivedRoute(route, { data, req, res, url, jsonRespo
       pre_gate_records: reports.filter((r) => !r.quality).length,
       reports: reports.length,
     })
+    return true
+  }
+
+  if (kind === 'source-agreement') {
+    // ENH-09. Where two independent products disagree, the disagreement *is*
+    // the finding — it is evidence about how much to trust the number that
+    // feeds a score, and it is honest in a way that raising confidence is not.
+    //
+    // What this route does not do is pick a winner. Between a satellite blend
+    // and a reanalysis that is a separate judgement with its own error modes,
+    // and the spec declines it in as many words: "Disagreement is the finding;
+    // picking a winner is a separate judgement." `disputed` is therefore a
+    // state a year carries and a consumer passes through, never an average.
+    //
+    // `refused` travels beside the report for the reason `calibration/by-region`
+    // counts its refusals: a region with one product present has an empty
+    // comparison list, and an empty list with no count reads as "these products
+    // agree" when it means "there was nothing to compare".
+    jsonResponse(res, 200, { success: true, ...sourceAgreement(data) })
     return true
   }
 
