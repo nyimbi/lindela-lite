@@ -24,14 +24,23 @@ export const AGREEMENT_VERDICTS = Object.freeze(['agree', 'marginal', 'disputed'
  * The thresholds, exported because a threshold nobody can name is a threshold
  * nobody can argue with, and this one is the entire output of the module.
  *
- * Pearson below 0.5 says the two products do not rank the same months the same
- * way, which is not a small thing when the ranking is what selects which months
- * a model trains on. Sign disagreement above 25% says one of them recorded rain
- * in months the other called dry — a categorical contradiction, not a
- * calibration difference.
+ * **Every key here is read by the verdict below, and the route publishes this
+ * object as the set it applied.** That is a property to keep, not a fact to
+ * assume: this object carried a `minPearson: 0.5` that no branch consulted —
+ * the decision was rank-based all along — so the payload named a cut point a
+ * consumer could argue with and lose. It was removed rather than enforced,
+ * because the ranking is deliberately *rank* correlation: rainfall products
+ * relate monotonically but not linearly, and a Pearson cut would call a
+ * correctly-ordered pair disagreement. The Pearson coefficient is still
+ * computed and published beside the verdict as evidence; it is not a gate.
+ *
+ * Rank correlation below 0.5 says the two products do not order the same months
+ * the same way, which is not a small thing when the order is what selects which
+ * months a model trains on. Sign disagreement above 25% says one of them
+ * recorded rain in months the other called dry — a categorical contradiction,
+ * not a calibration difference.
  */
 export const AGREEMENT_THRESHOLDS = Object.freeze({
-  minPearson: 0.5,
   minRankCorrelation: 0.5,
   maxMeanAbsoluteDifference: 5.0,
   maxSignDisagreementRate: 0.25,
