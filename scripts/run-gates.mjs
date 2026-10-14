@@ -118,7 +118,7 @@ const GATES = [
     name: 'check-client-endpoints',
     script: 'scripts/check-client-endpoints.mjs',
     tier: 'self-contained',
-    why: 'ENH-59. The fifth route table ARC-02 names — the client\'s call sites — had no cross-check at all, so a screen could fetch a route the server does not serve and render its empty state, which reads as "no data" rather than "no route". Reads the client\'s `/api/v1/…` literals out of `public/` and asks the same `route-surface.mjs` derivation the document check uses, so a family that moves out of the dispatcher needs no edit here. Strips comments first: the first draft\'s only finding on a clean tree was `/api/v1/readyz` inside the paragraph explaining its own removal, and a gate that fires on correct input gets deleted. Accepts a literal that is a proper prefix of a served path, because the client completes built paths at call time. Reads files only; carries eleven canaries.',
+    why: 'ENH-59. The fifth route table ARC-02 names — the client\'s call sites — had no cross-check at all, so a screen could fetch a route the server does not serve and render its empty state, which reads as "no data" rather than "no route". Reads the client\'s `/api/v1/…` literals out of `public/` and asks the same `route-surface.mjs` derivation the document check uses, so a family that moves out of the dispatcher needs no edit here. Strips comments first: the first draft\'s only finding on a clean tree was `/api/v1/readyz` inside the paragraph explaining its own removal, and a gate that fires on correct input gets deleted. Accepts a literal that is a proper prefix of a served path, because the client completes built paths at call time. Reads files only; carries ten canaries.',
   },
   {
     name: 'check-aggregation-kinds',

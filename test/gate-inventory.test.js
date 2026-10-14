@@ -122,6 +122,42 @@ describe('the README gate inventory', () => {
       `the true figure is "${THOUSANDS[Math.floor(declared / 1000)]} thousand"`)
   })
 
+  it('states a canary count the gate actually carries', async () => {
+    // The same defect as the README counts above, one level in. Each `why` in
+    // `run-gates.mjs` says how many canaries its gate carries, and that number
+    // is hand-typed beside a machine-maintained `CANARIES` array — so it drifts
+    // the moment a case is added or removed, and it drifts *downward* into
+    // understating the instrument, which is the direction nobody re-reads.
+    // `check-client-endpoints` said eleven against ten; the six beside it were
+    // right, which is exactly how a hand-typed count survives.
+    //
+    // Measured, not grepped: the array is imported and its length read. The
+    // number in the prose is spelled in words, so this maps the words it knows
+    // and refuses an unrecognised one rather than passing it silently.
+    const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
+      'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen',
+      'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
+    const source = readFileSync(path.join(ROOT, 'scripts/run-gates.mjs'), 'utf8')
+    // Each gate block is a `script:` line followed by its `why:` prose; pair
+    // them so the count is read against the gate it describes.
+    const claims = [...source.matchAll(/script:\s*'(scripts\/[\w-]+\.mjs)'[\s\S]{0,600}?why:\s*'((?:[^'\\]|\\.)*)'/g)]
+    let checked = 0
+    for (const [, file, why] of claims) {
+      const m = /\b(?:[Cc]arries)\s+([a-z-]+)\s+canar(?:y|ies)\b/.exec(why)
+      if (!m) continue
+      const n = WORDS.indexOf(m[1].toLowerCase())
+      assert.notEqual(n, -1, `${file} claims "${m[1]}" canaries, which is not a count this test knows`)
+      const mod = await import(`../${file}`)
+      assert.ok(Array.isArray(mod.CANARIES),
+        `${file} claims ${m[1]} canaries but exports no CANARIES array to measure against`)
+      assert.equal(n, mod.CANARIES.length,
+        `${file} claims ${m[1]} canaries and carries ${mod.CANARIES.length}`)
+      checked += 1
+    }
+    assert.ok(checked >= 5,
+      `only ${checked} canary counts found in run-gates.mjs — the parser is wrong, not the gates`)
+  })
+
   it('names no gate that does not exist', () => {
     // The old sentence named "schema" and "license", which are not gates. A
     // named gate is a claim a reader can check by looking in scripts/, so the
