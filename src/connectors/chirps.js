@@ -1,4 +1,7 @@
+import { gunzipSync } from 'node:zlib'
 import { fetchWithRetry } from './http.js'
+import { decodeGeoTiff, sampleAt } from '../geotiff.js'
+import { DEFAULT_REGIONS } from '../schema.js'
 import { stableId } from '../utils.js'
 import { assessPagination, completenessVerdictName, recordCap } from '../completeness.js'
 
@@ -7,9 +10,22 @@ const FILE_PATTERN = /chirps-v2\.0\.(\d{4}\.\d{2}\.\d{2})\.tif(?:\.gz)?/g
 const YEAR_DIR_PATTERN = />(\d{4})\/</g
 
 /**
+ * CHIRPS nodata, by convention rather than declaration.
+ *
+ * The daily p05 files carry no `GDAL_NODATA` tag — verified against the live
+ * bytes and recorded in `docs/research/chirps-geotiff/README.md` — so the
+ * reader cannot resolve it and this connector has to state it. The value is
+ * confirmed empirically: the leading cells of row 0, which are ocean at 50N
+ * near the antimeridian, are exactly -9999.0.
+ */
+const CHIRPS_NODATA = -9999
+
+/**
  * CHIRPS-2.0 daily precipitation, UCSB CHC.
  *
- * Keyless public dataset index (no account, no licence gate).
+ * Keyless public dataset index (no account, no licence gate). Public domain
+ * (CC0); the CHC asks for the Funk et al. 2014 citation, which is in
+ * `sources/INDEX.md`.
  *
  * Layout note, verified 2026-10-01: the product root no longer lists files
  * directly. It lists one directory per year (1981 through the current year),
@@ -19,26 +35,32 @@ const YEAR_DIR_PATTERN = />(\d{4})\/</g
  * So the index is walked one level down, and a year directory that yields no
  * filenames is recorded as an error rather than silently skipped.
  *
- * What this connector reports: the availability and dates of daily CHIRPS
- * precipitation rasters at 0.05 degrees. It does NOT read pixel values — the
- * rasters are gzip-compressed GeoTIFF, and decoding them is not something to
- * do without a raster library. Every observation therefore carries
- * `precipitation_mm: null` and `type: rainfall_dataset_available`.
+ * **It reads pixels.** Until 2026-10-14 this connector reported only which
+ * daily rasters exist, on the reasoning that decoding gzip-compressed GeoTIFF
+ * needs a raster library. `src/geotiff.js` removed that reason, and with it the
+ * limitation that made the records unjoinable: every observation carried
+ * `precipitation_mm: null` and `region_name: 'global'`, so nothing could be
+ * paired against a region's Open-Meteo series and `src/agreement.js` had no
+ * production caller. Each record is now one region on one day with a real
+ * millimetre figure, and `source: 'chirps'` beside `source: 'open_meteo'` is
+ * what makes the two comparable.
  *
- * This is a limitation worth stating plainly: this connector tells you what
- * data exists and where to get it, not what fell. Anything that needs actual
- * rainfall numbers must state which source it used.
+ * Reading pixels means downloading the raster, not listing its name — ~3 MB a
+ * day, up to ~11 MB on wet-season days, against 57.6 MB uncompressed. So the
+ * number of rasters decoded per run is capped (`chirps_days`) and the cap is
+ * reported in the completeness block, the same way the listing cap already is.
+ * A run that decodes fewer days than the index offered says so; it does not
+ * quietly become a run over a shorter window.
+ *
+ * Every failure is a named refusal on the record, never a silent 0. A decode
+ * that fails, a coordinate outside the raster's 50S-50N extent, a nodata cell
+ * under a region — each leaves `precipitation_mm: null` with `values_note`
+ * saying which, because a reader seeing a null must not infer "no rainfall".
  *
  * It also reports what the walk cost. `.slice(0, limit)` used to drop up to 700
  * of 730 daily files with nothing in the return value saying so, and the
  * dropped files were indistinguishable from days with no rainfall product at
- * all. The completeness block is that missing evidence. Note what it measures:
- * the count of files the index offered against the count this run kept. It
- * never needs a pixel reader for that, because "how many rasters exist" is a
- * property of the directory listing, not of the pixels inside them. Decoding
- * pixels would be a different question — did we read every value in every file —
- * and one this connector cannot answer, which `values_included: false` on each
- * record already says out loud.
+ * all. The completeness block is that missing evidence.
  */
 
 
@@ -52,18 +74,18 @@ const YEAR_DIR_PATTERN = />(\d{4})\/</g
  * never looked" are different claims and this repo has paid for conflating
  * them once already.
  */
-function chirpsCompleteness({ found, kept, limit, pagesFetched }) {
+function chirpsCompleteness({ found, datesKept, limit, pagesFetched }) {
   const cap = recordCap({
     found,
-    taken: kept.length,
+    taken: datesKept,
     cap: limit,
     reason: `chirps keeps the ${limit} most recent dates and drops the rest`,
   })
 
-  const lastPageFull = kept.length >= limit
+  const lastPageFull = datesKept >= limit
   const verdict = assessPagination({
     pagesFetched,
-    recordsSeen: kept.length,
+    recordsSeen: datesKept,
     // The index is a directory listing, not a paginated API, so there is no
     // provider page size. The cap is the only bound on a run.
     pageSize: limit,
@@ -76,7 +98,7 @@ function chirpsCompleteness({ found, kept, limit, pagesFetched }) {
     // it is passed only when records were actually dropped. `expectedTotal`
     // is the module's fallback for a provider that reports nothing, and it
     // yields a counted shortfall rather than a guess.
-    expectedTotal: found > kept.length ? found : null,
+    expectedTotal: found > datesKept ? found : null,
   })
 
   return {
@@ -107,7 +129,28 @@ export const chirpsConnector = {
     const maxYears = Number.isFinite(options.chirps_years) ? Number(options.chirps_years) : 2
     // Keep only the most recent requested number of dates.
     const limit = options.limit || 30
+    // Decoding is on by default. It is switchable because a caller that only
+    // wants the availability census should not pay ~3 MB a day for it, but the
+    // default has to be the useful one — an off-by-default reader is the state
+    // this connector was just moved out of.
+    const readValues = options.chirps_read_values !== false
+    // A raster is ~3 MB, up to ~11 MB on a wet day, so the number of days
+    // decoded is its own bound, separate from the listing cap. Small by
+    // default: the agreement route needs a handful of paired days to say
+    // anything, and an operator raising it should be doing so deliberately.
+    const decodeCap = Number.isFinite(options.chirps_days) ? Number(options.chirps_days) : 3
+    const regions = options.chirps_regions || DEFAULT_REGIONS
     let probed = 0
+    let decoded = 0
+    let decodeAttempts = 0
+    let decodeFailures = 0
+    // Declared outside the try: the single exit reads them, and a walk that
+    // threw halfway still has to report what it had counted by then.
+    let filesFound = 0
+    // Dates this run took a record for, against dates the index offered. The
+    // cap is applied per date rather than by slicing the records, so the two
+    // counts stay in the same unit.
+    let datesKept = 0
 
     /**
      * The single exit, so no path returns records without the accounting.
@@ -117,13 +160,67 @@ export const chirpsConnector = {
      * caller and then dropped on the floor by the pipeline that actually runs
      * this connector.
      */
-    const finish = (records) => {
-      const kept = records.slice(0, limit)
-      const completeness = chirpsCompleteness({ found: records.length, kept, limit, pagesFetched: probed })
+    const finish = (records, datesFound, datesKept) => {
+      const completeness = chirpsCompleteness({
+        found: datesFound,
+        // The listing cap counts *dates*, not records. One date now yields one
+        // record per region, so a cap read off `records.length` would mean a
+        // different window depending on how many regions were configured —
+        // 30 days at three regions would silently become a 10-day cap.
+        datesKept,
+        limit,
+        pagesFetched: probed,
+      })
+      // The decode cap is a second, independent bound, and it has to reach the
+      // return value for the same reason the listing cap does: a run that read
+      // three days out of thirty looks identical to a run over a three-day
+      // window unless the shortfall is stated.
+      completeness.days_decoded = decoded
+      completeness.decode_cap = readValues ? decodeCap : 0
+      completeness.decode_failures = decodeFailures
+      if (readValues && decodeFailures > 0) {
+        errors.push(`chirps: ${decodeFailures} raster${decodeFailures === 1 ? '' : 's'} failed to decode; affected records carry precipitation_mm: null with values_note saying why`)
+      }
       if (!completeness.complete) {
         errors.push(`chirps: walk is ${completenessVerdictName(completeness)} — ${completeness.reason}`)
       }
-      return { climate_observations: kept, errors, completeness }
+      return { climate_observations: records, errors, completeness }
+    }
+
+    /**
+     * One record for one region on one day.
+     *
+     * `sampled` is `sampleAt`'s result or null when the raster was never
+     * fetched. The two null paths are kept apart on purpose: "the value is
+     * missing because we did not look" and "because the cell is nodata" are
+     * different findings, and collapsing them would make a dry day and a
+     * skipped download read the same.
+     */
+    const recordFor = (region, date, fileUrl, sampled) => {
+      const hasValue = sampled !== null && sampled.value !== null
+      return {
+        id: stableId('climate', ['chirps', region.name, date]),
+        source: 'chirps',
+        // The type still says what the record is. A region-day carrying a
+        // millimetre figure is a rainfall observation, not merely a notice that
+        // a file exists, and the assertion set distinguishes them.
+        type: hasValue ? 'rainfall_observation' : 'rainfall_dataset_available',
+        region_name: region.name,
+        country: region.country,
+        latitude: region.lat,
+        longitude: region.lon,
+        observed_at: date.replaceAll('.', '-'),
+        precipitation_mm: hasValue ? sampled.value : null,
+        metadata: {
+          provider: 'UCSB CHC CHIRPS',
+          dataset: 'CHIRPS-2.0 global daily p05',
+          resolution: '0.05_degree',
+          source_url: indexUrl,
+          file_url: fileUrl,
+          values_included: hasValue,
+          values_note: valuesNote(sampled, readValues),
+        },
+      }
     }
 
     try {
@@ -135,10 +232,8 @@ export const chirpsConnector = {
 
       if (!years.length) {
         errors.push('chirps: product index lists no year directories; upstream layout may have changed again')
-        return finish([])
+        return finish([], 0, 0)
       }
-
-      let filesFound = 0
 
       for (const year of years) {
         let yearHtml
@@ -154,28 +249,40 @@ export const chirpsConnector = {
         filesFound += dates.length
 
         for (const date of dates) {
-          climate_observations.push({
-            id: stableId('climate', ['chirps', date]),
-            source: 'chirps',
-            type: 'rainfall_dataset_available',
-            region_name: 'global',
-            country: null,
-            latitude: null,
-            longitude: null,
-            observed_at: date.replaceAll('.', '-'),
-            // Null because this connector does not decode raster pixels. A
-            // reader seeing a null must not infer "no rainfall".
-            precipitation_mm: null,
-            metadata: {
-              provider: 'UCSB CHC CHIRPS',
-              dataset: 'CHIRPS-2.0 global daily p05',
-              resolution: '0.05_degree',
-              source_url: indexUrl,
-              file_url: `${indexUrl.replace(/\/$/, '')}/${year}/chirps-v2.0.${date}.tif.gz`,
-              values_included: false,
-              values_note: 'This connector reports dataset availability and dates, not pixel values. The rasters are gzip-compressed GeoTIFF and are not decoded here.',
-            },
-          })
+          if (datesKept >= limit) continue
+          datesKept += 1
+          const fileUrl = `${indexUrl.replace(/\/$/, '')}/${year}/chirps-v2.0.${date}.tif.gz`
+          // Decode the most recent `decodeCap` dates only; older ones keep the
+          // availability shape. The cap is counted across years, not per year,
+          // so a two-year walk does not silently double the transfer budget.
+          if (!readValues || decodeAttempts >= decodeCap) {
+            for (const region of regions) {
+              climate_observations.push(recordFor(region, date, fileUrl, null))
+            }
+            continue
+          }
+
+          // Counted before the fetch, not after. A cap on *successes* would let
+          // a source serving undecodable rasters pull every date the index
+          // lists — the bound that matters is the transfer, and the transfer
+          // happens whether or not the bytes turn out to be a TIFF.
+          decodeAttempts += 1
+          let raster = null
+          try {
+            const gz = await fetchWithRetry(fileUrl, { timeoutMs, retries, parse: 'buffer', source: options.source })
+            raster = decodeGeoTiff(gunzipSync(gz), { nodata: CHIRPS_NODATA })
+            decoded += 1
+          } catch (error) {
+            // Named, not silent. The records still go out — a date whose raster
+            // failed to decode is still a date the index offered — but every
+            // one of them says on its face that the value is missing and why.
+            decodeFailures += 1
+            errors.push(`chirps: ${date} raster unreadable: ${error.message}`)
+          }
+
+          for (const region of regions) {
+            climate_observations.push(recordFor(region, date, fileUrl, raster === null ? null : sampleAt(raster, region.lat, region.lon)))
+          }
         }
       }
 
@@ -186,6 +293,33 @@ export const chirpsConnector = {
       errors.push(`chirps: ${error.message}`)
     }
 
-    return finish(climate_observations)
+    return finish(climate_observations, filesFound, datesKept)
   },
+}
+
+/**
+ * Why a record holds the value it does, in the record's own words.
+ *
+ * The four cases are the four things that can happen, and each names itself:
+ * a sampled value, a nodata cell, a point outside the raster, and a raster
+ * never fetched. None of them is "no rainfall" — that is `precipitation_mm: 0`,
+ * which is a fifth case and reads as a number.
+ */
+function valuesNote(sampled, readValues) {
+  if (!readValues) {
+    return 'Pixel decoding was switched off for this run (chirps_read_values: false); the record reports that the raster exists and when.'
+  }
+  if (sampled === null) {
+    return 'The raster was not fetched or did not decode, so this record carries no value. A null here is not zero rainfall; see the run errors for the reason.'
+  }
+  if (sampled.reason === 'nodata') {
+    return 'The grid cell under this region holds CHIRPS nodata (-9999), which is ocean or outside the product extent, not a dry day.'
+  }
+  if (sampled.reason === 'outside_grid') {
+    return 'This region falls outside the CHIRPS 50S-50N extent, so the raster cannot answer for it.'
+  }
+  if (sampled.reason !== null) {
+    return `The raster could not be sampled at this region (${sampled.reason}).`
+  }
+  return 'Sampled from the CHIRPS daily p05 GeoTIFF at the region centre, nearest cell.'
 }

@@ -312,7 +312,7 @@ Built-in source ids:
 | `open_meteo` | forecast and historical precipitation and temperature | yes |
 | `gdacs` | GDACS global disaster alerts | yes |
 | `glofas` | Copernicus GloFAS river discharge | yes, **feed currently unverified** |
-| `chirps` | CHIRPS blended rainfall, monthly | yes |
+| `chirps` | CHIRPS daily rainfall at 0.05°, sampled per region from the p05 GeoTIFF | yes — CC0 |
 | `nasa_firms` | NASA FIRMS active fire detections | **no** — needs `NASA_FIRMS_MAP_KEY` |
 | `usgs_earthquake` | USGS earthquake catalogue | yes |
 | `noaa_enso` | NOAA CPC Niño 3.4 SST anomaly (ONI) | yes |

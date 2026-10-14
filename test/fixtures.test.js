@@ -3,6 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import { chirpsConnector } from '../src/connectors/chirps.js'
+import { gzipSync } from 'node:zlib'
+import { buildChirpsShapedTiff } from './tiff-fixture.mjs'
 import { gdacsConnector } from '../src/connectors/gdacs.js'
 import { glofasConnector } from '../src/connectors/glofas.js'
 import { nasaFirmsConnector } from '../src/connectors/nasa-firms.js'
@@ -150,29 +152,107 @@ describe('public source connector fixtures', () => {
     // on the root listing returned zero records while reporting no error, so
     // the connector looked healthy and ingested nothing.
     mockChirpsIndex()
-    const result = await chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 })
+    const result = await chirpsConnector.ingest({
+      chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_read_values: false,
+    })
     assert.equal(result.errors.length, 0)
-    assert.equal(result.climate_observations.length, 5)
+    // Five dates the index offered, one record per date per default region —
+    // the region split is what makes a CHIRPS record joinable against an
+    // Open-Meteo one, and it is why the count is no longer the date count.
+    assert.equal(result.climate_observations.length, 15)
+    assert.equal(result.completeness.counts_found, 5)
+    assert.equal(result.completeness.records_kept, 5)
     // Newest first: the connector exists to find recent daily files.
     assert.equal(result.climate_observations[0].observed_at, '2026-08-31')
     assert.equal(result.climate_observations[0].source, 'chirps')
-    const dates = result.climate_observations.map((o) => o.observed_at)
+    // `limit` bounds dates, not records: 30 days at three regions is still a
+    // 30-day window, not a 10-day one.
+    assert.equal(result.completeness.cap, 30)
+    const dates = [...new Set(result.climate_observations.map((o) => o.observed_at))]
     assert.deepEqual([...dates].sort().reverse(), dates, 'observations must be newest first')
   })
 
-  it('records the CHIRPS raster URL and admits it holds no rainfall values', async () => {
+  it('records the CHIRPS raster URL and reads a rainfall value out of it', async () => {
     mockChirpsIndex()
-    const result = await chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 })
+    const result = await chirpsConnector.ingest({
+      chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_days: 1,
+    })
+    // One date decoded, three regions: the newest record is the newest date's
+    // first region, and it carries a real figure rather than the availability
+    // shape this connector used to emit.
     const newest = result.climate_observations[0]
     assert.equal(
       newest.metadata.file_url,
       'https://fixture.test/chirps/2026/chirps-v2.0.2026.08.31.tif.gz',
     )
-    // A null must never read as "no rainfall fell".
-    assert.equal(newest.precipitation_mm, null)
-    assert.equal(newest.metadata.values_included, false)
-    assert.match(newest.metadata.values_note, /not pixel values/i)
-    assert.equal(newest.type, 'rainfall_dataset_available')
+    assert.equal(newest.observed_at, '2026-08-31')
+    assert.equal(newest.region_name, 'Turkana')
+    assert.equal(newest.precipitation_mm, 12.5)
+    assert.equal(newest.metadata.values_included, true)
+    assert.equal(newest.type, 'rainfall_observation')
+    // Every region on a decoded date carries its own value, not one shared one.
+    const day = result.climate_observations.filter((o) => o.observed_at === '2026-08-31')
+    assert.deepEqual(day.map((o) => [o.region_name, o.precipitation_mm]),
+      [['Turkana', 12.5], ['Mogadishu', 0], ['Juba', 4.25]])
+  })
+
+  it('reports a region whose CHIRPS cell is nodata as null, with the reason on the record', async () => {
+    // Ocean and outside-the-extent cells are -9999 in the raster. That is not
+    // zero rainfall, and a record must not let a reader think it is.
+    mockChirpsIndex()
+    const result = await chirpsConnector.ingest({
+      chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_days: 1,
+      chirps_regions: [{ name: 'Mid-Atlantic', country: null, lat: 0, lon: -30 }],
+    })
+    const [record] = result.climate_observations
+    assert.equal(record.precipitation_mm, null)
+    assert.equal(record.metadata.values_included, false)
+    assert.match(record.metadata.values_note, /nodata/i)
+    assert.equal(record.type, 'rainfall_dataset_available')
+  })
+
+  it('caps how many rasters it downloads, and says how many it decoded', async () => {
+    // Reading pixels is a download, not a listing: ~3 MB a day. The cap has to
+    // reach the return value or a three-day run and a thirty-day run truncated
+    // to three look identical.
+    mockChirpsIndex()
+    const result = await chirpsConnector.ingest({
+      chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_days: 2,
+    })
+    assert.equal(result.completeness.days_decoded, 2)
+    assert.equal(result.completeness.decode_cap, 2)
+    assert.equal(result.completeness.decode_failures, 0)
+    // Five dates offered, two decoded: the other three keep the availability
+    // shape rather than carrying a stale or invented value.
+    const withValues = new Set(result.climate_observations.filter((o) => o.precipitation_mm !== null).map((o) => o.observed_at))
+    assert.equal(withValues.size, 2)
+  })
+
+  it('reports a decode failure on the record rather than a silent zero', async () => {
+    // A raster that is not a GeoTIFF at all. The date is still one the index
+    // offered, so the records go out — but every one of them says the value is
+    // missing and why, and the run carries the failure.
+    mockChirpsIndex({ raster: Buffer.from('this is not a tiff') })
+    const result = await chirpsConnector.ingest({
+      chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_days: 1,
+    })
+    assert.equal(result.completeness.decode_failures, 1)
+    assert.ok(result.errors.some((e) => /raster unreadable/.test(e)))
+    assert.ok(result.errors.some((e) => /failed to decode/.test(e)))
+    const [record] = result.climate_observations
+    assert.equal(record.precipitation_mm, null)
+    assert.match(record.metadata.values_note, /did not decode/i)
+  })
+
+  it('still reports availability only when pixel reading is switched off', async () => {
+    mockChirpsIndex()
+    const result = await chirpsConnector.ingest({
+      chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_read_values: false,
+    })
+    assert.equal(result.completeness.decode_cap, 0)
+    assert.equal(result.climate_observations[0].precipitation_mm, null)
+    assert.equal(result.climate_observations[0].metadata.values_included, false)
+    assert.match(result.climate_observations[0].metadata.values_note, /switched off/i)
   })
 
   it('reports an error when the CHIRPS index has no year directories', async () => {
@@ -478,9 +558,26 @@ function mockFetch(fileName, contentType) {
  * Mocks the two-level CHIRPS layout: the root lists year directories, and each
  * year directory lists daily rasters.
  */
-function mockChirpsIndex() {
+function mockChirpsIndex({ raster = null } = {}) {
+  // The real product is `chirps-v2.0.YYYY.MM.DD.tif.gz` — a TIFF inside a
+  // gzip — and the connector gunzips before decoding. A mock serving raw TIFF
+  // bytes would fail the same way the real file would if the container changed.
+  const bytes = raster || gzipSync(buildChirpsShapedTiff({
+    values: [[3.1167, 35.6, 12.5], [2.0469, 45.3182, 0], [4.8594, 31.5713, 4.25]],
+  }))
   globalThis.fetch = async (url) => {
     const target = String(url)
+    // The rasters are fetched with `parse: 'buffer'`, so the mock has to serve
+    // bytes as well as markup. A mock that only speaks text would leave the
+    // whole decode path untested.
+    if (target.endsWith('.tif.gz')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Map([['content-type', 'application/gzip']]),
+        arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      }
+    }
     const file = target.includes('2026')
       ? 'chirps-2026.html'
       : target.includes('2025')

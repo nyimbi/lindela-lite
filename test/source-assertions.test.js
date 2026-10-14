@@ -266,7 +266,10 @@ describe('each kind fails on a deliberately bad batch', () => {
 
     // Same batch, opposite declared direction: CHIRPS is newest-first, so this
     // forward walk is the failure there and passes here.
-    const chirpsBatch = newestFirst.map((period) => ({ id: period, source: 'chirps', type: 'rainfall_dataset_available', observed_at: `${period}-01` }))
+    const chirpsBatch = newestFirst.map((period) => ({
+      id: period, source: 'chirps', type: 'rainfall_dataset_available', observed_at: `${period}-01`,
+      region_name: 'Turkana', metadata: { values_note: 'Pixel decoding was switched off for this run.' },
+    }))
     assert.equal(runAssertions({ source: 'chirps', records: chirpsBatch, options: { now: NOW } }).ok, true)
     assert.ok(runAssertions({ source: 'chirps', records: [...chirpsBatch].reverse(), options: { now: NOW } }).failures.some((item) => item.kind === 'monotonic_dates'))
     // The archive walk is the other way round, and passing there is the point.
@@ -363,7 +366,7 @@ describe('zero is a value', () => {
       runAssertions({ source: 'acled_csv', records: [{ id: 'c1', source_id: 'evt', event_type: 'protest', occurred_at: '2026-10-01T00:00:00.000Z', latitude: 2.0, longitude: 36.0, fatalities: 0 }], options: { now: NOW } }),
       runAssertions({ source: 'nasa_firms', records: [{ id: 'f1', source_id: 'viirs', event_type: 'fire', occurred_at: '2026-10-02T00:00:00.000Z', latitude: 2.0, longitude: 36.0, metadata: { frp: 0 } }], options: { now: NOW } }),
       runAssertions({ source: 'service_assets', records: [{ id: 'a1', name: 'Borehole', service_type: 'water', latitude: 3.1, longitude: 35.6, capacity: 0 }], options: { now: NOW } }),
-      runAssertions({ source: 'chirps', records: [{ id: 'x1', source: 'chirps', type: 'rainfall_dataset_available', observed_at: '2026-10-01', precipitation_mm: 0 }], options: { now: NOW } }),
+      runAssertions({ source: 'chirps', records: [{ id: 'x1', source: 'chirps', type: 'rainfall_observation', observed_at: '2026-10-01', region_name: 'Turkana', precipitation_mm: 0, metadata: { values_note: 'Sampled from the CHIRPS daily p05 GeoTIFF at the region centre, nearest cell.' } }], options: { now: NOW } }),
     ]
     for (const result of withZeroes) {
       assert.equal(result.ok, true, JSON.stringify(result.failures, null, 2))

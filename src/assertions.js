@@ -250,13 +250,52 @@ export const SOURCE_ASSERTIONS = deepFreeze({
 
   chirps: [
     {
-      name: 'chirps.raster availability records are identified and dated',
+      name: 'chirps.rainfall records are identified, dated and located',
       kind: 'required_fields',
-      fields: ['id', 'source', 'type', 'observed_at'],
-      // `precipitation_mm` is null on every record by construction — this
-      // connector reports which daily rasters exist, it does not decode pixels.
-      // Requiring it would condemn 100% of good runs.
-      note: 'precipitation_mm stays null by design; a reader must not infer "no rainfall" from it.',
+      fields: ['id', 'source', 'type', 'observed_at', 'region_name'],
+      // `precipitation_mm` is still not required, and the reason changed on
+      // 2026-10-14. It used to be null on *every* record because the connector
+      // did not decode pixels. It now decodes them, so the field is populated —
+      // but a null is still legitimate and still not zero rainfall: a region
+      // over ocean or outside the 50S-50N extent samples nodata, and a raster
+      // that fails to decode leaves the record without a value. Requiring the
+      // field would condemn those runs, which are honest ones.
+      //
+      // What must never be absent is `region_name`. It was the literal 'global'
+      // on every record until the connector began sampling per region, which is
+      // exactly why nothing could be paired against a region's Open-Meteo
+      // series — a record with no region cannot join to one.
+      note: 'precipitation_mm may be null for a nodata cell or an undecodable raster, and its values_note says which; region_name is what makes the record joinable.',
+    },
+    {
+      name: 'chirps.precipitation values are plausible millimetres',
+      kind: 'value_range',
+      field: 'precipitation_mm',
+      // Daily CHIRPS is mm/day. The record high for a 0.05-degree cell is well
+      // under 1000; a negative value is the nodata sentinel (-9999) leaking
+      // through the mask, which is the failure this catches — a reader that
+      // dropped the mask would store -9999 as a measurement and every
+      // downstream mean would be quietly wrong.
+      min: 0,
+      max: 1000,
+      note: 'Negative values are the CHIRPS nodata sentinel (-9999) escaping the mask; the upper bound is far above any real daily total.',
+    },
+    {
+      name: 'chirps.every record says why it holds the value it does',
+      kind: 'required_fields',
+      fields: ['metadata.values_note'],
+      // Reading pixels means downloading rasters, and a download can fail or a
+      // cell can be nodata. Both leave `precipitation_mm: null`, and both are
+      // legitimate — but neither may be left for a reader to guess at, because
+      // the guess a reader makes about a null rainfall figure is "no rain fell".
+      // The note names the case; this requires it to be there.
+      //
+      // The run-level counterpart — how many rasters a run decoded and how many
+      // failed — lives in the connector's completeness block, which the
+      // assertion framework never sees (`runAssertions` is handed records, not
+      // the run's return value). It is asserted in `test/fixtures.test.js`
+      // against the connector directly, rather than plumbed through here.
+      note: 'A null precipitation_mm must carry the reason it is null; a reader must never have to infer "no rainfall" from an absent value.',
     },
     {
       name: 'chirps.daily file dates do not go backwards',

@@ -101,10 +101,13 @@
   {
     "id": "chirps",
     "module": "src/connectors/chirps.js",
-    "description": "CHIRPS rainfall dataset index",
+    "description": "CHIRPS daily rainfall, sampled per region from the p05 GeoTIFF",
     "schemas": {
       "input": {
         "regions": "array of {name, country, lat, lon}",
+        "chirps_regions": "array of {name, country, lat, lon}; overrides regions for raster sampling",
+        "chirps_read_values": "boolean; decode the rasters (default true)",
+        "chirps_days": "number; how many rasters to download and decode per run (default 3)",
         "timeout_ms": "number",
         "retries": "number"
       },

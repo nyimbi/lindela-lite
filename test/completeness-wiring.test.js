@@ -120,11 +120,23 @@ function gdacsArchive(perWindow) {
 }
 
 describe('chirps: what the walk found, what it kept, and what it dropped', () => {
+  // Census mode (`chirps_read_values: false`) throughout this block. Its
+  // subject is the *listing* accounting — how many daily files the index
+  // offered against how many the cap kept — and that is a property of the
+  // directory listing, not of the pixels. Reading pixels would multiply each
+  // date by the region count and fetch a raster per date, which is a different
+  // question answered in test/fixtures.test.js. The cap counts dates either
+  // way; leaving decoding on here would only make these counts read in a
+  // different unit than the one the block asserts on.
   it('reports the pre-cap count that used to reach nobody', async () => {
     const result = await withStubbedFetch(chirpsIndex({ days: 365 }), () =>
-      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 }))
+      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_read_values: false }))
 
-    assert.equal(result.climate_observations.length, 30, 'the cap still applies')
+    // The cap bounds *dates*, and each date yields one record per default
+    // region — so the record count is the date count times the region count,
+    // and asserting on records here would be asserting the wrong unit.
+    assert.equal(new Set(result.climate_observations.map((o) => o.observed_at)).size, 30, 'the cap still applies')
+    assert.equal(result.climate_observations.length, 90)
     assert.equal(result.completeness.counts_found, 365,
       'the 335 dropped daily files are the whole point of the record')
     assert.equal(result.completeness.records_kept, 30)
@@ -141,7 +153,7 @@ describe('chirps: what the walk found, what it kept, and what it dropped', () =>
     // value into `source_runs[].errors`, so a verdict returned and never
     // recorded there is the defect this file was written against.
     const result = await withStubbedFetch(chirpsIndex({ days: 365 }), () =>
-      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 }))
+      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_read_values: false }))
 
     const line = result.errors.find((e) => /chirps: walk is/.test(e))
     assert.ok(line, `expected a completeness line among ${JSON.stringify(result.errors)}`)
@@ -154,9 +166,9 @@ describe('chirps: what the walk found, what it kept, and what it dropped', () =>
     // guard: operators learn to ignore the signal that would have told them
     // data was lost.
     const result = await withStubbedFetch(chirpsIndex({ days: 12 }), () =>
-      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 }))
+      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_read_values: false }))
 
-    assert.equal(result.climate_observations.length, 12)
+    assert.equal(new Set(result.climate_observations.map((o) => o.observed_at)).size, 12)
     assert.equal(result.completeness.complete, true)
     assert.equal(result.completeness.possibly_incomplete, false)
     assert.equal(result.completeness.counts_found, 12)
@@ -171,9 +183,9 @@ describe('chirps: what the walk found, what it kept, and what it dropped', () =>
     // pass every other assertion in this file and fail here.
     const html = chirpsIndex({ days: 30 })
     const filled = await withStubbedFetch(html, () =>
-      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0, limit: 30 }))
+      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_read_values: false, limit: 30 }))
     const roomy = await withStubbedFetch(html, () =>
-      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0, limit: 31 }))
+      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_read_values: false, limit: 31 }))
 
     assert.equal(filled.climate_observations.length, roomy.climate_observations.length)
     assert.equal(verdictName(filled.completeness), 'possibly_incomplete',
@@ -187,7 +199,7 @@ describe('chirps: what the walk found, what it kept, and what it dropped', () =>
     // 365 in 2026 plus 2 in 2025, walked because the index offers both. A count
     // that ignored the second page would still look plausible.
     const result = await withStubbedFetch(chirpsIndex({ days: 365, years: ['2026', '2025'] }), () =>
-      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 }))
+      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_read_values: false }))
 
     assert.equal(result.completeness.pages_fetched, 2)
     assert.equal(result.completeness.counts_found, 367)
@@ -199,7 +211,7 @@ describe('chirps: what the walk found, what it kept, and what it dropped', () =>
     // looked and the index was empty" is a finding, and zero found is not the
     // same claim as zero counted.
     const result = await withStubbedFetch(chirpsIndex({ days: 0 }), () =>
-      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 }))
+      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_read_values: false }))
 
     assert.equal(result.climate_observations.length, 0)
     assert.equal(result.completeness.counts_found, null)
@@ -214,7 +226,7 @@ describe('chirps: what the walk found, what it kept, and what it dropped', () =>
     // `WHERE possibly_incomplete = false` silently drop a whole quarter of real
     // observations. The accounting lives on the return value.
     const result = await withStubbedFetch(chirpsIndex({ days: 365 }), () =>
-      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0 }))
+      chirpsConnector.ingest({ chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_read_values: false }))
 
     assert.equal(result.completeness.complete, false)
     assert.ok(result.climate_observations.length > 0)
