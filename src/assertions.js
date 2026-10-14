@@ -45,6 +45,10 @@
  */
 
 import { canonicalHash, nowIso, stableId } from './utils.js'
+// The IoT normalizer's own sensor-type enum, so the assertion below cannot
+// drift from the set the normalizer accepts. `field-signals.js` imports only
+// `utils.js`, so this is not a cycle.
+import { IOT_SENSOR_TYPES } from './field-signals.js'
 
 /**
  * The assertion vocabulary. Every kind a source may declare, and nothing else —
@@ -87,6 +91,8 @@ export const SOURCE_COLLECTIONS = Object.freeze({
   acled_csv: 'conflict_events',
   conflict_csv: 'conflict_events',
   dhis2: 'climate_observations',
+  kobo: 'field_reports',
+  iot: 'iot_observations',
 })
 
 const GLOBAL_BOUNDS = Object.freeze({ latitude: { min: -90, max: 90 }, longitude: { min: -180, max: 180 } })
@@ -760,6 +766,96 @@ export const SOURCE_ASSERTIONS = deepFreeze({
       ratio: 0.5,
       zero_is_legitimate: true,
       note: 'No current epidemic disaster is a reading, not a silence to condemn; a collapse from a large trailing count is still worth its row.',
+    },
+  ],
+
+  kobo: [
+    {
+      name: 'kobo.field reports are identified, formed and sourced',
+      kind: 'required_fields',
+      fields: ['id', 'external_id', 'form_id', 'source'],
+      // `external_id` is the Kobo `_id`. A submission without one is a parse
+      // drift rather than a sparse form: every submission Kobo returns carries
+      // it, and `stableId` falls back to the array index when it is missing —
+      // which would key two different reports to one id on the next pull.
+      note: 'The id is what makes a re-pull idempotent; the external_id is what makes it checkable against Kobo.',
+    },
+    {
+      name: 'kobo.a field report keeps a body',
+      kind: 'required_fields',
+      fields: ['body'],
+      // The raw submission *is* the report — the connector stringifies it so
+      // every form field the author chose survives. An empty body means the
+      // submission was not read, which is the failure this connector exists to
+      // avoid reporting as success.
+      note: 'A field report with no body is a record of a submission nobody can read.',
+    },
+    {
+      name: 'kobo.submitted_at is null or a timestamp, never a guess',
+      kind: 'value_vocabulary',
+      field: 'source',
+      values: ['kobotoolbox'],
+      note: 'The source names the provider, and the CHW route writes the same collection with a different one — a record that lost its provenance reads as locally filed.',
+    },
+    {
+      name: 'kobo.the pull may legitimately return nothing',
+      kind: 'min_count_vs_trailing',
+      ratio: 0.5,
+      zero_is_legitimate: true,
+      note: 'A form nobody submitted today is a quiet day, not a dead connector; a collapse from a large trailing count is still worth its row.',
+    },
+  ],
+
+  iot: [
+    {
+      name: 'iot.readings are identified, placed and dated',
+      kind: 'required_fields',
+      fields: ['id', 'sensor_id', 'sensor_type', 'observed_at'],
+      // `normalizeIotObservation` owns these, so a missing one is not a sparse
+      // gateway — it is a record that bypassed the normalizer, which is the one
+      // way a malformed reading reaches the store.
+      note: 'The normalizer guarantees these; a batch missing one did not come through it.',
+    },
+    {
+      name: 'iot.readings are a known sensor type',
+      kind: 'value_vocabulary',
+      field: 'sensor_type',
+      // Read from the normalizer's own enum rather than retyped. A hand-typed
+      // copy of a discoverable set is this repository's most-repeated defect,
+      // and here it would be worse than usual: the normalizer *throws* on an
+      // unknown type, so a copy that drifted wider than the enum would assert
+      // a value the connector can never emit, and a copy that drifted narrower
+      // would condemn a reading the normalizer accepted.
+      values: IOT_SENSOR_TYPES,
+      note: 'The closed enum is what keeps a typo in a gateway config from becoming a new sensor class nothing thresholds on.',
+    },
+    {
+      name: 'iot.a reading is a real number',
+      kind: 'value_range',
+      field: 'value',
+      min: -1e6,
+      max: 1e6,
+      // A water level of 0 m, a rainfall of 0 mm and a battery at 0% are all
+      // measurements. The bound is a sanity rail against a unit or decimal
+      // shift, not a claim about what the sensor can read.
+      zero_is_legitimate: true,
+      note: 'Physical sanity bound, not a sensor range: null passes as absence, and 0 is a reading.',
+    },
+    {
+      name: 'iot.battery percentage is a percentage when present',
+      kind: 'value_range',
+      field: 'battery_pct',
+      min: 0,
+      max: 100,
+      zero_is_legitimate: true,
+      note: 'A flat battery is 0%, which is the reading an operator most needs; a value above 100 is a unit error.',
+    },
+    {
+      name: 'iot.a sensor network may legitimately report nothing',
+      kind: 'min_count_vs_trailing',
+      ratio: 0.5,
+      zero_is_legitimate: true,
+      note: 'A gateway with no new readings is a quiet window, not a dead feed; a collapse from a large trailing count is still worth its row.',
     },
   ],
 })

@@ -170,21 +170,49 @@ describe('ENH-60 — a connector with no gate is always-on, not gated', () => {
   })
 
   it('reports a registry entry the runtime cannot run as unwired, not as a switch', async () => {
-    // `kobo` and `iot` are built, tested, registry-listed and carry a `GATE_ENV`
-    // flag, but neither is in `CONNECTORS`, so `getConnector` throws
+    // `kobo` and `iot` were built, tested, registry-listed and carried a
+    // `GATE_ENV` flag, but neither was in `CONNECTORS`, so `getConnector` threw
     // `Unknown source`. The status route's own contract is "which connectors
     // this deployment can actually run, and why not" — so it may not report one
     // as enabled, and it may not tell an operator to set a flag that changes
     // nothing. This is the assertion that would have caught it.
-    const { res } = await call({ kind: 'connectors-status' }, { data: { source_runs: [] } })
-    const rows = res.json().data
-    const unwired = rows.filter((row) => !row.wired)
-    assert.ok(unwired.length > 0, 'every registry entry was reported wired — did the registry and CONNECTORS converge?')
-    for (const row of unwired) {
-      assert.equal(row.enabled, false, `${row.id} is advertised as runnable but is not in CONNECTORS`)
-      assert.doesNotMatch(row.reason, /=on/, `${row.id} names a flag to set, but its flag has no effect`)
-      assert.match(row.reason, /not registered for ingestion/, `${row.id}'s reason does not say why it is off`)
+    //
+    // It drives a **synthetic** entry, not the live registry. The first version
+    // read whichever real entry was unwired, which meant wiring the two above
+    // made this fail for the reason it was written to catch — and the fix that
+    // presents itself is a conditional that passes when there is nothing left to
+    // check. A canary that disappears when the tree improves is not a canary, so
+    // the subject moved to `connectorStatusRow`, where an unwired entry can be
+    // constructed whatever the registry holds.
+    const { connectorStatusRow } = await import('../src/routes/catalogue.js')
+    // One id that is deliberately absent from `GATE_ENV` and one that is in it,
+    // so the two together are the jurisdiction boundary: the refusal may not
+    // depend on a flag existing, because the reason it must not name one applies
+    // either way. Neither may be a real connector id — `kobo` was the first
+    // draft's example and the assertion failed the moment `kobo` was wired,
+    // which is the canary reporting a stale input rather than a defect.
+    for (const [entry, gates] of [
+      [{ id: 'not_a_connector' }, {}],
+      [{ id: 'phantom' }, { phantom: 'LINDELA_LITE_PHANTOM_ENABLED' }],
+    ]) {
+      const row = connectorStatusRow(entry, [], gates)
+      assert.equal(row.wired, false, `${entry.id} is not in CONNECTORS and must not be reported wired`)
+      assert.equal(row.enabled, false, `${entry.id} is advertised as runnable but is not in CONNECTORS`)
+      assert.doesNotMatch(row.reason, /=on/, `${entry.id} names a flag to set, but its flag has no effect`)
+      assert.match(row.reason, /not registered for ingestion/, `${entry.id}'s reason does not say why it is off`)
     }
+    // And the converse, so the two assertions above are not passed by a function
+    // that refuses everything: a wired entry reports its own state instead.
+    const wired = connectorStatusRow({ id: 'dhis2' }, [])
+    assert.equal(wired.wired, true, 'dhis2 is in CONNECTORS and must be reported wired')
+    assert.doesNotMatch(wired.reason || '', /not registered for ingestion/,
+      'a wired connector was given the unwired reason')
+    // The live registry is now the whole map, and that is asserted where it
+    // belongs — `test/connector-registry-parity.test.js` compares the two sets
+    // directly. Named here so a reader does not think this case stopped checking.
+    const { res } = await call({ kind: 'connectors-status' }, { data: { source_runs: [] } })
+    assert.ok(res.json().data.every((row) => row.wired),
+      'a registry entry is reported unwired — see test/connector-registry-parity.test.js')
   })
 
   it('counts rather than paginates, because the registry is a fixed catalogue', async () => {

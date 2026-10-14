@@ -19,6 +19,8 @@ export const SOURCE_IDS = Object.freeze([
   'acled_csv',
   'conflict_csv',
   'dhis2',
+  'kobo',
+  'iot',
 ])
 
 export const BLOCKED_SOURCE_IDS = Object.freeze(['gdelt'])
@@ -314,6 +316,7 @@ export function emptyStore() {
     quarantine_weather_forecasts: [],
     quarantine_school_attendance_observations: [],
     quarantine_iot_observations: [],
+    quarantine_field_reports: [],
     // Raw upstream response bodies, for replay and fixture seeding (ENH-12).
     //
     // Declared here because `store.js` SCHEMA now carries it: an `emptyStore`
@@ -538,6 +541,28 @@ export function publicSourceCatalog() {
         credential_hint: 'A self-hosted DHIS2 instance: base_url plus an API token or username/password. Off until LINDELA_LITE_DHIS2_ENABLED=on.',
         status_note: 'Maps configured data elements to climate observations and, from enrolled/present pairs, to school attendance. Refuses a single aggregate headcount rather than inventing present counts.',
         outputs: ['climate_observations', 'school_attendance_observations'],
+      }
+    }
+    if (id === 'kobo') {
+      return {
+        ...common,
+        name: 'KoboToolbox submissions',
+        type: 'kobo_api',
+        requires_credentials: true,
+        credential_hint: 'A KoboToolbox server: base_url, the form asset_uid and an API token. Off until LINDELA_LITE_KOBO_ENABLED=on.',
+        status_note: 'One field report per submission, keeping the raw form answers; a configured school_attendance mapping additionally yields normalized daily attendance and records the submissions missing its fields rather than skipping them silently.',
+        outputs: ['field_reports', 'school_attendance_observations'],
+      }
+    }
+    if (id === 'iot') {
+      return {
+        ...common,
+        name: 'IoT sensor gateway',
+        type: 'iot_gateway',
+        requires_credentials: true,
+        credential_hint: 'A gateway endpoint returning a JSON array of readings; an optional bearer token. Off until LINDELA_LITE_IOT_ENABLED=on.',
+        status_note: 'Readings pass through the closed sensor-type enum and per-type unit defaults; a reading that fails validation is reported in the run errors and the rest of the batch still returns.',
+        outputs: ['iot_observations'],
       }
     }
     // The fallthrough used to be reached by any id without a case above, and it

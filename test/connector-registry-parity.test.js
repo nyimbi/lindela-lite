@@ -36,6 +36,16 @@ import { fileURLToPath } from 'node:url'
  *
  * Canary: delete `dhis2: dhis2Connector,` from `CONNECTORS` and watch the
  * first case fail naming `dhis2`.
+ *
+ * **It is empty, and that is the point.** `kobo` and `iot` were its two
+ * entries: complete connectors with passing suites, registry-listed and
+ * gate-flagged, absent from `CONNECTORS` — so `/connectors/status` offered an
+ * operator a variable to set that changed nothing. Both are now registered,
+ * which took a schema change rather than a map entry (`field_reports` had no
+ * quarantine home and was absent from `OUTPUT_COLLECTIONS`, so a Kobo run
+ * would have accumulated its reports into nothing). The map is now the whole
+ * registry, and the empty declaration is kept rather than deleted because the
+ * third case is what makes an entry fail the moment it stops being true.
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -43,16 +53,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 /**
  * Registry entries with no connector in `CONNECTORS`, and why.
  *
- * Both are complete connectors with their own passing suites — the gap is the
- * registration, not the code. Each emits a collection the ingest accumulator
- * does not carry (`kobo` → `field_reports`; `field_reports` has no quarantine
- * home), so wiring either is a schema change rather than a one-line entry, and
- * it is not this unit's to make.
+ * Empty: every registry entry is now runnable. A future entry goes here only
+ * with the reason it is off, and the third case below fails it as a stale
+ * exemption the moment it is wired.
  */
-const UNWIRED = {
-  kobo: 'KoboToolbox pull; built and tested, emits field_reports which has no quarantine home yet',
-  iot: 'IoT gateway pull; built and tested, not yet registered for ingestion',
-}
+const UNWIRED = {}
 
 /** The registry the catalogue route serves, read the way the route reads it. */
 function registry() {

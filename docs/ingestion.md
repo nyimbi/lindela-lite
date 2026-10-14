@@ -25,6 +25,13 @@ User-supplied sources:
 - `acled_csv`
 - `dhis2`
 
+Operator-configured field-data pulls, gated behind an env flag and a credential
+the operator holds:
+
+- `kobo` — KoboToolbox submissions (`LINDELA_LITE_KOBO_ENABLED=on`)
+- `iot` — a sensor gateway answering a JSON array of readings
+  (`LINDELA_LITE_IOT_ENABLED=on`)
+
 `gdelt` is intentionally excluded.
 
 ### Sources That Need Configuration
@@ -299,6 +306,8 @@ Regular sources have default policies in `src/ingestion.js`:
 | `gdacs_archive` | 0 min | 30 sec | 2 | 43200 min |
 | `open_meteo_archive` | 0 min | 60 sec | 2 | 43200 min |
 | `open_meteo_flood` | 0 min | 60 sec | 2 | 43200 min |
+| `kobo` | 360 min | 20 sec | 2 | 720 min |
+| `iot` | 360 min | 20 sec | 2 | 720 min |
 
 User-supplied sources do not have regular schedules by default. `dhis2` has a
 policy but `regular: false`, because activation depends on an operator

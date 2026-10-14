@@ -34,6 +34,16 @@ describe('R-11 — every source the platform can run has a declared budget', () 
       acled_csv: 'a local file import (connectors/uploads.js); no outbound call',
       conflict_csv: 'a local file import (connectors/uploads.js); no outbound call',
       dhis2: 'one push per run to a configured instance; not a crawl',
+      // Both were registered into `CONNECTORS` after being built and left
+      // unwired, so this list grew with them rather than the policy map. Each
+      // makes one GET per run through plain `fetch` rather than
+      // `fetchWithRetry`, so there is no limiter call site for a policy to
+      // reach — declaring one would be the inert configuration R-11 is made of,
+      // which is the same reason their own `defineConnector` blocks carry no
+      // `rateLimit`. A crawl of either (paginating a form's submissions, say)
+      // is the change that would move them out of here.
+      kobo: 'one GET per run to a configured KoboToolbox asset; not a crawl',
+      iot: 'one GET per run to a configured gateway; not a crawl',
     }
     const missing = SOURCE_IDS.filter((id) => !RATE_LIMIT_POLICIES[id] && !(id in EXEMPT))
     assert.deepEqual(missing, [],

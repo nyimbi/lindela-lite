@@ -324,6 +324,8 @@ Built-in source ids:
 | `open_meteo_forecast` | current conditions and 7-day daily forecast per pilot district — feeds the map weather overlay via `GET /api/v1/weather` | yes — attribution required |
 | `reliefweb_epidemics` | ReliefWeb epidemic disaster events for the pilot countries — feeds the outbreak-map layer; keyless RSS (20 latest disasters worldwide, country-centroid placement) or the v2 API with subnational coordinates once a ReliefWeb-approved appname is set (`LINDELA_LITE_RELIEFWEB_APPNAME`) | yes, keyless RSS; v2 API needs a free approved appname |
 | `dhis2` | DHIS2 data-quality aggregate | user-supplied instance |
+| `kobo` | KoboToolbox submissions as field reports, plus normalized school attendance from a configured mapping | user-supplied instance |
+| `iot` | generic IoT sensor gateway readings (closed sensor-type enum, per-type unit defaults) | user-supplied gateway |
 | `service_assets` | imported roads, clinics, boreholes | — |
 | `acled_csv` | ACLED-compatible conflict CSV, user-supplied | user licence |
 | `conflict_csv` | Lite conflict schema CSV, user-supplied | user licence |

@@ -17,6 +17,8 @@ import { openMeteoForecastConnector } from './connectors/open-meteo-forecast.js'
 import { acledCsvConnector, conflictCsvConnector, serviceAssetsConnector } from './connectors/uploads.js'
 import { dhis2Connector } from './connectors/dhis2.js'
 import { reliefwebEpidemicsConnector } from './connectors/reliefweb-epidemics.js'
+import { koboConnector } from './connectors/kobo.js'
+import { iotConnector } from './connectors/iot.js'
 import { allowRequest, circuitStateFor, createCircuitState, outcomesFor, outcomesFromRuns, recordOutcome, scoreConnector } from './circuit.js'
 import { COMPLETENESS_VERDICTS, completenessVerdictName } from './completeness.js'
 import { runAssertions, quarantineRecords, quarantineCollectionName } from './assertions.js'
@@ -60,6 +62,13 @@ export const CONNECTORS = Object.freeze({
   acled_csv: acledCsvConnector,
   conflict_csv: conflictCsvConnector,
   dhis2: dhis2Connector,
+  // Both were built, tested, registry-listed and gate-flagged while absent from
+  // this map, so `/connectors/status` offered an operator a variable to set that
+  // changed nothing — `getConnector` refused the id as `Unknown source`. The
+  // registry parity test declared the gap in `UNWIRED` and now fails as a stale
+  // exemption if either leaves this map again.
+  kobo: koboConnector,
+  iot: iotConnector,
 })
 
 /** Process-monotonic. See `runInvocationSeq` use in `runIngestion`. */
@@ -129,6 +138,14 @@ export const SOURCE_POLICIES = Object.freeze({
   acled_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   conflict_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
   dhis2: { interval_minutes: 360, timeout_ms: 20000, retries: 1, stale_after_minutes: 720, minimum_records: 0, regular: false },
+  // Kobo and IoT are the same shape as dhis2: a connector that stays inert
+  // until an operator sets the env gate and supplies credentials for an
+  // instance only they know. `regular: false` and `minimum_records: 0` say
+  // that out loud — there is no publisher to be overdue against and no floor
+  // to hold an unconfigured pull to. Judging either against a clock produces
+  // the noise that trains people to ignore the freshness signal.
+  kobo: { interval_minutes: 360, timeout_ms: 20000, retries: 2, stale_after_minutes: 720, minimum_records: 0, regular: false },
+  iot: { interval_minutes: 360, timeout_ms: 20000, retries: 2, stale_after_minutes: 720, minimum_records: 0, regular: false },
 })
 
 export function getConnector(sourceId, connectors = CONNECTORS) {
@@ -1159,6 +1176,12 @@ export const OUTPUT_COLLECTIONS = [
   'weather_forecasts',
   'school_attendance_observations',
   'iot_observations',
+  // ENH-43/ENH-46. The Kobo pull's own output, and the last collection a
+  // connector emits that this accumulator did not carry. `kobo` is now in
+  // `CONNECTORS`, so without this entry its field reports would be accumulated
+  // into nothing and the run would report zero records on a successful pull —
+  // the exact silent drop the nine-entry widening above was made to end.
+  'field_reports',
 ]
 
 function countRecords(output) {

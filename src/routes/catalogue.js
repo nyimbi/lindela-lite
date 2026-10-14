@@ -136,6 +136,57 @@ function latestRunFor(runs, sourceId) {
 /**
  * Handle one catalogue route. Returns true when it handled the request.
  */
+/**
+ * One row of `GET /api/v1/connectors/status`, from a registry entry.
+ *
+ * Exported so the three-way distinction below is assertable on a **synthetic**
+ * entry rather than only on whichever real one happens to be unwired. That
+ * mattered: `kobo` and `iot` were the two unwired entries, and the test that
+ * held the route to its own contract drove them through the live registry — so
+ * wiring them made the assertion fail for the reason the assertion was written
+ * to catch, and the tempting fix was to weaken it to a conditional that passes
+ * when there is nothing to check. A canary that disappears when the tree
+ * improves is not a canary.
+ *
+ * Three states, and the route may not conflate them:
+ *
+ *   - **wired, gated on** — `enabled: true`, no reason. It will run.
+ *   - **wired, gated off** — `enabled: false`, and the reason names the variable
+ *     to set. An operator's own choice, so the route tells them how to undo it.
+ *   - **unwired** — `enabled: false`, and the reason may **not** name a flag.
+ *     A registry entry with no connector in `CONNECTORS` is advertised and not
+ *     runnable: `getConnector` throws `Unknown source`, so setting the variable
+ *     the row printed would change nothing. Telling an operator to set it is the
+ *     lie this branch exists to prevent.
+ */
+export function connectorStatusRow(connector, runs = [], gates = GATE_ENV) {
+  const gateVar = gates[connector.id] || null
+  const wired = Object.hasOwn(CONNECTORS, connector.id)
+  const enabled = wired && (gateVar ? process.env[gateVar] === 'on' : true)
+  const lastRun = latestRunFor(runs, connector.id)
+  return {
+    id: connector.id,
+    description: connector.description || '',
+    gate: gateVar,
+    enabled,
+    wired,
+    // A gated-off connector is a deliberate choice by an operator, so it says
+    // what to set rather than just reporting false. An unwired one has no
+    // switch to offer, and saying "set X=on" would be a lie about the flag.
+    reason: !wired
+      ? 'this connector is built and tested but not registered for ingestion; its gate flag has no effect yet'
+      : enabled ? null : `set ${gateVar}=on and provide its credentials to enable this source`,
+    output: connector.schemas?.output || [],
+    last_run: lastRun ? {
+      id: lastRun.id,
+      status: lastRun.status,
+      completed_at: lastRun.completed_at || null,
+      records: lastRun.records ?? null,
+      error: lastRun.error || null,
+    } : null,
+  }
+}
+
 export async function handleCatalogueRoute(route, { data, req, res, url, jsonResponse }) {
   if (route.kind === 'sources') {
     const health = ingestionStatus(data)
@@ -184,40 +235,7 @@ export async function handleCatalogueRoute(route, { data, req, res, url, jsonRes
     const registry = await getConnectorRegistry()
     const entries = Array.isArray(registry) ? registry : []
     const runs = data.source_runs || []
-    const rows = entries.map((connector) => {
-      const gateVar = GATE_ENV[connector.id] || null
-      // A registry entry with no connector is advertised, not runnable. `kobo`
-      // and `iot` are exactly this: built, tested, registry-listed and
-      // gate-flagged, and absent from `CONNECTORS`, so `getConnector` refuses
-      // them as `Unknown source`. Reporting the gate flag here would tell an
-      // operator to set a variable that changes nothing — the flag reads as the
-      // switch and is not one. `wired: false` says what is true, and the reason
-      // names the gap rather than implying a missing credential.
-      const wired = Object.hasOwn(CONNECTORS, connector.id)
-      const enabled = wired && (gateVar ? process.env[gateVar] === 'on' : true)
-      const lastRun = latestRunFor(runs, connector.id)
-      return {
-        id: connector.id,
-        description: connector.description || '',
-        gate: gateVar,
-        enabled,
-        wired,
-        // A gated-off connector is a deliberate choice by an operator, so it says
-        // what to set rather than just reporting false. An unwired one has no
-        // switch to offer, and saying "set X=on" would be a lie about the flag.
-        reason: !wired
-          ? 'this connector is built and tested but not registered for ingestion; its gate flag has no effect yet'
-          : enabled ? null : `set ${gateVar}=on and provide its credentials to enable this source`,
-        output: connector.schemas?.output || [],
-        last_run: lastRun ? {
-          id: lastRun.id,
-          status: lastRun.status,
-          completed_at: lastRun.completed_at || null,
-          records: lastRun.records ?? null,
-          error: lastRun.error || null,
-        } : null,
-      }
-    })
+    const rows = entries.map((connector) => connectorStatusRow(connector, runs))
     // `count`, not `total`: the registry is a fixed catalogue read from disk, so
     // there is no second page and no limit to report against. `total` beside an
     // array with no `returned`/`limit`/`has_more` is a paging envelope missing

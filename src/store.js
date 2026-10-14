@@ -60,6 +60,11 @@ export const QUARANTINE_SOURCES = Object.freeze([
   'weather_forecasts',
   'school_attendance_observations',
   'iot_observations',
+  // The Kobo connector's field reports. It was the one output with no
+  // quarantine home, which is why wiring `kobo` into `CONNECTORS` was a schema
+  // change rather than a map entry: a batch that fails its assertions is
+  // condemned, and a condemned batch with nowhere to go is discarded silently.
+  'field_reports',
 ])
 
 /**

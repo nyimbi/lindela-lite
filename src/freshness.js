@@ -169,6 +169,13 @@ export const CADENCE_DAYS = Object.freeze({
   // and it carries minimum_records: 0. Judging an unconfigured integration
   // against a clock produces noise that trains people to ignore the signal.
   dhis2: cadence(null, 0),
+  // Same argument for the two field-data pulls: Kobo's submissions arrive when
+  // a partner collects them and the IoT gateway answers when an operator
+  // points it at a LAN endpoint. Neither has a publication schedule, so a null
+  // cadence disables the deadline while leaving `broken` armed — a failed pull
+  // is still a failed pull.
+  kobo: cadence(null, 0),
+  iot: cadence(null, 0),
 })
 
 /**
