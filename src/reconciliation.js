@@ -49,7 +49,7 @@
 import { createHash } from 'node:crypto'
 
 import { canonicalHash, nowIso, stableId } from './utils.js'
-import { derivedKey } from './analytics.js'
+import { NUMERIC_VALUE_FIELDS, derivedKey } from './analytics.js'
 import { CHAINED_FIELDS, GENESIS_HASH, chainDigestInput, chainEntry, computeEntryHash } from './audit-chain.js'
 
 /**
@@ -100,12 +100,16 @@ export const TRACE_FAILURE_REASONS = Object.freeze(['no_provenance', 'incomplete
 const TRACE_FIELDS = Object.freeze(['source_run_id', 'payload_hash', 'transform_version'])
 
 /**
- * The value a published number carries, read the same way `analytics.js` reads
- * it, so "the value" means the same thing on both sides of a comparison.
+ * The value a published number carries, read through the field list
+ * `analytics.js` exports, so "the value" means the same thing on both sides of a
+ * comparison. It used to be a second copy of that list — same five entries, one
+ * of them a label — which is a drift waiting for whichever module gained a
+ * family first.
  */
 function valueOf(record) {
-  for (const field of ['score', 'risk_score', 'value', 'level', 'impact_level']) {
-    if (record && record[field] !== undefined && record[field] !== null) return record[field]
+  for (const field of NUMERIC_VALUE_FIELDS) {
+    const value = record?.[field]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
   }
   return null
 }

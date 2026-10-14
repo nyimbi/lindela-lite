@@ -181,6 +181,12 @@ export const SCHEMA = Object.freeze([
   // be swept when it is, or the row recording the anomaly would replace the
   // anomaly.
   { key: 'unexpected_changes' },
+  // ENH-51. The reconciliation ledger's events, written by `reconcileRefresh`
+  // inside `refreshAnalytics`. Not `derived: true` for the same reason
+  // `unexpected_changes` is not: `replaceAnalytics` swaps the eight collections
+  // it computes, and sweeping this one would replace the record of a change with
+  // the change.
+  { key: 'reconciliation_events' },
   { key: 'incidents' },
   { key: 'interventions' },
   { key: 'intervention_tasks' },

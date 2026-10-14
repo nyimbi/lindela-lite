@@ -10,6 +10,8 @@ import { computeRoadAccess } from './road-access.js'
 import { logger, metrics } from './observability.js'
 import { calibrationByRegion } from './calibration.js'
 import { driftReport } from './drift.js'
+import { buildProvenance } from './provenance.js'
+import { ReconciliationLedger, observationMap, reconcileRun } from './reconciliation.js'
 
 /**
  * Honesty envelopes (ENH-02).
@@ -325,6 +327,53 @@ export const DERIVED_INPUTS = Object.freeze([
 export const CLOCK_DEPENDENT = Object.freeze(['road_access', 'data_quality'])
 
 /**
+ * The `source` a derived number's provenance envelope names.
+ *
+ * Not a connector id, and deliberately not shaped like one: `source_runs` is
+ * keyed by connector, and a derived row attributed to a connector would be
+ * indistinguishable from an ingested one in every join that reads that column.
+ * The reconciliation ledger only needs the run id and the transform, but a
+ * reader of the envelope gets to see that this number was computed rather than
+ * fetched.
+ */
+export const DERIVED_RUN_SOURCE = 'analytics_refresh'
+
+/**
+ * What a derived number's run id is a digest of: everything the derived set
+ * reads, minus the derived set itself.
+ *
+ * Computed from `DERIVED_INPUTS` rather than typed out, because a hand-typed
+ * list standing for a discoverable set is this repository's most-repeated
+ * defect — and here the consequence is silent. A collection added to a scorer
+ * and not added here would leave the run id holding while the number moved, so
+ * the ledger would report `changed_without_input_change` for a number that did
+ * exactly what its inputs said.
+ *
+ * The subtraction states the definition — a run id is a function of what the
+ * refresh *read*, never of what it *wrote* — and it is currently inert: no
+ * scorer declares a derived collection as an input. It stays because the
+ * definition is the thing being written down, and the moment a scorer does read
+ * `risk_scores`, a run id hashed over its own output is not a subtle failure.
+ * The test beside this asserts the same rule in both directions, so the two
+ * agree by construction rather than by coincidence.
+ */
+export const RUN_INPUTS = Object.freeze([
+  ...new Set(DERIVED_INPUTS.flatMap((entry) => entry.inputs)),
+].filter((name) => !DERIVED_INPUTS.some((entry) => entry.name === name)))
+
+/**
+ * The code that produced a derived number, for `transform_version`.
+ *
+ * `buildProvenance` hashes the source text of the functions it is handed, so
+ * editing a scorer changes the version it stamps — which is exactly the claim
+ * the ledger's `changed_without_input_change` outcome needs to be checkable. It
+ * is passed as a thunk list rather than evaluated here so the two scorers stay
+ * the ones this module actually calls; a hand-typed version string would be the
+ * list-standing-for-a-discoverable-set defect with a hash on it.
+ */
+const DERIVED_TRANSFORMS = [computeFloodRisk, computeClimateConflictRisk, computeCompoundHazardRisk, computeServiceImpacts]
+
+/**
  * The collections a cached entry's digest was computed over.
  *
  * Read from the declaration rather than the key's own copy so a test can ask
@@ -377,6 +426,32 @@ function sliceOf(data, collections) {
 function derivedDigest(name, data) {
   try {
     return canonicalHash(sliceOf(data, derivedInputsFor(name)))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The id of the run a refresh's derived numbers came from, or `null`.
+ *
+ * A digest of the collections the refresh *read*, so the id moves when the
+ * inputs move and holds when they do not. `null` when they cannot be digested —
+ * the same guard, and the same reason, as `derivedDigest` above.
+ *
+ * Not `INPUT_COUNTS`, which is the obvious set and the wrong one. That set is
+ * the counts stamped *on* a derived record for ENH-23 to compare against, so it
+ * names the derived collections as inputs — and this refresh stamps every derived
+ * row with an envelope before the swap. Hashing them made the run id a function
+ * of the *previous* run id: seeded(1) → `743a33e6`, seeded(6) → `32ca17f7`, back
+ * to seeded(1) → `062ed804`, three ids for two input states. The ledger reads a
+ * moved run id with unchanged inputs as `changed_without_input_change` — "the
+ * engine changed" — so it would have reported the engine changing on every
+ * refresh, which is the outcome the module exists to distinguish from a real
+ * finding. A check that fires always is read as noise by the third week.
+ */
+function digestOfRun(data) {
+  try {
+    return stableId('analytics_run', [canonicalHash(sliceOf(data, RUN_INPUTS))])
   } catch {
     return null
   }
@@ -470,7 +545,54 @@ export async function refreshAnalytics(store) {
   //
   // Stamped before the swap, so what the store held is what the comparison reads.
   for (const record of computed.risk_scores || []) record.input_counts = inputDigestFor(placeOf(record), data)
-  for (const record of computed.impact_assessments || []) record.input_counts = inputDigestFor(placeOf(record), data)
+  // The row's own district, via `districtOf`, and not `placeOf` — see that
+  // function for why an identity and a place are not the same field.
+  for (const record of computed.impact_assessments || []) record.input_counts = inputDigestFor(districtOf(record), data)
+
+  // ENH-51. A derived number carries the envelope that names the run which
+  // produced it, for the same reason an ingested record does: the reconciliation
+  // ledger traces on `_provenance`, and a number with none is refused as
+  // `cannot_trace: no_provenance` rather than compared. Without this the ledger
+  // would run on every refresh and report nothing but refusals — a check that
+  // measures nothing, wearing the shape of a clean result.
+  //
+  // The run id is a digest of the *inputs* this refresh computed from, not a
+  // clock. The refresh is a pure function of its inputs — `planDerivedRefresh`
+  // already depends on that — so two refreshes over identical inputs are the
+  // same run as far as reconciliation is concerned, and a re-run of an unchanged
+  // store reconciles rather than reporting a spurious "changed with changed
+  // inputs". A clock here would make every refresh a new run and every pair
+  // would come back `reconciled`, which is the false negative the ledger exists
+  // to prevent.
+  //
+  // `derivedDigest`'s guard, for `derivedDigest`'s reason: an input that cannot
+  // be digested (a cycle, a BigInt) has no digest, and a run id computed from one
+  // would be a claim that two undigestible refreshes are the same run. When
+  // there is no id there is no envelope, the number refuses as untraceable, and
+  // that is the honest answer rather than a guessed attribution.
+  const derivedRunId = digestOfRun(data)
+  const derivedRows = [
+    ...(computed.risk_scores || []).map((record) => ['risk_scores', record]),
+    ...(computed.impact_assessments || []).map((record) => ['impact_assessments', record]),
+  ]
+  if (derivedRows.length) {
+    const envelopes = derivedRunId
+      ? buildProvenance({
+        sourceRun: { id: derivedRunId, source: DERIVED_RUN_SOURCE },
+        connector: { id: DERIVED_RUN_SOURCE },
+        records: derivedRows.map(([, record]) => record),
+        // No URL: a derived number is fetched from nowhere, and `null` says that
+        // rather than naming the store it was read out of. `retrieved_at` is the
+        // run id rather than a timestamp for the reason above — it has to be a
+        // function of the inputs or the envelope is not.
+        retrieval: { url: null, retrieved_at: derivedRunId },
+        transform: DERIVED_TRANSFORMS,
+      })
+      : []
+    derivedRows.forEach(([, record], index) => {
+      if (envelopes[index]) record._provenance = envelopes[index]
+    })
+  }
 
   // The skipped collections keep the rows the store already holds — `data` is the
   // pre-swap snapshot — so a skip is a genuine no-op rather than a recompute whose
@@ -484,6 +606,14 @@ export async function refreshAnalytics(store) {
   // moved" for a collection nothing measured. The reconciliation is for values
   // that moved, and a skip is the case where they could not have.
   const reconciliation = await reconcileDerivedNumbers(store, data, { previous: previousValues, now: new Date().toISOString() })
+  // ENH-51. ENH-23's reconciliation answers "did a value move by more than the
+  // band"; the ledger answers the narrower "did it move at all, and if its
+  // inputs held, what moved it". Both are written, because they are different
+  // questions with different bands and a caller reading one is not reading the
+  // other. The ledger's events go to `reconciliation_events` rather than into
+  // `unexpected_changes`, which ENH-23 owns and whose shape its readers depend
+  // on.
+  const ledger = await reconcileRefresh(store, { before: previousValues, after: payload, now: new Date().toISOString() })
   rememberDigests(store, digestsAfter(plan, data, previousDigests))
 
   // Persist calibration snapshot (best-effort, don't fail refresh)
@@ -587,10 +717,33 @@ async function readDerived(store, collections, snapshot = null) {
   return out
 }
 
-/** The number a reconciliation compares: the score, or null when there is none. */
+/**
+ * The number a reconciliation compares: the score, or null when there is none.
+ *
+ * The list was `score, risk_score, value, level, impact_level`, and two of those
+ * five were wrong in a way no test could see:
+ *
+ *   - `level` and `impact_level` are *labels*. A risk row carries `score` and
+ *     `risk_level`, so it compared on the score; an impact row carries
+ *     `impact_score` and `impact_level`, so it fell through to the label and
+ *     compared `'medium'` against `'medium'`. A service impact whose score moved
+ *     from 54 to 55 inside one band was reported as holding while its inputs
+ *     moved — the ledger's own `unchanged_with_input_change` finding, produced by
+ *     the comparison rather than found by it.
+ *   - a refusal is not a value. `computeCompoundHazardRisk` returns
+ *     `score: null, level: 'unknown'` when the window is too short, so the row
+ *     fell past the null score to the sentinel string and reconciled as
+ *     `'unknown'` — a *finding*, on a number that was never computed. A refusal
+ *     reported as a movement is the loudest way this module can lie.
+ *
+ * So: the numeric field each family actually publishes, and nothing else. A
+ * record with no numeric field returns null, which `reconcileNumber` turns into
+ * `missing_inputs` — an honest refusal rather than a comparison of two strings.
+ */
 function comparableValue(record) {
-  for (const field of ['score', 'risk_score', 'value', 'level', 'impact_level']) {
-    if (record[field] !== undefined && record[field] !== null) return record[field]
+  for (const field of NUMERIC_VALUE_FIELDS) {
+    const value = record[field]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
   }
   return null
 }
@@ -634,13 +787,65 @@ const INPUT_COUNTS = [
  * number, and collapsing them into a single key would compare two different
  * quantities and call the difference an anomaly.
  */
+/**
+ * The place a record is about.
+ *
+ * `asset_id` sits before `id` because an impact row's `id` is
+ * `stableId('impact', [asset.id, score])` — it *contains the score*, so the id
+ * is a different string every time the score moves. Keying on it made a changed
+ * impact indistinguishable from a brand-new one: the ledger saw
+ * `no_prior_observation` on both sides of every comparison and could never
+ * reconcile the family at all. It also made `inputDigestFor` count records in a
+ * district named `impact_7efd5b04…`, which no record carries, so every declared
+ * input came back zero and the row claimed nothing had moved whatever did.
+ *
+ * The asset id is stable across a score change, which is what a key needs to be.
+ * A row with neither still falls back to `id`, and a collection whose records
+ * carry no place at all keys degenerately — which `replay.js` already handles by
+ * refusing to pair on a colliding key rather than mispairing.
+ */
 function placeOf(record) {
-  return record.region || record.district || record.region_name || record.id || null
+  return record.region || record.region_name || record.asset_id || record.district || record.id || null
+}
+
+/**
+ * The district a record's inputs are counted over.
+ *
+ * Separate from `placeOf` because the two answer different questions and only
+ * coincided while every derived row carried a `region_name`. Identity has to be
+ * stable under a value change (hence `asset_id` for an impact); the input count
+ * has to name somewhere records actually live (hence the district). For an
+ * impact row the asset's `admin1` is the second and the asset id is the first,
+ * and using one for the other is how the counts came back all zero.
+ */
+function districtOf(record) {
+  // No `record.id` fallback, deliberately, though `placeOf` has one. An id is
+  // not a district: falling back to it is what made every impact row's inputs
+  // count zero, and a branch that re-creates the bug is not a safety net.
+  return record.district || record.region || record.region_name || null
 }
 
 export function derivedKey(collection, record) {
   return `${collection}:${record.type || 'score'}:${placeOf(record)}`
 }
+
+/**
+ * The numeric fields a derived row may publish its value under, most specific
+ * first.
+ *
+ * Exported because `src/reconciliation.js` compares the same rows and had its own
+ * copy of this list — the same five entries, one of them a label, drifting the
+ * moment either module gained a family. `derivedKey` is already shared between
+ * the two for exactly this reason; this is the second half of the same argument,
+ * and a caller that picked a different field would key a number one way and
+ * compare it another.
+ *
+ * Numeric only. A label is not a value: `impact_level: 'medium'` is a band, and
+ * comparing bands reports a score that moved 54 → 55 as holding. The sentinel
+ * `'unknown'` a refusal carries is the same mistake with a worse consequence —
+ * it makes a number that was never computed look like a number that moved.
+ */
+export const NUMERIC_VALUE_FIELDS = Object.freeze(['score', 'risk_score', 'impact_score', 'value'])
 
 export function inputDigestFor(district, data) {
   const counts = {}
@@ -716,6 +921,45 @@ export async function reconcileDerivedNumbers(store, data, { previous, now = new
     }
   }
   return { rows }
+}
+
+/**
+ * ENH-51 — the reconciliation ledger, run over one refresh.
+ *
+ * ENH-23 asks whether a number moved by more than a band over unchanged input
+ * *counts*. This asks the four-way question the ledger exists for, and the two
+ * are not the same question: a value that moved by a hair is a finding here and
+ * is deliberately below ENH-23's band, and a number that could not be traced at
+ * all is a refusal here and is invisible there. Both are written because both
+ * are read.
+ *
+ * `before` is the pre-swap derived map `readDerived` built, and `after` is the
+ * payload about to be stored — already carrying the `_provenance` envelope this
+ * refresh stamped on it. A refresh that recomputed nothing reconciles nothing,
+ * and says so with `measured: 0` rather than reporting a clean ledger, which is
+ * the distinction the module's own header is built on.
+ *
+ * The events are chained before they are stored, so the collection holds the
+ * same hash-chained rows `ReconciliationLedger` produces in memory. Re-merging a
+ * pair produces the same ids — `toEvent` keys on the run pair and the outcome,
+ * never on the clock — so a second refresh of an unchanged store updates the
+ * events rather than appending a second copy of them.
+ */
+async function reconcileRefresh(store, { before, after, now }) {
+  if (typeof store.merge !== 'function') return { measured: 0, events: [], skipped: 'store cannot merge' }
+  const prior = before instanceof Map ? before : observationMap(before || {})
+  const current = observationMap(after || {})
+  // A collection the refresh did not recompute is absent from `payload`, so its
+  // rows are absent from `current` too — and a number that is not in `current` is
+  // not compared. That is the honest outcome: nothing was measured about it, and
+  // inventing a comparison against the stored row would reconcile a number
+  // against itself.
+  const report = reconcileRun({ before: prior, after: current, now, includeReconciled: false })
+  if (!report.events.length) return { ...report, stored: 0 }
+  const ledger = new ReconciliationLedger()
+  const chained = ledger.append(report.events)
+  await store.merge({ reconciliation_events: chained })
+  return { ...report, stored: chained.length }
 }
 
 export function computeFloodRisk(data, options = {}) {
@@ -1142,11 +1386,24 @@ export function computeServiceImpacts(data, riskScores) {
       : null
     const generated_at = new Date().toISOString()
     assessments.push({
-      id: stableId('impact', [asset.id, score]),
+      // Keyed on the asset, not on the score. `stableId('impact', [asset.id, score])`
+      // made the id a function of the value it carries, so a moved score produced
+      // a *different row* rather than an update: the store held both, the ledger
+      // saw a first sight on each side of every comparison and could never
+      // reconcile the family, and nothing that joins an impact to its history —
+      // bitemporal, replay, the reconciliation ledger — could follow one asset
+      // across a refresh. An identity that changes when the number does is not an
+      // identity.
+      id: stableId('impact', [asset.id]),
       asset_id: asset.id,
       asset_name: asset.name,
       service_type: asset.service_type,
       country: asset.country,
+      // The asset's own district, carried so the row's declared inputs can be
+      // counted over somewhere that exists. Without it the count is taken over
+      // `impact_<hash>` — a name no record in the store carries — and every input
+      // reads zero, which is a measurement that cannot move.
+      district: asset.admin1 || asset.district || null,
       latitude: asset.latitude,
       longitude: asset.longitude,
       impact_score: score,

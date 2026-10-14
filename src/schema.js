@@ -297,6 +297,10 @@ export function emptyStore() {
     model_drift: [],
     // ENH-23. Must match COLLECTIONS in store.js — see record_versions above.
     unexpected_changes: [],
+    // ENH-51. The reconciliation ledger's events. Must match COLLECTIONS in
+    // store.js: a name in one list and not the other is a defect in whichever
+    // direction it appears.
+    reconciliation_events: [],
     // ENH-13. Must match COLLECTIONS in store.js: an emptyStore key that
     // JsonStore.merge never writes is harmless, but a COLLECTIONS entry with
     // no emptyStore key means read() spreads a missing key over the default
