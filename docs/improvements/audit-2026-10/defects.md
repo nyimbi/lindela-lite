@@ -1777,6 +1777,59 @@ truncated rather than *reachable*. The count no longer lies; the rows are still
 one fetch away. That is a paging implementation, not a clamp fix, and it is
 filed as ENH-81.
 
+**ENH-81 shipped 2026-10-11, so the paragraph above is now false as a statement
+about the console — and it was already narrower than it read.** `fetchAllPages`
+(`public/shared/paging.js`) walks the cursor, and the alerts rail calls it
+(`public/app.js`). The paragraph said "the console" and meant the alerts rail,
+which was the only list it had looked at.
+
+What is still true, checked 2026-10-15 rather than assumed: four other client
+lists fetch a fixed page and never walk — `workflow/search.js` (five collections
+at `limit=200`), `workflow/panel.js` (five at `limit=500`), `workflow/ops.js`
+(`outbox` and `field-reports`, both at `limit=500`) and the reports/climate/
+workflows loads in `app.js`'s refresh. They are not equally honest about it, and
+the difference is worth stating because it is the difference between a bound and
+a silent one:
+
+- `search.js` renders `searchCaveat` on every non-empty query — "searched the
+  first 200 records of each collection, client-side". A bound that says it is
+  bounded.
+- `panel.js` discloses it only in a *failure* string ("not found in the first 500
+  records of …"), so the operator learns the bound exactly when a lookup misses
+  and never while browsing.
+- `ops.js` was worse than silent, and this is the one item in the list that was
+  **fixed (2026-10-15)** rather than recorded. It read both collections it was about to delete
+  with `?limit=500` and then counted `data.length`, printing the result as
+  "**N exist**" on the confirm dialog for `apply-retention` — a permanent,
+  no-undo delete. On a store larger than 500 that understates what the delete
+  would touch, and on a read that *failed* it says "0 exist" about a collection
+  it never saw, then opens the confirm gate anyway, because `apiSettled` answers
+  `null` and `(null?.data || []).length` is a perfectly confident zero. Its
+  `unaged` count had the same shape: counted within the held page, printed as a
+  whole-set count. Three numbers, one defect — a bounded observation stated as a
+  total — in the one dialog where understating the set is not a display
+  question. `retentionPlan`/`retentionRow` now read the server's `total` through
+  `listScope`, say "of which this panel has read N" when `has_more` is set,
+  scope the unaged clause to the records actually scanned, and refuse before the
+  confirm gate when either collection is unreadable. `outboxBacklog` names the
+  same bound on the dispatch count, which reports the backlog from a bounded
+  page while the dispatch itself acts on the whole outbox. 15 cases in
+  `test/ops-retention-scale.test.js`. There was no test for `ops.js` before
+  this, which is why all three numbers had been wrong since the panel shipped.
+- The `app.js` loads keep the envelope and their panels read the server's `total`
+  through `listScope`/`pageWindow`, which is ARC-06's position exactly: the count
+  is honest and the rows are one fetch away. `renderPagerScope` — the function
+  that names a *capped walk* rather than an unloaded page — has one caller, the
+  alerts rail.
+
+So the honest residue is not "the console does not follow `next_cursor`": one
+list walks, one bounds itself and says so, one says so only on a miss, one
+asserted its page length as a total and has been fixed, and the rest report a
+server total over a single fetch. Which of those bounds is a product decision
+per surface; `ops.js` was not a decision, it was an omission, and the omission
+had a consequence the others do not — the set it misdescribed is the set an
+irreversible delete acts on.
+
 ### ARC-07 — MEDIUM — Error-envelope shape hand-written 128 times; no error taxonomy
 `{success:false, error:…}` is written at every `jsonResponse` site. Zero `code`
 field. Clients string-match `error` text. One 422, five 409, twenty-three 405.

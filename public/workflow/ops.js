@@ -20,6 +20,7 @@
 
 import { apiFetch, apiSettled } from '/shared/runtime.js'
 import { esc, num, truncate } from '/shared/fmt.js'
+import { listScope } from '/shared/paging.js'
 
 const json = (path, options) => apiFetch(path, options)
 
@@ -107,11 +108,30 @@ async function runBiasCorrect(out) {
 
 // --- Outbox dispatch ---------------------------------------------------------
 
+/**
+ * What the dispatch count may be said to have come from.
+ *
+ * The count is read off a bounded page, so it is a count of the backlog this
+ * panel could *see* — while the dispatch that follows acts on the whole outbox.
+ * "from N pending" over a truncated page reads as the whole backlog; over a
+ * failed read it reads as a confident zero. Both are the same defect as
+ * `retentionRow`'s: a bounded observation stated as a total.
+ */
+export function outboxBacklog(envelope, pending) {
+  if (envelope == null) {
+    return 'a pending count this panel could not read — the outbox request failed, and dispatch acted on the whole outbox'
+  }
+  if (envelope.has_more === true) {
+    return `${num(pending, { int: true })} pending in the first ${num((envelope.data || []).length, { int: true })} events read, of ${num(envelope.total, { int: true })} in the outbox — dispatch acts on the whole outbox, not only the events counted here`
+  }
+  return `${num(pending, { int: true })} pending`
+}
+
 async function runOutboxDispatch(out) {
   const before = await apiSettled('/api/v1/outbox?limit=500')
   const pending = (before?.data || []).filter((e) => e.status === 'pending').length
   const payload = await json('/api/v1/outbox/dispatch', { method: 'POST', body: '{}' })
-  result(out, `${num(payload?.dispatched ?? 0, { int: true })} event(s) marked sent, ${num(payload?.failed ?? 0, { int: true })} failed, from ${num(pending, { int: true })} pending. `
+  result(out, `${num(payload?.dispatched ?? 0, { int: true })} event(s) marked sent, ${num(payload?.failed ?? 0, { int: true })} failed, from ${outboxBacklog(before, pending)}. `
     + 'An event with no active webhook subscription matching it is still marked sent — nothing was delivered to it, and this count does not distinguish those from deliveries. A failure is retried until five attempts, then marked failed.',
   payload?.failed ? 'notice-warn' : '')
 }
@@ -128,25 +148,92 @@ async function runOutboxDispatch(out) {
  * deployment actually falls on. Counts and unageable records are true; the
  * verdict is the server's.
  */
-function retentionPlan(fieldReports, inbound) {
+export function retentionPlan(reportEnvelope, inboundEnvelope) {
   const ageable = (record) => {
     const stamp = record.occurred_at || record.created_at
     const parsed = stamp ? Date.parse(stamp) : Number.NaN
     return Number.isFinite(parsed)
   }
-  const buckets = (list) => ({
-    total: list.length,
-    unaged: list.filter((r) => !ageable(r)).length,
-  })
-  return { fieldReports: buckets(fieldReports), inbound: buckets(inbound) }
+  const buckets = (envelope) => {
+    const scope = listScope(envelope)
+    return {
+      // `listScope.total` is the server's matched count, not the page length.
+      // The dialog says "N exist" in front of an irreversible delete, so a page
+      // length printed there understates what the delete would touch.
+      total: scope.total,
+      // Only the held page can be scanned for missing timestamps. On a truncated
+      // page this counts within the page, and the caller says so.
+      unaged: (envelope?.data || []).filter((r) => !ageable(r)).length,
+      held: scope.held,
+      complete: scope.complete,
+      // An envelope that never arrived carries no count at all. `total` falls
+      // back to 0 through `listScope`; this flag is what keeps the dialog from
+      // rendering that 0 as "0 exist".
+      readable: envelope != null,
+    }
+  }
+  return { fieldReports: buckets(reportEnvelope), inbound: buckets(inboundEnvelope) }
 }
 
-async function runRetention(askToConfirm) {
+/**
+ * One row of the retention preview.
+ *
+ * Three numbers, each with its own failure: a collection that could not be read,
+ * a set larger than the page the panel holds, and records whose timestamps are
+ * missing so no window can age them. The previous copy asserted the first of
+ * these as a fact and the third as a whole-set count.
+ *
+ * `retentionRefusal` normally stops the dialog before this renders an unreadable
+ * bucket; the branch stays because this function's contract is that it never
+ * states a count it does not have, and that contract should not depend on a
+ * guard living in its caller.
+ */
+export function retentionRow(label, bucket) {
+  if (!bucket.readable) {
+    return { change: 'unknown', label, detail: 'could not be read — this panel cannot say how many records this route would consider' }
+  }
+  const exists = bucket.complete
+    ? `${num(bucket.total, { int: true })} exist`
+    : `${num(bucket.total, { int: true })} exist, of which this panel has read ${num(bucket.held, { int: true })} — the count is the server's, the scan for missing timestamps is not`
+  const unaged = bucket.unaged
+    ? `; ${num(bucket.unaged, { int: true })} of the records read carry no timestamp and are always kept`
+    : ''
+  return { change: 'may delete', label, detail: `${exists}${unaged}` }
+}
+
+/**
+ * The reason this panel must not open a confirm gate, or `null` to proceed.
+ *
+ * A preview built from a collection that could not be read would say "0 exist"
+ * about a set it never saw and then ask the operator to confirm deleting it.
+ * Refusing is the honest answer, and it costs nothing: nothing has been deleted
+ * at this point and a retry can succeed.
+ */
+export function retentionRefusal(plan) {
+  const missing = [
+    plan.fieldReports.readable ? null : 'field reports',
+    plan.inbound.readable ? null : 'RapidPro inbound messages',
+  ].filter(Boolean)
+  if (!missing.length) return null
+  return `Cannot preview this delete: the ${missing.join(' and ')} could not be read, so this panel cannot tell you how many records the route would consider. Nothing was deleted.`
+}
+
+/**
+ * @returns {Promise<string|null>} the reason the preview could not be built, or
+ *   `null` when the dialog opened — the caller must report the reason rather
+ *   than announcing a dialog that never appeared.
+ */
+export async function runRetention(askToConfirm) {
   const [reports, inbound] = await Promise.all([
     apiSettled('/api/v1/field-reports?limit=500'),
     apiSettled('/api/v1/rapidpro/inbound?limit=500'),
   ])
-  const plan = retentionPlan(reports?.data || [], inbound?.data || [])
+  const plan = retentionPlan(reports, inbound)
+
+  // Refuse before the confirm gate, not after it — and hand the reason back
+  // rather than writing it, because the caller owns the control that reports it.
+  const refusal = retentionRefusal(plan)
+  if (refusal) return refusal
 
   askToConfirm({
     title: 'Apply retention — this deletes records',
@@ -155,8 +242,8 @@ async function runRetention(askToConfirm) {
     intro: `POST /api/v1/maintenance/apply-retention permanently deletes every field report and inbound RapidPro message older than the retention window. There is no undo and no soft-delete here: the records are removed from the store, not flagged. `
       + `<strong>The window itself is not readable through the API</strong> — it is set in data/pii-policy.json or LINDELA_LITE_PII_POLICY — so this panel cannot show you exactly which records fall on the wrong side of it. What it can show is the scale:`,
     rows: [
-      { change: 'may delete', label: 'Field reports', detail: `${num(plan.fieldReports.total, { int: true })} exist; ${num(plan.fieldReports.unaged, { int: true })} carry no timestamp and are always kept` },
-      { change: 'may delete', label: 'RapidPro inbound messages', detail: `${num(plan.inbound.total, { int: true })} exist; ${num(plan.inbound.unaged, { int: true })} carry no timestamp and are always kept` },
+      retentionRow('Field reports', plan.fieldReports),
+      retentionRow('RapidPro inbound messages', plan.inbound),
       { change: 'unchanged', label: 'Everything else', detail: 'No other collection is touched by this route' },
     ],
     confirmLabel: 'Delete permanently',
@@ -166,6 +253,7 @@ async function runRetention(askToConfirm) {
       return `Deleted ${num(payload.field_reports.expired, { int: true })} field report(s) and ${num(payload.rapidpro_inbound_messages.expired, { int: true })} inbound message(s); kept ${num(payload.field_reports.kept, { int: true })} and ${num(payload.rapidpro_inbound_messages.kept, { int: true })} respectively. This cannot be undone.`
     },
   })
+  return null
 }
 
 // --- Connector registry ------------------------------------------------------
@@ -308,8 +396,11 @@ export async function mountOps({ askToConfirm }) {
   retentionButton?.addEventListener('click', async () => {
     result(retentionControl, 'Reading the collections that retention touches…')
     try {
-      await runRetention(askToConfirm)
-      result(retentionControl, 'Review the dialog. Nothing has been deleted.')
+      // The refusal is a string; a null return means the dialog opened. Reporting
+      // "Review the dialog" over a refusal would replace the one sentence that
+      // says why the delete did not happen.
+      const refusal = await runRetention(askToConfirm)
+      result(retentionControl, refusal || 'Review the dialog. Nothing has been deleted.', refusal ? 'notice-warn' : '')
     } catch (err) {
       result(retentionControl, String(err.message || err), 'notice-danger')
     }
