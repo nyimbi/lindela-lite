@@ -521,6 +521,27 @@ A second copy would be the drift the split is meant to avoid.
 >    the second writer's merge sees no clock at all. Wiring ENH-41 therefore means
 >    editing every operational normalizer, not adding a call site — fact 1's
 >    record-format change, with a mechanism rather than an impression.
+>
+> **Re-run 2026-10-15, both facts, because a proof nobody re-executes is a claim.**
+> Fact 4, verbatim:
+>
+> ```
+> node --input-type=module -e "import {buildUpdate} from './src/operations.js';
+>   const out = buildUpdate('field_reports', {id:'r1',summary:'x',incident_id:'i1'},
+>     {status:'confirmed', fields:{status:{heads:[{actor:'phone',clock:{phone:1}}]}}},
+>     {interventions:[]});
+>   console.log(out.status, out.fields, 'fields' in out)"
+> # -> confirmed undefined false
+> ```
+>
+> Fact 2, by enumeration rather than by example: `grep -rn PATCH public/` returns
+> **one** hit, `public/app.js:5879`'s `patchJson` helper, and `patchJson` appears
+> three times in `public/` — that definition, one import, and **one** call,
+> `public/panels/settings.js:79`, the trigger-protocol mode toggle. The CHW app's
+> only writes are two `submitOrQueue('/api/v1/chw/report', …)` calls
+> (`public/chw/app.js`), both POSTs. So there is still no surface that can produce
+> the concurrent edit this entry is named for, and no record shape for the merge to
+> act on.
 
 **ENH-42 — Offline map tile packs.** `basemap.js` is inline polygons and fetches
 nothing, so the offline map is a fixed asset. Let an operator define a bbox and
