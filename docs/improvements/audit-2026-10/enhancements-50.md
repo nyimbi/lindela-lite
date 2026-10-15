@@ -1287,6 +1287,40 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > and 127 exact comparisons across 36 route modules, none of which exposes its
 > path as a value a generator could read. Declaring the paths first is the
 > prerequisite, and that is ENH-60's residue rather than a table to write.
+>
+> **The reason was wrong, 2026-10-15, and the conclusion survives it.** The
+> paragraph above says a regex's structure "is not a value a generator could
+> read". That is checkable, and it is false — `scripts/route-surface.mjs` has read
+> exactly that since `6a5bf6f`, and it is the same derivation four gates already
+> run on. Measured at HEAD:
+>
+> ```
+> node --input-type=module -e "import {servedRoutePaths,routeSources} from
+>   './scripts/route-surface.mjs'; const {paths,coverage}=servedRoutePaths('.');
+>   console.log(paths.size, coverage.parsed.length, coverage.unparsed.length)"
+> ```
+>
+> gives **193 paths, 37 matchers parsed, 0 unparsed**. Resolving the capture
+> groups is not an approximation: `/(\/api\/v1\/(alert-rules|alert-events)(?:\/([^/]+))?)/`
+> yields all four of `/api/v1/alert-rules`, `/api/v1/alert-events`, and both
+> `/{id}` shapes, and **78 of the 193 served paths have no literal spelling
+> anywhere in `src/`** — `/api/v1/alert-events/{id}.cap`,
+> `/api/v1/trigger-protocols/{id}/backtest` — so those 78 are derived from regex
+> and from nothing else. `check-openapi` compares against this set, which is why
+> `/api/v1/alert-events/{id}.cap` is in `docs/openapi.yaml` at all: it could only
+> have got there from the pattern.
+>
+> So the matcher is **not** the obstacle, and the "61% derivable" figure understates
+> the derivable set for the same reason — it was counted from literal spellings,
+> which is the subset, not the surface. The obstacle the entry is actually up
+> against is the other three tables, and the reason they resist is in the table
+> above and is sound: a scope is a policy about a path, a manifest is a
+> measurement of what a handler reads, and a client literal is an argument at a
+> call site. Those are not properties of a path, so no path declaration can carry
+> them. That is a real argument for ENH-59 staying PARTIAL; "the matchers are
+> imperative" was not, and it had the additional cost of naming a prerequisite
+> (declare the paths first) that was already discharged. The conclusion held, the
+> reason did not, and the reason is what the next reader reuses.
 
 **ENH-60 — Router extraction.** `handleApiRequestInContext` was 1,597 lines
 (`src/server.js:763–2360` <!-- line-drift-ok: the range as audited; ENH-60 is IMPLEMENTED and the dispatcher is 80 lines now -->) and entangled routing, auth, validation, business logic
