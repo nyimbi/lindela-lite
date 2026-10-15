@@ -34,6 +34,7 @@ afterEach(() => {
 })
 
 const READ_TOKEN = 'read-token-aaaaaaaaaaaa'
+const ADMIN_TOKEN = 'admin-token-bbbbbbbbbbbb'
 const FULL_TOKEN = 'admin-token-bbbbbbbbbbbb'
 
 async function withServer(fn) {
@@ -77,15 +78,27 @@ describe('authentication is deny-by-default', () => {
   })
 
   it('gates /metrics, which used to be served before the auth gate', async () => {
-    setAuth([{ token: READ_TOKEN, scopes: ['read:hazards'] }])
+    // Two properties, and the second is the one that was missing. This test
+    // always asserted the first — an unauthenticated caller is refused — and it
+    // closed with `authed.status === 200` for a `read:hazards` token, which read
+    // as "the gate works" and was in fact the defect: `/metrics` declares
+    // `admin:*`, and the route enforced authentication without ever consulting
+    // that scope, so *any* valid token read the request rates and route labels.
+    // The assertion is what kept it: a test that pins a 200 on a route no
+    // non-admin should reach is a test that fails when the hole is closed.
+    setAuth([{ token: READ_TOKEN, scopes: ['read:hazards'] }, { token: ADMIN_TOKEN, scopes: ['admin:*'] }])
     await withServer(async (base) => {
       for (const route of ['/metrics', '/api/v1/metrics']) {
         const res = await fetch(`${base}${route}`)
         assert.equal(res.status, 401, `${route} is unauthenticated despite sitting in the API namespace`)
         assert.equal((await res.text()).includes('http_requests_total'), false)
       }
-      const authed = await fetch(`${base}/api/v1/metrics`, { headers: { authorization: `Bearer ${READ_TOKEN}` } })
-      assert.equal(authed.status, 200)
+      const scoped = await fetch(`${base}/api/v1/metrics`, { headers: { authorization: `Bearer ${READ_TOKEN}` } })
+      assert.equal(scoped.status, 403,
+        'a read:hazards token read the metrics it is not scoped for; the route is declared admin:*')
+      assert.equal((await scoped.text()).includes('http_requests_total'), false)
+      const admin = await fetch(`${base}/api/v1/metrics`, { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } })
+      assert.equal(admin.status, 200, 'the scope the route declares must still reach it')
     })
   })
 

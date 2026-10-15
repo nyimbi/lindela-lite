@@ -193,6 +193,64 @@ that caught it hashes the **served** response rather than the file on disk, whic
 is the only thing the browser ever sees, and asserts against the header rather
 than the exported array.
 
+### VUL-08 — MEDIUM — `/metrics` enforces authentication and never authorization
+
+*Not found by the 2026-10 audit; found 2026-10-15 while fixing the
+route-scope-coverage `findIndex` that had been hiding it.*
+
+`GET /metrics` and its `/api/v1/metrics` alias are declared `admin:*` — they fail
+closed to it in `auth.js`, which is right for them, and
+`docs/platform-jtbd-catalogue.md` names the Administrator scraping on a polling
+interval as the actor. The route did not consult that scope. It answered *above*
+the auth gate in `src/server.js`, did its own `authenticate(req)`, and returned:
+
+```js
+const metricsAuth = isAuthConfigured() && !isPublicPath(url.pathname) ? authenticate(req) : null
+if (isAuthConfigured() && !isPublicPath(url.pathname) && !metricsAuth) { jsonResponse(res, 401, …); return }
+```
+
+So it enforced *authentication* and never *authorization*. Any valid token — a
+`read:hazards` CHW token, a `write:incidents` console token — read the request
+rates, error rates, latency percentiles and, worst, the **route labels** that
+produced them. That last is an enumeration aid: it tells a caller which routes
+exist and how they are named, which is the reason the endpoint was never public
+in the first place.
+
+It is the shape this codebase keeps finding: a correct policy at a call site
+nothing reaches. `scopeForRoute('GET', '/api/v1/metrics')` returned `admin:*` the
+whole time — but by the *fail-closed default*, not by a row, so the right answer
+and an unclassified route were the same value and nothing could tell a decision
+from an oversight. A scope declared and never read is a gate at 19 of 27 paths.
+
+**Fixed 2026-10-15.** The branch now calls the same `enforceAuthGate` the
+`/api/v1/` dispatcher calls, so the two cannot drift, and it answers the
+unauthenticated case 401 rather than falling open. `READ_SCOPES` gains an
+explicit `['/api/v1/metrics', 'admin:*']` row, so the route is now *classified*
+rather than merely *closed* — and `auth.js` gains `declaredScopeFor`, because
+`scopeForRoute` folds "no row" into `admin:*` and therefore cannot distinguish a
+deliberate administrative route from an unclassified one. That distinction is
+what lets `test/route-scope-coverage.test.js` drop `/metrics` from its
+before-gate exclusion list and count it as the scope-checked read it now is.
+
+Two tests had to change, and both were *pinning the defect*:
+
+- `test/auth-deny-by-default.test.js` asserted `authed.status === 200` for a
+  `read:hazards` token. It read as "the gate works" and was the hole itself: a
+  test that requires a 200 on a route no non-admin should reach fails the moment
+  the hole is closed. It now asserts 403 for the scoped token and 200 for the
+  `admin:*` one.
+- `test/route-scope-coverage.test.js` listed `/metrics` in `BEFORE_GATE`, and its
+  `gateLine` used `findIndex` for the `enforceAuthGate` call. Once the metrics
+  branch called the gate itself, `findIndex` began returning *that* line rather
+  than the dispatcher's, so the exclusion stayed "proven" while the route was no
+  longer answered in front of the gate — the test's own comment warns about
+  exactly this `findIndex` hazard, and the fix had been applied only to the
+  prefix side. `gateLine` now takes the last call.
+
+Driven through a running server, not asserted against `scopeForRoute`: that
+function returned `admin:*` throughout, so a unit test of it would have passed
+for the life of the defect. What was missing was a caller.
+
 ---
 
 ## Data veracity

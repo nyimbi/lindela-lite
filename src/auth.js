@@ -185,6 +185,20 @@ export const READ_SCOPES = Object.freeze([
   ['/api/v1/explain', 'read:analytics'],
   // Every source's high-water mark — an integration surface, not a hazard one.
   ['/api/v1/watermarks', 'read:integrations'],
+  // `/metrics` is the one read that *is* an administrative surface. It exposes
+  // request rates, error rates, latency percentiles and the route labels that
+  // produced them — the last an enumeration aid, which is why it was never
+  // public — and `docs/platform-jtbd-catalogue.md` names its actor as the
+  // Administrator scraping on a polling interval. Before this row existed the
+  // endpoint was served correctly and by accident: `scopeForRoute` fails closed
+  // to `admin:*`, so the right answer and an unclassified route were the same
+  // value and nothing distinguished a decision from an oversight.
+  //
+  // The row is not decoration. `scopeFor` in `test/route-scope-coverage.test.js`
+  // reads `DENIED_SCOPE` as "no row", so declaring it here is what lets `/metrics`
+  // leave that test's before-gate exclusion list and be counted as the
+  // scope-checked read it now is.
+  ['/api/v1/metrics', 'admin:*'],
 ])
 
 /**
@@ -668,8 +682,23 @@ function firstMatch(table, pathname) {
  * rather than paid.
  */
 export function scopeForRoute(method, pathname) {
+  return declaredScopeFor(method, pathname) || DENIED_SCOPE
+}
+
+/**
+ * The scope a row in the table declares for a route, or `null` when none does.
+ *
+ * `scopeForRoute` cannot answer this. It folds "no row" into `admin:*`, which is
+ * also a scope a row may name — `/api/v1/metrics` names it deliberately — so
+ * from its return value alone a route somebody classified as administrative and
+ * a route nobody classified at all are the same string. A caller that needs to
+ * tell a decision from an oversight asks here; `test/route-scope-coverage.test.js`
+ * is that caller, because an unclassified read is the defect it exists to catch
+ * and it must not report the one deliberate `admin:*` read as that defect.
+ */
+export function declaredScopeFor(method, pathname) {
   const readOnly = method === 'GET' || method === 'HEAD'
-  return (readOnly ? firstMatch(READ_SCOPES, pathname) : firstMatch(WRITE_SCOPES, pathname)) || DENIED_SCOPE
+  return firstMatch(readOnly ? READ_SCOPES : WRITE_SCOPES, pathname)
 }
 
 export function hasRole(auth, role) {

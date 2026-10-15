@@ -243,3 +243,45 @@ describe('the table names the roles the documentation promises', () => {
     }
   })
 })
+
+describe('the metrics endpoint honours the scope its declaration names', () => {
+  // `/metrics` is declared `admin:*` — it fails closed to that in `auth.js`,
+  // which is right for it, and `docs/platform-jtbd-catalogue.md` names its actor
+  // as the Administrator scraping on a polling interval. The route answered
+  // *above* the auth gate and did its own `authenticate`, so it enforced
+  // authentication and never authorization: any valid token read request rates,
+  // error rates, latency percentiles and route labels. The last is an
+  // enumeration aid, which is why the endpoint is not public in the first place.
+  //
+  // Driven through the server rather than asserted against `scopeForRoute`:
+  // that function has returned `admin:*` for this path the whole time, so a unit
+  // test of it would have passed throughout the defect. What was missing is a
+  // caller.
+  const get = (base, pathname, token) => fetch(`${base}${pathname}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  })
+
+  it('refuses a read-only token the request rates and route labels', async () => {
+    await withServer(async (base) => {
+      for (const pathname of ['/metrics', '/api/v1/metrics']) {
+        const res = await get(base, pathname, 'tok-incidents')
+        assert.equal(res.status, 403,
+          `${pathname} served a write:incidents token ${res.status}; it is declared admin:*`)
+      }
+    })
+  })
+
+  it('still refuses an unauthenticated caller, rather than falling open', async () => {
+    await withServer(async (base) => {
+      const res = await get(base, '/api/v1/metrics', null)
+      assert.equal(res.status, 401, 'the fix must not turn the gate into a public path')
+    })
+  })
+
+  it('serves the platform token, which is what a scraper holds', async () => {
+    await withServer(async (base) => {
+      const res = await get(base, '/api/v1/metrics', 'tok-star')
+      assert.ok(res.status < 400, `admin:* got ${res.status} scraping the metrics it is declared for`)
+    })
+  })
+})

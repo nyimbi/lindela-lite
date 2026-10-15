@@ -683,18 +683,22 @@ export function createServer(options = {}) {
       }
 
       if (url.pathname === '/metrics' || url.pathname === '/api/v1/metrics') {
-        // Served through the auth gate rather than in front of it. It was
-        // returned above handleApi(), so `/api/v1/metrics` was reachable without
-        // a token despite sitting in the authenticated namespace — leaking
-        // request rates, error rates, latency percentiles and route labels,
-        // the last being an enumeration aid.
-        if (isAuthConfigured() && !isPublicPath(url.pathname)) {
-          const metricsAuth = authenticate(req)
-          if (!metricsAuth) {
-            jsonResponse(res, 401, { success: false, error: 'Unauthorized' })
-            return
-          }
-        }
+        // Through the gate, which is what this comment claimed and the code did
+        // not do. It did its own `authenticate` and returned, so it enforced
+        // *authentication* and never *authorization*: `/metrics` fails closed to
+        // `admin:*` in `auth.js` — right for it, and its actor in
+        // `docs/platform-jtbd-catalogue.md` is the Administrator scraping on a
+        // polling interval — but nothing consulted that scope. Any valid token
+        // read request rates, error rates, latency percentiles and route labels,
+        // the last being an enumeration aid, which is the reason the endpoint is
+        // not public in the first place. A scope declared and never read is the
+        // gate-at-19-of-27-paths shape: correct policy, no caller.
+        //
+        // `enforceAuthGate` is the same function the `/api/v1/` dispatch calls,
+        // so the two cannot drift, and it answers the unauthenticated case 401
+        // rather than falling open.
+        const metricsGate = await enforceAuthGate(req, res, url, { jsonResponse })
+        if (metricsGate.outcome === 'handled') return
         res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'cache-control': 'no-store' })
         res.end(metrics.render())
         return

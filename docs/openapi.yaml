@@ -3819,9 +3819,12 @@ paths:
     get:
       summary: Prometheus-format request metrics
       description: >-
-        Request rate, error rate, latency percentiles and route labels. Served
-        through the authentication gate rather than in front of it; route labels
-        are an enumeration aid, which is why the endpoint is not public.
+        Request rate, error rate, latency percentiles and route labels. Requires
+        the `admin:*` scope the route table declares for it, and is served
+        *through* the auth gate rather than in front of it — the actor is the
+        Administrator scraping on a polling interval (JTBD-075). Route labels are
+        an enumeration aid, which is why the endpoint is not public.
+      security: [{ apiKey: [] }]
       responses:
         '200':
           description: Metrics in Prometheus text format
@@ -3829,6 +3832,8 @@ paths:
             text/plain:
               schema:
                 type: string
+        '403':
+          description: A valid token that does not hold the `admin:*` scope this route declares
   /api/v1/workflows:
     get:
       summary: List workflow instances

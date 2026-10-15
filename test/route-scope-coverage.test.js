@@ -30,7 +30,7 @@ import path from 'node:path'
 import { describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { READ_SCOPES, WRITE_SCOPES, ROUTE_SCOPES, DENIED_SCOPE, scopeForRoute } from '../src/auth.js'
+import { READ_SCOPES, WRITE_SCOPES, ROUTE_SCOPES, DENIED_SCOPE, declaredScopeFor, scopeForRoute } from '../src/auth.js'
 import { routeSources } from '../scripts/route-surface.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -93,7 +93,7 @@ const MUTATING = ROUTES.filter((r) => r.method !== 'GET' && r.method !== 'HEAD')
  * coverage test below excludes these, and an exclusion that cannot be checked is
  * how a failing coverage test gets made to pass.
  */
-const BEFORE_GATE = ['/stac/', '/ogc/', '/metrics', '/api/v1/metrics']
+const BEFORE_GATE = ['/stac/', '/ogc/']
 
 /**
  * The scope the gate would require.
@@ -105,12 +105,14 @@ const BEFORE_GATE = ['/stac/', '/ogc/', '/metrics', '/api/v1/metrics']
  * the thing changes. `scopeForRoute` is exported, so the test calls it.
  */
 function scopeFor(method, pathname) {
-  const scope = scopeForRoute(method, pathname)
   // `scopeForRoute` folds "unmapped" into `admin:*`, which is also a real scope
-  // a row may name. No row does, so the two are distinguishable here — and the
-  // tests below assert on `null` for the unmapped case, which is the one that
-  // matters.
-  return scope === DENIED_SCOPE ? null : scope
+  // a row may name — `/api/v1/metrics` names it deliberately. Reading its return
+  // value alone therefore cannot tell a route somebody classified as
+  // administrative from one nobody classified, and this file's whole subject is
+  // the second. `declaredScopeFor` is the table's own answer: `null` means no row
+  // matched, which is the one that matters, and a declared `admin:*` comes back
+  // as the string it is.
+  return declaredScopeFor(method, pathname)
 }
 
 describe('the route table is a thing a test can read', () => {
@@ -245,10 +247,20 @@ describe('every mutating route is on the list', () => {
     //
     // Excluded, and each for a reason rather than to make the list pass:
     //   * the two shipped public paths, which never reach `scopeForRoute`;
-    //   * STAC, OGC and `/api/v1/metrics`, which `src/server.js` answers in
-    //     front of the gate — they call `authenticate` and then return, so a
-    //     scope row for them would be policy nothing consults, which is the
-    //     failure mode this whole file exists to catch.
+    //   * STAC and OGC, which `src/server.js` answers in front of the gate —
+    //     they call `authenticate` and then return, so a scope row for them
+    //     would be policy nothing consults, which is the failure mode this
+    //     whole file exists to catch.
+    //
+    // `/metrics` used to be on that second list and is not any more. It was
+    // answered above the gate doing its own `authenticate`, which enforced
+    // *authentication* and never *authorization*: any valid token read the
+    // request rates and route labels. It now answers through `enforceAuthGate`
+    // like every other route, so it is a scope-checked read and it belongs in
+    // `checked` — where the row added to `READ_SCOPES` for it is what keeps it
+    // from failing closed to `admin:*`. Removing it from this list is the whole
+    // point: an exclusion that outlives the code path it names is a route the
+    // coverage test has been told not to look at.
     //
     // The second exclusion is checked rather than asserted. `BEFORE_GATE` names
     // the paths the dispatcher answers early, and the test below proves each is
@@ -282,7 +294,17 @@ describe('every mutating route is on the list', () => {
     // this codebase has been bitten by before. So the assertion is on the last
     // occurrence: if any mention is below the gate, the last one is too.
     const server = fs.readFileSync(path.join(ROOT, 'src', 'server.js'), 'utf8').split('\n')
-    const gateLine = server.findIndex((line) => line.includes('enforceAuthGate(req, res, url'))
+    // The *last* gate call, not the first. `findIndex` read the first occurrence
+    // and the comment above fixed that for the prefix side only — so when
+    // `/metrics` began calling `enforceAuthGate` itself, this line started
+    // pointing at the metrics branch instead of the dispatcher and the whole
+    // assertion went vacuous: 685 < 700 passed while `/metrics` was no longer
+    // answered in front of the gate at all. Same bug the paragraph above
+    // describes, one variable over. The exclusion is a claim about the
+    // dispatcher, so it is the dispatcher's gate call it must be measured
+    // against.
+    const gateLine = server.reduce(
+      (last, line, i) => (line.includes('enforceAuthGate(req, res, url') ? i : last), -1)
     assert.ok(gateLine > 0, 'the gate call is still in src/server.js')
     for (const prefix of BEFORE_GATE) {
       const at = server.reduce((last, line, i) => (line.includes(`'${prefix}`) ? i : last), -1)
