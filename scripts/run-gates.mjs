@@ -151,6 +151,18 @@ const GATES = [
     why: 'QUA-05. Reads every module under src/ and every test file, and requires each module to be reached by a test or named in SERVER_SURFACE_MODULES with the route that reaches it. Makes the coverage census re-runnable, which the hand count it replaces was not — that count missed src/demo-seed.js and reported src/lineage.js as covered. Pure file reads.',
   },
   {
+    name: 'check-route-drift',
+    script: 'scripts/check-route-drift.mjs',
+    tier: 'self-contained',
+    why: 'ENH-59. Five tables described the same 233 operations and each was kept by hand, so the only thing holding them together was a person remembering to edit all five — and the item exists because one of them silently lost nine live routes. `docs/openapi.yaml` and `src/route-manifests.js` are now outputs of `src/route-declaration.js`, and this asserts each committed file equals a fresh generation, naming the line that moved. Its limit is worth stating where it is read: drift proves the tables came from the declaration, not that the declaration is true, because a generator that emits from a wrong declaration is consistent and wrong at once. `check-route-reachability` is the other half. The scope tables are the deliberate exception — a scope is policy, so they stay hand-kept and `test/route-declaration.test.js` proves the agreement. Reads files only; carries six canaries, driven by test/route-drift-gate.test.js.',
+  },
+  {
+    name: 'check-route-reachability',
+    script: 'scripts/check-route-reachability.mjs',
+    tier: 'self-contained',
+    why: 'ENH-59. The declaration and the dispatch code must describe the same routes, and nothing checked that. The direction that matters is the one nobody watches: `/api/v1/districts/{id}` was served, fetched by the console on every page, and in no table at all — invisible to every check built on the tables, because it was absent from all of them in the same way. Derives the served set from the imperative matchers via `scripts/route-surface.mjs` (193 paths from 37 matchers) and requires set equality with the declaration. Parameter *names* are normalised, literals and segment count are not, so a route that matches a declared one only in shape is still a finding — a fuzzy match there would swallow exactly the route that is missing. Reads files only; carries eight canaries, driven by test/route-reachability-gate.test.js.',
+  },
+  {
     name: 'check-budget-and-surface-contract',
     script: 'test/web-hidden-display.test.js',
     tier: 'self-contained',

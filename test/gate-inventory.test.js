@@ -79,6 +79,33 @@ function declaredTests() {
 /** English for a thousands figure, the way the README spells it. */
 const THOUSANDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
 
+/**
+ * A gate count, spelled the way the README spells it.
+ *
+ * This was a hand-kept map — `{ 18: 'eighteen', 7: 'seven', 25: 'twenty-five' }` —
+ * and adding a gate therefore broke the test with the message "README says the
+ * gate total is something other than 27 (27)": `spelled(27)` fell through to
+ * `String(27)`, the regex looked for `27`, and the README's "twenty-seven" did
+ * not match. A number the map had not been told about produced a failure that
+ * named the number twice and explained nothing.
+ *
+ * That is the "one of two spellings" class this repository has written down
+ * repeatedly: a lookup enumerates the values its author thought of, and the
+ * unlisted one fails in a way that misdescribes itself. A rule that covers the
+ * range has no such gap. Counts above ninety-nine are not spelled out in the
+ * README, so the hyphenated tens are the whole of it.
+ */
+const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
+  'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+
+function spelled(n) {
+  if (n < 20) return ONES[n]
+  const tens = TENS[Math.floor(n / 10)]
+  const ones = n % 10
+  return ones === 0 ? tens : `${tens}-${ONES[ones]}`
+}
+
 describe('the README gate inventory', () => {
   it('states the counts the runner actually reports', () => {
     const counts = tierCounts()
@@ -92,8 +119,6 @@ describe('the README gate inventory', () => {
 
     const total = counts['self-contained'] + counts['needs-browser'] + (counts['needs-server'] || 0)
     const sentence = claimSentence()
-    const words = { 18: 'eighteen', 7: 'seven', 25: 'twenty-five' }
-    const spelled = (n) => words[n] || String(n)
 
     assert.match(sentence, new RegExp(`\\b${spelled(total)}\\b`),
       `README says the gate total is something other than ${total} (${spelled(total)}); the runner holds ${JSON.stringify(counts)}`)
@@ -173,5 +198,24 @@ describe('the README gate inventory', () => {
     for (const file of named) {
       assert.ok(real.has(file), `README names ${file}, which is not a gate in run-gates.mjs`)
     }
+  })
+
+  it('spells any gate count the runner could report, not a listed few', () => {
+    // The helper is the assertion's only view of the README, so its gaps are
+    // silent: `spelled` falling through to `String(n)` made the failure message
+    // name the same number twice. Pinned here directly, because the end-to-end
+    // path only ever exercises the counts the tree happens to hold today, and
+    // the branch that matters is the one the next gate will land on.
+    assert.equal(spelled(20), 'twenty')
+    assert.equal(spelled(27), 'twenty-seven')   // the tens-plus-ones branch
+    assert.equal(spelled(30), 'thirty')         // the exact-ten branch
+    assert.equal(spelled(7), 'seven')
+    assert.equal(spelled(18), 'eighteen')       // the below-twenty branch
+    assert.equal(spelled(19), 'nineteen')       // its last value
+    assert.equal(spelled(21), 'twenty-one')
+    // No two counts share a spelling, which is what makes the regex safe: if
+    // they did, a README naming one would satisfy the assertion for the other.
+    const range = Array.from({ length: 100 }, (_, i) => spelled(i))
+    assert.equal(new Set(range).size, range.length, 'two gate counts spell the same way')
   })
 })

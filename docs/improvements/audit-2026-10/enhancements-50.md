@@ -28,26 +28,28 @@ shipped and unmarked, and the register was the last place anyone looked.
 
 | Verdict | Count | Items |
 |---|---|---|
-| IMPLEMENTED | 50 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81 |
-| PARTIAL | 1 | 59 |
+| IMPLEMENTED | 51 | 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81 |
+| PARTIAL | 0 | none |
 | ABSENT | 0 | none |
 
-PARTIAL means the substrate exists and the item's own claim does not: ENH-59 has
-**five** tables checked against each other — the document, the manifest table,
-the method gating, the envelope shape and, since 2026-10-12, the client's call
-sites — and no single declaration they are generated from. ENH-60 was the other
-one until 2026-10-13: the dispatcher's thirty-two hand-written `match`/`handle`
-blocks are now `src/route-families.js`'s `ROUTE_FAMILIES` table, iterated by
-`handleApiRequestInContext`, which went **367 → 80 lines**. That is ENH-59's
-declaration at the dispatch layer — one of the five tables now exists as a single
-source the dispatcher reads rather than statements a test reads back — but the
-other four are still hand-kept, so ENH-59 stays PARTIAL for its own reason.
-Reading a
-PARTIAL as done is the error this table exists to prevent: five cross-checks is
-a network that stops five tables disagreeing *silently*, which is a strictly
-weaker property than one source of truth, and the two are easy to conflate
-precisely because the first is what you build when you cannot yet build the
-second.
+ENH-59 was the last PARTIAL and closed 2026-10-15. It had been marked PARTIAL on
+the claim that the five tables could not be generated, and the claim was wrong in
+one word: **derive** was conflated with **declare**. A scope is not a function of
+a path, but it is a *value*, and values live in one declaration. What shipped is
+`src/route-declaration.js` — one `(METHOD, path)`-keyed entry per operation,
+carrying the spec body, the scope, the collections the handler reads, and the
+comments explaining each — with `docs/openapi.yaml` and `src/route-manifests.js`
+generated from it. `check-route-drift.mjs` fails when a committed file and its
+regeneration differ; `check-route-reachability.mjs` fails when a declared route is
+served by no matcher, or a matcher serves a route no declaration names. The
+remaining two tables are not generated, and that is a decision rather than a
+residue — see the closing note under the entry.
+
+Reading a PARTIAL as done is the error this table exists to prevent, and its
+mirror is reading a shipped item as partial because the reason it was held back
+was never re-read. ENH-59 held for four days on a reason that one measurement
+refuted; the conclusion was right and the reason was not, and the reason is what
+the next reader reuses.
 
 **Two rows were wrong in opposite directions, found 2026-10-12 by checking the
 code rather than the note.** ENH-32 was marked PARTIAL against a summary line
@@ -1321,6 +1323,70 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > imperative" was not, and it had the additional cost of naming a prerequisite
 > (declare the paths first) that was already discharged. The conclusion held, the
 > reason did not, and the reason is what the next reader reuses.
+>
+> **Shipped 2026-10-15, and the paragraph above is the one that was wrong.** Its
+> closing sentence — "those are not properties of a path, so no path declaration
+> can carry them" — is the whole error, and it is one word wide. A scope is not a
+> *property* of a path; it is a *value* associated with one, and values live in a
+> declaration. The three measurements that settle it were all run before this
+> paragraph was written and none of them was read as an answer:
+>
+> - **The join is total.** The spec's 233 operations ≡ the manifest's 233 entries,
+>   exact set equality on `(METHOD, path)`, zero duplicates on either side, zero
+>   one-sided. A total join is what a generator needs; it was recorded as a
+>   difficulty.
+> - **The hardest block round-trips byte-exact.** The 3,931-line `paths:` block
+>   reconstructs from a structured model to `BYTE EQUAL: true` — 193 paths, 233
+>   operations, 11 true separators, every block scalar preserved.
+> - **The matcher was never the obstacle**, which the paragraph above had already
+>   conceded.
+>
+> So the difficulty was real but mis-stated: a scope is *policy*, a manifest is a
+> *measurement*, prose is *text* — none is a function of the path, and all are
+> values. `src/route-declaration.js` carries them: 233 frozen entries, each with
+> `method`, `path` (the spec's spelling), `scope`, `reads`/`wide`, `history`, the
+> 130 comment lines of reasoning, and the verbatim spec body. Two files are now
+> outputs of it and two gates hold them:
+>
+> | Output | Generator | Held by |
+> |---|---|---|
+> | `docs/openapi.yaml` | `scripts/generate-openapi.mjs` | `check-route-drift.mjs` |
+> | `src/route-manifests.js` | `scripts/generate-route-manifests.mjs` | `check-route-drift.mjs` |
+> | the declaration itself | — | `check-route-reachability.mjs` |
+>
+> **Two tables are deliberately not generated, and the reason is not residue.**
+> The scope tables are the one place where a mistake *opens* a route rather than
+> closing one, so they stay hand-kept and are proved instead: every declared
+> operation must resolve to the scope the declaration names, and no row may match
+> zero served routes. That second assertion found a real defect the day it was
+> written — `['/api/v1/triggers', 'read:alerts']` and `['/api/v1/parametric', …]`
+> in both tables matched nothing, because the routes are
+> `/api/v1/trigger-protocols` and `/api/v1/parametric-rules` and a `/` boundary
+> means the short form covers neither. Four rows that read as policy and decided
+> nothing; removed. Client call sites stay *validated* by
+> `check-client-endpoints.mjs` rather than generated, which is the correct
+> relationship and was already true.
+>
+> **The manifest values are still measured — generation distributes, it does not
+> invent.** `collect-route-manifests.mjs` drives each route against a real server
+> with the store instrumented and *prints* the closure; it never wrote the file.
+> The declaration now stores that measurement and the generator emits it, so the
+> "a generator would replace a measurement with a guess" objection in the table
+> above is answered rather than ignored: the measurement is the input.
+>
+> **The check this item was written for is now automated.** `/api/v1/districts/{id}`
+> was served, fetched by the console on every page, and in no table — invisible to
+> every check built on the tables, because it was absent from all of them in the
+> same way. `check-route-reachability.mjs` derives the served set from the
+> imperative matchers through `scripts/route-surface.mjs` and requires set
+> equality with the declaration, so the next route in that shape fails a gate
+> instead of surviving four days of hand sweeps.
+>
+> **What it cost, recorded so the next estimate is better.** The bootstrap is 357
+> lines, the two generators 286, the two gates 321, the three driving tests 514, and
+> the declaration 5,710. The expensive part was not any of those: it was that three
+> separate hand-kept tables had to be *joined* before they could be replaced, and
+> the join was assumed hard because nobody had tried it. It took one query.
 
 **ENH-60 — Router extraction.** `handleApiRequestInContext` was 1,597 lines
 (`src/server.js:763–2360` <!-- line-drift-ok: the range as audited; ENH-60 is IMPLEMENTED and the dispatcher is 80 lines now -->) and entangled routing, auth, validation, business logic
