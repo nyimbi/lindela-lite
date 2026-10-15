@@ -59,6 +59,34 @@ const evaluate = async (expression) => {
 }
 
 /**
+ * Poll `expression` until it returns a truthy value, or give up after `timeout`.
+ *
+ * The checks that read the map used a fixed `setTimeout` — 4500 ms after
+ * `Page.navigate`, 1500 ms before counting markers — and then queried the DOM
+ * once. That budget is sized for a freshly-seeded store, and this gate is not
+ * the only thing writing: it files CHW reports and runs ingestion as part of its
+ * own checks, so the store grows with every run and the console's first paint
+ * slows with it. The result was a gate that passed alone and failed inside the
+ * tier — 7 checks reporting "hazard markers: 0" and "not ingested" — against a
+ * page whose data was simply still in flight. A sleep cannot be sized for a
+ * store that grows, so wait on the condition instead: it returns the moment the
+ * content lands and only costs the timeout when something is genuinely wrong.
+ *
+ * Returns the last observed value either way, so the caller's failure message
+ * still names what it actually saw rather than a timeout.
+ */
+const waitFor = async (expression, { timeout = 20000, interval = 250 } = {}) => {
+  const deadline = Date.now() + timeout
+  let last
+  for (;;) {
+    last = await evaluate(expression)
+    if (last) return last
+    if (Date.now() >= deadline) return last
+    await new Promise((r) => setTimeout(r, interval))
+  }
+}
+
+/**
  * Click a control, or fail the named check and carry on.
  *
  * The reason this exists: an unguarded `getElementById(...).click()` throws on
@@ -169,7 +197,11 @@ async function main() {
     width: LAYOUT_VIEWPORT.width, height: LAYOUT_VIEWPORT.height, deviceScaleFactor: 1, mobile: false,
   })
   await send('Page.navigate', { url: `${ENDPOINT}${ENDPOINT.includes('?') ? '&' : '?'}cachebust=${Date.now()}` })
-  await new Promise((r) => setTimeout(r, 4500))
+  // Wait for the console to actually build, rather than for a duration that was
+  // measured against one store size. See `waitFor`.
+  await waitFor(`!!(document.getElementById('situationMap')
+    && document.getElementById('floodLevelInput')
+    && document.getElementById('floodSimulate'))`)
 
   const boot = await evaluate(`(() => ({
     mapPresent: !!document.getElementById('situationMap'),
@@ -202,7 +234,12 @@ async function main() {
   // falling through to the default class did not break anything visible: it just
   // looked generic, so no check failed and the gap sat there. These assert the
   // taxonomy is wired to the map, not just declared in the schema.
-  await new Promise((r) => setTimeout(r, 1500))
+  //
+  // Wait for a hazard to be drawn rather than for 1500 ms: the markers arrive
+  // with the event fetch, and a store this gate has itself grown takes longer
+  // than the sleep allowed. A flat wait here is what reported "landslide
+  // markers: 0" on a map that had simply not finished drawing.
+  await waitFor(`document.querySelectorAll('#mapHazards .hazard-marker').length > 0`)
   const hazardTaxonomy = await evaluate(`(() => {
     const classes = new Set([...document.querySelectorAll('#mapHazards *')]
       .map((n) => n.getAttribute('class') || '')
@@ -468,6 +505,12 @@ async function main() {
 
   // Seasonal context. The wording is the assertion: a bare "El Nino" would
   // assert a declared event the connector deliberately refuses to declare.
+  //
+  // The strip reads its index from the climate observations, so it fills after
+  // the same fetch the hazards do. Wait for the anomaly to be a number rather
+  // than for a duration — "not ingested" was this gate reading a strip that had
+  // not been populated yet, which is the same false negative as a 0 marker.
+  await waitFor(`/\\d/.test((document.getElementById('seasonalAnomaly')||{}).textContent || '')`)
   const seasonal = await evaluate(`(() => ({
     phase: (document.getElementById('seasonalPhase')||{}).textContent || '',
     anomaly: (document.getElementById('seasonalAnomaly')||{}).textContent || '',

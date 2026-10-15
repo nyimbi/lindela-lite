@@ -505,6 +505,21 @@ A second copy would be the drift the split is meant to avoid.
 > The three facts above are the reason, and they are about surfaces rather than bytes.
 > Recorded because the conclusion is right and a wrong reason is the part that gets
 > reused — it would block a *different* module that could be lazily loaded.
+>
+> 4. **The server write model strips the clock, so this cannot be a client-only
+>    change.** This is the measurement that settles it, and the one the first draft
+>    did not make. A client could attach `record.fields` and merge its own copy, but
+>    the server's update path does not carry the key: `buildUpdate`
+>    (`src/operations.js:82`) spreads the patch over the existing record and hands the
+>    result to a per-collection normalizer, and `normalizeFieldReport`
+>    (`src/operations.js:257`) rebuilds the record from an explicit `stripUndefined({…})`
+>    allowlist of 22 keys. `fields` is not among them. Measured directly — a field
+>    report carrying `fields: { status: { heads: [{ actor: 'phone', clock: { phone: 1 } }] } }`
+>    goes into `buildUpdate` and comes out with `fields === undefined` and the status
+>    updated. A vector clock written by any client is dropped on the first PATCH, so
+>    the second writer's merge sees no clock at all. Wiring ENH-41 therefore means
+>    editing every operational normalizer, not adding a call site — fact 1's
+>    record-format change, with a mechanism rather than an impression.
 
 **ENH-42 — Offline map tile packs.** `basemap.js` is inline polygons and fetches
 nothing, so the offline map is a fixed asset. Let an operator define a bbox and
