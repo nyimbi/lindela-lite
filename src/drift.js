@@ -1,5 +1,8 @@
 import { stableId } from './utils.js'
-import { honestyEnvelope, uncertaintyTiers } from './analytics.js'
+// R-77: from the leaf module, not from `./analytics.js`. This import used to
+// close a cycle — `analytics.js` imports `driftReport` from here — and it
+// resolved only because the uses are inside a function body.
+import { honestyEnvelope, uncertaintyTiers } from './envelope.js'
 import { MIN_EVENTS, MIN_MONTHS, wilsonInterval } from './flood-probability.js'
 
 /**

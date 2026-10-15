@@ -48,7 +48,11 @@
  * surviving an exception — the narrator's contract, kept identical.
  */
 
-import { SUBJECTS, PREDICATES, WINDOWS } from './nl-query.js'
+// R-77: from the leaf module, not from `./nl-query.js`. `nl-query.js` imports
+// this module dynamically at `parseQueryWithModel`, so reading the vocabulary
+// from there closed the fifth cycle in `src/` — the one a static-only import
+// graph cannot see.
+import { SUBJECTS, PREDICATES, WINDOWS } from './nl-vocabulary.js'
 import { KNOWN_DISTRICTS, resolveDistrict } from './districts.js'
 
 /**

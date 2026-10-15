@@ -13,130 +13,28 @@ import { driftReport } from './drift.js'
 import { buildProvenance } from './provenance.js'
 import { ReconciliationLedger, observationMap, reconcileRun } from './reconciliation.js'
 
-/**
- * Honesty envelopes (ENH-02).
- *
- * Every number this module returns used to travel with either nothing or one
- * prose `limits` string, and prose is the one form a machine cannot check: an
- * integrator reading the payload never sees the sentence, and a dashboard can
- * drop it silently. The envelope makes the caveat part of the value — what the
- * number is, what it is not, what it was computed from, and what it refuses to
- * say — so the caveat survives the trip through a consumer that knows nothing
- * about this repository.
- *
- * The prose `limits` strings stay. The envelope is structure, not a replacement
- * for the sentence, and each envelope restates the sentence's claim in a field
- * a test can assert on.
- */
+// R-77: the honesty-envelope API (ENH-02/ENH-04) moved to `src/envelope.js`,
+// a leaf module with no imports, because `src/calibration.js` and
+// `src/drift.js` imported it from here while this file imports both — two
+// cycles that resolved only because every use is inside a function body.
+//
+// The `import` is not redundant with the `export … from` below: a re-export
+// binds nothing locally, and this module calls all three at ten sites. Both
+// lines are needed — the import for the call sites, the re-export so
+// `test/honesty-envelope.test.js` and any other existing importer keeps its
+// import path and the export identity is unchanged.
+import { ENVELOPE_KINDS, honestyEnvelope, uncertaintyTiers } from './envelope.js'
 
-/**
- * The kinds this module emits, with the claim each one is not entitled to make.
- *
- * A kind with no entry here is refused rather than described: an envelope whose
- * `not` is missing states what a number is without stating what it is not,
- * which is the failure the envelope exists to prevent.
- */
-export const ENVELOPE_KINDS = Object.freeze({
-  flood_risk_score: 'a weighted severity index over forecast rainfall, rain probability and nearby hazard reports — not a probability of flooding',
-  climate_conflict_risk_score: 'a weighted sum of input counts and severities — not a probability of conflict or of any climate-driven outcome',
-  service_impact_score: 'a blend of the two nearest region risk scores — not a forecast of service interruption and not an estimate of people affected',
-  data_quality_confidence: 'a completeness heuristic over geocoding, record count, run status and record age — not an accuracy measurement of the underlying data',
-  calibration_summary: 'an average over stored risk-score records — not a validation of the model behind them',
-  trust_score: 'a weighted composite of measured alert outcome agreement, outcome sample size and outcome recording coverage — not a statement that alerts will be correct',
-  drift_verdict: 'a comparison of two windows of the same series — not a diagnosis of the cause of a change',
-  // ENH-56. The one kind whose claim is *stronger* than the others, and the one
-  // whose limits are therefore spelled out harder: a joint rate over counted
-  // months is a frequency, not a fitted dependence model, and consecutive months
-  // share a season rather than being independent draws.
-  compound_hazard_risk_score: 'a joint rate of a flood-month and a conflict-month meeting, counted over calendar months in one radius — not a fitted dependence model, not a probability of either hazard, and not independent of the season the window covers',
-})
+export { ENVELOPE_KINDS, honestyEnvelope, uncertaintyTiers }
 
-const BASIS_DOC = 'docs/flood-probability-model-basis.md'
-const ENVELOPE_RETRIEVED_AT = () => new Date().toISOString()
+// R-77: the derived-row key moved to `src/derived-key.js`, a leaf module,
+// because `src/reconciliation.js` imported it from here while this file
+// imports `reconciliation` — the fourth cycle in `src/`, which the R-77 entry
+// never named. The import serves this module's own call sites; the re-export
+// keeps `src/replay.js` and `src/reconciliation.js` on their existing path.
+import { derivedKey, NUMERIC_VALUE_FIELDS, placeOf } from './derived-key.js'
 
-/**
- * Build the envelope for one number.
- *
- * `basis` is the evidence the number was computed from; `refused` is what this
- * call declined to say and why. Both are structural, never prose: a refusal
- * that cannot be asserted on is a comment.
- *
- * Refuses — returns `value: null` and a reason rather than a number — when the
- * kind is unknown or the value is not finite. A NaN in an envelope is the same
- * defect as a NaN in the score, and JSON turns it into `null` on the way out
- * with nothing to mark it as a refusal.
- */
-export function honestyEnvelope(kind, { value, basis = {}, refused = [], notIncluded = [], evidence = {} } = {}) {
-  const claim = ENVELOPE_KINDS[kind]
-  const reasons = [...refused]
-  if (!claim) reasons.push(`unknown envelope kind "${kind}"; the envelope cannot state what a number of this kind is not`)
-  if (value !== null && value !== undefined && !Number.isFinite(value)) reasons.push('value is not finite, so it is withheld rather than published as null')
-
-  // Withheld unless the envelope can say both what the number is and what it is
-  // not. A value travelling without the second half is the bare number this
-  // envelope was added to stop.
-  const publishable = Number.isFinite(value) && Boolean(claim)
-  return {
-    value: publishable ? value : null,
-    limits: {
-      kind: kind ?? null,
-      not: claim ?? null,
-      // Uniform on every record, and false: nothing in this module is
-      // calibrated against observed outcomes except through src/calibration.js,
-      // which says so on its own records.
-      calibrated_uncertainty: false,
-      sample: basis.sample ?? null,
-    },
-    evidence: {
-      basis_doc: BASIS_DOC,
-      basis: basis.description ?? null,
-      source_ids: basis.source_ids ?? [],
-      retrieved_at: evidence.retrieved_at ?? ENVELOPE_RETRIEVED_AT(),
-    },
-    not_included: notIncluded,
-    refused: reasons,
-  }
-}
-
-/**
- * Three tiers of uncertainty on one number (ENH-04), each named by what it
- * measures.
- *
- * The names are load-bearing. `confidence interval` is forbidden here because
- * it means something specific — a range over the posterior of the outcome — and
- * none of these three is that. A tier is either a measured spread with its
- * sample attached, or a refusal stating which tier is absent and why.
- *
- * - `model_parameter`: spread of the fitted coefficients across refits. Absent
- *   for any score that was never fitted, which is most of them.
- * - `sampling`: a Wilson interval on the contingency counts, reported with an
- *   effective n. The months are not independent — the trailing 90-day windows
- *   overlap, so consecutive months share most of their rainfall — and a Wilson
- *   interval computed on the raw count is narrower than the evidence supports.
- * - `coverage`: what the number does not represent, which is always present and
- *   never empty.
- */
-export function uncertaintyTiers({ modelParameter = null, sampling = null, coverage = [] } = {}) {
-  const tier = (measures, value, refusal) => (refusal
-    ? { measures, refused: refusal }
-    : { measures, ...value })
-  return {
-    model_parameter: tier(
-      'dispersion of the fitted coefficients across refits of this model; absent for a score that is not a fitted model',
-      modelParameter,
-      modelParameter ? null : 'no fit underlies this number, so there is no parameter to be uncertain about',
-    ),
-    sampling: tier(
-      'spread of the observed rate around its point estimate on the contingency counts, with an effective n corrected for serial correlation between months',
-      sampling,
-      sampling ? null : 'no contingency counts underlie this number, so there is no sample to put an interval around',
-    ),
-    coverage: {
-      measures: 'the populations and effects this number does not represent',
-      not_represented: Array.isArray(coverage) ? [...coverage] : [],
-    },
-  }
-}
+export { derivedKey, NUMERIC_VALUE_FIELDS }
 
 /**
  * Effective sample size for a monthly binary series.
@@ -787,26 +685,12 @@ const INPUT_COUNTS = [
  * number, and collapsing them into a single key would compare two different
  * quantities and call the difference an anomaly.
  */
-/**
- * The place a record is about.
- *
- * `asset_id` sits before `id` because an impact row's `id` is
- * `stableId('impact', [asset.id, score])` — it *contains the score*, so the id
- * is a different string every time the score moves. Keying on it made a changed
- * impact indistinguishable from a brand-new one: the ledger saw
- * `no_prior_observation` on both sides of every comparison and could never
- * reconcile the family at all. It also made `inputDigestFor` count records in a
- * district named `impact_7efd5b04…`, which no record carries, so every declared
- * input came back zero and the row claimed nothing had moved whatever did.
- *
- * The asset id is stable across a score change, which is what a key needs to be.
- * A row with neither still falls back to `id`, and a collection whose records
- * carry no place at all keys degenerately — which `replay.js` already handles by
- * refusing to pair on a colliding key rather than mispairing.
- */
-function placeOf(record) {
-  return record.region || record.region_name || record.asset_id || record.district || record.id || null
-}
+// R-77: placeOf/derivedKey/NUMERIC_VALUE_FIELDS moved to `src/derived-key.js`,
+// a leaf module, because `src/reconciliation.js` imported them from here
+// while this file imports `reconciliation` — the fourth cycle in `src/`,
+// which the R-77 entry never named. Re-exported so src/replay.js and
+// src/reconciliation.js keep their import path and the export identity is
+// unchanged. `districtOf` stays here: it is used only here.
 
 /**
  * The district a record's inputs are counted over.
@@ -824,28 +708,6 @@ function districtOf(record) {
   // count zero, and a branch that re-creates the bug is not a safety net.
   return record.district || record.region || record.region_name || null
 }
-
-export function derivedKey(collection, record) {
-  return `${collection}:${record.type || 'score'}:${placeOf(record)}`
-}
-
-/**
- * The numeric fields a derived row may publish its value under, most specific
- * first.
- *
- * Exported because `src/reconciliation.js` compares the same rows and had its own
- * copy of this list — the same five entries, one of them a label, drifting the
- * moment either module gained a family. `derivedKey` is already shared between
- * the two for exactly this reason; this is the second half of the same argument,
- * and a caller that picked a different field would key a number one way and
- * compare it another.
- *
- * Numeric only. A label is not a value: `impact_level: 'medium'` is a band, and
- * comparing bands reports a score that moved 54 → 55 as holding. The sentinel
- * `'unknown'` a refusal carries is the same mistake with a worse consequence —
- * it makes a number that was never computed look like a number that moved.
- */
-export const NUMERIC_VALUE_FIELDS = Object.freeze(['score', 'risk_score', 'impact_score', 'value'])
 
 export function inputDigestFor(district, data) {
   const counts = {}

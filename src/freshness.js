@@ -50,7 +50,12 @@
  */
 
 import { SOURCE_IDS } from './schema.js'
-import { SOURCE_POLICIES } from './ingestion.js'
+// R-77: from the leaf module, not from `./ingestion.js`. This import used to
+// close a cycle — `ingestion.js` imports `explainVerdict` and
+// `freshnessReportBySource` from here — and it resolved only because every use
+// of the binding is at call time. Reading it from `source-policies.js`, which
+// imports nothing, removes the cycle without changing a value.
+import { SOURCE_POLICIES } from './source-policies.js'
 import { toNumber } from './utils.js'
 
 /**

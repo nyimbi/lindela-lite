@@ -49,7 +49,12 @@
 import { createHash } from 'node:crypto'
 
 import { canonicalHash, nowIso, stableId } from './utils.js'
-import { NUMERIC_VALUE_FIELDS, derivedKey } from './analytics.js'
+// R-77: from the leaf module, not from `./analytics.js`. This import used to
+// close the fourth cycle in `src/` — `analytics.js` imports `reconcileRun` and
+// `ReconciliationLedger` from here — and it resolved only because the uses are
+// inside function bodies. The comment on `NUMERIC_VALUE_FIELDS` in
+// `src/derived-key.js` records why the two modules share one copy.
+import { NUMERIC_VALUE_FIELDS, derivedKey } from './derived-key.js'
 import { CHAINED_FIELDS, GENESIS_HASH, chainDigestInput, chainEntry, computeEntryHash } from './audit-chain.js'
 
 /**

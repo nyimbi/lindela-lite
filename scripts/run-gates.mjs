@@ -151,6 +151,18 @@ const GATES = [
     why: 'QUA-05. Reads every module under src/ and every test file, and requires each module to be reached by a test or named in SERVER_SURFACE_MODULES with the route that reaches it. Makes the coverage census re-runnable, which the hand count it replaces was not — that count missed src/demo-seed.js and reported src/lineage.js as covered. Pure file reads.',
   },
   {
+    name: 'check-boundary',
+    script: 'scripts/check-boundary.mjs',
+    tier: 'self-contained',
+    why: 'R-78. Nothing enforced the frontend/backend split, and the entry stated the invariant backwards: it said `src/` → `public/` and `public/` → `src/` were both 0 edges, but the first is **17 edges across 13 files** and is the mechanism by which the server and the browser run the same code (`public/shared/units.js`, `flood-bands.js`, `rank-explain.js`). A gate written from that entry would have failed on a clean tree and been switched off. The jurisdiction is one direction only — nothing under `public/` may import `src/`, because `src/` is not served and the failure is a 404 at runtime in a surface that passed every test. Comments are stripped before scanning, so the file that documents this rule is not reported as breaking it. Reads files only; carries nine canaries, driven by test/boundary-gate.test.js.',
+  },
+  {
+    name: 'check-import-cycles',
+    script: 'scripts/check-import-cycles.mjs',
+    tier: 'self-contained',
+    why: 'R-77. The entry listed three import cycles and there were five. All five are broken (each by moving a leaf out of the module that closed the loop: `src/source-policies.js`, `src/envelope.js`, `src/derived-key.js`, `src/nl-vocabulary.js`), and this is the class rather than the instances, so the sixth fails in CI instead of waiting to be found by hand — which is exactly how the fourth and fifth were found. A cycle resolves on a deferred binding until one becomes a top-level use, at which point it reads `undefined` with no error and the failure surfaces far from the import that caused it. Walks `src/` only: `public/` has no bundler and a cycle there is legal, and `scripts/` is tooling. Comments are stripped before the graph is built, because the first draft reported `freshness.js → freshness.js` from the usage example inside its own doc comment. Reads files only; carries eight canaries, driven by test/import-cycles-gate.test.js.',
+  },
+  {
     name: 'check-route-drift',
     script: 'scripts/check-route-drift.mjs',
     tier: 'self-contained',

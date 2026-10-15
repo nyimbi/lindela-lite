@@ -96,57 +96,23 @@ export const PUBLIC_INGESTION_SOURCES = Object.freeze([
   // free archive. They run on explicit request — see docs/ingestion.md.
 ])
 
-export const SOURCE_POLICIES = Object.freeze({
-  open_meteo: { interval_minutes: 180, timeout_ms: 20000, retries: 2, stale_after_minutes: 360, minimum_records: 1, regular: true },
-  // minimum_records is 1 rather than 0 for every source that is expected to
-  // return something. With 0, a connector that silently parses nothing still
-  // reports status "success", which is how CHIRPS, GloFAS, and NASA FIRMS all
-  // hid broken ingestion. Verified 2026-10-01 across repeated runs: gdacs
-  // returns 222 and usgs_earthquake 46, so a zero result means something broke.
-  gdacs: { interval_minutes: 60, timeout_ms: 20000, retries: 2, stale_after_minutes: 180, minimum_records: 1, regular: true },
-  glofas: { interval_minutes: 180, timeout_ms: 20000, retries: 2, stale_after_minutes: 360, minimum_records: 1, regular: true },
-  chirps: { interval_minutes: 720, timeout_ms: 20000, retries: 2, stale_after_minutes: 1440, minimum_records: 1, regular: true },
-  nasa_firms: { interval_minutes: 360, timeout_ms: 30000, retries: 2, stale_after_minutes: 720, minimum_records: 1, regular: true },
-  usgs_earthquake: { interval_minutes: 60, timeout_ms: 20000, retries: 2, stale_after_minutes: 180, minimum_records: 1, regular: true },
-  noaa_enso: { interval_minutes: 720, timeout_ms: 20000, retries: 2, stale_after_minutes: 1440, minimum_records: 1, regular: true },
-  // IPC classifications come out per analysis month and HDX scrapes them
-  // promptly, so 24 h beats the feed without hammering a 3.6 MB CSV. WHO GHO
-  // publishes yearly, so its staleness window is long: a national-annual
-  // figure is "stale" here only when something breaks, not week to week.
-  ipc_hdx: { interval_minutes: 1440, timeout_ms: 30000, retries: 2, stale_after_minutes: 2880, minimum_records: 1, regular: true },
-  who_gho: { interval_minutes: 1440, timeout_ms: 20000, retries: 2, stale_after_minutes: 20160, minimum_records: 1, regular: true },
-  // Historical backfills, never on the regular schedule: a full gdacs_archive
-  // walk is a paginated quarter-by-quarter crawl of 40 years, and re-running
-  // it hourly would be abuse of a free service. They run on demand (public
-  // ingestion or the ingestion run API) to stock training data.
-  gdacs_archive: { interval_minutes: 0, timeout_ms: 30000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
-  open_meteo_archive: { interval_minutes: 0, timeout_ms: 60000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
-  open_meteo_flood: { interval_minutes: 0, timeout_ms: 60000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
-  // Same cadence as open_meteo: the forecast is refreshed upstream roughly
-  // hourly and the overlay is only honest while the issue time is recent. The
-  // staleness window is the one WEATHER_STALE_AFTER_MINUTES publishes.
-  open_meteo_forecast: { interval_minutes: 180, timeout_ms: 20000, retries: 2, stale_after_minutes: 360, minimum_records: 1, regular: true },
-  // The plan asked for minimum_records: 0 ("no epidemic in the window is
-  // legitimate"), but every regular PUBLIC source is held to a floor by the
-  // no-silent-empty-success rule (R-41 family, enforced in test/lite.test.js).
-  // The honest vocabulary for legitimate emptiness already exists: two
-  // consecutive zero-record runs report the freshness verdict empty_response —
-  // "the source answers, but has had nothing for us" — while a FIRST empty run
-  // reads degraded, which is the correct suspicion.
-  reliefweb_epidemics: { interval_minutes: 360, timeout_ms: 20000, retries: 2, stale_after_minutes: 720, minimum_records: 1, regular: true },
-  service_assets: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
-  acled_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
-  conflict_csv: { interval_minutes: null, timeout_ms: 5000, retries: 0, stale_after_minutes: null, minimum_records: 0, regular: false },
-  dhis2: { interval_minutes: 360, timeout_ms: 20000, retries: 1, stale_after_minutes: 720, minimum_records: 0, regular: false },
-  // Kobo and IoT are the same shape as dhis2: a connector that stays inert
-  // until an operator sets the env gate and supplies credentials for an
-  // instance only they know. `regular: false` and `minimum_records: 0` say
-  // that out loud — there is no publisher to be overdue against and no floor
-  // to hold an unconfigured pull to. Judging either against a clock produces
-  // the noise that trains people to ignore the freshness signal.
-  kobo: { interval_minutes: 360, timeout_ms: 20000, retries: 2, stale_after_minutes: 720, minimum_records: 0, regular: false },
-  iot: { interval_minutes: 360, timeout_ms: 20000, retries: 2, stale_after_minutes: 720, minimum_records: 0, regular: false },
-})
+// R-77: SOURCE_POLICIES moved to `src/source-policies.js`, a leaf module,
+// because `src/freshness.js` imported it from here while this file imports
+// `freshness` — a real cycle that resolved only because every use is at call
+// time. Re-exported rather than relocated in the API, so every existing
+// importer (scripts/validate.mjs, the ingestion tests) keeps its import path.
+//
+// The **import** is load-bearing and is not the same statement as the export:
+// `export { X } from './y.js'` forwards `X` to importers and binds nothing in
+// this module's own scope, while five call sites below (lines 192, 795, 851,
+// 947, 959) read `SOURCE_POLICIES` directly. Written as the bare re-export,
+// every one of them threw `ReferenceError: SOURCE_POLICIES is not defined` at
+// call time — 15 tests red, and no static check catches it, because the file
+// parses and the export is real. Same failure as `src/analytics.js` had with
+// `honestyEnvelope`: a re-export is an edge in the graph, not a binding.
+import { SOURCE_POLICIES } from './source-policies.js'
+
+export { SOURCE_POLICIES }
 
 export function getConnector(sourceId, connectors = CONNECTORS) {
   if (BLOCKED_SOURCE_IDS.includes(sourceId)) {

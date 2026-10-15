@@ -1,5 +1,8 @@
 import { clamp, stableId } from './utils.js'
-import { honestyEnvelope } from './analytics.js'
+// R-77: from the leaf module, not from `./analytics.js`. This import used to
+// close a cycle — `analytics.js` imports `calibrationByRegion` from here — and
+// it resolved only because the use is inside a function body.
+import { honestyEnvelope } from './envelope.js'
 import { MIN_EVENTS, MIN_MONTHS, MODEL_BASIS, wilsonInterval } from './flood-probability.js'
 import { METRICS, computeMetric } from './analytics/metrics.js'
 

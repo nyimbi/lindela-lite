@@ -160,8 +160,8 @@ Full silent-failure inventory in the analyst's domain report; the load-bearing r
 | **R-75** | `handleApiRequest` is a 1,122-line function holding 83 `jsonResponse` calls, 54 method gates and 56 path literals. **CLOSED 2026-10-13 by the ENH-60 table move** — and every figure is false in the direction the defect asked for. `handleApiRequest` is **9 lines** (`src/server.js:963-971`): resolve the identity once, delegate, return — **0** `jsonResponse` calls. The body it named is `handleApiRequestInContext`, **80 lines** (`:973-1052`, 1 `jsonResponse`) iterating `src/route-families.js`'s 33-entry table, above `handleApi` at 107 lines. The **350** `jsonResponse` call sites and **97** method gates are spread across the **34 route modules** in `src/routes/`, which is the seam the row asked for. The citation rotted with the file: `src/server.js:424` is a scheduler `setInterval` now — it named a line, not a symbol, and the symbol moved. | `src/server.js:963`; `src/route-families.js` — 80 lines of table iteration, zero route logic | S3 |
 | **R-76** | **CLOSED 2026-10-12 — both tiers.** 7 of 17 gates never ran in CI, including every accessibility and layout invariant this project wrote 842 + 432 + 214 + 207 lines to express. The self-contained tier was closed first (`5cadf7c`); the browser seven were `workflow_dispatch`-only until the `browser` job took the whole `needs-browser` tier, which required `axe-core` to become a declared devDependency and `audit-a11y` to stop writing into tracked files. See the closed table below. | `.github/workflows/ci.yml` (`npm run gates`, `--tier needs-browser`); `scripts/validate.mjs:255-264` imports only four | S2 |
 | **R-77** | Three import cycles, all live on deferred bindings. `ingestion ↔ freshness`, `analytics ↔ calibration`, `analytics ↔ drift`. | `src/ingestion.js:22` ↔ `src/freshness.js:53`; `src/analytics.js:7` ↔ `src/calibration.js:2`; `src/analytics.js:8` ↔ `src/drift.js:2` | S3 |
-| **R-78** | Nothing enforces the frontend/backend split. `src/` → `public/` and `public/` → `src/` are both 0 edges today, by convention only. A one-line gate would hold it. | full import graph, 430 edges | S3 |
-| **R-79** | Adding a connector requires 7 edits across 6 files, four of them source-id-keyed parallel lists in three files that do not check each other's key equality. `docs/ingestion.md`'s row is the best-enforced item in the repo; the lists are the gap. | `src/schema.js:1`, `src/ingestion.js:25`, `:59`, `src/assertions.js:70`, `:99` | S3 |
+| **R-78** | **Fixed 2026-10-15 — and the row's own evidence was backwards.** It said `src/` → `public/` and `public/` → `src/` are both 0 edges. The second is 0 and is the invariant; the first is **17 edges across 13 files** (`src/analytics.js`, `src/routes/risk.js`, `src/forms.js`, …) importing `public/shared/units.js`, `flood-bands.js`, `rank-explain.js` — that direction is how the server and the browser run the *same* computation, so a gate asserting it would have failed on a clean tree and been switched off. The jurisdiction is one way: `scripts/check-boundary.mjs` requires nothing under `public/` to import `src/`, because `src/` is not served and the failure is a 404 in a surface that passed every test. Comments are stripped before scanning, so the file documenting the rule is not reported as breaking it. Nine canaries, driven by `test/boundary-gate.test.js`; canaried against a planted `public/app.js` import and watched to exit 1. | `scripts/check-boundary.mjs`; `test/boundary-gate.test.js`; the 17 legitimate edges at `src/analytics.js:7`, `src/districts.js:3`, `src/routes/risk.js:37` | S3 |
+| **R-79** | **Fixed 2026-10-15.** Adding a connector touched six source-id-keyed lists in four files and only three of the seven edges had a guard — `SOURCE_ASSERTIONS` and `CADENCE_DAYS` were each checked against `SOURCE_IDS`, and `connectors.registry.json` against `CONNECTORS`, but `CONNECTORS`, `SOURCE_POLICIES`, `SOURCE_COLLECTIONS` and the registry's own edge to `SOURCE_IDS` were checked by nothing. Pairwise guards meant a list could agree with its neighbour and disagree with the root, which reads as coverage while the set drifts. `test/source-id-lists.test.js` compares all six against `SOURCE_IDS` in both directions, names the file to open on failure, and carries a `PARTIAL` map so a deliberately-short list declares itself and an expired exemption fails. Canaried by dropping `iot` from the registry: two cases fail naming `iot` and the file. | `test/source-id-lists.test.js`; lists at `src/schema.js:3`, `src/ingestion.js:46`, `:99`, `src/assertions.js:75`, `:108`, `src/freshness.js:140`, `connectors.registry.json` | S3 |
 
 ### Checked and good — stated so it is not re-audited
 
@@ -331,6 +331,25 @@ The open set is now: **R-27** (performance half), **ENH-12** (table half), and
 **R-30/R-31 closed 2026-10-15** (kept listed until this edit so the change is
 visible rather than a silent disappearance). ENH-17 stays listed for the reason
 its own row gives.
+
+**R-77, R-78 and R-79 left this table on 2026-10-15.** R-78 and R-79 are fixed
+and their rows above carry the evidence; R-77 is the one that is *not* fixed and
+is recorded here rather than silently dropped, because a defect that is real and
+unfixed must stay visible:
+
+- **R-77 — the three cycles are live and one of them is now measurable.** The
+  entry called them "live on deferred bindings", which is true of the analytics
+  pair (`src/analytics.js:11-12` ↔ `src/calibration.js:2` / `src/drift.js:2`, all
+  uses inside function bodies) and **false of `ingestion ↔ freshness`**, where
+  the bindings are used at call time but the module graph is genuinely circular.
+  Breaking it is a move of `SOURCE_POLICIES` (`src/ingestion.js:99`, a pure
+  20-key data constant with no imports of its own) into a leaf module — a
+  mechanical change with no behaviour, and it is *not* done here because it
+  touches the ingestion module that three other workstreams are editing and the
+  value of the change is architectural rather than observable. Recorded with the
+  exact move so the next reader does not have to re-derive it. ESM tolerates the
+  cycle today; the risk is a future top-level use, which is the same "deferred
+  binding" the entry names.
 
 | id | why it is still open |
 | --- | --- |
