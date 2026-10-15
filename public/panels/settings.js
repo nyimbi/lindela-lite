@@ -378,5 +378,31 @@ function renderSettingsPanel() {
     await refresh({ force: true })
   }
 
-  return { renderSettingsPanel, createIncident, createIntervention, createTask, createAlertRule, evaluateAlerts, sendLatestRapidProAlert, createReportSchedule, runDueReports }
+  // The panel's own wiring, moved here from the console's
+  // `DEFERRED_PANEL_BINDINGS` table — the same deferral the rendering got, for
+  // the same reason: a closure per control in `app.js` is behaviour every
+  // console load pays for to serve a tab nobody has opened.
+  const actions = { createIncident, createIntervention, createTask, createAlertRule, evaluateAlerts, sendLatestRapidProAlert, createReportSchedule, runDueReports }
+
+  const bindings = [
+    ['addWebhookForm', 'submit', async (e) => {
+      e.preventDefault()
+      const url    = $('webhookUrlInput')?.value?.trim()
+      const events = ($('webhookEventsInput')?.value || 'alert.*').split(',').map((s) => s.trim()).filter(Boolean)
+      if (!url) return
+      const payload = await postJson('/api/v1/webhooks', { url, events })
+      setStatus(payload.success ? `Webhook added.` : (payload.error || 'Webhook failed'))
+      renderSettingsPanel()
+    }],
+    ['createIncidentButton', 'click', () => actions.createIncident()],
+    ['createInterventionButton', 'click', () => actions.createIntervention()],
+    ['createTaskButton', 'click', () => actions.createTask()],
+    ['createAlertRuleButton', 'click', () => actions.createAlertRule()],
+    ['evaluateAlertsButton', 'click', () => actions.evaluateAlerts()],
+    ['sendRapidProAlertButton', 'click', () => actions.sendLatestRapidProAlert()],
+    ['createReportScheduleButton', 'click', () => actions.createReportSchedule()],
+    ['runDueReportsButton', 'click', () => actions.runDueReports()],
+  ]
+
+  return { ...actions, renderSettingsPanel, bindings }
 }

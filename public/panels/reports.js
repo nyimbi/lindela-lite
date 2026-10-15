@@ -124,10 +124,10 @@ export function mount(console_) {
     }
   }
 
-  // The four deferred panels' controls are bound by `bindDeferredPanel` once
-  // their markup has been fetched — see DEFERRED_PANEL_BINDINGS. These bindings
-  // used to live here at module scope, where `?.` made them silently no-ops
-  // against markup that no longer exists at load.
+  // The panel's controls are bound by `bindDeferredPanel` once its markup has
+  // been fetched, from the `bindings` list at the foot of this file. They used to
+  // live at module scope, where `?.` made them silently no-ops against markup
+  // that no longer exists at load.
   function reportScope() {
     return Object.fromEntries(Object.entries({
       country:         $('reportCountryInput')?.value?.trim(),
@@ -189,10 +189,30 @@ export function mount(console_) {
     await refresh({ force: true })
   }
 
-  // Every action the panel's buttons call, so a binding elsewhere in the console
-  // does not need its own copy — the six closures in DEFERRED_PANEL_BINDINGS
-  // used to close over functions that lived here, which is how they kept the
-  // console's first load paying for a tab.
+  // Every action the panel's buttons call, and the listeners that call them.
+  //
+  // `bindings` is the panel's own wiring, moved here from the console's
+  // `DEFERRED_PANEL_BINDINGS` table. That table was correct but expensive: it
+  // held a closure per control in `app.js`, so every console load parsed the
+  // behaviour of four tabs nobody had opened. The listeners belong with the
+  // markup they attach to, and this module is only fetched when the tab is —
+  // which is the same deferral, applied to the wiring as well as the rendering.
+  //
+  // Returned rather than attached here because the console owns the mount
+  // ordering: it binds before unhiding the panel, so no control is focusable
+  // and clickable before it does anything.
+  const bindings = [
+    // Toggles the inline form rather than opening a dialog — the form is
+    // declared hidden in the panel and revealed here, which is why the
+    // `hidden` guard in R-56 matters for this control specifically.
+    ['newReportButton', 'click', () => {
+      const form = $('newReportForm')
+      if (form) form.hidden = !form.hidden
+    }],
+    ['generateReportButton', 'click', () => generateReport()],
+    ['createReportTemplateButton', 'click', () => createReportTemplate()],
+  ]
+
   return {
     renderReportsPanel,
     handleReportAction,
@@ -200,5 +220,6 @@ export function mount(console_) {
     generateReport,
     approveLatestReport,
     distributeLatestReport,
+    bindings,
   }
 }

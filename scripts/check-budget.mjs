@@ -171,12 +171,15 @@ const ENTRY = 'index.html'
  * definition, so it is not deferrable either.
  *
  * What did not move: the panel-handler debt named in the 148 -> 170, 170 -> 195
- * and 195 -> 200 sections is still in `app.js` — `DEFERRED_PANEL_BINDINGS` and
- * the ~750 lines it calls across the workflows, subject, equity, reports,
- * ingestion and settings sections — and it is now the *only* named removal left
- * on the first-load path. It is ~9.8 KB gzipped extracted on its own. It does
- * not belong in a layout commit, which is the only reason it is not in this
- * one; it is the next work.
+ * and 195 -> 200 sections — `DEFERRED_PANEL_BINDINGS` and the ~750 lines it
+ * called across the workflows, subject, equity, reports, ingestion and settings
+ * sections — was still in `app.js` at this raise, and was the *only* named
+ * removal left on the first-load path. It was ~9.8 KB gzipped extracted on its
+ * own, and it did not belong in a layout commit, which is the only reason it was
+ * not in this one. (Most of it was paid off in the two changes described at the
+ * foot of this comment: four of the six sections on 2026-10-06, the bindings
+ * table after that. The two renderers that remain are on the first paint and are
+ * not deferrable, which is why the debt does not go to zero.)
  *
  * 216 KB is 210.7 measured with 5.3 KB of headroom — deliberately less than the
  * 5.5 KB this raise absorbed, so the next change that touches the first load has
@@ -233,10 +236,32 @@ const ENTRY = 'index.html'
  * load is paid for by every operator on a field connection and a note in the
  * gate is not.
  *
- * This raise is still NOT paired with the panel-handler removal, and the debt is
- * named rather than discovered later: the handlers `DEFERRED_PANEL_BINDINGS`
- * calls are still parsed on every console load, and they are still the only
- * named removal left.
+ * That raise was NOT paired with the panel-handler removal, and the debt it named
+ * has now been paid — in two parts, neither of which was the removal the note
+ * described.
+ *
+ * The note said the handlers `DEFERRED_PANEL_BINDINGS` calls were still parsed on
+ * every console load. That was true when it was written and false by the time
+ * anyone read it again: reports, ingestion, settings and equity were moved to
+ * `public/panels/*.js` on 2026-10-06 (`aca0b11`, "the budget is paid back"), and
+ * those four modules are not in this graph — the walk below starts at
+ * `public/index.html` and follows the HTML's own script tags, and a module behind
+ * a `lazy()` is reached only when its tab is opened. So the debt this paragraph
+ * kept collecting had already been spent on something else, which is the failure
+ * mode the paragraph existed to prevent.
+ *
+ * What genuinely remained was the *bindings table*: 21 closures in `app.js`, one
+ * per deferred control, parsed on every load to wire four tabs nobody had opened.
+ * They now live beside the markup they attach to, in each panel module's own
+ * `bindings` list, and `app.js` asks the panel for them at mount. Measured: 229.9
+ * → 229.5 KB.
+ *
+ * The two renderers still inline are `loadWorkflowMetrics`/`renderWorkflowsTab`
+ * and `renderWorkflowInstanceList`, and they are correctly placed: the workflow
+ * ribbon is in the command band, outside every panel, and it renders its count on
+ * the default view. Deferring them would break the first paint rather than
+ * shorten it. That is the whole of what is left of the "panel handlers" this file
+ * used to name.
  */
 const BUDGET_KB = Number(process.env.BUDGET_KB || 230)
 

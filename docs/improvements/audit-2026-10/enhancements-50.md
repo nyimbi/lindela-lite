@@ -488,12 +488,23 @@ A second copy would be the drift the split is meant to avoid.
 >
 > Wiring it now would mean adding a vector clock to every record, a `fields` map to
 > both stores, and a conflict surface — a record-format change across the whole
-> platform, on top of 5.6 KB gzipped against 0.1 KB of first-load headroom that
-> `check-budget` reserves for the panel-handler extraction. That is the build this
-> entry is, and it is a larger unit than giving a library a route. It stays uncalled,
-> named here rather than left to be rediscovered, and `test/enhancement-status.test.js`
-> no longer uses it as its negative case — that subject is now `src/index.js`, which
-> is `package.json`'s `main` and is a fact about the design rather than a gap.
+> platform. That is the build this entry is, and it is a larger unit than giving a
+> library a route. It stays uncalled, named here rather than left to be rediscovered,
+> and `test/enhancement-status.test.js` no longer uses it as its negative case — that
+> subject is now `src/index.js`, which is `package.json`'s `main` and is a fact about
+> the design rather than a gap.
+>
+> **The budget is not what blocks it, and the first draft of this note said it was.**
+> That draft added "5.6 KB gzipped against 0.1 KB of first-load headroom," and the
+> sentence does not carry: `check-budget` walks the graph from `index.html` through
+> static `from '…'` literals, and a module behind `lazy()` is not in it. Measured —
+> `node scripts/check-budget.mjs` names `panels/` 0 times and `field-merge` 0 times,
+> and every panel this repo defers is loaded that way. A 5.6 KB module reachable only
+> from a merge call site costs the first load nothing, so size was never the reason;
+> the headroom figure was stale besides (0.5 KB as of the panel-handler extraction).
+> The three facts above are the reason, and they are about surfaces rather than bytes.
+> Recorded because the conclusion is right and a wrong reason is the part that gets
+> reused — it would block a *different* module that could be lazily loaded.
 
 **ENH-42 — Offline map tile packs.** `basemap.js` is inline polygons and fetches
 nothing, so the offline map is a fixed asset. Let an operator define a bbox and

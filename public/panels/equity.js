@@ -12,7 +12,7 @@
  * dependency surface without opening anything else.
  */
 export function render(console_) {
-  const { $, state, escapeHtml, truncate, pageWindow, renderPager, listScope } = console_
+  const { $, state, escapeHtml, truncate, pageWindow, renderPager, listScope, setStatus, postJson, refresh } = console_
 
   const alerts = state.data.alerts?.data || []
   const dispatches = state.data.dispatches?.data || []
@@ -71,4 +71,31 @@ export function render(console_) {
   }
 
   renderPager($('equityPager'), 'equity', districts.length, rerender)
+}
+
+/**
+ * The equity tab's own wiring, moved here from the console's
+ * `DEFERRED_PANEL_BINDINGS` table.
+ *
+ * `render` is the panel's paint; `bindings` is its controls. Both live in this
+ * module because both are behind the tab — a closure in `app.js` is behaviour
+ * every console load parses for a panel an operator opens when auditing district
+ * coverage, and this module is only fetched when that happens.
+ */
+export function bindings(console_) {
+  const { $, setStatus, postJson, refresh } = console_
+  return [
+    ['triggerEquityAuditButton', 'click', async () => {
+      const district = prompt('Enter district for equity audit:')
+      if (!district) return
+      setStatus('Triggering equity audit workflow...')
+      const payload = await postJson('/api/v1/workflows', {
+        type: 'equity_audit_action',
+        state: 'threshold_breached',
+        district: district,
+      })
+      setStatus(payload.success ? `Equity audit workflow triggered for ${district}.` : (payload.error || 'Workflow trigger failed'))
+      await refresh({ force: true })
+    }],
+  ]
 }

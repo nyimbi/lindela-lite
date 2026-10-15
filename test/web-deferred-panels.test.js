@@ -172,33 +172,54 @@ describe('ENH-46 — a deferred panel that is not wired is worse than a heavy on
       'bindApiKeyInput must run when the settings panel is mounted, not only at boot')
   })
 
-  it('every deferred panel declares its bindings in one table', () => {
+  it('every deferred panel declares its own bindings, in its own module', () => {
     // Scattered bindings are what made the original failure invisible: 21
     // controls, 21 separate lines, none of which said "this only works if the
     // markup is already here".
-    assert.match(APP, /const DEFERRED_PANEL_BINDINGS = \{/)
-    const table = /const DEFERRED_PANEL_BINDINGS = \{[\s\S]*?\n\}/.exec(APP)?.[0]
-    assert.ok(table)
+    //
+    // The bindings used to be one table in `app.js`. They are one list per panel
+    // module now — the same deferral applied to the wiring, because a closure in
+    // `app.js` is behaviour every console load parses to serve four tabs nobody
+    // has opened. The invariant this test protects is unchanged: every panel
+    // that is deferred says how its controls are wired, in one place, rather
+    // than across 21 lines of a file that does not mention the panel.
     for (const p of PANELS) {
-      if (p === 'settings') continue                     // bound via bindApiKeyInput + dhis2Settings
-      assert.match(table, new RegExp(`\\b${p}: \\[`), `${p} has no entry in DEFERRED_PANEL_BINDINGS`)
+      const module = code(`public/panels/${p}.js`)
+      assert.match(module, /bindings/,
+        `public/panels/${p}.js declares no bindings; its controls would render and do nothing`)
     }
+    // And the console must actually ask for them, or the modules' lists are
+    // dead data that reads as wiring.
+    assert.match(APP, /async function panelBindings\(/,
+      'app.js no longer asks the panels for their bindings')
+    assert.match(APP, /await bindDeferredPanel\(name\)/,
+      'mountPanel must await the bindings before marking the panel mounted')
   })
 
-  it('every control named in the bindings table exists in that panel template', () => {
-    // The binding table and the templates are two files that must agree on ids.
+  it('every bound control id exists in some panel template', () => {
+    // The bindings and the templates are two files that must agree on ids.
     // Nothing checks that except this, and a rename in one leaves a control
     // that renders and does nothing.
-    const table = /const DEFERRED_PANEL_BINDINGS = \{([\s\S]*?)\n\}/.exec(APP)?.[1]
-    assert.ok(table)
     const offenders = []
-    for (const m of table.matchAll(/\['(\w+)',\s*'(\w+)'/g)) {
-      const [, id, event] = m
-      const found = PANELS.some((p) => {
-        const html = read(`public/panels/${p}.html`)
-        return new RegExp(`id="${id}"`).test(html)
-      })
-      if (!found) offenders.push(`${id} (${event})`)
+    for (const p of PANELS) {
+      const module = read(`public/panels/${p}.js`)
+      const list = /const bindings = \[([\s\S]*?)\n  \]/.exec(module)?.[1]
+      if (!list) continue
+      for (const m of list.matchAll(/\['(\w+)',\s*'(\w+)'/g)) {
+        const [, id, event] = m
+        const found = PANELS.some((q) => new RegExp(`id="${id}"`).test(read(`public/panels/${q}.html`)))
+        if (!found) offenders.push(`${id} (${event}) declared in ${p}.js`)
+      }
+    }
+    // The equity panel builds its list in a function rather than a const, so it
+    // is read separately rather than skipped — a panel with no checked ids is a
+    // panel whose rename nothing would notice.
+    const equity = read('public/panels/equity.js')
+    for (const m of equity.matchAll(/\['(\w+)',\s*'(\w+)'/g)) {
+      const [, id] = m
+      if (!/id="triggerEquityAuditButton"/.test(read('public/panels/equity.html'))) {
+        offenders.push(`${id} declared in equity.js`)
+      }
     }
     assert.deepEqual(offenders, [],
       'these bindings name an id no panel template declares, so they attach to nothing')

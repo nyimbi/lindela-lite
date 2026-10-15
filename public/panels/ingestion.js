@@ -168,9 +168,45 @@ async function importServiceAssets(kind) {
 
 // =============================================================
 
+  // The panel's own wiring, moved here from the console's
+  // `DEFERRED_PANEL_BINDINGS` table. The table was correct but expensive: a
+  // closure per control in `app.js`, so every console load parsed the behaviour
+  // of four tabs nobody had opened. These listeners attach to controls inside
+  // this panel's markup, and the module is fetched with that markup — so the
+  // wiring costs nothing until the tab is opened.
+  //
+  // Through a name lookup rather than a direct reference because the buttons are
+  // inside the markup, so the module is loaded by the time anyone can press one;
+  // the lookup covers the case where it is not, with a sentence, because a
+  // button that does nothing and says nothing is the failure mode this whole
+  // change is arranged to avoid.
+  // The actions the palette and this panel's own controls reach, named before
+  // the wiring that reads them so the module reads in dependency order.
+  const actions = { loadSources, runIngestion, runSingleSource, createPublicIngestionSchedules, importAcledConflictCsv, runDueIngestion, importServiceAssets }
+
+  const runOrExplain = (name, ...args) => {
+    const action = actions[name]
+    if (!action) {
+      setStatus('The ingestion controls have not finished loading. Open the Ingestion tab and try again.')
+      return false
+    }
+    return action(...args)
+  }
+
+  const bindings = [
+    ['runButton', 'click', () => runOrExplain('runIngestion')],
+    ['createIngestionSchedulesButton', 'click', () => runOrExplain('createPublicIngestionSchedules')],
+    ['runDueIngestionButton', 'click', () => runOrExplain('runDueIngestion')],
+    ['importAcledButton', 'click', () => runOrExplain('importAcledConflictCsv')],
+    ['importCsvButton', 'click', () => runOrExplain('importServiceAssets', 'csv')],
+    ['importGeoJsonButton', 'click', () => runOrExplain('importServiceAssets', 'geojson')],
+    ['exportGeoJsonButton', 'click', () => window.open('/api/v1/export.geojson', '_blank')],
+    ['exportCsvButton', 'click', () => window.open('/api/v1/export.csv', '_blank')],
+  ]
+
   // Exposed so `app.js` can wire the panel's buttons, and so its command-palette
   // entries have something to call. The panel is not loaded until the tab is
   // opened, so a caller reaching one of these before that is a caller with a
   // button the user cannot see.
-  return { loadSources, runIngestion, runSingleSource, createPublicIngestionSchedules, importAcledConflictCsv, runDueIngestion, importServiceAssets }
+  return { ...actions, bindings, runOrExplain }
 }

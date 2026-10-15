@@ -4665,12 +4665,13 @@ const _mountedPanels = new Map()
 /**
  * Bindings for controls inside the four deferred panels.
  *
- * These 21 listeners used to bind by element id at module
- * scope. With the markup inline that ran against a live element and the `?.`
- * was defensive. With the markup deferred it runs against *nothing*: the
- * element does not exist yet, `?.` short-circuits, and the listener is never
- * attached — silently, with no error, because a no-op optional call is not a
- * failure anything reports.
+ * The listeners themselves live in each panel's own module now — see
+ * `panelBindings` below — and this is the one place that attaches them. These 21
+ * listeners used to bind by element id at module scope. With the markup inline
+ * that ran against a live element and the `?.` was defensive. With the markup
+ * deferred it runs against *nothing*: the element does not exist yet, `?.`
+ * short-circuits, and the listener is never attached — silently, with no error,
+ * because a no-op optional call is not a failure anything reports.
  *
  * The result would have been four panels of buttons that render correctly and
  * do nothing when clicked. That is a far worse defect than the 12 KB the
@@ -4686,13 +4687,9 @@ const _mountedPanels = new Map()
 const _deferredBound = new Set()
 
 /** Attach every listener for one deferred panel's controls. */
-function bindDeferredPanel(name) {
-  // Side-effect bindings that are not a single control each. Named here rather
-  // than discovered, because a panel whose wiring is "whatever ran at module
-  // scope" is a panel whose wiring silently stopped when its markup moved.
-  if (name === 'settings') { bindApiKeyInput(); refreshAuthState(); dhis2Settings() }
-  const entries = DEFERRED_PANEL_BINDINGS[name]
-  if (!entries) return 0
+async function bindDeferredPanel(name) {
+  const entries = await panelBindings(name)
+  if (!entries.length) return 0
   let bound = 0
   for (const [id, event, handler] of entries) {
     const key = `${name}:${id}:${event}`
@@ -4712,75 +4709,37 @@ function bindDeferredPanel(name) {
 }
 
 /**
- * Declared after the handlers it references, and read lazily inside
- * `mountPanel`, so the ordering here is a documentation choice rather than a
- * load-order dependency. Kept as data rather than as 21 wrapped closures so
- * the set of deferred controls is greppable in one place — the failure mode
- * this file exists to prevent was invisible precisely because it was scattered
- * across 21 separate lines.
+ * Each panel's listeners, asked of the panel itself.
+ *
+ * This was a table of 21 closures in this file. It was correct and it was
+ * expensive: a closure per control means every console load parses the behaviour
+ * of four tabs nobody has opened, and `check-budget` measures this file on a
+ * field connection. The listeners attach to controls inside the panel's own
+ * markup, and each panel module is fetched with that markup — so the wiring now
+ * costs nothing until the tab is opened, which is the same deferral the
+ * rendering got.
+ *
+ * What replaces the table is a lookup rather than a discovery. Each panel names
+ * its own bindings and this file binds them; a panel that returned none would
+ * silently have dead buttons, so the browser tier asserts each panel binds
+ * something.
  */
-const DEFERRED_PANEL_BINDINGS = {
-  reports: [
-    // Toggles the inline form rather than opening a dialog — the form is
-    // declared hidden in the panel and revealed here, which is why the
-    // `hidden` guard in R-56 matters for this control specifically.
-    ['newReportButton', 'click', () => {
-      const form = $('newReportForm')
-      if (form) form.hidden = !form.hidden
-    }],
-    // Through the module: these used to close over functions in this file, so
-    // every console load parsed six actions for a tab nobody had opened.
-    ['generateReportButton', 'click', () => reportsPanel().then((panel) => panel.generateReport())],
-    ['createReportTemplateButton', 'click', () => reportsPanel().then((panel) => panel.createReportTemplate())],
-  ],
-  equity: [
-    ['triggerEquityAuditButton', 'click', async () => {
-      const district = prompt('Enter district for equity audit:')
-      if (!district) return
-      setStatus('Triggering equity audit workflow...')
-      const payload = await postJson('/api/v1/workflows', {
-        type: 'equity_audit_action',
-        state: 'threshold_breached',
-        district: district,
-      })
-      setStatus(payload.success ? `Equity audit workflow triggered for ${district}.` : (payload.error || 'Workflow trigger failed'))
-      await refresh({ force: true })
-    }],
-  ],
-  ingestion: [
-    // Through `ingestionAction`, because the panel's behaviour is loaded with its
-    // markup: these buttons are inside that markup, so the module is loaded by
-    // the time anyone can press one, and `runOrExplain` covers the case where it
-    // is not — with a sentence, because a button that does nothing and says
-    // nothing is the failure mode this whole change is arranged to avoid.
-    ['runButton', 'click', () => runOrExplain('runIngestion')],
-    ['createIngestionSchedulesButton', 'click', () => runOrExplain('createPublicIngestionSchedules')],
-    ['runDueIngestionButton', 'click', () => runOrExplain('runDueIngestion')],
-    ['importAcledButton', 'click', () => runOrExplain('importAcledConflictCsv')],
-    ['importCsvButton', 'click', () => runOrExplain('importServiceAssets', 'csv')],
-    ['importGeoJsonButton', 'click', () => runOrExplain('importServiceAssets', 'geojson')],
-    ['exportGeoJsonButton', 'click', () => window.open('/api/v1/export.geojson', '_blank')],
-    ['exportCsvButton', 'click', () => window.open('/api/v1/export.csv', '_blank')],
-  ],
-  settings: [
-    ['addWebhookForm', 'submit', async (e) => {
-      e.preventDefault()
-      const url    = $('webhookUrlInput')?.value?.trim()
-      const events = ($('webhookEventsInput')?.value || 'alert.*').split(',').map((s) => s.trim()).filter(Boolean)
-      if (!url) return
-      const payload = await postJson('/api/v1/webhooks', { url, events })
-      setStatus(payload.success ? `Webhook added.` : (payload.error || 'Webhook failed'))
-      renderSettingsPanel()
-    }],
-    ['createIncidentButton', 'click', () => settingsAction('createIncident')],
-    ['createInterventionButton', 'click', () => settingsAction('createIntervention')],
-    ['createTaskButton', 'click', () => settingsAction('createTask')],
-    ['createAlertRuleButton', 'click', () => settingsAction('createAlertRule')],
-    ['evaluateAlertsButton', 'click', () => settingsAction('evaluateAlerts')],
-    ['sendRapidProAlertButton', 'click', () => settingsAction('sendLatestRapidProAlert')],
-    ['createReportScheduleButton', 'click', () => settingsAction('createReportSchedule')],
-    ['runDueReportsButton', 'click', () => settingsAction('runDueReports')],
-  ],
+async function panelBindings(name) {
+  if (name === 'equity') {
+    const module = await lazy('/panels/equity.js')
+    return module.bindings({ $, setStatus, postJson, refresh })
+  }
+  if (name === 'reports')   return (await reportsPanel()).bindings || []
+  if (name === 'ingestion') return (await loadIngestionPanel()).bindings || []
+  if (name === 'settings') {
+    // Side-effect bindings that are not a single control each, run before the
+    // panel's own list. Named rather than discovered, because a panel whose
+    // wiring is "whatever ran at module scope" is a panel whose wiring silently
+    // stopped when its markup moved.
+    bindApiKeyInput(); refreshAuthState(); dhis2Settings()
+    return (await settingsPanel()).bindings || []
+  }
+  return []
 }
 
 /**
@@ -4878,7 +4837,13 @@ async function mountPanel(name) {
   shell.innerHTML = innerMarkupOf(html)
   // Bind before the panel is unhidden, so a control is never focusable and
   // clickable before it does anything.
-  bindDeferredPanel(name)
+  //
+  // Awaited because the bindings now come from the panel's own module, which is
+  // a second fetch on first open. It resolves from the same `lazy()` cache the
+  // renderer below uses, so this does not double the network cost — and it must
+  // finish before `_mountedPanels` is set, or a second switch to this tab would
+  // see it as mounted, skip the bind, and leave the panel's buttons dead.
+  await bindDeferredPanel(name)
   _mountedPanels.set(name, true)
   return true
 }
@@ -5863,10 +5828,10 @@ function renderIngestionPanel() {
 /**
  * Mount the ingestion panel's behaviour, once, on first visit to the tab.
  *
- * The buttons in `DEFERRED_PANEL_BINDINGS` and the two command-palette entries
- * call through `ingestionAction`, which reads this. Before the panel has been
- * opened there is nothing to call — and that is not reachable from the UI,
- * because those buttons are inside the panel's own markup.
+ * The two command-palette entries reach the panel through this. The panel's own
+ * buttons do not — they bind from inside the module now — so the only caller
+ * that can arrive before the tab has been opened is the palette, and it goes
+ * through `runOrExplain` below, which loads rather than refuses.
  */
 let _ingestion = null
 
@@ -5879,19 +5844,20 @@ async function loadIngestionPanel() {
   return _ingestion
 }
 
-/** The panel's behaviour, or null when the tab has not been opened. */
-function ingestionAction(name) {
-  return _ingestion ? _ingestion[name] : null
-}
-
-/** Run one of the panel's actions, or say why it could not be run. */
+/**
+ * Run one of the ingestion panel's actions, loading the panel if needed.
+ *
+ * This used to read a module-level `_ingestion` and refuse when it was null,
+ * which was right while the only callers were buttons inside the panel's own
+ * markup. The command palette is not inside that markup: "Run all due sources"
+ * is reachable from the palette on a cold console, and the old body answered it
+ * with "Open the Ingestion tab and try again" — telling an operator to do the
+ * thing they had just done by another route. Loading here is what makes the
+ * palette entry work from anywhere.
+ */
 async function runOrExplain(name, ...args) {
-  const action = ingestionAction(name)
-  if (!action) {
-    setStatus('The ingestion controls have not finished loading. Open the Ingestion tab and try again.')
-    return false
-  }
-  return action(...args)
+  const panel = await loadIngestionPanel()
+  return panel.runOrExplain(name, ...args)
 }
 // Settings panel
 // =============================================================
