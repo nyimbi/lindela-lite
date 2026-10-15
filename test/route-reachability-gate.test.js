@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -135,5 +136,27 @@ describe('ENH-59 the reachability gate compares the declaration to the dispatch 
     const { output } = runGate()
     const served = Number(/clean — (\d+) served path/.exec(output)?.[1] ?? 0)
     assert.equal(served, paths.size, 'the gate reported a different served count than route-surface resolves')
+  })
+
+  it('passes a route that exists only inside a regex alternation — 78 of the 193', () => {
+    // The case the gate's normalisation must not lose. These paths have no
+    // literal spelling anywhere in `src/`: they exist only as capture groups in
+    // a matcher, so a gate that compared literals would report all 78 as
+    // served-but-undeclared. `/api/v1/alert-events/{id}.cap` is the named one —
+    // it is in the spec at all only because the pattern was read, and the
+    // reachability gate is the check that keeps it there.
+    const { paths } = servedRoutePaths(ROOT)
+    const regexDerived = '/api/v1/alert-events/{id}.cap'
+    assert.ok(
+      paths.has(regexDerived),
+      `${regexDerived} is no longer in the served set, so this test is no longer exercising the regex case`,
+    )
+    // And it is genuinely regex-derived: no literal spelling exists in src/.
+    const literal = new RegExp(`['"\`]${regexDerived.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"\`]`)
+    let found = false
+    for (const file of ['src/server.js', 'src/routes/alerting.js']) {
+      if (literal.test(readFileSync(path.join(ROOT, file), 'utf8'))) found = true
+    }
+    assert.ok(!found, `${regexDerived} now has a literal spelling, so this test no longer proves the regex case`)
   })
 })
