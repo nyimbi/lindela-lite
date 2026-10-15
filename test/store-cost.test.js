@@ -22,6 +22,7 @@ import { isDeclared } from '../src/store.js'
 import { JsonStore, COLLECTIONS, SCHEMA, sortRecords } from '../src/store.js'
 import { MIGRATIONS, SCHEMA_VERSION, targetVersion } from '../src/migrations.js'
 import { PostgresStore } from '../src/postgres-store.js'
+import { filterRecords } from '../src/utils.js'
 import { postgresCluster } from './pg-harness.mjs'
 
 const hazard = (id, extra = {}) => ({
@@ -432,60 +433,77 @@ describe('PostgresStore against a real cluster', () => {
     assert.deepEqual(data.action_logs.map((r) => r.id), ['log-keep'])
   })
 
-  it('ENH-10: the filter columns are readable and match the body', async (t) => {
+  it('R-30/R-31: the filter columns are gone, and every filter still answers', async (t) => {
     if (needs(t)) return
+    // These three tests used to read the generated columns directly and assert
+    // they matched the body. They cannot any more — migration 7 dropped all ten
+    // — and the thing worth asserting is not the columns but the filters, which
+    // is what the API actually calls. The columns existed to make these filters
+    // indexable and never did; the filters worked the whole time.
     await store.write({})
     await store.merge({
       service_assets: [{ id: 'a-1', country: 'KE', service_type: 'health', owner: 'ops' }],
       hazard_events: [hazard('hz-f', { severity: 'critical', source: 'gdacs', status: 'active' })],
     })
-    const { rows } = await store.pool.query(
-      `SELECT country, service_type, owner, severity, source, status
-         FROM lite_records WHERE collection = 'service_assets' AND id = 'a-1'`,
-    )
-    assert.deepEqual(rows[0], {
-      country: 'KE', service_type: 'health', owner: 'ops', severity: null, source: null, status: null,
-    })
 
-    const hazardRow = await store.pool.query(
-      `SELECT severity, source, status FROM lite_records
-        WHERE collection = 'hazard_events' AND id = 'hz-f'`,
+    // The columns are absent, which is the repair. Asserted on the real
+    // database rather than on the migration list, because a drop that silently
+    // failed to apply is exactly what a statement-level check cannot see.
+    const { rows: columns } = await store.pool.query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'lite_records'
+          AND column_name IN ('country', 'service_type', 'owner', 'severity', 'source', 'status')`,
     )
-    assert.deepEqual(hazardRow.rows[0], { severity: 'critical', source: 'gdacs', status: 'active' })
+    assert.deepEqual(columns, [], 'a dropped filter column is still on the table')
+
+    const data = await store.read()
+    const filtered = (params, records = data.hazard_events) =>
+      filterRecords(records, new URLSearchParams(params), {}, { unlimited: true }).map((r) => r.id)
+    assert.deepEqual(filtered('severity=critical'), ['hz-f'])
+    assert.deepEqual(filtered('source=gdacs'), ['hz-f'])
+    assert.deepEqual(filtered('status=active'), ['hz-f'])
+    assert.deepEqual(filtered('severity=low'), [])
+
+    const assets = data.service_assets
+    assert.deepEqual(filtered('country=KE', assets), ['a-1'])
+    assert.deepEqual(filtered('service_type=health', assets), ['a-1'])
+    assert.deepEqual(filtered('owner=ops', assets), ['a-1'])
   })
 
-  it('ENH-10: a filter column follows the second spelling the connectors use', async (t) => {
+  it('R-30/R-31: a filter still accepts the second spelling the connectors use', async (t) => {
     if (needs(t)) return
     // `filterRecords` accepts `risk_level` for severity and `scope.country` for
-    // country. An index over one spelling answers for one connector.
+    // country. The dropped columns COALESCE'd both spellings; the filter does
+    // the same in JavaScript, and that is what has to keep working.
     await store.merge({ hazard_events: [{ id: 'hz-alias', risk_level: 'extreme' }] })
     await store.merge({ hazard_events: [{ id: 'hz-nested', scope: { country: 'TZ' } }] })
-    const { rows } = await store.pool.query(
-      `SELECT id, severity, country FROM lite_records
-        WHERE collection = 'hazard_events' AND ((severity = 'extreme') OR (country = 'TZ'))
-        ORDER BY id`,
-    )
-    assert.deepEqual(rows.map((r) => r.id), ['hz-alias', 'hz-nested'])
+    const data = await store.read()
+    const hit = (params) => filterRecords(data.hazard_events, new URLSearchParams(params), {}, { unlimited: true })
+      .map((r) => r.id).sort()
+    assert.deepEqual(hit('severity=extreme'), ['hz-alias'])
+    assert.deepEqual(hit('country=TZ'), ['hz-nested'])
   })
 
-  it('ENH-10: a malformed record does not fail the write that stores it', async (t) => {
+  it('R-30/R-31: a malformed record still does not fail the write that stores it', async (t) => {
     if (needs(t)) return
-    // The lesson from migration 3, applied to five more generated columns: a
-    // migration that rejects the data the connectors send is an outage.
+    // The lesson from migration 3 was that a migration must not reject the data
+    // the connectors send. The columns are gone, so the record now has to
+    // survive the *write* with no generated column in the way — which it does,
+    // and it must keep doing so, because the guard that made this true was the
+    // one thing about those columns worth keeping.
     await store.merge({
       hazard_events: [
         hazard('hz-odd', { country: { nested: 'not a string' }, observed_at: 'last Tuesday' }),
         hazard('hz-null', { severity: null }),
       ],
     })
-    const { rows } = await store.pool.query(
-      `SELECT id, country, severity, observed_at FROM lite_records
-        WHERE collection = 'hazard_events' AND id IN ('hz-odd', 'hz-null') ORDER BY id`,
-    )
-    assert.equal(rows.length, 2)
-    const odd = rows.find((r) => r.id === 'hz-odd')
-    assert.equal(odd.observed_at, null, 'an unparseable instant becomes NULL, not a rejection')
-    assert.equal(odd.country, null, 'a non-string country becomes NULL, not a rejection')
+    const data = await store.read()
+    const ids = data.hazard_events.map((r) => r.id)
+    assert.ok(ids.includes('hz-odd'), 'a record with a non-string country was not stored')
+    assert.ok(ids.includes('hz-null'))
+    // And the filters read those rows rather than choking on them.
+    const odd = data.hazard_events.find((r) => r.id === 'hz-odd')
+    assert.equal(odd.country.nested, 'not a string', 'the body is stored as sent')
   })
 
   it('migrated to the version this build expects', async (t) => {

@@ -25,7 +25,7 @@
  */
 
 /** The version this build expects. A database below it needs migrating. */
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 7
 
 /**
  * The eight filters `filterRecords` implements in JavaScript with no index
@@ -341,6 +341,74 @@ export const MIGRATIONS = Object.freeze([
       `CREATE INDEX IF NOT EXISTS lite_records_partner_org_idx
          ON lite_records (collection, partner_org)
        WHERE partner_org IS NOT NULL`,
+    ],
+  }),
+  Object.freeze({
+    version: 7,
+    name: 'drop the filter columns no query can reach',
+    // R-30 and R-31 are one defect, and this is its repair.
+    //
+    // Migrations 3 and 5 added ten STORED generated columns and ten indexes so
+    // that the filters `filterRecords` implements in JavaScript would become
+    // index lookups. They did not. `PostgresStore.read` issues exactly one
+    // statement —
+    //
+    //   SELECT collection, body FROM lite_records WHERE <collection|history|partner> LIMIT n
+    //
+    // — and `normaliseReadOptions` accepts `collections`, `includeHistory` and
+    // `partnerOrg`, and nothing else. There is no filter parameter on the read
+    // path at all, so no query in this repository names any of the ten columns
+    // and none of the ten indexes can be reached by anything. They are
+    // recomputed and reindexed on every INSERT and UPDATE, on a table whose
+    // `write()` is a full-table DELETE and reinsert, and read by nothing.
+    //
+    // Why the columns cannot simply be wired to their filters instead. Each
+    // generated column is a COALESCE over the spellings `filterRecords` accepts
+    // for that field, which the migration-5 comment treats as equivalence. It
+    // is not equivalence, and the difference is the wrong direction to be wrong
+    // in:
+    //
+    //   - `region` is one exact string, while `recordInDistrict` compares
+    //     case-insensitively, splits a value on `[,;/]` and matches any part
+    //     ("Turkana, Bor"), falls back to a haversine test against the district
+    //     centre, and — for interventions, tasks and dispatches, which carry no
+    //     district field at all — follows `incident_id`/`intervention_id`/
+    //     `alert_event_id` to the record that does. A predicate on `region`
+    //     would drop every row that any of those four reaches.
+    //   - the `from`/`to` filter parses the first of nine fields that yields a
+    //     date (`observed_at`, `occurred_at`, `event_date`, `generated_at`,
+    //     `approved_at`, `distributed_at`, `updated_at`, `created_at`).
+    //     `observed_at` is one of the nine, so a predicate on it drops rows
+    //     dated by any of the other eight.
+    //   - `incident_id` and `intervention_id` also match `item.id`.
+    //
+    // So pushing these predicates into SQL would return *fewer* rows than the
+    // filter it replaced: a wrong answer in place of a slow one, on a query
+    // whose result the response is drawn from. The index that would be correct
+    // is the one over the row set the filter actually computes, which is a
+    // function of the body and the district relations and is not a column.
+    //
+    // The write amplification is the defect that remains, so the columns go.
+    // Nothing else changes: `filterRecords` keeps every filter it has, and the
+    // read path keeps returning the whole collection for it to filter. What the
+    // ten spellings were for is not lost — it is recorded here, where the next
+    // person to consider indexing a filter will look, and it is the reason the
+    // obvious version of that change does not work.
+    //
+    // A new migration rather than an edit to 3 and 5: both are applied on
+    // deployed databases, so rewriting them in place would leave every database
+    // that already ran them stamped at the same version with the old DDL —
+    // `upgrade head` would skip the drop and `alembic`-style drift checks
+    // against a from-migrations database would report clean. See R-73.
+    up: [
+      // The indexes go with their columns, so dropping the column is the whole
+      // statement. `IF EXISTS` because a database that never reached migration
+      // 5 has neither, and this must converge from any starting point.
+      ...[
+        'region', 'observed_at',
+        'country', 'source', 'status', 'severity',
+        'incident_id', 'intervention_id', 'service_type', 'owner',
+      ].map((column) => `ALTER TABLE lite_records DROP COLUMN IF EXISTS ${column}`),
     ],
   }),
   // CON-03 is *not* a migration, and the reason is worth recording where the

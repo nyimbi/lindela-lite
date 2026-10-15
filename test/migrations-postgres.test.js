@@ -29,6 +29,7 @@ import { after, before, describe, it } from 'node:test'
 
 import { PostgresStore } from '../src/postgres-store.js'
 import { MIGRATIONS, SCHEMA_VERSION, migrationStatements, targetVersion } from '../src/migrations.js'
+import { filterRecords } from '../src/utils.js'
 import { postgresCluster } from './pg-harness.mjs'
 
 describe('the migration runner, against a real PostgreSQL', () => {
@@ -147,7 +148,7 @@ describe('the migration runner, against a real PostgreSQL', () => {
     }
   })
 
-  it('actually created the columns and indexes the migrations add', async (t) => {
+  it('created the columns and indexes the migrations keep, and dropped the ones nothing reads', async (t) => {
     if (needsPostgres(t)) return
     const db = await client()
     const { rows } = await db.query(
@@ -155,24 +156,36 @@ describe('the migration runner, against a real PostgreSQL', () => {
        WHERE table_name = 'lite_records'`,
     )
     const byName = Object.fromEntries(rows.map((r) => [r.column_name, r]))
-    for (const column of ['payload_hash', 'schema_version', 'region', 'observed_at']) {
+    for (const column of ['payload_hash', 'schema_version', 'partner_org']) {
       assert.ok(byName[column], `migration promised a ${column} column and it is not there`)
     }
-    // GENERATED ALWAYS is the whole point: a client that could set region to
-    // something the body disagrees with would produce a query returning rows
-    // the response does not show.
-    assert.equal(byName.region.is_generated, 'ALWAYS')
-    assert.equal(byName.observed_at.is_generated, 'ALWAYS')
+
+    // R-30 and R-31. Migrations 3 and 5 added ten STORED generated columns for
+    // filters that run in JavaScript after the read; `PostgresStore.read` takes
+    // no filter, so nothing can reach any of them. Migration 7 drops them, and
+    // this is the assertion that they are actually gone from a migrated
+    // database — the pure-function test can only check the statement exists.
+    //
+    // Asserting on the *columns* rather than on the indexes is deliberate:
+    // dropping a column drops its index with it, so an index-name check would
+    // pass on a database where the drop had silently failed to cascade.
+    for (const column of [
+      'region', 'observed_at', 'country', 'source', 'status', 'severity',
+      'incident_id', 'intervention_id', 'service_type', 'owner',
+    ]) {
+      assert.ok(
+        !byName[column],
+        `${column} survived migration 7 — it is recomputed on every INSERT and read by no query`,
+      )
+    }
 
     const indexes = await db.query(`SELECT indexname FROM pg_indexes WHERE tablename = 'lite_records'`)
     const names = indexes.rows.map((r) => r.indexname)
-    for (const index of [
-      'lite_records_collection_hash_idx',
-      'lite_records_schema_version_idx',
-      'lite_records_region_idx',
-      'lite_records_observed_idx',
-    ]) {
+    for (const index of ['lite_records_collection_hash_idx', 'lite_records_schema_version_idx']) {
       assert.ok(names.includes(index), `${index} is missing`)
+    }
+    for (const index of ['lite_records_region_idx', 'lite_records_observed_idx']) {
+      assert.ok(!names.includes(index), `${index} outlived the column it indexed`)
     }
   })
 
@@ -208,14 +221,25 @@ describe('the migration runner, against a real PostgreSQL', () => {
     }
   })
 
-  it('converges from a database that has lost its ledger', async (t) => {
+  it('converges from a database that has lost its ledger, and does not resurrect the dropped columns', async (t) => {
     if (needsPostgres(t)) return
     // The upgrade path that matters: a database at some unknown older state, or
     // one restored from a backup taken before the ledger existed.
+    //
+    // The three columns are dropped before the repair and asserted *absent*
+    // after it. Before migration 7 the assertion was the reverse — that a
+    // replay recreates them — and that was correct while they existed. What it
+    // tests now is the property the ledger loss actually threatens: a replay
+    // runs every migration in order, so migrations 3 and 5 re-add the ten
+    // columns and migration 7 must drop them again in the same pass. A
+    // database that converged to a state where the drop did not re-run would
+    // carry the write amplification this repair exists to remove, and would
+    // look repaired.
     const db = await client()
     await db.query(`DELETE FROM lite_records WHERE collection = '__schema'`)
     await db.query('ALTER TABLE lite_records DROP COLUMN IF EXISTS observed_at')
     await db.query('ALTER TABLE lite_records DROP COLUMN IF EXISTS region')
+    await db.query('ALTER TABLE lite_records DROP COLUMN IF EXISTS severity')
     assert.equal(await store.readSchemaVersion(), 0)
 
     const repaired = freshStore()
@@ -223,9 +247,14 @@ describe('the migration runner, against a real PostgreSQL', () => {
     assert.equal(await repaired.readSchemaVersion(), SCHEMA_VERSION)
     const { rows } = await db.query(
       `SELECT column_name FROM information_schema.columns
-       WHERE table_name = 'lite_records' AND column_name IN ('region', 'observed_at')`,
+       WHERE table_name = 'lite_records'
+         AND column_name IN ('region', 'observed_at', 'severity', 'country', 'owner')`,
     )
-    assert.deepEqual(rows.map((r) => r.column_name).sort(), ['observed_at', 'region'])
+    assert.deepEqual(
+      rows.map((r) => r.column_name),
+      [],
+      'a replayed migration re-added a column migration 7 is meant to have dropped',
+    )
     await repaired.close()
   })
 
@@ -282,36 +311,55 @@ describe('the migration runner, against a real PostgreSQL', () => {
     assert.equal((await store.read()).hazard_events.length, 1)
   })
 
-  it('indexes a region and a time the API can filter on, and neither disagrees with the body', async (t) => {
+  it('keeps every filter working after the columns that were meant to index them are gone', async (t) => {
     if (needsPostgres(t)) return
     const db = await client()
     await db.query(`DELETE FROM lite_records WHERE collection = '__schema'`)
     await db.query('DELETE FROM lite_records WHERE collection = $1', ['hazard_events'])
     await db.query(
       `INSERT INTO lite_records (collection, id, body) VALUES
-        ('hazard_events', 'hz-region', '{"district": "Turkana", "observed_at": "2026-03-01T10:20:30.500Z"}'),
-        ('hazard_events', 'hz-area',   '{"area": "Marsabit", "observed_at": "2026-02-01T00:00:00.000Z"}'),
-        ('hazard_events', 'hz-junk',   '{"observed_at": "last Tuesday"}'),
-        ('hazard_events', 'hz-blank',  '{"observed_at": ""}')`,
+        ('hazard_events', 'hz-region', '{"id": "hz-region", "district": "Turkana", "observed_at": "2026-03-01T10:20:30.500Z"}'),
+        ('hazard_events', 'hz-area',   '{"id": "hz-area", "area": "Marsabit", "observed_at": "2026-02-01T00:00:00.000Z"}'),
+        ('hazard_events', 'hz-junk',   '{"id": "hz-junk", "observed_at": "last Tuesday"}'),
+        ('hazard_events', 'hz-blank',  '{"id": "hz-blank", "observed_at": ""}')`,
     )
-    const { rows } = await db.query(
-      `SELECT id, region, observed_at FROM lite_records
-       WHERE collection = 'hazard_events' ORDER BY observed_at DESC`,
-    )
-    const byId = Object.fromEntries(rows.map((r) => [r.id, r]))
-    // Three spellings of region across the connectors; one column has to answer
-    // for whichever one a source used.
-    assert.equal(byId['hz-region'].region, 'Turkana')
-    assert.equal(byId['hz-area'].region, 'Marsabit')
-    // The guard matters more than the parse: a record the regex rejects must
-    // still be storable, or a connector with a sloppy timestamp takes the whole
-    // ingest down rather than one index entry.
-    assert.equal(byId['hz-junk'].observed_at, null)
-    assert.equal(byId['hz-blank'].observed_at, null)
-    assert.equal(byId['hz-region'].observed_at.toISOString(), '2026-03-01T10:20:30.500Z')
-    // And the rows are still there, which is the point: NULL in an index column
-    // is not a rejected record.
-    assert.equal((await store.read()).hazard_events.length, 4)
+
+    // The columns that used to answer these two questions are gone, so this
+    // asks the question the API actually asks — through `filterRecords`, which
+    // is where every filter has always run. The point of the test is that
+    // removing the columns removed no *behaviour*: the read still returns every
+    // row and the filter still selects from it.
+    const store2 = new PostgresStore({ databaseUrl: cluster.url })
+    await store2.ensureSchema()
+    const data = await store2.read()
+    assert.equal(data.hazard_events.length, 4, 'the read is a whole-collection read and must stay one')
+
+    const byDistrict = filterRecords(data.hazard_events, new URLSearchParams('district=Turkana'), {}, { unlimited: true })
+    assert.deepEqual(byDistrict.map((r) => r.id), ['hz-region'])
+
+    // `area` is a spelling the dropped `region` column COALESCE'd
+    // (`district`, `region`, `area`) and `recordInDistrict` does not accept —
+    // it matches `district`, `region`, `region_name`, `admin1` and
+    // `scope.district`. So the column was wrong in both directions: it missed
+    // rows the filter reaches (case-insensitive labels, comma-separated
+    // multi-values, the haversine fallback, relation traversal) and it held
+    // entries the filter never matches. An index built on it would have
+    // returned rows this query must not, which is worse than the scan it
+    // replaced. Asserted rather than described, because "the index column and
+    // the filter disagree" is the claim the whole repair rests on.
+    const byArea = filterRecords(data.hazard_events, new URLSearchParams('district=Marsabit'), {}, { unlimited: true })
+    assert.deepEqual(byArea.map((r) => r.id), [], 'area is not a district spelling the filter accepts')
+
+    // The time filter parses the first of nine fields that yields a date. Two
+    // records here cannot be dated — `last Tuesday` and an empty string — and
+    // the filter's contract is to *keep* a record it cannot date rather than
+    // drop it, so both come back. That is the second way the dropped
+    // `observed_at` column was not equivalent to its filter: the column was
+    // NULL for exactly these rows, so a predicate on it would have dropped the
+    // two records the filter is specified to return.
+    const inMarch = filterRecords(data.hazard_events, new URLSearchParams('from=2026-03-01&to=2026-03-31'), {}, { unlimited: true })
+    assert.deepEqual(inMarch.map((r) => r.id).sort(), ['hz-blank', 'hz-junk', 'hz-region'])
+    await store2.close()
   })
 
   it('reports what it has run against what this build expects', async (t) => {

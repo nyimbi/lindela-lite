@@ -197,23 +197,79 @@ describe('the statements this build used to write inline', () => {
     assert.match(all, /lite_records_collection_hash_idx/)
   })
 
-  it('adds the columns the region and time queries need', () => {
-    // ENH-29 part 3: the single-table design stays, but the columns the hot
-    // queries filter on become indexable instead of being read out of JSONB in
-    // application code on every request.
+  it('added the columns the region and time queries were meant to need, then dropped them', () => {
+    // ENH-29 part 3 and ENH-10 added these to make the hot filters indexable.
+    // They never became indexable: `PostgresStore.read` takes no filter, so no
+    // query names any of them, and R-30/R-31 remove the write amplification
+    // they cost. Migration 7 drops them.
+    //
+    // The assertion is on the *pair*, add and drop, because either half alone
+    // is satisfiable by a tree that does not converge: a database that never
+    // reached migration 5 has nothing to drop, and one that reached it needs
+    // the drop to exist.
     const all = MIGRATIONS.flatMap((m) => m.up).join('\n')
-    assert.match(all, /ADD COLUMN IF NOT EXISTS region TEXT/)
+    assert.match(all, /ADD COLUMN IF NOT EXISTS region TEXT/, 'the add is the record of what was tried')
     assert.match(all, /ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ/)
-    assert.match(all, /lite_records_region_idx/)
-    assert.match(all, /lite_records_observed_idx/)
+    assert.match(all, /DROP COLUMN IF EXISTS region/, 'without the drop the columns stay on every write')
+    assert.match(all, /DROP COLUMN IF EXISTS observed_at/)
+    // And the drop is the newest migration, not an edit to an applied one.
+    const newest = MIGRATIONS.reduce((a, b) => (b.version > a.version ? b : a))
+    assert.ok(
+      newest.up.some((s) => /DROP COLUMN IF EXISTS region/.test(s)),
+      'the drop must be in the newest migration; editing migration 3 in place would leave every database that already ran it stamped at the same version with the old DDL',
+    )
+  })
+
+  it('drops every generated column no query can read, not only the two the audit named', () => {
+    // R-31 is R-30's other half: migration 5 added eight more of exactly the
+    // same thing. A repair that dropped only `region` and `observed_at` would
+    // leave eight columns and eight indexes still maintained on every write.
+    const dropped = MIGRATIONS.flatMap((m) => m.up)
+      .flatMap((s) => [...s.matchAll(/DROP COLUMN IF EXISTS (\w+)/g)].map((m) => m[1]))
+    for (const column of [
+      'region', 'observed_at', 'country', 'source', 'status', 'severity',
+      'incident_id', 'intervention_id', 'service_type', 'owner',
+    ]) {
+      assert.ok(dropped.includes(column), `${column} is still written and reindexed on every INSERT`)
+    }
+    // The three that DO have readers stay: `payload_hash` is the dedupe key,
+    // `partner_org` is ENH-17's predicate and is in the read's WHERE clause,
+    // and `schema_version` is the ledger's own column.
+    for (const kept of ['payload_hash', 'partner_org', 'schema_version']) {
+      assert.ok(!dropped.includes(kept), `${kept} has a reader and must not be dropped`)
+    }
   })
 
   it('derives those columns rather than letting a client set them', () => {
     // A region column a caller could populate independently of the body is a
     // query that returns rows the body disagrees with — and the disagreement
     // is invisible from the response, which is drawn from the body.
-    const generated = MIGRATIONS.flatMap((m) => m.up).filter((s) => /region TEXT|observed_at TIMESTAMPTZ/.test(s))
+    //
+    // This is the property that made the columns safe to *add*; it is recorded
+    // because migration 7 removes them, and the reason they were removed is not
+    // that they were wrong about the body but that no query read them.
+    const generated = MIGRATIONS.flatMap((m) => m.up).filter((s) => /ADD COLUMN IF NOT EXISTS (region TEXT|observed_at TIMESTAMPTZ)/.test(s))
     assert.equal(generated.length, 2)
     for (const statement of generated) assert.match(statement, /GENERATED ALWAYS/)
+  })
+
+  it('carries a deployed v6 database to the drop without touching the migrations it already ran', () => {
+    // The upgrade path a deployed database actually takes, pinned by version
+    // rather than described. Migration 3 added the two columns and migration 5
+    // the eight; both are applied on every live deployment. A database at v6
+    // must be given migration 7 and nothing else — replaying 3 and 5 to "fix"
+    // them would re-add the columns and then need the drop anyway, and editing
+    // either in place would leave the database stamped at its old version with
+    // the old DDL (R-73).
+    const atSix = pendingMigrations(6)
+    assert.deepEqual(atSix.map((m) => m.version), [7])
+    const statements = atSix.flatMap((m) => m.up).join('\n')
+    assert.match(statements, /DROP COLUMN IF EXISTS region/)
+    assert.ok(!/ADD COLUMN/.test(statements), 'the tail re-adds a column, so the drop cannot be the whole repair')
+    // And the migrations that added them are still in the list, unedited —
+    // the drop depends on them having run, and a database created fresh runs
+    // both and then the drop in one pass.
+    assert.match(migrationStatements(0).join('\n'), /ADD COLUMN IF NOT EXISTS region TEXT/)
+    assert.match(migrationStatements(0).join('\n'), /DROP COLUMN IF EXISTS region/)
   })
 })

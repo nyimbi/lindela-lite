@@ -16,6 +16,7 @@
 import { COLLECTIONS, sortRecords, JsonStore, supersededVersions } from '../src/store.js'
 import { PostgresStore } from '../src/postgres-store.js'
 import { VERSIONS_PER_RECORD } from '../src/bitemporal.js'
+import { filterRecords } from '../src/utils.js'
 import { postgresCluster } from '../test/pg-harness.mjs'
 
 const RECORDS = 39_715
@@ -259,22 +260,32 @@ async function measurePostgres(store) {
   })
   console.log(`  the scoped lookup is ${(oldHashes / newHashes).toFixed(1)}x faster`)
 
-  console.log('\nENH-10 — a filtered query, before and after migration 5')
+  // R-30/R-31. This block used to time `SELECT id FROM lite_records WHERE
+  // severity = 'critical'` and read the plan, to show migration 5's generated
+  // column paying off. It never did: `PostgresStore.read` issues one
+  // whole-collection query and takes no filter, so the application never runs
+  // that statement — the filter runs in JavaScript in `filterRecords`. Timing
+  // it measured a query no code path makes, which is how a column can look
+  // measured and still be dead.
+  //
+  // Migration 7 drops the ten columns, so this block would now fail on a
+  // missing column. What replaces it measures the cost that is actually paid:
+  // the whole-collection read plus the in-process filter over it. That is the
+  // number to beat before anyone proposes an index again.
+  console.log('\nR-30/R-31 — the read and the filter that replace the dropped columns')
 
-  await pool.query(
-    `SELECT severity FROM lite_records WHERE collection = 'incidents' AND severity = 'critical' LIMIT 1`,
-  )
-  const filtered = await time('severity = a literal', 10, async () => {
+  const filterCost = await time('read the collection, then filter it in process', 5, async () => {
     const { rows } = await pool.query(
-      `SELECT id FROM lite_records WHERE collection = 'incidents' AND severity = 'critical'`,
+      `SELECT collection, body FROM lite_records WHERE collection = 'incidents'`,
     )
-    return rows
+    const records = rows.map((r) => r.body)
+    return filterRecords(records, new URLSearchParams('severity=critical'), {}, { unlimited: true })
   })
-  const { rows: plan } = await pool.query(
-    `EXPLAIN SELECT id FROM lite_records WHERE collection = 'incidents' AND severity = 'critical'`,
+  const { rows: count } = await pool.query(
+    `SELECT count(*)::int AS n FROM lite_records WHERE collection = 'incidents'`,
   )
-  console.log(`  plan: ${plan.map((r) => r['QUERY PLAN']).join(' | ').slice(0, 200)}`)
-  return { filtered }
+  console.log(`  ${count[0].n} incidents read and filtered per request`)
+  return { filtered: filterCost }
 }
 
 async function measureJson(records) {
