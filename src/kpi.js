@@ -32,18 +32,63 @@ export function kpiCacheStats() {
   return { size: _cache.size, live, expired: _cache.size - live, max: CACHE_MAX_SIZE }
 }
 
-function _cacheKey(quarter, year, data) {
-  const counts = [
-    data.rapidpro_dispatches?.length ?? 0,
-    data.field_reports?.length ?? 0,
-    data.alert_events?.length ?? 0,
-    data.hazard_events?.length ?? 0,
-    data.interventions?.length ?? 0,
-    data.workflow_instances?.length ?? 0,
-    data.report_templates?.length ?? 0,
-  ].join(',')
-  const hash = crypto.createHash('sha256').update(counts).digest('hex').slice(0, 8)
-  return `${quarter}-${year}-${hash}`
+/**
+ * The collections `computeQuarterlyKpi` reads. Named once, because the digest
+ * below and the computation must cover the same set: a field the computation
+ * reads and the key does not is a field whose revision the cache cannot see.
+ */
+const KEYED_COLLECTIONS = Object.freeze([
+  'rapidpro_dispatches', 'field_reports', 'alert_events', 'hazard_events',
+  'interventions', 'workflow_instances', 'report_templates',
+])
+
+/**
+ * A digest of the content of every collection the quarterly computation reads.
+ *
+ * R-34. This was the join of the seven arrays' *lengths*. A record revised in
+ * place without changing any array's size — a figure corrected, a status
+ * flipped from `pending` to `sent`, a `sent_at` moved, an intervention
+ * reassigned — produced the identical key, and the caller was served the
+ * pre-revision numbers for up to `CACHE_TTL_MS`. Five minutes, silent, and
+ * attributed to a quarter: a plausible number that is wrong is the worst shape
+ * a cache bug has, because nothing downstream can tell it apart from a right
+ * one.
+ *
+ * The tempting cheap fix is a richer projection — lengths, plus the newest
+ * `updated_at`, plus the newest id. That is the same bug with a smaller
+ * aperture, and it is the one this file's neighbours were caught by: a
+ * predicate that is a strict subset of the thing it tests fails open, and it
+ * fails toward "clean". The seven collections are hashed whole.
+ *
+ * Streamed into one hash rather than concatenated, so the digest costs no
+ * materialised copy of the store. It is O(bytes) once per request against a
+ * computation that already walks all seven arrays and filters them.
+ *
+ * A row whose keys are ordered differently hashes differently and misses the
+ * cache. That direction is the safe one — a miss recomputes, a false hit
+ * publishes. Likewise a row that will not serialise: it mixes a nonce into the
+ * digest, so the key cannot match anything and the entry is recomputed rather
+ * than thrown out of. The alternative, letting `JSON.stringify` throw here,
+ * would turn a cache-key problem into a 500 on a route that used to answer.
+ */
+export function kpiCacheKey(quarter, year, data) {
+  const hash = crypto.createHash('sha256')
+  for (const name of KEYED_COLLECTIONS) {
+    hash.update(`${name}\u0000`)
+    for (const row of data?.[name] || []) {
+      let serialised
+      try {
+        serialised = JSON.stringify(row) ?? 'null'
+      } catch {
+        serialised = `unserialisable:${Math.random()}`
+      }
+      hash.update(serialised).update('\u0000')
+    }
+    // A distinct terminator per collection, so `['ab','c']` and `['a','bc']`
+    // in two different arrays cannot digest to the same bytes.
+    hash.update('\u0001')
+  }
+  return `${quarter}-${year}-${hash.digest('hex').slice(0, 16)}`
 }
 
 function _currentQuarter() {
@@ -147,13 +192,13 @@ export function computeQuarterlyKpi(data, { quarter, year, now = Date.now(), rin
     throw Object.assign(new Error(`quarter must be Q1|Q2|Q3|Q4`), { statusCode: 400 })
   }
 
-  const cacheKey = _cacheKey(q, y, data)
+  const cacheKey = kpiCacheKey(q, y, data)
   const cached = _cache.get(cacheKey)
   // QUA-01. The uptime is recomputed on the cached path rather than replayed.
   //
   // It is the one field in this payload that is not a function of the data —
   // it is the caller's own recent request outcomes — so it is not part of
-  // `_cacheKey`, and replaying it would hand one server the traffic of whichever
+  // `kpiCacheKey`, and replaying it would hand one server the traffic of whichever
   // server last filled the entry. Everything else here is derived from `data`
   // and the period, which is what the key covers.
   //
