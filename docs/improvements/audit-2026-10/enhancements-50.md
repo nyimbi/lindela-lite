@@ -1382,6 +1382,26 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > equality with the declaration, so the next route in that shape fails a gate
 > instead of surviving four days of hand sweeps.
 >
+> **Two defects in the published spec, found while reading it as data.** Both are
+> the item's own class — text that reads as documentation and reaches nobody —
+> and both were invisible to every check because each one is a *string* the checks
+> search for, and the string was there:
+>
+> - `GET /api/v1/calibration/by-region` carried a stray key
+>   `summary_note_removed: true` — a note-to-self from `7be1df9` that leaked into
+>   the published document, where a client reads it as an OpenAPI extension. No
+>   tool in the tree reads the name.
+> - `GET /api/v1/history/{id}` declared `description:` **twice**. YAML keeps the
+>   last, so the first — the paragraph explaining that the path capture is the
+>   collection name and the API reference spells it `:collection` — was
+>   unreachable dead text that read as documentation. Its content is merged into
+>   the surviving description rather than dropped, since the explanation was
+>   right.
+>
+> `validate.mjs` string-matches the spec rather than parsing it, so neither
+> could fail it. Reading the document as a data structure is what surfaced them,
+> which is the same move the whole entry is about.
+>
 > **What it cost, recorded so the next estimate is better.** The bootstrap is 357
 > lines, the two generators 286, the two gates 321, the three driving tests 514, and
 > the declaration 5,710. The expensive part was not any of those: it was that three

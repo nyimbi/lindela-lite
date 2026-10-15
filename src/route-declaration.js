@@ -69,7 +69,6 @@ export const ROUTE_DECLARATION = Object.freeze([
 		wide: false,
 		body: `
       summary: Per-region trust, or the reason it was not computed
-      summary_note_removed: true
       description: |
         How far this system's predictions have sat from what was subsequently
         observed, per region.
@@ -5124,17 +5123,17 @@ export const ROUTE_DECLARATION = Object.freeze([
 		body: `
       summary: What the platform believed about a collection, over time
       description: >-
-        The path segment is the collection name. It is \`{id}\` here because the
-        spec gate derives parameter names from the route patterns in
-        \`src/server.js\`, and every path capture in this document carries that
-        name; the API reference calls it \`:collection\`.
-      description: >-
         The bitemporal history, as a query. Every value the platform held, with
         the interval it was held for, plus a \`coverage\` block stating how much
         history was pruned — the store keeps the most recent five revisions per
         record, so this answers the recent past and says so. Only the bitemporal
         collections project: a field report is an event, not a state the platform
         held and later changed.
+
+        The path segment is the collection name. It is \`{id}\` here because the
+        spec gate derives parameter names from the route patterns in
+        \`src/server.js\`, and every path capture in this document carries that
+        name; the API reference calls it \`:collection\`.
       security: [{ apiKey: [] }]
       parameters:
         - name: id
