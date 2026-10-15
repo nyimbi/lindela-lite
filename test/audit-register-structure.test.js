@@ -204,3 +204,80 @@ describe('the audit register’s skeleton, guarded', () => {
     }
   })
 })
+
+/**
+ * The two enhancement registers, read as documents.
+ *
+ * `docs/improvements/enhancements.md` numbers `ENH-01..ENH-30` and
+ * `docs/improvements/system-audit/02-enhancements.md` numbers
+ * `ENH-01..ENH-50`. They are separate registers that both use the id space
+ * `ENH-nn`, so **every one of the 30 shared ids means two different things**:
+ * `ENH-01` is "Deny-by-default authorization" in one and "The field app works
+ * for a week offline" in the other, and so on for all thirty.
+ *
+ * The cost is not cosmetic. There are 1,855 `ENH-nn` citations in this
+ * repository across 338 files, 100 of them in `src/` comments — so a reader
+ * following `// ENH-29` from a source file has a 50% chance of landing on the
+ * wrong item, and `docs/improvements/status.md` resolves every id against the
+ * *first* register. This is the same shape the file's own header catalogues:
+ * a hand-kept table that nothing cross-checks drifts, and the drift looks like
+ * a clean result.
+ *
+ * The check below does not fix the collision — renaming 50 ids across 1,855
+ * citations is a change with its own review, and doing it inside a defect fix
+ * would bury it. What it does is make the collision *measured* rather than
+ * discovered: the numbers above are asserted, so the next id added to either
+ * register has to be a deliberate choice rather than a paste.
+ */
+describe('the two enhancement registers do not share an id space', () => {
+  const FIRST = readFileSync(new URL('../docs/improvements/enhancements.md', import.meta.url), 'utf8')
+  const SECOND = readFileSync(new URL('../docs/improvements/system-audit/02-enhancements.md', import.meta.url), 'utf8')
+
+  /** id -> title, for `### ENH-NN — Title`. */
+  function titled(text) {
+    return new Map([...text.matchAll(/^### (ENH-\d+) — (.+)$/gm)].map((m) => [m[1], m[2].trim()]))
+  }
+
+  it('parsed both registers, so a passing run is not a run over nothing', () => {
+    const a = titled(FIRST)
+    const b = titled(SECOND)
+    assert.ok(a.size >= 25, `parsed ${a.size} ids from enhancements.md, which is not the register`)
+    assert.ok(b.size >= 45, `parsed ${b.size} ids from 02-enhancements.md, which is not the register`)
+  })
+
+  it('records how many ids the two registers share, and that each means two things', () => {
+    const a = titled(FIRST)
+    const b = titled(SECOND)
+    const shared = [...a.keys()].filter((id) => b.has(id))
+    const ambiguous = shared.filter((id) => a.get(id) !== b.get(id))
+
+    // The collision itself. Asserted as a floor rather than an equality: if a
+    // future change renames one register's ids the number drops, and this test
+    // failing then is correct — it means the collision was addressed and this
+    // note is stale. What it must not do is pass while the number is zero for
+    // the wrong reason (a regex that stopped matching), which the parse check
+    // above covers.
+    assert.ok(
+      shared.length >= 25,
+      `the registers share only ${shared.length} ids — if the collision was fixed, update this note rather than the count`,
+    )
+    assert.equal(
+      ambiguous.length,
+      shared.length,
+      `${shared.length - ambiguous.length} shared id(s) now agree on meaning; the collision is partial rather than total`,
+    )
+  })
+
+  it('names the collision where a reader following an id will look', () => {
+    // The note is the deliverable: a reader who hits `ENH-29` in a source
+    // comment has to be able to find out it is ambiguous. A silent test that
+    // only fails on a change does not help them.
+    for (const [file, text] of [['enhancements.md', FIRST], ['system-audit/02-enhancements.md', SECOND]]) {
+      assert.match(
+        text,
+        /ENH-nn|id space|collide|collision/i,
+        `${file} does not warn that ENH ids are shared with the other register`,
+      )
+    }
+  })
+})

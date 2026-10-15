@@ -1,5 +1,16 @@
 # Thirty high-impact enhancements
 
+> **These ids are not unique across the repository.** This register numbers
+> `ENH-01..ENH-30`; [`system-audit/02-enhancements.md`](system-audit/02-enhancements.md)
+> numbers `ENH-01..ENH-50` in the same `ENH-nn` space, and **all thirty ids
+> below mean something different there** — this file's `ENH-01` is
+> deny-by-default authorization, that file's is an offline field app. Every
+> `ENH-nn` citation in `src/` and `docs/` is therefore ambiguous unless it names
+> its register. `docs/improvements/status.md` resolves against *this* file.
+> `test/audit-register-structure.test.js` measures the collision so it cannot
+> grow silently. Renaming either register is outstanding work, not a fixed
+> thing.
+
 Each entry names the evidence, the change, the value to a user, and what it
 deliberately does **not** license. Effort is rough: S is under a day, M is a
 week, L is a multi-week change. Defects referenced as `SEC-01`, `DATA-04` and so

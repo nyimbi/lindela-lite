@@ -313,13 +313,28 @@ shipped and only the index had not caught up.
 
 ### Open, with the measurement or the blocker
 
+This table carried two errors until 2026-10-15, both worth naming because they
+are the failure mode a hand-kept register has:
+
+1. **It said the open set was two items and it was four.** The paragraph that
+   used to sit between the rows below read "R-27/ENH-09 and ENH-12 are the only
+   items remaining genuinely open". **R-30 and R-31 were live at that moment**
+   and appeared in neither this table nor any other — they were in the D.
+   Scalability table with no status, which reads as "not yet triaged" rather
+   than "found and outstanding". An open table that omits what is open is worse
+   than no table, because it is the thing a reader trusts to know when to stop.
+2. **A paragraph was spliced between two rows**, which breaks the table in any
+   renderer that requires rows to be contiguous — the ENH-12 row below rendered
+   as body text on the row above it.
+
+The open set is now: **R-27** (performance half), **ENH-12** (table half), and
+**R-30/R-31 closed 2026-10-15** (kept listed until this edit so the change is
+visible rather than a silent disappearance). ENH-17 stays listed for the reason
+its own row gives.
+
 | id | why it is still open |
 | --- | --- |
 | R-27 / ENH-09 | **The correctness half is closed** (2026-10-07); the performance half is open. `/api/v1/food-security` and `/api/v1/disease-observations` returned `filterRecords(...)` directly, so against the demo store they answered with **500 of 4,517** and **500 of 1,707** records and no `total`, no `has_more` and no cursor — a truncated set indistinguishable from a complete one, the remaining records reachable only by raising `limit` by hand. Both now page properly, and both compute their roll-up from the whole matched set rather than from the page, which was the worse half: `summary` described whatever happened to fit. Guard: `test/r27-silent-truncation.test.js`, which fails both if the pagination envelope is dropped and if the roll-up goes back to the page.<br><br>**What is left is the performance half, and it is smaller than the audit recorded.** Re-measured 2026-10-13: `collectionPage` has **29 call sites** across `src/` (and 7 for `filterRecords`), all in `src/routes/` now — the ENH-60 extraction moved every route out of `server.js`, so the "26 call sites in `server.js`" this line carried from 2026-10-07 named a file that holds none of them. The substance is unchanged and re-measured against the 126 MB demo store: the largest paginated collection is **`events_outbox` at 1,785 rows** (`src/routes/outbox.js`), not the 360 the earlier figure named, and it pages in **0.281 ms**; `protocol_executions` at 1,770 pages in 0.214 ms, and `record_versions` — the 33,716-row collection the audit measured against — is still named by no `collectionPage` call site. So keyset pagination is bounded by ~1 week rather than ~3, and the trigger is unchanged in kind: a collection whose page cost matters against its own latency budget. `food_security_records` is the one heading there, at 4,735 and growing — and although `/api/v1/food-security` now pages through `matchedAndPage`, that is a route-level page over a fully materialised array, not a SQL keyset read, so the keyset work it would need is still a precondition rather than an optimisation. |
+| ENH-12 | The prune half shipped with R-26 (`O(V)` → `O(k log V)`, 15×). The table half — `record_versions` as a real relation with a real `record_id` — is the one item the audit calls "the schema the auditability claim rests on", ~4 engineer-weeks, with a data migration for existing deployments. Migration 4 indexed the extraction (`lite_records_version_record_idx`) and its own comment says why it stopped there: `record_id` is an expression index rather than a real column, so the prune is faster and the relation is still a JSONB pile. |
+| R-30 / R-31 | **Closed 2026-10-15.** Ten STORED generated columns and ten indexes, added by migrations 3 and 5 so that the filters `filterRecords` implements in JavaScript would become index lookups. They never did: `PostgresStore.read` takes no filter, so no query named any of the ten. Dropped by migration 7. Listed here after closing rather than removed, because this table's whole failure was an item going missing from it. |
 | ENH-17 | **Shipped, in the form this deployment model warrants** (2026-10-07). The generated column, the partial index, and the predicate in `PostgresStore.read()`'s `WHERE` clause. The audit's RLS half is withdrawn rather than blocked: it was specified as row-level security keyed on `current_setting('app.partner_org')`, which is a remedy for cross-*tenant* reads, and this deployment has one operator, one country programme and one database. `partner_org` separates organisations working the same response — where the records carry names and household counts, so the disclosure is real. Guard: `test/partner-sql-predicate.test.js`. |
-
-ENH-17 is listed here rather than above because this table has moved over the
-project's life: it once meant "still open", and ENH-17 is now closed with its RLS
-half withdrawn rather than blocked. R-27/ENH-09 and ENH-12 are the only items
-remaining genuinely open, and R-27 is now half closed.
-| ENH-12 | The prune half shipped with R-26 (`O(V)` → `O(k log V)`, 15×). The table half — `record_versions` as a real relation with a real `record_id` — is the one item the audit calls "the schema the auditability claim rests on", ~4 engineer-weeks, with a data migration for existing deployments. |

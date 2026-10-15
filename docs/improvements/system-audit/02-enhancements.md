@@ -1,5 +1,16 @@
 # Fifty enhancements
 
+> **These ids are not unique across the repository.** This register numbers
+> `ENH-01..ENH-50`; [`../enhancements.md`](../enhancements.md) numbers
+> `ENH-01..ENH-30` in the same `ENH-nn` space, and **all thirty shared ids mean
+> something different there** — this file's `ENH-01` is an offline field app,
+> that file's is deny-by-default authorization. Every `ENH-nn` citation in
+> `src/` and `docs/` is therefore ambiguous unless it names its register.
+> `docs/improvements/status.md` resolves against the other file, not this one.
+> `test/audit-register-structure.test.js` measures the collision so it cannot
+> grow silently. Renaming either register is outstanding work, not a fixed
+> thing.
+
 Each item names the metric it moves and the order-of-magnitude claim, before/after
 complexity, and a weighted score. **Remediation for the ~83 defects in
 [01-remediation.md](01-remediation.md) is not repeated here** — where an enhancement
