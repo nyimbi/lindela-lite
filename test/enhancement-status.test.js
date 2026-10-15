@@ -51,12 +51,21 @@ describe('enhancement status', () => {
     // returns a non-empty list for everything.
     //
     // The subject used to be `src/agreement.js`, on the grounds that only tests
-    // imported it. ENH-09 gave it a real caller (`src/source-agreement.js`), so
-    // it stopped being the negative case — which is the point of the assertion,
-    // not a reason to weaken it. `src/replay.js` is the current example: a
-    // module with a test file and no import from anywhere outside `test/`.
-    assert.equal(callers('src/replay.js', ROOT).length, 0,
-      'scanner claims replay.js has a production caller; it is imported only by tests')
+    // imported it. ENH-09 gave it a real caller (`src/source-agreement.js`), and
+    // then `src/replay.js` held the role until ENH-76 wired it to
+    // `src/routes/maintenance.js`. Both times the module stopped being the
+    // negative case because the entry it named got shipped — which is the point
+    // of the assertion, not a reason to weaken it.
+    //
+    // `src/index.js` is the current subject, and it is a *stable* one: it is
+    // `package.json`'s `"main"`, the barrel a consumer of this package imports
+    // from outside the repository. Nothing inside the tree imports it, and
+    // nothing ever should — an internal module reaching for the package's own
+    // entry point is an import cycle waiting to happen. So the zero here is a
+    // fact about the design rather than a gap waiting to be filled, and it will
+    // not go stale the next time an entry ships.
+    assert.equal(callers('src/index.js', ROOT).length, 0,
+      'scanner claims src/index.js has a caller; it is the package entry point, imported from outside the tree')
     // And the boundary the old pattern got wrong, asserted where it is decidable.
     //
     // `agreement.js` is a strict *suffix* of `source-agreement.js`, and the two

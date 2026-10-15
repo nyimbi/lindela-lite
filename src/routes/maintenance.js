@@ -40,8 +40,21 @@
  */
 
 import { refreshAnalytics } from '../analytics.js'
+import { actionLog } from '../operations.js'
 import { applyRetention, loadPolicy, personalWindowKey, retentionWindowFor } from '../pii.js'
 import { logger } from '../observability.js'
+import { captureRun, parseRunCapture, pinClock, replayRun, serialiseRunCapture } from '../replay.js'
+
+/**
+ * ENH-76. The body cap for a replay request, larger than the 5 MB default.
+ *
+ * A run capture carries the input snapshot, the published rows and the audit
+ * chain, and a real store's snapshot is megabytes. The default would refuse the
+ * document this route exists to accept, with a 413 that reads as "your capture is
+ * too big" when the truth is "the cap was written for a form post". Named here
+ * rather than inlined so the number is one decision in one place.
+ */
+export const REPLAY_BODY_MAX_BYTES = 64 * 1024 * 1024
 
 /**
  * The collections retention applies to, and the window each is measured by.
@@ -76,6 +89,8 @@ export const DEMO_SEED_BUDGET_MS = 45_000
 export function matchMaintenanceRoute(pathname, method = 'POST') {
   if (String(method).toUpperCase() !== 'POST') return null
   if (pathname === '/api/v1/maintenance/apply-retention') return { kind: 'apply-retention' }
+  if (pathname === '/api/v1/maintenance/capture-run') return { kind: 'capture-run' }
+  if (pathname === '/api/v1/maintenance/replay-run') return { kind: 'replay-run' }
   if (pathname === '/api/v1/demo/seed') return { kind: 'demo-seed' }
   return null
 }
@@ -155,6 +170,87 @@ export async function handleMaintenanceRoute(route, { store, data, req, res, url
     }
 
     jsonResponse(res, 200, { success: true, ...perCollection })
+    return true
+  }
+
+  if (kind === 'capture-run') {
+    // ENH-76. Run the derivation once and write down everything a replay needs:
+    // the snapshot it read, the rows it published, the instant it ran.
+    //
+    // The snapshot is taken *before* the refresh, because `refreshAnalytics`
+    // swaps the derived collections — a capture that read the store afterwards
+    // would hold the run's own output as its input, and replaying it would
+    // compare a run against itself. That is a capture which reproduces by
+    // construction and verifies nothing, and it is the failure mode this route
+    // is most likely to introduce.
+    const body = await readRequestJson(req).catch(() => ({}))
+    const inputs = await store.read()
+    // The clock is pinned *around* the refresh, not read after it. The run stamps
+    // `generated_at` and `honesty.evidence.retrieved_at` on every derived row
+    // from `new Date()`, and `replayRun` re-derives under a pin at the capture's
+    // own `pinned_at` — so a route that ran on the real clock and then recorded a
+    // later instant would write a capture that diverges from itself on every
+    // timestamp it carries. Pinning here is what makes the pair symmetric: the
+    // run and its replay see one instant.
+    const now = new Date().toISOString()
+    const published = await pinClock(now, () => refreshAnalytics(store))
+    let capture
+    try {
+      capture = captureRun({ inputs, published, now, note: typeof body?.note === 'string' ? body.note : null })
+    } catch (error) {
+      // `captureRun` refuses a malformed input or published set by name. That is
+      // a 400 the operator can act on rather than a 500 for a bad request.
+      jsonResponse(res, 400, { success: false, error: error.message, code: error.name })
+      return true
+    }
+    const document = serialiseRunCapture(capture)
+    const log = actionLog('maintenance', 'capture_run', { pinned_at: capture.pinned_at, bytes: document.length }, body?.actor, req.__auth?.subject)
+    await store.merge({ action_logs: [log] })
+    jsonResponse(res, 201, {
+      success: true,
+      pinned_at: capture.pinned_at,
+      bytes: document.length,
+      // The capture is the response body's `capture` field rather than a file
+      // this route writes. A maintenance route that wrote a path the caller
+      // named would be a write primitive; the caller already has the bytes and
+      // can put them wherever it keeps evidence.
+      capture: JSON.parse(document),
+      action_log: log,
+    })
+    return true
+  }
+
+  if (kind === 'replay-run') {
+    // ENH-76. Re-derive a captured run through the production engine and report
+    // whether every published number came back bit-for-bit.
+    //
+    // The capture arrives in the body. It is a portable document by design —
+    // `serialiseRunCapture` exists so a run can be handed to somebody else to
+    // check — and verifying one is exactly the act this route serves. It writes
+    // nothing: a replay that wrote its result into the store would be a run, and
+    // the module's whole claim is that a replay is not a re-run.
+    const body = await readRequestJson(req, { maxBytes: REPLAY_BODY_MAX_BYTES }).catch((error) => ({ __error: error }))
+    if (body?.__error) {
+      jsonResponse(res, body.__error.statusCode || 400, { success: false, error: body.__error.message })
+      return true
+    }
+    let capture
+    try {
+      // Accept the document directly, or nested under `capture` — a client that
+      // posted the route's own 201 body should not have to unwrap it.
+      capture = parseRunCapture(body?.capture ? JSON.stringify(body.capture) : JSON.stringify(body))
+    } catch (error) {
+      jsonResponse(res, 400, { success: false, error: error.message, code: error.name })
+      return true
+    }
+    const verdict = await replayRun(capture)
+    const log = actionLog('maintenance', 'replay_run', { verdict: verdict.verdict, pinned_at: capture.pinned_at }, body?.actor, req.__auth?.subject)
+    await store.merge({ action_logs: [log] })
+    // A divergence is a 200. The replay ran and answered; the answer is that a
+    // number moved. A 4xx would make "the engine disagrees with its own record"
+    // read as a malformed request, and that is the one reading an operator must
+    // not get.
+    jsonResponse(res, 200, { success: true, ...verdict, action_log: log })
     return true
   }
 

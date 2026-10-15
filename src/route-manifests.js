@@ -164,6 +164,9 @@ export const ROUTE_MANIFESTS = Object.freeze({
   // The narrator reads the report's own generated sections and nothing else:
   // commentary audited against the record, not re-derived from the store.
   'POST /api/v1/reports/:id/narrate': Object.freeze(["reports"]),
+  // ENH-57. The briefing narrows the report it was given; it reads the
+  // report and nothing else, and the narrowing happens in memory.
+  'POST /api/v1/reports/:id/briefings': Object.freeze(["reports"]),
   'GET /api/v1/response-resources': Object.freeze(["response_resources"]),
   'GET /api/v1/response-resources/:id': Object.freeze(["response_resources"]),
   'GET /api/v1/road-access': Object.freeze(["road_access"]),
@@ -345,6 +348,13 @@ export const WIDE_ROUTES = Object.freeze([
   'POST /api/v1/interventions',
   'POST /api/v1/kpi/refresh-snapshots',
   'POST /api/v1/maintenance/apply-retention',
+  // ENH-76. `capture-run` reads the whole store to snapshot a run, and
+  // `replay-run` reads nothing at all — its subject is the document in its body,
+  // re-derived through the production engine against a captured store adapter.
+  // Both are wide for the reason `scenario-comparisons` is: a manifest cannot say
+  // "reads everything" or "reads nothing" without being the shape of a mistake.
+  'POST /api/v1/maintenance/capture-run',
+  'POST /api/v1/maintenance/replay-run',
   'POST /api/v1/outbox/dispatch',
   'POST /api/v1/parametric-rules',
   'POST /api/v1/parametric-rules/:id/simulate',

@@ -135,6 +135,11 @@ export function normalizeReport(input = {}, data, existing = null) {
     source_refs: arrayValue(input.source_refs ?? existing?.source_refs),
     warnings: arrayValue(input.warnings ?? existing?.warnings),
     narrative: objectValue(input.narrative ?? existing?.narrative),
+    // ENH-57. The per-audience briefings ride beside `narrative` rather than in
+    // `metadata`, which is a free-form bag a client may overwrite: a briefing is
+    // audited text, and the figures in it were checked against the report's own
+    // facts, so it belongs in a field the normalizer owns.
+    briefings: objectValue(input.briefings ?? existing?.briefings),
     distribution_defaults: arrayValue(input.distribution_defaults ?? existing?.distribution_defaults ?? template?.distribution_defaults),
     generated_at: input.generated_at || existing?.generated_at || null,
     approved_at: input.approved_at || existing?.approved_at || null,

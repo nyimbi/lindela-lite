@@ -756,6 +756,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListResponse'
+  /api/v1/maintenance/capture-run:
+    post:
+      summary: Run the derivation once and write down the input snapshot, the published rows and the instant, as a portable run capture a replay can verify
+      operationId: postmaintenance_capture-run
+      responses:
+        '201':
+          description: The run capture, as a document in the response body
+        '400':
+          description: The snapshot or the published set cannot be captured
+  /api/v1/maintenance/replay-run:
+    post:
+      summary: Re-derive a captured run through the production engine and report whether every published number came back bit-for-bit; a divergence is a 200 carrying the moved fields
+      operationId: postmaintenance_replay-run
+      responses:
+        '200':
+          description: The verdict — reproduced, diverged, or unverifiable — with the collections compared and every moved field named
+        '400':
+          description: The body is not a run capture
   /api/v1/outbox:
     get:
       summary: Pending outbox events
@@ -2451,6 +2469,16 @@ paths:
           description: Report has no generated sections
         '409':
           description: Approved or distributed report is immutable
+  /api/v1/reports/{id}/briefings:
+    post:
+      summary: Write the report's briefing for one or more declared audiences, each narrowed to the sections and figures that audience is entitled to; a refusal is returned as a refusal, never as a short paragraph
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: One briefing per requested audience, each narrated or refused with its reason
+        '400':
+          description: Report has no generated sections, or an audience name is not in the registry
   /api/v1/reports/{id}/approve:
     post:
       summary: Approve a generated report
