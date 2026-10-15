@@ -502,9 +502,10 @@ A second copy would be the drift the split is meant to avoid.
 > and every panel this repo defers is loaded that way. A 5.6 KB module reachable only
 > from a merge call site costs the first load nothing, so size was never the reason;
 > the headroom figure was stale besides (0.5 KB as of the panel-handler extraction).
-> The three facts above are the reason, and they are about surfaces rather than bytes.
-> Recorded because the conclusion is right and a wrong reason is the part that gets
-> reused — it would block a *different* module that could be lazily loaded.
+> The four facts above are the reason, and they are about surfaces and write paths
+> rather than bytes. Recorded because the conclusion is right and a wrong reason is
+> the part that gets reused — it would block a *different* module that could be
+> lazily loaded.
 >
 > 4. **The server write model strips the clock, so this cannot be a client-only
 >    change.** This is the measurement that settles it, and the one the first draft
