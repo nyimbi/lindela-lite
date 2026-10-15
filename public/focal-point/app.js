@@ -21,6 +21,21 @@ const state = {
   currentDialogMode: null,
   currentWorkflowId: null,
   protocols: [],
+  // The three collections the approval queue is built from, each assigned by the
+  // fetch that loads it. Declared because two of them are read on a path where
+  // their own fetch failed: `state.pending` is assigned inside `renderPending`,
+  // which is skipped when the workflows request throws, and `state.alerts` is
+  // read by `knownDistricts` whether or not the alerts request returned. Both
+  // reads are guarded with `|| []` today, so the failure is a wrong count rather
+  // than a TypeError — and a guard is a repair at the read, not a declaration at
+  // the source. An empty array is the honest initial value: not loaded and
+  // loaded-nothing are the same fact to every reader here.
+  workflows: [],
+  pending: [],
+  alerts: [],
+  // The element focus returns to when a dialog closes, captured on open. Not
+  // derivable afterwards — by the time the dialog is closing, focus is inside it.
+  dialogReturnFocus: null,
 }
 
 // Same as the portal: the credential moves into secure hardware on a shell.

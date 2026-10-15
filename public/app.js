@@ -76,12 +76,20 @@ const state = {
   data: {},
   reports: [],
   templates: [],
+  // R-68. Four keys written and read here were undeclared in this literal,
+  // which nothing noticed: a key the literal does not name is one a reset
+  // written as `Object.keys(state)` drops.
+  alertsTruncated: false,   // last alerts walk stopped early; the pager says "200 of 1,400"
+  iotObservations: null,    // last good /api/v1/iot-observations; null = never fetched
+  selectedRecordId: null,   // the deep link's `selected=` id, restored and encoded
   filters: {
     coldChain: false,
   },
   _paletteItems: [],
   _paletteIndex: 0,
   _dispatchGateAlert: null,
+  _outcomeAlert: null,          // the alert the outcome-follow-up prompt is about
+  _outcomeCoverageAsked: false, // the coverage question has been put once
   // A source restored from the URL before /api/v1/sources has populated the
   // filter; consumed by the next populateMapSourceFilter.
   _restoredSource: null,
@@ -3858,7 +3866,11 @@ async function refresh({ first = false, force = false } = {}) {
     if (merged.reports) {
       state.data.reports = merged.reports
       state.reports = merged.reports.data || []
-      state.reportsScope = listScope(merged.reports)
+      // No `reportsScope` here. It was computed and stored, and nothing ever
+      // read it: the reports panel derives its own scope from the *filtered*
+      // rows at `panels/reports.js:27`, which is a different number from the
+      // unfiltered one this line produced. A stored value that no reader wants
+      // is worse than no value, because the next reader trusts it.
     }
     if (merged.reportTemplates) {
       state.data.reportTemplates = merged.reportTemplates

@@ -163,6 +163,12 @@ const GATES = [
     why: 'ENH-59. The declaration and the dispatch code must describe the same routes, and nothing checked that. The direction that matters is the one nobody watches: `/api/v1/districts/{id}` was served, fetched by the console on every page, and in no table at all — invisible to every check built on the tables, because it was absent from all of them in the same way. Derives the served set from the imperative matchers via `scripts/route-surface.mjs` (193 paths from 37 matchers) and requires set equality with the declaration. Parameter *names* are normalised, literals and segment count are not, so a route that matches a declared one only in shape is still a finding — a fuzzy match there would swallow exactly the route that is missing. Reads files only; carries eight canaries, driven by test/route-reachability-gate.test.js.',
   },
   {
+    name: 'check-state-keys',
+    script: 'scripts/check-state-keys.mjs',
+    tier: 'self-contained',
+    why: 'R-68. A browser surface reads and writes its `state` object through keys the literal that defines it never names, and JavaScript does not mind — so the defect is invisible by construction: an undeclared key and a declared one behave identically until something enumerates the object, at which point a reset written as `Object.keys(state)` drops it. `public/app.js` carried six and `public/focal-point/app.js` four, including one key (`reportsScope`) that was written and never read and one (`state.pending`) read on a path where its own fetch had failed. Resolves `state` **lexically** rather than by regex, because two functions in `public/app.js` take their own `state` parameter and nine references belong to those — a regex scanner reports them as findings, and nine false positives is how a gate gets turned off. Files with no module-level literal are reported out of jurisdiction rather than guessed at. Reads files only; carries ten canaries, driven by test/state-keys-gate.test.js.',
+  },
+  {
     name: 'check-budget-and-surface-contract',
     script: 'test/web-hidden-display.test.js',
     tier: 'self-contained',
