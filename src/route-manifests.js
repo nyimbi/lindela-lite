@@ -29,6 +29,8 @@
 import { COLLECTIONS } from './store.js'
 
 export const ROUTE_MANIFESTS = Object.freeze({
+  'DELETE /api/v1/annotations/:id': Object.freeze(["annotations"]),
+  'DELETE /api/v1/federation/peers/:id': Object.freeze(["federation_peers", "action_logs"]),
   'DELETE /api/v1/parametric-rules/:id': Object.freeze(["parametric_rules"]),
   'GET /api/v1/action-logs': Object.freeze(["action_logs"]),
   'GET /api/v1/action-logs/:id': Object.freeze(["action_logs"]),
@@ -44,10 +46,10 @@ export const ROUTE_MANIFESTS = Object.freeze({
   // service_assets: the expected-loss proxy is severity x exposure, and exposure
   // comes from the impact model's population-at-risk rows.
   'GET /api/v1/alert-events/triage': Object.freeze(["alert_events", "hazard_events", "service_assets"]),
+  'GET /api/v1/alert-outcomes': Object.freeze(["alert_outcomes"]),
   // ENH-73. The decision interval, from the alerts and the determinations
   // filed against them.
   'GET /api/v1/alert-outcomes/decision-latency': Object.freeze(["alert_events", "alert_outcomes"]),
-  'GET /api/v1/alert-outcomes': Object.freeze(["alert_outcomes"]),
   'GET /api/v1/alert-outcomes/tally': Object.freeze(["alert_events", "alert_outcomes"]),
   'GET /api/v1/alert-rules': Object.freeze(["alert_rules"]),
   'GET /api/v1/alert-rules/:id': Object.freeze(["alert_rules"]),
@@ -59,11 +61,8 @@ export const ROUTE_MANIFESTS = Object.freeze({
   // `:id/versions` are declared explicitly rather than left to their `:id`
   // sibling — the lookup is segment-exact, so neither is covered by it.
   'GET /api/v1/annotations': Object.freeze(["annotations"]),
-  'GET /api/v1/annotations/record/:id': Object.freeze(["annotations"]),
   'GET /api/v1/annotations/:id/versions': Object.freeze(["annotations"]),
-  'POST /api/v1/annotations': Object.freeze(["annotations"]),
-  'PATCH /api/v1/annotations/:id': Object.freeze(["annotations"]),
-  'DELETE /api/v1/annotations/:id': Object.freeze(["annotations"]),
+  'GET /api/v1/annotations/record/:id': Object.freeze(["annotations"]),
   'GET /api/v1/audit/head': Object.freeze(["action_logs"]),
   'GET /api/v1/audit/verify': Object.freeze(["action_logs"]),
   'GET /api/v1/calibration/by-region': Object.freeze(["region_trust"]),
@@ -75,6 +74,12 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/compound-risk': Object.freeze(["risk_scores"]),
   'GET /api/v1/conflict-risk': Object.freeze(["risk_scores"]),
   'GET /api/v1/connectors': Object.freeze(["source_runs"]),
+  'GET /api/v1/connectors/status': Object.freeze(["source_runs"]),
+  // ENH-54. Two derived reads feed it and nothing else: the refused drift
+  // verdicts and the freshness verdicts, which are computed from the source
+  // runs. Naming a third collection here would claim a read the handler does
+  // not make, and the manifest is what the access check trusts.
+  'GET /api/v1/data-gaps': Object.freeze(["model_drift", "source_runs"]),
   'GET /api/v1/data-lineage': Object.freeze(["data_lineage"]),
   'GET /api/v1/data-quality': Object.freeze(["data_quality"]),
   // ENH-34. The index and one handle read only their own collection. The POST
@@ -109,11 +114,20 @@ export const ROUTE_MANIFESTS = Object.freeze({
   // collection the handler touches is the shape that reads `undefined` on
   // PostgreSQL. Exact, not wide.
   'GET /api/v1/export.geojson': Object.freeze(["alert_events", "conflict_events", "field_reports", "hazard_events", "impact_assessments", "incidents", "intervention_tasks", "interventions", "alert_rules", "rapidpro_dispatches", "rapidpro_inbound_messages", "response_resources", "risk_scores", "service_assets"]),
+  // ENH-80. The registry routes and the operator's status read are narrow: the
+  // registry, plus the heartbeat the status route reads for the last exchange.
+  // The two *peer-facing* routes are not here — they serve every syncable
+  // collection, which is a whole-store read by definition, and they are named in
+  // WIDE_ROUTES below.
+  'GET /api/v1/federation/peers': Object.freeze(["federation_peers"]),
+  'GET /api/v1/federation/status': Object.freeze(["federation_peers", "system_heartbeat"]),
+  'GET /api/v1/field-outcomes': Object.freeze(["field_outcomes"]),
+  'GET /api/v1/field-outcomes/summary': Object.freeze(["field_outcomes", "alert_events"]),
   'GET /api/v1/field-reports': Object.freeze(["field_reports"]),
+  'GET /api/v1/field-reports/:id': Object.freeze(["field_reports"]),
   // ENH-44. The quality roll-up reads only the collection whose verdicts it
   // counts — the verdict is stamped at write time, so nothing here joins out.
   'GET /api/v1/field-reports/quality': Object.freeze(["field_reports"]),
-  'GET /api/v1/field-reports/:id': Object.freeze(["field_reports"]),
   'GET /api/v1/flood-probability/models': Object.freeze(["flood_probability_models"]),
   'GET /api/v1/flood-risk': Object.freeze(["risk_scores"]),
   'GET /api/v1/food-security': Object.freeze(["food_security_records"]),
@@ -127,24 +141,18 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/ingest/status': Object.freeze(["connector_circuit", "ingestion_schedules", "source_runs"]),
   'GET /api/v1/interventions': Object.freeze(["interventions"]),
   'GET /api/v1/interventions/:id': Object.freeze(["interventions"]),
+  'GET /api/v1/iot-observations': Object.freeze(["iot_observations"]),
   'GET /api/v1/kpi/monthly-series': Object.freeze(["alert_events", "field_reports", "interventions", "rapidpro_dispatches", "workflow_instances"]),
   'GET /api/v1/kpi/quarterly': Object.freeze(["alert_events", "field_outcomes", "field_reports", "hazard_events", "interventions", "rapidpro_dispatches", "report_templates", "workflow_instances"]),
   'GET /api/v1/kpi/snapshots': Object.freeze(["kpi_snapshots"]),
   'GET /api/v1/model-drift': Object.freeze(["model_drift"]),
-  // ENH-09. The agreement check reads the observations and nothing else: both
-  // products' series arrive as `climate_observations` records, told apart by
-  // `source`, so there is no join out to a second collection.
-  'GET /api/v1/source-agreement': Object.freeze(["climate_observations"]),
-  // ENH-54. Two derived reads feed it and nothing else: the refused drift
-  // verdicts and the freshness verdicts, which are computed from the source
-  // runs. Naming a third collection here would claim a read the handler does
-  // not make, and the manifest is what the access check trusts.
-  'GET /api/v1/data-gaps': Object.freeze(["model_drift", "source_runs"]),
   'GET /api/v1/operations/summary': Object.freeze(["field_reports", "incidents", "intervention_tasks", "interventions", "response_resources"]),
   'GET /api/v1/outbox': Object.freeze(["events_outbox"]),
   'GET /api/v1/parametric-disbursements': Object.freeze(["parametric_disbursements"]),
   'GET /api/v1/parametric-rules': Object.freeze(["parametric_rules"]),
   'GET /api/v1/parametric-rules/:id': Object.freeze(["parametric_rules"]),
+  'GET /api/v1/protocol-executions': Object.freeze(["protocol_executions"]),
+  'GET /api/v1/protocol-executions/summary': Object.freeze(["protocol_executions"]),
   'GET /api/v1/rapidpro/escalations': Object.freeze(["rapidpro_dispatches", "rapidpro_inbound_messages"]),
   'GET /api/v1/rapidpro/inbound': Object.freeze(["rapidpro_inbound_messages"]),
   'GET /api/v1/rapidpro/response-metrics': Object.freeze(["rapidpro_dispatches", "rapidpro_inbound_messages"]),
@@ -161,36 +169,32 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/reports/:id': Object.freeze(["reports"]),
   'GET /api/v1/reports/:id/export.json': Object.freeze(["reports"]),
   'GET /api/v1/reports/:id/export.md': Object.freeze(["reports"]),
-  // The narrator reads the report's own generated sections and nothing else:
-  // commentary audited against the record, not re-derived from the store.
-  'POST /api/v1/reports/:id/narrate': Object.freeze(["reports"]),
-  // ENH-57. The briefing narrows the report it was given; it reads the
-  // report and nothing else, and the narrowing happens in memory.
-  'POST /api/v1/reports/:id/briefings': Object.freeze(["reports"]),
   'GET /api/v1/response-resources': Object.freeze(["response_resources"]),
   'GET /api/v1/response-resources/:id': Object.freeze(["response_resources"]),
+  'GET /api/v1/river-discharge': Object.freeze(["climate_observations"]),
   'GET /api/v1/road-access': Object.freeze(["road_access"]),
   'GET /api/v1/road-access/summary': Object.freeze(["road_access"]),
+  'GET /api/v1/school-attendance': Object.freeze(["school_attendance_observations"]),
   'GET /api/v1/service-assets': Object.freeze(["service_assets"]),
   'GET /api/v1/service-assets/:id': Object.freeze(["service_assets"]),
   'GET /api/v1/service-impacts': Object.freeze(["impact_assessments"]),
+  // ENH-09. The agreement check reads the observations and nothing else: both
+  // products' series arrive as `climate_observations` records, told apart by
+  // `source`, so there is no join out to a second collection.
+  'GET /api/v1/source-agreement': Object.freeze(["climate_observations"]),
   'GET /api/v1/sources': Object.freeze(["connector_circuit", "ingestion_schedules", "source_runs"]),
-  'GET /api/v1/connectors/status': Object.freeze(["source_runs"]),
   'GET /api/v1/tasks': Object.freeze(["intervention_tasks"]),
   'GET /api/v1/tasks/:id': Object.freeze(["intervention_tasks"]),
   'GET /api/v1/trigger-protocols': Object.freeze(["trigger_protocols"]),
   'GET /api/v1/trigger-protocols/:id': Object.freeze(["trigger_protocols"]),
-  'GET /api/v1/protocol-executions': Object.freeze(["protocol_executions"]),
-  'GET /api/v1/protocol-executions/summary': Object.freeze(["protocol_executions"]),
-  'GET /api/v1/field-outcomes': Object.freeze(["field_outcomes"]),
-  'GET /api/v1/field-outcomes/summary': Object.freeze(["field_outcomes", "alert_events"]),
-  'GET /api/v1/school-attendance': Object.freeze(["school_attendance_observations"]),
-  'GET /api/v1/iot-observations': Object.freeze(["iot_observations"]),
   'GET /api/v1/watermarks': Object.freeze(["watermark_state"]),
   'GET /api/v1/weather': Object.freeze(["weather_forecasts"]),
-  'GET /api/v1/river-discharge': Object.freeze(["climate_observations"]),
   'GET /api/v1/webhooks': Object.freeze(["webhook_subscriptions"]),
   'GET /api/v1/webhooks/:id': Object.freeze(["webhook_subscriptions"]),
+  'GET /api/v1/workflows': Object.freeze(["workflow_instances"]),
+  'GET /api/v1/workflows/:id': Object.freeze(["workflow_instances"]),
+  'GET /api/v1/workflows/metrics': Object.freeze(["workflow_instances"]),
+  'GET /ogc/collections/:id/items': Object.freeze(["hazard_events", "conflict_events", "service_assets", "risk_scores"]),
   // The STAC and OGC catalogues. `STAC_READ_COLLECTIONS` is the manifest —
   // four collections, declared beside the collections it names in `src/stac.js`,
   // and identical for all four routes because they share one resolver. These
@@ -204,19 +208,15 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /stac/collections/:id': Object.freeze(["hazard_events", "conflict_events", "service_assets", "risk_scores"]),
   'GET /stac/collections/:id/items': Object.freeze(["hazard_events", "conflict_events", "service_assets", "risk_scores"]),
   'GET /stac/collections/:id/items/:id': Object.freeze(["hazard_events", "conflict_events", "service_assets", "risk_scores"]),
-  'GET /ogc/collections/:id/items': Object.freeze(["hazard_events", "conflict_events", "service_assets", "risk_scores"]),
-  // ENH-80. The registry routes and the operator's status read are narrow: the
-  // registry, plus the heartbeat the status route reads for the last exchange.
-  // The two *peer-facing* routes are not here — they serve every syncable
-  // collection, which is a whole-store read by definition, and they are named in
-  // WIDE_ROUTES below.
-  'GET /api/v1/federation/peers': Object.freeze(["federation_peers"]),
-  'GET /api/v1/federation/status': Object.freeze(["federation_peers", "system_heartbeat"]),
+  'PATCH /api/v1/annotations/:id': Object.freeze(["annotations"]),
+  'POST /api/v1/annotations': Object.freeze(["annotations"]),
   'POST /api/v1/federation/peers': Object.freeze(["federation_peers", "action_logs"]),
-  'DELETE /api/v1/federation/peers/:id': Object.freeze(["federation_peers", "action_logs"]),
-  'GET /api/v1/workflows': Object.freeze(["workflow_instances"]),
-  'GET /api/v1/workflows/metrics': Object.freeze(["workflow_instances"]),
-  'GET /api/v1/workflows/:id': Object.freeze(["workflow_instances"]),
+  // ENH-57. The briefing narrows the report it was given; it reads the
+  // report and nothing else, and the narrowing happens in memory.
+  'POST /api/v1/reports/:id/briefings': Object.freeze(["reports"]),
+  // The narrator reads the report's own generated sections and nothing else:
+  // commentary audited against the record, not re-derived from the store.
+  'POST /api/v1/reports/:id/narrate': Object.freeze(["reports"]),
 })
 
 /**
@@ -253,11 +253,41 @@ export const WIDE_ROUTES = Object.freeze([
   'GET /api/v1/alert-outcomes/reasons',
   'GET /api/v1/assessments',
   'GET /api/v1/auth-info',
+  'GET /api/v1/basemap/tiles/carto/:id/:id/:id.png',
+  // ADR-013. The raster basemap tile proxy reads no collection either — it
+  // fetches one PNG from the tile upstream the deployment is configured with —
+  // so there is no manifest to declare. Wide is the vocabulary's only word for
+  // "not measured against a collection set".
+  //
+  // The difference from every other wide entry is that this one was *not*
+  // declared while the route was live: it was written
+  // `/<literal>/.exec(url.pathname)`, a spelling `scripts/route-surface.mjs`
+  // did not read, so it appeared in no manifest and no document at once. Two
+  // paths rather than one because the source is a literal alternation in the
+  // route regex, `(osm|carto)`, and the table keys on the path a caller writes.
+  'GET /api/v1/basemap/tiles/osm/:id/:id/:id.png',
   'GET /api/v1/districts',
   'GET /api/v1/export.csv',
   'GET /api/v1/export.ndjson',
+  'GET /api/v1/exports',
+  // ENH-80. The peer-facing half of the federation family. All four are wide for
+  // the same reason and it is not a fallback: `/exchange` and `/manifest` serve
+  // every syncable collection, so their collection set *is* the syncable set —
+  // a list of 55 names that goes stale the next time a collection is added.
+  // `/merge` writes whatever the payload names, narrowed at the handler by
+  // `acceptablePayload` rather than by a manifest. `/sync` drives an exchange in
+  // both directions over the same set. The registry routes beside them are
+  // narrow and are in `ROUTE_MANIFESTS` above; the two halves really are
+  // different routes with different collection sets.
+  'GET /api/v1/federation/exchange',
+  'GET /api/v1/federation/exchange/manifest',
   'GET /api/v1/flood-depth',
   'GET /api/v1/flood-probability/score',
+  // CAP-01. Reading the form catalogue and one version, and publishing a new
+  // version. The catalogue reads nothing from the store but the published
+  // definitions; publishing writes them, so it is declared with its collection.
+  'GET /api/v1/forms',
+  'GET /api/v1/forms/:id',
   'GET /api/v1/health',
   'GET /api/v1/history/:id',
   'GET /api/v1/history/:id/record',
@@ -271,15 +301,19 @@ export const WIDE_ROUTES = Object.freeze([
   'GET /api/v1/reports/:id/export.csv',
   'GET /api/v1/reports/:id/export.geojson',
   'GET /api/v1/scenarios/:id',
+  'GET /api/v1/taxonomy',
+  // ENH-42. The offline tile-pack pair reads no collection at all — the plan
+  // route is arithmetic over a bbox and the pack route fetches from the tile
+  // server the deployment is configured with — so there is no manifest to
+  // declare and an empty one is what `test/route-manifests.test.js` rejects.
+  // Wide is the vocabulary's only word for "not measured against a collection
+  // set", the same word `GET /api/v1/health` uses for the same reason, and the
+  // dispatcher runs both *above* the store read (`src/server.js`, ENH-42 block),
+  // so the whole-store read this declaration would otherwise imply never
+  // happens.
+  'GET /api/v1/tile-packs',
+  'GET /api/v1/tile-packs/plan',
   'GET /api/v1/upload',
-  // ENH-68. The collection is chosen by the question — `runQuery` reads
-  // `data[subject.collection]` where the subject comes from the parse, and the
-  // subjects span risk scores, flood models, population, alerts, dispatches,
-  // region trust and hazard events. A static manifest cannot be narrower than
-  // that union without lying about a subject it omits, so this is the honest
-  // entry rather than a measured one that would be wrong for six questions in
-  // seven.
-  'POST /api/v1/ask',
   'GET /stac/catalog.json',
   'PATCH /api/v1/action-logs/:id',
   'PATCH /api/v1/alert-events/:id',
@@ -312,40 +346,34 @@ export const WIDE_ROUTES = Object.freeze([
   // safe direction and it is also the honest one: the set is the model's, not
   // the route's.
   'POST /api/v1/anticipatory/evaluate',
-  // ENH-53. Reads `service_assets` and `hazard_events` through
-  // `computeRoadAccess`, which is three calls deep from this handler. Same
-  // reasoning as above.
-  'POST /api/v1/prepositioning/plan',
-  // ENH-55. Reads nothing and writes nothing — a pure function of its body — and
-  // is wide rather than declared empty, because `ROUTE_MANIFESTS` has no way to
-  // say "reads nothing" without also being the shape of a mistake: an empty
-  // manifest hands the handler a store with no collections in it, and
-  // `test/route-manifests.test.js` refuses one for exactly that reason.
-  'POST /api/v1/scenario-comparisons',
+  // ENH-68. The collection is chosen by the question — `runQuery` reads
+  // `data[subject.collection]` where the subject comes from the parse, and the
+  // subjects span risk scores, flood models, population, alerts, dispatches,
+  // region trust and hazard events. A static manifest cannot be narrower than
+  // that union without lying about a subject it omits, so this is the honest
+  // entry rather than a measured one that would be wrong for six questions in
+  // seven.
+  'POST /api/v1/ask',
   'POST /api/v1/chw/reply',
   'POST /api/v1/chw/report',
   'POST /api/v1/community-feedback',
   'POST /api/v1/dataset-snapshots',
   'POST /api/v1/demo/seed',
   'POST /api/v1/equity/scan',
+  'POST /api/v1/export/dhis2',
+  'POST /api/v1/federation/exchange/merge',
+  'POST /api/v1/federation/sync',
   'POST /api/v1/field-reports',
   'POST /api/v1/flood-probability/train',
+  'POST /api/v1/forms',
   'POST /api/v1/incidents',
   'POST /api/v1/ingest/run',
   'POST /api/v1/ingest/run-due',
   'POST /api/v1/ingest/schedules',
-  'POST /api/v1/ingest/schedules/defaults',
   'POST /api/v1/ingest/schedules/:id/run',
-  'GET /api/v1/exports',
-  'GET /api/v1/taxonomy',
-  // CAP-01. Reading the form catalogue and one version, and publishing a new
-  // version. The catalogue reads nothing from the store but the published
-  // definitions; publishing writes them, so it is declared with its collection.
-  'GET /api/v1/forms',
-  'GET /api/v1/forms/:id',
-  'POST /api/v1/forms',
-  'POST /api/v1/export/dhis2',
+  'POST /api/v1/ingest/schedules/defaults',
   'POST /api/v1/interventions',
+  'POST /api/v1/iot-observations',
   'POST /api/v1/kpi/refresh-snapshots',
   'POST /api/v1/maintenance/apply-retention',
   // ENH-76. `capture-run` reads the whole store to snapshot a run, and
@@ -358,6 +386,10 @@ export const WIDE_ROUTES = Object.freeze([
   'POST /api/v1/outbox/dispatch',
   'POST /api/v1/parametric-rules',
   'POST /api/v1/parametric-rules/:id/simulate',
+  // ENH-53. Reads `service_assets` and `hazard_events` through
+  // `computeRoadAccess`, which is three calls deep from this handler. Same
+  // reasoning as above.
+  'POST /api/v1/prepositioning/plan',
   'POST /api/v1/rapidpro/alert-events/:id/send',
   'POST /api/v1/rapidpro/field-report',
   'POST /api/v1/rapidpro/reply',
@@ -365,8 +397,8 @@ export const WIDE_ROUTES = Object.freeze([
   'POST /api/v1/report-distributions/:id/retry',
   'POST /api/v1/report-schedule-runs/:id/retry',
   'POST /api/v1/report-schedules',
-  'POST /api/v1/report-schedules/run-due',
   'POST /api/v1/report-schedules/:id/run',
+  'POST /api/v1/report-schedules/run-due',
   'POST /api/v1/report-templates',
   'POST /api/v1/report-templates/:id/copy',
   'POST /api/v1/reports',
@@ -375,55 +407,23 @@ export const WIDE_ROUTES = Object.freeze([
   'POST /api/v1/reports/:id/generate',
   'POST /api/v1/response-resources',
   'POST /api/v1/routing/plan',
+  // ENH-55. Reads nothing and writes nothing — a pure function of its body — and
+  // is wide rather than declared empty, because `ROUTE_MANIFESTS` has no way to
+  // say "reads nothing" without also being the shape of a mistake: an empty
+  // manifest hands the handler a store with no collections in it, and
+  // `test/route-manifests.test.js` refuses one for exactly that reason.
+  'POST /api/v1/scenario-comparisons',
   'POST /api/v1/scenarios',
-  'POST /api/v1/service-assets',
   'POST /api/v1/school-attendance',
-  'POST /api/v1/iot-observations',
+  'POST /api/v1/service-assets',
   'POST /api/v1/tasks',
   'POST /api/v1/trigger-protocols/:id/backtest',
   'POST /api/v1/trigger-protocols/:id/shadow-run',
   'POST /api/v1/trigger-protocols/run',
   'POST /api/v1/upload',
   'POST /api/v1/webhooks',
-  'POST /api/v1/workflows/metrics',
   'POST /api/v1/workflows/:id/transition',
-  // ENH-80. The peer-facing half of the federation family. All four are wide for
-  // the same reason and it is not a fallback: `/exchange` and `/manifest` serve
-  // every syncable collection, so their collection set *is* the syncable set —
-  // a list of 55 names that goes stale the next time a collection is added.
-  // `/merge` writes whatever the payload names, narrowed at the handler by
-  // `acceptablePayload` rather than by a manifest. `/sync` drives an exchange in
-  // both directions over the same set. The registry routes beside them are
-  // narrow and are in `ROUTE_MANIFESTS` above; the two halves really are
-  // different routes with different collection sets.
-  'GET /api/v1/federation/exchange',
-  'GET /api/v1/federation/exchange/manifest',
-  'POST /api/v1/federation/exchange/merge',
-  'POST /api/v1/federation/sync',
-  // ENH-42. The offline tile-pack pair reads no collection at all — the plan
-  // route is arithmetic over a bbox and the pack route fetches from the tile
-  // server the deployment is configured with — so there is no manifest to
-  // declare and an empty one is what `test/route-manifests.test.js` rejects.
-  // Wide is the vocabulary's only word for "not measured against a collection
-  // set", the same word `GET /api/v1/health` uses for the same reason, and the
-  // dispatcher runs both *above* the store read (`src/server.js`, ENH-42 block),
-  // so the whole-store read this declaration would otherwise imply never
-  // happens.
-  'GET /api/v1/tile-packs',
-  'GET /api/v1/tile-packs/plan',
-  // ADR-013. The raster basemap tile proxy reads no collection either — it
-  // fetches one PNG from the tile upstream the deployment is configured with —
-  // so there is no manifest to declare. Wide is the vocabulary's only word for
-  // "not measured against a collection set".
-  //
-  // The difference from every other wide entry is that this one was *not*
-  // declared while the route was live: it was written
-  // `/<literal>/.exec(url.pathname)`, a spelling `scripts/route-surface.mjs`
-  // did not read, so it appeared in no manifest and no document at once. Two
-  // paths rather than one because the source is a literal alternation in the
-  // route regex, `(osm|carto)`, and the table keys on the path a caller writes.
-  'GET /api/v1/basemap/tiles/osm/:id/:id/:id.png',
-  'GET /api/v1/basemap/tiles/carto/:id/:id/:id.png',
+  'POST /api/v1/workflows/metrics',
 ])
 /** How much of the API is still on the whole-store read, as one number. */
 export const UNMAPPED_COUNT = WIDE_ROUTES.length

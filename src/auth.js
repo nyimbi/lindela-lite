@@ -62,8 +62,12 @@ export const READ_SCOPES = Object.freeze([
   ['/api/v1/report-schedules', 'read:reports'],
   ['/api/v1/alert-events', 'read:alerts'],
   ['/api/v1/alert-rules', 'read:alerts'],
-  ['/api/v1/triggers', 'read:alerts'],
-  ['/api/v1/parametric', 'read:parametric'],
+  // ENH-59. `/api/v1/triggers` and `/api/v1/parametric` were rows here and in
+  // `WRITE_SCOPES`, and neither matched a single served path: the routes are
+  // `/api/v1/trigger-protocols` and `/api/v1/parametric-rules`, and a `/`
+  // boundary means the short form covers neither. They read as policy and
+  // decided nothing. `test/route-declaration.test.js` now fails on any row that
+  // matches no served route, which is what found these.
   ['/api/v1/webhooks', 'read:integrations'],
   ['/api/v1/outbox', 'read:integrations'],
   ['/api/v1/connectors', 'read:integrations'],
@@ -263,8 +267,6 @@ export const WRITE_SCOPES = Object.freeze([
   ['/api/v1/alert-rules', 'admin:alerts'],
   ['/api/v1/alert-events', 'admin:alerts'],
   ['/api/v1/alerts', 'admin:alerts'],
-  ['/api/v1/triggers', 'admin:alerts'],
-  ['/api/v1/parametric', 'admin:parametric'],
   ['/api/v1/webhooks', 'admin:integrations'],
   ['/api/v1/outbox', 'admin:integrations'],
   ['/api/v1/connectors', 'admin:connectors'],
