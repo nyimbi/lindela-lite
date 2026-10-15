@@ -1354,18 +1354,56 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > | `src/route-manifests.js` | `scripts/generate-route-manifests.mjs` | `check-route-drift.mjs` |
 > | the declaration itself | — | `check-route-reachability.mjs` |
 >
-> **Two tables are deliberately not generated, and the reason is not residue.**
-> The scope tables are the one place where a mistake *opens* a route rather than
-> closing one, so they stay hand-kept and are proved instead: every declared
-> operation must resolve to the scope the declaration names, and no row may match
-> zero served routes. That second assertion found a real defect the day it was
-> written — `['/api/v1/triggers', 'read:alerts']` and `['/api/v1/parametric', …]`
-> in both tables matched nothing, because the routes are
-> `/api/v1/trigger-protocols` and `/api/v1/parametric-rules` and a `/` boundary
-> means the short form covers neither. Four rows that read as policy and decided
-> nothing; removed. Client call sites stay *validated* by
-> `check-client-endpoints.mjs` rather than generated, which is the correct
-> relationship and was already true.
+> **Two tables are deliberately not generated — but the first reason given for
+> that was backwards, and the measurement is below.**
+>
+> The claim was that the scope tables are "the one place where a mistake *opens*
+> a route rather than closing one", so generating them would be the risky
+> direction. Measured on 2026-10-15, it is the other way round:
+>
+> - **The two forms agree on every declared operation.** All 233 declared
+>   operations resolve through the hand-kept prefix table to exactly the scope
+>   the declaration names — **0 differences**. A per-operation generated table
+>   would reproduce that set exactly.
+> - **They differ on a route that is served but *not* declared**, and there the
+>   prefix table is the one that opens the route. A new
+>   `POST /api/v1/alert-events/acknowledge`, absent from the declaration, resolves
+>   to `admin:alerts` under the prefix table and to `DENIED_SCOPE` under a
+>   per-operation table. The hand-kept form **fails open by prefix**; the
+>   generated form **fails closed**. So the argument that the hand-kept table is
+>   the conservative choice is exactly inverted, and it is `check-route-reachability.mjs`
+>   — not the table's form — that is doing the work of keeping the declared set
+>   complete.
+>
+> What actually keeps the tables hand-kept is **comment density, not risk**. The
+> two tables carry 187 comment lines against 128 rows: `READ_SCOPES` is 78 rows
+> with 97 comments, `WRITE_SCOPES` 50 rows with 90. Those comments are the
+> policy — why `/exchange` gets a scope of its own rather than
+> `read:integrations` (ENH-80), why an annotation is `read:incidents` and not a
+> scope of its own (ENH-74), why `field-reports/quality` needs a row when
+> `/field-reports` already has one (ENH-44). A generator that emitted 226 rows
+> would have to carry 187 lines of per-row rationale the declaration does not
+> hold, or drop it. That is a reason to keep the file, and it is a different
+> reason from the one written here first.
+>
+> The tables are proved rather than generated: every declared operation must
+> resolve to the scope the declaration names (the 0-difference measurement above,
+> asserted by `test/route-declaration.test.js`), and no row may match zero served
+> routes. That second assertion found a real defect the day it was written —
+> `['/api/v1/triggers', 'read:alerts']` and `['/api/v1/parametric', …]` in both
+> tables matched nothing, because the routes are `/api/v1/trigger-protocols` and
+> `/api/v1/parametric-rules` and a `/` boundary means the short form covers
+> neither. Four rows that read as policy and decided nothing; removed. Client
+> call sites stay *validated* by `check-client-endpoints.mjs` rather than
+> generated, which is the correct relationship and was already true.
+>
+> **The open question this leaves.** The prefix form fails open on an undeclared
+> route, and nothing currently asserts that a served-but-undeclared route is
+> denied rather than granted. `check-route-reachability.mjs` makes the declared
+> set equal the served set, which closes the gap *today* — but the two mechanisms
+> are independent, and a route added to `src/routes/` without a declaration entry
+> fails the reachability gate while still being granted a scope by prefix. That
+> is worth a test that asserts the denial directly, and it is not in this item.
 >
 > **The manifest values are still measured — generation distributes, it does not
 > invent.** `collect-route-manifests.mjs` drives each route against a real server

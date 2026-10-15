@@ -6,6 +6,7 @@ import { ROUTE_DECLARATION } from '../src/route-declaration.js'
 import { ROUTE_MANIFESTS, WIDE_ROUTES, needsHistory, collectionsForRequest } from '../src/route-manifests.js'
 import { READ_SCOPES, WRITE_SCOPES, declaredScopeFor } from '../src/auth.js'
 import { servedRoutePaths } from '../scripts/route-surface.mjs'
+import { shape } from '../scripts/check-route-reachability.mjs'
 import { generateOpenApi } from '../scripts/generate-openapi.mjs'
 import { generateRouteManifests, TABLE_SPELLING } from '../scripts/generate-route-manifests.mjs'
 
@@ -174,6 +175,58 @@ describe('ENH-59 scope agreement', () => {
         `${key} is declared public but a scope table claims it`,
       )
     }
+  })
+
+  it('denies a served route that is not declared — the prefix table fails open, so this pins the pairing', () => {
+    // Measured 2026-10-15, and it corrects a claim this register made in the
+    // other direction. The hand-kept tables are *prefix* rows, so a route that
+    // is served but absent from the declaration is GRANTED a scope by the row
+    // above it in the tree — `POST /api/v1/alert-events/acknowledge`, a route
+    // nobody declared, resolves to `admin:alerts` today. A per-operation
+    // generated table would deny it. So the prefix form is the one that fails
+    // open, and the reason it is safe is not the table's shape: it is that
+    // `check-route-reachability.mjs` makes the declared set equal the served
+    // set, so no such route exists.
+    //
+    // That pairing is the whole safety argument, and until now nothing asserted
+    // it. This test does: it takes a route the tables would happily grant and
+    // asserts the declaration does not contain it, so the day someone adds a
+    // route without declaring it, the reachability gate and this test fail
+    // together rather than the route silently inheriting its family's scope.
+    const undeclared = '/api/v1/alert-events/acknowledge'
+    const granted = declaredScopeFor('POST', undeclared)
+    assert.equal(
+      granted,
+      'admin:alerts',
+      `the prefix table no longer grants ${undeclared}; if the tables became per-operation, `
+      + 'this test is measuring the wrong failure and should be rewritten, not deleted',
+    )
+    const declared = new Set(ROUTE_DECLARATION.map((e) => `${e.method} ${toColon(e.path)}`))
+    assert.ok(
+      !declared.has(`POST ${undeclared}`),
+      `${undeclared} is now declared, so it is no longer the undeclared case this test needs`,
+    )
+    // And the property that makes the grant harmless: nothing the server serves
+    // is missing from the declaration. This is the same assertion
+    // `check-route-reachability.mjs` makes, restated here because *this* is the
+    // test that depends on it being true — the gate and this test are the two
+    // halves of one argument, and a test that relies on a gate it does not run
+    // is a test that passes when the gate is deleted.
+    //
+    // The comparison uses the gate's own `shape()`, not a second normalisation
+    // written here. The spec writes `{z}/{x}/{y}.png` and the matcher writes
+    // `:id/:id2/:id3.png`; `shape` collapses parameter names and keeps literals
+    // and segment counts, which is the one normalisation the comparison needs.
+    // Restating it here would give the repository a second definition of "the
+    // same route", and the two would drift.
+    const { paths } = servedRoutePaths(process.cwd())
+    const declaredShapes = new Set(ROUTE_DECLARATION.map((e) => shape(e.path)))
+    const missing = [...paths].map((p) => shape(p)).filter((s) => !declaredShapes.has(s))
+    assert.deepEqual(
+      [...new Set(missing)],
+      [],
+      `served paths with no declaration entry — each is granted its family's scope by prefix:\n  ${[...new Set(missing)].join('\n  ')}`,
+    )
   })
 
   it('has no scope row that decides nothing', () => {
