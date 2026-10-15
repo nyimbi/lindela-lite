@@ -57,7 +57,7 @@ export function mount(console_) {
           </div>
           <div class="item-actions">
             ${canApprove ? `<button class="btn btn-xs btn-approve" data-id="${escapeHtml(r.id)}" data-action="approve">Approve</button>` : ''}
-            ${canDist    ? `<button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="distribute">Distribute</button>` : ''}
+            ${canDist    ? `<button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="distribute" data-i18n="action.distribute">${escapeHtml(t('action.distribute', 'Distribute'))}</button>` : ''}
             <button class="btn btn-xs btn-narrate" data-id="${escapeHtml(r.id)}" data-action="narrate" data-i18n="reports.narrate">Narrate</button>
             <button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="export-md">MD</button>
             <button class="btn btn-xs" data-id="${escapeHtml(r.id)}" data-action="export-csv">CSV</button>

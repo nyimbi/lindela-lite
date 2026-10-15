@@ -64,7 +64,7 @@ const GATES = [
     name: 'check-i18n',
     script: 'scripts/check-i18n.mjs',
     tier: 'self-contained',
-    why: 'Compares the locale catalogues against each other. Pure file reads.',
+    why: 'Compares the locale catalogues against each other, and (R-72) each catalogue against the source that asks for its keys. Pure file reads. Rule 4 reports a key no `public/`, `src/` or `scripts/` file can ask for: every locale is measured against such a key, so it raises the coverage floor for a string no reader can reach. Honours template-built keys by deriving the prefix set from the source and keeping only prefixes that name a catalogue namespace — `token_${n}` in `src/auth.js` builds a token id, not a key, and excuses nothing — and reports a prefix covering more than a quarter of the catalogue rather than trusting it. Declares itself out of jurisdiction on a tree with no `public/shared/runtime.js`, which is how the three i18n fixture-tree tests run it. Reads files only; carries eight canaries, driven by test/i18n-reachability.test.js.',
   },
   {
     name: 'check-i18n-offers',
