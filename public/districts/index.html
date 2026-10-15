@@ -183,7 +183,7 @@
         font-size: 0.85rem;
         margin-bottom: 0.5rem;
       }
-      .back-link:hover { color: var(--ink); }
+      /* `.back-link:hover` deleted: identical to components.css. */
 
       .ribbon {
         background: var(--bg-elevated);
@@ -222,8 +222,9 @@
         text-transform: uppercase;
       }
 
-      /* Hazard table */
-      .table-wrap { overflow-x: auto; }
+      /* Hazard table. `.table-wrap { overflow-x: auto }` deleted: components.css
+         ships it on the same selector. The element rules below stay — this
+         surface's hazard grid is denser than the shared `.table-wrap table`. */
       table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
       th {
         text-align: left;

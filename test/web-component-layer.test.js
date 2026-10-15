@@ -165,7 +165,6 @@ const KNOWN_DUPLICATES = new Set([
   '.rule-name — components.css vs parametric:inline',
   '.section-title — components.css vs districts:inline',
   '.signout-btn — focal-point:inline AND portal:inline',
-  '.table-wrap — components.css AND styles.css vs districts:inline',
   '.workflow-card — styles.css vs focal-point:inline',
 ])
 
@@ -247,9 +246,11 @@ describe('R-70 — a shared component is defined in exactly one place', () => {
     // reports *what* duplicates and this reports *why these four*, and a
     // reader deciding whether to delete a block wants the second answer.
     // `.offline-banner`, `.retry-btn`, `.kpi-tile` and its four modifiers are
-    // closed. `.toast` was never duplicated outside chw/ (owned elsewhere) and
-    // `.table-wrap` remains on the recorded backlog in districts — see
-    // KNOWN_DUPLICATES.
+    // closed. `.toast` was never duplicated outside chw/ (owned elsewhere).
+    // `.table-wrap` was on the backlog in districts and is now closed too: its
+    // one inline rule set `overflow-x: auto`, which components.css already
+    // declares on the same selector, so the copy was deleted rather than the
+    // component promoted.
     for (const cls of ['offline-banner', 'toast', 'table-wrap', 'kpi-tile']) {
       const places = where.get(cls) || new Set()
       const inline = [...places].filter((p) => p.endsWith(':inline'))
