@@ -461,6 +461,40 @@ No `src/` twin, deliberately: ENH-39's split exists because the server needs a
 sha256 the browser cannot compute, and a merge function needs nothing server-only.
 A second copy would be the drift the split is meant to avoid.
 
+> **Still no caller, 2026-10-15 — and the reason is measured, not assumed.** The
+> module is imported by its test file and by nothing else. Three facts were checked
+> before concluding that, and each closes a different way the wiring could have gone:
+>
+> 1. **No record carries a field map.** `mergeRecords` merges `record.fields`, a map
+>    of field name to a set of maximal writes. Grepping `src/` and `public/` for a
+>    `fields` map finds only `assertion.fields` (a list of names to check),
+>    `definition.fields` (form schema), and spread-locals — no record on either side
+>    of the wire has the shape this merges. Both stores write whole records:
+>    `buildUpdate` (`src/operations.js:82`) is `{...existing, ...patch}`, so the
+>    server's own update model is the last-writer-wins this entry exists to reject.
+> 2. **No surface edits a record concurrently.** The field app only creates —
+>    `public/chw/app.js` posts to `/api/v1/chw/report` three times and issues no
+>    PATCH. The console's only PATCH is an online configuration toggle
+>    (`public/panels/settings.js:79`, a trigger-protocol mode). So the scenario the
+>    entry is named for — a health worker correcting a case status offline while a
+>    district officer edits the same case in the console — has no surface that can
+>    produce it.
+> 3. **Nothing is silently lost in the meantime.** The queue's `markRetry`
+>    (`public/shared/queue-core.js:144`) dead-letters *any* 4xx, so a 409 conflict
+>    would stop retrying — but R-60 already surfaces dead-lettered records to the
+>    worker (`refreshQueueStatus`, `heldBlock`), so a refused edit is visible rather
+>    than discarded. That is a weaker guarantee than convergence and it is not
+>    claimed to be one: the edit is still lost, the worker is merely told.
+>
+> Wiring it now would mean adding a vector clock to every record, a `fields` map to
+> both stores, and a conflict surface — a record-format change across the whole
+> platform, on top of 5.6 KB gzipped against 0.1 KB of first-load headroom that
+> `check-budget` reserves for the panel-handler extraction. That is the build this
+> entry is, and it is a larger unit than giving a library a route. It stays uncalled,
+> named here rather than left to be rediscovered, and `test/enhancement-status.test.js`
+> no longer uses it as its negative case — that subject is now `src/index.js`, which
+> is `package.json`'s `main` and is a fact about the design rather than a gap.
+
 **ENH-42 — Offline map tile packs.** `basemap.js` is inline polygons and fetches
 nothing, so the offline map is a fixed asset. Let an operator define a bbox and
 generate a downloadable pack (PMTiles) so a CHW's phone has the terrain for their
@@ -1055,6 +1089,23 @@ fact set, so the narrative cannot invent a figure for any audience.
 > keyed per period so re-running a day is a no-op rather than a second email; an
 > unreadable instant is due for nobody, not for everyone. 21 tests, canaried three
 > ways.
+>
+> **The caller, added 2026-10-15.** The module was complete and reached by nothing:
+> `narrateBriefings` had no route, so no audience was ever briefed. `POST
+> /api/v1/reports/{id}/briefings` (`src/routes/reporting.js`) now generates one
+> briefing per audience from a report's own sections and records them on the report
+> beside `narrative`, which is a field the normalizer owns, rather than in
+> `metadata`, which is a free-form bag a client may overwrite. Two failures the
+> route had to be written around, both of which the module could not see: a body
+> carrying `env` or `http` must not reach `narrateReport`, which takes both as
+> injectable transports — a test seam, and from a route an exfiltration path that
+> posts the report's own sections to a host the caller chose, so nothing from the
+> body is spread into those options and the test asserts the model call goes to the
+> environment's base URL; and an unknown audience name must be a 400, not a 500,
+> because `narrateBriefings` indexes the registry and throws a TypeError, so a
+> misspelled field was answered as a server fault. A refusal stays a 200 — it is a
+> statement about entitlement, not about whether the request was well formed.
+> 10 tests, two canaried.
 
 **ENH-58 — Counterfactual impact evaluation.** Given a dispatch and a matched
 comparison set, estimate what the intervention changed. This is what turns the
@@ -2268,6 +2319,23 @@ recompute it."
 > comparator, so a last-digit difference and `-0` vs `0` are divergences —
 > `canonicalHash` pairs records but never decides, because `JSON.stringify` renders
 > `-0` as `0`. 18 tests, deterministic across repeated runs.
+>
+> **The caller, added 2026-10-15.** The harness had no route, so nothing could
+> capture a run or verify one. `POST /api/v1/maintenance/capture-run` and
+> `POST /api/v1/maintenance/replay-run` (`src/routes/maintenance.js`) are that pair.
+> The capture route reads the store *before* `refreshAnalytics` swaps the derived
+> collections, because a snapshot taken afterwards holds the run's own output as its
+> input and replays by construction — a capture that verifies nothing. It also pins
+> the clock *around* the refresh: the engine stamps `generated_at` and
+> `honesty.evidence.retrieved_at` from `new Date()`, and `replayRun` re-derives under
+> a pin at the capture's own `pinned_at`, so a route that ran on the real clock and
+> then recorded a later instant wrote a capture that diverged from itself on every
+> timestamp it carried. That was the defect this route shipped with, and the
+> round-trip test found it. Both properties have a canary and both fire. A divergence
+> is a 200 naming the moved collection, record key and field path — "the engine
+> disagrees with its own record" must not read as "your request was malformed" — and
+> a replay writes one action log and nothing else, asserted across every collection
+> the store holds. 8 tests.
 
 **ENH-77 — Synthetic-population load model.** Drive the API from a model of real
 access patterns (a CHW syncing, a console polling, a partner pulling) to find the
