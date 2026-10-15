@@ -1239,6 +1239,33 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > what has been built is the network that keeps them from disagreeing silently,
 > which is a strictly weaker property and a strictly cheaper one to reach. ENH-59
 > stays PARTIAL for the reason it always had.
+>
+> **The reason, measured rather than argued, 2026-10-15.** The paragraphs above
+> say a generator is larger than it reads as. That is a claim about how much of
+> each table is a function of a route declaration, and it can be counted. It was
+> counted, with `route-surface.mjs`'s own derivation over all 37 sources:
+>
+> | Table | Entries | Derivable from the route declaration? |
+> |---|---|---|
+> | Matcher paths (exact `pathname === '…'`) | **115** distinct (122 occurrences) | Yes — this is the declaration, and it is already machine-readable |
+> | Matcher paths (regex `.match(/…/)`) | **35** | No. The path structure lives in a pattern, not in a value: `/(\/a\/b)/` and `/a/:id` are different objects and only one of them is a declaration |
+> | `docs/openapi.yaml` | **188** paths, ~261 prose lines | Partly. The path keys derive; the descriptions are sentences no declaration carries |
+> | `src/auth.js` scope rows | **130** | No. A scope is a *policy* about a path, not a property of it — the same path takes `read:x` on GET and `admin:x` on POST, and `role:chw\|write:incidents` has no representation in a path at all |
+> | `src/route-manifests.js` | **235** | No, and by design: the file says its lists are *measured*, by driving each route against a real server with the read instrumented. A generator would replace a measurement with a guess |
+> | Client call sites (`public/`) | **135** literals, 74 distinct | No. These are call sites — the path is an argument at the point of use, and generating them means rewriting the callers |
+>
+> The count is the argument. **115 of 188 documented paths** (61%) could come from
+> the matcher declaration today; the remaining 73 carry something a path literal
+> does not — a regex's structure, a scope's policy, a manifest's measurement, or a
+> caller's argument. A generator that produced only the derivable 61% would be a
+> sixth table, which is the failure mode this entry exists to name.
+>
+> This is the same shape as the ENH-41 note: the conclusion was right and stated
+> as an impression, and an impression is not reusable. The figure that matters is
+> that the *imperative matcher* is the load-bearing obstacle — 35 regex matchers
+> and 127 exact comparisons across 36 route modules, none of which exposes its
+> path as a value a generator could read. Declaring the paths first is the
+> prerequisite, and that is ENH-60's residue rather than a table to write.
 
 **ENH-60 — Router extraction.** `handleApiRequestInContext` was 1,597 lines
 (`src/server.js:763–2360` <!-- line-drift-ok: the range as audited; ENH-60 is IMPLEMENTED and the dispatcher is 80 lines now -->) and entangled routing, auth, validation, business logic
