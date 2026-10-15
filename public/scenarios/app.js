@@ -6,26 +6,25 @@
 // with a question, not a blank form, so the surface now opens on five named
 // scenarios and Run sits with the results it produces.
 
-import { apiFetch, initI18n, autoMarkScrollableRegions } from '/shared/runtime.js'
+import { apiFetch, initI18n, autoMarkScrollableRegions, t } from '/shared/runtime.js'
 import { esc, formatRelative, num, signed, applyLocaleToDocument } from '/shared/fmt.js'
 
 const BASE = '/api/v1'
 
 /**
- * `t` with an English fallback, because the shared runtime's returns the key
- * itself for a key no catalogue carries — and this surface ships keys in a
- * staged map the catalogues have not absorbed yet. The fallback is what a reader
- * sees in that window; the key name is what they would see instead, and the
- * whole reason check-i18n.mjs exists is that a health worker once met
- * `chw.submit` where a button label should have been.
+ * `t` comes from the shared runtime and is re-exported here because the tests
+ * read it off this module.
  *
- * The gate scans for a two-argument `t(key, fallback)` call, so the second
- * argument is load-bearing: dropping it turns a translatable string into a name.
+ * This surface used to carry its own `t(key, fallback)` that resolved through
+ * `window.__i18n` and fell back to the English sentence when the key was absent.
+ * The shared one now does exactly that — the second argument is a fallback when
+ * it is a string and an interpolation map when it is an object — so the private
+ * copy was a second implementation of one contract (R-71). The second argument
+ * stays load-bearing: `scripts/check-i18n.mjs` scans for a two-argument
+ * `t(key, fallback)` call, and dropping it turns a translatable string into a
+ * key name.
  */
-export function t(key, fallback = key) {
-  const resolved = window.__i18n?.t(key)
-  return !resolved || resolved === key ? fallback : resolved
-}
+export { t }
 
 /**
  * `{name}` interpolation for the sentences.

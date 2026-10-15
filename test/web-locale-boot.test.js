@@ -142,17 +142,20 @@ describe('R-62 — English is the base layer at boot, not only after a locale ch
       'stopped applying them would make R-63 return on every surface')
   })
 
-  it('co/ layers its locale over English rather than replacing it', () => {
-    // `co/` ships a private copy of the loader. The copy fetched only the
-    // requested locale, so `t(key, fallback)` fell through to the raw key for
-    // every string the locale omitted — and `so` is 23% covered, so that was
-    // most of the page. This is the cost of having a private copy: the bug
-    // that `set()` already fixed lived on in the copy.
+  it('co/ boots through the shared loader instead of shipping a copy of it', () => {
+    // `co/` used to ship a private copy of the loader, and the copy fetched only
+    // the requested locale: `t(key, fallback)` then fell through to the raw key
+    // for every string the locale omitted — and `so` is 23% covered, so that was
+    // most of the page. The copy was itself the defect, so the assertion is now
+    // that there is no copy. `initI18n` re-reads English as the base and layers
+    // the chosen locale over it; a second implementation of that is a second
+    // place for it to drift (R-71).
     const src = code('public/co/app.js')
-    assert.match(src, /fetch\(\s*['"]\/i18n\/en\.json['"]\s*\)/,
-      'co must read en.json as the base layer before overlaying the chosen locale')
-    assert.match(src, /if \(locale !== ['"]en['"]\)/,
-      'the chosen locale overlays the base rather than replacing it')
+    assert.match(src, /import\s*\{[^}]*initI18n[^}]*\}\s*from\s*['"]\/shared\/runtime\.js['"]/,
+      'co must boot through initI18n, which is where the English base layer lives')
+    assert.doesNotMatch(src, /fetch\(\s*['"`]\/i18n\//,
+      'co fetches a catalogue itself; the shared loader is the one place that ' +
+      'reads en.json as the base and overlays the chosen locale')
   })
 
   it('every offered locale is checked for the keys its surfaces actually use', () => {
@@ -188,19 +191,30 @@ describe('R-63 — lang and dir are correct at boot on every surface', () => {
   for (const { dir, module } of SURFACES) {
     it(`${dir} applies its locale to the document at boot`, () => {
       const src = code(module)
-      assert.match(src, /applyLocaleToDocument/,
-        `${dir} never calls applyLocaleToDocument, so a reader on an Arabic ` +
-        'phone gets lang="en" dir="ltr" — an RTL language laid out LTR, which ' +
-        'is worse than not offering it because it looks finished')
+      // Two spellings, both correct. A surface may call the applier itself, or
+      // boot through `initI18n`, whose `set()` applies it. Pinning only the
+      // first would fail `co` for delegating — and the honest property is that
+      // the document is stamped at boot, not *where* from. The delegation
+      // branch is not a hole: the test below pins `initI18n`'s own path.
+      assert.match(src, /applyLocaleToDocument\(|initI18n\(/,
+        `${dir} neither calls applyLocaleToDocument nor boots through initI18n, ` +
+        'so a reader on an Arabic phone gets lang="en" dir="ltr" — an RTL ' +
+        'language laid out LTR, which is worse than not offering it because ' +
+        'it looks finished')
     })
 
-    it(`${dir} imports applyLocaleToDocument from the shared module`, () => {
+    it(`${dir} takes the RTL decision from the shared table, not a local list`, () => {
       // A private `locale === 'ar' ? 'rtl' : 'ltr'` is the thing R-63 exists to
       // prevent: it puts the RTL list in a second place, and adding a locale
       // then silently misses it.
       const src = code(module)
-      assert.match(src, /import\s*\{[^}]*applyLocaleToDocument[^}]*\}\s*from\s*['"]\/shared\/fmt\.js['"]/,
-        `${dir} must import applyLocaleToDocument from /shared/fmt.js`)
+      // The applier must come from the shared modules — either directly, or
+      // through the loader that imports it. A surface that grew its own copy is
+      // the defect, and this is what tells the two apart.
+      assert.match(src,
+        /import\s*\{[^}]*applyLocaleToDocument[^}]*\}\s*from\s*['"]\/shared\/fmt\.js['"]|import\s*\{[^}]*initI18n[^}]*\}\s*from\s*['"]\/shared\/runtime\.js['"]/,
+        `${dir} neither imports applyLocaleToDocument from /shared/fmt.js nor ` +
+        'initI18n from /shared/runtime.js, so it owns a locale applier')
       // Strip import lines first: the shared import legitimately names
       // `applyLocaleToDocument`, and a regex over the whole file flags the
       // import that is the *fix* as though it were the defect.
@@ -212,16 +226,73 @@ describe('R-63 — lang and dir are correct at boot on every surface', () => {
     })
   }
 
-  it('the console is not double-applying lang/dir in two places', () => {
-    // The console called it in two places already — once in the locale loader
-    // and once inside `applyI18n`, so every sweep re-set it. Harmless, but it
-    // is the reason the console was the one surface with correct `dir` and the
-    // other seven were not: it got there by accident rather than by contract.
+  it('initI18n applies lang and dir, so a surface that delegates gets them', () => {
+    // The load-bearing half of the widening above. `co` boots through
+    // `initI18n` and calls nothing else, so if this path stopped stamping the
+    // document the surface test would still pass and every Arabic reader of
+    // `co` would get `lang="en" dir="ltr"`. A gate that accepts a delegation
+    // must pin what it delegates to.
+    const src = code('public/shared/runtime.js')
+    const init = /export async function initI18n[\s\S]*?\n\}/.exec(src)
+    assert.ok(init, 'initI18n is present in shared/runtime.js')
+    assert.match(init[0], /await i18n\.set\(/,
+      'initI18n must boot through set(), which is the path that applies lang/dir')
+    const set = /async set\(locale\)\s*\{[\s\S]*?\n {4}\}/.exec(src)
+    assert.ok(set, 'the i18n object carries a set()')
+    assert.match(set[0], /applyLocaleToDocument\(locale\)/,
+      'set() must apply lang/dir on every locale switch, not only the first')
+  })
+
+  it('the console applies lang/dir through the shared loader, in one place', () => {
+    // The console called it in two places — once in the locale loader and once
+    // inside `applyI18n`, so every sweep re-set it. Harmless, but it is the
+    // reason the console was the one surface with correct `dir` and the other
+    // seven were not: it got there by accident rather than by contract. Both
+    // call sites are gone now; the shared `set()` applies it on boot and on
+    // every switch, which is what makes the delegation above sound.
     const src = code('public/app.js')
     const calls = (src.match(/applyLocaleToDocument\(/g) || []).length
-    assert.ok(calls <= 3,
-      `applyLocaleToDocument is called ${calls} times in app.js; the locale ` +
-      'table is the single source of truth and the document write belongs in one place')
+    assert.equal(calls, 0,
+      `applyLocaleToDocument is called ${calls} times in app.js; the console ` +
+      'boots through initI18n, which applies lang/dir itself — a local call is ' +
+      'a second place for the RTL decision')
+  })
+
+  it('no surface owns a private `t` resolver or its own catalogue fetch', () => {
+    // R-71. Five surfaces each carried a `t(key, fallback)` (or `t(key, vars)`)
+    // over a catalogue they fetched themselves, and the copies disagreed with
+    // the shared one on fallback semantics: the shared `t` returned the key on a
+    // miss, the copies returned the fallback. The console's took an
+    // interpolation map, so the one call site that passed a fallback dropped it
+    // silently. All five are gone; this is what keeps the sixth from arriving,
+    // because a new surface is the natural place to copy the one next to it.
+    const offenders = []
+    for (const { dir, module } of SURFACES) {
+      const src = code(module)
+      // A module-level `function t(` / `const t =` / `export function t(`. A
+      // local `const t` inside another function (focal-point's `compare` has
+      // one) is not a resolver and must not be reported.
+      const decl = /^(?:export\s+)?(?:async\s+)?function t\s*\(|^(?:export\s+)?const t\s*=/m.exec(src)
+      if (decl) offenders.push(`${dir}: declares its own t`)
+      if (/fetch\(\s*['"`]\/i18n\//.test(src)) offenders.push(`${dir}: fetches a catalogue itself`)
+      if (/import\s*\{[^}]*\bt as \w+[^}]*\}\s*from/.test(src)) offenders.push(`${dir}: aliases t`)
+    }
+    assert.deepEqual(offenders, [],
+      'every surface resolves strings through the shared `t` in /shared/runtime.js; ' +
+      'a private copy is a second implementation of one contract')
+  })
+
+  it('every surface imports the shared t and initI18n', () => {
+    // The positive half: the offenders check above passes trivially for a
+    // surface that resolves nothing at all. Enumerated, so a surface added
+    // later is a failing assertion rather than an unchecked one.
+    for (const { dir, module } of SURFACES) {
+      const src = code(module)
+      assert.match(src, /import\s*\{[^}]*\bt\b[^}]*\}\s*from\s*['"]\/shared\/runtime\.js['"]/,
+        `${dir} does not import the shared t`)
+      assert.match(src, /import\s*\{[^}]*initI18n[^}]*\}\s*from\s*['"]\/shared\/runtime\.js['"]/,
+        `${dir} does not import initI18n, so it cannot boot a catalogue`)
+    }
   })
 
   it('every surface declares lang and dir in its markup as a starting default', () => {

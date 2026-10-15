@@ -14,8 +14,8 @@ import {
 import { seasonalNarrative, seasonalPhaseLabel, readSeasonalState, seasonalCalendar, seasonalCalendarNote } from '/shared/seasonal.js'
 import { decodeView, encodeView, isCustom, resolveView, sanitizeMapTransform, shareUrl } from '/shared/view-state.js'
 import { fillAppVersion } from '/shared/app-version.js'
-import { apiFetch, apiSettled, autoMarkScrollableRegions, initOfflineQueue, initServiceWorker } from '/shared/runtime.js'
-import { applyLocaleToDocument, esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
+import { apiFetch, apiSettled, autoMarkScrollableRegions, initI18n, initOfflineQueue, initServiceWorker, t } from '/shared/runtime.js'
+import { esc as escapeHtml, formatTimestamp, metres, num, pct, safeClass, sevClass, signed, truncate, truncateId } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { formatRelative } from '/shared/fmt.js'
 import { describeState, ERROR } from '/shared/states.js'
@@ -52,7 +52,6 @@ initServiceWorker()
 // =============================================================
 const state = {
   locale: localStorage.getItem('lindela_lite_locale') || 'en',
-  catalog: {},
   // Panels the last refresh could not reach. Empty until a refresh runs and
   // nothing failed; a surface that has never polled has not checked anything,
   // and the workflow panel must not say otherwise.
@@ -221,62 +220,14 @@ function debounce(fn, ms) {
 // =============================================================
 // i18n
 // =============================================================
-/**
- * Load a locale with English as the base layer.
- *
- * This used to replace the catalogue outright, so any key the active locale did
- * not have rendered as the raw key name. The dashboard offered nine languages
- * and was complete in two, so a Somali or French operator saw
- * `equity.acknowledged` as a column header. A missing translation should degrade
- * to English, not to a key.
- *
- * English is loaded first and the active locale layered over it, so a partially
- * translated locale shows English where it has no translation and its own text
- * where it does. Coverage is reported by scripts/check-i18n.mjs, so a gap is
- * visible rather than silently masked.
- */
-async function loadLocale(locale) {
-  const catalog = {}
-  try {
-    const base = await fetch('/i18n/en.json')
-    if (base.ok) Object.assign(catalog, await base.json())
-  } catch {
-    // No English either: the key itself is all we have.
-  }
-  if (locale !== 'en') {
-    try {
-      const res = await fetch(`/i18n/${locale}.json`)
-      if (res.ok) Object.assign(catalog, await res.json())
-    } catch {
-      // Keep the English layer.
-    }
-  }
-  state.catalog = catalog
-  // lang and dir come from the shared locale table rather than an `=== 'ar'`
-  // test here, so adding an RTL locale is a one-line change in one place.
-  applyLocaleToDocument(locale)
-  applyI18n()
-}
-
-function t(key, vars = {}) {
-  let str = state.catalog[key] || key
-  for (const [k, v] of Object.entries(vars)) str = str.replace(`{${k}}`, String(v))
-  return str
-}
-
-function applyI18n() {
-  applyLocaleToDocument(state.locale)
-  document.querySelectorAll('[data-i18n]').forEach((el) => {
-    const key = el.dataset.i18n
-    el.textContent = t(key)
-  })
-  document.querySelectorAll('[data-i18n-title]').forEach((el) => {
-    el.title = t(el.dataset.i18nTitle)
-  })
-  document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
-    el.placeholder = t(el.dataset.i18nPlaceholder)
-  })
-}
+// The loader, the resolver and the DOM sweep all come from the shared runtime
+// (see the `initI18n` boot below). This surface carried its own copy of all
+// three (R-71): a `t(key, vars)` that took an interpolation map where the other
+// four surfaces' took a fallback, so the one call site that passed a fallback
+// here dropped it silently (`statusbar.lag_unmeasurable` — the catalogue does
+// carry the key, so only a locale that omits it would have shown the bug). The
+// copy also never set `window.__i18n`, so `navbar.js`'s `i18nText` read an
+// empty catalogue and the bar rendered English in every language.
 
 // =============================================================
 // Pagination
@@ -6223,7 +6174,10 @@ if (locSel) {
   locSel.addEventListener('change', async (e) => {
     state.locale = e.target.value
     localStorage.setItem('lindela_lite_locale', state.locale)
-    await loadLocale(state.locale)
+    // `set()` re-reads English as the base and re-stamps the DOM; booting again
+    // through `initI18n` would build a second catalogue object and leave
+    // `navbar.js` reading the first.
+    await window.__i18n.set(state.locale)
   })
 }
 
@@ -6453,10 +6407,16 @@ dhis2Settings()
 // partial outage — the locale would stay unset and the URL filters would stay
 // unrestored because an unrelated step failed first. Each step that can reject
 // handles its own failure; the ones below are synchronous and cannot.
-await loadLocale(state.locale).catch((err) => {
-  console.error('Boot: locale catalogue did not load', err)
+// The shared loader keeps whatever it has rather than rejecting, so a dead
+// server no longer throws out of module evaluation — but it also no longer
+// reports itself, and a page of raw key names with no explanation is the
+// failure this message exists for. An empty catalogue after boot is the
+// signal, and it is the honest one.
+await initI18n(state.locale)
+if (!Object.keys(window.__i18n.catalog).length) {
+  console.error('Boot: locale catalogue did not load')
   setStatus('The language catalogue did not load. The interface is showing English strings.')
-})
+}
 // The source picker used to be fetched here at boot, un-caught, so a dead server
 // rejected and threw out of module evaluation — `restoreFiltersFromUrl` and the
 // first `refresh` never ran, and the console booted half-built saying nothing.

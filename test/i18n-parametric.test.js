@@ -179,9 +179,16 @@ async function loadParametric({ routes = {}, catalog = {} } = {}) {
     catalog,
     t(key, params = {}) {
       asked.push(key)
-      let text = catalog[key] || key
-      for (const [name, value] of Object.entries(params)) {
-        text = text.replace(new RegExp(`\\{${name}\\}`, 'g'), value)
+      // Mirrors `initI18n`'s own `t` (public/shared/runtime.js): the second
+      // argument is either a fallback string or an interpolation map, and the
+      // two are told apart by type. A stub that assumed the map shape would
+      // spread a string into single characters and interpolate nothing.
+      const fallback = typeof params === 'string' ? params : key
+      let text = catalog[key] || fallback
+      if (params && typeof params === 'object') {
+        for (const [name, value] of Object.entries(params)) {
+          text = text.replace(new RegExp(`\\{${name}\\}`, 'g'), value)
+        }
       }
       return text
     },

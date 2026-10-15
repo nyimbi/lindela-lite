@@ -107,6 +107,10 @@ async function loadCo() {
     addEventListener() {},
   }
   globalThis.location = { href: 'http://localhost/' }
+  // The module boots through the shared loader, which reads the stored locale
+  // and writes it on a switch — the private copy it replaced did neither, so
+  // this stub is new here rather than newly needed by the page.
+  globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: [] }), text: async () => '' })
 
   return import(new URL('co/app.js', `file://${PUBLIC_ROOT}/`).href)

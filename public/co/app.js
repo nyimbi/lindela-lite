@@ -6,10 +6,10 @@
 // one. District names, alert event ids and quarter labels were interpolated
 // into innerHTML raw. The helpers now come from the shared module.
 
-import { esc, formatTimestamp, num, pct, truncate, applyLocaleToDocument } from '/shared/fmt.js'
+import { esc, formatTimestamp, num, pct, truncate } from '/shared/fmt.js'
 import { metricLabel } from '/shared/labels.js'
 import { barChart, sparkline } from '/shared/charts.js'
-import { apiFetch, apiSettled, autoMarkScrollableRegions } from '/shared/runtime.js'
+import { apiFetch, apiSettled, autoMarkScrollableRegions, initI18n, t } from '/shared/runtime.js'
 import { createLoadSequence } from '/shared/states.js'
 
 /**
@@ -23,51 +23,27 @@ import { createLoadSequence } from '/shared/states.js'
  */
 const loadSequence = createLoadSequence()
 
-let currentLocale = 'en'
-let i18n = {}
+/**
+ * The languages this surface offers, mirrored in the `<select>` in index.html.
+ *
+ * `init()` reads the picker rather than trusting this list, and
+ * `test/web-co-i18n.test.js` asserts the two agree — a picker and a catalogue
+ * that disagree in either direction produce exactly the bug the gate was written
+ * to catch.
+ */
+const OFFERED_LOCALES = ['en', 'sw']
 
 /**
- * Load a locale, always layering it over English.
+ * The locale to boot in.
  *
- * The single-locale load was R-62 on this surface: a Somali session got a
- * catalogue that is 23% covered, so every key the Somali file omits fell
- * through to `t(key, fallback)` and rendered either the key or nothing.
- * `set()` in `shared/runtime.js` re-reads English as the base for exactly this
- * reason; this private copy of the loader never did, which is what having a
- * private copy costs.
+ * The stored locale is written by every surface that offers a picker, so a
+ * reader who last chose a language this surface cannot render must land on
+ * English rather than on a picker that says English over a page of key names.
+ * The offered list is the authority, and it is the same list the markup carries.
  */
-async function loadLocale(locale) {
-  const base = {}
-  try {
-    const res = await fetch('/i18n/en.json')
-    if (res.ok) Object.assign(base, await res.json())
-  } catch {
-    // Keep whatever we have.
-  }
-  i18n = base
-  if (locale !== 'en') {
-    try {
-      const res = await fetch(`/i18n/${locale}.json`)
-      if (res.ok) Object.assign(i18n, await res.json())
-    } catch {
-      // Keep the English layer. A missing translation must fall back to
-      // English, never to a raw key.
-    }
-  }
-  currentLocale = locale
-  applyLocaleToDocument(locale)
-  applyI18n()
-}
-
-function t(key, fallback = key) {
-  return i18n[key] || fallback
-}
-
-function applyI18n() {
-  document.querySelectorAll('[data-i18n]').forEach((el) => {
-    const key = el.dataset.i18n
-    if (i18n[key]) el.textContent = i18n[key]
-  })
+function currentLocale() {
+  const stored = localStorage.getItem('lindela_lite_locale')
+  return OFFERED_LOCALES.includes(stored) ? stored : 'en'
 }
 
 /**
@@ -797,7 +773,7 @@ export async function load() {
   }
 }
 
-function init() {
+async function init() {
   const localeSel = document.getElementById('locale-select')
   const quarterSel = document.getElementById('quarter-select')
   const yearSel = document.getElementById('year-select')
@@ -805,9 +781,19 @@ function init() {
   // Set default quarter
   if (quarterSel) quarterSel.value = currentQuarter()
 
-  localeSel?.addEventListener('change', (e) => {
-    loadLocale(e.target.value).then(load)
-  })
+  // The shared loader re-reads English as the base on every switch, which is
+  // what the private copy this replaced never did (R-62 on this surface), and
+  // it applies `lang`/`dir` and repaints `[data-i18n]` itself.
+  const locale = currentLocale()
+  await initI18n(locale)
+  if (localeSel) {
+    localeSel.value = locale
+    localeSel.addEventListener('change', async (e) => {
+      localStorage.setItem('lindela_lite_locale', e.target.value)
+      await window.__i18n.set(e.target.value)
+      load()
+    })
+  }
 
   quarterSel?.addEventListener('change', load)
   yearSel?.addEventListener('change', load)
@@ -815,7 +801,8 @@ function init() {
   // The dashboard swaps four tables per quarter change; a fixed sweep at boot
   // would miss every one of them. Observed instead — see `autoMarkScrollableRegions`.
   autoMarkScrollableRegions()
-  loadLocale('en').then(() => { load(); renderExportPreview() })
+  load()
+  renderExportPreview()
 }
 
 if (document.readyState === 'loading') {

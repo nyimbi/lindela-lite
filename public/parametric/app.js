@@ -6,7 +6,14 @@
 // and a table whose 32-character identifiers were wide enough to push the last
 // column off the right edge of the viewport with no way to scroll to it.
 
-import { initI18n, t as lookup, apiFetch, autoMarkScrollableRegions } from '/shared/runtime.js'
+// `t` is the shared runtime's, imported as `lookup` (R-71). This file used to
+// wrap it to carry an English fallback at the call site: the shared `t` resolved
+// a missing key to the key itself, which on this page put
+// `parametric.screening_blocked` where the sentence says the payout is held. The
+// shared `t` now takes that fallback argument directly, so the wrapper is a
+// second implementation of one function — the call sites below are unchanged,
+// because `lookup` is exported under the name `t` by the module that defines it.
+import { initI18n, t, apiFetch, autoMarkScrollableRegions } from '/shared/runtime.js'
 import { esc, formatTimestamp, num, truncateId, applyLocaleToDocument } from '/shared/fmt.js'
 
 const BASE = '/api/v1'
@@ -17,22 +24,6 @@ let disbursements = []
 /** The last simulation panel on screen, kept so a locale switch can redraw it. */
 let lastResult = null
 let locale = 'en'
-
-/**
- * `t` with the English sentence carried at the call site.
- *
- * The shared runtime resolves a key no catalogue defines to the key itself,
- * which is right for a module that has no opinion about what the sentence was
- * meant to say, and wrong on this page: the strings here state what a trigger
- * releases and what a sanctions match blocks. `parametric.screening_blocked`
- * standing where the sentence says the payout is held is a materially worse
- * defect than that sentence not being translated, so a missing key falls back
- * to English rather than to a key name.
- */
-function t(key, fallback) {
-  const text = lookup(key)
-  return text === key ? fallback : text
-}
 
 /**
  * Metric keys arrive as raw field names; the UI shows what they measure.

@@ -120,8 +120,30 @@ globalThis.document = {
 }
 globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}), text: async () => '' })
 
-/** Put a catalogue in place the way `initI18n` would, then ask the page to render. */
-const withCatalog = (catalog) => { globalThis.window.__i18n = { catalog } }
+/**
+ * Put a catalogue in place the way `initI18n` would, then ask the page to render.
+ *
+ * The object carries `t` as well as `catalog`, because that is what `initI18n`
+ * stages and what the shared `t` delegates to. Staging a bare catalogue made the
+ * shared wrapper grow a branch for a state production never reaches — the only
+ * writer of `window.__i18n` is `initI18n` itself — so the stub mirrors the real
+ * object and the branch is gone.
+ */
+const withCatalog = (catalog) => {
+  globalThis.window.__i18n = {
+    catalog,
+    t(key, params = {}) {
+      const fallback = typeof params === 'string' ? params : key
+      let text = catalog[key] || fallback
+      if (params && typeof params === 'object') {
+        for (const [name, value] of Object.entries(params)) {
+          text = text.replace(new RegExp(`\\{${name}\\}`, 'g'), value)
+        }
+      }
+      return text
+    },
+  }
+}
 
 describe('districts i18n — every key the surface shows has a source', () => {
   it('stages a string for every key the page puts in the DOM', () => {

@@ -10,25 +10,17 @@
 // the URL hash. The console, by contrast, had 55 uses of one escapeHtml — the
 // discipline existed, in one file.
 
-import { apiFetch, autoMarkScrollableRegions, initI18n } from '/shared/runtime.js'
+import { apiFetch, autoMarkScrollableRegions, initI18n, t } from '/shared/runtime.js'
 import { esc, formatTimestamp, formatRelative, num, pct, sevClass, sevChipHtml, applyLocaleToDocument } from '/shared/fmt.js'
 import {
   districtsShareUrl, encodeDistrictsView, isDistrictsViewCustom, resolveDistrictsView,
 } from '/shared/districts-view.js'
 
-/**
- * A string in the language the reader selected, or in English.
- *
- * The fallback argument is not decoration. A key no catalogue carries resolves,
- * under the shared runtime, to the key itself — so an untranslated surface shows
- * `districts.count_assets` where a heading belongs, which is the failure this
- * layer exists to make impossible. English is a complete rendering of this
- * surface, so it is always available even when a locale is not.
- */
-function t(key, fallback = key) {
-  const catalog = window.__i18n?.catalog
-  return (catalog && catalog[key]) || fallback
-}
+// `t` is imported from the shared runtime rather than redefined here (R-71).
+// This surface's private copy read `window.__i18n.catalog` directly and returned
+// the fallback on a miss; the shared `t` now takes the same second argument and
+// resolves identically, so the copy was a second implementation of one function.
+// Its import is at the top of this file.
 
 /**
  * `{name}` interpolation for the sentences, which cannot be concatenated.

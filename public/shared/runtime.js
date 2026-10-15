@@ -480,10 +480,15 @@ export async function initI18n(defaultLocale = 'en') {
   const i18n = {
     current: defaultLocale,
     catalog,
+    // Second arg: a fallback string, or an interpolation map — told apart by
+    // type, so one `t` serves both call styles (R-71).
     t(key, params = {}) {
-      let text = catalog[key] || key
-      for (const [name, value] of Object.entries(params)) {
-        text = text.replace(new RegExp(`\\{${name}\\}`, 'g'), value)
+      const fallback = typeof params === 'string' ? params : key
+      let text = catalog[key] || fallback
+      if (params && typeof params === 'object') {
+        for (const [name, value] of Object.entries(params)) {
+          text = text.replace(new RegExp(`\\{${name}\\}`, 'g'), value)
+        }
       }
       return text
     },
@@ -539,6 +544,13 @@ export async function initI18n(defaultLocale = 'en') {
       const key = el.getAttribute('data-i18n-title')
       el.title = i18n.t(key)
     })
+    // The console's command palette carries its hint here, and it is the only
+    // surface that does — but a sweep that skips an attribute is how a string
+    // stays English in every language.
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+      const key = el.getAttribute('data-i18n-placeholder')
+      el.placeholder = i18n.t(key)
+    })
   }
 
   // R-62/R-63. Boot goes through the same two-step as a locale switch, so
@@ -554,8 +566,10 @@ export async function initI18n(defaultLocale = 'en') {
 }
 
 export function t(key, params = {}) {
-  if (!window.__i18n) return key
-  return window.__i18n.t(key, params)
+  const fallback = typeof params === 'string' ? params : key
+  // `|| fallback`: a delegate may carry only part of the catalogue, and a miss
+  // must leave English standing rather than blank the string.
+  return window.__i18n?.t?.(key, params) || fallback
 }
 
 /**
