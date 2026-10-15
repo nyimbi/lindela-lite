@@ -2200,6 +2200,13 @@ statically imported — canaried by adding the static import and watching it fai
    **Resolved without the extraction:** the walker follows static specifiers only,
    so `lazy()` keeps the module off the measured graph and the debt stays unpaid
    for now.
+   **The debt was then paid, 2026-10-15** (`a3e0421`): the 21-closure
+   `DEFERRED_PANEL_BINDINGS` table moved into the panel modules it wires, which is
+   the extraction this bullet named as a precondition. It bought 0.4 KB — 229.9 →
+   229.5 — because the closures were the parsed-on-every-load part, not the panel
+   *markup*, which had already moved in `aca0b11`. Recorded here so the sentence
+   above is not re-collected as an outstanding blocker the way the budget gate's own
+   note had been.
 2. **The default intent would gut the console.** `ROLES.operator.defaultIntent` is
    `triage`, whose `show` is `['rail']` — so `decideSurface('operator','triage')`
    hides **30 of 39 controls**, including all six map filters (`mapTimeRange`,
