@@ -351,7 +351,14 @@ The gaps are uneven in a way that matters:
 | 19 | Scenario workbench | Shipped |
 | 20 | Localization + RTL | Partial — 11 locales, missing on 3 key surfaces |
 
-**5 shipped, 15 partial, 0 rejected.**
+**7 shipped, 13 partial, 0 rejected.** The footer read "5 shipped, 15 partial"
+until 2026-10-16, which its own table above has never said: counting the rows
+gives 7 `Shipped` and 13 `Partial`, where item 7 is the one that is partial in
+the strict sense — shipped on SMS, absent on CAP — and the other twelve carry a
+qualifier inside `Partial` that the count does not separate. A hand-kept total
+that disagrees with the table it summarises is the same failure this register
+catalogues elsewhere, and nothing checked it: `test/audit-register-structure.test.js`
+guards `audit-2026-10/`, and this file is outside its jurisdiction.
 
 The pattern is consistent and worth naming: this project builds the capability and
 then does not finish the wiring. Item 3 computes the impact figures and never stores

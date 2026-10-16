@@ -13,9 +13,9 @@ Four deliverables, plus the evidence they rest on.
 | Document | What it contains |
 |---|---|
 | [enhancements.md](enhancements.md) | **30 enhancements**, grouped and sequenced, each with evidence, value, and what it does not license |
-| [status.md](status.md) | **What has actually shipped** of those 30, verified against the tree: 7 shipped, 15 partial, 8 not started, with the evidence and the guarding test for each |
+| [status.md](status.md) | **What has actually shipped** of those 30, verified against the tree: 30 shipped, 0 partial, 0 not started, with the evidence and the guarding test for each |
 | [defects.md](defects.md) | **~55 defects**, security holes and architectural deficiencies, and the five root causes behind them |
-| [roadmap-extension.md](roadmap-extension.md) | **All 20 items** from `docs/plans/world-class-roadmap.md`, with verified status: 5 shipped, 15 partial, 0 rejected |
+| [roadmap-extension.md](roadmap-extension.md) | **All 20 items** from `docs/plans/world-class-roadmap.md`, with verified status: 7 shipped, 13 partial, 0 rejected |
 | [sources-and-decisions-roadmap.md](sources-and-decisions-roadmap.md) | **31 new capability items** — the sources, decisions and operational states the platform cannot currently express, each deduplicated against the three above |
 
 The three earlier documents ask whether the platform is trustworthy (ENH) and whether
@@ -85,6 +85,18 @@ including `GET /api/v1/export.csv`, which returns field reports and RapidPro mes
 — even when API keys are correctly configured. That last detail is what makes it
 serious. A deployment with auth enabled *looks* secured.
 
+> **All three of the above are closed, and the text is kept as the finding**
+> (verified 2026-10-16). Authorization is deny-by-default: `isPublicRequest`
+> returns false for anything but `GET`/`HEAD` on an explicitly configured
+> `LINDELA_LITE_PUBLIC_PATHS` (`src/auth.js:431-434`), guarded by
+> `test/auth-deny-by-default.test.js`. Postgres `write()` upserts through
+> `insertRecords` and persists `payload_hash` (DAT-01), and `replaceAnalytics`
+> replaces all six derived collections in one transaction (DAT-05); both are in
+> `test/store-conformance.test.js`. The JSON store serialises mutations through a
+> chain with a temp-file rename (DAT-03), same guard. The coverage gap that let
+> the backend go untested is the one thing here that was structural rather than a
+> defect, and it is why ENH-29 exists.
+
 ---
 
 ## What the audit found about the project's own habit
@@ -95,15 +107,25 @@ fails: **it builds the capability and then does not finish the wiring.**
 Five of the fifteen partial roadmap items would be *shipped* by adding a test that
 fails today.
 
-- `analytics/impact.js` counts each asset once per nearby hazard. It has **100% line
-  coverage**.
-- `retention` reports `{success: true, expired: 1}` and deletes nothing, because
-  `merge` has no delete path.
-- `redactPii` is implemented, tested, and never called from a request path.
-- `signPayload` is defined in one module and called from another that never imports
-  it. Every secret-protected webhook is dead, silently.
-- `scopeToPartnerOrg` is dead code, and the partner portal renders the filter as
-  applied.
+> **All five are now wired, and this list is kept as the finding rather than as the
+> state** (verified 2026-10-16). Each names the shape of the failure, which is why
+> it is worth keeping; none is true of the tree any more, and a reader acting on
+> this list as current would be sent to five dead ends.
+>
+> - `analytics/impact.js` counts each asset once — `test/facilities-at-risk-counting.test.js`
+>   asserts it over three hazards reaching one asset (DATA-03, DAT-06).
+> - `retention` expires through a real `store.remove()` on both backends
+>   (`src/routes/maintenance.js:104-129`); the route that reported `success: true`
+>   while deleting nothing was DAT-07.
+> - `redactPii` is called from eleven sites on the RapidPro inbound path
+>   (`src/routes/rapidpro.js`), guarded by `test/privacy-rapidpro-inbound.test.js`
+>   and `test/pii.test.js`.
+> - `signPayload` is imported and called at `src/outbox.js:382`, which sets
+>   `x-signature` on every webhook delivery.
+> - `scopeToPartnerOrg` is exercised by `test/partner-isolation.test.js`, and the
+>   scoping is pushed into SQL as `partner_org = $2` (`src/store.js:552-567`) —
+>   the field it read, which `authenticate()` never set, is the reason it was dead
+>   and is now carried on the token.
 
 And one that is not about wiring at all: **falsy-zero conflation, in both
 directions, in a codebase that has written the rule down twice.**
@@ -124,37 +146,38 @@ That is why the two foundation items, **ENH-29** (store conformance suite) and
 **ENH-02** (payload honesty gate, extending a CI check that already exists), are
 worth more than any individual feature here.
 
-**And the build is green while most of it is true.** `main` passes 370 of 370.
-The two guards written specifically for the connector-registration bug class
-assert that a string appears in `src/ingestion.js`, and they grep the accumulator
-— which is correct — while the actual defect sits in `countRecords` fifty lines
-away. Refactoring the accumulator to derive from the same shared list *fixes the
-bug* and *fails both tests*. A green build here is evidence that a particular
-string is still present.
+**And the build is green while most of it is true.** `main` passed 370 of 370 on
+the day of the audit; it is 4,835 today. The two guards written specifically for
+the connector-registration bug class assert that a string appears in
+`src/ingestion.js`, and they grep the accumulator — which is correct — while the
+actual defect sits in `countRecords` fifty lines away. Refactoring the accumulator
+to derive from the same shared list *fixes the bug* and *fails both tests*. A green
+build here is evidence that a particular string is still present, and the count
+going up by an order of magnitude does not change that: it is evidence about the
+assertions, not about the code.
 
 ---
 
 ## Three things that are cheap and were not expected
 
-- **There is no bulk upload.** No multipart, no `FormData`, no `<input type="file">`
-  on any of the eight surfaces. `src/connectors/uploads.js:54` accepts CSV as a
-  **string inside a JSON body** (`options.service_assets_csv`). A district officer
-  with a 4 MB ACLED export has no path in. This is the hardest adoption blocker in
-  the platform and it appears on no existing roadmap.
-- **There is no charting layer at all.** No library, no `<canvas>`, no reusable
-  chart component anywhere in `public/`. The complete inventory of graphics
-  primitives in the product is 39 `svgEl()` calls in `public/app.js` (the map), one
-  200×40 px sparkline at `public/co/app.js:328`, CSS-`<div>` bars at
-  `public/co/app.js:236`, and CSS-`<div>` bars again at `public/scenarios/app.js:342`.
-  Seven of eight users see no chart of anything; what they see instead is a
-  `<span>` holding a sentence.
-- **Declared rate limits are honoured nowhere.** Every connector declares a
-  `rateLimit`; none is enforced. IPC fans ~92 concurrent requests against a documented
-  20/min budget, and `gdacs_archive` can hold a request socket for ~4.2 hours.
-- **A district map drops every record on the equator and prime meridian**, because
-  `public/districts/app.js:208` filters coordinates with `p.lat && p.lon` and 0 is
-  falsy. The severity filter on the console is inverted for the same reason: set it
-  to `critical` and the map keeps showing everything (`public/app.js:1173`).
+> **Two of the three shipped, the third is half done** (verified 2026-10-16).
+> ENH-25 landed 2026-10-03 and ENH-16 2026-10-03; rate-limit *enforcement* is the
+> one still open in the shape described.
+>
+> - **Bulk upload shipped.** `src/upload.js` with `GET`/`POST /api/v1/upload`,
+>   accepting CSV through three doors including real multipart
+>   (`src/routes/upload.js:5-6`), 52 tests.
+> - **A charting layer shipped.** `public/shared/charts.js` — 17 exported
+>   primitives, pure string-returning functions with no DOM — with `co/` and the
+>   console wired, 49 tests.
+> - **Rate limits are declared and still not enforced.** `src/rate-limit.js`
+>   normalises a connector's `rateLimit` declaration and the inbound limiter is
+>   live, but the *outbound* connector budget the finding is about — IPC's ~92
+>   concurrent requests against a documented 20/min — is unchanged.
+> - **The falsy-zero coordinate filter is fixed** (WEB-01/WEB-02): the district
+>   map tests `lat === null || lat === undefined || lat === ''`
+>   (`public/districts/app.js:263`) and the console's severity filter tests
+>   `== null` rather than truthiness.
 
 ---
 
