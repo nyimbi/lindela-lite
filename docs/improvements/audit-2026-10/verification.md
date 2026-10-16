@@ -11,31 +11,55 @@ hot path named in `defects.md`, and how each `file:line` was confirmed.
 alert rules; `E` the alert-event history for a rule; `I` the driver-item count (7);
 `B` the response byte size.
 
-| Path | Where | Complexity | Bound today | Cost of one call |
+**Re-measured 2026-10-17.** The `Where` column below was resolved against the tree
+at `72a6b63` and every line in it has since moved — the symbols are all still
+there, the numbers are not. The `Bound today` column is the audit's before-state,
+and **six** of its rows describe a path that has since been fixed: SCL-01 put a row
+budget and a cursor on `read()`, CON-05 built the per-rule event grouping once,
+ENH-62 keyed the derived collections on the digest of their inputs,
+`computeApiUptime` now returns `null` rather than `100.0` on zero observations,
+SCL-07 scoped `/ready`'s two whole-store reads to the two collections its rollups
+actually read, and SCL-04/05 removed the synchronous compression and hashing this
+table called the event-loop blockers. Read the column as *what the bound was*, and
+`defects.md` for what it is now.
+
+| Path | Where (symbol; the audit's line) | Complexity | Bound at the audit | Cost of one call |
 |---|---|---|---|---|
-| Postgres `read()` | `src/postgres-store.js:267` | O(N) bytes + O(N log N) sort | none — no `LIMIT`, no cursor | materialises every requested row into the heap |
-| `filterRecords` | `src/utils.js:207–241` | O(filters × N) allocations, then O(limit) | `limit` ≤ 5000 after the slice | ~18 full-collection passes per request |
-| `runPeriodicTick` | `src/server.js:229–263` | O(I × N) | none | ~10+ full-store reads per tick |
+| Postgres `read()` | `src/postgres-store.js` `#readWith` (was `:267`) | O(N) bytes + O(N log N) sort | **was** none — no `LIMIT`, no cursor | materialised every requested row; now `LIMIT budget + 1` with `iterateRecords` as the cursor |
+| `filterRecords` | `src/utils.js:229` (was `:207`) | O(filters × N) allocations, then O(limit) | `limit` ≤ 5000 after the slice | ~18 full-collection passes per request |
+| `runPeriodicTick` | `src/server.js:311` (was `:229`) | O(I × N) | **was** none | ~10+ full-store reads per tick; now one read passed down |
 | `evaluateAndPersistAlerts` | `src/server.js` `evaluateAndPersistAlerts` | O(raised × N) | none | one read + one merge per raised alert |
-| `isSuppressed` | `src/alerts.js` (per rule) | O(R × E) | none | re-filters all events per rule per evaluation |
-| `Math.max(...seen)` | `src/alerts.js` | O(E) args | engine argument limit | `RangeError` on a long history |
-| `backtestTriggerProtocol` | `src/alerts.js:408–486` | O(runs × hazards) + O(runs × N) | none | `pointInTimeContext` re-scans per run |
-| `refreshAnalytics` | `src/analytics.js:226, 283` | O(regions × N) + 2 full reads | none | recomputes 8 derived collections |
-| `jsonResponse` | `src/utils.js` | O(B) sync serialize + sha256 | none | full body hash per 200 |
-| `sendFile` | `src/server.js` `sendFile` / `preparedStatic` | O(B) sync read + sha1 + gzip | none — no gzip cache | blocks the loop per static request |
-| `computeApiUptime` | `src/kpi.js:97–102` | O(1) | — | returns 100.0 on zero observations |
-| `/ready` | `src/server.js:839, 861` | 2 × O(N) + O(n log n) chain verify | none | paid per readiness poll |
+| `isSuppressed` | `src/alerts.js:757` (per rule) | O(R × E) | **was** none | re-filtered all events per rule per evaluation; now a `Map` built once |
+| `Math.max(...seen)` | `src/alerts.js` | O(E) args | engine argument limit | `RangeError` on a long history — the spread is gone |
+| `backtestTriggerProtocol` | `src/alerts.js:449` (was `:408`) | O(runs × hazards) + O(runs × N) | none | `pointInTimeContext` re-scans per run |
+| `refreshAnalytics` | `src/analytics.js:403` (was `:226, 283`) | O(regions × N) + 2 full reads | **was** none | recomputed 8 derived collections; now only those whose input digest moved |
+| `jsonResponse` | `src/utils.js:747` | O(B) sync serialize + sha256 | none | full body hash per 200 |
+| `sendFile` | `src/server.js:1473` `sendFile` / `preparedStatic` | O(B) sync read + sha1 + gzip | none — no gzip cache | blocks the loop per static request |
+| `computeApiUptime` | `src/kpi.js:174` (was `:97`) | O(1) | — | returned `100.0` on zero observations; returns `null` now |
+| `/ready` | `src/routes/liveness.js` `handleLivenessRoute` (was `src/server.js:839, 861`) | 2 × O(N) + O(n log n) chain verify | **was** none | was two whole-store reads + a chain verify per poll; now one scoped read of the two collections its rollups name |
 
-**The two that dominate.** `read()` (unbounded, per request) and `runPeriodicTick`
-(7× per tick) multiply: the periodic driver alone is ~10 full-store materialisations
-per interval, and every API request adds another. ENH-61 (cursor reads) and ENH-62
-(content-addressed derived cache) are the two removals; SCL-01/02/03 are the same
-finding from three directions.
+**The two that dominated.** `read()` (unbounded, per request) and `runPeriodicTick`
+(7× per tick) multiplied: the periodic driver alone was ~10 full-store
+materialisations per interval, and every API request added another. ENH-61 (cursor
+reads) and ENH-62 (content-addressed derived cache) are the two removals; SCL-01/02/03
+are the same finding from three directions. Both have landed.
 
-**The two that block the event loop.** `sendFile`'s `gzipSync` and `jsonResponse`'s
-hash are synchronous CPU on the request path. Under concurrency they serialise; the
-async work behind them cannot proceed. A gzip cache and a streaming ETag (hash the
-stream, not the buffer) remove both.
+**The two that blocked the event loop, and both were fixed.** `sendFile`'s
+`gzipSync` and `jsonResponse`'s hash were synchronous CPU on the request path, and
+under concurrency they serialised. SCL-04 added a `(path, mtime, size)`-keyed
+compression cache — keyed on mtime rather than the path alone, because a deploy
+rewrites the files under a process that runs for weeks — and SCL-05 moved the hash
+behind `conditionable`, which is `status === 200` on a GET or HEAD, the only
+requests a conditional request is defined for. The two are not the same fix and the
+table named them as one: the cache removes repeat work, the guard removes work
+nobody could have used. **SCL-05's own entry in `defects.md` said the fix was a
+cache, and there is none** — corrected there, because a fix note naming a mechanism
+that was never built sends the next reader looking for it.
+
+**What is left of this table is the structural half**, and it is the half no cache
+touches: `filterRecords`' ~18 full-collection passes per request, `jsonResponse`'s
+synchronous `JSON.stringify` on every 200, and the `read()` budget that turns a
+large store into a refusal rather than a slow answer.
 
 ---
 

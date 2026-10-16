@@ -630,8 +630,18 @@ than once per request. Cited at the site.
 serialised bytes to compute the ETag, per response. A 5,000-record page is a full
 serialise + hash on the hot path, O(response bytes) sync.
 
-**Fixed 2026-10-11.** `jsonResponse` caches the stringified body and its hash. Cited
-at the site.
+**Fixed 2026-10-10 (`0b1cd30`), and the fix is not the one this entry first
+recorded.** It said `jsonResponse` "caches the stringified body and its hash".
+There is no cache: `payload` is stringified on every response and `etagFor` runs
+on every conditionable one. What `0b1cd30` did was scope the ETag — `conditionable`
+is `status === 200` on a GET or HEAD, and the hash now runs only for those. The
+original entry named a mechanism that was never built and stated it as the fix,
+which is worse than a stale line number: a reader looking for the cache would find
+nothing and conclude the entry was about a different function.
+
+The serialisation is still per response, and that is the honest remaining cost.
+The audit's own proposed fix — hash the stream rather than the buffer — was not
+taken, because the ETag has to be decided before the first byte is written.
 
 ### SCL-06 — MEDIUM — `terrain.js` tile cache is unbounded
 `src/terrain.js:35` `const tileCache = new Map()`, set with no size cap and no
