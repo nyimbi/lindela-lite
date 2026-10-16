@@ -511,6 +511,21 @@ export function counts(data) {
     // read the derived keys below).
     school_attendance_observations: data.school_attendance_observations?.length ?? null,
     iot_observations: data.iot_observations?.length ?? null,
+    // The other two the ingestion pipeline emits. `OUTPUT_COLLECTIONS` is the
+    // set every connector's output is accumulated into and the set the
+    // quarantine homes are derived from, so a collection on it that has no count
+    // is a collection that arrives, is stored, is quarantined — and cannot be
+    // thresholded on. Both were on it and neither was here.
+    //
+    // The invariant is asserted in test/evaluation-context.test.js against
+    // `OUTPUT_COLLECTIONS` rather than against the schema, because the schema is
+    // 69 collections and most are legitimately uncounted: `record_versions` is a
+    // revision log, `idempotency_keys` is machinery, `system_heartbeat` is a
+    // liveness row, and the ten `quarantine_*` homes are reachable through their
+    // source run's `quarantine` field. What may not be uncounted is what the
+    // pipeline publishes.
+    food_security_records: data.food_security_records?.length ?? null,
+    weather_forecasts: data.weather_forecasts?.length ?? null,
     // Offered by the protocol form's metric picker since it was written, and
     // absent here — so a rule set to `counts.disease_observations` resolved to
     // `undefined`, `evaluateConditionSet` read that as unevaluable, and the

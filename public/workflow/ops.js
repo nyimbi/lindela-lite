@@ -59,7 +59,13 @@ async function runShadow(protocol, out) {
     // would_fire is false here because the comparison was never made, not
     // because the condition failed. Reporting "would not fire" would be the
     // platform's silence read as a negative finding.
-    return result(out, `Unresolved: ${protocol.metric} did not evaluate to a number, so no trigger condition could be tested. Nothing fired, and nothing was tested.`, 'notice-warn')
+    //
+    // The path named is the one the server could not read, not the protocol's
+    // primary metric. A compound condition set has more than one term and the
+    // dead one is rarely the first, so naming `protocol.metric` sent the
+    // operator to edit a path that was fine.
+    const dead = d.unresolvable_metrics?.length ? d.unresolvable_metrics : [protocol.metric]
+    return result(out, `Unresolved: ${dead.join(', ')} did not evaluate to a number, so no trigger condition could be tested. Nothing fired, and nothing was tested.`, 'notice-warn')
   }
   result(out, d.would_fire
     ? `Would fire. ${protocol.metric} is ${num(value, { dp: 4 })}, which is ${d.would_fire ? '' : ''}${protocol.operator} ${protocol.threshold}. Nothing was sent — this was a shadow run.`

@@ -323,15 +323,22 @@ Measured before and after, against a fresh store: `operations.counts.open_incide
 and agrees with the live run. `test/evaluation-context.test.js` asserts both, and the
 context-shape equality that makes the next namespace reach every caller.
 
-**The diagnostic is not built.** `term_unresolvable` is on each term of
-`evaluateConditionSet`'s result, so the information exists — what is missing is a caller
-that surfaces it. `evaluateInShadowMode` returns `evaluable` and a per-term `terms` array
-but no message naming *which* path failed, and `evaluateAlertRules` skips a non-finite
-value with a bare `continue` (`src/alerts.js:174`), so a rule whose metric names nothing
-is still indistinguishable from a threshold that is not met on the alert path. The picker
-gate in `test/evaluation-context.test.js` closes the *reachable* half of that — the paths
-the settings surface offers all resolve — but a path typed by hand into a rule or a
-protocol still fails silently. Wiring the message through is a separate change.
+**The diagnostic is built, 2026-10-16.** `evaluateAlertRules` now returns
+`{ raised, updated, unresolvable }`, where each entry names the rule and the path that
+resolved to nothing — and `counts()`'s own `null`-for-absent discipline counts as
+unresolvable, because `null` is not a number a threshold can be compared against.
+`evaluateAndPersistAlerts` (`src/server.js:1120`) logs one `alert_rule_metric_unresolvable`
+warning and one `alert_rule_unresolvable_total` counter per dead rule per evaluation, which
+is the only place the fact was ever visible. `evaluateInShadowMode` returns
+`unresolvable_metrics` and a message naming the path instead of "No trigger condition met",
+and `public/workflow/ops.js` — the surface that actually calls shadow-run — names the dead
+term rather than the protocol's primary metric, which for a compound condition set sent the
+operator to edit a path that was fine.
+
+What is still not done: nothing surfaces `unresolvable` on the alert *list* an operator
+reads. A rule that is dead is visible in the log and in the shadow-run response, and not in
+the panel. That is a smaller gap than the one closed here and is recorded rather than
+implied.
 
 ---
 

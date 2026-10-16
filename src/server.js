@@ -1118,7 +1118,23 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
  */
 export async function evaluateAndPersistAlerts(store, data, { actor = null, subject = null } = {}) {
   const context = buildEvaluationContext(data)
-  const { raised, updated } = evaluateAlertRules(data, context)
+  const { raised, updated, unresolvable } = evaluateAlertRules(data, context)
+  // D11's second half, at the only place it can be seen. A rule whose metric
+  // path resolves to nothing fires never and logs never, so the operator's whole
+  // evidence was the absence of an alert — indistinguishable from a threshold
+  // that is correctly not met. One warning per dead rule per evaluation, naming
+  // the path and what it resolved to, because the fix is an edit to that path
+  // and nothing else in the system can tell you it needs one.
+  for (const dead of unresolvable) {
+    metrics.counter('alert_rule_unresolvable_total', { rule_id: dead.rule_id })
+    logger.warn('alert_rule_metric_unresolvable', {
+      rule_id: dead.rule_id,
+      rule_name: dead.rule_name,
+      metric: dead.metric,
+      resolved: dead.resolved,
+      message: `alert rule "${dead.rule_name}" can never fire: ${dead.metric} resolves to ${dead.resolved} in the evaluation context`,
+    })
+  }
   const logs = [
     ...raised.map((event) => actionLog('alert_events', 'created', event, actor, subject)),
     ...updated.map((event) => actionLog('alert_events', event.status, event, actor, subject)),

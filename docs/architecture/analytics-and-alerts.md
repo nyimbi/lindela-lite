@@ -525,6 +525,8 @@ read by the backtest.
   deliberate.~~ **Fixed 2026-10-03** — see above; the accumulator is now
   incremented, divided by the count of records that carry a confidence, and null
   when there are none.
-- `evaluateAlertRules` skips a rule whose metric resolves to `undefined` with no
-  diagnostic. A typo in a metric path is indistinguishable from a rule that
-  correctly did not fire.
+- `evaluateAlertRules` returns the rules whose metric resolved to nothing as
+  `unresolvable`, and `evaluateAndPersistAlerts` logs each one as
+  `alert_rule_metric_unresolvable`. A typo in a metric path is a rule that can never fire,
+  and it is now distinguishable from a rule that correctly did not fire — in the log and in
+  the shadow-run response, though not yet on the alert list an operator reads.

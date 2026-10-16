@@ -34,8 +34,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { after, before, describe, it } from 'node:test'
 
-import { resolveMetric, evaluateConditionSet, evaluateInShadowMode } from '../src/alerts.js'
+import { resolveMetric, evaluateConditionSet, evaluateAlertRules, evaluateInShadowMode } from '../src/alerts.js'
 import { buildEvaluationContext, counts, operationalSummary } from '../src/operations.js'
+import { OUTPUT_COLLECTIONS } from '../src/ingestion.js'
 import { liveContext } from '../src/protocols.js'
 import { JsonStore } from '../src/store.js'
 import { ROOT } from './browser-env.mjs'
@@ -160,6 +161,27 @@ describe('R-95 — one context shape, so a shadow run agrees with the live run',
     assert.deepEqual(Object.keys(context).sort(), Object.keys(buildEvaluationContext(data)).sort())
   })
 
+  it('every collection the ingestion pipeline emits has a count', () => {
+    // The invariant, stated against the set that defines it rather than a number.
+    // `counts()` has 45 keys against 69 schema collections, and most of the
+    // difference is legitimate: `record_versions` is a revision log,
+    // `idempotency_keys` is machinery, `system_heartbeat` is a liveness row, the
+    // ten `quarantine_*` homes are reachable through their source run's
+    // `quarantine` field. What may not be uncounted is what the pipeline
+    // *publishes*, because that is what an operator thresholds on — and
+    // `food_security_records` and `weather_forecasts` were both emitted and both
+    // missing, which is `counts.disease_observations` twice more.
+    //
+    // Asserted against OUTPUT_COLLECTIONS, so adding a connector's output to the
+    // accumulator without adding its count fails here rather than in production.
+    const counted = new Set(Object.keys(counts(data)))
+    const uncounted = OUTPUT_COLLECTIONS.filter((key) => !counted.has(key))
+    assert.deepEqual(uncounted, [],
+      'these collections are accumulated by ingestion and have no count in counts(), ' +
+      'so no alert rule or trigger protocol can threshold on them')
+    assert.ok(OUTPUT_COLLECTIONS.length >= 10, 'OUTPUT_COLLECTIONS was not read')
+  })
+
   it('counts() and the context agree on how many keys the picker could name', () => {
     // A guard on the guard: if `counts()` ever loses its `?.length ?? null`
     // discipline and starts returning `undefined` for absent collections, the
@@ -173,5 +195,66 @@ describe('R-95 — one context shape, so a shadow run agrees with the live run',
       'null is a value a rule can compare against and undefined is not')
     assert.ok(Object.keys(operationalSummary(data).counts).includes('open_incidents'),
       'the operations namespace must keep the key the form ships as its default')
+  })
+})
+
+describe("D11 — a metric that names nothing says so", () => {
+  // The half the first fix left. Making every context carry `operations` closed
+  // the *reachable* miss: the paths the settings form offers now all resolve.
+  // A path typed by hand into a rule still fails silently, and silently is the
+  // whole problem — `evaluateAlertRules` skipped a non-finite value with a bare
+  // `continue`, so a typo and a threshold that was correctly not met produced
+  // the same evidence, which is none.
+  const rule = (metric) => ({
+    id: 'r1', name: 'Typo rule', status: 'active', metric,
+    operator: '>', threshold: 0, version: 1, hysteresis: 0, suppression_minutes: 0,
+  })
+  const store = (metric) => ({ alert_rules: [rule(metric)], alert_events: [], hazard_events: [] })
+
+  it('a rule over a path that resolves to nothing is named, not skipped', () => {
+    const { raised, unresolvable } = evaluateAlertRules(store('counts.hazard_eventz'), buildEvaluationContext(data))
+    assert.deepEqual(raised, [])
+    assert.equal(unresolvable.length, 1)
+    assert.equal(unresolvable[0].metric, 'counts.hazard_eventz')
+    assert.equal(unresolvable[0].rule_id, 'r1')
+  })
+
+  it('a rule whose metric resolves is not reported as unresolvable', () => {
+    // The control. A list that collects every rule would satisfy the test above
+    // while telling the operator nothing — and would warn on every healthy rule
+    // in the deployment.
+    const { unresolvable } = evaluateAlertRules(store('counts.hazard_events'), buildEvaluationContext(data))
+    assert.deepEqual(unresolvable, [])
+  })
+
+  it('a null reading counts as unresolvable, not as zero', () => {
+    // `counts()` returns null for an absent collection on purpose, and null is
+    // not a number a threshold can be compared against. A rule over a
+    // collection the store has never ingested is dead for the same reason a
+    // typo is, and reports the same way.
+    const absent = { ...buildEvaluationContext(data), counts: { ...buildEvaluationContext(data).counts, hazard_events: null } }
+    const { unresolvable } = evaluateAlertRules(store('counts.hazard_events'), absent)
+    assert.equal(unresolvable.length, 1)
+    assert.equal(unresolvable[0].resolved, 'null')
+  })
+
+  it('the shadow run says why, rather than "No trigger condition met"', () => {
+    const protocol = { name: 'Typo protocol', metric: 'counts.hazard_eventz', operator: '>', threshold: 0 }
+    const result = evaluateInShadowMode(protocol, buildEvaluationContext(data))
+    assert.equal(result.evaluable, false)
+    assert.deepEqual(result.unresolvable_metrics, ['counts.hazard_eventz'])
+    assert.match(result.message, /counts\.hazard_eventz/)
+    assert.doesNotMatch(result.message, /No trigger condition met/,
+      'a path that names nothing is not a threshold that was not reached')
+  })
+
+  it('a healthy protocol keeps the plain message', () => {
+    // The other side of the same branch: a protocol that genuinely did not reach
+    // its threshold must not be reported as broken.
+    const protocol = { name: 'Quiet protocol', metric: 'counts.hazard_events', operator: '>', threshold: 1_000_000 }
+    const result = evaluateInShadowMode(protocol, buildEvaluationContext(data))
+    assert.equal(result.evaluable, true)
+    assert.deepEqual(result.unresolvable_metrics, [])
+    assert.equal(result.message, 'No trigger condition met')
   })
 })

@@ -155,6 +155,7 @@ export function evaluateAlertRules(data, context) {
   const active = data.alert_rules.filter((rule) => rule.status === 'active')
   const raised = []
   const updated = []
+  const unresolvable = []
 
   // CON-05. `isSuppressed` filtered the whole `alert_events` collection once per
   // rule and the open-event filter did it again, so a single evaluation walked
@@ -171,7 +172,19 @@ export function evaluateAlertRules(data, context) {
 
   for (const rule of active) {
     const value = resolveMetric(context, rule.metric)
-    if (!Number.isFinite(value)) continue
+    // D11's second half. `continue` was the whole of this branch, so a rule whose
+    // metric path names nothing — a typo, or a key the context does not carry —
+    // was indistinguishable from a threshold that was correctly not met. Both
+    // produce no alert and no log line, and the operator's only evidence is
+    // silence. The path is collected so the caller can say which rule is dead,
+    // and the check is `resolveMetric` returning a non-finite value rather than
+    // the rule being absent from the context: a metric that resolves to `null`
+    // (an absent collection, by `counts()`'s own discipline) is also unevaluable
+    // and also silent.
+    if (!Number.isFinite(value)) {
+      unresolvable.push({ rule_id: rule.id, rule_name: rule.name, metric: rule.metric, resolved: value === undefined ? 'undefined' : String(value) })
+      continue
+    }
     const firing = compare(value, rule.operator, rule.threshold)
     const prior = eventsFor(rule)
     const open = prior.filter((event) => event.status === 'open')
@@ -232,7 +245,7 @@ export function evaluateAlertRules(data, context) {
     raised.push(buildAlert(rule, value, { bucket, now, context, inputs: inputIdsFor(rule, data), data }))
   }
 
-  return { raised, updated }
+  return { raised, updated, unresolvable }
 }
 
 /**
@@ -563,12 +576,24 @@ export function evaluateInShadowMode(protocol, context) {
   // adopted on the wrong evidence.
   const evaluation = evaluateConditionSet(protocol.condition_set || { combinator: 'and', negate: false, terms: [{ metric: protocol.metric, operator: protocol.operator, threshold: protocol.threshold }] }, context)
   const value = evaluation.primary ? evaluation.primary.observed_value : null
+  // D11's second half, the protocol side. `evaluable: false` says the answer is
+  // not an answer; the message said "No trigger condition met", which reads as a
+  // threshold that was not reached. Those are different facts and only one of
+  // them is a reason to edit the protocol, so the message names the path that
+  // could not be read and the terms carry the flag that produced it.
+  const unresolved = evaluation.results.filter((r) => r.term_unresolvable).map((r) => r.metric)
+  const message = evaluation.firing
+    ? `${protocol.name}: ${protocol.metric} ${protocol.operator} ${protocol.threshold} (actual ${value})`
+    : unresolved.length
+      ? `cannot evaluate: ${unresolved.join(', ')} resolves to nothing in the evaluation context`
+      : 'No trigger condition met'
   return {
     would_fire: evaluation.firing,
-    message: evaluation.firing ? `${protocol.name}: ${protocol.metric} ${protocol.operator} ${protocol.threshold} (actual ${value})` : 'No trigger condition met',
+    message,
     computed_value: value,
     evaluable: evaluation.evaluable,
-    terms: evaluation.results.map((r) => ({ metric: r.metric, operator: r.operator, threshold: r.threshold, observed_value: r.observed_value, satisfied: r.satisfied })),
+    unresolvable_metrics: unresolved,
+    terms: evaluation.results.map((r) => ({ metric: r.metric, operator: r.operator, threshold: r.threshold, observed_value: r.observed_value, satisfied: r.satisfied, term_unresolvable: r.term_unresolvable })),
     shadow: true,
   }
 }
