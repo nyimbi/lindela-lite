@@ -430,8 +430,9 @@ is what surfaced them; a reading of the source had not.
   first-load comments and into `scripts/check-budget.mjs`'s own note and the route declaration —
   which is the convention that file already states. Measured 229.9 KB before and after.
 
-- **A gate gap the fix exposed: `CONSOLE_ENDPOINT_PATHS` is never checked against the console.**
-  `test/load-model.test.js` asserts each modelled path is *present*
+- **A gate gap the fix exposed: `CONSOLE_ENDPOINT_PATHS` was never checked against the console —
+  closed 2026-10-16.**
+  `test/load-model.test.js` asserted each modelled path is *present*
   (`assert.ok(CONSOLE_ENDPOINT_PATHS[name])`) and never that it is the string `public/app.js`
   actually fetches. Canaried: reverting `app.js` to `?limit=200` while the model still said
   `?view=verification` left the suite at **17 pass, 0 fail**. Sixteen of the eighteen paths are
@@ -439,3 +440,15 @@ is what surfaced them; a reading of the source had not.
   by `localEventQuery`/`globalEventQuery` and `fetchAllPages`, so they need a named exemption
   rather than a fuzzy match. Not built here — it is a separate unit, and the load model is a
   measurement rather than a runtime surface.
+
+  Built the next day as `test/load-model-paths.test.js`, and **the exemption turned out to be
+  unnecessary**: both builders import cleanly under Node, so the check *drives* `globalEventQuery()`
+  and `fetchAllPages` and compares their output against the model. That matters for `events` —
+  `/api/v1/events?limit=50` appears in `public/shared/map-frame.js` only inside a comment explaining
+  what the map *used* to fetch, which is exactly what a substring match would have matched. The
+  reader also had to learn a second shape: `iotObservations` is not a `load()` call but
+  `{ iotObservations: await fetchJson('/api/v1/iot-observations?map=1') }` in the same `Promise.all`,
+  and a reader that knew only `load()` reported the model as naming a path the console never fetches.
+  Four canaries, all fired, including the original hole (now 2 failures) — and the converse case, a
+  console path the model omits, with the four panel-handler routes declared on-demand and each
+  asserted to still be fetched. 4856 pass / 0 fail; 23/23 gates.
