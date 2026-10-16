@@ -155,8 +155,8 @@ Full silent-failure inventory in the analyst's domain report; the load-bearing r
 
 | id | Defect | Evidence | Sev |
 |---|---|---|---|
-| **R-73** | 19 of 39 `public/*.js` modules cannot be imported by Node — 12,053 of 17,988 front-end lines (67%). The suite's response is source surgery: `test/chw-wizard-honesty.test.js:209` strips every `import ` line and `vm.runInContext`s the remainder, with a hand-appended probe naming eight private locals. | per-file import attempt, 19 failures | S2 |
-| **R-74** | The mitigation is duplicated **7×** — 2,957 lines of the 32,682-line suite. `registerHooks` solves it in ~8 lines and is already written at `test/web-console.test.js:69`. All seven copies were written against Node 20 and will break on the host's Node 26, where `navigator` is getter-only. | `registerHooks` grep → 7 files | S3 |
+| **R-73** | 19 of 39 `public/*.js` modules cannot be imported by Node — 12,053 of 17,988 front-end lines (67%). The suite's response was source surgery: `test/chw-wizard-honesty.test.js` stripped every `import ` line and `vm.runInContext`ed the remainder, with a hand-appended probe naming eight private locals. **CLOSED 2026-10-16 by `53e5298`** — the last two sandboxes are gone and every one of the **63** front-end modules imports through `test/browser-env.mjs`. (The figures above are the audited tree; the count is 63 now, and 26,973 lines, because the tree grew.) | `test/web-module-importability.test.js` — imports every module, and fails on either surgery spelling | S2 |
+| **R-74** | The mitigation was duplicated **7×** — 2,957 lines of the 32,682-line suite. `registerHooks` solves it in ~8 lines and is already written at `test/web-console.test.js:69`. All seven copies were written against Node 20 and will break on the host's Node 26, where `navigator` is getter-only. **CLOSED 2026-10-16 by `53e5298`** — one harness, `test/browser-env.mjs`, and the two spellings a copy can take (`node:vm`, import-stripping) are both gate-failing. (Re-measured 2026-10-17: the suite is **87,358 lines** across 321 files, and `registerHooks` is named in **3** files — the harness, `test/falsy-zero.test.js:17` and the gate. `test/web-console.test.js:69` holds `installModuleResolution()` now; the line moved with the extraction.) | `registerHooks` grep → 3 files; the gate canaried both ways | S3 |
 | **R-75** | `handleApiRequest` is a 1,122-line function holding 83 `jsonResponse` calls, 54 method gates and 56 path literals. **CLOSED 2026-10-13 by the ENH-60 table move** — and every figure is false in the direction the defect asked for. `handleApiRequest` is **9 lines** (`src/server.js:990-998`): resolve the identity once, delegate, return — **0** `jsonResponse` calls. The body it named is `handleApiRequestInContext`, **88 lines** (`:1000-1087`, 1 `jsonResponse`) iterating `src/route-families.js`'s 35-entry table, above `handleApi` at 107 lines. The **350** `jsonResponse` call sites and **97** method gates are spread across the **36 route modules** in `src/routes/`, which is the seam the row asked for. The citation rotted with the file: `src/server.js:424` is a scheduler `setInterval` now — it named a line, not a symbol, and the symbol moved. (Re-measured 2026-10-17; the row carried 9 lines at `:963-971`, 80 at `:973-1052`, a 33-entry table and 34 modules, all of which were right on 2026-10-13 and none of which anything re-checked.) | `src/server.js:990`; `src/route-families.js` — 88 lines of table iteration, zero route logic | S3 |
 | **R-76** | **CLOSED 2026-10-12 — both tiers.** 7 of 17 gates never ran in CI, including every accessibility and layout invariant this project wrote 842 + 432 + 214 + 207 lines to express. The self-contained tier was closed first (`5cadf7c`); the browser seven were `workflow_dispatch`-only until the `browser` job took the whole `needs-browser` tier, which required `axe-core` to become a declared devDependency and `audit-a11y` to stop writing into tracked files. See the closed table below. | `.github/workflows/ci.yml` (`npm run gates`, `--tier needs-browser`); `scripts/validate.mjs:255-264` imports only four | S2 |
 | **R-77** | **Fixed 2026-10-15 — and the row's count was wrong.** It named three cycles; the tree had **five**. It missed `analytics ↔ reconciliation` entirely, and could not have named `needle ↔ nl-query`, which is reachable only through a dynamic `import()` and is invisible to a graph built from `from '…'` alone. A hand list is the wrong instrument when the enumeration is the thing that is wrong, so the fix is the class: `scripts/check-import-cycles.mjs` builds the graph from all four import spellings after stripping comments, and the sixth cycle fails in CI rather than waiting to be found by reading. Each of the five was broken the same way, by moving the bindings the loop passed through into a leaf: `src/source-policies.js`, `src/envelope.js`, `src/derived-key.js`, `src/nl-vocabulary.js`. Eight canaries, driven by `test/import-cycles-gate.test.js`. Comments must be stripped before scanning — the first draft reported a self-loop on `src/freshness.js`, whose doc comment documents its own usage with an import. | `scripts/check-import-cycles.mjs`; `test/import-cycles-gate.test.js`; `test/leaf-modules.test.js` | S3 |
@@ -173,6 +173,36 @@ skipped), auth, ingestion failure and the offline queue are all genuinely covere
 `emptyStore()`'s duplication of `SCHEMA` is guarded from both sides by two tests.
 Adding a *collection* costs 3–6 file edits and 0 migrations, with four guard tests that
 fail closed if you forget. Do not spend effort here.
+
+> **Re-measured 2026-10-17 — the first two figures are the audited tree's, and
+> neither is a figure any instrument produces.** The 71 is real: `72a6b63` and
+> `5bc71e8` both hold **71** `.js` modules under `src/`, `src/lineage.js` is
+> **20** lines, and `src/index.js` is **8** lines still. Everything after it has
+> moved. `src/` holds **167** modules; **166** are reached by a test and the one
+> exception — `cors.js`, a middleware whose behaviour is response headers on a
+> real request — is named in `check-module-coverage.mjs`'s allowlist. That gate
+> is the instrument this paragraph never had: it reports
+> `clean — 167 module(s) under src/, 321 test file(s) searched`, and it fails on
+> an unreached module *and* on an allowlist entry a test now imports, because an
+> exemption that outlives its reason is how an allowlist becomes a hiding place.
+> `src/lineage.js` is gone — `da64321` (2026-10-11) deleted it, and the gate's own
+> docstring names it as the module the hand count could not see.
+>
+> **The 2,056 does not reproduce and the 1.9% has no instrument.** At `5bc71e8`
+> the tree held 89 test files and 2,043 `it(`/`test(` calls, and
+> `STATUS-2026-10-05.md` records the suite as 2,323 — a third number. The suite
+> is **4,922** tests now. For the source-text share I measured both readings a
+> person might take: **31** of 4,876 tests have a body that reads a `src/` or
+> `public/` file as text and asserts on it (0.6%), and **600** tests sit in a file
+> that reads one at all (12.3%). The old figure is between them and matches
+> neither, and nothing here is gated — so it is a number that will drift again.
+> What *is* true and worth keeping is the direction: the rule is stated at
+> `docs/improvements/_research/00-audit-baseline.md:67` and the largest remaining
+> offenders fail closed. Read the percentage as a claim about 2026-10-05.
+>
+> The last two sentences still hold and I re-checked them rather than assuming:
+> `test/store-schema-declaration.test.js` derives `COLLECTIONS` from `SCHEMA` and
+> asserts `emptyStore()` agrees in **both** directions.
 ---
 
 ## H. Data veracity — where the refusal discipline leaks
@@ -331,12 +361,18 @@ R-86, R-88, R-91, R-92, R-93, R-94, R-95. Each was verified against the tree on
 without the fix, which the canaries below found rather than the reading — those
 four now have one, written in this pass.
 
-R-49 and R-73/R-74 are closed with a residual, recorded here rather than left to
-read as complete: R-49's `/health` still does not report free space (`/ready`
-does, and is the probe the deployments use), and R-73/R-74's replacement harness
-is in place and every module imports, but two `vm.runInContext` sites remain
+R-49 is closed with a residual, recorded here rather than left to read as
+complete: its `/health` still does not report free space (`/ready` does, and is
+the probe the deployments use).
+
+R-73/R-74 had the same residual when this paragraph was written — the harness was
+in place and every module imported, but two `vm.runInContext` sites remained
 (`test/chw-wizard-honesty.test.js:318`, `test/web-chw-offline.test.js:307`)
-against seven before it.
+against seven before it. **`53e5298`, later the same day, removed those two as
+well.** Both files now import through `test/browser-env.mjs`, and the gate fails
+on either surgery spelling rather than on `runInContext` alone — a predicate
+matching only that call would let a copy that filters source by its `import `
+lines straight through, which is the half that decides what the module can see.
 
 | id | what it was | the guard that fails without it |
 | --- | --- | --- |

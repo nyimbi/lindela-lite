@@ -179,6 +179,11 @@ Recorded because a rejected idea is a result.
   *Closed 2026-10-12 (R-76): both tiers run on every push, and the registry has since
   grown to 31 gates — 24 self-contained, 7 `needs-browser`. The sentence above is true
   of the tree this audit was taken at, not of the tree now.*
+  *Re-measured 2026-10-17: the coverage figure is the audited tree's too. `src/` holds
+  **167** modules and **166** are reached by a test — the 167th, `cors.js`, is a named
+  allowlist entry — checked by `scripts/check-module-coverage.mjs`, a gate that did not
+  exist when this was written. See the box in
+  [01-remediation.md](01-remediation.md#checked-and-good--stated-so-it-is-not-re-audited).*
 
 ## Verification performed
 

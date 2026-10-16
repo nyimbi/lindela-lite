@@ -436,7 +436,7 @@ veracity sweep. It sits at the end of Wave 3 because it is a veracity item.)*
 | A general lint/format layer | Cosmetic. Excluded by the brief. |
 | Split `public/app.js` by its 27 concerns | A symptom of a missing module boundary; ENH-36 makes boundaries testable so a split becomes verifiable. Splitting first creates 27 unverifiable files. |
 | Move `emptyStore()` into `store.js` | The cycle argument is sound and the list is guarded from both sides by two tests. |
-| "Add more tests" as an end | `src/` is at 97.2% direct module coverage. The gap is that 7 gates never run. |
+| "Add more tests" as an end | `src/` is at 97.2% direct module coverage — the audited tree's figure. It is **166 of 167** now, gated by `check-module-coverage.mjs`; the gap was that 7 gates never run. |
 | A single flat `observations` table | Duplicates `src/migrations.js`'s generated-column approach. ENH-10 extends it rather than reopening it. |
 | Drop `#parsedStamp = null` outright | Loses cross-process write detection. ENH-13 stamps *and* keeps the check. |
 | Cache `read()` per dashboard load | `server.js:1470-1498` makes ten filter calls over one materialised `data`; a memo helps that route and nothing else. Local optimisation, excluded by the brief. |
