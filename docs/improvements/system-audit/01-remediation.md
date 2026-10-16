@@ -271,7 +271,7 @@ commit for each is on `fix/storage-and-ingestion-correctness`.
 | R-53 | `6f6be48` — fixed-rate next run; the lateness is measured and reported | `test/schedule-slip.test.js` |
 | R-65, ENH-41 | `55aaf01` — the precache closure reaches the lazy graph (45 → 74 paths) | `test/sw-bootstrap-assets.test.js` |
 | R-62, R-63 | `f7502a8` — the locale layer boots through the same two-step as a switch | `test/web-locale-boot.test.js` |
-| R-76 | `5cadf7c` — the self-contained tier runs in the `test` job. The audit found 7 of 17 gates unrun; the self-contained tier was **18** gates at that commit and **all 18 ran on every push** (24 today, 31 across both tiers), which is the number that matters because it is the whole tier and not a subset someone chose. `check-workflows.mjs` validated the edit, and the step was canaried by planting a dead `/api/v1/…` literal in `public/sw.js` and watching `npm run gates` exit 1 before reverting it. | `.github/workflows/ci.yml` (`npm run gates`), `scripts/run-gates.mjs --tier self-contained` |
+| R-76 | `5cadf7c` — the self-contained tier runs in the `test` job. The audit found 7 of 17 gates unrun; the self-contained tier was **18** gates at that commit and **all 18 ran on every push** (25 today, 32 across both tiers), which is the number that matters because it is the whole tier and not a subset someone chose. `check-workflows.mjs` validated the edit, and the step was canaried by planting a dead `/api/v1/…` literal in `public/sw.js` and watching `npm run gates` exit 1 before reverting it. | `.github/workflows/ci.yml` (`npm run gates`), `scripts/run-gates.mjs --tier self-contained` |
 | R-76 (browser tier) | **The seven gates that need Chrome now run on every push.** The row above closed the self-contained tier; the browser six were still `workflow_dispatch`-only, which is a gate that has never run. Three things blocked them, and each was a precondition rather than plumbing. (1) `axe-core` was imported by `audit-a11y.mjs` and declared in neither `package.json` nor `package-lock.json`, so `npm ci` in CI installed only `pg` — verified by simulating a CI checkout (`git archive HEAD \| tar -x` then `npm ci`), which left `node_modules/axe-core/axe.min.js` missing. It is a devDependency now. (2) `audit-a11y` wrote its two findings into **tracked** files, so the job would leave the checkout dirty; it writes to `$RUNNER_TEMP/lindela-a11y/` when that is set, and the job uploads that directory as an artifact instead. (3) The `dashboard` job ran one of the seven by name. It is `browser` now and runs `node scripts/run-gates.mjs --tier needs-browser`, so a gate added later joins by being *classified* rather than by someone remembering to name it here. **Canaried twice**: a planted failure in `check-a11y` made the tier report `FAIL` and the runner exit non-zero (and a planted failure in `check-i18n` confirmed the runner's `0/1 gates ok` / `failed: …` exit path on a fast gate); the tier was then run clean and serially to **7/7 gates ok**, ~8 minutes. | `.github/workflows/ci.yml` (`browser` job), `scripts/run-gates.mjs --tier needs-browser`, `scripts/audit-a11y.mjs` (`RUNNER_TEMP`) |
 | **R-80** | **CI was red on every push, and the green step above was green underneath it.** `5cadf7c` wired the self-contained tier correctly — the failure was in the `test` and `coverage` jobs it runs beside, and had been there since before it. Three tests passed under Node 26 (the laptop) and failed under Node 22 (what CI pins): two awaited an `unref`'d timer that never fires once the loop drains, and one deleted its own temp fixture in a `finally` that raced the async `import()` reading it. A fourth defect was older still: `check-coverage.mjs`'s `parseTotals` matched the totals row as `ℹ all files` or bare, and Node 22 prefixes it `# `, so the gate reported "could not find the `all files` row" against a log containing it — on every run it had ever had, confirmed against three historical commits. Fixed in `21c7eb7` (the three tests) and `5ed1a01` (the coverage parser). **The lesson is the one this register keeps relearning: a gate's local pass says nothing about CI, because the run happens on a different Node.** Run `fnm exec --using 22 node --test` before believing a green suite, and read the *run history* rather than the job's YAML. | `fnm exec --using 22.23.0 node --test test/*.test.js` — 4,408/4,408 with 0 cancelled; `scripts/check-coverage.mjs` ok on both versions |
 | R-12 (second half) | `2a82069` — the retention route and the retention driver read *different windows*. `apply-retention` refused on the general window while `applyScheduledRetention` used each collection's own, so a deployment setting only `communityFeedbackDays` got a 400 saying "Nothing was deleted" from a route whose scheduled twin was expiring `community_feedback` every tick. Found while extracting both into `src/routes/maintenance.js` (ENH-60). The route now applies per-collection windows and refuses only when none is set. | `test/maintenance-route-module.test.js` — runs both call sites against one policy and asserts they agree; canaried by restoring the pre-extraction body |
@@ -420,6 +420,32 @@ The alert-rule metric field ships `value="operations.counts.open_incidents"` as 
 shadow run answered "would not fire" for a rule the scheduler fired. Both now call one
 `buildEvaluationContext(data)` in `src/operations.js`, and the test asserts a shadow run and a live run
 agree on the form's own default.
+
+**The third vocabulary, found 2026-10-17: the demo seed's, and all of it is dead.** The gate above
+holds the *picker* to the context. The seed ships a second vocabulary, and nothing checked it —
+measured by driving `seedAll` into a fresh temp store, **5 of 5** alert rules, **10 of 10** trigger
+protocols, **3 of 3** parametric rules and **10 of 10** recorded alert events name a metric that
+resolves to nothing, across five names (`precipitation_mm`, `temperature_max_c`,
+`conflict_events_count_7d`, `fever_case_rate_per_1000`, `dispatch_accuracy_pct`). Every rule the demo
+an operator first meets is unfireable, and the diagnostic D11 added is the only reason it is visible.
+
+The figure recorded first was "5 of 6 alert rules and 8 of 12 trigger protocols", measured against
+`data/lindela-lite-store.json` instead of the seed. The store carries runtime-created records with
+correct `counts.*` paths, and those were supplying *every* resolvable row in both counts — the
+denominator was the store's and the numerator the seed's, so neither figure described the seed. A
+measurement of the seed must drive `seedAll`; its builders are module-private.
+
+`scripts/check-seed-metrics.mjs` closes the class: it drives the real `seedAll` and reads the
+vocabulary off the rows, so it cannot drift from the seed it checks. It fails an undeclared dead name
+and a stale allowance whose metric has begun resolving. The dead names are declared with the reason
+each is dead rather than renamed, because there is no faithful rename — the context carries global
+collection row counts, while a seed rule is `precipitation_mm >= 40 in Turkana`, a per-region reading.
+The nearest available name would make Flood Watch fire on "the store holds some weather rows",
+permanently and in every region. What would revive them is a per-region metric namespace, and the
+evaluator has none: it reads one global scalar per rule, while these rules are scoped to regions
+(`scope: { regions: [...] }`) and **`scope.regions` is read nowhere** — `src/alerts.js:684` reads only
+`scope.district`, as a label for an alert that has already fired. That is a feature, not a correction,
+and it is recorded as one.
 
 ### Open, with the measurement or the blocker
 

@@ -344,13 +344,38 @@ and the settings panel's Evaluate button names each dead rule and its metric rat
 folding it into the total.
 
 Found while closing it, and **not** fixed here: the shipped demo seed's own rules and
-protocols use metric paths that name nothing in the evaluation context. Measured against
-`data/lindela-lite-store.json` on 2026-10-17, **5 of 6** alert rules and **8 of 12**
-trigger protocols are unresolvable — `precipitation_mm`, `temperature_max_c`,
-`conflict_events_count_7d`, `fever_case_rate_per_1000`, `dispatch_accuracy_pct`. The
-context carries `counts.*` and `operations.*`, so a rule is live only if its path starts
-with one of those; every bare field name is dead. That is what the diagnostic now says out
-loud, which is the only reason it is visible at all.
+protocols use metric paths that name nothing in the evaluation context. Measured on
+2026-10-17 by driving `seedAll` into a fresh temp store, **every one of them is dead** —
+**5 of 5** alert rules, **10 of 10** trigger protocols, **3 of 3** parametric rules and
+**10 of 10** recorded alert events, across five names: `precipitation_mm`,
+`temperature_max_c`, `conflict_events_count_7d`, `fever_case_rate_per_1000`,
+`dispatch_accuracy_pct`. The context carries `counts.*` and `operations.*`, so a rule is
+live only if its path starts with one of those; every bare field name is dead. That is what
+the diagnostic now says out loud, which is the only reason it is visible at all.
+
+*This paragraph first said "5 of 6 alert rules and 8 of 12 trigger protocols", measured
+against `data/lindela-lite-store.json` rather than against the seed. The store's extra rows
+are runtime-created records carrying correct `counts.*` paths, and they were supplying every
+"resolvable" row in both counts — the denominator was the store's and the numerator the
+seed's, so neither figure described the seed. A measurement of the seed has to drive
+`seedAll`, which is the only way to reach its module-private builders.*
+
+**Why this is recorded rather than renamed.** The context carries global collection row
+counts; a seed rule is `precipitation_mm >= 40 in Turkana`, a *per-region reading*. The
+nearest available name, `counts.climate_observations`, is a global row count, so renaming
+would make "Flood Watch" fire on "the store holds some weather rows" — permanently, in every
+region. There is no rename that preserves what the rule means. The missing capability is one
+layer down: the evaluator reads a single global scalar per rule, while these rules are scoped
+to regions (`scope: { regions: ['Turkana', 'Bor', 'Aweil'] }`) and **`scope.regions` is read
+nowhere** — `src/alerts.js:684` reads only `scope.district`, as a label for an alert that has
+already fired. A per-region metric namespace is what would revive them, and building it is a
+feature, not a correction.
+
+`scripts/check-seed-metrics.mjs` (R-95's missing half) now holds the seed's vocabulary to the
+context. `test/evaluation-context.test.js` already held the *settings picker's* vocabulary
+and passes, because the picker's vocabulary is correct; the seed shipped a second vocabulary
+nothing checked. The gate fails an undeclared dead name and also a stale allowance whose
+metric has started resolving.
 
 ---
 
