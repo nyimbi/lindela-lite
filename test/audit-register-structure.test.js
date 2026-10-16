@@ -229,7 +229,7 @@ describe('the audit register’s skeleton, guarded', () => {
  *
  * The cost is not cosmetic, and the size of it is measured below rather than
  * stated here — see `citationSpread()`. At the last measurement there were
- * **1,918** `ENH-nn` citations across **348** files, **339** of them in `src/`
+ * **1,925** `ENH-nn` citations across **351** files, **343** of them in `src/`
  * comment lines — so a reader following `// ENH-29` from a source file has a 50%
  * chance of landing on the wrong item, and `docs/improvements/status.md`
  * resolves every id against the *first* register. This is the same shape the
@@ -245,6 +245,12 @@ describe('the audit register’s skeleton, guarded', () => {
  * `src/` figure was wrong by a factor of 3.4 — it named a tenth of the real
  * cost in the sentence arguing that the cost was large. `citationSpread()` now
  * derives all three, so they cannot be typed wrong again.
+ *
+ * The figures moved by 7 citations, 3 files and 4 `src/` comments when the
+ * rate-limit budget landed, which is the mechanism working: the number is held
+ * to the tree by a test, so a change that adds citations to the register's own
+ * subject updates it in the same commit rather than leaving a stale count
+ * behind.
  *
  * The check below does not fix the collision — renaming 50 ids across ~1,900
  * citations is a change with its own review, and doing it inside a defect fix

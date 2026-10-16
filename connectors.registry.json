@@ -437,7 +437,8 @@
         "archive_start_year": "number (default 1985)",
         "countries": "array of ISO3 codes (default Sub-Saharan Africa); 'all' for every country",
         "timeout_ms": "number",
-        "retries": "number"
+        "retries": "number",
+        "budget_ms": "number — wall-clock deadline for the whole walk (default: from SOURCE_POLICIES); absent walks unbounded"
       },
       "output": [
         "hazard_events"

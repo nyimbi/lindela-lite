@@ -1,4 +1,5 @@
 import { fetchWithRetry } from './http.js'
+import { createBudget } from '../rate-limit.js'
 import { stableId } from '../utils.js'
 import { defineConnector } from './spec.js'
 import { DEFAULT_COUNTRIES } from './ipc-hdx.js'
@@ -71,6 +72,25 @@ async function connectorIngest(options = {}) {
   let pagesFetched = 0
   let recordsSeen = 0
 
+  // ENH-11 / ING-06. A deadline for the *source*, where `timeout_ms` bounds one
+  // request. This walk is 1985→now quarter by quarter; with two retries each
+  // that is up to 168 × 3 attempts, and at 30s apiece it reaches ~4.2 hours
+  // while every individual call is a healthy one. The per-attempt timeout is
+  // correct and cannot see the sum, so the budget is spent across the walk and
+  // checked before each window: the run stops while it can still say why,
+  // rather than being reaped by a socket that outlives the process.
+  //
+  // Absent `budget_ms` the connector walks unbounded, exactly as before — the
+  // budget is a declared policy and this connector does not invent one.
+  const budgetMs = Number(options.budget_ms)
+  const budget = Number.isFinite(budgetMs) && budgetMs > 0
+    ? createBudget({ totalMs: budgetMs, name: 'gdacs_archive' })
+    : null
+  // Windows that the deadline cut off, so the verdict can distinguish "the walk
+  // finished" from "the walk was stopped" — a truncated crawl reported as
+  // complete is the silence this file exists to remove.
+  let windowsSkippedByBudget = 0
+
   for (let year = startYear; year <= thisQuarter.year; year += 1) {
     // The current quarter is only complete up to today, but partial is fine —
     // the archive answers with what it has for the window.
@@ -78,6 +98,27 @@ async function connectorIngest(options = {}) {
     for (let q = 1; q <= lastQuarter; q += 1) {
       const label = `${year}-Q${q}`
       windowsPlanned += 1
+      // Checked before the request, not after: the budget bounds what the walk
+      // *starts*, so a window that would run past the deadline is not opened at
+      // all. `issue()` counts even when it denies, so `windowsSkippedByBudget`
+      // is the number of windows the deadline took, and `windows_planned`
+      // already counted them.
+      if (budget) {
+        const spent = budget.issue()
+        if (!spent.allowed) {
+          windowsSkippedByBudget += 1
+          // Recorded as its own verdict rather than left out, so the merge
+          // cannot read the gap as a quiet quarter. Same reasoning as the
+          // failed-window branch below: an unread window is unknown, not zero.
+          windowVerdicts.push({
+            complete: false,
+            possibly_incomplete: false,
+            reason: `window ${label} was not read (${spent.reason}); nothing behind it was counted`,
+            counts_found: null,
+          })
+          continue
+        }
+      }
       try {
         const window = quarterRange(year, q)
         const text = await fetchWithRetry(`${ARCHIVE_ROOT}?fromDate=${window.from}&toDate=${window.to}`, {
@@ -163,6 +204,13 @@ async function connectorIngest(options = {}) {
     flagged_windows: flaggedWindows,
     cap: WINDOW_CAP,
     provider_total: null,
+    // ENH-11. Whether a deadline was in force at all, and what it took. `null`
+    // for the budget when the policy declares none, so a reader can tell an
+    // unbounded walk from a bounded one that finished inside its budget —
+    // reporting `0 windows skipped` for both would be the same silence.
+    budget_ms: budget ? budget.totalMs : null,
+    windows_skipped_by_budget: windowsSkippedByBudget,
+    budget_exhausted: budget ? budget.isExhausted() : false,
   }
 
   if (!completeness.complete) {
@@ -170,6 +218,18 @@ async function connectorIngest(options = {}) {
     // runIngestion carries into the source run's record; a run that returns a
     // verdict nobody stores is the defect this file was written to remove.
     errors.push(`gdacs_archive: archive walk is ${completenessVerdictName(merged)} — ${merged.reason}`)
+  }
+
+  if (windowsSkippedByBudget > 0) {
+    // Named separately from the completeness verdict. A budget stop and a failed
+    // fetch both leave windows unread, and they are not the same fact: one says
+    // GDACS stopped answering, the other says we chose to stop asking. The
+    // operator's next move differs — retry with a longer budget, or investigate
+    // the provider — so the run has to say which one happened.
+    errors.push(
+      `gdacs_archive: budget_exhausted — wall-clock budget of ${budget.totalMs}ms ran out with `
+      + `${windowsSkippedByBudget} of ${windowsPlanned} windows unread`,
+    )
   }
 
   if (!hazard_events.length && !errors.some((e) => /window/.test(e))) {
@@ -254,10 +314,11 @@ export const spec = defineConnector({
       countries: "array of ISO3 codes to keep (default: Sub-Saharan Africa); 'all' for every country",
       timeout_ms: 'number (default 30000)',
       retries: 'number (default 2)',
+      budget_ms: 'number — wall-clock deadline for the whole walk (default: from SOURCE_POLICIES); absent walks unbounded',
     },
     outputSchema: {
       hazard_events: 'flood archive events; severity null (GDACS publishes a fill-in zero for floods)',
-      completeness: '{complete, possibly_incomplete, reason, counts_found, pages_fetched, windows_planned, records_seen, records_kept, walk_end, flagged_windows}; one verdict for the whole archive walk',
+      completeness: '{complete, possibly_incomplete, reason, counts_found, pages_fetched, windows_planned, records_seen, records_kept, walk_end, flagged_windows, budget_ms, windows_skipped_by_budget, budget_exhausted}; one verdict for the whole archive walk',
     },
   },
   defaults: {

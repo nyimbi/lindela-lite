@@ -211,6 +211,19 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
       watermark_state: watermarkBySource.get(source) || {},
       timeout_ms: toNumber(request.timeout_ms ?? request.timeoutMs ?? policy.timeout_ms, policy.timeout_ms || 20000),
       retries: toNumber(request.retries ?? policy.retries, policy.retries || 0),
+      // ENH-11 / ING-06. The source's wall-clock deadline, where `timeout_ms`
+      // bounds one request. Only `gdacs_archive` declares one: its walk is 168
+      // quarterly requests and 168 × 3 × 30s is the ~4.2 hours ING-06 measured.
+      // Passed through rather than defaulted, so a connector that has no
+      // budget keeps walking unbounded and the policy table stays the one
+      // place a budget is stated.
+      //
+      // Normalised to `undefined` rather than left as `toNumber`'s `null`:
+      // the absence of a budget and a budget declared as null are different
+      // statements, and `budget_ms: null` on the request reads as the second.
+      // (`toNumber(value, undefined)` does not do this — an explicit
+      // `undefined` argument fires the parameter default, which is `null`.)
+      budget_ms: toNumber(request.budget_ms ?? policy.budget_ms, undefined) ?? undefined,
     }
     let status = 'success'
     let errors = []

@@ -431,3 +431,52 @@ describe('nothing here is a no-op', () => {
       'the historical backfills are deliberately not on the regular schedule')
   })
 })
+describe('ENH-11 — a source\'s declared budget reaches the connector that spends it', () => {
+  // `createBudget` was correct, tested, and called from nothing but its own
+  // test file. The unit tests in test/completeness-wiring.test.js prove the
+  // connector honours a `budget_ms` it is handed; they cannot prove anything
+  // hands it one. That join is `SOURCE_POLICIES` → `sourceRequest` →
+  // `connector.ingest(request)`, and a projection that exists and is never
+  // applied is the same defect one layer out — so this drives `runIngestion`
+  // and reads the request the connector actually received.
+  const capture = (id, seen) => ({
+    id,
+    async ingest(request) {
+      seen.push(request)
+      return { hazard_events: [] }
+    },
+  })
+
+  it('passes the declared budget_ms through to the connector', async () => {
+    const store = freshStore()
+    const seen = []
+    await runIngestion(store, { sources: ['gdacs_archive'] }, { connectors: { gdacs_archive: capture('gdacs_archive', seen) } })
+
+    assert.equal(seen.length, 1, 'the connector was not called')
+    assert.equal(seen[0].budget_ms, 900000,
+      `the declared budget did not reach the connector: got ${JSON.stringify(seen[0].budget_ms)}`)
+  })
+
+  it('leaves budget_ms undefined for a source that declares none', async () => {
+    // The positive control in the other direction. A default applied here would
+    // bound every walk in the platform while the policy table said only one
+    // source had a budget, which is a limit nobody declared and nobody can find.
+    const store = freshStore()
+    const seen = []
+    await runIngestion(store, { sources: ['gdacs'] }, { connectors: { gdacs: capture('gdacs', seen) } })
+
+    assert.equal(seen[0].budget_ms, undefined,
+      `a budget appeared for a source that declares none: ${JSON.stringify(seen[0].budget_ms)}`)
+  })
+
+  it('lets a caller override the declared budget', async () => {
+    const store = freshStore()
+    const seen = []
+    await runIngestion(
+      store,
+      { sources: ['gdacs_archive'], budget_ms: 1000 },
+      { connectors: { gdacs_archive: capture('gdacs_archive', seen) } },
+    )
+    assert.equal(seen[0].budget_ms, 1000, 'the request\'s own budget was ignored in favour of the policy')
+  })
+})

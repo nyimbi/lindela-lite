@@ -68,6 +68,22 @@ import {
 import { sendRapidProReportSummary } from '../rapidpro.js'
 
 /**
+ * One deadline across connect, headers and body for a distribution webhook.
+ *
+ * The same reason `dispatchToRapidPro` has one: a partner endpoint that accepts
+ * the connection and then never answers is an ordinary outage, and the caller
+ * needs a dispatch record either way. Without a deadline the fetch holds the
+ * request that triggered the distribution open indefinitely, so one stalled
+ * partner takes a worker out of the pool for as long as it stays stalled — and
+ * the run row it would have written never lands, which is the failure the
+ * distribution record exists to prevent.
+ *
+ * Five seconds matches the outbox's own delivery deadline (`src/outbox.js:331`),
+ * which is the same shape of call to the same kind of endpoint.
+ */
+const WEBHOOK_TIMEOUT_MS = 5000
+
+/**
  * Which reporting route a request is, or null.
  *
  * `method` is a parameter because of VER-14: `run-due` is an action, and the
@@ -114,25 +130,25 @@ export function matchReportingRoute(pathname, method = 'GET') {
 /**
  * Handle one reporting route. Returns true when it handled the request.
  */
-export async function handleReportingRoute(route, { store, data, req, res, url, jsonResponse, checkWebhookUrl }) {
+export async function handleReportingRoute(route, { store, data, req, res, url, jsonResponse, checkWebhookUrl, webhookTimeoutMs }) {
   if (route.kind === 'templates') {
     await handleReportTemplateRoute(store, data, req, res, url, route, jsonResponse)
     return true
   }
   if (route.kind === 'reports') {
-    await handleReportRoute(store, data, req, res, url, route, { checkWebhookUrl, jsonResponse })
+    await handleReportRoute(store, data, req, res, url, route, { checkWebhookUrl, webhookTimeoutMs, jsonResponse })
     return true
   }
   if (route.kind === 'distributions') {
-    await handleReportDistributionRoute(store, data, req, res, url, route, { checkWebhookUrl, jsonResponse })
+    await handleReportDistributionRoute(store, data, req, res, url, route, { checkWebhookUrl, webhookTimeoutMs, jsonResponse })
     return true
   }
   if (route.kind === 'schedules') {
-    await handleReportScheduleRoute(store, data, req, res, url, route, { checkWebhookUrl, jsonResponse })
+    await handleReportScheduleRoute(store, data, req, res, url, route, { checkWebhookUrl, webhookTimeoutMs, jsonResponse })
     return true
   }
   if (route.kind === 'schedule-runs') {
-    await handleReportScheduleRunRoute(store, data, req, res, url, route, { checkWebhookUrl, jsonResponse })
+    await handleReportScheduleRunRoute(store, data, req, res, url, route, { checkWebhookUrl, webhookTimeoutMs, jsonResponse })
     return true
   }
   jsonResponse(res, 404, { success: false, error: 'Not found' })
@@ -198,7 +214,7 @@ async function handleReportTemplateRoute(store, data, req, res, url, route, json
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleReportRoute(store, data, req, res, url, route, { checkWebhookUrl, jsonResponse }) {
+async function handleReportRoute(store, data, req, res, url, route, { checkWebhookUrl, webhookTimeoutMs, jsonResponse }) {
   if (req.method === 'GET' && route.exportFormat) {
     const report = findVisible(data.reports, route.id)
     if (!report) {
@@ -457,7 +473,7 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
       jsonResponse(res, 404, { success: false, error: 'Report not found' })
       return
     }
-    const result = await distributeReport(existing, body, body.actor, data, { checkWebhookUrl })
+    const result = await distributeReport(existing, body, body.actor, data, { checkWebhookUrl, webhookTimeoutMs })
     const record = result.report
     const log = actionLog('reports', 'distributed', record, body.actor, req.__auth?.subject)
     await store.merge({
@@ -483,7 +499,7 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleReportDistributionRoute(store, data, req, res, url, route, { checkWebhookUrl, jsonResponse }) {
+async function handleReportDistributionRoute(store, data, req, res, url, route, { checkWebhookUrl, webhookTimeoutMs, jsonResponse }) {
   if (req.method === 'GET' && !route.id) {
     jsonResponse(res, 200, { success: true, ...collectionPage(data.report_distribution_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_distribution_runs' }) })
     return
@@ -504,7 +520,7 @@ async function handleReportDistributionRoute(store, data, req, res, url, route, 
       jsonResponse(res, 404, { success: false, error: 'Report not found' })
       return
     }
-    const result = await distributeReport(report, { channels: [{ ...(run.options || {}), channel: run.channel, recipients: run.recipients }], retry_of: run.id }, body.actor, data, { checkWebhookUrl })
+    const result = await distributeReport(report, { channels: [{ ...(run.options || {}), channel: run.channel, recipients: run.recipients }], retry_of: run.id }, body.actor, data, { checkWebhookUrl, webhookTimeoutMs })
     await store.merge({
       reports: [result.report],
       report_distribution_runs: result.runs,
@@ -517,15 +533,15 @@ async function handleReportDistributionRoute(store, data, req, res, url, route, 
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleReportScheduleRoute(store, data, req, res, url, route, { checkWebhookUrl, jsonResponse }) {
+async function handleReportScheduleRoute(store, data, req, res, url, route, { checkWebhookUrl, webhookTimeoutMs, jsonResponse }) {
   if (route.kind === 'schedule-runs') {
-    await handleReportScheduleRunRoute(store, data, req, res, url, route, { checkWebhookUrl, jsonResponse })
+    await handleReportScheduleRunRoute(store, data, req, res, url, route, { checkWebhookUrl, webhookTimeoutMs, jsonResponse })
     return
   }
 
   if (req.method === 'POST' && route.action === 'run-due') {
     const body = await readRequestJson(req)
-    const result = await runDueReportSchedules(data, body.actor, { checkWebhookUrl })
+    const result = await runDueReportSchedules(data, body.actor, { checkWebhookUrl, webhookTimeoutMs })
     await store.merge(result.writes)
     jsonResponse(res, 201, { success: true, data: result.runs, reports: result.reports, distributions: result.distributions })
     return
@@ -571,7 +587,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route, { ch
       jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })
       return
     }
-    const result = await runReportSchedule(data, schedule, body.actor, { checkWebhookUrl })
+    const result = await runReportSchedule(data, schedule, body.actor, { checkWebhookUrl, webhookTimeoutMs })
     await store.merge(result.writes)
     jsonResponse(res, 201, { success: true, data: result.scheduleRun, report: result.report, distributions: result.distributions })
     return
@@ -579,7 +595,7 @@ async function handleReportScheduleRoute(store, data, req, res, url, route, { ch
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function handleReportScheduleRunRoute(store, data, req, res, url, route, { checkWebhookUrl, jsonResponse }) {
+async function handleReportScheduleRunRoute(store, data, req, res, url, route, { checkWebhookUrl, webhookTimeoutMs, jsonResponse }) {
   if (req.method === 'GET' && !route.id) {
     jsonResponse(res, 200, { success: true, ...collectionPage(data.report_schedule_runs, url.searchParams, { auth: req.__auth, data, collection: 'report_schedule_runs' }) })
     return
@@ -600,7 +616,7 @@ async function handleReportScheduleRunRoute(store, data, req, res, url, route, {
       jsonResponse(res, 404, { success: false, error: 'Report schedule not found' })
       return
     }
-    const result = await runReportSchedule(data, schedule, body.actor, { checkWebhookUrl })
+    const result = await runReportSchedule(data, schedule, body.actor, { checkWebhookUrl, webhookTimeoutMs })
     await store.merge(result.writes)
     jsonResponse(res, 201, { success: true, data: result.scheduleRun, report: result.report, distributions: result.distributions })
     return
@@ -608,7 +624,7 @@ async function handleReportScheduleRunRoute(store, data, req, res, url, route, {
   jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
 }
 
-async function distributeReport(report, body = {}, actor = 'operator', data = null, { checkWebhookUrl = assertSafeWebhookUrl } = {}) {
+async function distributeReport(report, body = {}, actor = 'operator', data = null, { checkWebhookUrl = assertSafeWebhookUrl, webhookTimeoutMs = WEBHOOK_TIMEOUT_MS } = {}) {
   if (!['ready', 'approved', 'distributed'].includes(report.status)) {
     throw Object.assign(new Error('Report must be ready or approved before distribution'), { statusCode: 400 })
   }
@@ -642,18 +658,42 @@ async function distributeReport(report, body = {}, actor = 'operator', data = nu
         // SSRF the webhook path already closed — one token away from the cloud
         // metadata endpoint and the internal network.
         const target = await checkWebhookUrl(required(channel.url, 'url'))
-        const response = await fetch(target, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', ...(channel.headers || {}) },
-          body: JSON.stringify({ report, markdown: renderReportMarkdown(report) }),
+        // A deadline, because a partner that accepts the connection and never
+        // answers would otherwise hold this request open for as long as it
+        // stays silent. One deadline spans the response *and* its body: a
+        // server that sends headers and then stalls aborts inside
+        // `readExternalResponse`, not inside the fetch, so a `.catch` on the
+        // fetch alone would leave that case uncovered — measured, and it does.
+        //
+        // The timeout is translated into a message naming the budget rather
+        // than the runtime's `TimeoutError: The operation was aborted due to
+        // timeout`, which names the mechanism and not the deadline. That string
+        // is what would otherwise land in the run row an operator reads.
+        const signal = AbortSignal.timeout(webhookTimeoutMs)
+        const responseBody = await (async () => {
+          const response = await fetch(target, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', ...(channel.headers || {}) },
+            body: JSON.stringify({ report, markdown: renderReportMarkdown(report) }),
+            signal,
+          })
+          const body = await readExternalResponse(response)
+          return { response, body }
+        })().catch((error) => {
+          if (error?.name === 'TimeoutError') {
+            throw Object.assign(
+              new Error(`webhook did not answer within ${webhookTimeoutMs}ms`),
+              { statusCode: 504 },
+            )
+          }
+          throw error
         })
-        const responseBody = await readExternalResponse(response)
         runs.push(normalizeDistributionRun({
           ...runInput,
-          status: response.ok ? 'sent' : 'failed',
-          response_status: response.status,
-          response_body: responseBody,
-          error: response.ok ? null : `Webhook HTTP ${response.status}`,
+          status: responseBody.response.ok ? 'sent' : 'failed',
+          response_status: responseBody.response.status,
+          response_body: responseBody.body,
+          error: responseBody.response.ok ? null : `Webhook HTTP ${responseBody.response.status}`,
         }, report))
       } else if (channel.channel === 'rapidpro_sms') {
         const summary = channel.text || formatReportSmsSummary(report)
@@ -677,11 +717,11 @@ async function distributeReport(report, body = {}, actor = 'operator', data = nu
   return { report: hasDeliveredArtifact ? markReportDistributed(report) : report, runs, rapidproDispatches, actor }
 }
 
-export async function runDueReportSchedules(data, actor = 'operator', { checkWebhookUrl } = {}) {
+export async function runDueReportSchedules(data, actor = 'operator', { checkWebhookUrl, webhookTimeoutMs } = {}) {
   const due = data.report_schedules.filter((schedule) => scheduleIsDue(schedule))
   const aggregate = emptyScheduleResult()
   for (const schedule of due) {
-    const result = await runReportSchedule(data, schedule, actor, { checkWebhookUrl })
+    const result = await runReportSchedule(data, schedule, actor, { checkWebhookUrl, webhookTimeoutMs })
     mergeScheduleResult(aggregate, result)
     data = {
       ...data,
@@ -695,7 +735,7 @@ export async function runDueReportSchedules(data, actor = 'operator', { checkWeb
   return aggregate
 }
 
-async function runReportSchedule(data, schedule, actor = 'operator', { checkWebhookUrl } = {}) {
+async function runReportSchedule(data, schedule, actor = 'operator', { checkWebhookUrl, webhookTimeoutMs } = {}) {
   const startedAt = new Date().toISOString()
   const template = data.report_templates.find((item) => item.id === schedule.template_id)
   if (!template) {
@@ -729,7 +769,7 @@ async function runReportSchedule(data, schedule, actor = 'operator', { checkWebh
   const distributions = []
   const rapidproDispatches = []
   if (schedule.auto_distribute) {
-    const distribution = await distributeReport({ ...report, status: 'approved' }, { channels: schedule.distribution_defaults }, actor, data, { checkWebhookUrl })
+    const distribution = await distributeReport({ ...report, status: 'approved' }, { channels: schedule.distribution_defaults }, actor, data, { checkWebhookUrl, webhookTimeoutMs })
     report = distribution.report
     distributions.push(...distribution.runs)
     rapidproDispatches.push(...distribution.rapidproDispatches)

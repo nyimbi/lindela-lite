@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import http from 'node:http'
 import { describe, it } from 'node:test'
 
 import { handleReportingRoute, matchReportingRoute, runDueReportSchedules } from '../src/routes/reporting.js'
@@ -81,7 +82,7 @@ function recordingStore(initial = {}) {
 }
 
 const call = (route, {
-  method = 'GET', body, auth, store = recordingStore(), search = '', checkWebhookUrl,
+  method = 'GET', body, auth, store = recordingStore(), search = '', checkWebhookUrl, webhookTimeoutMs,
 } = {}) => {
   const res = fakeResponse()
   const req = makeReq(method, body, auth)
@@ -91,7 +92,7 @@ const call = (route, {
   return runWithRequestContext(auth ?? req.__auth, () => handleReportingRoute(route, {
     store, data: store.state, res, jsonResponse, req,
     url: new URL(`http://127.0.0.1/x${search}`),
-    checkWebhookUrl,
+    checkWebhookUrl, webhookTimeoutMs,
   })).then((handled) => ({ handled, res, store }))
 }
 
@@ -216,6 +217,86 @@ describe('ARC-01 — an outbox emit failure is counted, not swallowed', () => {
     assert.equal(store.state.reports.length, 1, 'the report was lost to an outbox failure')
     assert.match(metrics.render(), /outbox_emit_failed_total\{event="report\.created"\} 1/,
       'the emit failure was swallowed rather than counted')
+  })
+})
+
+describe('ENH-11 — a distribution webhook is bounded by a deadline', () => {
+  // A server that accepts the connection and then never answers. This is the
+  // case the item named: `distributeReport` fetched with no `AbortSignal`, so
+  // one stalled partner held the request that triggered the distribution open
+  // for as long as it stayed silent. Real socket, not a stub — a stubbed
+  // `fetch` would prove the argument was passed and not that a hang ends.
+  const hangingServer = () => new Promise((resolve) => {
+    const sockets = new Set()
+    const server = http.createServer(() => { /* accept, never respond */ })
+    server.on('connection', (socket) => {
+      sockets.add(socket)
+      socket.on('close', () => sockets.delete(socket))
+    })
+    server.listen(0, '127.0.0.1', () => resolve({
+      url: `http://127.0.0.1:${server.address().port}/hook`,
+      // The abort destroys the client side; the server's socket lingers until
+      // the kernel notices, so close them explicitly or `server.close()` waits.
+      close: () => new Promise((done) => {
+        for (const socket of sockets) socket.destroy()
+        server.close(done)
+      }),
+    }))
+  })
+
+  it('records a failed run naming the deadline instead of hanging', async () => {
+    const server = await hangingServer()
+    try {
+      const store = recordingStore({ reports: [report({ status: 'approved' })] })
+      const started = Date.now()
+      const { res } = await call({ kind: 'reports', id: 'r1', action: 'distribute' }, {
+        method: 'POST',
+        body: { channels: [{ channel: 'webhook', url: server.url }] },
+        // `checkWebhookUrl` resolves the loopback address the server actually
+        // listens on, which the SSRF guard would refuse — the guard is asserted
+        // separately above and is not what this test is about.
+        checkWebhookUrl: async (raw) => raw,
+        webhookTimeoutMs: 300,
+        store,
+      })
+      const elapsed = Date.now() - started
+      const run = store.state.report_distribution_runs.at(-1)
+      assert.equal(run.status, 'failed', 'the run was not recorded as failed')
+      assert.match(run.error, /did not answer within 300ms/,
+        `the recorded error names the mechanism, not the budget: ${run.error}`)
+      assert.doesNotMatch(run.error, /aborted due to timeout/,
+        'the runtime\'s own TimeoutError string reached the run row')
+      assert.ok(elapsed < 3000, `the request took ${elapsed}ms — the deadline did not fire`)
+      assert.equal(res.status, 201, 'the distribution was not recorded')
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('still records a webhook that answers, so the deadline is not a blanket refusal', async () => {
+    // The positive control. A predicate that fails every request would pass the
+    // test above; this is what makes the pair an assertion about the deadline.
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{"ok":true}')
+    })
+    await new Promise((done) => server.listen(0, '127.0.0.1', done))
+    try {
+      const store = recordingStore({ reports: [report({ status: 'approved' })] })
+      await call({ kind: 'reports', id: 'r1', action: 'distribute' }, {
+        method: 'POST',
+        body: { channels: [{ channel: 'webhook', url: `http://127.0.0.1:${server.address().port}/hook` }] },
+        checkWebhookUrl: async (raw) => raw,
+        webhookTimeoutMs: 300,
+        store,
+      })
+      const run = store.state.report_distribution_runs.at(-1)
+      assert.equal(run.status, 'sent', `a responsive webhook was recorded as ${run.status}: ${run.error}`)
+      assert.equal(run.response_status, 200)
+      assert.deepEqual(run.response_body, { ok: true })
+    } finally {
+      await new Promise((done) => server.close(done))
+    }
   })
 })
 

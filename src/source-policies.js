@@ -41,7 +41,17 @@ export const SOURCE_POLICIES = Object.freeze({
   // walk is a paginated quarter-by-quarter crawl of 40 years, and re-running
   // it hourly would be abuse of a free service. They run on demand (public
   // ingestion or the ingestion run API) to stock training data.
-  gdacs_archive: { interval_minutes: 0, timeout_ms: 30000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
+  //
+  // ENH-11. `budget_ms` is the deadline for the *source*, where `timeout_ms`
+  // bounds one request. A full walk is 1985→now quarter by quarter — 168
+  // requests at two retries each — so 168 × 3 × 30s reaches ~4.2 h while every
+  // individual call is a healthy 30s. ING-06 measured the runaway; the budget
+  // is what stops it, and the connector checks it between windows so the run
+  // can say why it stopped instead of being reaped by a socket that outlives
+  // the process. 15 minutes is roughly four times the slowest observed run
+  // across every source in the demo store (ipc_hdx, 174.8s) and still leaves
+  // the walk bounded, which is the point.
+  gdacs_archive: { interval_minutes: 0, timeout_ms: 30000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false, budget_ms: 900000 },
   open_meteo_archive: { interval_minutes: 0, timeout_ms: 60000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
   open_meteo_flood: { interval_minutes: 0, timeout_ms: 60000, retries: 2, stale_after_minutes: 43200, minimum_records: 1, regular: false },
   // Same cadence as open_meteo: the forecast is refreshed upstream roughly

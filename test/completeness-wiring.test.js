@@ -341,3 +341,83 @@ describe('gdacs_archive: a capped quarter is no longer a quiet quarter', () => {
     }
   })
 })
+describe('ENH-11 — the archive walk is bounded by a declared wall-clock budget', () => {
+  // ING-06. `timeout_ms` bounds one request and cannot see the sum; a full
+  // gdacs_archive walk is 1985→now quarter by quarter, and 168 requests at two
+  // retries and 30s apiece reaches ~4.2 hours while every call is a healthy
+  // one. The budget bounds the *source*, and these tests are about the two
+  // things that makes true: the walk stops, and it says why.
+  //
+  // The exhaustion is made deterministic rather than raced: the stub sleeps
+  // longer than the whole budget, so the first window is read (its `issue()`
+  // runs within milliseconds of the budget starting) and every window after it
+  // is denied by a margin of 100ms. A test that depended on a real clock's
+  // jitter would pass or fail with machine load.
+  const BUDGET_MS = 200
+  const WINDOW_MS = 300
+
+  const slowArchive = () => gdacsArchive(async () => {
+    await new Promise((resolve) => setTimeout(resolve, WINDOW_MS))
+    return { features: gdacsFeatures(12) }
+  })
+
+  it('stops the walk at the deadline and names the budget in the errors', async () => {
+    const result = await withStubbedFetch(
+      slowArchive(),
+      () => gdacsArchiveConnector.ingest({
+        archive_start_year: THIS_YEAR - 1, retries: 0, budget_ms: BUDGET_MS,
+      }))
+
+    const c = result.completeness
+    assert.equal(c.budget_ms, BUDGET_MS, 'the budget in force was not reported')
+    assert.equal(c.pages_fetched, 1, `the walk read ${c.pages_fetched} windows past its budget`)
+    assert.ok(c.windows_skipped_by_budget > 0, 'no window was recorded as cut off by the budget')
+    assert.equal(c.budget_exhausted, true)
+    assert.equal(
+      c.pages_fetched + c.windows_skipped_by_budget,
+      c.windows_planned,
+      'the windows the budget took and the windows read must account for the plan',
+    )
+    assert.ok(result.errors.some((e) => /budget_exhausted/.test(e)),
+      `the run did not name the budget stop: ${result.errors.join(' | ')}`)
+    assert.match(
+      result.errors.find((e) => /budget_exhausted/.test(e)),
+      new RegExp(`wall-clock budget of ${BUDGET_MS}ms`),
+      'the error names the mechanism and not the deadline',
+    )
+  })
+
+  it('reads the windows it cut off as unknown, not as a quiet quarter', async () => {
+    // A truncated crawl reported as complete is the silence this whole file
+    // exists to remove. The windows the budget took were never read, so
+    // whatever GDACS holds for them is unknown — the same claim a failed fetch
+    // makes, and it has to reach the verdict the same way.
+    const result = await withStubbedFetch(
+      slowArchive(),
+      () => gdacsArchiveConnector.ingest({
+        archive_start_year: THIS_YEAR - 1, retries: 0, budget_ms: BUDGET_MS,
+      }))
+
+    assert.notEqual(verdictName(result.completeness), 'complete',
+      'a walk the budget stopped reported itself as complete')
+    assert.equal(result.completeness.complete, false)
+    assert.equal(result.completeness.walk_end, 'plan_abandoned')
+  })
+
+  it('walks unbounded when no budget is declared, so the deadline is opt-in', async () => {
+    // The positive control. A predicate that truncated every walk would pass
+    // both tests above; this is what makes them an assertion about the budget
+    // rather than about truncation. Every other connector declares no
+    // `budget_ms`, so this is also their behaviour.
+    const result = await withStubbedFetch(
+      gdacsArchive(() => ({ features: gdacsFeatures(12) })),
+      () => gdacsArchiveConnector.ingest({ archive_start_year: THIS_YEAR, retries: 0 }))
+
+    assert.equal(result.completeness.budget_ms, null, 'a budget appeared where none was declared')
+    assert.equal(result.completeness.windows_skipped_by_budget, 0)
+    assert.equal(result.completeness.budget_exhausted, false)
+    assert.equal(result.completeness.pages_fetched, result.completeness.windows_planned,
+      'the unbounded walk did not read every planned window')
+    assert.ok(!result.errors.some((e) => /budget_exhausted/.test(e)))
+  })
+})
