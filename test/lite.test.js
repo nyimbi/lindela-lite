@@ -890,6 +890,63 @@ describe('Lindela Lite analytics', () => {
     assert.equal(risk.interval_width, risk.sensitivity_width)
   })
 
+  it('carries the ensemble spread index, which the band above it is not', () => {
+    // `spreadSkillIndex` was written, tested in isolation, and reachable from
+    // nothing: `src/analytics/ensemble.js` computed a coefficient of variation
+    // over ensemble members and no production path ever called it. A dead
+    // module the inventory lists as a capability is worse than an absent one,
+    // so the fix is that the flood payload carries it — and this asserts the
+    // payload, not the function, because the function was never the defect.
+    const flood = computeFloodRisk(data)
+    const risk = flood[0]
+
+    // Always present, so a consumer can tell "not reportable" from "field
+    // dropped" — null is the answer below the floor, not an absent key.
+    assert.ok('ensemble_spread_index' in risk, 'the flood payload dropped ensemble_spread_index')
+    assert.ok('ensemble_spread_basis' in risk, 'the flood payload dropped ensemble_spread_basis')
+    assert.equal(risk.ensemble_spread_floor, 3)
+
+    // The band is coverage-driven; this is member-driven. They must not be the
+    // same number wearing two names, which is the conflation the sensitivity
+    // rename already fixed once on this payload.
+    assert.notEqual(risk.ensemble_spread_index, risk.sensitivity_width)
+  })
+
+  it('reports an ensemble spread only from real ensemble members', () => {
+    // Three ensemble forecasts, each with members that disagree — enough to
+    // clear the floor. The point is that the number moves with member spread
+    // and stays null when the members are absent, so it cannot be satisfied by
+    // the point forecast alone.
+    const member = (id, p50, values) => ({
+      ...data.climate_observations[0],
+      id,
+      precipitation_mm: p50,
+      ensemble_source: 'open_meteo_ensemble',
+      ensemble_p50: p50,
+      ensemble_p90: p50,
+      ensemble_members: values.map((value) => ({ value })),
+    })
+
+    const tight = computeFloodRisk({
+      ...data,
+      climate_observations: [member('c1', 100, [98, 102]), member('c2', 100, [99, 101]), member('c3', 100, [97, 103])],
+    })[0]
+    const wide = computeFloodRisk({
+      ...data,
+      climate_observations: [member('c1', 100, [40, 160]), member('c2', 100, [30, 170]), member('c3', 100, [50, 150])],
+    })[0]
+
+    assert.ok(Number.isFinite(tight.ensemble_spread_index), 'three ensembles must clear the floor')
+    assert.equal(tight.ensemble_spread_basis, 3)
+    assert.ok(wide.ensemble_spread_index > tight.ensemble_spread_index,
+      'a wider ensemble must report a larger spread index — otherwise the field is not reading the members')
+
+    // Below the floor: null, and the basis says why rather than the key vanishing.
+    const one = computeFloodRisk({ ...data, climate_observations: [member('c1', 100, [40, 160])] })[0]
+    assert.equal(one.ensemble_spread_index, null)
+    assert.equal(one.ensemble_spread_basis, 0)
+  })
+
   it('explains a zero-width band rather than implying certainty', () => {
     // With full input coverage the band collapses. That must not read as
     // "no uncertainty" — the limits text has to say what it means.

@@ -338,7 +338,7 @@ The gaps are uneven in a way that matters:
 | # | Item | Status now | Was |
 |---|---|---|---|
 | 1 | Quantile risk + calibration report | **Shipped** — `calibrationReport` is called on `/api/v1/assessments` (`src/routes/events.js:85`) | "report not routed" |
-| 2 | Ensemble & multi-model forcing | **Partial** — the ensemble has a live source (`src/connectors/open-meteo.js:126`, gated on `include_ensemble`); only `spreadSkillIndex` (`src/analytics/ensemble.js:43`) has no production caller | "dead module, no live data" |
+| 2 | Ensemble & multi-model forcing | **Shipped** — the ensemble has a live source (`src/connectors/open-meteo.js:126`, gated on `include_ensemble`), and `spreadSkillIndex` is now reachable: `computeFloodRisk` reports `ensemble_spread_index` / `ensemble_spread_basis` / `ensemble_spread_floor` (`src/analytics.js`), asserted by `test/lite.test.js` | — |
 | 3 | Impact-based forecasting | **Shipped** — assets-outer `distinctAssets` (`src/analytics/impact.js:118`); `replaceAnalytics` writes all derived collections in one transaction (`src/postgres-store.js:1068`) | "broken on Postgres, double-counted" |
 | 4 | Bias-corrected downscaling | **Shipped** — `MIN_STATIONS_FOR_QUANTILE_MAP = 3`, null-refusing (`src/analytics/downscaling.js:18`), wired at `src/routes/compute.js:58` | "degenerate with one station" |
 | 5 | Data-quality lineage graph | **Shipped** — one lineage row per source run with its own counts and hashes (`src/provenance.js:223`, `test/record-provenance.test.js:385`) | "implemented, tested, wrong" |
@@ -358,10 +358,12 @@ The gaps are uneven in a way that matters:
 | 19 | Scenario workbench | **Shipped** | — |
 | 20 | Localization + RTL | **Partial** — **10** locales, not 11, and RTL *is* implemented (`public/shared/fmt.js:299-334`); the pickers offer only English | "11 locales, missing on 3 key surfaces" |
 
-**13 shipped, 7 partial, 0 rejected.** The footer read "5 shipped, 15 partial"
+**14 shipped, 6 partial, 0 rejected.** The footer read "5 shipped, 15 partial"
 until 2026-10-16, which its own table above has never said — counting the rows
 gives 7 `Shipped` and 13 `Partial` at the time, and that count was itself made
-from rows a third of which were stale. A hand-kept total that disagrees with the
+from rows a third of which were stale. Row 2 moved Partial → Shipped later the
+same day, when `spreadSkillIndex` acquired a production caller (see the row); the
+footer follows the table, which is the point. A hand-kept total that disagrees with the
 table it summarises is the same failure this register catalogues elsewhere, and
 nothing checked it: `test/audit-register-structure.test.js` guards
 `audit-2026-10/`, and this file is outside its jurisdiction.

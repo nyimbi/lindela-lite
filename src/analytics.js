@@ -4,6 +4,7 @@ import { riskLevel, severityWeight } from './schema.js'
 import { clamp, canonicalHash, haversineKm, stableId, toNumber } from './utils.js'
 import { KNOWN_DISTRICTS } from './districts.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
+import { spreadSkillIndex, MIN_ENSEMBLES_FOR_SPREAD_SKILL } from './analytics/ensemble.js'
 import { meanMeasured } from '../public/shared/units.js'
 import { compoundHazardScore, MIN_COMPOUND_MONTHS } from './compound-hazard.js'
 import { computeRoadAccess } from './road-access.js'
@@ -880,6 +881,15 @@ export function computeFloodRisk(data, options = {}) {
     // coverage. Percentiles previously synthesized from a point value would
     // otherwise always satisfy this and report uncertainty the data does not have.
     const hasEnsemble = climate.some((c) => c.ensemble_source === 'open_meteo_ensemble' && Number.isFinite(c.ensemble_p90))
+    // How wide the ensemble is relative to its own value — a coefficient of
+    // variation, and the one number here that comes from the forecast's own
+    // members rather than from input coverage. It is null below the reporting
+    // floor (`MIN_ENSEMBLES_FOR_SPREAD_SKILL`), and null is the honest answer:
+    // a relative spread from one or two ensembles describes the sample, not the
+    // uncertainty. Surfaced beside the sensitivity band so a reader can see that
+    // the two are different quantities — the band is coverage-driven, this is
+    // member-driven, and only this one is a property of the forecast.
+    const spreadSkill = spreadSkillIndex(climate)
     const hasBiasCorrection = climate.some((c) => Number.isFinite(c.bias_corrected_precipitation_mm))
 
     // Same rule for probability: an absent forecast is not a 0% chance of rain.
@@ -983,6 +993,15 @@ export function computeFloodRisk(data, options = {}) {
       score_p90,
       interval_width,
       calibrated_uncertainty: false,
+      // Member-derived, unlike the band above it. `ensemble_spread_index` is a
+      // relative spread (mean member stddev / mean member median) over the
+      // in-scope ensemble forecasts; `ensemble_spread_basis` says how many went
+      // into it, and both are null when the floor was not met. A consumer that
+      // wants "how uncertain is this input" wants this field, not
+      // `sensitivity_width`, and the two are named so the choice is visible.
+      ensemble_spread_index: spreadSkill,
+      ensemble_spread_basis: spreadSkill === null ? 0 : climate.filter((c) => c.ensemble_source === 'open_meteo_ensemble').length,
+      ensemble_spread_floor: MIN_ENSEMBLES_FOR_SPREAD_SKILL,
       risk_level: riskLevel(score),
       confidence,
       generated_at,
