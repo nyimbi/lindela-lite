@@ -331,7 +331,18 @@ function renderSettingsPanel() {
     setStatus('Evaluating alert rules...')
     const payload = await postJson('/api/v1/alerts/evaluate', {})
     if (!payload.success) { setStatus(payload.error || 'Alert evaluation failed'); return }
-    setStatus(`Evaluated ${payload.evaluated} rules; created ${payload.created} alert events.`)
+    // D11's second half. "Evaluated 6 rules; created 1 alert event" was the whole
+    // report, and it counted five rules whose metric resolved to nothing as
+    // rules that had been checked and had not crossed their threshold. Those are
+    // different facts and only one of them is a reason to edit a rule, so the
+    // dead ones are named — a count alone sends the operator to the log, and the
+    // path is what they need to fix.
+    const dead = payload.unresolvable || []
+    const summary = `Evaluated ${payload.evaluated} rules; created ${payload.created} alert events.`
+    setStatus(dead.length
+      ? `${summary} ${dead.length} could not be tested — ${dead.map((d) => `${d.rule_name || d.rule_id} (${d.metric})`).join(', ')} resolved to nothing, so they can never fire.`
+      : summary,
+    )
     await refresh({ force: true })
   }
 

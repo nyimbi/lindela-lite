@@ -335,10 +335,22 @@ and `public/workflow/ops.js` — the surface that actually calls shadow-run — 
 term rather than the protocol's primary metric, which for a compound condition set sent the
 operator to edit a path that was fine.
 
-What is still not done: nothing surfaces `unresolvable` on the alert *list* an operator
-reads. A rule that is dead is visible in the log and in the shadow-run response, and not in
-the panel. That is a smaller gap than the one closed here and is recorded rather than
-implied.
+**Closed 2026-10-17.** The gap was one call wide: `evaluateAndPersistAlerts` computed
+`unresolvable`, logged it, and returned `{ raised, updated }`, so `POST /alerts/evaluate`
+answered `evaluated: 6, created: 1` — five of the six rules had never been compared against
+their threshold, and the response said they had been evaluated. The engine now returns the
+list, the route reports `unevaluable` beside `evaluated` with the paths in `unresolvable`,
+and the settings panel's Evaluate button names each dead rule and its metric rather than
+folding it into the total.
+
+Found while closing it, and **not** fixed here: the shipped demo seed's own rules and
+protocols use metric paths that name nothing in the evaluation context. Measured against
+`data/lindela-lite-store.json` on 2026-10-17, **5 of 6** alert rules and **8 of 12**
+trigger protocols are unresolvable — `precipitation_mm`, `temperature_max_c`,
+`conflict_events_count_7d`, `fever_case_rate_per_1000`, `dispatch_accuracy_pct`. The
+context carries `counts.*` and `operations.*`, so a rule is live only if its path starts
+with one of those; every bare field name is dead. That is what the diagnostic now says out
+loud, which is the only reason it is visible at all.
 
 ---
 

@@ -528,5 +528,6 @@ read by the backtest.
 - `evaluateAlertRules` returns the rules whose metric resolved to nothing as
   `unresolvable`, and `evaluateAndPersistAlerts` logs each one as
   `alert_rule_metric_unresolvable`. A typo in a metric path is a rule that can never fire,
-  and it is now distinguishable from a rule that correctly did not fire — in the log and in
-  the shadow-run response, though not yet on the alert list an operator reads.
+  and it is now distinguishable from a rule that correctly did not fire — in the log, in
+  the shadow-run response, and on the settings panel's Evaluate report, which names each
+  dead rule and its path and separates `unevaluable` from `created` in the response body.

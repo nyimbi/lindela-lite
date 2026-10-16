@@ -38,6 +38,7 @@ import { resolveMetric, evaluateConditionSet, evaluateAlertRules, evaluateInShad
 import { buildEvaluationContext, counts, operationalSummary } from '../src/operations.js'
 import { OUTPUT_COLLECTIONS } from '../src/ingestion.js'
 import { liveContext } from '../src/protocols.js'
+import { evaluateAndPersistAlerts } from '../src/server.js'
 import { JsonStore } from '../src/store.js'
 import { ROOT } from './browser-env.mjs'
 
@@ -236,6 +237,84 @@ describe("D11 — a metric that names nothing says so", () => {
     const { unresolvable } = evaluateAlertRules(store('counts.hazard_events'), absent)
     assert.equal(unresolvable.length, 1)
     assert.equal(unresolvable[0].resolved, 'null')
+  })
+
+  it('the engine hands the dead rules back, so a caller can surface them', async () => {
+    // `evaluateAlertRules` has returned `unresolvable` since `5dca0be`; the
+    // engine that wraps it logged each one and returned only `{ raised,
+    // updated }`, so the fact died one call above the surface. A caller cannot
+    // surface what it is not handed, and `POST /alerts/evaluate` answered
+    // `evaluated: 6, created: 1` — which reads as five rules that correctly did
+    // not cross their threshold.
+    const dir2 = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-unresolvable-'))
+    try {
+      const s = new JsonStore(path.join(dir2, 'store.json'))
+      await s.merge({ alert_rules: [rule('counts.hazard_eventz')] })
+      const result = await evaluateAndPersistAlerts(s, await s.read())
+      assert.equal(result.unresolvable.length, 1)
+      assert.equal(result.unresolvable[0].metric, 'counts.hazard_eventz')
+      assert.deepEqual(result.raised, [])
+    } finally {
+      await fs.rm(dir2, { recursive: true, force: true })
+    }
+  })
+
+  it('the settings panel names the dead rule rather than counting it as evaluated', async () => {
+    // The last site, and the one an operator actually reads. Driven rather than
+    // read: an earlier version of this test asserted the panel *source* contained
+    // `payload.unresolvable`, and a canary that made the warning branch
+    // unreachable while leaving that string in place passed it — a source-text
+    // guard cannot see the defect it is named for. `mount` takes its console as
+    // a parameter, so the real handler runs against stubs and the message is
+    // what is asserted.
+    const { mount } = await import('../public/panels/settings.js')
+    const statuses = []
+    const panel = mount({
+      $: () => null,
+      state: {},
+      escapeHtml: (s) => String(s),
+      fetchJson: async () => ({ data: [] }),
+      lazy: async () => ({ mountOps: async () => {}, askToConfirm: async () => true }),
+      setStatus: (m) => statuses.push(m),
+      queueRequest: (f) => f(),
+      refresh: async () => {},
+      bindApiKeyInput: () => {},
+      reportsPanel: async () => ({ createReportTemplate: async () => {} }),
+      postJson: async () => ({
+        success: true, evaluated: 6, created: 1,
+        unresolvable: [{ rule_id: 'rule-flood-precip', rule_name: 'Flood Watch', metric: 'precipitation_mm', resolved: 'undefined' }],
+      }),
+      patchJson: async () => ({ success: true }),
+      safeClass: (s) => String(s),
+    })
+    await panel.evaluateAlerts()
+    const message = statuses.at(-1) || ''
+    assert.match(message, /6 rules/, 'the count of rules considered is still reported')
+    assert.match(message, /Flood Watch/, 'the dead rule must be named — the path is what the operator has to fix')
+    assert.match(message, /precipitation_mm/, 'the metric path is the thing to edit, so it travels with the name')
+    assert.match(message, /can never fire/,
+      'a rule that was never tested is not a rule that did not fire, and the message has to say so')
+  })
+
+  it('a healthy evaluation keeps the plain report', async () => {
+    // The control. A panel that always names a dead rule would satisfy the test
+    // above while alarming on every healthy evaluation.
+    const { mount } = await import('../public/panels/settings.js')
+    const statuses = []
+    const panel = mount({
+      $: () => null, state: {}, escapeHtml: (s) => String(s),
+      fetchJson: async () => ({ data: [] }),
+      lazy: async () => ({ mountOps: async () => {}, askToConfirm: async () => true }),
+      setStatus: (m) => statuses.push(m),
+      queueRequest: (f) => f(), refresh: async () => {}, bindApiKeyInput: () => {},
+      reportsPanel: async () => ({ createReportTemplate: async () => {} }),
+      postJson: async () => ({ success: true, evaluated: 3, created: 2, unresolvable: [] }),
+      patchJson: async () => ({ success: true }), safeClass: (s) => String(s),
+    })
+    await panel.evaluateAlerts()
+    const message = statuses.at(-1) || ''
+    assert.match(message, /Evaluated 3 rules; created 2 alert events\./)
+    assert.doesNotMatch(message, /can never fire/)
   })
 
   it('the shadow run says why, rather than "No trigger condition met"', () => {

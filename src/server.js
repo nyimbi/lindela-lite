@@ -1169,7 +1169,15 @@ export async function evaluateAndPersistAlerts(store, data, { actor = null, subj
       }
     }
   }
-  return { raised, updated }
+  // D11's second half, third site. The log line and the counter are the only
+  // evidence the operator has that a rule is dead, and neither is on the screen
+  // they are looking at: `POST /alerts/evaluate` answered `evaluated: 6, created:
+  // 1`, which reads as five rules that correctly did not cross their threshold.
+  // The count of rules that could not be tested is a different number from the
+  // count that were tested and did not fire, and it is returned so the caller
+  // can say which. Returning it is not the same as surfacing it — the route
+  // does that — but a caller cannot surface what it is not handed.
+  return { raised, updated, unresolvable }
 }
 
 /**

@@ -307,15 +307,22 @@ async function handleAlertEvaluation(store, data, req, res, jsonResponse, evalua
     return
   }
   const body = await readRequestJson(req)
-  const { raised, updated } = await evaluateAndPersistAlerts(store, data, {
+  const { raised, updated, unresolvable = [] } = await evaluateAndPersistAlerts(store, data, {
     actor: body.actor,
     subject: req.__auth?.subject,
   })
+  // D11's second half, at the surface an operator actually reads. `evaluated`
+  // counts every active rule; a rule whose metric resolved to nothing was never
+  // compared against its threshold, and reporting it inside that total is the
+  // silence the whole diagnostic exists to break. The two are separate fields
+  // and `unevaluable` is the number that says the evaluation was partial.
   jsonResponse(res, 201, {
     success: true,
     evaluated: data.alert_rules.length,
     created: raised.length,
     updated: updated.length,
+    unevaluable: unresolvable.length,
+    unresolvable,
     data: raised,
   })
 }

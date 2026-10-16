@@ -219,6 +219,39 @@ describe('ENH-60 — alerts/evaluate refuses a wrong verb with a 405, not a 404'
     assert.equal(res.json().evaluated, 2)
     assert.equal(res.json().created, 1)
   })
+
+  it('separates a rule that could not be tested from one that did not fire', async () => {
+    // D11's second half, at the surface. `evaluated` counts every active rule,
+    // and a rule whose metric resolved to nothing was never compared against
+    // its threshold — so reporting it inside that total says five rules were
+    // checked when five were skipped. The engine has returned `unresolvable`
+    // since `5dca0be`; the route dropped it, and this asserts it does not.
+    const dead = { rule_id: 'r2', rule_name: 'Typo rule', metric: 'counts.hazard_eventz', resolved: 'undefined' }
+    const { res } = await call({ kind: 'alerts-evaluate' }, {
+      method: 'POST',
+      data: { alert_rules: [{ id: 'r1' }, { id: 'r2' }] },
+      body: {},
+      evaluateAndPersistAlerts: async () => ({ raised: [], updated: [], unresolvable: [dead] }),
+    })
+    assert.equal(res.status, 201)
+    assert.equal(res.json().evaluated, 2)
+    assert.equal(res.json().unevaluable, 1, 'the count of rules that were never tested must be its own field')
+    assert.deepEqual(res.json().unresolvable, [dead], 'the path is what the operator has to fix, so it travels with the count')
+  })
+
+  it('an engine that returns no `unresolvable` is not reported as having dead rules', async () => {
+    // The default is the empty list, not `undefined`: a caller that surfaces
+    // `unresolvable.length` must not throw on an engine written before the field
+    // existed, and a missing field must not read as "some rules are dead".
+    const { res } = await call({ kind: 'alerts-evaluate' }, {
+      method: 'POST',
+      data: { alert_rules: [{ id: 'r1' }] },
+      body: {},
+      evaluateAndPersistAlerts: async () => ({ raised: [], updated: [] }),
+    })
+    assert.equal(res.json().unevaluable, 0)
+    assert.deepEqual(res.json().unresolvable, [])
+  })
 })
 
 describe('ENH-52 — anticipatory/evaluate fires inside the window, and only then', () => {
