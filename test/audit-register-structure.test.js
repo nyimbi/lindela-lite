@@ -30,7 +30,8 @@
  */
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import path from 'node:path'
 import { describe, it } from 'node:test'
 
 const README = readFileSync(new URL('../docs/improvements/audit-2026-10/README.md', import.meta.url), 'utf8')
@@ -215,19 +216,29 @@ describe('the audit register’s skeleton, guarded', () => {
  * `ENH-01` is "Deny-by-default authorization" in one and "The field app works
  * for a week offline" in the other, and so on for all thirty.
  *
- * The cost is not cosmetic. There are 1,855 `ENH-nn` citations in this
- * repository across 338 files, 100 of them in `src/` comments — so a reader
- * following `// ENH-29` from a source file has a 50% chance of landing on the
- * wrong item, and `docs/improvements/status.md` resolves every id against the
- * *first* register. This is the same shape the file's own header catalogues:
- * a hand-kept table that nothing cross-checks drifts, and the drift looks like
- * a clean result.
+ * The cost is not cosmetic, and the size of it is measured below rather than
+ * stated here — see `citationSpread()`. At the last measurement there were
+ * **1,917** `ENH-nn` citations across **348** files, **338** of them in `src/`
+ * comment lines — so a reader following `// ENH-29` from a source file has a 50%
+ * chance of landing on the wrong item, and `docs/improvements/status.md`
+ * resolves every id against the *first* register. This is the same shape the
+ * file's own header catalogues: a hand-kept table that nothing cross-checks
+ * drifts, and the drift looks like a clean result.
  *
- * The check below does not fix the collision — renaming 50 ids across 1,855
+ * That paragraph used to say "1,855 citations across 338 files, 100 of them in
+ * `src/` comments", and it closed by claiming "the numbers above are asserted".
+ * They were not — only the collision counts were — and they had already rotted
+ * when they were written. Measured at the commit that added them (`41ff308`,
+ * 2026-10-15, in a temp worktree): 1,872 citations, 338 files, **336** in `src/`
+ * comments. So the file count was right, the total was low by 17, and the
+ * `src/` figure was wrong by a factor of 3.4 — it named a tenth of the real
+ * cost in the sentence arguing that the cost was large. `citationSpread()` now
+ * derives all three, so they cannot be typed wrong again.
+ *
+ * The check below does not fix the collision — renaming 50 ids across ~1,900
  * citations is a change with its own review, and doing it inside a defect fix
  * would bury it. What it does is make the collision *measured* rather than
- * discovered: the numbers above are asserted, so the next id added to either
- * register has to be a deliberate choice rather than a paste.
+ * discovered, and hold the scale of it to the tree rather than to a memory.
  */
 describe('the two enhancement registers do not share an id space', () => {
   const FIRST = readFileSync(new URL('../docs/improvements/enhancements.md', import.meta.url), 'utf8')
@@ -280,4 +291,94 @@ describe('the two enhancement registers do not share an id space', () => {
       )
     }
   })
+
+  it('the scale the note states is the scale the tree has', () => {
+    // The header's paragraph quotes three numbers, and the version of it before
+    // this case claimed they were asserted while asserting none of them — so
+    // they rotted the moment the tree grew, which is the failure this whole file
+    // exists to catch, reproduced inside the file itself.
+    //
+    // The assertion is deliberately loose on the total and exact on the shape.
+    // The repository grows: a new file with one citation is normal and must not
+    // fail a test. What must not pass silently is the note naming a *scale* the
+    // tree has left behind — the `src/` figure was off by 3.4x, which is not
+    // drift, it is a different number.
+    const { total, files, srcComments } = citationSpread()
+    assert.ok(total > 500, `counted ${total} ENH-nn citations — the walk or the regex is wrong, not the note`)
+    assert.ok(files > 100, `counted citations in ${files} files — the walk is wrong`)
+
+    // Read from this file's own source. The note is wrapped across lines with a
+    // ` * ` prefix, so the pattern allows the comment's own asterisks between
+    // the phrases — `\s+` alone does not cross them, and the first version of
+    // this pattern failed on a note that was right there.
+    const note = /At the last measurement there were[\s*]+\*\*([\d,]+)\*\* `ENH-nn` citations across[\s*]+\*\*([\d,]+)\*\* files,[\s*]+\*\*([\d,]+)\*\* of them in `src\/`/.exec(
+      readFileSync(new URL(import.meta.url), 'utf8'),
+    )
+    assert.ok(note, 'the header note no longer states its counts in the form this check reads')
+
+    const stated = { total: Number(note[1].replace(/,/g, '')), files: Number(note[2].replace(/,/g, '')), srcComments: Number(note[3].replace(/,/g, '')) }
+    // Tight, and deliberately so. The first version allowed 10% slack and passed
+    // a note that said 349 where the tree has 338 — the slack swallowed a wrong
+    // number, which is the failure this case exists to prevent. `citationSpread()`
+    // is deterministic (measured three times: 1,917 / 348 / 338 on each run), so
+    // the note can be held to the exact figure. If the tree moves, the note moves
+    // with it in the same commit; that is the point.
+    for (const key of ['total', 'files', 'srcComments']) {
+      const actual = { total, files, srcComments }[key]
+      assert.equal(
+        stated[key],
+        actual,
+        `the header note says ${key} = ${stated[key]}, the tree has ${actual}. `
+        + 'Update the note — it is the sentence that tells a reader how much the collision costs.',
+      )
+    }
+  })
 })
+
+/**
+ * How far `ENH-nn` citations reach, measured rather than remembered.
+ *
+ * Counts every `ENH-nn` token in the repository, the files holding one, and the
+ * ones that are in a `src/` comment — which is the figure that decides whether a
+ * reader following an id from source code can be misled.
+ *
+ * `srcComments` is comment *lines* carrying at least one citation, not tokens:
+ * a line is what a reader's eye lands on, and a block comment restating three
+ * ids on one line is one place to be misled, not three. That definition is why
+ * the number is 349 rather than the 376 raw tokens in `src/`.
+ */
+function citationSpread() {
+  const ROOT = path.resolve(new URL('..', import.meta.url).pathname)
+  const SKIP = new Set(['.git', 'node_modules', '.claude', 'coverage'])
+  const RE = /\bENH-\d+\b/g
+
+  const walk = (dir, out = []) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP.has(entry.name)) continue
+      const p = path.join(dir, entry.name)
+      if (entry.isDirectory()) walk(p, out)
+      else out.push(p)
+    }
+    return out
+  }
+
+  let total = 0
+  let srcComments = 0
+  const files = new Set()
+  for (const file of walk(ROOT)) {
+    let text
+    try { text = readFileSync(file, 'utf8') } catch { continue }
+    if (text.includes('\0')) continue
+    const hits = text.match(RE)
+    if (!hits) continue
+    total += hits.length
+    files.add(file)
+    if (path.relative(ROOT, file).startsWith(`src${path.sep}`)) {
+      for (const line of text.split('\n')) {
+        if (RE.test(line) && /^\s*(\/\/|\*|\/\*)/.test(line)) srcComments += 1
+        RE.lastIndex = 0
+      }
+    }
+  }
+  return { total, files: files.size, srcComments }
+}
