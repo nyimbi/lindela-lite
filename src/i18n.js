@@ -1,27 +1,19 @@
-import fs from 'node:fs/promises'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const i18nDir = path.resolve(__dirname, '../public/i18n')
-const catalogCache = {}
-
-export const SUPPORTED_LOCALES = ['en', 'sw', 'ar', 'so', 'din', 'km', 'nk', 'fr', 'pt', 'am']
-
-export async function loadCatalog(locale = 'en') {
-	if (catalogCache[locale]) return catalogCache[locale]
-
-	const normalized = SUPPORTED_LOCALES.includes(locale) ? locale : 'en'
-	try {
-		const data = await fs.readFile(path.join(i18nDir, `${normalized}.json`), 'utf8')
-		const catalog = JSON.parse(data)
-		catalogCache[normalized] = catalog
-		return catalog
-	} catch {
-		return {}
-	}
-}
-
+/**
+ * The server-side text primitives.
+ *
+ * `loadCatalog` and `SUPPORTED_LOCALES` were deleted 2026-10-16: nothing
+ * imported either, and the only thing that would have used them is the
+ * `?locale=` option on the markdown report export, which is itself unwired —
+ * `renderReportMarkdown` takes a `locale` and renders every structural word in
+ * English, and the catalogs in `public/i18n/` hold UI labels, not the report
+ * document's `Type:`/`Status:`/`Warnings` headings. So the loader had nothing
+ * to load *for*, and deleting it removes a capability claim rather than a
+ * capability. The finding is recorded against the option, not the loader: the
+ * route accepts a locale it cannot honour, which is a defect a caller can hit.
+ *
+ * What remains is what the tree actually calls: `plainLanguage` from
+ * `src/reports.js`, and `t`/`isRtl` from the client bundle's tests.
+ */
 export function t(catalog, key, params = {}) {
 	let text = catalog[key] || key
 	for (const [name, value] of Object.entries(params)) {

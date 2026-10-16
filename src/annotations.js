@@ -177,19 +177,6 @@ function clientIdOf(annotation) {
   return isAbsent(annotation?.client_annotation_id) ? null : String(annotation.client_annotation_id)
 }
 
-/** The id of the live version of an annotation: the successor if it has one, else itself. */
-export function liveVersionOf(annotations, id) {
-  let current = annotations.find((a) => a.id === id) || null
-  let guard = 0
-  while (current?.superseded_by && guard < annotations.length + 1) {
-    const next = annotations.find((a) => a.id === current.superseded_by)
-    if (!next) break
-    current = next
-    guard += 1
-  }
-  return current
-}
-
 /** The whole chain of versions ending at `id`, oldest first. */
 export function versionsOf(annotations, id) {
   let current = annotations.find((a) => a.id === id) || null

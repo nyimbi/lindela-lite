@@ -54,8 +54,14 @@ const GHO_ROOT = 'https://ghoapi.azureedge.net/api'
  * Outbreak-relevant indicators, codes verified live on 2026-10-02 via the
  * Indicator endpoint. The unit belongs to the row here so a report cannot
  * misread deaths as cases.
+ *
+ * Exported under this name because `gho_indicators` in the request schema takes
+ * these codes, and a caller restricting the set needs to read them from the
+ * connector rather than retype them. It carried a second name
+ * (`WHO_GHO_INDICATORS = INDICATORS`) that nothing imported — a redundant alias
+ * is the same finding as a dead export, one binding over.
  */
-const INDICATORS = Object.freeze([
+export const INDICATORS = Object.freeze([
   { code: 'CHOLERA_0000000001', name: 'Number of reported cases of cholera', unit: 'cases' },
   { code: 'CHOLERA_0000000002', name: 'Number of reported deaths from cholera', unit: 'deaths' },
   { code: 'CHOLERA_0000000003', name: 'Cholera case fatality rate', unit: 'ratio' },
@@ -65,8 +71,6 @@ const INDICATORS = Object.freeze([
   { code: 'WHS3_50', name: 'Yellow fever - number of reported cases', unit: 'cases' },
   { code: 'WHS3_52', name: 'Plague - number of reported cases', unit: 'cases' },
 ])
-
-export const WHO_GHO_INDICATORS = INDICATORS
 
 export function buildIndicatorUrl(code) {
   // No $orderby (silently ignored by this endpoint) and no $filter (silently
@@ -95,7 +99,7 @@ async function connectorIngest(options = {}) {
         source: options.source,
       })
       const payload = JSON.parse(text)
-      const rows = Array.isArray(payload.value) ? payload.value : []
+      const rows = parseWhoRows(payload)
       if (!rows.length) {
         // OData answered but gave nothing: distinguishable from a network
         // failure only because it's recorded here rather than swallowed.
@@ -165,6 +169,17 @@ async function connectorIngest(options = {}) {
   return { disease_observations, errors }
 }
 
+/**
+ * The rows of an OData payload, or an empty array when the envelope is not the
+ * shape this connector expects.
+ *
+ * Exported and called from `connectorIngest` above: the body used to be inlined
+ * there, which made the export a second copy of a one-line rule — the shape
+ * `check-dead-exports.mjs` reports. The envelope is the OData `{ value: [...] }`
+ * wrapper; a payload that is not an object, or whose `value` is not an array,
+ * is a provider-side change and yields no rows rather than throwing, so the
+ * caller records it against the indicator and keeps walking the rest.
+ */
 export function parseWhoRows(payload) {
   return Array.isArray(payload?.value) ? payload.value : []
 }

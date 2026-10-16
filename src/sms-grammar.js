@@ -241,6 +241,16 @@ export function parseSmsSubmission(text, options = {}) {
   const match = trimmed.match(SUBMIT_PATTERN)
   if (!match) return { recognised: false, verb: null, refusal: null, submission: null }
 
+  // The alternation in `SUBMIT_PATTERN` and `SUBMIT_VERB_ALIASES` above are the
+  // same two words spelled twice, and the list was the copy nothing read — a
+  // verb added there would document a synonym the parser rejects. Comparing the
+  // matched token against the list makes the list load-bearing, so the drift
+  // this repository keeps paying for cannot be introduced silently: a pattern
+  // that grew a verb the list lacks throws here rather than accepting it.
+  if (!SUBMIT_VERB_ALIASES.includes(match[1].toUpperCase())) {
+    throw new Error(`SUBMIT_PATTERN matched ${JSON.stringify(match[1])}, which is not in SUBMIT_VERB_ALIASES (${SUBMIT_VERB_ALIASES.join(', ')})`)
+  }
+
   const verb = SUBMIT_VERB
   const rest = (match[2] || '').trim()
   // A bare verb: recognised as a submission, but with nothing to ground it. The

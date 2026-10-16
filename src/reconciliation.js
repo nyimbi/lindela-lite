@@ -291,6 +291,17 @@ export function reconcileNumber({ before, after, now = nowIso() } = {}) {
 }
 
 function refusal(reason, { now, before = null, current = null, trace = null }) {
+  // The reason must be one of the named codes. It was a bare string passed
+  // straight through, so `TRACE_FAILURE_REASONS` was the vocabulary a *reader*
+  // used while the code used whatever the caller typed — the list was frozen
+  // and nothing consulted it. `traceAfter.reason` at the call sites above comes
+  // from the tracer, which is the same module and uses the same constants, so
+  // this asserts rather than validates: it is a runtime check that the two
+  // spellings of the set have not drifted, which is the defect class this
+  // repository keeps paying for.
+  if (!TRACE_FAILURE_REASONS.includes(reason)) {
+    throw new Error(`refusal reason must be one of ${TRACE_FAILURE_REASONS.join(', ')}; received ${JSON.stringify(reason)}`)
+  }
   return {
     outcome: 'cannot_trace',
     finding: false,

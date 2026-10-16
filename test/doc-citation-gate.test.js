@@ -130,16 +130,44 @@ describe('the doc-citation gate is scoped to citations that name nothing', () =>
     for (const rel of ['docs/architecture/ingestion.md', 'docs/architecture/request-lifecycle.md']) {
       assert.ok(cite(rel), `${rel} should carry a citation for this check to mean anything`)
     }
-    // A planted past-EOF citation in a live architecture document is a finding.
-    const live = path.join(ROOT, 'docs/architecture/README.md')
-    const original = fs.readFileSync(live, 'utf8')
+    // A planted past-EOF citation in an architecture document is a finding.
+    //
+    // It is planted in a *copy*, not in the tracked tree. It used to be written
+    // into `docs/architecture/README.md` and restored in a `finally`, which is
+    // the QUA-08 class and it did real damage: two suite runs overlapping (or one
+    // run under enough load) leave worker B reading worker A's planted text as
+    // its own "original", so B's restore re-commits the plant. Measured
+    // 2026-10-16 — after two concurrent `node --test test/*.test.js` runs, the
+    // tracked file carried the planted line with no test running, and
+    // `check-doc-citations` failed the registry with a citation nobody wrote.
+    // `scanTree` takes a root, so the copy is the whole fix.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lindela-doc-citations-'))
     try {
-      fs.writeFileSync(live, `${original}\nplanted (\`src/server.js:999999\`).\n`)
-      const { code, output } = runGate()
-      assert.notEqual(code, 0, 'a past-EOF citation in docs/architecture/ passed — the walk is still scoped to one directory')
-      assert.match(output, /docs\/architecture\/README\.md/, 'the finding does not name the file it read')
+      const docs = path.join(dir, 'docs', 'architecture')
+      fs.mkdirSync(docs, { recursive: true })
+      for (const name of fs.readdirSync(path.join(ROOT, 'docs', 'architecture'))) {
+        const from = path.join(ROOT, 'docs', 'architecture', name)
+        if (fs.statSync(from).isFile()) fs.copyFileSync(from, path.join(docs, name))
+      }
+      const planted = path.join(docs, 'README.md')
+      const original = fs.readFileSync(planted, 'utf8')
+      fs.writeFileSync(planted, `${original}\nplanted (\`src/server.js:999999\`).\n`)
+      const findings = scanTree(dir)
+      // The finding shape is `{ line, doc, file, cited, eof }` — assert on the
+      // fields, not on a stringified object, so a finding that merely mentions
+      // the number cannot satisfy this.
+      const hit = findings.filter((f) => f.doc.endsWith('architecture/README.md') && f.cited === 999999)
+      assert.equal(hit.length, 1,
+        `a past-EOF citation in docs/architecture/ produced ${hit.length} finding(s) — the walk is still scoped to one directory`)
+      assert.ok(hit[0].eof < 999999, 'the finding does not carry the real EOF, so it is not the past-EOF check')
+      fs.writeFileSync(planted, original)
+      assert.equal(scanTree(dir).length, 0, 'the clean copy still reports a finding, so the plant was not the cause')
     } finally {
-      fs.writeFileSync(live, original)
+      fs.rmSync(dir, { recursive: true, force: true })
     }
+    // And the tracked document was never written: a canary that leaves the tree
+    // dirty is a finding about the canary.
+    assert.equal(fs.readFileSync(path.join(ROOT, 'docs', 'architecture', 'README.md'), 'utf8').includes('999999'), false,
+      'the canary left its citation in the tracked architecture document')
   })
 })

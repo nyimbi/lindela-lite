@@ -177,7 +177,7 @@ Recorded because a rejected idea is a result.
 - **More tests, as an end in itself.** `src/` is at 97.2% direct module coverage. The gap
   is that 7 of 17 gates never run in CI, not that tests are scarce.
   *Closed 2026-10-12 (R-76): both tiers run on every push, and the registry has since
-  grown to 30 gates — 23 self-contained, 7 `needs-browser`. The sentence above is true
+  grown to 31 gates — 24 self-contained, 7 `needs-browser`. The sentence above is true
   of the tree this audit was taken at, not of the tree now.*
 
 ## Verification performed

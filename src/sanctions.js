@@ -95,10 +95,3 @@ export async function screenNames(names, options = {}) {
   }
   return { matches, screened: (names || []).length }
 }
-
-/**
- * Clears the cached SDN list. Used by tests.
- */
-export function resetSdnCache() {
-  cache = null
-}

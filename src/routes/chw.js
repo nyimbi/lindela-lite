@@ -41,7 +41,7 @@ import { loadPolicy, redactPii } from '../pii.js'
 import { stampQuality } from '../quality.js'
 import { assertCategory } from '../taxonomy.js'
 import { stableId, readRequestJson } from '../utils.js'
-import { recordIdForSubmission } from '../submission-id.js'
+import { FIELD_REPORT_PREFIX, recordIdForSubmission } from '../submission-id.js'
 import { formFor, mergeForms, validateAnswers } from '../forms.js'
 
 /**
@@ -106,7 +106,7 @@ export async function handleChwRoute(route, { store, data, req, res, jsonRespons
       // record. Without it the id hashed the server's `now` and a lost response
       // followed by a queue drain wrote the same report twice, which was
       // measured against a live server before this changed.
-      id: recordIdForSubmission('report', body.submission_id)
+      id: recordIdForSubmission(FIELD_REPORT_PREFIX, body.submission_id)
         || stableId('report', [body.description, body.location?.latitude, body.location?.longitude, now]),
       submission_id: typeof body.submission_id === 'string' && body.submission_id ? body.submission_id : null,
       summary: body.description,

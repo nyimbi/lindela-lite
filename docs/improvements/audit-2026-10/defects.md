@@ -2535,6 +2535,121 @@ It found `src/demo-seed.js`, which the hand count above had missed — the modul
 is reached only through `POST /api/v1/demo/seed`, so nothing imports it from a
 test file and a name-based census cannot see it.
 
+### QUA-09 — HIGH — reachability of a module is not reachability of its exports
+`check-module-coverage.mjs` asks whether a *module* is reached, and one import of
+one name answers yes for the whole file. So a module can be fully covered while
+half its exports are reachable by nothing: `src/sanctions.js` was reached by
+`lite.test.js` importing `parseSdnCsv` and `screenName`, and `resetSdnCache` —
+whose own docstring said "Used by tests" — was called by no test and no module,
+in or out. The census above counts files; the defect lives one level down, in the
+names a file exports.
+
+**Fixed 2026-10-16.** `scripts/check-dead-exports.mjs` reads *import statements*
+and asks, per export, whether any name import, `export *`, namespace import or
+resolvable dynamic import reaches it. It reported **31** findings on the tree it
+was written against and the dispositions took it to **10**, each one an export
+nothing reaches:
+
+- **Deleted, docstring false** — `resetSdnCache` ("Used by tests", no test),
+  `resetTaxonomy` ("for a test that changes the environment", but
+  `loadTaxonomySync` takes an injectable `env` so no reset is needed),
+  `loadCatalog` and `SUPPORTED_LOCALES` (nothing imported either; the only thing
+  that would have used them is the `?locale=` option below), `peerRows` (a
+  one-line twin of `peerSummaries`), `pendingForFocalPoint`, `liveVersionOf`,
+  `latestCaptureFor`, `CONSOLE_POLL_MAX_MS`, and two redundant re-export doors
+  (`DEMO_SEED_BUDGET_MS` from `server.js`, `SUBMISSION_ID_BYTES` from
+  `submission-id.js`) whose stated readers do not exist.
+- **Wired, because the consumer was real and waiting** — `parseWhoRows` (the
+  body was inlined at the call site, making the export a second copy of a
+  one-line rule), `FIELD_REPORT_PREFIX` (imported by `operations.js` and
+  `routes/chw.js`, which retyped `'report'`), `createReplicaFromEnv` (**below**),
+  and three frozen vocabularies asserted at their use sites: `TRACE_FAILURE_REASONS`
+  in `refusal()`, `REPLAY_VERDICTS` in `buildVerdict()`, `SUBMIT_VERB_ALIASES` at
+  the `SUBMIT_PATTERN` match. Each was a set declared once and consulted by
+  nothing — the recurring class — and each now throws if the code and the set
+  disagree.
+- **The 10 that remain are named, not hidden.** Four are the fixture-capture
+  family in `connectors/http.js` (`beginCapture`, `endCapture`, `captureStore`,
+  `isReplaying`) plus `federation-peers.js::localManifest`/`peersForExchange`,
+  `federation.js::incomingIsRevision` and `reconciliation.js::ledgerDigest`:
+  built, tested through the pieces they compose, and reached by no caller. The
+  rest — `observability.js::recentRequestOutcomes`, `server.js::stopPeriodicDriver`
+  — are already recorded in `docs/improvements/defects.md:874`. They are kept
+  because deleting them would remove a documented capability claim rather than a
+  capability; the gate is what keeps the list honest.
+
+**A finding the gate produced that is a real defect, not a dead export:**
+`createReplicaFromEnv` had no caller, so `options.replica` was always undefined
+and a deployment that set `LINDELA_LITE_REPLICA_URL` read its primary while the
+register said **"Wired 2026-10-12."** The register was corrected and the
+environment is now the default (`options.replica ?? createReplicaFromEnv()`).
+
+**A finding about the instrument itself, which is why the count moved 31 → 26
+before any disposition.** The first scan reported `src/connectors/gdacs.js::spec`,
+`glofas.js::spec` and `usgs-earthquake.js::spec` as dead. All three are read by
+`test/connector-registry-parity.test.js` through
+`(await import(path.join(ROOT, entry.module))).spec` — a property access on a
+*dynamic* import whose specifier is computed from `connectors.registry.json`, so
+no regex resolves it. Three sibling connectors exporting the same `spec` were not
+flagged only because `lite.test.js` reads them with a literal specifier. The rule
+was added and canaried: the name is recorded globally (the target cannot be
+attributed, and a finding naming a file the operator cannot fix is one they learn
+to skim), which costs three false findings removed against one false pass.
+
+The gate has 23 canaries and `--self-test`, and is driven from `test/` because
+`run-gates.mjs` spawns gates bare. Five instrument bugs were found and fixed while
+building it, each by a canary rather than by reading: a mention in a comment or
+docstring counted as a call; `(?<![\w$.])` excluding spread calls; `//` inside a
+regex literal read as a line comment; `${…}` template holes blanked as prose; and
+53 test files' `const { X } = await import(…)` never parsed at all.
+
+### QUA-10 — MEDIUM — the markdown report export accepts a locale it cannot honour
+`src/routes/reporting.js:208` reads `?locale=` and passes it to
+`renderReportMarkdown`, which takes a `locale` argument and renders every
+structural word — `Type:`, `Status:`, `Generated:`, `Warnings`, every section
+heading — in English. So a caller asking for `?locale=sw` receives an English
+document and no indication that the parameter did nothing. It is the same shape
+as a dead export one layer out: a capability the surface advertises and the code
+does not perform. Found while disposing of `loadCatalog`, which is the loader that
+*would* have served it and was itself reached by nothing.
+
+**Not fixed; named at the site.** The catalogs in `public/i18n/` carry UI labels
+(`action.approve`, `chw.report_sent`), not the report document's vocabulary, so
+honouring the parameter is a translation pass over `reports.js` and not a wiring
+change. The option is kept rather than silently dropped — dropping it would
+ignore the caller's request, which is worse than naming the gap — and
+`renderReportMarkdown` carries a comment saying it is accepted and not honoured.
+
+### QUA-11 — MEDIUM — a test harness kills the server it just started, then connects to it
+`test/listen-address-honesty.test.js`'s `startServer` resolved by sending the
+child `SIGTERM` and *then* returning the port, so every caller that connects to
+that port is racing the process's own shutdown. Whether `net.connect` wins
+depends only on whether the parent is scheduled within the child's shutdown
+latency, which is a property of the machine's load and not of anything the test
+asserts.
+
+Measured directly, by varying the gap between the signal and the connect:
+**0 ms → 0/60 refused, 5 ms → 60/60 refused**. In isolation the parent almost
+always wins, which is why this read as a rare flake rather than a broken harness:
+`node --test test/listen-address-honesty.test.js` alone passed 12/12 and then
+0/12 under the full suite's load, where the parent is descheduled for longer. The
+observable failure was `narrowing the bind actually narrows it` reporting
+"the loopback bind should be listening on loopback" — a message that names the
+product behaviour and not the harness, which is what made it worth chasing rather
+than re-running. It reproduced at **3/300** instrumented runs under suite load and
+**~1/46** as a plain suite run.
+
+**Fixed 2026-10-16.** `startServer` no longer kills the child; it returns it and
+each of the four callers kills it in a `t.after`, so nothing races the shutdown.
+Re-measured under the same suite load: **0/40**. The fix is canaried by restoring
+the signal in `finish`, which brings the failure back at **2/30**.
+
+The class is the same one QUA-08 states, one layer out: a test whose verdict
+depends on scheduling is evidence for nothing. The tell here was that the failing
+assertion was about the *product* — a listener that should be up — while the
+cause was in the harness, and the gap between the two is why it survived as a
+"flake" instead of being read as a defect.
+
 ### QUA-06 — MEDIUM — No test asserts a route's response envelope shape consistently
 `api-substrate.test.js` covers pagination/ETag/idempotency/readiness on
 `service_assets` only. No test walks all 150 documented routes asserting
@@ -2644,6 +2759,34 @@ Both seams are canaried by making the gate ignore its argument: the gate then
 scans the real tree, finds the guard present, exits 0, and the canary reports
 "the gate passed with the guard removed". A seam a caller can ignore silently is
 not a seam.
+
+**The class recurred a fourth time, and this one corrupted the tree.** Found
+2026-10-16 while running two `node --test test/*.test.js` runs concurrently:
+`test/doc-citation-gate.test.js` planted a past-EOF citation into the tracked
+`docs/architecture/README.md` and restored it in a `finally`. Two overlapping
+runs interleave so that worker B reads worker A's *planted* text as its own
+"original", and B's restore then re-commits the plant — after which the tracked
+document carried the planted past-EOF citation with no test running, and
+`check-doc-citations` failed the registry naming a citation nobody wrote. The
+three earlier instances were caught before they damaged anything; this one
+required `git diff` to find and a hand-restore to undo. `scanTree(root)` already
+took a root, so the canary now plants into a copy and asserts on the finding's
+fields (`cited === 999999`) rather than on a stringified object. It is canaried by
+removing the plant, which fails it with "produced 0 finding(s)".
+
+**The class recurred a third time, found 2026-10-16 while fixing QUA-09.**
+`test/i18n-reachability.test.js` planted `zz.canary_dead_key` into the tracked
+`public/i18n/en.json`, ran `scripts/check-i18n.mjs`, and restored the file in a
+`finally`. The three sibling i18n suites had already moved to a copied tree;
+this one had not, and `npm run gates` runs `check-i18n` while `node --test` runs
+the canary. Measured: six gate runs concurrent with the canary saw the planted
+key in **one**, so the registry failed intermittently with a message naming a key
+no operator had written. The fix is the seam the siblings use — `check-i18n.mjs`
+resolves `ROOT` from its own location, so a copy of the gate beside a copy of the
+tree measures the copy. Re-measured after: **0 of 18** concurrent runs failed.
+This one is the mildest of the three in consequence and the sharpest in
+diagnosis, because the failure it produces reads as a content defect in the
+catalogue rather than as a scheduling artifact.
 
 The detector for this class is not a lint — a test writing a file is legitimate.
 It is `git status` after a suite run: a dirty tree that was clean before the run

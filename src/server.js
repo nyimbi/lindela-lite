@@ -17,7 +17,7 @@ import {
   runIngestion,
 } from './ingestion.js'
 import { actionLog, counts, operationalSummary } from './operations.js'
-import { createStoreFromEnv } from './storage.js'
+import { createReplicaFromEnv, createStoreFromEnv } from './storage.js'
 import { budgetedStore, queryBudgetLimits, runWithQueryBudget, WIDE_QUERY_BUDGET } from './query-budget.js'
 import { readReplicaStore } from './read-replica.js'
 import { currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext } from './utils.js'
@@ -106,11 +106,13 @@ export const APP_VERSION = (() => {
  * on any of them.
  *
  * The value lives in `src/routes/maintenance.js` now, beside the route that
- * reads it — ENH-60 moved the seed there. It is re-exported here because
- * `test/` and `scripts/` read it off this module and a constant is not worth a
- * second import site.
+ * reads it — ENH-60 moved the seed there. It used to be re-exported from here
+ * on the stated grounds that `test/` and `scripts/` read it off this module.
+ * They do not: nothing imports `DEMO_SEED_BUDGET_MS` from `server.js`, and the
+ * only reader anywhere imports it from `routes/maintenance.js` directly. A
+ * re-export door with no one walking through it is a second way to reach one
+ * binding, and it is deleted 2026-10-16 rather than kept as an untested claim.
  */
-export { DEMO_SEED_BUDGET_MS } from './routes/maintenance.js'
 
 const DRIVER_ITEMS = [
   { id: 'ingestion', label: 'ingestion schedules', run: (store, data) => runDueIngestionSchedules(store, data) },
@@ -488,7 +490,17 @@ export function createServer(options = {}) {
   // or a replica fallback count. `readReplicaStore` returns the primary
   // *itself* when no replica is configured, so a deployment without one has no
   // wrapper in its path.
-  const apiStore = (store) => budgetedStore(readReplicaStore(store, { replica: options.replica ?? null }))
+  // ENH-67. The replica comes from the environment when the caller names none.
+  // The docstring above and the register both described this as wired while
+  // `createReplicaFromEnv` had no caller and every `createServer()` passed no
+  // `replica` — so `options.replica` was always undefined, `readReplicaStore`
+  // always returned the primary, and a deployment that set
+  // `LINDELA_LITE_REPLICA_URL` read its primary and believed it was reading a
+  // replica. The reading is explicit-first: a caller that passes `replica`
+  // (a test, an embedder) is not overridden by the environment, and `null`
+  // from an unset variable is the same "no replica" the default already was.
+  const replica = options.replica ?? createReplicaFromEnv()
+  const apiStore = (store) => budgetedStore(readReplicaStore(store, { replica }))
   // One limiter per server, not per request: the budget is per client across
   // the process, and a limiter rebuilt per request would have no memory of the
   // last request at all. Injectable so a test can drive it with a fake clock.

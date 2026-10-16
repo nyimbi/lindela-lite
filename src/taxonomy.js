@@ -159,11 +159,6 @@ export function taxonomy() {
   return cached
 }
 
-/** Reset the cache — for a test that changes the environment. */
-export function resetTaxonomy() {
-  cached = null
-}
-
 /**
  * Resolve a value to a category code, or null.
  *

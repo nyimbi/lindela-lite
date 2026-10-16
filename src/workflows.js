@@ -159,14 +159,6 @@ export function transitionWorkflow(instance, { to, actor, actor_source, claimed_
   }
 }
 
-export function pendingForFocalPoint(instances, district) {
-  return instances.filter((w) =>
-    w.type === 'anticipatory_alert' &&
-    w.state === 'focal_point_review' &&
-    w.district === district
-  )
-}
-
 export function workflowMetrics(instances) {
   const counts = {
     open: 0,

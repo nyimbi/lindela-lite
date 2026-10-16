@@ -556,16 +556,6 @@ export function pruneCaptures(entries, { now = new Date(), retentionDays = DEFAU
   return entries.filter((entry) => epochOf(requireTimestamp(entry.retrieved_at, 'retrieved_at')) >= cutoff)
 }
 
-/** The most recent capture for a URL, or null. */
-export function latestCaptureFor(captures, url) {
-  let best = null
-  for (const entry of captures) {
-    if (entry.url !== url) continue
-    if (!best || epochOf(entry.retrieved_at) >= epochOf(best.retrieved_at)) best = entry
-  }
-  return best
-}
-
 /**
  * A `fetch`-shaped object that replays captured payloads with no network.
  *

@@ -358,13 +358,33 @@ describe('the improvement registers state totals their tables agree with', () =>
     //
     // So this asserts both halves, not just the sum: a total that happens to be
     // right while the split is wrong is the failure mode a single count misses.
-    // The late set is named here rather than derived, because "found after the
-    // audit" is a fact about when the audit ran, not a property of the file.
-    const LATE = new Set(['QUA-08', 'VUL-08',
-      ...Array.from({ length: 8 }, (_, i) => `VER-${13 + i}`)])
-
+    //
     const AUDIT = read('docs/improvements/audit-2026-10/defects.md')
     const AUDIT_README = read('docs/improvements/audit-2026-10/README.md')
+
+    // The late set is *read from the README's own sentences*, not named here.
+    // It was named here, and the naming was defended on the grounds that "found
+    // after the audit" is a fact about when the audit ran rather than a property
+    // of the file — which is true, and is exactly why the list drifted: adding
+    // QUA-09 and QUA-10 to `defects.md` and to the README's ranges left this
+    // literal behind, and the test then reported 70 base entries against a
+    // README that correctly said 68. A second hand-typed list is the class this
+    // repository has written down repeatedly; the README states the ranges, so
+    // the ranges are what this reads.
+    const lateSentences = AUDIT_README.split('\n').filter((l) => /found (since|later)/.test(l)).join('\n')
+    assert.ok(lateSentences, 'the audit README no longer says how many defects were found after the audit')
+    const LATE = new Set()
+    for (const [, from, to] of lateSentences.matchAll(/`([A-Z]{2,4}-\d{2})(?:\.\.([A-Z]{2,4}-\d{2}))?`/g)) {
+      if (!to) { LATE.add(from); continue }
+      const [prefix, first] = from.split('-')
+      const [otherPrefix, last] = to.split('-')
+      assert.equal(prefix, otherPrefix, `the README names a range across two prefixes: ${from}..${to}`)
+      for (let n = Number(first); n <= Number(last); n += 1) {
+        LATE.add(`${prefix}-${String(n).padStart(2, '0')}`)
+      }
+    }
+    assert.ok(LATE.size > 0, 'the README names no late-found ids, so the split below would be the whole register')
+
 
     // The heading shape is the entry: `## VUL-01 — CRITICAL — …`. A prefix in
     // body prose (`VUL-03` cited inside VUL-08) is a cross-reference, not an
@@ -387,7 +407,7 @@ describe('the improvement registers state totals their tables agree with', () =>
 
     const statedLate = /plus (\w+) found later/.exec(AUDIT_README)
     assert.ok(statedLate, 'audit README states no "plus N found later" total')
-    const words = { six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 }
+    const words = { six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13 }
     assert.equal(words[statedLate[1].toLowerCase()], late,
       `audit README says "plus ${statedLate[1]} found later"; defects.md has ${late} `
       + `(${[...LATE].sort().join(', ')}). A base total that is right while the split is wrong `

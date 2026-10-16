@@ -35,6 +35,38 @@ function runGate(args = []) {
   }
 }
 
+/**
+ * The gate over a private copy of the tree it reads.
+ *
+ * The gate resolves `ROOT` from its own location, so a copy of it beside a copy
+ * of the tree measures the copy. This is the seam QUA-08 established for the
+ * three other i18n suites (`i18n-parametric`, `i18n-scenarios`, `i18n-districts`
+ * all use it), and the canary below needs it: planting a key into the *tracked*
+ * `public/i18n/en.json` makes the suite's verdict a function of scheduling,
+ * because `node --test` runs files in parallel workers and every one of them may
+ * run the real gate inside the window. Measured before this change: six gate
+ * runs concurrent with this file's canary saw the planted key in **one** of
+ * them, so `npm run gates` failed intermittently for a reason no operator could
+ * act on.
+ */
+function sandboxedGate(mutate) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lindela-i18n-reachability-'))
+  try {
+    for (const sub of ['public', 'src', 'scripts']) {
+      fs.cpSync(path.join(ROOT, sub), path.join(dir, sub), { recursive: true })
+    }
+    if (mutate) mutate(path.join(dir, 'public', 'i18n', 'en.json'))
+    const script = path.join(dir, 'scripts', 'check-i18n.mjs')
+    try {
+      return { code: 0, output: execFileSync(process.execPath, [script], { encoding: 'utf8' }) }
+    } catch (error) {
+      return { code: error.status ?? 1, output: `${error.stdout || ''}${error.stderr || ''}` }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 describe('R-72 the i18n gate reports keys no source can ask for', () => {
   it('passes on the tree as it stands, and says the catalogue is fully reachable', () => {
     const { code, output } = runGate()
@@ -121,22 +153,28 @@ describe('R-72 the i18n gate reports keys no source can ask for', () => {
   })
 
   it('flags a key planted in the catalogue and absent from every source', () => {
-    // The gate's own canary, over the real tree: a planted key must be named and
-    // the run must exit non-zero. Reverted from a copy, never `git checkout` —
-    // the working tree is shared with other agents.
-    const en = path.join(ROOT, 'public', 'i18n', 'en.json')
-    const backup = fs.readFileSync(en, 'utf8')
-    try {
-      const obj = JSON.parse(backup)
+    // The gate's own canary: a planted key must be named and the run must exit
+    // non-zero — and it must be planted in a *copy*. A canary that mutates the
+    // tracked catalogue is the QUA-08 class: it makes every other test's result
+    // a function of worker scheduling, and the gate under `npm run gates` reads
+    // the real file while this one writes it.
+    const planted = sandboxedGate((en) => {
+      const obj = JSON.parse(fs.readFileSync(en, 'utf8'))
       obj['zz.canary_dead_key'] = 'Canary'
       fs.writeFileSync(en, `${JSON.stringify(obj, null, 2)}\n`)
-      const { code, output } = runGate()
-      assert.equal(code, 1, 'the gate passed with an unreachable key in the catalogue')
-      assert.match(output, /zz\.canary_dead_key/, 'the gate failed without naming the planted key')
-    } finally {
-      fs.writeFileSync(en, backup)
-    }
-    // And the revert took: the gate is green again, so the canary was not left in.
-    assert.equal(runGate().code, 0, 'the tree is still failing after the canary was reverted')
+    })
+    assert.equal(planted.code, 1, 'the gate passed with an unreachable key in the catalogue')
+    assert.match(planted.output, /zz\.canary_dead_key/, 'the gate failed without naming the planted key')
+
+    // And the revert is not a separate act that can be forgotten: the same
+    // fixture with no mutation is green, so the canary cannot have been left in.
+    const clean = sandboxedGate()
+    assert.equal(clean.code, 0, `the copied tree fails without a planted key:\n${clean.output}`)
+    assert.match(clean.output, /0 unreferenced/, 'the clean copy is not reporting a reachable catalogue')
+
+    // The real catalogue is never written, so this file cannot perturb a
+    // concurrent run of the gate.
+    assert.equal(fs.readFileSync(path.join(ROOT, 'public', 'i18n', 'en.json'), 'utf8').includes('canary_dead_key'), false,
+      'the canary left its key in the tracked catalogue')
   })
 })

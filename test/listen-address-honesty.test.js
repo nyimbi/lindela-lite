@@ -34,6 +34,17 @@ const DOCKERFILE = fs.readFileSync(new URL('../Dockerfile', import.meta.url), 'u
  * that line alone. The startup block is three lines when bound to every
  * interface and one when bound to loopback, and resolving on the first of them
  * made the two warning lines a race this test lost about half the time.
+ *
+ * **The child is not killed here.** It used to be — `finish` sent SIGTERM and
+ * then resolved — which made the port a coin flip for any caller that connects
+ * to it: the signal is delivered before the caller gets the port, so whether
+ * `net.connect` wins depends on whether the parent is scheduled within the
+ * child's shutdown latency. Measured directly, gap after SIGTERM before connect
+ * → connection refused: **0 ms → 0/60, 5 ms → 60/60**. In isolation the parent
+ * almost always wins; under a full suite run it is descheduled for longer and
+ * `narrowing the bind actually narrows it` fails with "the loopback bind should
+ * be listening on loopback", roughly 1 run in 46. The caller owns the process
+ * now and kills it in a `t.after`, so nothing races the shutdown.
  */
 function startServer(env, { quietFor = 250 } = {}) {
   return new Promise((resolve, reject) => {
@@ -59,14 +70,13 @@ function startServer(env, { quietFor = 250 } = {}) {
       done = true
       clearTimeout(deadline)
       if (quietTimer) clearTimeout(quietTimer)
-      child.kill('SIGTERM')
       fn(arg)
     }
 
     const onData = (chunk) => {
       out += chunk
       if (quietTimer) clearTimeout(quietTimer)
-      quietTimer = setTimeout(() => finish(resolve, { output: out, port }), quietFor)
+      quietTimer = setTimeout(() => finish(resolve, { output: out, port, child }), quietFor)
     }
 
     const deadline = setTimeout(() => {
@@ -95,16 +105,18 @@ function acceptsConnection(address, port) {
 }
 
 describe('the process does not claim loopback it is not binding', () => {
-  it('says so when bound to every interface', async () => {
-    const { output } = await startServer({ LINDELA_LITE_HOST: '0.0.0.0' })
+  it('says so when bound to every interface', async (t) => {
+    const { output, child } = await startServer({ LINDELA_LITE_HOST: '0.0.0.0' })
+    t.after(() => child.kill('SIGKILL'))
     assert.match(output, /bound to every interface/,
       'binding 0.0.0.0 must not be announced as a 127.0.0.1 URL')
     assert.match(output, /reachable from other machines/,
       'a listener on every interface has to say so, because auth may be off')
   })
 
-  it('announces a loopback bind plainly, with no warning', async () => {
-    const { output } = await startServer({ LINDELA_LITE_HOST: '127.0.0.1' })
+  it('announces a loopback bind plainly, with no warning', async (t) => {
+    const { output, child } = await startServer({ LINDELA_LITE_HOST: '127.0.0.1' })
+    t.after(() => child.kill('SIGKILL'))
     assert.match(output, /listening on http:\/\/127\.0\.0\.1:/)
     assert.doesNotMatch(output, /reachable from other machines/,
       'a loopback bind must not warn about network exposure it does not have')
@@ -121,15 +133,17 @@ describe('the process does not claim loopback it is not binding', () => {
       'so should the image, for `docker run -p` without compose')
   })
 
-  it('narrowing the bind actually narrows it', async () => {
+  it('narrowing the bind actually narrows it', async (t) => {
     // The env var is only worth having if it changes what the socket does, and
     // the loopback address is the only one available to test against on a host
     // that may or may not have a LAN address.
-    const { port } = await startServer({ LINDELA_LITE_HOST: '127.0.0.1' })
-    assert.equal(await acceptsConnection('127.0.0.1', port), true,
+    const loopback = await startServer({ LINDELA_LITE_HOST: '127.0.0.1' })
+    t.after(() => loopback.child.kill('SIGKILL'))
+    assert.equal(await acceptsConnection('127.0.0.1', loopback.port), true,
       'the loopback bind should be listening on loopback')
 
     const wildcard = await startServer({ LINDELA_LITE_HOST: '0.0.0.0' })
+    t.after(() => wildcard.child.kill('SIGKILL'))
     assert.equal(await acceptsConnection('127.0.0.1', wildcard.port), true,
       'the wildcard bind should also answer on loopback')
   })

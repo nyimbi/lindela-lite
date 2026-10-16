@@ -12,7 +12,7 @@ import { assertCategory } from './taxonomy.js'
 import { ERROR_CODES } from './errors.js'
 import { computeMetric } from './analytics/metrics.js'
 import { stampQuality } from './quality.js'
-import { recordIdForSubmission } from './submission-id.js'
+import { FIELD_REPORT_PREFIX, recordIdForSubmission } from './submission-id.js'
 
 const OPERATIONAL_COLLECTIONS = Object.freeze({
   incidents: 'incident',
@@ -283,7 +283,7 @@ function normalizeFieldReport(input, data, existing = null) {
     // identical reports, and an operator entering the same summary twice is
     // filing twice.
     id: input.id
-      || recordIdForSubmission('report', input.submission_id)
+      || recordIdForSubmission(FIELD_REPORT_PREFIX, input.submission_id)
       || stableId('report', [input.incident_id, input.intervention_id, input.summary, input.observed_at || now]),
     submission_id: input.submission_id || existing?.submission_id || null,
     incident_id: input.incident_id || intervention?.incident_id || null,

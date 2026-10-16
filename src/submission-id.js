@@ -17,11 +17,17 @@ import { mintSubmissionId, stampSubmissionId } from '../public/shared/submission
  * `submitOrQueue` actually performs — attempt online with no key, time out,
  * queue, retry — wrote two.
  *
- * Re-exported so a server-side caller has one import for the pair, and so the
- * gate that checks every `src/` module is reached by a test sees the browser
- * file reached through this one.
+ * `mintSubmissionId` and `stampSubmissionId` are re-exported so a server-side
+ * caller has one import for the pair, and so the gate that checks every `src/`
+ * module is reached by a test sees the browser file reached through this one.
+ * Both are imported by name from here.
+ *
+ * `SUBMISSION_ID_BYTES` was in the same clause and is not: nothing imports it
+ * from this file, and the two modules that want it read it off
+ * `public/shared/submission-id.js` directly. A re-export that carries one name
+ * nobody reaches is a door that looks like the pair's and is not.
  */
-export { mintSubmissionId, stampSubmissionId, SUBMISSION_ID_BYTES } from '../public/shared/submission-id.js'
+export { mintSubmissionId, stampSubmissionId } from '../public/shared/submission-id.js'
 
 /** The id prefix for a field report. Kept here so the caller names a record, not a string. */
 export const FIELD_REPORT_PREFIX = 'report'

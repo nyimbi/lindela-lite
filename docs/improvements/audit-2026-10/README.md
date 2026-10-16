@@ -5,14 +5,14 @@ implemented. The first asked whether the platform is honest and whether its clai
 work. This one asks two different questions:
 
 - **What can it not yet do?** — fifty non-incremental enhancements (`ENH-31..80`).
-- **What is wrong right now?** — sixty-eight defects across eight domains, ten
-  more found since (`VER-13..VER-20`, `QUA-08` and `VUL-08`; each says where it
-  was found, and the ones not found by the audit say so).
+- **What is wrong right now?** — sixty-eight defects across eight domains, thirteen
+  more found since (`VER-13..VER-20`, `QUA-08..QUA-11` and `VUL-08`; each says
+  where it was found, and the ones not found by the audit say so).
 
 | Document | What it contains |
 |---|---|
 | [enhancements-50.md](enhancements-50.md) | Fifty enhancements in seven groups, each with its order-of-magnitude claim and a weighted Impact-Effort score |
-| [defects.md](defects.md) | Sixty-eight defects from the audit, eight domains, each with verified file:line evidence and a severity — plus ten found later, `VER-13..VER-20`, `QUA-08` and `VUL-08` |
+| [defects.md](defects.md) | Sixty-eight defects from the audit, eight domains, each with verified file:line evidence and a severity — plus thirteen found later, `VER-13..VER-20`, `QUA-08..QUA-11` and `VUL-08` |
 | [roadmap.md](roadmap.md) | Phased sequencing, the dependency graph, the critical path, and resource allocation |
 | [verification.md](verification.md) | Asymptotic complexity of every hot path, and how each line number was confirmed |
 
@@ -31,7 +31,7 @@ The first audit's enhancements are `ENH-01..ENH-30`; its defect prefixes are
 | Observability | `OBS-01 .. OBS-07` | — (new domain) |
 | Architecture | `ARC-01 .. ARC-12` | `DAT-01 .. DAT-07` |
 | Capability gaps | `CAP-01 .. CAP-06` | — (new domain) |
-| Test quality | `QUA-01 .. QUA-08` | `TEST-01 .. TEST-04` |
+| Test quality | `QUA-01 .. QUA-11` | `TEST-01 .. TEST-04` |
 
 Where an item touches the same file as a prior finding it is a *different* defect
 or a *new* capability, never a restatement. The three new domains — concurrency,

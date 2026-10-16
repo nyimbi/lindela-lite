@@ -139,7 +139,18 @@ describe('the audit register’s skeleton, guarded', () => {
     // of the number.
     const stated = /sixty-eight defects across eight domains,\s+(\w+)\s+more found since/i.exec(README)
     assert.ok(stated, 'the README no longer states a total, so this check has nothing to compare against')
-    const words = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 }
+    // Spelled out rather than parsed, because the README states the count in
+    // words. It stopped at `ten` and the register reached twelve, at which point
+    // this check could no longer read its own README and failed on a correct
+    // total — a jurisdiction limit in the instrument, not a defect in the
+    // register. Twenty is the ceiling a reader would still accept as prose; past
+    // that the README should state a numeral and this map should be deleted
+    // rather than grown.
+    const words = {
+      one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+      eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+      eighteen: 18, nineteen: 19, twenty: 20,
+    }
     const claimedLate = words[stated[1].toLowerCase()]
     assert.ok(claimedLate, `the README states "${stated[1]}" late finds, which is not a number this check can read`)
     assert.equal(ENTRIES.length, AUDIT_ENTRIES + claimedLate,
@@ -218,7 +229,7 @@ describe('the audit register’s skeleton, guarded', () => {
  *
  * The cost is not cosmetic, and the size of it is measured below rather than
  * stated here — see `citationSpread()`. At the last measurement there were
- * **1,917** `ENH-nn` citations across **348** files, **338** of them in `src/`
+ * **1,918** `ENH-nn` citations across **348** files, **339** of them in `src/`
  * comment lines — so a reader following `// ENH-29` from a source file has a 50%
  * chance of landing on the wrong item, and `docs/improvements/status.md`
  * resolves every id against the *first* register. This is the same shape the

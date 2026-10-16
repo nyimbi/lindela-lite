@@ -613,6 +613,15 @@ function checkChain(chain) {
 }
 
 function buildVerdict(verdict, unverifiable, { run, chain, collections, diverged, digests, reason }) {
+  // The verdict must be a member of the frozen set. `REPLAY_VERDICTS` was the
+  // three outcomes a *reader* was told were exhaustive while every call site
+  // typed its own literal — the list was declared and never consulted, so a
+  // fourth spelling would have been stored on a row and reported as a result.
+  // The call sites pass literals from the same three, so this cannot fire today;
+  // it is the check that keeps the set and its uses one thing.
+  if (!REPLAY_VERDICTS.includes(verdict)) {
+    throw new Error(`replay verdict must be one of ${REPLAY_VERDICTS.join(', ')}; received ${JSON.stringify(verdict)}`)
+  }
   return {
     verdict,
     reason,

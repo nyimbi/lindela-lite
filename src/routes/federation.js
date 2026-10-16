@@ -371,7 +371,3 @@ export async function removePeer(store, data, id, { actor = 'operator', subject 
   return { record: existing, log }
 }
 
-/** The peers an operator can see, for the status route and a listing. */
-export function peerRows(data) {
-  return Array.isArray(data?.[FEDERATION_PEERS_COLLECTION]) ? data[FEDERATION_PEERS_COLLECTION] : []
-}

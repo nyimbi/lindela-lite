@@ -57,9 +57,6 @@ import { DEFAULT_SEED, seededRng } from './counterfactual.js'
  */
 export const CONSOLE_POLL_BASE_MS = 30_000
 
-/** The console's poll ceiling, for reference. `POLL_MAX_MS` in `public/app.js`. */
-export const CONSOLE_POLL_MAX_MS = 300_000
-
 /** The tab a freshly opened console shows. `state.activeTab` in `public/app.js`. */
 export const CONSOLE_DEFAULT_TAB = 'alerts'
 

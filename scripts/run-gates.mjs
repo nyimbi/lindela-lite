@@ -175,6 +175,12 @@ const GATES = [
     why: 'ENH-59. The declaration and the dispatch code must describe the same routes, and nothing checked that. The direction that matters is the one nobody watches: `/api/v1/districts/{id}` was served, fetched by the console on every page, and in no table at all — invisible to every check built on the tables, because it was absent from all of them in the same way. Derives the served set from the imperative matchers via `scripts/route-surface.mjs` (193 paths from 37 matchers) and requires set equality with the declaration. Parameter *names* are normalised, literals and segment count are not, so a route that matches a declared one only in shape is still a finding — a fuzzy match there would swallow exactly the route that is missing. Reads files only; carries eight canaries, driven by test/route-reachability-gate.test.js.',
   },
   {
+    name: 'check-dead-exports',
+    script: 'scripts/check-dead-exports.mjs',
+    tier: 'self-contained',
+    why: 'QUA-09. `check-module-coverage` asks whether a module is reached, and one import of one name answers yes for the whole file — so `src/sanctions.js` was fully covered while `resetSdnCache`, whose own docstring said "Used by tests", was reached by nothing in or out of the tree. This reads *import statements* and asks per export whether any name import, `export *`, namespace import or resolvable dynamic import reaches it, reporting 10 exports that nothing reaches and 127 that are merely exported wider than they need to be (a lint, not a finding). It found a real defect on the tree it was written for: `createReplicaFromEnv` had no caller, so a deployment that set `LINDELA_LITE_REPLICA_URL` read its primary while the register said "Wired 2026-10-12". Five instrument bugs were found by canaries rather than by reading — a mention in a docstring counted as a call, a spread call excluded by a lookbehind, `//` inside a regex literal read as a comment, `${…}` holes blanked as prose, and 53 test files’ dynamic destructuring never parsed — so the rule that resolves `(await import(<computed>)).name` records the *name* globally rather than attributing it to a file the operator cannot fix. Reads files only; carries 23 canaries, driven by test/dead-exports-gate.test.js.',
+  },
+  {
     name: 'check-state-keys',
     script: 'scripts/check-state-keys.mjs',
     tier: 'self-contained',

@@ -2142,9 +2142,24 @@ mid-stream restart risks a duplicated or skipped record.
 
 **Wired 2026-10-12.** `server.js` establishes the budget around the dispatch and
 chooses the allowance per route: `WIDE_ROUTES` gets the store's own ceiling, a
-manifest gets the narrow default. `createReplicaFromEnv` reads
+manifest gets the narrow default.
+
+*The replica half of this paragraph was not true when it was written, and the
+date above belongs to the budget.* `createReplicaFromEnv` reads
 `LINDELA_LITE_REPLICA_URL`; unset, `readReplicaStore` returns the primary itself,
-so a deployment without one is unchanged.
+so a deployment without one is unchanged. **But nothing called it.** Every
+`createServer()` in the tree passed no `replica` — the entry point at
+`src/server.js` calls `createServer()` bare — so `options.replica` was always
+`undefined`, `readReplicaStore` always returned the primary, and a deployment
+that set the variable read its primary while the register said it read a
+replica. `scripts/check-dead-exports.mjs` reported the export with no caller,
+which is how this was found.
+
+**Wired 2026-10-16.** `createServer` resolves `options.replica ??
+createReplicaFromEnv()`, so the environment is the default and an explicit
+argument still wins — a test or embedder passing `replica` is not overridden.
+Unset is `null`, which is the value the default already was, so a deployment
+without a replica is byte-for-byte unchanged.
 
 *Wiring the budget exposed a defect that had been invisible while a whole-store
 read cost only bandwidth.* `collectionsForRequest` blanked the first two path
