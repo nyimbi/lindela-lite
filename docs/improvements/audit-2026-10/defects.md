@@ -2613,12 +2613,26 @@ as a dead export one layer out: a capability the surface advertises and the code
 does not perform. Found while disposing of `loadCatalog`, which is the loader that
 *would* have served it and was itself reached by nothing.
 
-**Not fixed; named at the site.** The catalogs in `public/i18n/` carry UI labels
+**Fixed 2026-10-16.** The catalogs in `public/i18n/` carry UI labels
 (`action.approve`, `chw.report_sent`), not the report document's vocabulary, so
 honouring the parameter is a translation pass over `reports.js` and not a wiring
-change. The option is kept rather than silently dropped — dropping it would
-ignore the caller's request, which is worse than naming the gap — and
-`renderReportMarkdown` carries a comment saying it is accepted and not honoured.
+change. What was fixable is the silence: a request that cannot be served now says
+so. The route answers **400** for any locale but `en`, naming the value it was
+asked for — `the markdown export renders in English only; locale="sw" cannot be
+honoured` — and `renderReportMarkdown` throws on the same condition, because a
+direct caller has no route in front of it. Refusing was chosen over dropping the
+parameter quietly: the caller's request is either honoured or declined, and a
+document that looks like an answer to a question it did not answer is the defect.
+
+Verified before changing the behaviour that **no caller sends `?locale=`** —
+`public/reports/app.js` does not mention it, and the only occurrences in `src/`
+are the route's own read and pass-through — so the refusal breaks no client.
+Both guards are canaried: removing the route's block fails
+`test/reporting-route-module.test.js` (14 → 13 pass), removing the renderer's
+fails `test/export-narrative.test.js` (33 → 32), and each was reverted from a
+`cp` backup. The renderer test asserts both sides — a throw for `sw` *and* an
+unchanged render for `en` and for the no-argument call — so a guard that threw
+unconditionally could not pass it.
 
 ### QUA-11 — MEDIUM — a test harness kills the server it just started, then connects to it
 `test/listen-address-honesty.test.js`'s `startServer` resolved by sending the

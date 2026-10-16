@@ -270,3 +270,36 @@ describe('ARC-01 — the scheduled path runs the same lifecycle as the manual on
     assert.deepEqual(result.writes.report_schedules.map((s) => s.id), ['due'])
   })
 })
+
+describe('QUA-10 — the markdown export refuses a locale it cannot render', () => {
+  it('answers 400 for a locale other than English, and names the parameter', async () => {
+    // The body is English and only English. Before this the route read
+    // `?locale=`, passed it to a renderer that ignored it, and returned an
+    // English document under a Swahili filename — a caller asking for Swahili
+    // got English and no signal that the request had not been served.
+    const store = recordingStore({ reports: [report()] })
+    const { res } = await call(
+      { kind: 'reports', id: 'r1', exportFormat: 'md' },
+      { store, search: '?locale=sw' },
+    )
+    assert.equal(res.status, 400)
+    const body = res.json()
+    assert.equal(body.success, false)
+    assert.match(body.error, /English only/)
+    assert.match(body.error, /"sw"/, 'the refusal does not name the locale that was asked for')
+  })
+
+  it('serves English unchanged, including when the parameter is explicit', async () => {
+    // The refusal must not catch the case the route exists to serve. `en` and
+    // an absent parameter are the same request, and both must render.
+    for (const search of ['', '?locale=en']) {
+      const store = recordingStore({ reports: [report()] })
+      const { res } = await call(
+        { kind: 'reports', id: 'r1', exportFormat: 'md' },
+        { store, search },
+      )
+      assert.equal(res.status, 200, `search=${JSON.stringify(search)} was refused`)
+      assert.match(res.text(), /^# Situation Report/)
+    }
+  })
+})

@@ -526,3 +526,24 @@ describe('the export composes with the report it exports rather than replacing i
     )
   })
 })
+
+describe('QUA-10 — the renderer refuses a locale it cannot honour', () => {
+  it('throws rather than rendering English for a caller who asked for another language', () => {
+    // The route refuses `?locale=` with a 400; this guard covers the direct
+    // caller, which has no route in front of it. Both exist because the defect
+    // was a parameter that looked wired: `renderReportMarkdown(report, {locale:
+    // 'sw'})` returned a fluent English document, so nothing downstream could
+    // tell the request had not been served.
+    assert.throws(
+      () => renderReportMarkdown({ id: 'r', title: 'T', status: 'ready', sections: [] }, { locale: 'sw' }),
+      /renders English only.*"sw"/,
+    )
+  })
+
+  it('still renders for English, so the guard is not a blanket refusal', () => {
+    const en = renderReportMarkdown({ id: 'r', title: 'T', status: 'ready', sections: [] }, { locale: 'en' })
+    assert.match(en, /^# T/)
+    const implicit = renderReportMarkdown({ id: 'r', title: 'T', status: 'ready', sections: [] })
+    assert.equal(implicit, en, 'the default must be the same document as an explicit en')
+  })
+})

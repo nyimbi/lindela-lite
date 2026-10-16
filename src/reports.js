@@ -273,16 +273,16 @@ export function computeNextRunAt(schedule, from = new Date().toISOString()) {
 }
 
 export function renderReportMarkdown(report, { locale = 'en', plain = false } = {}) {
-  // `locale` is accepted and NOT honoured: every structural word below is
-  // English, and the route that passes it (`routes/reporting.js` reads
-  // `?locale=`) therefore accepts a parameter it cannot act on. It is kept
-  // rather than dropped because dropping it would silently ignore the caller's
-  // request, which is worse than the current state where the gap is named here.
-  // Translating a report is a real piece of work — the catalogs in
-  // `public/i18n/` carry UI labels, not these headings — and until it is done
-  // the honest thing is this comment and the finding, not a parameter that
-  // looks wired. Reported by `scripts/check-dead-exports.mjs` (the loader that
-  // would have served it was dead).
+  // English only, and it says so rather than rendering an English document to a
+  // caller who asked for another language. `?locale=` on the export route is
+  // refused at the route for the same reason; this guard is for a direct caller,
+  // which has no route to refuse it. A translated report is a real piece of work
+  // — the catalogs in `public/i18n/` carry UI labels, not these headings — and
+  // until it is done, a parameter that looks wired and does nothing is the defect
+  // (QUA-10), not the missing feature.
+  if (locale !== 'en') {
+    throw new Error(`renderReportMarkdown renders English only; locale=${JSON.stringify(locale)} is not supported`)
+  }
   let title = report.title
   const lines = [
     `# ${title}`,

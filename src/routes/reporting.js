@@ -206,6 +206,21 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
     }
     if (route.exportFormat === 'md') {
       const locale = url.searchParams.get('locale') || 'en'
+      // The markdown body is English, and only English. `renderReportMarkdown`
+      // takes a `locale` and does not honour it — the catalogs in `public/i18n/`
+      // carry UI labels, not the document's `Type:`/`Status:`/`Warnings`
+      // headings — so a caller asking for `?locale=sw` used to receive an English
+      // document that looked like a Swahili one. Refusing is the honest answer:
+      // it tells the caller the request cannot be served, which is a fact they
+      // can act on, where a silently-English body is not. The parameter is still
+      // read rather than ignored, so this cannot rot into "no one passes it".
+      if (locale !== 'en') {
+        jsonResponse(res, 400, {
+          success: false,
+          error: `the markdown export renders in English only; locale=${JSON.stringify(locale)} cannot be honoured`,
+        })
+        return
+      }
       const plain = url.searchParams.get('plain') === '1'
       res.writeHead(200, {
         'content-type': 'text/markdown; charset=utf-8',
