@@ -106,7 +106,7 @@ export const CONSOLE_ENDPOINT_PATHS = Object.freeze({
   alerts: '/api/v1/alert-events?limit=200',
   reports: '/api/v1/reports?limit=20',
   reportTemplates: '/api/v1/report-templates?limit=20',
-  climate: '/api/v1/climate?limit=200',
+  climate: '/api/v1/climate?view=verification',
   seasonal: '/api/v1/climate?source=noaa_enso&limit=500',
   weather: '/api/v1/weather',
   riverDischarge: '/api/v1/river-discharge',

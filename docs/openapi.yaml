@@ -1609,9 +1609,58 @@ paths:
   /api/v1/climate:
     get:
       summary: Climate observations
+      description: >-
+        The raw series, paged and ordered newest-first. With
+        `view=verification`, the two series the forecast-versus-outcome join
+        reads, selected by row shape rather than by recency — the default page
+        cannot carry both, because the unbounded forecast rows are always newer
+        than the outcomes they are checked against.
+      parameters:
+        - name: view
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [verification]
+          description: >-
+            `verification` returns the precipitation forecasts and the archive
+            outcomes, each capped at `series.limit`, plus a `series` block
+            stating each one's `total` and `returned` so a caller can tell a
+            complete series from a truncated one.
       responses:
         '200':
           description: Climate observations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { type: object }
+                  returned: { type: integer }
+                  total: { type: integer }
+                  has_more: { type: boolean }
+                  next_cursor: { type: ['string', 'null'] }
+                  series:
+                    type: object
+                    description: >-
+                      Present only for `view=verification`. The store's own size
+                      for each series, so the panel's sentence is a claim about the
+                      store rather than about the page.
+                    properties:
+                      forecasts:
+                        type: object
+                        properties:
+                          total: { type: integer }
+                          returned: { type: integer }
+                      outcomes:
+                        type: object
+                        properties:
+                          total: { type: integer }
+                          returned: { type: integer }
+                      limit: { type: integer }
   /api/v1/weather:
     get:
       summary: Current conditions and 7-day forecast per pilot district

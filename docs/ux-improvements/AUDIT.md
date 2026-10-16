@@ -391,3 +391,51 @@ is what surfaced them; a reading of the source had not.
   - **The lede promised per-card loading that no longer happened**, and the `.catch` that wrote
     "Counts unavailable" per card had no per-card request left to fail. Both are rewritten: one
     request, one failure state, applied across the grid.
+
+- **The verification panel's coverage sentence was computed over a page, not a store. Not in the
+  audit.** ENH-21's forecast-versus-outcome panel joins the weather connector's forecasts to the
+  archive connector's outcomes, and the console fed it the same `?limit=200` ambient climate page
+  HX-06 named as one of "the worst offenders on `/`". That page is ordered newest-first and the
+  weather connector files a forecast row per district-day, so those rows grow without bound and
+  crowd everything else out.
+
+  Measured through the live ingress on the demo store: the page carried **71 of the store's 117
+  forecasts and 0 of its 19 ENSO rows**, and the panel printed "71 forecasts in the store" over a
+  store holding 117. This is the silent-truncation class the audit already knows from R-27
+  (road-access / food-security) and ARC-06 — a newest-first fixed page treated as a total.
+
+  The archive half of the join cannot be measured on the demo store, which holds no archive rows
+  at all. It is structural rather than observed: an outcome exists only for a day that has
+  happened, so it is always older than the forecasts it is checked against and is the first thing
+  a newest-first page drops. Measured on a planted store instead — 5 archive regions, 0 in the
+  page, 5 under the fix.
+
+  It is now one request, **`GET /api/v1/climate?view=verification`**, selecting each series by
+  what a row *is* rather than by recency, with a `series` block stating each one's `total` and
+  `returned` so a caller never infers a store's size from a page length. Same shape as HX-06's
+  `view=summary`. Two defects fell out of the same edit:
+
+  - **The seasonal strip's fallback was dead code that could only lie.** It read
+    `state.seasonal?.length ? state.seasonal : state.climate` — and the ambient page carried 0 of
+    19 ENSO rows, so the fallback returned `null` and `seasonalNarrative(null)` printed "Niño 3.4
+    has not been ingested. Run POST /api/v1/ingest/run", instructing an operator to re-run an
+    ingestion that had already run. The fallback is gone; the strip has one source and is told
+    when that source failed, because a dead request and a connector that never ran are different
+    claims.
+  - **`state.climate` became write-only** after the change — the "field written and never read"
+    class. Removed; `check-state-keys.mjs` stays clean.
+
+  The budget gate did not move. The change cost 0.42 KB gzipped in `public/app.js` against 0.1 KB
+  of headroom, and it was paid back by the removal above plus trimming the reasoning out of the
+  first-load comments and into `scripts/check-budget.mjs`'s own note and the route declaration —
+  which is the convention that file already states. Measured 229.9 KB before and after.
+
+- **A gate gap the fix exposed: `CONSOLE_ENDPOINT_PATHS` is never checked against the console.**
+  `test/load-model.test.js` asserts each modelled path is *present*
+  (`assert.ok(CONSOLE_ENDPOINT_PATHS[name])`) and never that it is the string `public/app.js`
+  actually fetches. Canaried: reverting `app.js` to `?limit=200` while the model still said
+  `?view=verification` left the suite at **17 pass, 0 fail**. Sixteen of the eighteen paths are
+  verbatim literals in the console and could be compared exactly; `events` and `alerts` are built
+  by `localEventQuery`/`globalEventQuery` and `fetchAllPages`, so they need a named exemption
+  rather than a fuzzy match. Not built here — it is a separate unit, and the load model is a
+  measurement rather than a runtime surface.

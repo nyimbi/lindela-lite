@@ -108,10 +108,8 @@ const state = {
   foodSecuritySummary: null,
   diseaseSummary: null,
   showIpcAreas: false,
-  climate: [],
-  // The source-filtered Niño 3.4 series behind the seasonal strip. Separate from
-  // `climate` because the ambient climate page is ordered newest-first and the
-  // unbounded forecast rows crowd the monthly series out of it.
+  // The source-filtered Niño 3.4 series behind the seasonal strip; the ambient
+  // page cannot carry it (0 of 19 ENSO rows in a newest-first 200).
   seasonal: [],
   // The weather overlay's last good payload from /api/v1/weather. Kept across
   // refreshes like the other map inputs, so one failed poll does not blank the
@@ -1166,7 +1164,7 @@ function renderRouteLayer(plan, bbox) {
  * on its own, because one warm month is not a declared ENSO event and a panel
  * reading a bare phase name would reasonably assume it was.
  */
-function renderSeasonalStrip(observations) {
+function renderSeasonalStrip(observations, { failed = false } = {}) {
   if (!seasonalPhaseEl) return
   const state = readSeasonalState(observations)
 
@@ -1193,13 +1191,19 @@ function renderSeasonalStrip(observations) {
       : ''
   }
   if (seasonalSummaryEl) seasonalSummaryEl.textContent = seasonalSummary(state)
-  if (seasonalNoteEl) seasonalNoteEl.textContent = seasonalNarrative(state)
+  // A failed fetch and a connector that never ran are different claims:
+  // `seasonalNarrative(null)` would tell the operator to re-run an ingestion.
+  if (seasonalNoteEl) {
+    seasonalNoteEl.textContent = failed && !state
+      ? 'The Niño 3.4 series could not be fetched, so this panel has not read the store. Whether it has been ingested is unknown from here.'
+      : seasonalNarrative(state)
+  }
   const advVal = $('seasonalAdvisoryValue')
   const advCount = $('seasonalAdvisoryCount')
   const advQual = $('seasonalAdvisoryQual')
   if (advVal && state) { advVal.textContent = `${state.anomalyC > 0 ? '+' : ''}${state.anomalyC?.toFixed(2) || '—'}` } else if (advVal) { advVal.textContent = '—' }
   if (advCount && state) { const met = Math.min(state.overlappingSeasons || 0, 5); advCount.textContent = `${met} of 5` } else if (advCount) { advCount.textContent = '— of 5' }
-  if (advQual && state) { advQual.textContent = state.episodeDeclared ? 'CPC episode criterion met: declared event' : 'Not a declared event — advisory only' } else if (advQual) { advQual.textContent = 'Not ingested — no advisory' }
+  if (advQual && state) { advQual.textContent = state.episodeDeclared ? 'CPC episode criterion met: declared event' : 'Not a declared event — advisory only' } else if (advQual) { advQual.textContent = failed ? 'Not read — fetch failed' : 'Not ingested — no advisory' }
   if (seasonalIndexEl && state?.indexUsed) {
     seasonalIndexEl.textContent = `Niño 3.4 SST anomaly (${state.indexUsed})`
   }
@@ -3740,7 +3744,9 @@ async function refresh({ first = false, force = false } = {}) {
       })(),
       load('reports', '/api/v1/reports?limit=20'),
       load('reportTemplates', '/api/v1/report-templates?limit=20'),
-      load('climate', '/api/v1/climate?limit=200'),
+      // The verification panel's two series, selected server-side — one
+      // newest-first page cannot carry both. See `verificationView`.
+      load('climate', '/api/v1/climate?view=verification'),
       // The Niño 3.4 series, fetched by source rather than off the ambient
       // climate page. The ambient page is ordered newest-first and the weather
       // connector files a forecast row per district-day, so those rows grow
@@ -3852,21 +3858,11 @@ async function refresh({ first = false, force = false } = {}) {
     // different to say in each case and must be reached in both.
     renderWorkflowInstanceList()
 
-    if (merged.climate) {
-      state.data.climate = merged.climate
-      state.climate = merged.climate.data || []
-    }
+    if (merged.climate) state.data.climate = merged.climate
 
-    // The seasonal strip draws from the source-filtered ENSO page, falling back
-    // to the ambient climate page only when that fetch failed — the two hold
-    // different rows, and the ambient one cannot be relied on to carry the
-    // monthly series (see the fetch above). Rendered once, after both, so a
-    // cold start with no ambient rows still shows the advisory rather than
-    // flashing "not ingested" on the way to it.
+    const seasonalFailed = state.failedSources?.has('seasonal') === true
     if (merged.seasonal) state.seasonal = merged.seasonal.data || []
-    if (merged.seasonal || merged.climate) {
-      renderSeasonalStrip(state.seasonal?.length ? state.seasonal : state.climate)
-    }
+    if (merged.seasonal || seasonalFailed) renderSeasonalStrip(state.seasonal, { failed: seasonalFailed })
 
     if (merged.weather) state.weather = merged.weather
     // Written on failure too, like the workflow panel: a failed weather fetch

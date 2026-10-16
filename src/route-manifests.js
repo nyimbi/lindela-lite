@@ -67,6 +67,20 @@ export const ROUTE_MANIFESTS = Object.freeze({
   'GET /api/v1/audit/head': Object.freeze(["action_logs"]),
   'GET /api/v1/audit/verify': Object.freeze(["action_logs"]),
   'GET /api/v1/calibration/by-region': Object.freeze(["region_trust"]),
+  // ENH-21. `climate_observations` holds four connectors' rows and pages
+  // newest-first, and the weather connector files a forecast row per
+  // district-day, so those rows grow without bound. The verification panel
+  // joins forecasts to archive outcomes, and an outcome exists only for a day
+  // that has happened — so outcomes are always older and are the first thing a
+  // fixed page drops. Measured on the demo store through the live ingress: a
+  // 200-row page carried 71 of its 117 forecasts and 0 of its 19 ENSO rows,
+  // and the panel printed "71 forecasts in the store" over a store holding
+  // 117. The archive half is structural rather than observed there — the demo
+  // store holds no archive rows — so it is measured on a planted store: 5
+  // archive regions, 0 in the page, 5 under this view. `view=verification`
+  // selects the two series by what a row *is* rather than by recency, and
+  // states each one's size so a caller never infers a total from a page
+  // length. Same shape as HX-06's `view=summary`.
   'GET /api/v1/climate': Object.freeze(["climate_observations"]),
   'GET /api/v1/community-feedback': Object.freeze(["community_feedback"]),
   'GET /api/v1/community-feedback/summary': Object.freeze(["community_feedback"]),

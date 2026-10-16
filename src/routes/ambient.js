@@ -58,12 +58,66 @@ const bandTable = (bands) => bands.map((b) => ({
 }))
 
 /**
+ * The two series the forecast-versus-outcome join reads, out of one collection.
+ *
+ * `climate_observations` holds four connectors' rows and pages newest-first.
+ * The weather connector files a forecast row per district-day and those
+ * accumulate without bound, so the archive connector's outcome rows — which are
+ * by definition *older*, because an outcome exists only for a day that has
+ * happened — sit behind them and are the first thing any fixed page drops. In
+ * the demo store a 200-row page carried 71 of 117 forecasts and none of the
+ * outcomes, and the verification panel printed "71 forecasts in the store" over
+ * a store holding 117.
+ *
+ * So the two series are selected by what they *are* rather than by recency, and
+ * the block beside them says how much of each is here. That last part is the
+ * point: a view that returned the series without stating its own coverage would
+ * be the same defect one layer down.
+ *
+ * `VERIFICATION_SERIES_LIMIT` caps each series. It is generous because the panel
+ * needs the whole series to bin honestly, and it is stated rather than implied
+ * because an unbounded collection cannot promise completeness — a deployment
+ * that reaches the cap is told so in `truncated`.
+ */
+const VERIFICATION_SERIES_LIMIT = 2000
+
+function verificationView(observations) {
+  const all = observations || []
+  const forecasts = all.filter((r) => r?.type === 'precipitation_forecast')
+  const outcomes = all.filter((r) => r?.source === 'open_meteo_archive')
+  const cut = (rows) => (rows.length > VERIFICATION_SERIES_LIMIT ? rows.slice(0, VERIFICATION_SERIES_LIMIT) : rows)
+  const data = [...cut(forecasts), ...cut(outcomes)]
+  return {
+    data,
+    returned: data.length,
+    total: forecasts.length + outcomes.length,
+    has_more: forecasts.length > VERIFICATION_SERIES_LIMIT || outcomes.length > VERIFICATION_SERIES_LIMIT,
+    next_cursor: null,
+    // The panel's sentence is a claim about the store, so the store's own sizes
+    // travel with the rows rather than being re-derived from the page length.
+    series: {
+      forecasts: { total: forecasts.length, returned: Math.min(forecasts.length, VERIFICATION_SERIES_LIMIT) },
+      outcomes: { total: outcomes.length, returned: Math.min(outcomes.length, VERIFICATION_SERIES_LIMIT) },
+      limit: VERIFICATION_SERIES_LIMIT,
+    },
+  }
+}
+
+/**
  * Handle one ambient-layer route. Returns true when it handled the request.
  */
 export function handleAmbientRoute(route, { data, req, res, url, jsonResponse }) {
   const { kind } = route
 
   if (kind === 'climate') {
+    // HX-06's argument, applied here. The verification panel needs two specific
+    // series, and no recency-ordered page can carry both; selecting them
+    // server-side is one request instead of two and states the coverage once,
+    // where both the console and any JSON consumer read the same numbers.
+    if (url.searchParams.get('view') === 'verification') {
+      jsonResponse(res, 200, { success: true, ...verificationView(data.climate_observations) })
+      return true
+    }
     jsonResponse(res, 200, {
       success: true,
       ...collectionPage(data.climate_observations, url.searchParams, {

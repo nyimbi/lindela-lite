@@ -2231,11 +2231,76 @@ export const ROUTE_DECLARATION = Object.freeze([
 		scope: 'read:hazards',
 		reads: Object.freeze(["climate_observations"]),
 		wide: false,
+		notes: [
+			"ENH-21. `climate_observations` holds four connectors' rows and pages",
+			"newest-first, and the weather connector files a forecast row per",
+			"district-day, so those rows grow without bound. The verification panel",
+			"joins forecasts to archive outcomes, and an outcome exists only for a day",
+			"that has happened — so outcomes are always older and are the first thing a",
+			"fixed page drops. Measured on the demo store through the live ingress: a",
+			"200-row page carried 71 of its 117 forecasts and 0 of its 19 ENSO rows,",
+			"and the panel printed \"71 forecasts in the store\" over a store holding",
+			"117. The archive half is structural rather than observed there — the demo",
+			"store holds no archive rows — so it is measured on a planted store: 5",
+			"archive regions, 0 in the page, 5 under this view. `view=verification`",
+			"selects the two series by what a row *is* rather than by recency, and",
+			"states each one's size so a caller never infers a total from a page",
+			"length. Same shape as HX-06's `view=summary`.",
+		],
 		body: `
       summary: Climate observations
+      description: >-
+        The raw series, paged and ordered newest-first. With
+        \`view=verification\`, the two series the forecast-versus-outcome join
+        reads, selected by row shape rather than by recency — the default page
+        cannot carry both, because the unbounded forecast rows are always newer
+        than the outcomes they are checked against.
+      parameters:
+        - name: view
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [verification]
+          description: >-
+            \`verification\` returns the precipitation forecasts and the archive
+            outcomes, each capped at \`series.limit\`, plus a \`series\` block
+            stating each one's \`total\` and \`returned\` so a caller can tell a
+            complete series from a truncated one.
       responses:
         '200':
           description: Climate observations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { type: object }
+                  returned: { type: integer }
+                  total: { type: integer }
+                  has_more: { type: boolean }
+                  next_cursor: { type: ['string', 'null'] }
+                  series:
+                    type: object
+                    description: >-
+                      Present only for \`view=verification\`. The store's own size
+                      for each series, so the panel's sentence is a claim about the
+                      store rather than about the page.
+                    properties:
+                      forecasts:
+                        type: object
+                        properties:
+                          total: { type: integer }
+                          returned: { type: integer }
+                      outcomes:
+                        type: object
+                        properties:
+                          total: { type: integer }
+                          returned: { type: integer }
+                      limit: { type: integer }
 `,
 	}),
 	Object.freeze({
