@@ -54,6 +54,7 @@ under **Unreleased**; this table is the index into them.
 | PRIV-02 | fixed | redaction defaults on; HMAC-SHA256 digests with a configured salt; 0° is a coordinate | `pii.test.js` |
 | ING-01 | fixed | severity from the alert level alone; prose never consulted; unknown ⇒ `null` | `connector-severity.test.js` |
 | ING-02 | fixed | severity is `null` by construction, declared in `model_limit` | `connector-severity.test.js` |
+| ING-06 | fixed | `gdacs_archive` declares `budget_ms`; the walk spends it and checks it before each window | `completeness-wiring.test.js`, `ingestion-wiring.test.js` |
 | ALERT-01 | fixed | lifecycle→msgtype table asserted against the alert-status vocabulary; unknown throws | `cap-encoding.test.js` |
 | ALERT-07 | fixed | `scopeOverride` honoured and validated; falsy-but-present values no longer fall back to `Public` | `cap-encoding.test.js` |
 | DATA-03 | fixed | each asset counted once, from the shared collection list | `facilities-at-risk-counting.test.js` |
@@ -500,6 +501,33 @@ everything.
   out per attempt only. `src/connectors/gdacs-archive.js:46-74` issues ~168
   sequential requests; worst case ~4.2 hours holding a `POST /ingest/run` socket,
   and `src/server.js` sets no request timeout.
+  **Fixed 2026-10-16.** The budget is declared where every other source policy
+  is: `gdacs_archive` carries `budget_ms: 900000` in `SOURCE_POLICIES`
+  (`src/source-policies.js:54`), `runIngestion` passes it to the connector as a
+  request field (`src/ingestion.js:226`), and the walk spends it and checks it
+  *before* opening each window (`src/connectors/gdacs-archive.js:106`), so a
+  window that would run past the deadline is never started. The verdict gains
+  `budget_ms`, `windows_skipped_by_budget` and `budget_exhausted`, and a budget
+  stop is named in `errors` separately from a completeness failure — one says
+  GDACS stopped answering, the other says we chose to stop asking, and the
+  operator's next move differs. Absent the declaration the walk is unbounded, so
+  the deadline is opt-in and the policy table stays the one place a budget is
+  stated. The number is measured: the slowest run in the demo store is `ipc_hdx`
+  at 174.8 s, so 15 minutes is about four times the worst observed case while
+  still bounding the 168-quarter walk. Guarded by *the archive walk is bounded by
+  a declared wall-clock budget* in `test/completeness-wiring.test.js` and *a
+  source's declared budget reaches the connector that spends it* in
+  `test/ingestion-wiring.test.js`.
+
+  The third clause is **not** fixed and is now measured rather than asserted:
+  `src/server.js` sets no server-level timeout, and Node's own default
+  `requestTimeout` of 300 s does not bound a slow handler — measured, a handler
+  sleeping 2.5 s under `requestTimeout = 500` still returned 200 after 2.55 s,
+  because `requestTimeout` bounds receiving the request, not answering it. What
+  bounds the request now is the source's own budget plus the 45 s
+  `DEMO_SEED_BUDGET_MS` on `POST /api/v1/maintenance/seed`
+  (`src/routes/maintenance.js:80`); `POST /api/v1/ingest/run` still runs without
+  one, which is a smaller defect than ING-06 named and is not this fix.
 - **ING-07 — Retry is doubled and the outer layer is inert.**
   `src/ingestion.js:314-323` plus `src/connectors/http.js:3-19`. Connectors catch
   and *return* rather than throw, so network failures receive only the 150/300 ms
@@ -820,9 +848,16 @@ that records *that* without recording *what* is a worse artefact than none —
 it certifies something happened and cannot be used to reconstruct it. Fixed by
 an optional metadata parameter, with caller-wins precedence over the defaults.
 
-**Outbound HTTP** — `distributeReport` fetches with no timeout, unlike every
-connector. HTTP error bodies are discarded at `src/connectors/http.js:6`, so
-`Retry-After` is never seen. RapidPro outbound is likewise unbounded.
+**Outbound HTTP** — **all three claims refuted against the tree on 2026-10-16**,
+and each was true when written. `distributeReport` now runs under one 5 s
+deadline (`WEBHOOK_TIMEOUT_MS`, `src/routes/reporting.js:84`) spanning the
+response *and* its body — a server that sends headers then stalls aborts inside
+the body read, not inside the fetch, so a `.catch` on the fetch alone leaves that
+case uncovered. `Retry-After` is parsed off the error response and reaches the
+backoff as its own term (`src/connectors/http.js:322,364`), widened on 2026-10-04.
+RapidPro outbound is bounded at 10 s (`src/rapidpro.js:9,418`). What remains
+unfixed in this paragraph is the report-webhook *signature*: report webhooks are
+timed but still unsigned.
 
 **Reports** — `markdown_download` records a byte count rather than the artefact
 (`src/reports.js:1373`), so the exported report is not retrievable later. Report <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->

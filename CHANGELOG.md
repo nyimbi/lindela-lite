@@ -524,6 +524,32 @@ alerts divided by zero and rendered `0%`, which reads as "no false alerts" rathe
 than "nobody has looked". One definition now, in both places, with the numerator
 published beside it as `false_alert_determined` so the denominator is visible.
 
+**A source could run for four hours and there was nothing to stop it.** The
+`gdacs_archive` connector walks 1985 to now a quarter at a time — 168 requests,
+three attempts each, 30 s apiece, which reaches ~4.2 hours while every individual
+call is a healthy one. `timeout_ms` bounds one request and cannot see the sum, so
+the deadline is now declared for the *source*: `gdacs_archive` carries
+`budget_ms: 900000` in `SOURCE_POLICIES` beside its timeout and retries,
+`runIngestion` passes it to the connector, and the walk checks it before opening
+each window, so a window that would run past the deadline is never started. The
+verdict reports `budget_ms`, `windows_skipped_by_budget` and `budget_exhausted`,
+and a budget stop is named in `errors` separately from a completeness failure —
+one says the provider stopped answering, the other says we chose to stop asking,
+and the operator's next move differs. Absent the declaration a connector walks
+unbounded, so the budget is opt-in and the policy table stays the one place one is
+stated. The number is measured rather than picked: the slowest run in the demo
+store is `ipc_hdx` at 174.8 s, so 15 minutes is roughly four times the worst
+observed case.
+
+The same deadline now covers a report's distribution webhook, which fetched with
+no signal at all — a partner that accepted the connection and then never answered
+held the request that triggered the distribution open indefinitely, and the run
+row it would have written never landed, which is the failure the distribution
+record exists to prevent. It runs under 5 s, matching the outbox's own delivery
+deadline. The deadline spans the response *and* its body: measured, a server that
+sends headers and then stalls aborts inside the body read, not inside the fetch,
+so a `.catch` on the fetch alone leaves that case uncovered.
+
 ### Added
 
 **Documentation links are checked, not assumed.** `validate.mjs` tested a
