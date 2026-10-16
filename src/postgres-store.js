@@ -111,7 +111,7 @@ export const SCHEMA_LOCK_KEY = 4_001_002
  * `params[n - 1]` for either consumer.
  */
 export function readPredicate(options = {}) {
-  const { collections, includeHistory, partnerOrg } = normaliseReadOptions(options)
+  const { collections, includeHistory, partnerOrg, recordScope } = normaliseReadOptions(options)
 
   const clauses = ["collection <> '__schema'"]
   const params = []
@@ -120,6 +120,38 @@ export function readPredicate(options = {}) {
     clauses.push(`collection = ANY($${params.length}::text[])`)
   }
   if (!includeHistory) clauses.push(`collection <> '${HISTORY_COLLECTION}'`)
+  // ENH-12, the read half. Two branches under one `OR`, and the form matters:
+  //
+  //   - the live branch keys on `id`, served by `lite_records_pkey` on
+  //     `(collection, id)`;
+  //   - the version branch keys on `body->>'record_id'`, served by migration 4's
+  //     partial expression index `lite_records_version_record_idx`.
+  //
+  // Written as a `CASE` — `(CASE WHEN collection = 'record_versions' THEN
+  // body->>'record_id' ELSE id END) = $n` — it is a *function of a column* and
+  // no index can serve it: measured on 36,000 rows, 4.414 ms and a Seq Scan,
+  // against 0.052 ms and a BitmapOr of the two indexes for this form. The
+  // shorter `OR` that omits `collection = $n` from the live branch also plans to
+  // the BitmapOr and is *not* used, because it would match a live row in an
+  // unrelated collection that happened to carry the same id.
+  //
+  // `recordId` is optional: a scope naming only a collection keeps that
+  // collection's whole revision history, which is the series route's question.
+  if (recordScope) {
+    params.push(recordScope.collection)
+    const byCollection = `$${params.length}`
+    if (recordScope.recordId === null) {
+      clauses.push(`((collection = ${byCollection}) OR (collection = '${HISTORY_COLLECTION}' AND body->>'collection' = ${byCollection}))`)
+    } else {
+      params.push(recordScope.recordId)
+      const byRecord = `$${params.length}`
+      clauses.push(
+        `((collection = ${byCollection} AND id = ${byRecord})`
+        + ` OR (collection = '${HISTORY_COLLECTION}' AND body->>'collection' = ${byCollection}`
+        + ` AND body->>'record_id' = ${byRecord}))`,
+      )
+    }
+  }
   // ENH-17: the partner-organisation predicate in the WHERE clause, not in a
   // filter over what was already fetched. An index lookup on (collection,
   // partner_org) instead of an O(N) scan over rows the caller may not see.

@@ -26,7 +26,7 @@ import { applyRetention, loadPolicy, retentionWindowFor } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
 import { executeTriggerProtocols } from './protocols.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
-import { collectionsForRequest, needsHistory } from './route-manifests.js'
+import { collectionsForRequest, needsHistory, recordScopeForRequest } from './route-manifests.js'
 import { matchStacRoute, matchOgcRoute, handleStacRoute } from './routes/stac.js'
 import { ROUTE_FAMILIES, dispatchFamily } from './route-families.js'
 import { emit, emitMany, dispatchPending } from './outbox.js'
@@ -1017,10 +1017,18 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   // `/history` routes returned an empty series on Postgres while working on a
   // JSON box, because `JsonStore` ignored the flag and `PostgresStore` honoured
   // it (ARC-10). The adapters agree now, so the request has to be explicit.
+  // ENH-12, the read half. `/history/:collection/record` reads one record and
+  // its revisions instead of the whole store: 50,111 rows to answer about a
+  // record with one revision, measured, against 6 rows scoped. The scope is
+  // separate from the manifest because it narrows to a *row* and a manifest
+  // names collections — and because keeping the manifest `null` keeps the route
+  // on `WIDE_QUERY_BUDGET`, where a 25,000-row default would 503
+  // `food_security_records` at 29,325 rows with its history.
   const readRequest = {
     collections: collectionsForRequest(req.method, url.pathname, url.searchParams),
     includeHistory: needsHistory(req.method, url.pathname),
     partnerOrg: currentRequestAuth()?.partner_org || null,
+    recordScope: recordScopeForRequest(req.method, url.pathname, url.searchParams),
   }
   req.__auth = auth
 

@@ -26,6 +26,7 @@
  * either mapped here or explicitly wide, so a new route cannot arrive unmapped
  * and silently expensive.
  */
+import { BITEMPORAL_COLLECTIONS } from './bitemporal.js'
 import { COLLECTIONS } from './store.js'
 
 export const ROUTE_MANIFESTS = Object.freeze({
@@ -458,6 +459,50 @@ export function needsHistory(method, pathname) {
     .replace(/\/api\/v1\/([^/]+)\/[^/]+(?=\/|$)/, '/api/v1/$1/:id')
   return HISTORY_ROUTES.has(`${String(method || 'GET').toUpperCase()} ${bare}`)
 }
+
+/**
+ * ENH-12, the read half — the record scope for one request, or `null`.
+ *
+ * `/history/:collection/record` asks about *one record*, and answered it by
+ * reading the whole store: the two history routes resolve to a `null` manifest,
+ * so the read was every declared collection with history on — 50,111 rows on the
+ * demo store, of which 34,058 are version rows — and `versionsFor` then filtered
+ * them in JavaScript. Measured, the route transferred 34,058× the rows it needed
+ * to answer about a record with one revision.
+ *
+ * The scope is resolved here rather than as a `collectionsForRequest` manifest
+ * for two reasons, and the second is the one that decided it:
+ *
+ *   - a manifest names *collections*, and this narrows to a row. `record_versions`
+ *     is one physical collection holding every record's history, so no collection
+ *     list can express "this record's revisions";
+ *   - a non-null manifest would move the route off `WIDE_QUERY_BUDGET` onto the
+ *     narrow default of 25,000 rows, and `food_security_records` with its history
+ *     is 29,325 rows on the demo store — so a manifest-shaped fix would turn a
+ *     working request into a 503. The scope narrows the read without touching
+ *     which budget it is metered against.
+ *
+ * The collection comes from the path and the record from `?id=`, the same way
+ * `EXPLAIN_KEY` reads its collection from `?kind=`: the answer is a property of
+ * the request, not of the path. A missing `?id=` is left unscoped rather than
+ * guessed at, and the handler answers its own 400 — this function's job is the
+ * read, not the validation.
+ */
+export function recordScopeForRequest(method, pathname, search = null) {
+  if (String(method || 'GET').toUpperCase() !== 'GET') return null
+  const match = String(pathname || '').match(/^\/api\/v1\/history\/([^/]+)\/record$/)
+  if (!match) return null
+  const collection = decodeURIComponent(match[1])
+  // Only a collection that can have history is worth scoping to: a nonsense name
+  // would otherwise reach the store and be refused by `assertDeclaredCollection`
+  // inside the read, turning the handler's honest 404 into a 500.
+  if (!PROJECTABLE.has(collection)) return null
+  const recordId = typeof search?.get === 'function' ? search.get('id') : null
+  return { collection, recordId: recordId || null }
+}
+
+/** The collections whose records carry a revision history, per `bitemporal.js`. */
+const PROJECTABLE = new Set(BITEMPORAL_COLLECTIONS)
 
 const EXPLAIN_KEY = 'GET /api/v1/explain/:id'
 

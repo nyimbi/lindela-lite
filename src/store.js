@@ -382,13 +382,20 @@ export class StoreReadBudgetExceeded extends Error {
  * counts them: the named collections when a manifest is given, every declared
  * collection otherwise, minus history unless it was asked for.
  */
-export function countReadRows(source, collections, includeHistory) {
+export function countReadRows(source, collections, includeHistory, recordScope = null) {
   const wanted = collections === null ? null : new Set(collections)
   let total = 0
   for (const collection of COLLECTIONS) {
     if (wanted !== null && !wanted.has(collection)) continue
     if (!includeHistory && collection === HISTORY_COLLECTION) continue
-    total += source[collection]?.length || 0
+    if (recordScope === null) {
+      total += source[collection]?.length || 0
+      continue
+    }
+    // ENH-12. Counted over the rows the scope selects, not the collection, or
+    // the budget would refuse a read it is about to serve — the same set the
+    // Postgres adapter's `WHERE` matches, which is the property SCL-01 asserts.
+    total += (source[collection] || []).filter((row) => inRecordScope(row, collection, recordScope)).length
   }
   return total
 }
@@ -409,11 +416,28 @@ export function countReadRows(source, collections, includeHistory) {
  * Conflating them would make `read([])` a way to accidentally read everything.
  */
 export function normaliseReadOptions(options) {
-  if (Array.isArray(options)) return { collections: options, includeHistory: false, partnerOrg: null }
-  const { collections = null, includeHistory = false, partnerOrg = null } = options || {}
+  if (Array.isArray(options)) {
+    return { collections: options, includeHistory: false, partnerOrg: null, recordScope: null }
+  }
+  const { collections = null, includeHistory = false, partnerOrg = null, recordScope = null } = options || {}
   return {
     collections: collections === null || collections === undefined ? null : [...collections],
     includeHistory: Boolean(includeHistory),
+    // ENH-12, the read half. One record's live row plus that record's own
+    // revisions, instead of the whole store. `/history/:collection/record` was
+    // measured reading 50,111 rows to answer about a record with one revision:
+    // `record_versions` is one physical collection holding every record's
+    // history, so `versionsFor`'s `v.record_id === recordId` filter was applied
+    // in JavaScript over all 34,058 version rows. Migration 4's expression index
+    // already carries `(body->>'record_id')`, so the scope is answerable from an
+    // index and needs no schema change — which is what refutes ENH-12's
+    // remaining half rather than deferring it.
+    //
+    // `null` means "no record scope", which is every other route. The collection
+    // is required and the record id is optional: the series route would want the
+    // collection alone, and `null` there is a statement about the read rather
+    // than about a record.
+    recordScope: normaliseRecordScope(recordScope),
     // ENH-17. Null means "this token is not scoped to a partner organisation",
     // which is a different statement from "this caller may see everything" and
     // has to stay distinguishable: `partner_org = $2` with a null parameter
@@ -421,6 +445,66 @@ export function normaliseReadOptions(options) {
     // over-share it.
     partnerOrg: typeof partnerOrg === 'string' && partnerOrg ? partnerOrg : null,
   }
+}
+
+/**
+ * ENH-12, the read half — the record scope, normalised in one place.
+ *
+ * The scope is `{ collection, recordId }` and both adapters have to agree on
+ * what it means, for the same reason `normaliseReadOptions` exists: two adapters
+ * normalising it separately is how they drift, and a scope one honours and the
+ * other ignores is a read whose *result* depends on a backend environment
+ * variable. That is ARC-10's shape, and the JSON store ignoring a flag the
+ * Postgres store honoured is what made the history feature work in development
+ * and return nothing in production.
+ *
+ * A scope with no collection is refused rather than ignored. Silently dropping
+ * it would turn a caller's intended narrow read into the whole-store read this
+ * exists to replace — the expensive direction, arrived at by a typo. A missing
+ * `recordId` is legal and means the collection's whole history.
+ */
+export function normaliseRecordScope(scope) {
+  if (!scope || typeof scope !== 'object') return null
+  const collection = typeof scope.collection === 'string' && scope.collection ? scope.collection : null
+  if (!collection) {
+    throw new Error('recordScope requires a collection: a scope without one would be silently dropped and read the whole store')
+  }
+  assertDeclaredCollection(collection)
+  const recordId = typeof scope.recordId === 'string' && scope.recordId ? scope.recordId : null
+  return Object.freeze({ collection, recordId })
+}
+
+/**
+ * Does one stored row fall inside a record scope?
+ *
+ * The JavaScript half of the predicate `PostgresStore.readPredicate` pushes into
+ * SQL as a `BitmapOr` over the primary key and migration 4's expression index.
+ * Both have to select the same rows or the two adapters return different stores,
+ * which `test/store-conformance.test.js` exists to prevent — so this is written
+ * against the *shape of the row* rather than against either adapter's storage.
+ *
+ * Two branches, because the two kinds of row are keyed differently and the
+ * history is one physical collection rather than one per source:
+ *
+ *   - a **live** row is keyed by `id`, and its collection is the row's own;
+ *   - a **version** row lives in `record_versions` and carries the collection it
+ *     is a revision *of* in `body.collection`, with the record in
+ *     `body.record_id`. Its own `id` is a hash of the supersession interval, so
+ *     matching on `id` would find nothing.
+ *
+ * `recordId: null` keeps every revision of the collection, which is what the
+ * series route needs — it projects one collection's history without naming a
+ * record.
+ */
+export function inRecordScope(row, physicalCollection, recordScope) {
+  if (recordScope === null) return true
+  const { collection, recordId } = recordScope
+  if (physicalCollection === HISTORY_COLLECTION) {
+    if (row?.collection !== collection) return false
+    return recordId === null || row?.record_id === recordId
+  }
+  if (physicalCollection !== collection) return false
+  return recordId === null || row?.id === recordId
 }
 
 /**
@@ -435,11 +519,20 @@ export function normaliseReadOptions(options) {
  * production and threw in development. The full shape is the contract: every
  * declared collection is always present and always an array.
  */
-export function manifestShape(source, collections) {
+export function manifestShape(source, collections, recordScope = null) {
   const wanted = collections === null ? null : new Set(collections)
   const out = {}
   for (const collection of COLLECTIONS) {
-    out[collection] = wanted === null || wanted.has(collection) ? (source[collection] || []) : []
+    const rows = source[collection] || []
+    const kept = wanted === null || wanted.has(collection) ? rows : []
+    // ENH-12. The scope narrows what is *in* a collection, so it is applied here
+    // rather than folded into `wanted`: a collection the scope excludes is
+    // present and empty, exactly as one the manifest excludes is. Conflating the
+    // two would make a scoped read return `undefined` for a collection the
+    // caller can name, which is the shape `manifestShape` exists to prevent.
+    out[collection] = recordScope === null
+      ? kept
+      : kept.filter((row) => inRecordScope(row, collection, recordScope))
   }
   out.version = source.version
   out.updated_at = source.updated_at
@@ -642,7 +735,7 @@ export class JsonStore {
    * the Postgres adapter uses.
    */
   async read(options = {}) {
-    const { collections, includeHistory, partnerOrg } = normaliseReadOptions(options)
+    const { collections, includeHistory, partnerOrg, recordScope } = normaliseReadOptions(options)
     const read = await this.#readAll()
     // SCL-01. Counted over exactly the rows this read would return, which is
     // the same set the Postgres adapter's `WHERE` matches — the named
@@ -650,7 +743,7 @@ export class JsonStore {
     // not. Counting the file instead would make the two adapters refuse on
     // different requests.
     const budget = this.readRowBudget ?? readRowBudget()
-    const matched = countReadRows(read, collections, includeHistory)
+    const matched = countReadRows(read, collections, includeHistory, recordScope)
     if (matched > budget) throw new StoreReadBudgetExceeded(matched, budget, collections)
     // A bare read is answered with the cached object itself, not a copy of it.
     // R-28 asserts the second `read()` returns the same reference as the first —
@@ -658,7 +751,7 @@ export class JsonStore {
     // rather than redone — so a whole-store read that built a fresh object every
     // time would report a re-parse on every call and hide the cache it exists to
     // prove. The transformations below are only applied when one was asked for.
-    if (collections === null && !includeHistory && !partnerOrg) {
+    if (collections === null && !includeHistory && !partnerOrg && recordScope === null) {
       if (this.#defaultViewOf !== read) {
         this.#defaultView = withoutHistory(read)
         this.#defaultViewOf = read
@@ -666,9 +759,13 @@ export class JsonStore {
       return this.#defaultView
     }
     const scoped = partnerOrg ? scopeToPartner(read, partnerOrg) : read
+    // ENH-12. Narrowed to the scope's rows before the manifest shape is taken,
+    // so the two compose the way the Postgres `WHERE` does: the scope selects
+    // rows and the manifest decides which collections are present at all.
     return manifestShape(
       includeHistory ? scoped : withoutHistory(scoped),
       collections,
+      recordScope,
     )
   }
 
@@ -767,7 +864,7 @@ export class JsonStore {
    * the unbounded allocation the budget guards, not an instance of it.
    */
   async *iterateRecords(options = {}, { batchSize = 1000 } = {}) {
-    const { collections, includeHistory, partnerOrg } = normaliseReadOptions(options)
+    const { collections, includeHistory, partnerOrg, recordScope } = normaliseReadOptions(options)
     const read = await this.#readAll()
     const scoped = partnerOrg ? scopeToPartner(read, partnerOrg) : read
     const source = includeHistory ? scoped : withoutHistory(scoped)
@@ -777,6 +874,11 @@ export class JsonStore {
     for (const collection of COLLECTIONS) {
       if (wanted !== null && !wanted.has(collection)) continue
       for (const body of source[collection] || []) {
+        // ENH-12, the streaming half. The scope has to apply here as well as in
+        // `read()`, or an export and a read of the same options would disagree
+        // about what the store holds — the two-adapter drift ARC-10 is about,
+        // one level in.
+        if (!inRecordScope(body, collection, recordScope)) continue
         batch.push({ collection, body })
         if (batch.length >= size) {
           yield* batch
