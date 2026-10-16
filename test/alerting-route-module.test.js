@@ -280,3 +280,56 @@ describe('ARC-01 — the module answers, or declines, without inventing a respon
     assert.deepEqual(res.json().data, [])
   })
 })
+
+describe('HX-06 — the alert list answers with a rail row, and the detail route does not', () => {
+  // The unit test for `alertRailRow` proves the projection; it cannot prove the
+  // route calls it. This drives the handler, because a projection that exists
+  // and is never applied is the "written and never read" defect one layer out.
+  const fat = () => [{
+    id: 'a1', status: 'open', severity: 'high', rule_name: 'Hazard pressure watch',
+    created_at: '2026-10-16T00:00:00.000Z',
+    derivation: {
+      rule_version: 4, input_record_ids: ['h1'],
+      context_snapshot: { counts: { hazard_events: 4 } },
+    },
+  }]
+
+  it('the list drops the counter snapshot and keeps the rail fields', async () => {
+    const { res } = await call(
+      { kind: 'alert-collection', collection: 'alert_events', id: null },
+      { data: { alert_events: fat() }, search: '?limit=200' },
+    )
+    assert.equal(res.status, 200)
+    const row = res.json().data[0]
+    assert.equal(row.derivation.context_snapshot, undefined,
+      'the list route is still shipping the counter snapshot — 36.6 KB of a 38.3 KB row')
+    assert.deepEqual(row.derivation.input_record_ids, ['h1'])
+    assert.equal(row.severity, 'high')
+    assert.equal(row.rule_name, 'Hazard pressure watch')
+  })
+
+  it('the detail route still carries the whole record', async () => {
+    // The projection is only honest because the snapshot is reachable somewhere.
+    // If this ever stops being true the list has not been slimmed, it has been
+    // censored.
+    const { res } = await call(
+      { kind: 'alert-collection', collection: 'alert_events', id: 'a1' },
+      { data: { alert_events: fat() } },
+    )
+    assert.equal(res.status, 200)
+    assert.deepEqual(res.json().data.derivation.context_snapshot, { counts: { hazard_events: 4 } },
+      'the detail route no longer carries the snapshot, so the list is the only place it was ever readable')
+  })
+
+  it('the alert-rules collection is untouched', async () => {
+    // The projection is named for one collection. A rule has no derivation and
+    // must not be routed through the row projection by accident.
+    const rule = { id: 'r1', name: 'Hazard pressure', metric: 'counts.hazard_events', threshold: 3 }
+    const { res } = await call(
+      { kind: 'alert-collection', collection: 'alert_rules', id: null },
+      { data: { alert_rules: [rule] } },
+    )
+    assert.equal(res.status, 200)
+    assert.deepEqual(res.json().data[0], rule)
+  })
+})

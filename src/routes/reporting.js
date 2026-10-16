@@ -61,6 +61,7 @@ import {
   normalizeScheduleRun,
   recordsForReportSources,
   renderReportMarkdown,
+  reportRailRow,
   scheduleIsDue,
   updateReport,
 } from '../reports.js'
@@ -246,7 +247,15 @@ async function handleReportRoute(store, data, req, res, url, route, { checkWebho
   }
 
   if (req.method === 'GET' && !route.id) {
-    jsonResponse(res, 200, { success: true, ...collectionPage(data.reports, url.searchParams, { auth: req.__auth, data, collection: 'reports' }) })
+    // HX-06. The rail draws a title, a status pill, the narration chip and a
+    // date, and the store's `sections` and `source_refs` are 405 KB of a 411 KB
+    // page for six reports — fetched on the boot tick and every tick of the
+    // reports tab, and discarded on arrival. The filter runs over the full
+    // records and the projection is applied to the page, so a filter that reads
+    // a dropped field still sees it. `/reports/{id}` is unchanged.
+    const page = collectionPage(data.reports, url.searchParams, { auth: req.__auth, data, collection: 'reports' })
+    page.data = (page.data || []).map(reportRailRow)
+    jsonResponse(res, 200, { success: true, ...page })
     return
   }
   if (req.method === 'GET' && route.id && !route.action) {

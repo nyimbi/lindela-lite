@@ -122,11 +122,49 @@ Stated plainly, because most heuristic evaluations only list faults:
   | `/chw/` | 75 KB | 14 |
   | `/parametric/` | 70 KB | 13 |
 
-  On the same host these land in under 80 ms, which is why `latency` looks fine. On a 2G field link 680 KB is the dominant cost. The worst offenders on `/` are `api/v1/climate?limit=200` (114 KB), `api/v1/rapidpro/dispatches?limit=200` (15.6 KB) and `api/v1/workflows?limit=200` (10.4 KB). `/districts/` eagerly fetches every district's full detail — `bor` 57 KB, `turkana` 56 KB, `karamoja` 38 KB, `mandera` 32 KB — to draw five summary cards.
+  On the same host these land in under 80 ms, which is why `latency` looks fine. On a 2G field link 680 KB is the dominant cost.
+
+  **The offender list below was wrong about which endpoint was worst, and the
+  correction is the finding.** Re-measured 2026-10-16 through the live ingress
+  against the 128.5 MB demo store, the console's boot tick is **1,213,354 bytes
+  raw / 141 KB gzipped across 18 requests**, and `api/v1/climate?limit=200`
+  — named here as the worst at 114 KB — is not on the console's boot path at
+  all: it fetches `?view=verification`, which is 109 KB raw. The three this
+  entry named (climate 114 KB, dispatches 15.6 KB, workflows 10.4 KB) are 140 KB
+  of 1.21 MB. The two that dominate were not named:
+
+  | Endpoint | Raw | Gzipped | Share |
+  |---|---|---|---|
+  | `/api/v1/reports?limit=20` | 411,700 | 71,532 | 34% |
+  | `/api/v1/alert-events?limit=200` | 359,275 | 26,360 | 30% |
+
+  Both shipped the whole stored document to draw a card. `reports` was 70%
+  `sections` prose and 28% `source_refs` — the report's own text, which the rail
+  does not draw and does not open a dialog to reach. `alert-events` was **95.7%
+  `derivation.context_snapshot`**: the store's counter snapshot at fire time,
+  36.6 KB of a 38.3 KB row, 343 KB of the 359 KB page for nineteen alerts, read
+  by nothing on any surface — and the one place it was carried *to*, the detail
+  dialog, renders every field with `String(v)` and so printed it as
+  `[object Object]`.
+
+  **Fixed 2026-10-16.** Both list routes project to the row the rail draws
+  (`alertRailRow`, `reportRailRow`), with the full record still on
+  `/alert-events/{id}` and `/reports/{id}`. Boot tick **1,213,354 → 477,570
+  bytes raw, 141 → 55 KB gzipped**. The projections are allowlists where the
+  unbounded members live, so a field added to the store later does not ride
+  along by default. Guards: `test/rail-payload.test.js` for the projections and
+  the route-level assertions in `test/alerting-route-module.test.js` and
+  `test/reporting-route-module.test.js` for the wiring, since a projection that
+  exists and is never applied is the same defect one layer out. Six canaries,
+  each fired by removing one side of one allowlist.
+
+  `/districts/` was the same class and is closed separately — see the note under
+  "Still open". The `limit=200` series the fix below proposes are **not** the
+  problem the measurement found: capping them would have removed 140 KB of 1.21 MB.
 - **Who it hurts:** Field users on metered or 2G connections; partner organisations behind institutional proxies.
 - **Severity:** major
 - **Classification:** improvement
-- **Fix:** Make `/districts/` cards lazy — fetch a summary endpoint, load detail on card activation. Paginate or cap the `limit=200` series behind the map.
+- **Fix:** ~~Paginate or cap the `limit=200` series behind the map.~~ Done, in the form the measurement supports: project each list route to the fields its rail draws, keep the full record on the detail route.
 
 ### HX-07 — The same severity concept is styled four different ways
 - **Surface:** `/districts/` vs `/`

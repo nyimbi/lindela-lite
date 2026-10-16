@@ -1078,3 +1078,39 @@ export function renderExportMarkdown(report, data = {}, options = {}) {
   lines.push('')
   return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()}\n`
 }
+
+/**
+ * HX-06 — a report as a rail row, not as the generated document.
+ *
+ * `/api/v1/reports` answered with the whole record. Measured on the demo store,
+ * `sections` is **289 KB of a 411 KB page** and `source_refs` **116 KB** — 6
+ * reports, so ~68 KB of section prose and 19 KB of refs each — fetched every
+ * 30 seconds on the boot tick and every tick of the reports tab. The rail draws
+ * a title, a status pill, the narration chip and a date; it reads
+ * `id`, `title`, `template_name`, `status`, `generated_at` and `narrative`, and
+ * nothing else. It does not open a detail dialog.
+ *
+ * The section prose is not deleted — it is the report, and `export.md`,
+ * `export.json` and the briefings all read it from the store. Those read
+ * `data.reports` directly, not this route. `/api/v1/reports/{id}` is unchanged
+ * and carries the whole document.
+ *
+ * The list is an **allowlist**: a field added to a report later is absent from
+ * the rail until someone names it here.
+ */
+const RAIL_REPORT_KEYS = Object.freeze([
+  'id', 'template_id', 'report_type', 'status', 'title', 'scope',
+  'section_ids', 'warnings', 'narrative', 'distribution_defaults',
+  'generated_at', 'approved_at', 'distributed_at', 'owner',
+  'created_at', 'updated_at', 'metadata',
+])
+
+/** One report as a rail row. See `RAIL_REPORT_KEYS`. */
+export function reportRailRow(record) {
+  if (!record || typeof record !== 'object') return record
+  const row = {}
+  for (const key of RAIL_REPORT_KEYS) {
+    if (record[key] !== undefined) row[key] = record[key]
+  }
+  return row
+}

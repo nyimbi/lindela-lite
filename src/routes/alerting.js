@@ -46,8 +46,8 @@
  */
 
 import {
-  approveAlertEvent, backtestTriggerProtocol, evaluateInShadowMode, normalizeAlertRule,
-  normalizeTriggerProtocol, updateAlertEvent,
+  alertRailRow, approveAlertEvent, backtestTriggerProtocol, evaluateInShadowMode,
+  normalizeAlertRule, normalizeTriggerProtocol, updateAlertEvent,
 } from '../alerts.js'
 import { renderCapXml } from '../cap.js'
 import { capPermalink, renderCapFeed, validateCapProfile } from '../cap-profile.js'
@@ -269,7 +269,17 @@ async function handleAlertRoute(route, { data, req, res, url, jsonResponse, stor
     // incident, tasks through the intervention, dispatches through the alert
     // event — the same way districtOverview does. Without it those collections
     // matched nothing and a district reported no activity it plainly had.
-    jsonResponse(res, 200, { success: true, ...collectionPage(data[route.collection], url.searchParams, { data, collection: route.collection }) })
+    //
+    // HX-06. The page is projected to what a rail row draws, because the store's
+    // `derivation.context_snapshot` is 36.6 KB of a 38.3 KB alert and no console
+    // surface reads it — measured at 359 KB per fetch of 19 alerts, on the tab
+    // the console opens by default, every 30 seconds. The filter runs over the
+    // full records and the projection is applied to the page, so a filter that
+    // reads a dropped field still sees it. `/alert-events/{id}` is unchanged and
+    // carries the whole record for the detail dialog.
+    const page = collectionPage(data[route.collection], url.searchParams, { data, collection: route.collection })
+    if (route.collection === 'alert_events') page.data = (page.data || []).map(alertRailRow)
+    jsonResponse(res, 200, { success: true, ...page })
     return true
   }
 

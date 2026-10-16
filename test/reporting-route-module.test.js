@@ -303,3 +303,43 @@ describe('QUA-10 — the markdown export refuses a locale it cannot render', () 
     }
   })
 })
+
+describe('HX-06 — the reports list answers with a rail row, and the detail route does not', () => {
+  // `reportRailRow` is unit-tested; that proves the projection and not that the
+  // route applies it. This drives the handler.
+  const fat = () => [{
+    id: 'r1', template_id: 't1', report_type: 'situation_report', status: 'ready',
+    title: 'Daily operations SITREP', generated_at: '2026-10-16T00:00:00.000Z',
+    section_ids: ['incident_summary'],
+    sections: [{ id: 'incident_summary', title: 'Incident summary', content: 'x'.repeat(500) }],
+    source_refs: [{ collection: 'hazard_events', id: 'h1' }],
+    narrative: { status: 'narrated', model: 'claude-sonnet-5-5' },
+    warnings: [], owner: 'ops',
+  }]
+
+  it('the list drops the section prose and the refs, and keeps the card fields', async () => {
+    const { res } = await call(
+      { kind: 'reports', id: null },
+      { store: recordingStore({ reports: fat() }) },
+    )
+    assert.equal(res.status, 200)
+    const row = res.json().data[0]
+    assert.equal(row.sections, undefined,
+      'the list route is still shipping the section prose — 289 KB of a 411 KB page')
+    assert.equal(row.source_refs, undefined)
+    assert.equal(row.title, 'Daily operations SITREP')
+    assert.equal(row.narrative.status, 'narrated',
+      'the narration chip reads narrative.status; without it a narrated report renders as untouched')
+    assert.deepEqual(row.section_ids, ['incident_summary'])
+  })
+
+  it('the detail route still carries the sections', async () => {
+    const { res } = await call(
+      { kind: 'reports', id: 'r1' },
+      { store: recordingStore({ reports: fat() }) },
+    )
+    assert.equal(res.status, 200)
+    assert.equal(res.json().data.sections.length, 1,
+      'the detail route no longer carries the sections, so the prose is unreachable from every surface')
+  })
+})

@@ -768,3 +768,56 @@ function arrayValue(value) {
 function objectValue(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
 }
+
+/**
+ * HX-06 — an alert as a rail row, not as the document the store holds.
+ *
+ * `/api/v1/alert-events` answered with the whole record, and `derivation.
+ * context_snapshot` is the store's counter snapshot at fire time — measured on
+ * the demo store at **36.6 KB of a 38.3 KB row**, 343 KB of a 359 KB page for
+ * 19 alerts. Nothing in the console reads it: the rail draws a severity chip, a
+ * rule name, a date, the metric and status, the location and the approval block,
+ * and the detail dialog renders every field with `String(v)`, which turns that
+ * snapshot into `[object Object]`. The bytes were paid on every 30-second tick,
+ * on the tab the console opens by default, and discarded on arrival.
+ *
+ * The snapshot is not deleted — it is what `docs/data-model.md` calls the
+ * reading as it was rather than as it can be re-derived, and the two tests that
+ * assert on it read the store rather than this route. It is on
+ * `/api/v1/alert-events/{id}`, which is what the detail dialog can fetch when
+ * the derivation is the thing being read.
+ *
+ * The list is an **allowlist**, not a drop of `context_snapshot` alone: a field
+ * added to the store later is absent from the rail until someone names it here,
+ * where a blocklist would ship it to every operator by default. The members are
+ * what `ruleDerivationBlock` in `public/workflow/wire-explain.js` prints —
+ * including `input_record_ids`, because the block branches on whether that
+ * array exists to say "computed from N records" against "an aggregate over the
+ * store", and dropping it would turn the first claim into the second.
+ */
+const RAIL_DERIVATION_KEYS = Object.freeze([
+  'rule_id', 'rule_version', 'rule_name_at_fire', 'metric', 'operator',
+  'threshold', 'observed_value', 'observed_at', 'input_record_ids',
+  'input_record_ids_total', 'input_record_ids_truncated', 'engine',
+])
+
+/** One alert event as a rail row. See `RAIL_DERIVATION_KEYS`. */
+export function alertRailRow(record) {
+  if (!record || typeof record !== 'object') return record
+  const row = {}
+  for (const [key, value] of Object.entries(record)) {
+    if (key === 'derivation') continue
+    row[key] = value
+  }
+  const derivation = record.derivation
+  if (derivation && typeof derivation === 'object') {
+    const kept = {}
+    for (const key of RAIL_DERIVATION_KEYS) {
+      if (derivation[key] !== undefined) kept[key] = derivation[key]
+    }
+    row.derivation = kept
+  } else {
+    row.derivation = derivation ?? null
+  }
+  return row
+}

@@ -365,9 +365,25 @@ is what surfaced them; a reading of the source had not.
   headroom, which is the state the gate's own note is designed to produce: the next change that
   touches the first load has to pay something back rather than spend. The only named removal left
   on that path is the workflow renderers, and they are correctly placed (they draw on first
-  paint). Everything else in the finding — the eager `limit=200` series behind the map — is a
-  request-count and payload question rather than a byte-budget one, and is tracked by the
-  `limit=200` figures in the findings file rather than here.
+  paint).
+
+  **The request half of the finding is closed, 2026-10-16, and the finding's own figures were
+  wrong about where the bytes were.** Re-measured through the live ingress against the 128.5 MB
+  demo store: the boot tick is **1,213,354 bytes raw / 141 KB gzipped across 18 requests**, and
+  the three endpoints this entry named — `climate?limit=200` 114 KB, `dispatches?limit=200`
+  15.6 KB, `workflows?limit=200` 10.4 KB — are 140 KB of it. Two endpoints it never named were
+  64% of it: `/api/v1/reports?limit=20` at **411,700 bytes** (70% `sections` prose, 28%
+  `source_refs`) and `/api/v1/alert-events?limit=200` at **359,275 bytes**, of which **95.7% was
+  `derivation.context_snapshot`** — 36.6 KB of a 38.3 KB row, the store's counter snapshot at fire
+  time, read by no surface, and rendered as `[object Object]` in the one dialog it reached.
+
+  Both list routes now project to the row their rail draws; the full record stays on
+  `/alert-events/{id}` and `/reports/{id}`. Boot tick **1,213,354 → 477,570 bytes raw, 141 → 55 KB
+  gzipped**. Guards: `test/rail-payload.test.js` for the projections, and route-level assertions
+  in `test/alerting-route-module.test.js` / `test/reporting-route-module.test.js` for the wiring,
+  because a projection that exists and is never applied is the same defect one layer out. Six
+  canaries, each fired by removing one side of one allowlist. Capping the `limit=200` series — the
+  fix this finding proposed — would have removed 140 KB of 1.21 MB and left the two that mattered.
 
 - **HX-06 — `/districts/`'s eager fetch. Closed 2026-10-16.** The second half of the same
   finding, and the one with a measurement behind it: the list page fetched one *full* district
