@@ -1626,6 +1626,31 @@ was correct, tested, and used by the driver — and the route three hundred line
 away had its own answer to the same question. Neither was wrong about its
 subject; they were wrong about each other.
 
+**Closed 2026-10-15 — the consolidation is no longer ENH-59's outstanding work,
+and the sentences above saying it is are superseded.** Read the paragraphs above
+as the history of how the blind spots were found, not as the current state; the
+"still open" and "still ENH-59's" lines in this entry are true of the dates they
+were written and false now.
+
+What shipped is `src/route-declaration.js`: one `(METHOD, path)`-keyed entry per
+operation carrying the spec body, the scope, the collections the handler reads,
+and the comments. `docs/openapi.yaml` and `src/route-manifests.js` are generated
+from it — the two tables this entry's narrative spent the most words on.
+`scripts/check-route-drift.mjs` fails when a committed table and its
+regeneration differ, which is the property the five cross-checks could not give:
+they proved the tables agreed *today*, and drift proves they came from one input.
+`scripts/check-route-reachability.mjs` closes the other direction — a generator
+emitting from a wrong declaration is consistent and wrong at once, so the
+declaration is checked against the paths the matchers actually serve.
+
+Two of the five tables are still hand-kept, and that is a decision rather than a
+residue: a scope is *policy*, a caller list is *usage*, and neither is a function
+of a path. Both are proved to agree with the declaration on every operation by
+`test/route-declaration.test.js` rather than generated. The distinction the
+original PARTIAL verdict missed is **derive** against **declare** — the entry was
+right that a scope is not derivable from a path, and wrong that this made the
+tables ungenerable, because a value need not be derived to live in one place.
+
 ### ARC-03 — HIGH — `/api/v1/demo/seed` imports `scripts/seed-demo.mjs` at request time
 `src/server.js:1269`. Production `src/` depends on `scripts/` — inverted layering.
 The 75 KB seed script is bundled into the runtime path; an import error there is a
