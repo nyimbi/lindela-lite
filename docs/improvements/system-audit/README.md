@@ -6,7 +6,7 @@
 
 | Document | Contents |
 |---|---|
-| [01-remediation.md](01-remediation.md) | **92 defects** requiring remediation — disjoint from the 50. Defects, anti-patterns, concurrency anomalies, scalability bottlenecks, observability deficits, security vulnerabilities. |
+| [01-remediation.md](01-remediation.md) | **93 defects** requiring remediation — disjoint from the 50. Defects, anti-patterns, concurrency anomalies, scalability bottlenecks, observability deficits, security vulnerabilities. |
 | [02-enhancements.md](02-enhancements.md) | **50 enhancements** — each with a named metric, the order-of-magnitude claim, complexity before/after, and a weighted score. |
 | [03-roadmap.md](03-roadmap.md) | Six phases, dependency graph, critical path, resource allocation, and the sequencing constraints that are not negotiable. |
 

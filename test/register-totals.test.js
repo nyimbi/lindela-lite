@@ -253,4 +253,42 @@ describe('the improvement registers state totals their tables agree with', () =>
       { shipped: counts.Shipped, partial: counts.Partial, 'not started': counts['Not started'] },
       'the README index row for status.md disagrees with the register')
   })
+
+  it('system-audit: the remediation total is the number of entries, not the number of ids', () => {
+    // `01-remediation.md` lists its defects as `| **R-NN** | … |` rows across
+    // several sections, and the README states a total. It was exactly right when
+    // written — 92 entries at `5bc71e8`, 2026-10-05 — and R-80 was added on
+    // 2026-10-12 without the count following. So this is drift rather than a
+    // miscount, which is worth distinguishing: the same assertion catches both,
+    // but the fix differs.
+    //
+    // The reader accepts bold or bare ids, and that is not a convenience: the
+    // two shapes disagreed by exactly the drift. Until this change the register
+    // held **92 bold entries plus R-80 bare** — R-80 being the one entry written
+    // without `**`, added on 2026-10-12. So a reader requiring the bold counted
+    // 92, agreed with the stale README, and reported the register correct. The
+    // count and the presentation were the same bug; R-80 is now bolded like the
+    // rest, and the reader accepts both shapes so the next one cannot hide.
+    //
+    // Not asserted: that the ids are contiguous. R-81 and R-82 have never
+    // existed in any commit (checked at 5bc71e8 and at HEAD), so a gap is the
+    // register's own numbering rather than a deleted row.
+    const AUDIT_README = read('docs/improvements/system-audit/README.md')
+    const REMEDIATION = read('docs/improvements/system-audit/01-remediation.md')
+
+    const entries = new Set(
+      [...REMEDIATION.matchAll(/^\| \*{0,2}(R-\d+)\*{0,2} \|/gm)].map((m) => m[1]),
+    )
+    assert.ok(entries.size > 80,
+      `read only ${entries.size} remediation entries — the reader or the register is wrong, not the count`)
+
+    const stated = /(\d+) defects\*{0,2} requiring remediation/.exec(AUDIT_README)
+    assert.ok(stated, 'system-audit/README.md states no "N defects requiring remediation" total')
+    assert.equal(
+      Number(stated[1]),
+      entries.size,
+      `system-audit/README.md says ${stated[1]} defects; 01-remediation.md lists ${entries.size}. `
+      + 'A count that does not follow the register is the drift this whole file exists to catch.',
+    )
+  })
 })
