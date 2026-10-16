@@ -87,6 +87,10 @@ export async function fetchAllPages(fetchPage, { path, limit = 200, maxPages = 2
   let pages = 0
   let total = null
   let truncated = false
+  // A route with a roll-up beside its list computes it over the whole matched
+  // set, so every page carries the same one. Kept for the caller that draws its
+  // status line from it; dropping it reads as "not published", silently.
+  let summary = null
 
   while (pages < maxPages) {
     const query = `limit=${encodeURIComponent(limit)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`
@@ -98,7 +102,7 @@ export async function fetchAllPages(fetchPage, { path, limit = 200, maxPages = 2
       // The rows already collected are real and worth showing; the ones after
       // the failure were never asked for. Returning nothing would blank a panel
       // that has data, and returning the rows silently would read as complete.
-      return { rows, pages, total: total ?? rows.length, truncated: true, failed: true }
+      return { rows, pages, total: total ?? rows.length, summary, truncated: true, failed: true }
     }
     pages += 1
 
@@ -115,16 +119,17 @@ export async function fetchAllPages(fetchPage, { path, limit = 200, maxPages = 2
 
     if (Array.isArray(envelope)) { cursor = null } else {
       if (Number.isFinite(envelope?.total)) total = envelope.total
+      if (envelope?.summary != null) summary = envelope.summary
       cursor = envelope?.next_cursor || null
       if (envelope?.has_more === false) cursor = null
     }
 
-    if (!cursor) return { rows, pages, total: total ?? rows.length, truncated: false, failed: false }
+    if (!cursor) return { rows, pages, total: total ?? rows.length, summary, truncated: false, failed: false }
     if (pages >= maxPages) break
   }
 
   // Out of the loop with a cursor still in hand: the cap, not the end of the set.
-  return { rows, pages, total: total ?? rows.length, truncated: true, failed: false }
+  return { rows, pages, total: total ?? rows.length, summary, truncated: true, failed: false }
 }
 
 /**

@@ -1443,26 +1443,22 @@ function clearRoutePlan() {
 
 async function loadRoadStatus() {
   try {
-    // `limit=5000` is the server's own maximum, asked for explicitly. The route
-    // pages now, and the overlay draws what it is given: at the default 500 a
-    // road network larger than that would silently lose its tail, and a missing
-    // road draws as no road — the failure map-frame.js was written to end.
-    const body = await fetchJson('/api/v1/road-access?limit=5000')
-    if (body?.success) {
-      state.roadAccess = body.data || []
-      // "0 impassable" and "the count did not load" both used to render as
-      // "All N roads passable" — the reassuring half of the sentence, from a
-      // field that was never filled in.
-      const cut = isUndetermined(body.summary?.impassable) ? null : Number(body.summary.impassable)
-      if (roadStatusEl && roadOverlayToggle?.checked) {
-        roadStatusEl.textContent = cut === null || !Number.isFinite(cut)
-          ? 'Road passability not published'
-          : cut
-            ? `${cut} of ${body.summary.total_roads} roads impassable`
-            : `All ${body.summary.total_roads} roads passable`
-      }
-      if (roadOverlayToggle?.checked) reRenderMapFromState()
+    // R-27. `limit=5000` is a ceiling: a network past it loses its tail, and a
+    // missing road draws as no road. Walk the cursor; `summary` is page-invariant.
+    const walk = await fetchAllPages(
+      (path) => fetchJson(path),
+      { path: '/api/v1/road-access', limit: 500, maxPages: 40 },
+    )
+    if (walk.failed && !walk.rows.length) throw new Error('road-access unreachable')
+    state.roadAccess = walk.rows
+    const cut = isUndetermined(walk.summary?.impassable) ? null : Number(walk.summary.impassable)
+    if (roadStatusEl && roadOverlayToggle?.checked) {
+      const tail = walk.truncated ? ', from a partial load' : ''
+      roadStatusEl.textContent = cut === null || !Number.isFinite(cut)
+        ? 'Road passability not published'
+        : (cut ? `${cut} of ${walk.summary.total_roads} roads impassable` : `All ${walk.summary.total_roads} roads passable`) + tail
     }
+    if (roadOverlayToggle?.checked) reRenderMapFromState()
   } catch {
     state.roadAccess = []
   }
@@ -1476,18 +1472,27 @@ async function loadRoadStatus() {
  */
 async function loadIpcOverlay() {
   try {
-    const list = await fetchJson('/api/v1/food-security?limit=5000')
-    if (list?.success) {
-      state.foodSecurity = (list.data || []).filter(
-        (r) => r.scope === 'area' && r.validity_period === 'current')
-      const withBox = state.foodSecurity.filter((r) => r.bbox).length
-      if (ipcStatusEl && ipcOverlayToggle?.checked) {
+    // R-27. `limit=5000` is a ceiling: the demo collection is 5,650, so this
+    // returned 5,000 with `has_more: true` — 556 of 2,229 IPC areas lost.
+    const walk = await fetchAllPages(
+      (path) => fetchJson(path),
+      { path: '/api/v1/food-security', limit: 500, maxPages: 40 },
+    )
+    state.foodSecurity = walk.rows.filter(
+      (r) => r.scope === 'area' && r.validity_period === 'current')
+    const withBox = state.foodSecurity.filter((r) => r.bbox).length
+    if (ipcStatusEl && ipcOverlayToggle?.checked) {
+      if (walk.failed && !walk.rows.length) {
+        ipcStatusEl.textContent = 'IPC food-security data unavailable'
+      } else if (walk.truncated) {
+        ipcStatusEl.textContent = `${withBox} IPC areas shaded, from a partial load — more records exist than were fetched`
+      } else {
         ipcStatusEl.textContent = withBox
           ? `${withBox} IPC areas shaded by published Phase 3+ share; boxes include neighbouring ground`
           : 'No IPC area geometry matched — see food-security records for the classifications'
       }
-      if (ipcOverlayToggle?.checked) reRenderMapFromState()
     }
+    if (ipcOverlayToggle?.checked) reRenderMapFromState()
   } catch {
     if (ipcStatusEl) ipcStatusEl.textContent = 'IPC food-security data unavailable'
   }

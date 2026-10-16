@@ -236,4 +236,37 @@ describe('ENH-81 — walking a paged endpoint to its end', () => {
     assert.equal(calls, 1, 'a false has_more must end the walk')
     assert.equal(result.truncated, false)
   })
+
+  it('carries the roll-up a route computes over the whole matched set', async () => {
+    // `/road-access` and `/food-security` return a `summary` beside the list,
+    // computed server-side over the full match so it is identical on every page.
+    // A walk that dropped it left the status line reading "not published" —
+    // a wrong answer that looks like an absence of data, which is why it is
+    // asserted rather than assumed.
+    const withSummary = async (path) => {
+      const url = new URL(path, 'http://x')
+      const limit = Number(url.searchParams.get('limit'))
+      const cursor = url.searchParams.get('cursor')
+      const all = rows(61)
+      const start = cursor ? all.findIndex((r) => r.id === cursor) + 1 : 0
+      const page = all.slice(start, start + limit)
+      const hasMore = start + page.length < all.length
+      return {
+        data: page,
+        total: all.length,
+        has_more: hasMore,
+        next_cursor: hasMore ? page[page.length - 1].id : null,
+        summary: { total_roads: 61, impassable: 7 },
+      }
+    }
+    const result = await fetchAllPages(withSummary, { path: '/api/v1/road-access', limit: 30 })
+    assert.equal(result.rows.length, 61, 'the walk must still reach the end')
+    assert.deepEqual(result.summary, { total_roads: 61, impassable: 7 },
+      'the roll-up must survive the walk; undefined reads as "not published"')
+  })
+
+  it('reports no roll-up when the route has none, rather than inventing one', async () => {
+    const result = await fetchAllPages(server(rows(10)), { path: '/api/v1/x', limit: 30 })
+    assert.equal(result.summary, null)
+  })
 })
