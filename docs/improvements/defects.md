@@ -852,9 +852,13 @@ ensemble endpoint (`ensemble-api.open-meteo.com/v1/ensemble`) behind its
 keys, and computes p10/p50/p90 with `computeEnsembleStats` — so
 `ensemble_source` is set from fetched members and `drivers.ensemble_used` is
 reachable. The research, the measured response shape and the rejected options are
-in `docs/research/open-meteo-ensemble/`. `spreadSkillIndex` remains without a
-caller: the console's reliability view (`public/shared/viz-verify.js`) is the
-route to that chart and it is still blocked on archive records, not on members.
+in `docs/research/open-meteo-ensemble/`. `spreadSkillIndex` remained without a
+caller until 2026-10-16: `computeFloodRisk` now reports it as
+`ensemble_spread_index` / `ensemble_spread_basis` / `ensemble_spread_floor`, so
+the coefficient of variation over real members reaches the flood payload beside
+the coverage-driven sensitivity band rather than being merged with it. The
+console's reliability view (`public/shared/viz-verify.js`) is still the route to
+that chart and is still blocked on archive records, not on members.
 
 `computeEnsembleStats` also returns `{p10: 0, p50: 0, p90: 0, mean: 0, stddev: 0,
 count: 0}` for an empty input. A percentiles-of-nothing reported as five zeros is
