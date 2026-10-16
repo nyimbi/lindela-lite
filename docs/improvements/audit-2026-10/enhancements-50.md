@@ -1397,13 +1397,23 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > call sites stay *validated* by `check-client-endpoints.mjs` rather than
 > generated, which is the correct relationship and was already true.
 >
-> **The open question this leaves.** The prefix form fails open on an undeclared
-> route, and nothing currently asserts that a served-but-undeclared route is
-> denied rather than granted. `check-route-reachability.mjs` makes the declared
-> set equal the served set, which closes the gap *today* — but the two mechanisms
-> are independent, and a route added to `src/routes/` without a declaration entry
-> fails the reachability gate while still being granted a scope by prefix. That
-> is worth a test that asserts the denial directly, and it is not in this item.
+> **The open question this paragraph left was closed in the same commit that
+> wrote it** (2026-10-15, `3715a05`). It said nothing asserts that a
+> served-but-undeclared route is denied rather than granted, and that a test
+> asserting the denial "is not in this item". The test is in the item:
+> `test/route-declaration.test.js` *denies a served route that is not declared —
+> the prefix table fails open, so this pins the pairing* pins
+> `declaredScopeFor('POST', '/api/v1/alert-events/acknowledge')` to `admin:alerts`
+> as the positive case, asserts that route is absent from the declaration, and
+> then restates the reachability gate's own set equality through the gate's own
+> `shape()` rather than a second normalisation — "a test that relies on a gate it
+> does not run is a test that passes when the gate is deleted", which is why it
+> imports `servedRoutePaths` and `shape` from the gate instead of trusting it.
+> Canaried 2026-10-16 by planting `if (pathname ===
+> '/api/v1/alert-events/canary-undeclared')` in `src/routes/alerting.js`: the test
+> fails naming the path. The reason this paragraph is left standing rather than
+> deleted is the register's own recurring one — the conclusion (a test was
+> missing) was right and the state (it had just been written) was not.
 >
 > **The manifest values are still measured — generation distributes, it does not
 > invent.** `collect-route-manifests.mjs` drives each route against a real server

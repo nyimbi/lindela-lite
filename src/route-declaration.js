@@ -10,13 +10,18 @@
 // The two generated files are held by `scripts/check-route-drift.mjs`, which
 // fails when a committed file and its regeneration differ.
 //
-// The scope tables are the deliberate exception. A scope is *policy* — which
-// caller may reach a route — and this file says only that the route exists.
-// Generating them would move a security decision into a projection of the
-// path, which is the wrong direction for the one table where a mistake opens
-// a route rather than closing one. `test/route-declaration.test.js` proves the
-// agreement instead: every declared operation resolves to the scope this file
-// names, and no row matches zero served routes.
+// The scope tables are the deliberate exception, and the reason is comment
+// density rather than risk. The two tables carry 187 comment lines against
+// 128 rows — the policy itself, why a route gets a scope of its own, why
+// another shares one. A generator emitting 226 rows would have to carry that
+// rationale or drop it. The safety argument is not the tables' shape: the
+// hand-kept form is *prefix* rows, so it FAILS OPEN — a served route absent
+// from this file inherits its family's scope (POST
+// /api/v1/alert-events/acknowledge resolves to `admin:alerts`). What makes
+// that harmless is the reachability gate below, which makes the served set
+// equal this file; `test/route-declaration.test.js` asserts the pairing
+// directly and proves the agreement — every declared operation resolves to
+// the scope this file names, and no row matches zero served routes.
 //
 // `scripts/check-route-reachability.mjs` is the other half: it fails when a
 // declared route is served by no matcher, or a matcher serves a route no
