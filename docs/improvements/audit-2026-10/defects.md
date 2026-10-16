@@ -2538,7 +2538,7 @@ it. It checks the other direction too: an allowlist entry a test now imports is
 reported as a stale exemption, because an entry that outlives its reason is how
 an allowlist becomes a place to hide. Nine canaries cover both directions,
 including that a bare specifier and a mention in a comment are not imports.
-Registered in `scripts/run-gates.mjs` as self-contained (12 gates).
+Registered in `scripts/run-gates.mjs` as self-contained — **12** when this landed, **24** in that tier today (31 across both).
 
 It found `src/demo-seed.js`, which the hand count above had missed — the module
 is reached only through `POST /api/v1/demo/seed`, so nothing imports it from a
@@ -2690,8 +2690,9 @@ or named in `ARRAY_IS_COMPLETE` with the reason its set cannot grow; and a paged
 `total` is at least its `returned`. Exemptions are by media type where a route
 speaks a published standard — GeoJSON (RFC 7946), the STAC catalogue, OGC API
 Features — because wrapping those in this envelope would break the schema they
-exist to speak. Registered in `scripts/run-gates.mjs` as a `self-contained` gate
-(11 gates now), with 13 canaries covering both directions of every rule.
+exist to speak. Registered in `scripts/run-gates.mjs` as a `self-contained` gate — **11** in
+that tier when this landed, **24** today — with 13 canaries covering both
+directions of every rule.
 
 It found three real defects on its first run, which is the point of it:
 
