@@ -46,6 +46,48 @@ import { piiSaltStatus } from '../pii.js'
 import { publicSourceCatalog } from '../schema.js'
 
 /**
+ * What the store occupies and what the disk has left, or an honest refusal.
+ *
+ * R-49's second half. Both routes report this now: `/ready` fails on it because
+ * a deployment probe should, and `/health` reports it because that is the
+ * endpoint a person reads when a write returned 500 and they want to know why.
+ *
+ * A backend that cannot see the disk reports `supported: false` with the reason
+ * rather than a number it cannot vouch for. A Postgres client is the case that
+ * matters — `pg_database_size` is a real measurement of the store, and the
+ * database server's filesystem is not visible from here, so `free_bytes` stays
+ * null and the `note` says so. A probe that throws or times out is also
+ * `supported: false`, and is never itself a readiness failure.
+ *
+ * `mode` is carried in every branch. It was `storage: { mode: store.mode }`
+ * before this function existed, and a caller reads `health.storage.mode` to tell
+ * a JSON deployment from a Postgres one — so dropping it in the branches that
+ * are *about* the store would break the one field the key was originally for.
+ */
+async function storageReport(store, timeoutMs, withTimeout) {
+  const empty = {
+    mode: store.mode || 'custom',
+    supported: false, error: null, store_bytes: null, free_bytes: null, total_bytes: null, used_ratio: null,
+  }
+  if (typeof store.storageUsage !== 'function') {
+    return { ...empty, note: 'this store does not report its storage usage' }
+  }
+  try {
+    // `storageUsage()` answers with `backend`; `/health` has always answered
+    // with `mode`, and `store.mode` is the field both stores declare. Merged
+    // rather than replaced so the reported usage keeps every key the probe
+    // measured and the route keeps the key its callers read.
+    const usage = await withTimeout(Promise.resolve(store.storageUsage()), timeoutMs)
+    return { mode: store.mode || 'custom', ...usage }
+  } catch (error) {
+    const reason = error?.name === 'TimeoutError'
+      ? `the disk probe did not answer within ${timeoutMs}ms`
+      : String(error?.message || error)
+    return { ...empty, error: reason }
+  }
+}
+
+/**
  * Which liveness route a request is, or null.
  *
  * Both are GET and neither takes an id, so the pathname alone decides. Written
@@ -74,6 +116,11 @@ export async function handleLivenessRoute(route, {
     jsonResponse(res, 405, { success: false, error: 'Method not allowed' })
     return true
   }
+
+  // One timeout for both routes. It bounds the store read on `/ready` and the
+  // disk probe on `/health`; SCL-07's rule is that an unresponsive store costs
+  // one timeout, not one per thing asked of it.
+  const timeoutMs = Number(url.searchParams.get('timeout_ms') || 2000)
 
   if (route.kind === 'health') {
     // `/health` reports on the pipeline and counts the collections, so it reads
@@ -143,7 +190,14 @@ export async function handleLivenessRoute(route, {
       counts: counts(data),
       sources: publicSourceCatalog().map((source) => source.id),
       exclusions: ['gdelt'],
-      storage: { mode: store.mode || 'custom' },
+      // R-49's second half. `/ready` reports free space because a deployment
+      // probe needs to fail on a full disk; `/health` reported only the store's
+      // mode, so the person asking "why did the write 500?" read a 200 and a
+      // mode name. The probes are raced against one timeout here too, and a
+      // backend that cannot see the disk reports `supported: false` rather than
+      // a made-up number — a Postgres client cannot see the database server's
+      // filesystem, and saying so is the honest answer.
+      storage: await storageReport(store, timeoutMs, withTimeout),
       // The auth posture, on the one route an operator can reach without a
       // token. It used to live only on `/api/v1/auth-info`, which needs a token
       // to read — so the person asking "is this deployment secured?" was the one
@@ -163,7 +217,6 @@ export async function handleLivenessRoute(route, {
 
   if (route.kind === 'ready') {
     const started = Date.now()
-    const timeoutMs = Number(url.searchParams.get('timeout_ms') || 2000)
     // SCL-07. One read, and it names what it wants.
     //
     // This endpoint is the most-polled surface in the deployment — a load

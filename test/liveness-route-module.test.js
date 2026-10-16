@@ -356,6 +356,53 @@ describe('R-48/R-49 — the probe reports schema drift and free space', () => {
   })
 })
 
+describe('R-49 — both routes report what the disk has left', () => {
+  // `/ready` fails on a full disk because a deployment probe should. `/health`
+  // reported only the store's *mode*, so the person who read it after a write
+  // 500'd learned that the backend was called "json" and nothing else. Both
+  // report the probe now; neither invents a number it cannot vouch for.
+  const usage = (over = {}) => async () => ({
+    supported: true, backend: 'json', store_bytes: 40 * 1024 * 1024,
+    free_bytes: 100 * 1024 * 1024, total_bytes: 200 * 1024 * 1024, used_ratio: 0.5, error: null, ...over,
+  })
+
+  it('reports the free space on /health, not just the mode', async () => {
+    const { json } = await call({ kind: 'health' }, { store: storeDouble({ storageUsage: usage() }) })
+    assert.equal(json.storage.supported, true)
+    assert.equal(json.storage.free_bytes, 100 * 1024 * 1024)
+    assert.equal(json.storage.store_bytes, 40 * 1024 * 1024)
+    assert.equal(json.storage.backend, 'json')
+  })
+
+  it('reports a backend that cannot see the disk as unsupported, with its reason', async () => {
+    // A Postgres client measures the database and cannot see the server's
+    // filesystem. `supported: false` plus a note is the honest answer; a
+    // made-up free-space figure would be worse than no figure.
+    const postgres = async () => ({
+      supported: true, backend: 'postgres', store_bytes: 1024, free_bytes: null,
+      total_bytes: null, used_ratio: null, error: null,
+      note: 'the database server filesystem is not visible from this client',
+    })
+    const { json } = await call({ kind: 'health' }, { store: storeDouble({ storageUsage: postgres }) })
+    assert.equal(json.storage.free_bytes, null)
+    assert.match(json.storage.note, /not visible from this client/)
+
+    // A store with no probe at all says so rather than reporting nulls silently.
+    const bare = await call({ kind: 'health' }, { store: storeDouble() })
+    assert.equal(bare.json.storage.supported, false)
+    assert.match(bare.json.storage.note, /does not report its storage usage/)
+  })
+
+  it('a probe that throws does not turn /health into a 500', async () => {
+    const { res, json } = await call({ kind: 'health' }, {
+      store: storeDouble({ storageUsage: async () => { throw new Error('statfs not permitted') } }),
+    })
+    assert.equal(res.status, 200)
+    assert.equal(json.storage.supported, false)
+    assert.match(json.storage.error, /statfs not permitted/)
+  })
+})
+
 describe('ENH-60 — a verb the family does not serve is refused', () => {
   it('answers 405 for a write to either path', async () => {
     for (const kind of ['health', 'ready']) {
