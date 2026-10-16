@@ -2,7 +2,7 @@
 
 Status: proposed — 2026-10-03. **Seven rows verified shipped and six partly
 built on 2026-10-16; see "Verified against the tree" below before reading any
-row's `Now` as current.**
+row's `Now` as current. That leaves seventeen unbuilt of thirty.**
 Related: [enhancements.md](enhancements.md) (ENH-01..30), [roadmap-extension.md](roadmap-extension.md) (items 1–20), [world-class-roadmap.md](../plans/world-class-roadmap.md)
 
 ## What this document is
@@ -16,7 +16,7 @@ This document adds a third axis: **what the platform does not know yet**. Thirty
 | Prefix | Group | What it adds |
 |---|---|---|
 | SRC-01..11 | Sources | Facts the platform cannot currently state |
-| DEC-01..09 | Decisions | Judgements it cannot currently make |
+| DEC-01..08 | Decisions | Judgements it cannot currently make |
 | OPS-01..06 | Operations | States a response team must move through |
 | PLT-01..04 | Platform | Ways for the data to leave and be queried at scale |
 | CC-01 | Cold chain | One vertical taken end to end |
@@ -67,6 +67,16 @@ The instruction was no duplication and no contradiction. Here is every item in t
 | CC-01 Cold chain and vaccine viability | **new** | SRC-05 | Detailed below. |
 
 **Twenty-five carried, three explicitly rejected as duplicates (DEC-03, DEC-08, and the SEP/IBF half of extension 6 already inside DEC-07), three that extend an existing item by adding a deliverable rather than repeating one (SRC-03, PLT-03, PLT-04).**
+
+That is thirty rows: the twenty-five, plus DEC-03 and DEC-08 as the rejected
+pair, plus SRC-01, DEC-07 and CC-01, which are carried for reasons the sentence
+above does not cover (a retirement, a remediation and a vertical). The group
+table declared `DEC-01..09` until 2026-10-16 and the index said **31 capability
+items** — the arithmetic of that range, not of the file. There was never a
+DEC-09: eight DEC rows and eight `### DEC-NN` headings were written in the
+commit that introduced the register (`d1daa25`) and no commit has held nine.
+`test/register-totals.test.js` now derives the total from the rows, so a range
+that outruns the file fails rather than being copied into a second document.
 
 ---
 

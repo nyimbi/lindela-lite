@@ -348,13 +348,13 @@ The gaps are uneven in a way that matters:
 | 9 | Offline-first PWA | **Shipped** | — |
 | 10 | STAC / OGC | **Shipped** | — |
 | 11 | CAP export | **Partial** — message-type mapping and scope validation are fixed (`src/cap.js:24-28`, `:171-180`); the circle geometry is still centroid-plus-radius (`:99-101`) | "XML valid, semantics wrong" |
-| 12 | Connector SDK + registry | **Shipped** — with two registry/connector key drifts still live (see below) | — |
+| 12 | Connector SDK + registry | **Shipped** — the registry's option surface is compared against each connector's live `spec.schema.requestSchema` (`test/connector-registry-parity.test.js`), so a key the connector never reads fails the suite | — |
 | 13 | Outbox event bus | **Shipped** — `x-signature` set on every delivery (`src/outbox.js:382`); `next_attempt_at` written and honoured with backoff | "signed path cannot work" |
 | 14 | Auth + scoped tokens + audit | **Shipped** — deny-by-default gate, `timingSafeEqual` (`src/auth.js:527`), `/metrics` behind the gate | "GET unauthenticated, fails open" |
 | 15 | PII minimisation + retention | **Shipped** — with one open gap (see below) | "implemented, not wired, retention no-op" |
 | 16 | Signed releases + SBOM | **Partial** — SLSA level 3 provenance runs (`ci.yml:271`) as well as the CycloneDX SBOM (`:160`); artifact signing (cosign) is still absent | "SBOM only" |
 | 17 | OTel + Prometheus + logs | **Partial** — `/metrics` gated and cardinality bounded (`src/observability.js:130-230`); OpenTelemetry is absent | "metrics and logs only" |
-| 18 | Idempotent ingestion | **Partial** — `payload_hash` persists (`src/postgres-store.js:649`); two id-drift defects remain (see below) | "dedup broken on Postgres" |
+| 18 | Idempotent ingestion | **Partial** — `payload_hash` persists (`src/postgres-store.js:649`) and now ignores a `fetched_at` stamp nested in `metadata`, so a same-content re-run hashes alike; no lease or claim mechanism | "dedup broken on Postgres" |
 | 19 | Scenario workbench | **Shipped** | — |
 | 20 | Localization + RTL | **Partial** — **10** locales, not 11, and RTL *is* implemented (`public/shared/fmt.js:299-334`); the pickers offer only English | "11 locales, missing on 3 key surfaces" |
 
@@ -369,8 +369,8 @@ nothing checked it: `test/audit-register-structure.test.js` guards
 ### What the re-verification found still open
 
 Three residuals, each verified against the tree rather than inferred, and each
-narrower than the row it sits under. The first was a live defect and is now
-fixed; the other two stand:
+narrower than the row it sits under. **All three are now closed**; what each
+actually was, and what closes it, is recorded below.
 
 - **A write path called no redactor (item 15) — fixed 2026-10-16.**
   `redactPii` had thirteen call sites across `src/routes/rapidpro.js` and
@@ -390,17 +390,52 @@ fixed; the other two stand:
   field was sent. Guarded by `test/operational-route-module.test.js`, which
   asserts the pseudonym shape, that the default and a supplied name agree, and
   that a *resource* name is left alone (the redactor was never about it).
-- **Two connector-registry key drifts (item 12).** `connectors.registry.json:288`
-  offers `gho_top_years` while `src/connectors/who-gho.js:87` reads
-  `gho_min_year`; and the registry's IPC default is `['KE','SO','SS']`
-  (`:250`) against the connector's 46 ISO3 codes (`src/connectors/ipc-hdx.js:58`).
-  A registry that disagrees with its connector is a configuration surface that
-  silently does nothing.
-- **Two id-drift defects in dedup (item 18).** `src/connectors/ipc-hdx.js:250`
-  stamps `fetched_at` inside `metadata`, which `canonicalHash`'s ignore list does
-  not strip, and `src/connectors/open-meteo-archive.js:209` includes `endDate` in
-  the id — so a re-run of either produces a new id for the same content. There is
-  also no lease or claim mechanism.
+- **Two connector-registry key drifts (item 12) — fixed 2026-10-16.**
+  `connectors.registry.json` offered `gho_top_years` while
+  `src/connectors/who-gho.js:87` reads `gho_min_year` — a key an operator could
+  set that changed nothing and raised no error. Removed. The second half is not
+  the same defect and the register stated it wrongly: `['KE','SO','SS']` was
+  never a `defaults` key in the registry (`git show 0f23d1a:connectors.registry.json`
+  — `defaults` holds only `rateLimit`, `retry` and `timeout_ms`). It was prose
+  inside the `schemas.input.countries` **description string**, and it named a
+  default the connector does not have: `src/connectors/ipc-hdx.js:58` holds 46
+  Sub-Saharan ISO3 codes in `DEFAULT_COUNTRIES`, and `optionCountryFilter` falls
+  back to that list, not to three countries. So the drift was documentation that
+  misinformed rather than configuration that did nothing — a weaker defect than
+  the row claimed, and corrected rather than "fixed".
+
+  The class is what needed the check, not the two instances. The registry's
+  `schemas.input` is now compared against each connector's live
+  `spec.schema.requestSchema` in `test/connector-registry-parity.test.js`, with
+  two declarations that are themselves asserted: `INTERNAL` for the request keys
+  the runner injects rather than offers (`now`, `on_watermark_state`, the
+  watermark cursor), and `NO_SPEC` for the five connectors that predate
+  `defineConnector` and export no machine-readable surface. An entry that stops
+  being true fails, so an exemption cannot outlive its reason. Three canaries
+  fired. **What the check compares is the key set, not the descriptions** — the
+  `countries` text above is not machine-readable and would still drift silently,
+  which is the honest scope of this fix.
+- **Two id-drift defects in dedup (item 18) — fixed 2026-10-16, by the hash and
+  not the id.** `src/connectors/ipc-hdx.js:250` stamps `fetched_at` inside
+  `metadata`, and `canonicalHash`'s ignore list is top-level only, so that stamp
+  was hashed as content: a same-content re-run produced a new `payload_hash`.
+  `withoutFetchStamp` (`src/utils.js`) now strips that key at every depth before
+  hashing. It is deliberately key-specific rather than a blanket recursive strip,
+  because `action_logs.metadata.removed_rule.created_at` is *content* — an
+  archived rule's real creation time — and stripping it would make two different
+  rules hash alike, which is the defect `canonicalise` exists to fix. A canary
+  proves the blanket strip fails a test.
+
+  The archive half is not what the register said. `src/connectors/open-meteo-archive.js`
+  puts `endDate` in the id, so **the id does still move with the clock day** —
+  measured, `climate_54fbaa9bb207b2f8` on 10-16 against
+  `climate_85e7f433bc2019ad` on 10-17 with identical `daily` content. Writing
+  "the id no longer drifts" would be a false reason on a true result. What
+  prevents the duplicate is that `mergeById` (`src/store.js:1255`) checks
+  `payload_hash` **before** the id and skips an incoming record whose hash it
+  already holds — so the `fetched_at` fix is what closes this, through the hash
+  path. The id was never the guard. There is still no lease or claim mechanism,
+  which is why item 18 stays Partial.
 
 The pattern is consistent and worth naming: this project builds the capability and
 then does not finish the wiring. Item 3 computes the impact figures and never stores
@@ -412,10 +447,11 @@ request path.
 > **That paragraph is the register's thesis and nine of its examples are now
 > false.** Items 3, 5 and 15 all shipped, and item 11's semantics were corrected;
 > the wiring was finished in each case, which is the outcome the paragraph was
-> arguing for. It is kept because the failure mode it names is real and the
-> residual list above shows it still live in a narrower form — a second door with
-> no gate, a registry that drifts from its connector — but a reader should take
-> the four items named as a historical illustration, not as a current defect list.
+> arguing for. It is kept because the failure mode it names is real — the
+> residual list above found a second door with no gate, and a registry that had
+> drifted from its connector — but a reader should take the four items named as a
+> historical illustration, not as a current defect list. Every residual above is
+> now closed, and two of the three were narrower than the row that carried them.
 
 That is a good failure mode — the hard part, the part requiring judgement and
 domain knowledge, is done everywhere. What is missing is the class of check that
