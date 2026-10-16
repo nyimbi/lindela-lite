@@ -28,7 +28,6 @@ import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 import fs from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 import { importFrontEnd, installBrowserEnv } from './browser-env.mjs'
 

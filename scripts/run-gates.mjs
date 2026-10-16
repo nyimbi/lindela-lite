@@ -187,10 +187,16 @@ const GATES = [
     why: 'R-68. A browser surface reads and writes its `state` object through keys the literal that defines it never names, and JavaScript does not mind — so the defect is invisible by construction: an undeclared key and a declared one behave identically until something enumerates the object, at which point a reset written as `Object.keys(state)` drops it. `public/app.js` carried six and `public/focal-point/app.js` four, including one key (`reportsScope`) that was written and never read and one (`state.pending`) read on a path where its own fetch had failed. Resolves `state` **lexically** rather than by regex, because two functions in `public/app.js` take their own `state` parameter and nine references belong to those — a regex scanner reports them as findings, and nine false positives is how a gate gets turned off. Files with no module-level literal are reported out of jurisdiction rather than guessed at. Reads files only; carries ten canaries, driven by test/state-keys-gate.test.js.',
   },
   {
-    name: 'check-budget-and-surface-contract',
+    // Named for what it runs. It was `check-budget-and-surface-contract`, which
+    // promised a budget check that `check-budget` (line 58) performs and a
+    // contract check that does not exist — while the script beside it asserts
+    // neither. A reader scanning this list for "where is the budget checked?"
+    // found two answers and one of them was wrong, and `--gate
+    // check-budget-and-surface-contract` would have run the CSS cascade.
+    name: 'check-hidden-display',
     script: 'test/web-hidden-display.test.js',
     tier: 'self-contained',
-    why: 'Resolves the CSS cascade over eight surfaces in Node. The `[hidden]` class, closed without a browser.',
+    why: 'R-56/R-57. `[hidden]` must mean hidden, on every surface, in every viewport, and this class has shipped three times — always with correct markup and a correct user-agent rule, beaten silently on specificity by an author rule naming a `display` value. So it resolves the cascade rather than grepping: parses each surface\'s markup into an element tree, parses every stylesheet in load order, computes the winning `display` for every `hidden` element by real specificity and source order, and asserts `none`. The parser fails closed — an unsupported at-rule raises rather than being skipped, because a matcher that ignores what it cannot understand is the same quiet as the defect. Needs no browser: the cascade is arithmetic over two text files.',
   },
   {
     name: 'check-outbound-fetch',
