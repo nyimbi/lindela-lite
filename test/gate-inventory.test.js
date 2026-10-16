@@ -159,9 +159,21 @@ describe('the README gate inventory', () => {
     // Measured, not grepped: the array is imported and its length read. The
     // number in the prose is spelled in words, so this maps the words it knows
     // and refuses an unrecognised one rather than passing it silently.
-    const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
+    // Spelled out to ninety-nine, compounds included. The list stopped at
+    // `twenty` and a gate that grew past it was refused as "not a count this
+    // test knows" — the right refusal for an unrecognised word, the wrong
+    // vocabulary for a repository with more than twenty gates' worth of
+    // canaries. A bound that the instrument's own subject outgrows is a bound
+    // that turns a true register into a failing test.
+    const UNITS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
       'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen',
-      'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
+      'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+    const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+    const WORDS = [...UNITS]
+    for (let t = 2; t < TENS.length; t += 1) {
+      WORDS.push(TENS[t])
+      for (let u = 1; u < 10; u += 1) WORDS.push(`${TENS[t]}-${UNITS[u]}`)
+    }
     const source = readFileSync(path.join(ROOT, 'scripts/run-gates.mjs'), 'utf8')
     // Each gate block is a `script:` line followed by its `why:` prose; pair
     // them so the count is read against the gate it describes.

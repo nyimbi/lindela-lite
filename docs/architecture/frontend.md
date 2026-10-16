@@ -43,7 +43,7 @@ console's feature set would make it worse at the one job it has. See
 
 ### What the console is
 
-`public/app.js` is 3,656 lines — larger than every other surface combined — because
+`public/app.js` is 6,451 lines — larger than every other surface combined — because
 it carries the situation map, twelve polled panels, alert triage and dispatch.
 `public/index.html` is the only surface with an inline `<style>` block of
 consequence, and the only one that does not link `components.css`.
@@ -98,7 +98,7 @@ flowchart TB
   class NOPARAMS note
 ```
 
-**`tokens.css`** is 111 lines of `:root` custom properties in OKLCH. It declares no
+**`tokens.css`** is 473 lines of `:root` custom properties in OKLCH. It declares no
 rules, so it has no cascade position and cannot be overridden by specificity games
 from a later sheet — only by a later `:root` block. Dark only: there is no light
 theme, because every surface in this product is used in a room without daylight or
@@ -106,7 +106,7 @@ on a phone at 6am. The comments record why individual values moved; `--ink-faint
 was raised from 55% L because it measured 3.6:1 on `--surface` and carries "never
 run" and "unknown", the two states an operator most needs to read.
 
-**`styles.css`** (2,224 lines) is the console's primitive layer — reset, body
+**`styles.css`** (3,328 lines) is the console's primitive layer — reset, body
 typography, the scroll container, buttons, inputs, tables, dialogs, the RTL block.
 It opens with `@import url('/tokens.css')`, which is what makes the cascade work:
 a surface that links only this sheet still resolves every token.
@@ -125,7 +125,7 @@ main {
 
 The comment is right that the other pages escaped by accident.
 
-**`components.css`** (781 lines) is the composite layer — cards, rails, badges,
+**`components.css`** (1,156 lines) is the composite layer — cards, rails, badges,
 chips, stat tiles, tables as they appear in a page rather than in a document. Its
 own header comment records why it exists: seven of the eight surfaces carried
 236–326 lines of inline `<style>` re-declaring the reset, body, header, footer,
@@ -336,7 +336,7 @@ drives the mouse path and never the keyboard one.)
 
 ### The service worker's job
 
-`public/sw.js` (367 lines) is a single classic worker. It is registered by
+`public/sw.js` (980 lines) is a single classic worker. It is registered by
 `runtime.js initServiceWorker` on the console and focal-point, and hand-registered
 where `runtime.js` is not imported. It does four jobs: precache the shell, serve
 API responses, register the platform, and replay the offline queue.

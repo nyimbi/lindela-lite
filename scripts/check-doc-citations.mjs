@@ -35,6 +35,41 @@ import { fileURLToPath } from 'node:url'
  * `line-drift-ok:` on the line or the one above. The marker is the point: it
  * turns a silent stale citation into a line a reviewer sees and agrees with.
  *
+ * **A size in prose is the same claim in a different unit, and it had no gate
+ * at all.** `check-doc-citations` reads `path:NNN`. A document that says
+ * `public/sw.js` (367 lines) beside a file of 980 makes exactly the claim the
+ * line number makes — *this is what the tree holds* — and nothing read it. Six
+ * live documents stated `src/server.js` as 1,613 or 1,661 lines while it held
+ * 1,660, and `docs/architecture/frontend.md` was wrong in all five of its sizes
+ * (3,656 → 6,451, 111 → 473, 2,224 → 3,328, 781 → 1,156, 367 → 980). So the
+ * same scan reads a second shape: a backticked source path followed immediately
+ * by a number and the word `lines`.
+ *
+ * **Only where the count is adjacent to the path.** `handleApiRequestInContext`
+ * is **88 lines** (`:1000-1087`) … iterating `src/route-families.js`'s 35-entry
+ * table — the 88 is the *function's* size and the path is a different file's
+ * name, forty characters away. A regex that allowed any prose between them
+ * reports that line, and a gate that fails on correct input is a gate that gets
+ * turned off. So the number must sit within a few characters of the backtick:
+ * `` `path` (N lines) ``, `` `path` is N lines ``. A claim written any other
+ * way is out of jurisdiction rather than guessed at — the same judgement the
+ * line-number scope already makes.
+ *
+ * A document that declares itself a dated snapshot (`citations-are-historical:`)
+ * is exempt from this too, for the same reason: its numbers are a quote of a
+ * tree that is gone. `docs/plans/ui-ux-world-class.md` says `styles.css` is
+ * 1,744 lines and is right to; the file is 3,328 now.
+ *
+ * **The tolerance, and why it is not a fudge.** "N lines" has two conventions
+ * and they differ by exactly one: `wc -l` counts newlines, so a file whose last
+ * line has no trailing newline reads one short of the number of lines it has.
+ * Both spellings are in the registers — `src/rate-limit.js` (578 lines) is the
+ * `wc` value and `src/reports.js` (1,117 lines) is the other — and neither
+ * author was wrong. So a claim within one of the file is accepted. The defect
+ * this gate exists for is 3,656 against 6,451; an off-by-one from a newline
+ * convention is not it, and a gate that fails on a correct file is a gate that
+ * gets a `|| true` appended to it.
+ *
  * Exit 0 when clean, 1 with the citations listed. Canaried in `--self-test`.
  */
 
@@ -96,6 +131,18 @@ const RANGE = /([\w./-]+\.(?:js|mjs)):(\d+)\s*[–—-]\s*(\d+)/g
 const DRIFT_OK = /line-drift-ok:/
 
 /**
+ * A file size stated in prose, where the count is adjacent to the path.
+ *
+ * `**\`styles.css\`** (2,224 lines)`, `` `public/app.js` is 3,656 lines ``,
+ * `` `src/reports.js` is **1,117** lines ``. The optional `is|has|holds|carries|
+ * now` and the optional opening paren and bold markers are the spellings the
+ * registers actually use; anything further from the backtick is a different
+ * claim (a function's size, a count of call sites) and is deliberately not
+ * matched. See the docstring.
+ */
+const SIZE_CLAIM = /`([\w./-]+\.(?:js|mjs|css|html))`\*{0,2}\s*(?:\(\s*)?(?:(?:is|has|holds|carries|now)\s+)?\*{0,2}([\d,]{2,})\*{0,2}[- ]lines?\b/g
+
+/**
  * A whole document declared a dated snapshot.
  *
  * `_research/*.md` are audits of a tree that no longer exists — each names the
@@ -141,6 +188,34 @@ function lineCount(rel) {
     lineCountCache.set(rel, count)
   }
   return lineCountCache.get(rel)
+}
+
+/**
+ * Resolve the path in a size claim to one repo-relative file, or `null`.
+ *
+ * Deliberately separate from `resolveCitation`, whose basename index holds only
+ * `.js`/`.mjs` — the extensions a `path:line` citation can name. A size claim
+ * names sheets too (`tokens.css`, `components.css`), and widening that index
+ * would silently change what a *line citation* resolves to. Two claim shapes,
+ * two resolvers, one index each.
+ */
+function resolveSizePath(name) {
+  if (fs.existsSync(path.join(ROOT, name))) return name
+  // A bare basename, as `frontend.md` writes it. Unique match only: two files
+  // named `app.js` is a claim that does not say which, and the gate does not
+  // guess on the author's behalf.
+  const base = path.basename(name)
+  const hits = []
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+      const abs = path.join(dir, entry.name)
+      if (entry.isDirectory()) { walk(abs); continue }
+      if (entry.name === base) hits.push(path.relative(ROOT, abs))
+    }
+  }
+  walk(ROOT)
+  return hits.length === 1 ? hits[0] : null
 }
 
 /**
@@ -256,6 +331,26 @@ export function scanText(text, { doc = '<memory>', allowSnapshot = true } = {}) 
       if (num > eof) {
         findings.push({ line: i + 1, doc, file, cited: num, eof })
       }
+    }
+
+    // The same claim in a different unit: a size in prose. A path whose line
+    // count is not the number beside it is the defect a line citation past EOF
+    // is, one unit over — the document says what the tree holds and the tree
+    // says otherwise.
+    for (const m of line.matchAll(SIZE_CLAIM)) {
+      const [, name, statedRaw] = m
+      const stated = Number(statedRaw.replace(/,/g, ''))
+      const target = resolveSizePath(name)
+      // Unresolvable names are not this gate's jurisdiction: a document may
+      // describe a file that was deleted, and `check-doc-citations` already
+      // reports a `path:line` to a file that does not exist.
+      if (target === null) continue
+      const actual = lineCount(target)
+      // `wc -l` and a line count differ by one when the last line has no
+      // trailing newline; both conventions are in the registers. See the
+      // docstring — the defect is 3,656 against 6,451, not a newline.
+      if (actual === null || Math.abs(actual - stated) <= 1) continue
+      findings.push({ line: i + 1, doc, file: name, cited: stated, eof: actual, size: true })
     }
   }
   return findings
@@ -404,6 +499,67 @@ export const CANARIES = [
     scan: () => scanText('{"note":"citations-are-historical: 2026-10-03","detail":"see `src/server.js:999999`"}', { doc: 'docs/improvements/_status-c.json', allowSnapshot: false }).length,
   },
   {
+    name: 'a size in prose that disagrees with the file is a finding',
+    source: '`src/server.js` is 3,656 lines of route dispatch.',
+    expect: 1,
+  },
+  {
+    name: 'a size in prose that agrees is clean',
+    source: `\`src/server.js\` is ${lineCount('src/server.js')} lines of route dispatch.`,
+    expect: 0,
+  },
+  {
+    // Both conventions are in the registers: `wc -l` counts newlines, a line
+    // count does not, and they differ by one when the last line has no trailing
+    // newline. `src/rate-limit.js` (578) is the first, `src/reports.js` (1,117)
+    // the second, and neither author was wrong.
+    name: 'a size one off, from the newline convention, is accepted',
+    source: `\`src/server.js\` is ${lineCount('src/server.js') - 1} lines and also ${lineCount('src/server.js') + 1} lines.`,
+    expect: 0,
+  },
+  {
+    // The spellings the registers actually use, one canary each. A single
+    // canary expecting three findings cannot say *which* spelling stopped
+    // being read, and the "one of two spellings" defect this repository
+    // catalogues is exactly a gate covering one form and passing on the rest.
+    name: 'the parenthesised spelling is read',
+    source: '**`public/sw.js`** (11 lines) is the worker.',
+    expect: 1,
+  },
+  {
+    name: 'the bolded-without-parentheses spelling is read',
+    source: '**`public/sw.js`** is 12 lines of worker.',
+    expect: 1,
+  },
+  {
+    name: 'the `now N lines` spelling is read',
+    source: '`public/sw.js` now 13 lines, up from 11.',
+    expect: 1,
+  },
+  {
+    // The jurisdiction rule. `handleApiRequestInContext` is 88 lines and
+    // `src/route-families.js` is named forty characters later; a regex that
+    // allowed prose between path and number reports a correct line.
+    name: 'a function size beside a different file name is not a size claim',
+    source: 'The body it named is `handleApiRequestInContext`, **88 lines** (`:1000-1087`) iterating `src/route-families.js`\'s 35-entry table.',
+    expect: 0,
+  },
+  {
+    name: 'a size claim past a deleted file is out of jurisdiction, not a finding',
+    source: '`src/not-a-real-module.js` is 12 lines of nothing.',
+    expect: 0,
+  },
+  {
+    name: 'the marker exempts a stale size',
+    source: '// line-drift-ok: quoted as it was\n`public/sw.js` (367 lines) was the worker then.',
+    expect: 0,
+  },
+  {
+    name: 'a dated snapshot document is exempt from the size check too',
+    source: '# Audit at `b07bbe4`\ncitations-are-historical: 2026-10-03\n\n`public/sw.js` is 367 lines.',
+    expect: 0,
+  },
+  {
     name: 'the file predicate reads .md and _status-*.json only',
     expect: 0,
     scan: () => {
@@ -439,11 +595,15 @@ if (isMain) {
   }
   console.error(`doc-citation check: ${findings.length} citation(s) name a line that does not exist\n`)
   for (const f of findings) {
-    const why = f.eof === null ? 'no such file' : `past EOF (${f.eof})`
+    const why = f.size
+      ? `says ${f.cited} lines, the file has ${f.eof}`
+      : f.eof === null ? 'no such file' : `past EOF (${f.eof})`
     console.error(`  ${f.doc}:${f.line}  ${f.file}:${f.cited}  ${why}`)
   }
   console.error('\nA line number past EOF names nothing. Re-anchor it to the function that performs')
   console.error('the read (a name survives a refactor a line number does not), or mark the citation')
   console.error('`line-drift-ok: <reason>` when the entry means to quote it as it was.')
+  console.error('A size that disagrees with the file is the same claim one unit over: re-measure it,')
+  console.error('say when it was measured, or mark the line if it means to quote the tree as it was.')
   process.exit(1)
 }
