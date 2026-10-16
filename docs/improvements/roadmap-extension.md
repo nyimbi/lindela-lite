@@ -315,14 +315,41 @@ Amharic, Somali, Kinyarwanda, Khmer, **and** a `din` tag that is not valid BCP-4
 The gaps are uneven in a way that matters:
 
 - **The three surfaces a district officer actually uses — `districts`, `scenarios`,
-  `parametric` — have no locale picker at all**, while the console ships 10
-  languages. Translation effort has gone to the audience that was easiest to serve.
-- RTL for `ar` is not implemented.
+  `parametric` — offer English only**, while the console ships 10 languages.
+  *(This said "no locale picker at all". There is a picker on each of the three —
+  `districts/index.html:400`, `scenarios/index.html:216`,
+  `parametric/index.html:90` — and `public/districts/app.js:62` is
+  `OFFERED_LOCALES = ['en']`. The picker is not the defect and cannot be the fix:
+  `check-i18n-offers.mjs` derives the expected offer from what is actually
+  translated, and for all three namespaces that is `['en']` — 83, 74 and 59 keys
+  in `en.json` and **zero** of them in any of the nine other catalogues. Nobody
+  translated the strings, so a picker offering Kiswahili would offer a language
+  the surface cannot render. The finding is the translation gap, and it is
+  larger than this bullet implied.)* Translation effort has gone to the audience
+  that was easiest to serve.
+- RTL for `ar` is implemented **and reachable** — `public/shared/fmt.js:330-333`
+  sets `lang` and `dir` together from one table, the catalogue carries
+  `ar: { label: 'العربية', rtl: true }`, and `public/focal-point/index.html:491`
+  offers `ar` with the whole `focal-point.*` namespace translated to 100%. The
+  surfaces a district officer uses still do not: `chw`, `districts`, `scenarios`
+  and `parametric` offer no `ar`, and `public/chw/app.js:312` writes
+  `dir = 'rtl'` from its own inline test rather than from `isRtl` — a second
+  spelling of the same decision, correct today and diverging the moment a second
+  RTL locale is added.
+  *(This bullet said "not implemented". It was implemented on 2026-10-13 and
+  reachable through the focal-point surface; the residual is the four surfaces
+  that cannot reach it and the duplicate test, which is a narrower finding with a
+  different fix.)*
 - Alert SMS is monolingual (`src/rapidpro.js:301`), which is the one channel that
   reaches the field.
-- The plain-language report mode was not built. `src/reports.js` is 849 lines of
-  template assembly and 90.58% covered, but it is written for an analyst audience,
-  not a community one.
+- The plain-language report mode was not built. `src/reports.js` is **1,116** lines
+  now (849 when this was written) of template assembly, but it is written for an
+  analyst audience, not a community one. The coverage figure that stood beside the
+  line count — 90.58% — is not re-measured here and is not the axis to read:
+  `scripts/check-coverage.mjs` runs the whole suite and reports lines, branches and
+  functions against floors of 92/76/90. A single module's line percentage, from
+  the era when coverage ran six files out of 162, is the measurement that gate
+  exists to replace.
 
 ---
 
