@@ -16,7 +16,7 @@ import {
   runDueIngestionSchedules,
   runIngestion,
 } from './ingestion.js'
-import { actionLog, counts, operationalSummary } from './operations.js'
+import { actionLog, buildEvaluationContext } from './operations.js'
 import { createReplicaFromEnv, createStoreFromEnv } from './storage.js'
 import { budgetedStore, queryBudgetLimits, runWithQueryBudget, WIDE_QUERY_BUDGET } from './query-budget.js'
 import { readReplicaStore } from './read-replica.js'
@@ -1117,11 +1117,7 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
  * than a false claim. It was still the core function, reachable only by hand.
  */
 export async function evaluateAndPersistAlerts(store, data, { actor = null, subject = null } = {}) {
-  const context = {
-    counts: counts(data),
-    operations: operationalSummary(data),
-    data_quality: data.data_quality,
-  }
+  const context = buildEvaluationContext(data)
   const { raised, updated } = evaluateAlertRules(data, context)
   const logs = [
     ...raised.map((event) => actionLog('alert_events', 'created', event, actor, subject)),

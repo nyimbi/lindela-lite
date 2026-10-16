@@ -310,6 +310,29 @@ that fires in production.
 **Fix.** Extract one `buildEvaluationContext(data)` used by both, and return the metric
 paths that could not be resolved alongside the verdict so a silent miss is visible.
 
+**Status 2026-10-16: the first half is done; the second is not, and is now recorded.**
+`buildEvaluationContext(data, { pointInTime })` lives in `src/operations.js:102` and all
+four context sites call it — `src/server.js:1120`, `src/routes/parametric.js:245`,
+`src/protocols.js:112` (`liveContext`, which the shadow-run route uses) and
+`src/alerts.js:555` (`pointInTimeContext`, the backtest). The file paths in the finding
+above are stale: the shadow-run handler moved to `src/routes/alerting.js:452`.
+
+Measured before and after, against a fresh store: `operations.counts.open_incidents` →
+`undefined` under the old `liveContext`, `0` under the shared builder; and
+`evaluateInShadowMode` on the settings form's own default now reports `evaluable: true`
+and agrees with the live run. `test/evaluation-context.test.js` asserts both, and the
+context-shape equality that makes the next namespace reach every caller.
+
+**The diagnostic is not built.** `term_unresolvable` is on each term of
+`evaluateConditionSet`'s result, so the information exists — what is missing is a caller
+that surfaces it. `evaluateInShadowMode` returns `evaluable` and a per-term `terms` array
+but no message naming *which* path failed, and `evaluateAlertRules` skips a non-finite
+value with a bare `continue` (`src/alerts.js:174`), so a rule whose metric names nothing
+is still indistinguishable from a threshold that is not met on the alert path. The picker
+gate in `test/evaluation-context.test.js` closes the *reachable* half of that — the paths
+the settings surface offers all resolve — but a path typed by hand into a rule or a
+protocol still fails silently. Wiring the message through is a separate change.
+
 ---
 
 ### D12. RapidPro dispatch has no retry, no timeout, and blocks the request

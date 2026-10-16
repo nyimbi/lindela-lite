@@ -93,7 +93,7 @@
  */
 
 import { evaluateConditionSet } from './alerts.js'
-import { counts, buildCreate, actionLog } from './operations.js'
+import { buildEvaluationContext, buildCreate, actionLog } from './operations.js'
 import { sendRapidProAlert, rapidProStatus } from './rapidpro.js'
 import { stableId } from './utils.js'
 import { emit } from './outbox.js'
@@ -109,7 +109,7 @@ import { logger, metrics } from './observability.js'
 // `pre_authorised: true`, `protocol/1` in the engine).
 
 export function liveContext(data) {
-  return { counts: counts(data), data_quality: data.data_quality || null }
+  return buildEvaluationContext(data)
 }
 
 /** Pure evaluation: returns per-protocol firing against the full logic. */

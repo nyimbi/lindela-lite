@@ -357,15 +357,33 @@ against seven before it.
 | R-92 | `terrainLabelForSamples` returns `null` below `MIN_TERRAIN_COMPARABLES`; the bbox-only hazard reports `distanceKm: null` rather than 0 | `test/refusal-floors.test.js` (canaried: the floor at 0 fails two) |
 | R-93 | `median()` averages the middle pair; the n=1 rates go through the registry's sample floors | `test/numeric-veracity.test.js`, `test/metric-registry.test.js` (canaried) |
 | R-94 | The filter routes through `orgUnitFor`, so a synonym resolves — the third function with its own vocabulary is gone | `test/org-units.test.js` (canaried) |
-| R-95 | `population_at_risk_union_total` / `_union_assets` publish the de-duplicated figure beside the per-hazard sum | `test/remaining-defects.test.js` — **added this pass**; the union keys were read by no test (canaried: nulling the union fails it) |
+| R-95 | `population_at_risk_union_total` / `_union_assets` publish the de-duplicated figure beside the per-hazard sum | `test/remaining-defects.test.js` — **added this pass**; the union keys were read by no test (canaried: nulling the union fails it). Reachability measured 2026-10-16: all three keys resolve through `resolveMetric`, so the union figures *are* rule-readable — see the note below for the dead path the same measurement found |
 
-**R-95's union keys are published and read by nothing.** The metric is
-registered, the de-duplication is correct, and `counts()` computes both keys —
-but no route field, client surface or test reads `population_at_risk_union_total`
-before this pass's guard. That is R-77's shape one layer out: correct, tested,
-and reached by nobody. It is a smaller finding than R-95 and is recorded rather
-than fixed, because wiring a panel to a figure is a product decision about which
-number an operator should see beside the per-hazard sum.
+**R-95's union keys are published and read by nothing — measured, and it is not the finding.** The
+metric is registered, the de-duplication is correct, and `counts()` computes both keys. The residual
+was recorded on the claim that nothing reads them. The claim was checked rather than repeated, by
+resolving each key through `resolveMetric` against a real `{ counts, operations, data_quality }`
+context: `population_at_risk_total` → `1600`, `population_at_risk_union_total` → `800`,
+`population_at_risk_union_assets` → `2`. All three resolve. The union keys *are* reachable — an alert
+rule or trigger protocol set to `counts.population_at_risk_union_total` reads the de-duplicated
+figure, and the metric registry advertises it. "Read by no route field or client surface" was true
+and is not the same claim as "unreachable"; the residual had conflated the two.
+
+Measuring the rest of the picker's vocabulary found the actual dead path. `counts.disease_observations`
+has been an option in `public/panels/settings.html`'s `protoMetricList` since the form was written and
+was absent from `counts()`, so an operator who picked it built a protocol that could never fire —
+`undefined`, `term_unresolvable`, no diagnostic, byte-identical to a threshold that was not met. The
+key is added. `test/evaluation-context.test.js` now reads the picker out of the shipped HTML and
+resolves every option against a real context, so the class cannot return; canaried by removing the key
+(fails, naming the path) and by restoring the short context shape (fails two).
+
+The same measurement found the second half, one namespace out. `operations` existed in two of the four
+evaluation contexts — `server.js` and `parametric.js` built `{ counts, operations, data_quality }`
+while `protocols.js:liveContext` and `alerts.js:pointInTimeContext` built `{ counts, data_quality }`.
+The alert-rule metric field ships `value="operations.counts.open_incidents"` as its **default**, so a
+shadow run answered "would not fire" for a rule the scheduler fired. Both now call one
+`buildEvaluationContext(data)` in `src/operations.js`, and the test asserts a shadow run and a live run
+agree on the form's own default.
 
 ### Open, with the measurement or the blocker
 

@@ -16,7 +16,7 @@
  */
 import { ALERT_EVENT_STATUSES, ALERT_RULE_STATUSES, normalizeSeverity } from './schema.js'
 import { stableId, toNumber } from './utils.js'
-import { counts } from './operations.js'
+import { buildEvaluationContext } from './operations.js'
 
 export const OPERATORS = Object.freeze(['>', '>=', '<', '<=', '==', '!='])
 const TRIGGER_MODES = Object.freeze(['shadow', 'live'])
@@ -552,7 +552,7 @@ function pointInTimeContext(data, run) {
     if (!Array.isArray(records)) continue
     snapshot[collection] = records.filter(asOf)
   }
-  return { counts: counts(snapshot), data_quality: snapshot.data_quality }
+  return buildEvaluationContext(data, { pointInTime: snapshot })
 }
 
 

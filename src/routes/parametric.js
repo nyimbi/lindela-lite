@@ -21,7 +21,7 @@
  *     audit chain that says only that something was removed is broken at exactly
  *     the point someone needed to know what had been in force.
  *   - **the trigger is evaluated against the platform's own state.** The
- *     simulation decides from `counts`/`operationalSummary`/`data_quality`, the
+ *     simulation decides from the shared evaluation context, the
  *     same context an alert rule sees, so a payout is decided by the data rather
  *     than asserted by the caller. An explicit `trigger_value` overrides it, for
  *     an operator quoting an observation the store has not ingested.
@@ -36,7 +36,7 @@
  * drift.
  */
 
-import { counts, actionLog, operationalSummary } from '../operations.js'
+import { actionLog, buildEvaluationContext } from '../operations.js'
 import { normalizeParametricRule, simulateDisbursement } from '../parametric.js'
 import { screenNames } from '../sanctions.js'
 import { readRequestJson } from '../utils.js'
@@ -242,11 +242,7 @@ export async function handleParametricRoute(route, { store, data, req, res, json
       // context alert rules see, so a parametric payout is decided by the data
       // rather than asserted by the caller. An explicit trigger_value overrides
       // it, for an operator quoting an observation the store has not ingested.
-      const context = {
-        counts: counts(data),
-        operations: operationalSummary(data),
-        data_quality: data.data_quality,
-      }
+      const context = buildEvaluationContext(data)
       // An approval backed by a workflow instance is verified; one asserted in
       // the request body is recorded as asserted. `focal_point_approved` still
       // gates, but the disbursement now carries where the approval came from,

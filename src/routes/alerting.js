@@ -53,10 +53,10 @@ import { renderCapXml } from '../cap.js'
 import { capPermalink, renderCapFeed, validateCapProfile } from '../cap-profile.js'
 import { decisionLatency } from '../decision-latency.js'
 import { logger, metrics } from '../observability.js'
-import { actionLog, counts } from '../operations.js'
+import { actionLog } from '../operations.js'
 import { emit } from '../outbox.js'
 import { determinationFor, normalizeAlertOutcome, outcomeReasons, outcomeTally, projectDetermination } from '../outcomes.js'
-import { executeTriggerProtocols } from '../protocols.js'
+import { executeTriggerProtocols, liveContext } from '../protocols.js'
 import { rankAlerts } from '../triage.js'
 import { collectionPage, readRequestJson } from '../utils.js'
 import { findVisible } from '../visibility.js'
@@ -449,10 +449,7 @@ async function handleTriggerRoute(route, { data, req, res, url, jsonResponse, st
       jsonResponse(res, 404, { success: false, error: 'Trigger protocol not found' })
       return true
     }
-    const context = {
-      counts: counts(data),
-      data_quality: data.data_quality,
-    }
+    const context = liveContext(data)
     const result = evaluateInShadowMode(existing, context)
     jsonResponse(res, 200, { success: true, data: result })
     return true

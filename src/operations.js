@@ -70,6 +70,44 @@ export function operationalSummary(data) {
   }
 }
 
+/**
+ * The evaluation context a metric path is resolved against.
+ *
+ * There were four shapes of this object across the tree, and they did not agree
+ * on which namespaces exist:
+ *
+ *   server.js:1120      { counts, operations, data_quality }
+ *   parametric.js:245   { counts, operations, data_quality }
+ *   protocols.js:111    { counts, data_quality }            ← no `operations`
+ *   alerts.js:555       { counts, data_quality }            ← no `operations`
+ *
+ * `operations` is not decoration. `public/panels/settings.html:151` ships
+ * `value="operations.counts.open_incidents"` as the alert-rule metric field's
+ * default, and `protoMetricList` offers ten `counts.*` paths beside it — so the
+ * settings surface promises both namespaces. Under the two short shapes the
+ * shipped default resolved to `undefined`, `evaluateConditionSet` read that as
+ * `term_unresolvable`, and the rule silently did not fire: the exact failure
+ * this file's `counts()` comment describes, one namespace out.
+ *
+ * Nothing caught it because the same protocol evaluated two ways answered
+ * differently — `POST /trigger-protocols/:id/shadow-run` (via `liveContext`)
+ * said "would not fire" while the scheduler (via `server.js`) fired it. A
+ * shadow run that disagrees with the live run is worse than no shadow run.
+ *
+ * One builder, so the next namespace added reaches every caller. `pointInTime`
+ * carries the backtest's snapshot because that context is deliberately a
+ * different *data* view, not a different *shape* — the distinction the four
+ * copies lost.
+ */
+export function buildEvaluationContext(data, { pointInTime = null } = {}) {
+  const source = pointInTime ?? data
+  return {
+    counts: counts(source),
+    operations: operationalSummary(source),
+    data_quality: source.data_quality ?? null,
+  }
+}
+
 export function buildCreate(collection, input, data) {
   if (collection === 'incidents') return normalizeIncident(input, data)
   if (collection === 'interventions') return normalizeIntervention(input, data)
@@ -473,6 +511,13 @@ export function counts(data) {
     // read the derived keys below).
     school_attendance_observations: data.school_attendance_observations?.length ?? null,
     iot_observations: data.iot_observations?.length ?? null,
+    // Offered by the protocol form's metric picker since it was written, and
+    // absent here — so a rule set to `counts.disease_observations` resolved to
+    // `undefined`, `evaluateConditionSet` read that as unevaluable, and the
+    // protocol could not fire. Nothing reported it: a metric path that names
+    // nothing is indistinguishable from a threshold that is not met, which is
+    // the whole of what this key is for.
+    disease_observations: data.disease_observations?.length ?? null,
     // The action loop, as counts an operator can trend: how many pre-authorised
     // actions fired, and how many field outcomes responders confirmed.
     protocol_executions: data.protocol_executions?.length ?? null,
