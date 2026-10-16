@@ -55,6 +55,24 @@ caught any of them:
 | `glofas` | Published RSS URL served the EFAS web app; parse found no items | Fixture was valid RSS, and the parse of valid RSS was correct |
 | `nasa_firms` | No keyless access; placeholder key returned HTTP 400 per region | Fixture supplied its own body, bypassing the key check |
 
+**Where those three stand now** (2026-10-16). The table is a record of why the
+fixtures were blind, written in the present tense of the day; two of the three
+have since been fixed and the row text has not moved with them.
+
+- **`chirps` — fixed.** The connector walks the year directories
+  (`YEAR_DIR_PATTERN`, `src/connectors/chirps.js:228`) and the fixture now
+  encodes the two-level layout, guarded by `test/fixtures.test.js:150`
+  ("walks CHIRPS year directories to find daily files"). A reader taking the row
+  above as current would be looking for a bug that is closed.
+- **`nasa_firms` — documented rather than fixed.** The connector now reports an
+  error and zero records when the key is unset instead of sending a placeholder,
+  and the catalog marks it `requires_credentials: true` (see the section above).
+- **`glofas` — still live, and still the row's problem.** The connector is
+  registered, appears in `SOURCE_POLICIES` and is marked unverified in
+  `src/schema.js:390`. SRC-01 in
+  [improvements/sources-and-decisions-roadmap.md](improvements/sources-and-decisions-roadmap.md)
+  is the item that retires it; it is open.
+
 `npm run check:live-sources` probes every public source against its real
 upstream and reports records, errors, and timing. Pass `--strict` to exit
 non-zero when any source errors or returns nothing.

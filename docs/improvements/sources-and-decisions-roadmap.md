@@ -1,6 +1,8 @@
 # Sources and Decisions: the second capability roadmap
 
-Status: proposed — 2026-10-03
+Status: proposed — 2026-10-03. **Seven rows verified shipped and six partly
+built on 2026-10-16; see "Verified against the tree" below before reading any
+row's `Now` as current.**
 Related: [enhancements.md](enhancements.md) (ENH-01..30), [roadmap-extension.md](roadmap-extension.md) (items 1–20), [world-class-roadmap.md](../plans/world-class-roadmap.md)
 
 ## What this document is
@@ -65,6 +67,56 @@ The instruction was no duplication and no contradiction. Here is every item in t
 | CC-01 Cold chain and vaccine viability | **new** | SRC-05 | Detailed below. |
 
 **Twenty-five carried, three explicitly rejected as duplicates (DEC-03, DEC-08, and the SEP/IBF half of extension 6 already inside DEC-07), three that extend an existing item by adding a deliverable rather than repeating one (SRC-03, PLT-03, PLT-04).**
+
+---
+
+## Verified against the tree — 2026-10-16
+
+This document was written 2026-10-03 and its header said `Status: proposed`. That
+is true of most of it and false of seven rows, which the tree has since
+implemented. **Read the rows below as shipped, not proposed**; the body text
+under each has been left as written, because it is the evidence the item rested
+on and it is worth seeing what was true when it was argued.
+
+| Row | Now | Evidence |
+|---|---|---|
+| **SRC-02** Fix or retire CHIRPS | **Fixed** | The connector walks the year directories (`YEAR_DIR_PATTERN`, `src/connectors/chirps.js:228`), the fixture encodes the two-level layout, and `test/fixtures.test.js:150` guards it. The row's own `Now` cites `docs/ingestion.md:47`, which now carries a dated note rather than the stale claim. |
+| **DEC-03** Calibration and verification | **Shipped** | The row rejected itself as a duplicate of ENH-03/ENH-21, and both landed: `src/calibration.js` `trustScore` at `GET /api/v1/calibration/by-region` (`src/routes/derived.js:48`), and `public/shared/viz-verify.js`. |
+| **DEC-06** Compound multi-hazard risk | **Shipped** | `src/compound-hazard.js` — an empirical joint rate and lift, two- and three-hazard entry points — served at `GET /api/v1/compound-risk` (`src/routes/risk.js:52`) and wired into `src/analytics.js:1189`. |
+| **DEC-08** Bias-corrected downscaling | **Shipped** | The row listed itself as "already present"; it is now `src/analytics/downscaling.js` and `POST /api/v1/analytics/bias-correct`. |
+| **OPS-03** Actually dispatch the outbox | **Shipped** | `{ id: 'outbox', run: (store) => dispatchPending(store) }` is in `DRIVER_ITEMS` (`src/server.js:118`), iterated by `runPeriodicTick` (`:315`), ticked by `createPeriodicDriver` (`:430`) and started at boot (`:1623`). The row's `Now` — "never called by a scheduler" — is no longer true. |
+| **PLT-04** Contract tests plus a scheduled live probe | **Shipped** | Recorded-fixture contract tests (`test/fixtures.test.js`, `scripts/capture-fixtures.mjs`) plus `scripts/check-live-sources.mjs` on a daily CI cron (`.github/workflows/ci.yml:39`, job at `:171`). |
+| **SRC-01** Promote `open_meteo_flood`, retire `glofas` | **Half** | The promotion is done — `open_meteo_flood` is registered (`src/ingestion.js:58`) with a schema entry (`src/schema.js:484`). The retirement is not: `glofas` is still in `CONNECTORS` (`src/ingestion.js:49`), `SOURCE_POLICIES` (`src/source-policies.js:29`) and `PUBLIC_INGESTION_SOURCES` (`src/ingestion.js:80`), and `src/schema.js:390` still carries the unverified note. The row's own argument — that a `SOURCE_POLICIES` entry which cannot succeed is a health check that fails forever — is the reason this half still matters. |
+
+Four further rows are **partly** done, in each case in a shape the row did not
+name. Recorded so the next reader does not re-open them as if nothing had moved:
+
+- **DEC-02** — a discharge *layer* shipped (`GET /api/v1/river-discharge`,
+  `public/shared/discharge-bands.js`), but no alert rule can read discharge:
+  `evaluateAlertRules` resolves against `{counts, operations, data_quality}`
+  (`src/server.js:1108`) and `counts()` exposes no discharge key. The threshold
+  alerting the row asks for is still absent.
+- **DEC-04** — the forecast half now exists as `backtestTriggerProtocol`
+  (`src/alerts.js:436`): a matched sample over a lead-time window yielding
+  precision, recall, f1, event base rate and precision lift, guarded by
+  `test/trigger-backtest.test.js`. It is not surfaced as named POD/POFD/PROG KPIs.
+- **OPS-02** — tasks carry `owner`, `priority` and `due_at` and `overdue_tasks` is
+  computed (`src/operations.js:52`), so the "no assignee, no age" half of the
+  row's `Now` is stale. Queue ordering and age-based escalation are still absent.
+- **OPS-04** — a token now binds a verified `subject` and `partner_org` and
+  supports role scopes, and `actorFor` prefers the authenticated subject over the
+  caller string (`src/audit-chain.js:224`). There is still no principal entity:
+  roles are scopes on a token, not a person.
+- **OPS-06** — the PDF and distribution channels shipped (`src/pdf.js`;
+  `distributeReport` with markdown/json/csv/geojson/webhook/rapidpro_sms,
+  `src/routes/reporting.js:587`). No email channel and no signed per-report link.
+- **CC-01** — cold-chain temperature is a first-class sensor type
+  (`src/field-signals.js:19`), but none of the row's five deliverables shipped:
+  no `cold_chain` in `SERVICE_TYPES`, no `refrigeration_asset`, no
+  `excursion_rate`/`time_in_range`/`stock_at_risk`, no lot or logger telemetry.
+
+Everything else — SRC-03..11, DEC-01, DEC-05, DEC-07, OPS-01, OPS-05,
+PLT-01..03 — is genuinely unbuilt, and the rows stand as written.
 
 ---
 

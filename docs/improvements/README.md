@@ -16,7 +16,7 @@ Four deliverables, plus the evidence they rest on.
 | [status.md](status.md) | **What has actually shipped** of those 30, verified against the tree: 30 shipped, 0 partial, 0 not started, with the evidence and the guarding test for each |
 | [defects.md](defects.md) | **~55 defects**, security holes and architectural deficiencies, and the five root causes behind them |
 | [roadmap-extension.md](roadmap-extension.md) | **All 20 items** from `docs/plans/world-class-roadmap.md`, with verified status: 7 shipped, 13 partial, 0 rejected |
-| [sources-and-decisions-roadmap.md](sources-and-decisions-roadmap.md) | **31 new capability items** — the sources, decisions and operational states the platform cannot currently express, each deduplicated against the three above |
+| [sources-and-decisions-roadmap.md](sources-and-decisions-roadmap.md) | **31 capability items** — the sources, decisions and operational states the platform could not express, each deduplicated against the three above. Verified 2026-10-16: **7 shipped, 6 partly built, 18 unbuilt** — the row statuses are in the register |
 
 The three earlier documents ask whether the platform is trustworthy (ENH) and whether
 what it claims to do actually works (items 1–20). The fourth asks a different
