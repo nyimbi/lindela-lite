@@ -369,21 +369,27 @@ nothing checked it: `test/audit-register-structure.test.js` guards
 ### What the re-verification found still open
 
 Three residuals, each verified against the tree rather than inferred, and each
-narrower than the row it sits under:
+narrower than the row it sits under. The first was a live defect and is now
+fixed; the other two stand:
 
-- **A write path calls no redactor (item 15).** `redactPii` has thirteen call
-  sites across `src/routes/rapidpro.js` and `src/routes/chw.js`; the generic
-  create path (`src/routes/operational.js:168`) calls `buildCreate` with none of
+- **A write path called no redactor (item 15) — fixed 2026-10-16.**
+  `redactPii` had thirteen call sites across `src/routes/rapidpro.js` and
+  `src/routes/chw.js`; the generic create path called `buildCreate` with none of
   them. Tested through the live ingress: `POST /api/v1/field-reports` with
-  `reported_by: "Amina Nakuru"` returns and stores that string unhashed, where
+  `reported_by: "Amina Nakuru"` returned and stored that string unhashed, where
   `redactPii` hashes exactly that field (`src/pii.js:92`). The `reporter_name`
-  and `reporter_phone` fields are *not* leaked — `normalizeFieldReport`'s
-  allowlist drops them — so the exposure is the free-text attribution field, not
-  the contact details. The CHW door redacts `reported_by` only when the reporter
-  asks to be anonymous, so this is not a bypass of an established decision; it is
-  the operational door having no redaction step at all, which is the same shape
-  as the `stampQuality` comment at `src/operations.js:323` — "a gate at one of
-  two doors is not a gate" — applied to PII instead of quality.
+  and `reporter_phone` fields were *not* leaked — `normalizeFieldReport`'s
+  allowlist drops them — so the exposure was the free-text attribution field, not
+  the contact details.
+
+  `src/routes/operational.js` now calls `redactPii` on the built record. After
+  the build, not before, so the field is the one the builder produces:
+  `normalizeFieldReport` defaults `reported_by` to the literal `'operator'`, and
+  a redactor running before it would hash a caller's name while leaving that
+  system label in cleartext — two shapes in one column, decided by whether the
+  field was sent. Guarded by `test/operational-route-module.test.js`, which
+  asserts the pseudonym shape, that the default and a supplied name agree, and
+  that a *resource* name is left alone (the redactor was never about it).
 - **Two connector-registry key drifts (item 12).** `connectors.registry.json:288`
   offers `gho_top_years` while `src/connectors/who-gho.js:87` reads
   `gho_min_year`; and the registry's IPC default is `['KE','SO','SS']`

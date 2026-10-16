@@ -36,6 +36,7 @@
 import { refreshAnalytics } from '../analytics.js'
 import { runIngestion } from '../ingestion.js'
 import { WRITABLE_COLLECTIONS, actionLog, buildCreate, buildSoftDelete, buildUpdate, isDeleted } from '../operations.js'
+import { loadPolicy, redactPii } from '../pii.js'
 import { ERROR_CODES } from '../errors.js'
 import { logger, metrics } from '../observability.js'
 import { emit } from '../outbox.js'
@@ -167,7 +168,24 @@ export async function handleOperationalRoute(route, { data, req, res, url, jsonR
 
   if (req.method === 'POST' && !route.id) {
     const body = await readRequestJson(req)
-    const record = buildCreate(route.collection, body, data)
+    // The third door into `field_reports`, and until now the only one with no
+    // redactor behind it. `src/routes/rapidpro.js` and `src/routes/chw.js` both
+    // call `redactPii` on the record they are about to store; this path built
+    // one with `buildCreate` and stored it, so `POST /api/v1/field-reports` with
+    // `reported_by: "Amina Nakuru"` wrote that name in cleartext where
+    // `redactPii` hashes exactly that field. Tested through the live ingress.
+    //
+    // Redacted *after* the build, not before, so the field is the one the
+    // builder produces: `normalizeFieldReport` defaults `reported_by` to the
+    // literal `'operator'` when the caller sends none, and redacting the input
+    // would leave that system label in cleartext while a caller-supplied name
+    // was hashed — two shapes in one column, decided by whether the field was
+    // sent. Hashing the constant costs nothing; a distinct-reporter count over
+    // the column is unchanged, because a constant hashed is still one value.
+    //
+    // This is `src/operations.js:323`'s own argument — "a gate at one of two
+    // doors is not a gate" — applied to PII rather than to the quality verdict.
+    const record = redactPii(buildCreate(route.collection, body, data), await loadPolicy())
     const log = actionLog(route.collection, 'created', record, body.actor, req.__auth?.subject)
     await store.merge({ [route.collection]: [record], action_logs: [log] })
     if (route.collection === 'incidents') {

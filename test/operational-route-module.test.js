@@ -283,3 +283,58 @@ describe('ARC-01 — the module answers, or declines, without inventing a respon
     assert.equal(res.status, 405)
   })
 })
+
+describe('PRIV — the operational write door redacts, like the other two', () => {
+  // `src/routes/rapidpro.js` and `src/routes/chw.js` both call `redactPii` on
+  // what they store. This path built a record with `buildCreate` and stored it
+  // untouched, so `POST /api/v1/field-reports` with `reported_by: "Amina Nakuru"`
+  // wrote that name in cleartext where `redactPii` hashes exactly that field.
+  // `src/operations.js:323` already makes this argument for the quality verdict
+  // — "a gate at one of two doors is not a gate" — and it holds for PII too.
+  const PSEUDONYM = /^sha256:[0-9a-f]+:[0-9a-f]+$/
+
+  it('pseudonymises a caller-supplied reported_by rather than storing it', async () => {
+    const { store } = await call({ kind: 'collection', collection: 'field_reports' }, {
+      method: 'POST',
+      body: { summary: 'Water rising at the clinic', incident_id: 'inc-1', reported_by: 'Amina Nakuru' },
+      data: { incidents: [{ id: 'inc-1', title: 'Flood', status: 'open' }] },
+    })
+    const written = store.merges.flatMap((m) => m.field_reports || [])[0]
+    assert.ok(written, 'nothing was written')
+    assert.doesNotMatch(written.reported_by, /Amina/, 'the reporter name reached the store in cleartext')
+    assert.match(written.reported_by, PSEUDONYM, 'reported_by was not pseudonymised')
+  })
+
+  it('gives the default and a supplied name the same shape', async () => {
+    // Redacting the *built* record rather than the input is what makes this
+    // true: `normalizeFieldReport` defaults `reported_by` to the literal
+    // `'operator'`, and a redactor that ran before the build would hash the
+    // caller's name and leave the system label in cleartext — two shapes in one
+    // column, decided by whether the field was sent.
+    const data = { incidents: [{ id: 'inc-1', title: 'Flood', status: 'open' }] }
+    const named = await call({ kind: 'collection', collection: 'field_reports' }, {
+      method: 'POST', body: { summary: 'a', incident_id: 'inc-1', reported_by: 'Amina Nakuru' }, data,
+    })
+    const bare = await call({ kind: 'collection', collection: 'field_reports' }, {
+      method: 'POST', body: { summary: 'b', incident_id: 'inc-1' }, data,
+    })
+    const a = named.store.merges.flatMap((m) => m.field_reports || [])[0].reported_by
+    const b = bare.store.merges.flatMap((m) => m.field_reports || [])[0].reported_by
+    assert.match(a, PSEUDONYM)
+    assert.match(b, PSEUDONYM, 'the default reporter was left as the literal "operator"')
+    assert.notEqual(a, b, 'two different reporters hashed to one value, so the distinct-reporter count collapsed')
+  })
+
+  it('leaves a resource name alone — it is a thing, not a person', async () => {
+    // The redactor must not reach a field it was never about. `name` is a
+    // person's name in a provider payload and a piece of equipment here, which
+    // is why the top level matches `reporter_name`/`contact_name` only.
+    const { store } = await call({ kind: 'collection', collection: 'response_resources' }, {
+      method: 'POST',
+      body: { name: 'Water treatment kits', resource_type: 'supply', location_name: 'Lodwar' },
+    })
+    const written = store.merges.flatMap((m) => m.response_resources || [])[0]
+    assert.equal(written.name, 'Water treatment kits', 'the redactor hashed a resource name')
+    assert.equal(written.location_name, 'Lodwar', 'the redactor hashed a place name')
+  })
+})
