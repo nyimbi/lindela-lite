@@ -4844,8 +4844,34 @@ export const ROUTE_DECLARATION = Object.freeze([
 		path: '/api/v1/districts',
 		scope: 'read:hazards',
 		wide: true,
+		notes: [
+			"HX-06. Without `view=summary` the list page fetched this and then one",
+			"`/districts/{id}` per card to fill four numbers and one line — 2,652 KB",
+			"measured through the live ingress for five districts, ~2.3 MB of it the",
+			"30-row `alert_events` sample each overview embeds. `view=summary` returns",
+			"the same cards' fields and nothing else, and is the page's default. The",
+			"full overview is unchanged at `/districts/{id}`.",
+		],
 		body: `
       summary: List the districts the platform knows by name
+      description: >-
+        Returns identity alone unless \`view=summary\` is asked for. With it, each
+        row also carries the four counts and the most recent hazard a district
+        card draws, computed from the whole district rather than from the
+        30-row samples \`/api/v1/districts/{id}\` embeds. A card built from the
+        overview's \`open_alerts\` is a count over a truncated window and reads as
+        a total.
+      parameters:
+        - name: view
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [summary]
+          description: >-
+            \`summary\` adds per-district card fields: \`counts\`,
+            \`open_alert_count\`, \`active_hazard_count\` and \`latest_hazard\`.
+            Omitted, the response is identity only.
       responses:
         '200':
           description: Districts

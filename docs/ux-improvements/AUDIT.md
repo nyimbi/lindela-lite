@@ -349,10 +349,45 @@ is what surfaced them; a reading of the source had not.
 
 ## Still open
 
-- **HX-06 — first-load payload.** The one finding of the 45 that was not closed. The console
-  still carries four *inactive* tab panels in `index.html`, parsed on every load, among the
-  controls the audit counted above the fold. Deferring them into modules loaded on first tab
-  switch pays the byte debt back and fixes HX-05 in the same edit. The audit's own note is that
-  it touches roughly 150 element lookups in `app.js` and is not a change to attempt at the end
-  of a pass — that still holds, and it wants a pass of its own. The debt is recorded in
-  `scripts/check-budget.mjs` next to the budget it defers.
+- **HX-06 — the console's first-load payload.** The console's half is the one part of the 45
+  findings still open, and the entry below it is kept as a record of a claim that went stale
+  rather than as a description of the tree.
+
+  > **The sentence that used to open this item was false by 2026-10-16.** It read: "the console
+  > still carries four *inactive* tab panels in `index.html`, parsed on every load." Those four
+  > panels were deferred into `public/panels/*.html` on 2026-10-06 (`a33a1c0`); `index.html` is
+  > 9.8 KB gzipped and no longer carries them, and `check-budget` cannot reach them because
+  > nothing in the first-load graph references them. A reader acting on that sentence would have
+  > gone looking for markup that had already moved. The debt it described is real but is a
+  > different one — see `scripts/check-budget.mjs`, which has carried the running account.
+
+  The console measured **229.9 KB gzipped against a 230.0 KB ceiling** on 2026-10-16 — 0.1 KB of
+  headroom, which is the state the gate's own note is designed to produce: the next change that
+  touches the first load has to pay something back rather than spend. The only named removal left
+  on that path is the workflow renderers, and they are correctly placed (they draw on first
+  paint). Everything else in the finding — the eager `limit=200` series behind the map — is a
+  request-count and payload question rather than a byte-budget one, and is tracked by the
+  `limit=200` figures in the findings file rather than here.
+
+- **HX-06 — `/districts/`'s eager fetch. Closed 2026-10-16.** The second half of the same
+  finding, and the one with a measurement behind it: the list page fetched one *full* district
+  overview per card to fill four numbers and a hazard line. Measured through the live ingress,
+  five districts cost **2,652.9 KB across 6 requests**, of which ~2.3 MB was the 30-row
+  `alert_events` sample each overview embeds and the card discarded.
+
+  It is now one request: **`GET /api/v1/districts?view=summary`**, 1.1 KB, carrying exactly the
+  fields a card draws. The counts are computed server-side from the same arrays
+  `districtOverview` reads, so a card and the overview it links to cannot disagree.
+
+  Two defects fell out of the same edit, and neither was in the audit:
+
+  - **The card's "open alerts" count was computed over a truncated window.** The browser read
+    `overview.alert_events`, which is capped at `SAMPLE_LIMIT` (30) and sorted newest-first, and
+    counted `status === 'open'` in it. A district with 45 alerts reported at most 30, and one
+    whose open alerts were older than its 30 most recent reported fewer than it had — a sample
+    wearing a total's clothes, which is the same class as `src/districts.js:73` that this audit
+    called out. `counts.open_alert_count` is now counted over the whole district, and
+    `test/district-route-module.test.js` pins it at 45 alerts / 41 open.
+  - **The lede promised per-card loading that no longer happened**, and the `.catch` that wrote
+    "Counts unavailable" per card had no per-card request left to fail. Both are rewritten: one
+    request, one failure state, applied across the grid.

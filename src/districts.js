@@ -202,6 +202,78 @@ function districtForDispatch(dispatch, alert, knownDistricts) {
   }
 }
 
+/**
+ * The newest hazard by time, as `[record, ms]`, or null when none has a
+ * parseable timestamp.
+ *
+ * `active_hazards` arrives sorted by severity, so "most recent" needs its own
+ * pass. A hazard with no parseable timestamp sorts last rather than poisoning
+ * the comparison with NaN.
+ *
+ * Shared with the list summary rather than reimplemented there: a card and the
+ * overview it links to must not disagree about which hazard is newest, and two
+ * copies of a comparator is how that starts.
+ */
+export function mostRecentHazard(hazards) {
+  let best = null
+  let bestTs = -Infinity
+  for (const h of hazards) {
+    const ts = recordTime(h)
+    if (Number.isFinite(ts) && ts > bestTs) {
+      bestTs = ts
+      best = h
+    }
+  }
+  return best ? [best, bestTs] : null
+}
+
+/**
+ * The four numbers and the one line a district card draws, computed over the
+ * whole district.
+ *
+ * HX-06. The card used to be built in the browser from `/districts/{id}`, which
+ * embeds only the 30 most recent alert events — so `open_alerts` on a district
+ * with more than 30 alerts was a count over a truncated window wearing a
+ * total's clothes, and the fetch itself was ~540 KB per card. Both are fixed by
+ * computing the summary here, from the same arrays the overview reads.
+ *
+ * `open_alerts` counts the whole district's alert events, not the sample; the
+ * sample block on the overview is what tells a reader a window exists, and a
+ * card is not the place to re-derive one.
+ */
+export function districtSummary(data, districtSlug) {
+  const district = resolveDistrict(districtSlug)
+  if (!district) return null
+
+  const allAlertEvents = filterForDistrict(district, data.alert_events || [])
+  const hazardEvents = filterForDistrict(district, data.hazard_events || [])
+  const serviceAssets = filterForDistrict(district, data.service_assets || [])
+  const incidents = filterForDistrict(district, data.incidents || [])
+  const recent = mostRecentHazard(hazardEvents)
+
+  return {
+    slug: district.slug,
+    name: district.name,
+    country: district.country,
+    radius_km: district.radius_km,
+    counts: {
+      service_assets: serviceAssets.length,
+      incidents: incidents.length,
+      open_alert_count: allAlertEvents.filter((a) => a.status === 'open').length,
+      active_hazard_count: hazardEvents.length,
+    },
+    latest_hazard: recent
+      ? {
+          hazard: {
+            event_type: recent[0].event_type || recent[0].type || null,
+            severity: recent[0].severity ?? null,
+          },
+          at: new Date(recent[1]).toISOString(),
+        }
+      : null,
+  }
+}
+
 export function districtOverview(data, districtSlug) {
   const district = resolveDistrict(districtSlug)
   if (!district) return null

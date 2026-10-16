@@ -185,3 +185,66 @@ describe('ENH-60 — the district reads answer a missing district as a 404, not 
     assert.equal(res.json().data.district.slug, 'turkana')
   })
 })
+
+describe('HX-06 — the list carries every card field, counted over the district and not a sample', () => {
+  // The list page used to fetch one full overview per card and read four
+  // numbers and a hazard line out of it: 2,652 KB measured through the live
+  // ingress for five districts, ~2.3 MB of it the 30-row `alert_events` sample
+  // each overview embeds. `view=summary` is the replacement, and the property
+  // worth pinning is the one that was wrong before it: `open_alert_count` is a
+  // count over the district, so a district with more than SAMPLE_LIMIT (30)
+  // alerts must not report a count that stops at the sample.
+  const alertsFor = (slug, n, openCount) => Array.from({ length: n }, (_, i) => ({
+    id: `${slug}-a${i}`,
+    status: i < openCount ? 'open' : 'resolved',
+    scope: { district: slug },
+    occurred_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+  }))
+
+  it('counts open alerts over the whole district, past the 30-row sample', async () => {
+    // 45 alerts, 41 open. The overview embeds the 30 most recent, so a count
+    // read off that sample would report at most 30 and here would say 30.
+    const { res } = await call({ kind: 'districts' }, {
+      search: '?view=summary',
+      data: { alert_events: alertsFor('turkana', 45, 41) },
+    })
+    const turkana = res.json().data.find((d) => d.slug === 'turkana')
+    assert.equal(turkana.counts.open_alert_count, 41,
+      'open_alert_count stopped at the sample window rather than counting the district')
+  })
+
+  it('agrees with the overview on every field a card draws', async () => {
+    const data = {
+      alert_events: alertsFor('turkana', 45, 41),
+      hazard_events: [{ id: 'h1', severity: 'high', event_type: 'flood', scope: { district: 'turkana' }, occurred_at: '2026-03-01T00:00:00.000Z' }],
+      service_assets: [{ id: 's1', lat: 3.1, lon: 35.6 }],
+    }
+    const list = await call({ kind: 'districts' }, { search: '?view=summary', data })
+    const card = list.res.json().data.find((d) => d.slug === 'turkana')
+    const overview = await call({ kind: 'district', id: 'turkana' }, { data })
+    const o = overview.res.json().data
+    assert.equal(card.counts.service_assets, o.counts.service_assets, 'assets disagree between card and overview')
+    assert.equal(card.counts.incidents, o.counts.incidents, 'incidents disagree between card and overview')
+    assert.equal(card.counts.active_hazard_count, o.counts.hazard_events, 'hazards disagree between card and overview')
+    assert.equal(card.latest_hazard.hazard.event_type, o.active_hazards[0].event_type, 'the newest hazard disagrees')
+    assert.equal(card.latest_hazard.at, o.active_hazards[0].occurred_at, 'the newest hazard timestamp disagrees')
+  })
+
+  it('serves identity alone when no view is asked for', async () => {
+    // The default must not grow: a caller reading `/districts` for the registry
+    // gets the registry, and the summary is opt-in.
+    const { res } = await call({ kind: 'districts' })
+    assert.equal(res.json().data.every((d) => d.counts === undefined), true,
+      'the bare list grew card fields, so every existing consumer pays for them')
+  })
+
+  it('reports a district with no timestamped hazard as having none, not as an error', async () => {
+    const { res } = await call({ kind: 'districts' }, {
+      search: '?view=summary',
+      data: { hazard_events: [{ id: 'h1', severity: 'low', scope: { district: 'turkana' } }] },
+    })
+    const turkana = res.json().data.find((d) => d.slug === 'turkana')
+    assert.equal(turkana.counts.active_hazard_count, 1, 'an untimestamped hazard is still an active hazard')
+    assert.equal(turkana.latest_hazard, null, 'a hazard with no parseable time was reported as the newest one')
+  })
+})

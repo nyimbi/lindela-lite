@@ -558,11 +558,13 @@ function renderList(districts) {
 
   const lede = document.createElement('p')
   lede.className = 'page-lede'
-  // The list endpoint carries identity only, so every card makes its own
-  // request. Saying so up front is the difference between a page that looks
-  // broken for two seconds and one that looks like it is working.
+  // HX-06. This page used to fetch one full district overview per card to fill
+  // four numbers and a hazard line — 2,652 KB for five districts, ~2.3 MB of it
+  // the 30-row alert sample each overview embeds and the card threw away. One
+  // `view=summary` request now carries every card's fields, and the counts come
+  // from the whole district rather than from a truncated window.
   lede.textContent = fill(
-    t('districts.list_lede', '{n} districts. Counts, hazards and the most recent event load per card, so one slow district does not hold up the rest of the list.'),
+    t('districts.list_lede', '{n} districts. Counts, hazards and the most recent event load together, so one slow district does not hold up the rest of the list.'),
     { n: String(districts.length) },
   )
   app.appendChild(lede)
@@ -606,57 +608,75 @@ function renderList(districts) {
     grid.appendChild(card)
     filters.cards.push(card)
 
-    // The element is held directly rather than looked up by id. A fetch that
-    // lands after the reader has moved to a district overview used to write
-    // into whatever element happened to carry that id by then.
-    const counts = card.querySelector('.district-card-counts')
+  }
 
-    apiFetch(`/api/v1/districts/${encodeURIComponent(d.slug)}`)
-      .then(({ data }) => {
-        if (!data || !card.isConnected) return
-        const c = data.counts || {}
-        const alerts = data.alert_events || []
-        const hazards = data.active_hazards || []
-        const open = openAlerts(alerts).length
-        const latest = mostRecentHazard(hazards)
-        card.dataset.attention = open > 0 || hazards.length > 0 ? 'yes' : 'no'
+  app.appendChild(grid)
+
+  // HX-06. One request for every card's fields, where there used to be one full
+  // overview per card. The cards are already in the DOM when this lands, so the
+  // failure path and the success path both write into a node that exists; the
+  // element is held per card rather than looked up by id, because a fetch that
+  // lands after the reader moved to a district overview used to write into
+  // whatever element happened to carry that id by then.
+  apiFetch('/api/v1/districts?view=summary')
+    .then(({ data }) => {
+      const bySlug = new Map((data || []).map((s) => [String(s.slug), s]))
+      for (const card of filters.cards) {
+        if (!card.isConnected) continue
+        const counts = card.querySelector('.district-card-counts')
+        if (!counts) continue
+        const summary = bySlug.get(String(card.dataset.slug))
+        if (!summary) {
+          card.dataset.attention = 'unknown'
+          counts.setAttribute('aria-busy', 'false')
+          counts.textContent = t('districts.counts_unavailable', 'Counts unavailable')
+          counts.classList.add('data-gap')
+          continue
+        }
+        const c = summary.counts || {}
+        const open = Number(c.open_alert_count) || 0
+        const hazards = Number(c.active_hazard_count) || 0
+        const latest = summary.latest_hazard
+        card.dataset.attention = open > 0 || hazards > 0 ? 'yes' : 'no'
         counts.setAttribute('aria-busy', 'false')
         counts.innerHTML = `
           <span class="district-stat-list">
             <span class="district-stat"><strong>${esc(num(open, { int: true }))}</strong> ${esc(open === 1
               ? t('districts.open_alert_one', 'open alert')
               : t('districts.open_alerts_many', 'open alerts'))}</span>
-            <span class="district-stat"><strong>${esc(num(hazards.length, { int: true }))}</strong> ${esc(hazards.length === 1
+            <span class="district-stat"><strong>${esc(num(hazards, { int: true }))}</strong> ${esc(hazards === 1
               ? t('districts.active_hazard_one', 'active hazard')
               : t('districts.active_hazards_many', 'active hazards'))}</span>
             <span class="district-stat"><strong>${esc(num(c.service_assets, { int: true }))}</strong> ${esc(t('districts.unit_assets', 'assets'))}</span>
             <span class="district-stat"><strong>${esc(num(c.incidents, { int: true }))}</strong> ${esc(t('districts.unit_incidents', 'incidents'))}</span>
           </span>
           ${latest
-            ? `<span class="district-card-latest">${esc(t('districts.most_recent_hazard', 'Most recent hazard'))} ${sevChip(latest.hazard.severity)}${esc(latest.hazard.event_type || latest.hazard.type || t('districts.unlabelled', 'unlabelled'))} &middot; ${esc(formatRelative(latest.at))}</span>`
-            : `<span class="district-card-latest muted-sm">${esc(hazards.length
+            ? `<span class="district-card-latest">${esc(t('districts.most_recent_hazard', 'Most recent hazard'))} ${sevChip(latest.hazard?.severity)}${esc(latest.hazard?.event_type || t('districts.unlabelled', 'unlabelled'))} &middot; ${esc(formatRelative(latest.at))}</span>`
+            : `<span class="district-card-latest muted-sm">${esc(hazards
                 ? t('districts.no_hazard_timestamp', 'Active hazards carry no timestamp.')
                 : t('districts.no_hazards_recorded', 'No active hazards on record.'))}</span>`}
         `
-        // The filter reads `dataset.attention`, which only exists now.
-        applyFilters(districts.length)
-      })
-      .catch(() => {
-        // This used to be `.catch(() => {})`, which left the literal text
-        // "Loading counts..." on screen forever after any failure — a spinner
-        // that stops spinning and never resolves into either state.
-        if (!card.isConnected) return
+      }
+      // The filter reads `dataset.attention`, which only exists now.
+      applyFilters(districts.length)
+    })
+    .catch(() => {
+      // This used to be `.catch(() => {})`, which left the literal text
+      // "Loading counts..." on screen forever after any failure — a spinner
+      // that stops spinning and never resolves into either state.
+      for (const card of filters.cards) {
+        if (!card.isConnected) continue
+        const counts = card.querySelector('.district-card-counts')
+        if (!counts) continue
         counts.setAttribute('aria-busy', 'false')
         counts.textContent = t('districts.counts_unavailable', 'Counts unavailable')
         counts.classList.add('data-gap')
         // Left unresolved: the filter cannot honestly call this district
         // quiet, and it will keep showing under the attention filter.
         card.dataset.attention = 'unknown'
-        applyFilters(districts.length)
-      })
-  }
-
-  app.appendChild(grid)
+      }
+      applyFilters(districts.length)
+    })
 
   const empty = document.createElement('p')
   empty.className = 'empty-note'

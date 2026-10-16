@@ -267,6 +267,12 @@ export const WIDE_ROUTES = Object.freeze([
   // paths rather than one because the source is a literal alternation in the
   // route regex, `(osm|carto)`, and the table keys on the path a caller writes.
   'GET /api/v1/basemap/tiles/osm/:id/:id/:id.png',
+  // HX-06. Without `view=summary` the list page fetched this and then one
+  // `/districts/{id}` per card to fill four numbers and one line — 2,652 KB
+  // measured through the live ingress for five districts, ~2.3 MB of it the
+  // 30-row `alert_events` sample each overview embeds. `view=summary` returns
+  // the same cards' fields and nothing else, and is the page's default. The
+  // full overview is unchanged at `/districts/{id}`.
   'GET /api/v1/districts',
   'GET /api/v1/export.csv',
   'GET /api/v1/export.ndjson',

@@ -32,7 +32,7 @@
  *     failure.
  */
 
-import { KNOWN_DISTRICTS, districtOverview } from '../districts.js'
+import { KNOWN_DISTRICTS, districtOverview, districtSummary } from '../districts.js'
 import { createEquityAuditWorkflows, detectAccuracyBreaches, equityByDistrict } from '../equity.js'
 
 /**
@@ -70,6 +70,19 @@ export async function handleDistrictRoute(route, { store, data, req, res, url, j
   const { kind } = route
 
   if (kind === 'districts') {
+    // HX-06. The list page fetched this and then one overview per card to fill
+    // four numbers and a hazard line — 2,652 KB measured through the live
+    // ingress for five districts, of which ~2.3 MB was the 30-row
+    // `alert_events` sample each overview embeds and the card discarded. The
+    // summary is computed from the same arrays the overview reads, so the two
+    // cannot disagree; `view=summary` is what asks for it.
+    if (url.searchParams.get('view') === 'summary') {
+      jsonResponse(res, 200, {
+        success: true,
+        data: KNOWN_DISTRICTS.map((d) => districtSummary(data, d.slug)),
+      })
+      return true
+    }
     jsonResponse(res, 200, { success: true, data: KNOWN_DISTRICTS })
     return true
   }
