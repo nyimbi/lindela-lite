@@ -33,7 +33,7 @@ import { describe, it } from 'node:test'
 
 import { median, numericOr, numericOrNull, sumMeasured } from '../src/analytics/numeric.js'
 import { computeFacilitiesAtRisk, computePopulationAtRisk } from '../src/analytics/impact.js'
-import { population_at_risk } from '../src/analytics/metrics.js'
+import { computeMetric, population_at_risk } from '../src/analytics/metrics.js'
 import { haversineKm } from '../src/utils.js'
 
 describe('R-86 — numericOrNull returns null for everything it cannot vouch for', () => {
@@ -174,6 +174,59 @@ describe('R-93 — the median is the median, at even n', () => {
     assert.equal(median([]), null)
     assert.equal(median(null), null)
     assert.equal(median([null, undefined, NaN]), null)
+  })
+})
+
+describe('R-91 — a dispatch that failed reached nobody', () => {
+  // `people_reached` summed `recipients_count` over every dispatch, so a
+  // dispatch reading `status: 'failed'`, `sent_at: null`, HTTP 503 contributed
+  // its full head count: 1,399 people on the live store, with Bor overstated
+  // 25%. The figure is a claim about people who received a warning, and a
+  // dispatch that never left the server received none of them.
+  const dispatch = (over) => ({
+    id: 'd1', status: 'sent', sent_at: '2026-08-01T00:00:00.000Z',
+    recipients_count: 100, destination: '+255700000001', ...over,
+  })
+
+  it('excludes failed, queued and pending dispatches, and counts the exclusion', () => {
+    for (const status of ['failed', 'queued', 'pending']) {
+      const one = computeMetric('people_reached', {
+        dispatches: [dispatch({ status, sent_at: null, recipients_count: 1399 })],
+      })
+      assert.equal(one.value, 0, `a ${status} dispatch was counted as people reached`)
+      assert.equal(one.failed_excluded, 1, `the ${status} dispatch was not reported as excluded`)
+      assert.equal(one.sends, 0, `a ${status} dispatch was counted as a send`)
+    }
+  })
+
+  it('requires a timestamp or a status, and counts a row carrying neither as not sent', () => {
+    // The predicate is an OR — stamped, or a status that is not one of the
+    // three failure states — because a connector may report one and not the
+    // other. A row with neither is a row nothing claims was sent.
+    const bare = computeMetric('people_reached', {
+      dispatches: [{ id: 'd', recipients_count: 500 }],
+    })
+    assert.equal(bare.value, 0, 'a row with no timestamp and no status was counted as reaching people')
+    assert.equal(bare.failed_excluded, 1)
+
+    const stamped = computeMetric('people_reached', {
+      dispatches: [dispatch({ status: 'delivered', sent_at: '2026-08-01T00:00:00.000Z' })],
+    })
+    assert.equal(stamped.value, 100, 'a stamped dispatch was not counted')
+  })
+
+  it('still counts a dispatch that was sent, and sums only the sent ones', () => {
+    const mixed = computeMetric('people_reached', {
+      dispatches: [
+        dispatch({ id: 'ok', recipients_count: 10, destination: '+256' }),
+        dispatch({ id: 'bad', status: 'failed', sent_at: null, recipients_count: 1399, destination: '+255' }),
+      ],
+    })
+    assert.equal(mixed.value, 10, 'the sent head count is not the total')
+    assert.equal(mixed.sends, 1)
+    assert.equal(mixed.failed_excluded, 1)
+    assert.equal(mixed.distinct_destinations, 1,
+      'the failed dispatch’s destination is not a destination that was reached')
   })
 })
 

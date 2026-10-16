@@ -340,4 +340,41 @@ describe('the operations summary counts what its keys name', () => {
 		assert.equal(c.population_at_risk_total, 0)
 		assert.equal(c.facilities_at_risk_total, 0)
 	})
+
+	it('publishes a de-duplicated figure beside the per-hazard sum', () => {
+		// R-95. `population_at_risk_total` sums the per-hazard rows, and those
+		// rows overlap: an asset inside two hazards' radii contributes its
+		// population twice. Clustered events are the normal regime for floods,
+		// so this is not a rare over-count — it is what the number does.
+		//
+		// The union is computed from the assets and hazards the rows were
+		// derived from, because a per-hazard row carries no asset ids and
+		// cannot be de-duplicated after the fact.
+		const asset = (id, population) => ({
+			id, service_type: 'health', population_served: population,
+			latitude: 4.1, longitude: 31.6,
+		})
+		const clustered = {
+			...base,
+			// Two hazards close enough that one asset sits inside both radii.
+			hazard_events: [
+				{ id: 'h1', event_type: 'flood', severity: 'high', latitude: 4.1, longitude: 31.6 },
+				{ id: 'h2', event_type: 'flood', severity: 'high', latitude: 4.11, longitude: 31.61 },
+			],
+			service_assets: [asset('a1', 500), asset('a2', 300)],
+			population_at_risk: [
+				{ hazard_event_id: 'h1', population_at_risk: 800 },
+				{ hazard_event_id: 'h2', population_at_risk: 800 },
+			],
+		}
+		const c = counts(clustered)
+		assert.equal(c.population_at_risk_total, 1600, 'the per-hazard sum is what the store holds')
+		assert.equal(c.population_at_risk_union_total, 800,
+			'the union is the de-duplicated people figure — 500 + 300, each asset once')
+		assert.equal(c.population_at_risk_union_assets, 2, 'two distinct assets, not four hazard-hits')
+
+		// And the honest null: no analytics run means unknown, not zero.
+		assert.equal(counts(base).population_at_risk_union_total, null)
+		assert.equal(counts(base).population_at_risk_union_assets, null)
+	})
 })

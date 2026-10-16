@@ -322,6 +322,51 @@ shipped and only the index had not caught up.
 | R-89 | `pearson`/`spearman` filtered the two series independently and zipped by index | `src/agreement.js:47`; `test/agreement-alignment.test.js` |
 | R-90 | A null correlation was read as agreeing (`?? 0` / `?? 1`) | `src/agreement.js:393`; `test/agreement-alignment.test.js` |
 
+### Closed but never marked — the second sweep, found 2026-10-16
+
+The 2026-10-13 sweep re-checked sixteen and left **twenty with no status at all**:
+R-46, R-49, R-57, R-58, R-59, R-61, R-68, R-69, R-73, R-74, R-83, R-84, R-85,
+R-86, R-88, R-91, R-92, R-93, R-94, R-95. Each was verified against the tree on
+2026-10-16, and **all twenty are closed**. Four of them had no guard that fails
+without the fix, which the canaries below found rather than the reading — those
+four now have one, written in this pass.
+
+R-49 and R-73/R-74 are closed with a residual, recorded here rather than left to
+read as complete: R-49's `/health` still does not report free space (`/ready`
+does, and is the probe the deployments use), and R-73/R-74's replacement harness
+is in place and every module imports, but two `vm.runInContext` sites remain
+(`test/chw-wizard-honesty.test.js:318`, `test/web-chw-offline.test.js:307`)
+against seven before it.
+
+| id | what it was | the guard that fails without it |
+| --- | --- | --- |
+| R-46 | A zero-subscriber event was recorded `sent`; it is left `pending` with `undeliverable: true` and `last_error` naming why | `test/outbox-route-module.test.js` (canaried: dropping the `undeliverable` counter fails it) |
+| R-49 | The temp file is unlinked on any write failure, and `#freeSpace` probes with `fs.statfs` — `/ready` degrades on `free_bytes < store_bytes` | `test/liveness-route-module.test.js`, `test/store-write-cleanup.test.js` (canaried: forcing `diskFull` false fails it) |
+| R-57 | `components.css` carries `[hidden] { display: none !important }`, so no author rule can beat it; the per-site `.rail-panel[hidden]` rules are belt-and-braces behind that | `test/web-hidden-display.test.js` — resolves the cascade per surface (canaried: the backstop's `!important` is what fails; removing the per-site rule alone does not) |
+| R-58 | `submitOrQueue` attempts first and queues on failure; `onLine === false` only skips the attempt, and never decides whether to save | `test/offline-delivery.test.js` (canaried: removing the attempt fails it) |
+| R-59 | One claim and lease in `queue-core.js`; both drains (`flush()`, the worker's) go through it, and the idempotency key closes the millisecond window the claim cannot | `test/queue-capacity.test.js` — **added this pass**, three cases; the claim had no test at all (canaried: `heldByOther = false` fails all three) |
+| R-61 | The `data-i18n` attribute is gone from the nav link, so the sweep no longer overwrites the fallback with the raw key | `test/web-locale-boot.test.js` (canaried) |
+| R-68 | `selectedRecordId` is declared in the `state` literal | `test/state-keys-gate.test.js` (canaried: renaming the key fails two) |
+| R-69 | Both `.offline-banner` blocks are deleted; `--warn-wash` is the token | `test/web-component-layer.test.js` (canaried: planting `#fef3c7` fails it) |
+| R-73 / R-74 | Every module under `public/` imports in Node through `test/browser-env.mjs`; the seven sandbox copies are one | `test/web-module-importability.test.js` (canaried: breaking the harness fails it) |
+| R-83 | `pct()` takes an explicit `scale` and **throws** on anything else; no inference from magnitude | `test/fmt-pct-scale.test.js` (canaried: restoring `Math.abs(n) <= 1` fails three) |
+| R-84 / R-85 | One `METRICS.false_alert_rate`, one `computeMetric` — "the only supported route"; the two wrong definitions and their arguing comments are gone | `test/metric-registry.test.js` (canaried: a local redefinition fails five) |
+| R-86 | `numericOrNull` is the only sanctioned conversion, and it replaces `Number.isFinite(Number(x))` rather than living beside it | `test/numeric-veracity.test.js` (canaried) |
+| R-88 | The mapper returns `null` — never a number — when unidentifiable, and `MIN_STATIONS_FOR_QUANTILE_MAP` is 3 | `test/downscaling-honesty.test.js` (canaried: the floor at 1 fails two) |
+| R-91 | Failed, queued and pending dispatches are excluded and counted as `failed_excluded`; the head-count-as-destination defect is closed too | `test/numeric-veracity.test.js` — **added this pass**, three cases; nothing asserted the exclusion (canaried: dropping the `continue` fails three) |
+| R-92 | `terrainLabelForSamples` returns `null` below `MIN_TERRAIN_COMPARABLES`; the bbox-only hazard reports `distanceKm: null` rather than 0 | `test/refusal-floors.test.js` (canaried: the floor at 0 fails two) |
+| R-93 | `median()` averages the middle pair; the n=1 rates go through the registry's sample floors | `test/numeric-veracity.test.js`, `test/metric-registry.test.js` (canaried) |
+| R-94 | The filter routes through `orgUnitFor`, so a synonym resolves — the third function with its own vocabulary is gone | `test/org-units.test.js` (canaried) |
+| R-95 | `population_at_risk_union_total` / `_union_assets` publish the de-duplicated figure beside the per-hazard sum | `test/remaining-defects.test.js` — **added this pass**; the union keys were read by no test (canaried: nulling the union fails it) |
+
+**R-95's union keys are published and read by nothing.** The metric is
+registered, the de-duplication is correct, and `counts()` computes both keys —
+but no route field, client surface or test reads `population_at_risk_union_total`
+before this pass's guard. That is R-77's shape one layer out: correct, tested,
+and reached by nobody. It is a smaller finding than R-95 and is recorded rather
+than fixed, because wiring a panel to a figure is a product decision about which
+number an operator should see beside the per-hazard sum.
+
 ### Open, with the measurement or the blocker
 
 This table carried two errors until 2026-10-15, both worth naming because they

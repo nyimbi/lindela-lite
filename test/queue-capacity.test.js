@@ -3,7 +3,7 @@ import { describe, it } from 'node:test'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
-  enqueueRecord, readAll, MAX_QUEUE_RECORDS,
+  enqueueRecord, readAll, MAX_QUEUE_RECORDS, claimBatch, drainQueue, CLAIM_LEASE_MS,
 } from '../public/shared/queue-core.js'
 
 /**
@@ -73,8 +73,14 @@ function memoryDb({ readFails = false } = {}) {
           return req
         },
         delete(id) {
-          const at = records.findIndex((r) => r.id === id)
-          if (at >= 0) records.splice(at, 1)
+          // `queue-core.del` settles on the transaction's `oncomplete`, exactly
+          // as `put` does. A double that splices and returns leaves the promise
+          // pending forever, and the drain that deleted the record hangs.
+          setTimeout(() => {
+            const at = records.findIndex((r) => r.id === id)
+            if (at >= 0) records.splice(at, 1)
+            tx.oncomplete?.()
+          }, 0)
         },
         getAll() {
           const req = {}
@@ -93,6 +99,75 @@ function memoryDb({ readFails = false } = {}) {
     },
   }
 }
+
+describe('R-59 — two drains, one claim', () => {
+  // `flush()` (the page, on the 30 s tick and on `online`) and `replayQueue()`
+  // (the service worker, on Background Sync) both read the same store and both
+  // deleted independently. Two drains meant two field reports for one
+  // observation, and the idempotency key does not cover it: the key makes the
+  // *server* collapse a duplicate, it does not stop the second drain from
+  // sending. Latent only while the worker could not install at all — fixing
+  // that activated this, which is why the claim landed with it.
+  const queued = (db) => enqueueRecord(db, { path: '/api/v1/reports', what: 'one', options: { method: 'POST' } })
+
+  it('the second drainer takes nothing while the first holds the record', async () => {
+    const db = memoryDb()
+    await queued(db)
+
+    const first = await claimBatch(db, { owner: 'page' })
+    assert.equal(first.length, 1, 'the first claim took the record')
+
+    const second = await claimBatch(db, { owner: 'worker' })
+    assert.equal(second.length, 0,
+      'the worker claimed a record the page is already sending — two drains, two reports')
+
+    // The same owner may re-claim: a drain that crashed mid-send must be able
+    // to pick its own records up again.
+    const again = await claimBatch(db, { owner: 'page' })
+    assert.equal(again.length, 1, 'a drainer could not re-claim its own record')
+  })
+
+  it('the lease expires, so a drainer that died does not strand the record', async () => {
+    const db = memoryDb()
+    await queued(db)
+    const t0 = 1_000_000
+
+    await claimBatch(db, { owner: 'page', now: t0 })
+    const during = await claimBatch(db, { owner: 'worker', now: t0 + CLAIM_LEASE_MS - 1 })
+    assert.equal(during.length, 0, 'the claim did not hold for the length of its lease')
+
+    const after = await claimBatch(db, { owner: 'worker', now: t0 + CLAIM_LEASE_MS + 1 })
+    assert.equal(after.length, 1,
+      'a claim outlived its lease, so a drainer that died mid-send stranded the record forever')
+  })
+
+  it('a drained record is deleted, and only by the drainer that holds it', async () => {
+    const db = memoryDb()
+    await queued(db)
+    await claimBatch(db, { owner: 'page' })
+
+    const sent = []
+    const result = await drainQueue(db, {
+      owner: 'page',
+      send: async (record) => { sent.push(record.path) },
+    })
+    assert.equal(result.sent, 1)
+    assert.deepEqual(sent, ['/api/v1/reports'])
+    assert.equal((await readAll(db)).length, 0, 'the delivered record was not removed from the queue')
+
+    // And the worker, which holds no claim, sends nothing and deletes nothing.
+    await queued(db)
+    await claimBatch(db, { owner: 'page' })
+    const workerSends = []
+    const workerResult = await drainQueue(db, {
+      owner: 'worker',
+      send: async (record) => { workerSends.push(record.path) },
+    })
+    assert.equal(workerResult.attempted, 0, 'the worker attempted a record the page holds')
+    assert.deepEqual(workerSends, [], 'the same report was sent twice')
+    assert.equal((await readAll(db)).length, 1, 'the worker deleted a record it did not send')
+  })
+})
 
 describe('R-60 — the queue has a record cap', () => {
   it('writes while there is room', async () => {
