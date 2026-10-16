@@ -308,7 +308,7 @@ like-for-like.
 *Externalize strings; i18n catalogs for en/fr/pt/sw/ar/am; plain-language report
 mode.*
 
-Localization shipped well beyond the ask: 11 locales in `public/i18n/` including
+Localization shipped well beyond the ask: 10 locales in `public/i18n/` including
 Amharic, Somali, Kinyarwanda, Khmer, **and** a `din` tag that is not valid BCP-47
 (D32). Guards exist: `scripts/check-i18n.mjs` and `check-i18n-offers.mjs`.
 
