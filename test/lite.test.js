@@ -5110,6 +5110,40 @@ describe('Lindela Lite payload hashing', () => {
     assert.equal(canonicalHash(arrOne), canonicalHash(arrTwo))
   })
 
+  it('ignores a fetch stamp nested inside metadata, and nothing else nested', async () => {
+    // Five connectors stamp `metadata.fetched_at` with `new Date()`. The
+    // top-level ignore list never reached a nested key, so a re-run of
+    // unchanged content produced a different hash — and `mergeById` skips on
+    // hash, so the re-run was written as new rather than recognised. Measured
+    // on the demo store: 5,650 `food_security_records` and 1,707
+    // `disease_observations` carrying the stamp.
+    const { canonicalHash } = await import('../src/utils.js')
+    const build = (fetchedAt) => ({
+      source: 'ipc_hdx', country: 'KEN', phases: { '3+': { number: 100, fraction: 0.2 } },
+      metadata: { provider: 'IPC', classification_note: 'analytical, not an estimate', fetched_at: fetchedAt },
+    })
+    assert.equal(
+      canonicalHash(build('2026-10-16T00:00:00.000Z')),
+      canonicalHash(build('2026-10-17T09:31:07.412Z')),
+      'a re-run of unchanged content must hash the same, or it is stored as a new record',
+    )
+
+    // The strip is exactly one key, not every timestamp name. A nested
+    // `created_at` is sometimes content: `action_logs.metadata.removed_rule` is
+    // an archived rule whose `created_at` is the rule's real creation time, and
+    // dropping it would make two different rules hash alike — the defect the
+    // case above exists to prevent, arriving from the other direction.
+    const rule = (createdAt) => ({ source: 'action_logs', metadata: { removed_rule: { created_at: createdAt, code: 'R1' } } })
+    assert.notEqual(canonicalHash(rule('2026-01-01T00:00:00.000Z')), canonicalHash(rule('2026-02-02T00:00:00.000Z')),
+      'a nested content timestamp must still count, or two different records hash alike')
+
+    // And a real metadata change still moves the hash, which is the property
+    // the surrounding cases are about.
+    const base = build('2026-10-16T00:00:00.000Z')
+    const corrected = { ...base, metadata: { ...base.metadata, classification_note: 'corrected' } }
+    assert.notEqual(canonicalHash(base), canonicalHash(corrected))
+  })
+
   it('propagates a metadata-only change through the store merge', async () => {
     // mergeById skips an incoming record whose payload_hash already exists. With
     // metadata invisible to the hash, re-ingesting a connector could never update
@@ -5148,6 +5182,38 @@ describe('Lindela Lite payload hashing', () => {
     again.payload_hash = canonicalHash(again)
     const merged = mergeById([rec], [again])
     assert.equal(merged.length, 1, 'an unchanged record must not be duplicated')
+  })
+
+  it('recognises a re-run whose id moved but whose content did not', async () => {
+    // The archive connector derives its id from the *requested* window, whose
+    // end date is the run's clock day (`src/connectors/open-meteo-archive.js:209`
+    // over `fetchWindow`'s `today`). Two runs a day apart therefore mint two
+    // ids for one region-day of content the source published once. What stops
+    // that becoming two stored records is not the id — it is `mergeById`
+    // checking `payload_hash` first, which only works because the fetch stamp
+    // is out of the hash. Measured: `climate_54fbaa9b…` on 10-16 and
+    // `climate_85e7f433…` on 10-17, identical `daily`.
+    const { mergeById } = await import('../src/store.js')
+    const { canonicalHash } = await import('../src/utils.js')
+
+    const build = (id, fetchedAt) => {
+      const rec = {
+        id, source: 'open_meteo_archive', region_name: 'Turkana',
+        series_start: '2026-10-16', series_end: '2026-10-16',
+        daily: [{ date: '2026-10-16', precipitation_mm: 0 }],
+        metadata: { provider: 'ERA5', fetched_at: fetchedAt },
+      }
+      rec.payload_hash = canonicalHash(rec)
+      return rec
+    }
+
+    const first = build('climate_54fbaa9bb207b2f8', '2026-10-16T00:00:00.000Z')
+    const rerun = build('climate_85e7f433bc2019ad', '2026-10-17T00:00:00.000Z')
+    assert.notEqual(first.id, rerun.id, 'the fixture must actually move the id, or this proves nothing')
+
+    const merged = mergeById([first], [rerun])
+    assert.equal(merged.length, 1,
+      'one region-day of unchanged content must be one record, whatever id the window minted')
   })
 })
 

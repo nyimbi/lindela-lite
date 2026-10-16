@@ -112,4 +112,84 @@ describe('the connector registry and the runtime map name one set', () => {
       .filter((module) => !module || !existsSync(path.join(ROOT, module)))
     assert.deepEqual(missing, [], `registry entries point at modules that do not exist: ${missing.join(', ')}`)
   })
+
+  it('advertises the options the connector actually reads, and invents none', async () => {
+    // The registry's `schemas.input` is the option surface an operator is told
+    // about; the connector's own `spec.schema.requestSchema` is the one it
+    // reads. Two lists of one thing, compared by nothing — so
+    // `connectors.registry.json` offered `gho_top_years` while
+    // `src/connectors/who-gho.js` reads `gho_min_year`, and a reader who set
+    // the advertised key changed nothing. Same class as the unwired-connector
+    // case above, one layer in: a configuration surface that silently does
+    // nothing.
+    //
+    // Compared against the live `spec` export rather than a grep, for the
+    // reason this file's header gives: a grep for a missing key passes with the
+    // key missing.
+    //
+    // `INTERNAL` is not an escape hatch — it is the declaration, and it exists
+    // because some request keys are injected by the runner rather than offered
+    // to an operator (`now`, `on_watermark_state`, the watermark cursor). Each
+    // entry is asserted to still be internal, so one that becomes a real
+    // operator option fails here rather than reading as covered.
+    const INTERNAL = {
+      open_meteo_archive: ['archive_chunk_days', 'now', 'on_watermark_state', 'watermark_state'],
+      open_meteo_flood: ['flood_chunk_days', 'now', 'on_watermark_state', 'watermark_state'],
+    }
+
+    // Connectors that predate `defineConnector` and export a plain object with
+    // no `spec`, so their option surface is not machine-readable and there is
+    // nothing to compare the registry against. Declared rather than skipped,
+    // and each is asserted to still lack a spec, so one that gains a `spec`
+    // fails here instead of reading as covered.
+    const NO_SPEC = {
+      chirps: 'plain object export, predates defineConnector',
+      nasa_firms: 'plain object export, predates defineConnector',
+      service_assets: 'upload-backed; option surface is the request body',
+      acled_csv: 'upload-backed; option surface is the request body',
+      conflict_csv: 'upload-backed; option surface is the request body',
+    }
+
+    const drift = []
+    for (const entry of registry()) {
+      const module = await import(path.join(ROOT, entry.module))
+      const spec = module.spec
+      if (!spec) {
+        if (!Object.hasOwn(NO_SPEC, entry.id)) {
+          drift.push(`${entry.id}: no spec export to compare against, and no declared reason`)
+        }
+        continue
+      }
+      if (Object.hasOwn(NO_SPEC, entry.id)) {
+        drift.push(`${entry.id}: declared as having no spec, but it exports one — remove the stale declaration`)
+      }
+
+      const advertised = Object.keys(entry.schemas?.input || {})
+      const declared = Object.keys(spec.schema?.requestSchema || {})
+      const internal = INTERNAL[entry.id] || []
+      for (const key of declared.filter((k) => !internal.includes(k))) {
+        if (!advertised.includes(key)) {
+          drift.push(`${entry.id}: reads "${key}", the registry does not advertise it`)
+        }
+      }
+      for (const key of advertised) {
+        if (!declared.includes(key)) {
+          drift.push(`${entry.id}: advertises "${key}", the connector never reads it`)
+        }
+      }
+    }
+    assert.deepEqual(drift, [], `connector registry option drift:\n  ${drift.join('\n  ')}`)
+
+    // And every declared-internal key is still real, so the exemption cannot
+    // outlive the reason for it.
+    for (const [id, keys] of Object.entries(INTERNAL)) {
+      const entry = registry().find((e) => e.id === id)
+      const spec = (await import(path.join(ROOT, entry.module))).spec
+      const declared = Object.keys(spec.schema?.requestSchema || {})
+      for (const key of keys) {
+        assert.ok(declared.includes(key),
+          `${id} declares "${key}" internal but the connector no longer has it — remove the stale exemption`)
+      }
+    }
+  })
 })

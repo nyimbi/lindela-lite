@@ -36,11 +36,47 @@ function canonicalise(value) {
   return value
 }
 
+/**
+ * The one nested key the hash drops: a fetch stamp is provenance, not content.
+ *
+ * `ignoreKeys` above is top-level only, and five connectors stamp
+ * `metadata.fetched_at` with `new Date()` — `ipc-hdx.js:250`,
+ * `who-gho.js:148`, `gdacs-archive.js:243`, `open-meteo-archive.js:233`,
+ * `open-meteo-flood.js:208`. That key sat *inside* `metadata`, so the top-level
+ * ignore list never reached it and every re-run of unchanged content produced a
+ * different `payload_hash`. `mergeById` (`src/store.js:1255`) skips an incoming
+ * record whose hash it has already seen, so a re-run was not recognised as a
+ * duplicate and was written as new — measured: 5,650 `food_security_records`
+ * and 1,707 `disease_observations` carrying `metadata.fetched_at`, on a demo
+ * store that has been re-ingested repeatedly.
+ *
+ * Deliberately key-specific rather than a blanket recursive strip of every
+ * timestamp name. `canonicalise`'s own comment above is the reason: a nested
+ * `created_at` is sometimes content. `action_logs.metadata.removed_rule` is an
+ * archived rule whose `created_at` is the rule's real creation time, and
+ * dropping it would make two different rules with one shape hash alike — the
+ * "hash identical no matter what the record said" defect this function exists
+ * to prevent, arriving from the other direction. So the strip is exactly the
+ * fetch stamp, which the demo store carries only ever at `metadata.fetched_at`
+ * and never as content.
+ */
+function withoutFetchStamp(value) {
+  if (Array.isArray(value)) return value.map(withoutFetchStamp)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== 'fetched_at')
+        .map(([key, nested]) => [key, withoutFetchStamp(nested)]),
+    )
+  }
+  return value
+}
+
 export function canonicalHash(record, ignoreKeys = ['id', 'payload_hash', 'ingested_at', 'generated_at', 'updated_at', 'created_at', 'first_seen_at']) {
   const filtered = Object.fromEntries(
     Object.entries(record).filter(([key]) => !ignoreKeys.includes(key))
   )
-  return crypto.createHash('sha256').update(JSON.stringify(canonicalise(filtered))).digest('hex')
+  return crypto.createHash('sha256').update(JSON.stringify(withoutFetchStamp(canonicalise(filtered)))).digest('hex')
 }
 
 export function nowIso() {

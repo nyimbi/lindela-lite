@@ -247,7 +247,7 @@
     "description": "IPC Acute Food Insecurity classifications, national and subnational, via HDX. Keyless, CC0. Relayed as published, not re-classified or scored.",
     "schemas": {
       "input": {
-        "countries": "array of ISO3 codes to keep (default ['KE','SO','SS']); 'all' for every country",
+        "countries": "array of ISO3 codes to keep (default the 46 Sub-Saharan African codes in src/connectors/ipc-hdx.js DEFAULT_COUNTRIES); 'all' for every country",
         "geometry": "boolean - fetch per-country GeoJSON and store per-area bounding boxes (default true)",
         "timeout_ms": "number",
         "retries": "number"
@@ -285,7 +285,6 @@
       "input": {
         "gho_indicators": "array of indicator codes to restrict to (default the outbreak set)",
         "gho_min_year": "number (default 5 years back)",
-        "gho_top_years": "number (default 40)",
         "timeout_ms": "number",
         "retries": "number"
       },
