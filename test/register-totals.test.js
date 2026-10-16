@@ -339,4 +339,51 @@ describe('the improvement registers state totals their tables agree with', () =>
       + 'Either fix the number, or — if the sentence is about what shipped at a commit rather than now — '
       + 'say so, because this reads it as a claim about the file on disk.')
   })
+
+  it('audit-2026-10: the defect total is the number of entries, split base and late', () => {
+    // The same shape as the system-audit case, and the fourth stale total found
+    // in this family. `defects.md` numbers its entries as `## PREFIX-NN — SEV —
+    // …` headings across eight domain sections; the README states the total two
+    // ways, and until this change the two disagreed with each other: line 9 said
+    // "sixty-eight … ten more found since" (78, correct) and the document table
+    // said "Sixty-eight … plus six found later, `VER-13..VER-17` and `QUA-08`"
+    // (74, stale — written before VER-18, VER-19, VER-20 and VUL-08 existed).
+    //
+    // So this asserts both halves, not just the sum: a total that happens to be
+    // right while the split is wrong is the failure mode a single count misses.
+    // The late set is named here rather than derived, because "found after the
+    // audit" is a fact about when the audit ran, not a property of the file.
+    const LATE = new Set(['QUA-08', 'VUL-08',
+      ...Array.from({ length: 8 }, (_, i) => `VER-${13 + i}`)])
+
+    const AUDIT = read('docs/improvements/audit-2026-10/defects.md')
+    const AUDIT_README = read('docs/improvements/audit-2026-10/README.md')
+
+    // The heading shape is the entry: `## VUL-01 — CRITICAL — …`. A prefix in
+    // body prose (`VUL-03` cited inside VUL-08) is a cross-reference, not an
+    // entry, and counting those is how a reader inflates the set.
+    const entries = [...AUDIT.matchAll(/^#{2,4} ([A-Z]{2,4}-\d+) — /gm)].map((m) => m[1])
+    const distinct = new Set(entries)
+    assert.equal(entries.length, distinct.size,
+      `defects.md has ${entries.length} entry headings but only ${distinct.size} distinct ids — `
+      + 'a duplicated id means one defect is filed twice')
+
+    const base = [...distinct].filter((id) => !LATE.has(id)).length
+    const late = distinct.size - base
+    assert.ok(base > 50, `read only ${base} base entries — the reader or the register is wrong`)
+
+    const statedBase = /(\w+)-eight defects from the audit/.exec(AUDIT_README)
+    assert.ok(statedBase, 'audit README states no "Sixty-eight defects from the audit" total')
+    assert.equal(base, 68,
+      `audit README's line 9 and its document table must agree on the base total; `
+      + `defects.md has ${base} entries that are not in the late-found set`)
+
+    const statedLate = /plus (\w+) found later/.exec(AUDIT_README)
+    assert.ok(statedLate, 'audit README states no "plus N found later" total')
+    const words = { six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 }
+    assert.equal(words[statedLate[1].toLowerCase()], late,
+      `audit README says "plus ${statedLate[1]} found later"; defects.md has ${late} `
+      + `(${[...LATE].sort().join(', ')}). A base total that is right while the split is wrong `
+      + 'is what a single count cannot see.')
+  })
 })

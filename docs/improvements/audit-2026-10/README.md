@@ -12,7 +12,7 @@ work. This one asks two different questions:
 | Document | What it contains |
 |---|---|
 | [enhancements-50.md](enhancements-50.md) | Fifty enhancements in seven groups, each with its order-of-magnitude claim and a weighted Impact-Effort score |
-| [defects.md](defects.md) | Sixty-eight defects from the audit, eight domains, each with verified file:line evidence and a severity — plus six found later, `VER-13..VER-17` and `QUA-08` |
+| [defects.md](defects.md) | Sixty-eight defects from the audit, eight domains, each with verified file:line evidence and a severity — plus ten found later, `VER-13..VER-20`, `QUA-08` and `VUL-08` |
 | [roadmap.md](roadmap.md) | Phased sequencing, the dependency graph, the critical path, and resource allocation |
 | [verification.md](verification.md) | Asymptotic complexity of every hot path, and how each line number was confirmed |
 
