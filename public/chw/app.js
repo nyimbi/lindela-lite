@@ -1525,3 +1525,35 @@ function renderReferenceCards(query = '') {
 
 await init()
 autoMarkScrollableRegions()
+
+/**
+ * The wizard's own surface, for tests.
+ *
+ * Both `test/chw-wizard-honesty.test.js` and `test/web-chw-offline.test.js` used
+ * to reach these by stripping every `import ` line out of this file's source and
+ * running the remainder in a bare `vm` context with a hand-appended probe naming
+ * thirteen private locals (R-73/R-74). That reads the file as text, so a rename
+ * breaks the test with a `ReferenceError` from inside a template string rather
+ * than a compile error — and the two copies of the surgery drifted.
+ *
+ * `public/app.js` already exports the functions its tests drive; this is the
+ * same arrangement, named once so a rename has one place to happen.
+ *
+ * Not a general escape hatch. Only what the tests actually drive is here.
+ */
+export const wizard = {
+  state,
+  showScreen,
+  requestUserLocation,
+  setHint,
+  describeLocation,
+  submitSymptomReport,
+  renderStepProgress,
+  adoptableForm,
+  loadServedForm,
+  readAnswers,
+  usesBuiltinScreens,
+  buildServed,
+  symptomSteps: () => SYMPTOM_STEPS,
+  activeForm: () => activeForm,
+}

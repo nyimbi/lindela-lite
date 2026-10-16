@@ -214,6 +214,12 @@ export function stubElement(tag = 'DIV') {
     innerHTML: '',
     textContent: '',
     value: '',
+    // A file input's `files` is a FileList, and the field app reads
+    // `$('incidentPhoto').files[0]` before every incident submission. A stub
+    // without it is not a smaller stub: it throws inside the handler, so the
+    // submission never reaches the queue and the test that wanted to observe the
+    // queued record sees the app crash instead.
+    files: [],
     checked: false,
     disabled: false,
     options: [],
@@ -355,14 +361,24 @@ export function stubElement(tag = 'DIV') {
 /* ========================================================== globals ==== */
 
 /**
- * Define a global, replacing any accessor property.
+ * Define a global, replacing any accessor property, and return a function that
+ * puts back whatever was there.
  *
  * `navigator` on Node 26 is getter-only, so a plain assignment cannot set it.
  * This deletes first, which works for both cases: a writable data property is
  * deleted and redefined, and an accessor is removed so the assignment lands.
- * Called with `define: true` it does not even try the assignment.
+ *
+ * The restore matters as much as the install. A test file that installs an
+ * environment and never removes it leaves the suite's remaining files running
+ * against a stub DOM, which shows up as an unrelated test failing rather than
+ * as a leak here.
  */
 function defineGlobal(name, value) {
+  // Every name this function replaces is recorded while an install is in
+  // progress, so the restore below is built from what was actually defined
+  // rather than from a list kept by hand beside it — a list that would drift the
+  // first time someone added a global and forgot the second place.
+  if (_recording) _recording.set(name, Object.getOwnPropertyDescriptor(globalThis, name))
   try {
     delete globalThis[name]
   } catch {
@@ -378,6 +394,9 @@ function defineGlobal(name, value) {
   })
   return true
 }
+
+/** The descriptors `defineGlobal` is replacing, while an install is running. */
+let _recording = null
 
 /** A `localStorage` that lives in this module, so tests do not leak into each other. */
 export function makeStorage(initial = {}) {
@@ -402,7 +421,9 @@ export function makeStorage(initial = {}) {
  * hung suite, not a passing one.
  *
  * @param {{ location?: object, online?: boolean, storage?: object,
- *           elements?: Map<string, object>, respond?: (url: string) => any }} [options]
+ *           elements?: Map<string, object>, respond?: (url: string, init?: object) => any,
+ *           document?: object, window?: object, navigator?: object,
+ *           indexedDB?: object }} [options]
  */
 export function installBrowserEnv(options = {}) {
   const {
@@ -415,9 +436,26 @@ export function installBrowserEnv(options = {}) {
     storage = makeStorage(),
     elements = new Map(),
     respond,
+    // A caller with its own DOM — a test that needs a real element tree rather
+    // than the id-keyed stub — supplies it here. The wizard's own tests build
+    // one, because `showScreen` walks `.screen` nodes and a stub that answers
+    // `querySelectorAll` with `[]` cannot tell a handler that hides the previous
+    // screen from one that does not.
+    document: documentOverride,
+    window: windowOverride,
+    navigator: navigatorOverride,
+    // The offline queue is opened through `window.indexedDB`, falling back to
+    // the global — IndexedDB belongs to a browsing context, not to a process, so
+    // a worker has only the second and a page has both. A test that installs a
+    // double has to be able to put it where the code looks, or every queue test
+    // reports "this browser has no storage available" while the store sits on a
+    // window the harness replaced a line later.
+    indexedDB: indexedDBOverride,
   } = options
 
   installModuleResolution()
+  const previous = new Map()
+  _recording = previous
 
   const byId = elements
   const getElementById = (id) => {
@@ -437,7 +475,7 @@ export function installBrowserEnv(options = {}) {
     }
   }
 
-  defineGlobal('window', {
+  const win = windowOverride ?? {
     addEventListener() {},
     removeEventListener() {},
     dispatchEvent: () => true,
@@ -453,9 +491,15 @@ export function installBrowserEnv(options = {}) {
     scrollTo() {},
     open: () => null,
     location2: undefined,
-  })
+  }
+  // Merged rather than assigned only when absent: a caller who passes both a
+  // window and an `indexedDB` double means the double, and a window stub with an
+  // `indexedDB` of its own wins otherwise — the caller's option silently ignored
+  // and the queue reading a different store than the test holds a reference to.
+  if (indexedDBOverride) win.indexedDB = indexedDBOverride
+  defineGlobal('window', win)
 
-  defineGlobal('document', {
+  defineGlobal('document', documentOverride ?? {
     getElementById,
     querySelector: () => null,
     querySelectorAll: () => [],
@@ -486,7 +530,7 @@ export function installBrowserEnv(options = {}) {
 
   // The one that breaks on Node 26 if assigned plainly. `userAgent` is read by
   // the offline path; `onLine` by `initOfflineBanner` and the queue.
-  defineGlobal('navigator', {
+  defineGlobal('navigator', navigatorOverride ?? {
     userAgent: 'node-test',
     language: 'en-GB',
     languages: ['en-GB'],
@@ -544,9 +588,12 @@ export function installBrowserEnv(options = {}) {
   defineGlobal('indexedDB', undefined)
   defineGlobal('caches', undefined)
 
-  defineGlobal('fetch', async (url) => {
+  // `init` carries what was sent. A responder that only sees the URL cannot
+  // answer a question about the request body, and a test that needs the body
+  // then has to read it off a stub the module was never given.
+  defineGlobal('fetch', async (url, init) => {
     if (respond) {
-      const custom = respond(String(url))
+      const custom = respond(String(url), init)
       if (custom !== undefined) {
         return {
           ok: custom.ok !== false,
@@ -612,16 +659,55 @@ export function installBrowserEnv(options = {}) {
   })
   defineGlobal('clearTimeout', (id) => realClearTimeout(id))
 
-  return { byId, location, storage }
+  _recording = null
+
+  /**
+   * Put the host's globals back.
+   *
+   * Without this a test that installs an environment leaves the rest of the
+   * suite — and every file that runs after it in the same process — looking at a
+   * stub DOM, which fails as an unrelated test rather than as a leak here.
+   */
+  const restore = () => {
+    for (const [name, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+      else delete globalThis[name]
+    }
+    previous.clear()
+  }
+
+  // `getElementById` is returned as well as `byId`, because it is the same
+  // function the document uses and a test that creates an element the app has
+  // not reached yet must land in the map the app reads from. Rebuilding it from
+  // `byId` in each test is how the two drift.
+  return { byId, getElementById, location, storage, restore }
 }
 
 /**
  * Import a front-end module with the environment installed.
  *
  * @param {string} rel  e.g. 'app.js' or 'co/app.js'
- * @param {object} [options] passed to `installBrowserEnv`
+ * @param {object} [options] passed to `installBrowserEnv`, plus `fresh` and `env`
  */
 export async function importFrontEnd(rel, options = {}) {
-  installBrowserEnv(options)
-  return import(pathToFileURL(path.join(ROOT, 'public', rel)).href)
+  // A caller that needs the environment's own handles — its `getElementById`, so
+  // it can seed an element the app has not reached for yet — installs once and
+  // passes the result back here. Installing a second time from the same options
+  // is what this argument exists to prevent: two installs make two element maps,
+  // the module captures its `toast` from the second, and the test reads `undefined`
+  // off the first while every global it can see looks right. The failure is a
+  // control that reports nothing, which reads as the app's bug rather than as
+  // the harness's.
+  const { fresh = false, env: installed, ...env } = options
+  if (!installed) installBrowserEnv(env)
+  const url = pathToFileURL(path.join(ROOT, 'public', rel))
+  // ESM caches by URL, and every surface module carries top-level state — the
+  // wizard's own `state`, `activeForm` and step list among them. A test that
+  // boots twice in one file would otherwise measure the first boot's module, so
+  // `fresh` gives each boot its own URL. It is the same file on disk; only the
+  // cache key differs.
+  if (fresh) url.searchParams.set('boot', String((bootCount += 1)))
+  return import(url.href)
 }
+
+let bootCount = 0

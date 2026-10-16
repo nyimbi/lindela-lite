@@ -10,12 +10,14 @@
  * the same record. `Next` blocked silently. And every step of a five-step wizard
  * was titled "Report symptom", with four dots for five screens.
  *
- * `public/chw/app.js` cannot be imported from a test — absolute
- * `/shared/runtime.js` specifiers, top-level await, a real DOM — so it is run
- * as the script it is: the import lines are dropped, the module body runs
- * verbatim in a `vm` against a DOM stub, and the trailing probe exposes the
- * module's own `state` and functions rather than a reimplementation. The
- * handlers under test are the ones the buttons are wired to.
+ * The module is imported, not executed as text. It used to be the other way:
+ * every `import ` line stripped out, the remainder run in a `vm`, and a
+ * hand-appended probe naming thirteen private locals (R-73/R-74). That reads
+ * the file as a string, so a rename broke the test with a `ReferenceError` from
+ * inside a template literal rather than a compile error, and the same surgery
+ * was copy-pasted into a second test file and drifted. `public/chw/app.js`
+ * exports its own surface now, and the harness in `test/browser-env.mjs`
+ * supplies the DOM.
  *
  * The DOM stub is not a mock of the app; it is a DOM. It is the app's
  * behaviour that is under test, and the alternative — asserting on source text
@@ -26,12 +28,15 @@ import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 import fs from 'node:fs'
 import path from 'node:path'
-import vm from 'node:vm'
+import { pathToFileURL } from 'node:url'
+
+import { importFrontEnd, installBrowserEnv } from './browser-env.mjs'
 
 /**
- * Every boot replaces the host's `document`, `window`, `navigator` and `fetch`
- * so the real runtime can run. Restored after each test, or the second test in
- * a file measures the first one's stub.
+ * Every boot installs a fresh browser environment, and a fresh module URL, so
+ * no test measures the previous one's DOM or module state. The environment is
+ * torn down after each test; a test that leaves the stubs in place makes the
+ * next file in the suite run against them.
  */
 const booted = []
 afterEach(() => {
@@ -39,6 +44,16 @@ afterEach(() => {
 })
 
 const ROOT = path.join(import.meta.dirname, '..')
+/**
+ * The host's own timer, captured before any environment is installed.
+ *
+ * `installBrowserEnv` replaces `setTimeout` with one whose handle is
+ * unreferenced — the right thing for the console's self-rescheduling poll, and
+ * wrong for a test that awaits a real delay: an unref'd timer never keeps the
+ * loop alive, so `wait(20)` with nothing else pending is a promise that never
+ * settles, reported as "the event loop has already resolved".
+ */
+const realSetTimeout = globalThis.setTimeout.bind(globalThis)
 // ENH-38. The shared form vocabulary, for the cases that assert the wizard
 // adopts a served definition rather than the one it was compiled with.
 const forms = await import(path.join(ROOT, 'public/shared/forms.js'))
@@ -73,6 +88,7 @@ function makeElement(tag = 'div', id = '') {
 			contains: (c) => el.classes.has(c),
 		},
 		setAttribute(k, v) { el.attrs[k] = String(v) },
+		removeAttribute(k) { delete el.attrs[k] },
 		getAttribute: (k) => (k in el.attrs ? el.attrs[k] : null),
 		hasAttribute: (k) => k in el.attrs,
 		get firstChild() { return el.children[0] ?? null },
@@ -154,8 +170,6 @@ function matches(node, sel) {
  */
 async function bootChw({ geolocation = null, servedForm } = {}) {
 	const en = JSON.parse(read('public/i18n/en.json'))
-	const runtime = await import(path.join(ROOT, 'public/shared/runtime.js'))
-	const states = await import(path.join(ROOT, 'public/shared/states.js'))
 	const forms = await import(path.join(ROOT, 'public/shared/forms.js'))
 
 	const HEADINGS = {
@@ -233,8 +247,14 @@ async function bootChw({ geolocation = null, servedForm } = {}) {
 	const documentStub = {
 		getElementById: getById,
 		documentElement: makeElement('html'),
+		head: makeElement('head'),
+		body: makeElement('body'),
 		createElement: (tag) => makeElement(tag),
+		createElementNS: (_ns, tag) => makeElement(tag),
+		createDocumentFragment: () => makeElement('#fragment'),
 		createTextNode: (text) => { const node = makeElement('#text'); node.textContent = String(text); return node },
+		addEventListener() {},
+		removeEventListener() {},
 		querySelector: (sel) => documentStub.querySelectorAll(sel)[0] ?? null,
 		querySelectorAll(selector) {
 			const m = /^\[([a-z-]+)(?:="([^"]*)")?\]$/.exec(selector)
@@ -252,17 +272,22 @@ async function bootChw({ geolocation = null, servedForm } = {}) {
 	}
 
 	const fetchCalls = []
-	const fakeFetch = async (path_, options) => {
+	// The harness's `respond` takes the payload, not a response object: it builds
+	// the `ok`/`status`/`json` shape itself, so a responder that returned one
+	// would be handing it a body of `{ ok, status, json }` and every read would
+	// answer `undefined` — a served form that never arrives, indistinguishable
+	// from a deployment that serves none.
+	const fakeFetch = (path_, options) => {
 		fetchCalls.push({ path: path_, options })
-		if (String(path_).endsWith('/i18n/en.json')) return { ok: true, status: 200, json: async () => en }
+		if (String(path_).endsWith('/i18n/en.json')) return { body: en }
 		// ENH-38. The served form definition, when a test supplies one. Absent,
 		// the route answers the shape a deployment that serves only the built-in
 		// would: the built-in itself.
 		if (/^\/api\/v1\/forms\//.test(String(path_))) {
-			if (servedForm === null) return { ok: false, status: 404, json: async () => ({ success: false, error: 'no form' }) }
-			return { ok: true, status: 200, json: async () => ({ success: true, data: servedForm ?? forms.CHW_SYMPTOM_FORM }) }
+			if (servedForm === null) return { ok: false, status: 404, body: { success: false, error: 'no form' } }
+			return { body: { success: true, data: servedForm ?? forms.CHW_SYMPTOM_FORM } }
 		}
-		return { ok: true, status: 201, headers: new Headers(), json: async () => ({ data: { id: 'r-1' } }) }
+		return { status: 201, body: { data: { id: 'r-1' } } }
 	}
 
 	const navigatorStub = {
@@ -276,57 +301,31 @@ async function bootChw({ geolocation = null, servedForm } = {}) {
 			: null,
 	}
 
-	const context = {
-		console, JSON, URL, AbortSignal, CustomEvent, Headers,
-		setInterval: () => 0,
-		setTimeout,
-		clearTimeout,
-		requestAnimationFrame: (fn) => { fn(); return 0 },
-		localStorage: { getItem: () => 'en', setItem() {} },
+	// The navbar mounts into the body and appends a dialog, and the app reads
+	// `window.__i18n` on a locale switch. All of it is the real module's own
+	// import-time work, so the stub has to carry what it touches rather than the
+	// app being told to skip it.
+	const windowStub = {
+		addEventListener() {},
+		removeEventListener() {},
+		dispatchEvent: () => true,
+		matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+		localStorage: { getItem: () => 'en', setItem() {}, removeItem() {} },
+		location: { hash: '', search: '', href: 'http://localhost/chw/', pathname: '/chw/' },
+		__i18n: null,
+	}
+	const bootOptions = {
 		document: documentStub,
+		window: windowStub,
 		navigator: navigatorStub,
-		fetch: fakeFetch,
-		...runtime,
-		// The state vocabulary the app imports by name. It is pure and DOM-free,
-		// so the real module runs in the vm untouched.
-		...states,
-		// ENH-38. The shared form vocabulary the app imports by name — the
-		// built-in definition and the validator. Also pure and DOM-free.
-		...forms,
-		mountNavbar() {},
+		respond: (url, init) => fakeFetch(url, init),
 	}
-	context.window = { addEventListener() {}, dispatchEvent: () => true, __i18n: null }
-	context.globalThis = context
-	vm.createContext(context)
+	const restore = installBrowserEnv(bootOptions).restore
 
-	const source = read('public/chw/app.js').split('\n').filter((l) => !l.startsWith('import ')).join('\n')
-	// The runtime functions injected above are this realm's, not the vm's, so
-	// they read the host's `document`. Both realms have to see the same stubs or
-	// the app and the i18n catalogue would be looking at two different documents.
-	const previous = {}
-	const define = (key, value) => {
-		previous[key] = Object.getOwnPropertyDescriptor(globalThis, key)
-		Object.defineProperty(globalThis, key, { value, configurable: true, writable: true })
-	}
-	define('window', context.window)
-	define('document', documentStub)
-	define('navigator', navigatorStub)
-	define('fetch', fakeFetch)
-	// The queue installs a 30s flush timer, which outlives the test run in Node.
-	define('setInterval', () => 0)
-
-	await vm.runInContext(
-		`(async () => {${source}\nglobalThis.__chw = { state, showScreen, requestUserLocation, setHint, describeLocation, submitSymptomReport, renderStepProgress, SYMPTOM_STEPS: () => SYMPTOM_STEPS, adoptableForm, loadServedForm, readAnswers, usesBuiltinScreens, buildServed, getActiveForm: () => activeForm }\n})()`,
-		context,
-	)
-	await new Promise((r) => setTimeout(r, 20))
-
-	const restore = () => {
-		for (const [key, descriptor] of Object.entries(previous)) {
-			if (descriptor) Object.defineProperty(globalThis, key, descriptor)
-			else delete globalThis[key]
-		}
-	}
+	// A fresh URL per boot: the module holds `state` and `activeForm` at module
+	// scope, and 27 boots share one file.
+	const mod = await importFrontEnd('chw/app.js', { ...bootOptions, fresh: true })
+	await new Promise((r) => realSetTimeout(r, 20))
 
 	const el = (id) => getById(id)
 	const clickButton = (attrs) => {
@@ -336,10 +335,10 @@ async function bootChw({ geolocation = null, servedForm } = {}) {
 	}
 
 	booted.push({ restore })
-	return { context, el, clickButton, makeButton, screens, fetchCalls, byId, restore }
+	return { document: documentStub, wizard: mod.wizard, el, clickButton, makeButton, screens, fetchCalls, byId, restore }
 }
 
-const wait = (ms = 10) => new Promise((r) => setTimeout(r, ms))
+const wait = (ms = 10) => new Promise((r) => realSetTimeout(r, ms))
 
 /**
  * Compare a plain object's fields, ignoring which realm its prototype came
@@ -395,7 +394,7 @@ describe('CW-05 — the location step never claimed a place it did not have', ()
 		// Reproduced over CDP with geolocation never granted: pressing
 		// Auto-detect changed nothing on screen. Not one word, not one pixel.
 		const app = await bootChw({
-			geolocation: (_ok, fail) => setTimeout(() => fail({ code: 1 }), 0),
+			geolocation: (_ok, fail) => realSetTimeout(() => fail({ code: 1 }), 0),
 		})
 		await advanceTo(app, 'symptomLocation')
 
@@ -407,19 +406,19 @@ describe('CW-05 — the location step never claimed a place it did not have', ()
 		assert.equal(app.el('locationStatus').dataset.state, 'error')
 		assert.match(app.el('locationStatus').textContent, /permission was refused/,
 			'the four geolocation failures are different facts and a caller may act on each')
-		assert.equal(app.context.__chw.state.symptom.location, null,
+		assert.equal(app.wizard.state.symptom.location, null,
 			'a failed fix must store nothing that reads as a coordinate')
 	})
 
 	it('uses a real fix and prints the coordinates it got', async () => {
 		const app = await bootChw({
-			geolocation: (ok) => setTimeout(() => ok({ coords: { latitude: -1.2864, longitude: 36.8172, accuracy: 12 } }), 0),
+			geolocation: (ok) => realSetTimeout(() => ok({ coords: { latitude: -1.2864, longitude: 36.8172, accuracy: 12 } }), 0),
 		})
 		await advanceTo(app, 'symptomLocation')
 		app.el('autoLocationBtn').click()
 		await wait(30)
 
-		sameFields(app.context.__chw.state.symptom.location, {
+		sameFields(app.wizard.state.symptom.location, {
 			latitude: -1.2864, longitude: 36.8172, source: 'gps', accuracy_m: 12,
 		}, 'a real fix must be stored whole, with the accuracy it arrived with')
 		assert.equal(app.el('locationStatus').textContent,
@@ -431,7 +430,7 @@ describe('CW-05 — the location step never claimed a place it did not have', ()
 		// The queued payload read `{"latitude":null,"longitude":null,
 		// "source":"reported_here"}` — a location field asserting a location.
 		const app = await bootChw({
-			geolocation: (_ok, fail) => setTimeout(() => fail({ code: 1 }), 0),
+			geolocation: (_ok, fail) => realSetTimeout(() => fail({ code: 1 }), 0),
 		})
 		await advanceTo(app, 'symptomLocation')
 
@@ -442,7 +441,7 @@ describe('CW-05 — the location step never claimed a place it did not have', ()
 		// 'reported_here'}` into state and shipped it. So the assertion is on the
 		// coordinates, not merely on the absence of an object: a value that
 		// carries a source naming a place must carry the place.
-		const location = app.context.__chw.state.symptom.location
+		const location = app.wizard.state.symptom.location
 		assert.ok(location === null
 			|| (location.latitude == null && location.longitude == null),
 		'with no fix, `Here` has no coordinates to record')
@@ -460,26 +459,26 @@ describe('CW-05 — the location step never claimed a place it did not have', ()
 		app.el('manualLat').value = ''
 		app.el('manualLon').value = ''
 		app.el('useManualLocationBtn').click()
-		assert.equal(app.context.__chw.state.symptom.location, null)
+		assert.equal(app.wizard.state.symptom.location, null)
 		assert.match(app.el('manualLocationHint').textContent, /both a latitude and a longitude/)
 
 		app.el('manualLat').value = '0'
 		app.el('manualLon').value = '0'
 		app.el('useManualLocationBtn').click()
-		assert.equal(app.context.__chw.state.symptom.location, null,
+		assert.equal(app.wizard.state.symptom.location, null,
 			'(0, 0) is in bounds and in the Gulf of Guinea; it is not a household')
 		assert.match(app.el('manualLocationHint').textContent, /open ocean/)
 
 		app.el('manualLat').value = '99'
 		app.el('manualLon').value = '36.8'
 		app.el('useManualLocationBtn').click()
-		assert.equal(app.context.__chw.state.symptom.location, null)
+		assert.equal(app.wizard.state.symptom.location, null)
 		assert.match(app.el('manualLocationHint').textContent, /between -90 and 90/)
 
 		app.el('manualLat').value = '-1.2864'
 		app.el('manualLon').value = '36.8172'
 		app.el('useManualLocationBtn').click()
-		sameFields(app.context.__chw.state.symptom.location,
+		sameFields(app.wizard.state.symptom.location,
 			{ latitude: -1.2864, longitude: 36.8172, source: 'manual' })
 		assert.equal(app.el('locationStatus').textContent, 'Location typed in: 1.2864° S, 36.8172° E.')
 	})
@@ -519,7 +518,7 @@ describe('CW-12 — duration is a number and a unit, not a unit', () => {
 		app.el('symptomDurationNextBtn').click()
 		await wait()
 
-		const { state } = app.context.__chw
+		const state = app.wizard.state
 		assert.equal(state.symptom.durationValue, 12)
 		assert.equal(state.symptom.durationUnit, 'hours')
 	})
@@ -532,7 +531,7 @@ describe('CW-12 — duration is a number and a unit, not a unit', () => {
 		await wait()
 
 		assert.ok(app.el('symptomDurationScreen').classes.has('active'), 'the step must not advance')
-		assert.equal(app.context.__chw.state.symptom.durationValue, null)
+		assert.equal(app.wizard.state.symptom.durationValue, null)
 		assert.match(app.el('symptomDurationHint').textContent, /Enter how many days or hours/)
 	})
 
@@ -598,7 +597,7 @@ describe('CW-14 — a blocked control explains itself', () => {
 describe('HX-09 — the wizard names the step you are on', () => {
 	it('counts seven steps, and the dots agree with the count', async () => {
 		const app = await bootChw()
-		assert.equal(app.context.__chw.SYMPTOM_STEPS().length, 7)
+		assert.equal(app.wizard.symptomSteps().length, 7)
 		// Reproduced over CDP: the last screen drew five dots and the other four
 		// drew four, so the row could not be read as a position in anything.
 		const html = read('public/chw/index.html')
@@ -626,7 +625,7 @@ describe('HX-09 — the wizard names the step you are on', () => {
 			const dots = makeElement('div')
 			const counter = makeElement('p')
 			el.querySelector = (sel) => (sel === '[data-step]' ? dots : sel === '[data-step-counter]' ? counter : null)
-			app.context.__chw.renderStepProgress()
+			app.wizard.renderStepProgress()
 			assert.equal(dots.children.length, 7, `${name} must draw one dot per step`)
 			assert.match(counter.textContent, /^Step \d of 7$/, `${name} must count its steps`)
 		}
@@ -670,7 +669,7 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		const servedForm = { ...forms.CHW_SYMPTOM_FORM, version: 2 }
 		const app = await bootChw({ servedForm })
 		await wait(30)
-		assert.equal(app.context.__chw.getActiveForm().version, 2,
+		assert.equal(app.wizard.activeForm().version, 2,
 			'the wizard did not adopt the served version')
 
 		await advanceTo(app, 'symptomLocation')
@@ -696,13 +695,13 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		const app = await bootChw({ servedForm })
 		await wait(30)
 
-		assert.equal(app.context.__chw.getActiveForm().version, 2,
+		assert.equal(app.wizard.activeForm().version, 2,
 			'the wizard did not adopt a served definition it can now render')
 		// The extra question has a screen of its own, drawn from the definition,
 		// and that screen carries an action button. Read the real DOM, not `el(id)`
 		// — that helper fabricates a missing element, so it cannot tell a rendered
 		// screen from an absent one.
-		const dom = app.context.document
+		const dom = app.document
 		const extra = dom.querySelectorAll('#muac_mmScreen')
 		assert.equal(extra.length, 1, 'the served question got no screen')
 		assert.ok(extra[0].querySelectorAll('.btn-primary').length >= 1,
@@ -721,20 +720,20 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		const app = await bootChw({ servedForm })
 		await wait(30)
 
-		const { readAnswers } = app.context.__chw
+		const { readAnswers } = app.wizard
 		// The extra question renders as an input the reader can reach. Answer it,
 		// then read: the answer must arrive keyed by the definition's own name.
-		const widget = app.context.document.querySelectorAll('[data-field-muac-mm]')[0]
+		const widget = app.document.querySelectorAll('[data-field-muac-mm]')[0]
 		assert.ok(widget, 'the served definition’s field was not rendered with a readable hook')
 		widget.value = '125'
 		// A multiselect is the field most easily dropped by a reader that handles
 		// only text inputs, and a dropped answer is worse than a refused one
 		// because it files silently. Tick two boxes and require both back.
-		const boxes = app.context.document.querySelectorAll('[data-field-danger-signs]')
+		const boxes = app.document.querySelectorAll('[data-field-danger-signs]')
 		assert.ok(boxes.length >= 2, 'the served definition’s multiselect was not rendered as checkboxes')
 		boxes[0].checked = true
 		boxes[1].checked = true
-		const answers = readAnswers(app.context.__chw.getActiveForm())
+		const answers = readAnswers(app.wizard.activeForm())
 		assert.equal(answers.muac_mm, '125', 'the served definition’s extra answer did not reach the answers object')
 		assert.deepEqual(answers.danger_signs, [boxes[0].getAttribute('data-field-danger-signs'), boxes[1].getAttribute('data-field-danger-signs')],
 			'a multiselect answer was dropped by the served-definition reader')
@@ -754,8 +753,8 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		const served = await bootChw({ servedForm: { ...forms.CHW_SYMPTOM_FORM, version: 2 } })
 		await wait(30)
 
-		const a = builtin.context.__chw.readAnswers(builtin.context.__chw.getActiveForm())
-		const b = served.context.__chw.readAnswers(served.context.__chw.getActiveForm())
+		const a = builtin.wizard.readAnswers(builtin.wizard.activeForm())
+		const b = served.wizard.readAnswers(served.wizard.activeForm())
 		assert.deepEqual(Object.keys(a).sort(), Object.keys(b).sort(),
 			'the answer keys differ between the built-in and a served definition that asks the same questions')
 	})
@@ -772,10 +771,10 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		const app = await bootChw({ servedForm })
 		await wait(30)
 
-		const widget = app.context.document.querySelectorAll('[data-field-muac-mm]')[0]
+		const widget = app.document.querySelectorAll('[data-field-muac-mm]')[0]
 		widget.value = '125'
-		app.context.__chw.state.symptom = { ...app.context.__chw.state.symptom, who: 'self', type: 'fever', durationValue: 3, durationUnit: 'days' }
-		await app.context.__chw.submitSymptomReport()
+		app.wizard.state.symptom = { ...app.wizard.state.symptom, who: 'self', type: 'fever', durationValue: 3, durationUnit: 'days' }
+		await app.wizard.submitSymptomReport()
 		await wait(40)
 
 		const body = JSON.parse(app.fetchCalls.find((c) => c.path === '/api/v1/chw/report').options.body)
@@ -789,7 +788,7 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		// makes the route 404; the wizard must still be usable.
 		const app = await bootChw({ servedForm: null })
 		await wait(30)
-		assert.equal(app.context.__chw.getActiveForm().version, 1)
+		assert.equal(app.wizard.activeForm().version, 1)
 		// The wizard opens and advances on the built-in's own screens.
 		app.el('reportSymptomBtn').click()
 		await wait()
@@ -815,11 +814,11 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		const app = await bootChw({ servedForm })
 		await wait(30)
 
-		assert.equal(app.context.__chw.getActiveForm().version, 1,
+		assert.equal(app.wizard.activeForm().version, 1,
 			'the wizard adopted a definition whose field type it cannot draw')
-		assert.match(app.context.__chw.state.formNotice, /lesion_photo/,
+		assert.match(app.wizard.state.formNotice, /lesion_photo/,
 			'the refusal must name the field')
-		assert.match(app.context.__chw.state.formNotice, /image/,
+		assert.match(app.wizard.state.formNotice, /image/,
 			'the refusal must name the type it cannot draw')
 	})
 
@@ -828,13 +827,13 @@ describe('ENH-38 — the wizard files the version the deployment serves', () => 
 		// still open the wizard, and the built-in is what lets it.
 		const app = await bootChw({ servedForm: null })
 		await wait(30)
-		assert.equal(app.context.__chw.getActiveForm().version, 1)
-		assert.equal(app.context.__chw.state.formNotice, null, 'a missing route is not a notice')
+		assert.equal(app.wizard.activeForm().version, 1)
+		assert.equal(app.wizard.state.formNotice, null, 'a missing route is not a notice')
 	})
 
 	it('adoptableForm accepts the built-in, a wider definition, and refuses an undrawable type', async () => {
 		const app = await bootChw()
-		const { adoptableForm } = app.context.__chw
+		const { adoptableForm } = app.wizard
 		const { form, reason } = adoptableForm(forms.CHW_SYMPTOM_FORM)
 		assert.ok(form, 'the built-in must be adoptable')
 		assert.equal(reason, null)

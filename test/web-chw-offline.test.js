@@ -2,12 +2,10 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import vm from 'node:vm'
 import { describe, it } from 'node:test'
 
-import { submitOrQueue } from '../public/shared/runtime.js'
-import * as states from '../public/shared/states.js'
-import * as forms from '../public/shared/forms.js'
+import { importFrontEnd, installBrowserEnv, stubElement } from './browser-env.mjs'
+import { initOfflineQueue, submitOrQueue } from '../public/shared/runtime.js'
 
 // Imported dynamically and tolerated as an empty object: a service worker that
 // reaches for `self` at module scope cannot be imported at all under Node, and
@@ -17,6 +15,18 @@ const { BOOTSTRAP_ASSETS = [], ENTRY_PATHS = [], SURFACES = [], parseReferences,
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const ORIGIN = 'https://app.test'
+
+/**
+ * The host's own timer, captured before any environment is installed.
+ *
+ * `installBrowserEnv` replaces `setTimeout` with one whose handle is
+ * unreferenced — the right thing for the queue's 30-second flush, which must not
+ * keep the process alive, and wrong for a test awaiting a real delay: an unref'd
+ * timer never holds the loop open, so `wait(20)` with nothing else pending is a
+ * promise that never settles, reported as "the event loop has already resolved"
+ * against every test in the file.
+ */
+const realSetTimeout = globalThis.setTimeout.bind(globalThis)
 
 const readPublic = (p) => readFile(path.join(PUBLIC, p), 'utf8')
 
@@ -51,7 +61,7 @@ function fakeIndexedDB({ openFails = false, requestError = null, abortAfterWrite
 		records,
 		open() {
 			const request = {}
-			setTimeout(() => {
+			realSetTimeout(() => {
 				if (openFails) {
 					request.onerror?.({ message: 'blocked' })
 					return
@@ -64,7 +74,7 @@ function fakeIndexedDB({ openFails = false, requestError = null, abortAfterWrite
 						tx.objectStore = () => ({
 							add(value) {
 								const req = {}
-								setTimeout(() => {
+								realSetTimeout(() => {
 									if (requestError) {
 										req.onerror?.(requestError)
 										tx.onabort?.()
@@ -90,7 +100,7 @@ function fakeIndexedDB({ openFails = false, requestError = null, abortAfterWrite
 							// replaces the row when it carries one.
 							put(value) {
 								const req = {}
-								setTimeout(() => {
+								realSetTimeout(() => {
 									if (requestError) {
 										req.onerror?.(requestError)
 										tx.onabort?.()
@@ -119,12 +129,12 @@ function fakeIndexedDB({ openFails = false, requestError = null, abortAfterWrite
 							},
 							count() {
 								const req = {}
-								setTimeout(() => req.onsuccess?.(records.length), 0)
+								realSetTimeout(() => req.onsuccess?.(records.length), 0)
 								return req
 							},
 							getAll() {
 								const req = {}
-								setTimeout(() => req.onsuccess?.(records.slice()), 0)
+								realSetTimeout(() => req.onsuccess?.(records.slice()), 0)
 								return req
 							},
 						})
@@ -138,186 +148,93 @@ function fakeIndexedDB({ openFails = false, requestError = null, abortAfterWrite
 	}
 }
 
-/** The runtime reads `window`, `navigator` and `document` off the global, so
- *  they are installed and removed around each test rather than leaked. */
-function installGlobals({ window: win, document: doc, navigator: nav, fetch: f }) {
-	const previous = {
-		window: Object.getOwnPropertyDescriptor(globalThis, 'window'),
-		document: Object.getOwnPropertyDescriptor(globalThis, 'document'),
-		navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator'),
-		setInterval: Object.getOwnPropertyDescriptor(globalThis, 'setInterval'),
-		fetch: Object.getOwnPropertyDescriptor(globalThis, 'fetch'),
-	}
-	const define = (key, value) => Object.defineProperty(globalThis, key, { value, configurable: true, writable: true })
-	if (win) define('window', win)
-	if (doc) define('document', doc)
-	if (nav) define('navigator', nav)
-	if (f) define('fetch', f)
-	// The queue installs a 30s flush timer; in Node that outlives the test run.
-	define('setInterval', () => 0)
-	return () => {
-		for (const [key, descriptor] of Object.entries(previous)) {
-			if (descriptor) Object.defineProperty(globalThis, key, descriptor)
-			else delete globalThis[key]
-		}
-	}
-}
-
+/**
+ * The globals the runtime reads, installed around one test and removed after it.
+ *
+ * This used to be a local `installGlobals` — a second copy of what
+ * `test/browser-env.mjs` provides, kept in step with it by hand (R-74). The
+ * shared one is the one that knows `navigator` is a getter-only global on
+ * Node 26, that the queue's 30-second flush timer must not outlive the run, and
+ * that a test file which leaves its stubs in place fails as an unrelated file
+ * further down the suite.
+ */
 function withBrowser({ online = false, indexedDB = null } = {}) {
-	const win = {
-		addEventListener() {},
-		dispatchEvent: () => true,
-		...(indexedDB ? { indexedDB } : {}),
-	}
-	const restore = installGlobals({
-		window: win,
-		document: { querySelectorAll: () => [] },
-		navigator: { onLine: online },
-	})
-	return { win, restore }
+	return installBrowserEnv({ online, indexedDB })
 }
 
 /**
- * Boot the real public/chw/app.js in a vm with the real runtime injected and a
- * DOM that records what the user was told.
+ * Boot the real public/chw/app.js, with the real runtime under it, against a DOM
+ * that records what the user was told.
  *
- * The app module is not importable from a test (absolute `/shared/runtime.js`
- * specifiers, top-level await, a DOM) so it is loaded as the script it is: the
- * two import lines are dropped, everything else runs verbatim. The trailing
- * probe is the only addition, and it exposes the module's own state rather than
- * a reimplementation of it.
+ * This used to run the file as a *script*: `vm.runInContext` over the source with
+ * every `import ` line stripped out, the runtime's exports and the state and
+ * form vocabularies spread onto the context by hand, and `submitOrQueue`
+ * reimplemented locally — because a bare vm context has no module resolver, so
+ * the symbol the app imports by name had to be supplied, and the copy that was
+ * supplied was written by whoever wrote this file (R-73/R-74).
+ *
+ * That substitution is the reason to import instead. `submitOrQueue` decides
+ * *whether a report was saved*, and this test asserts what the health worker was
+ * told — so a local copy with a slightly different contract lets the product
+ * break while the test stays green. It is the real function now, and it is real
+ * all the way down: `apiFetch` with its timeout and its `res.ok` check, the
+ * queue core's `enqueue` that throws rather than resolving on a write that took
+ * nothing.
+ *
+ * The DOM stub is not a mock of the app either; it is a DOM. It is the app's
+ * behaviour under test, and the alternative — asserting on source text — cannot
+ * tell a handler that refuses from one that reads as if it refuses.
  */
-async function bootChw({ online = false, indexedDB = null, appJs = null } = {}) {
-	const source = appJs ?? (await readPublic('chw/app.js'))
+async function bootChw({ online = false, indexedDB = null } = {}) {
 	const en = JSON.parse(await readPublic('i18n/en.json'))
-	const runtime = await import('../public/shared/runtime.js')
-
-	const elements = new Map()
-	const makeElement = (id) => ({
-		id,
-		dataset: {},
-		style: {},
-		value: '',
-		textContent: '',
-		checked: false,
-		files: [],
-		handlers: {},
-		classList: { add() {}, remove() {}, contains: () => false },
-		addEventListener(type, handler) {
-			this.handlers[type] = handler
-		},
-		removeEventListener() {},
-		setAttribute() {},
-		getAttribute: () => null,
-		hasAttribute: () => false,
-		querySelector: () => null,
-		querySelectorAll: () => [],
-		appendChild() {},
-		remove() {},
-		focus() {},
-		scrollIntoView() {},
-	})
-
-	const windowStub = {
-		addEventListener() {},
-		dispatchEvent() {},
-		...(indexedDB ? { indexedDB } : {}),
-	}
 	const fetchCalls = []
-	const fakeFetch = async (path_, options) => {
+	// Body-shaped, because the harness builds the response around it: `ok`,
+	// `status`, `json` and `text`. A responder that returned a response-shaped
+	// object would be handing it a body of `{ ok, status, json }` and every read
+	// would answer `undefined` — a served catalogue that never arrives, which is
+	// indistinguishable from a deployment that serves none.
+	const fakeFetch = (path_, options) => {
 		fetchCalls.push({ path: path_, options })
-		if (String(path_).endsWith('/i18n/en.json')) {
-			return { ok: true, status: 200, json: async () => en }
-		}
-		if (online) {
-			return { ok: true, status: 201, headers: new Headers(), json: async () => ({ data: { id: 'r-1' } }) }
-		}
-		throw Object.assign(new Error('offline'), { name: 'TypeError' })
-	}
-	const context = {
-		console,
-		JSON,
-		URL,
-		AbortSignal,
-		CustomEvent,
-		setInterval: () => 0,
-		clearTimeout() {},
-		setTimeout,
-		requestAnimationFrame: () => 0,
-		localStorage: { getItem: () => 'en', setItem() {} },
-		document: {
-			getElementById(id) {
-				if (!elements.has(id)) elements.set(id, makeElement(id))
-				return elements.get(id)
-			},
-			querySelectorAll: () => [],
-			querySelector: () => null,
-			documentElement: makeElement('html'),
-		},
-		window: windowStub,
-		navigator: { onLine: online, geolocation: null },
-		fetch: fakeFetch,
-		// The real implementations, not stand-ins: the defect being guarded is
-		// in this code, so replacing it with a mock would test the mock.
-		...runtime,
-		// The state vocabulary the app imports by name. It is pure and DOM-free,
-		// so the real module runs in the vm untouched.
-		...states,
-		// ENH-38. The shared form vocabulary the app imports by name too.
-		...forms,
-		mountNavbar() {},
-	}
-	context.globalThis = context
-	vm.createContext(context)
-
-	// The runtime functions injected above run in *this* realm, so they see
-	// globalThis — not the vm's `window`. Both realms have to be pointed at the
-	// same stubs or the app and the queue would be looking at two browsers.
-	const documentStub = context.document
-	const restore = installGlobals({ window: windowStub, document: documentStub, fetch: fakeFetch })
-
-	// The app routes every submission through `submitOrQueue`, which lives in
-	// `shared/runtime.js`. This harness strips imports because they cannot
-	// resolve in a bare vm context, so that symbol has to be supplied here.
-	//
-	// It mirrors the real contract — try, and queue on failure rather than on
-	// `navigator.onLine` — because a stub with a different contract would let the
-	// queue-on-failure behaviour pass here while being broken in the product.
-	// The real implementation is covered by `test/offline-delivery.test.js` and
-	// driven in a browser by `scripts/check-chw-queue-state.mjs`.
-	const submitOrQueue = async (path_, body, { headers, what = null } = {}) => {
-		if (context.navigator.onLine !== false) {
-			try {
-				const res = await fakeFetch(path_, { method: 'POST', headers, body: JSON.stringify(body) })
-				if (res.ok) return { sent: true, data: await res.json() }
-			} catch { /* fall through to the queue */ }
-		}
-		const queued = await windowStub.lindelaQueue.enqueue(
-			path_, { method: 'POST', body, headers }, { what },
-		)
-		return { ...queued, queuedBecause: 'the request did not get through' }
+		if (String(path_).endsWith('/i18n/en.json')) return { body: en }
+		// Offline, the request does not get through — which is a *thrown* fetch in
+		// a browser, and is what `submitOrQueue` catches and queues on. Not a
+		// status: a 503 arrives as a response, and `apiFetch` turns it into an
+		// error the caller can read, which is a different path through the code
+		// and a different thing to be honest about.
+		if (!online) throw Object.assign(new Error('offline'), { name: 'TypeError' })
+		return { status: 201, body: { data: { id: 'r-1' } } }
 	}
 
-	const script = source
-		.split('\n')
-		.filter((line) => !line.startsWith('import '))
-		.map((line) => (line === 'await initOfflineQueue()' ? 'await initOfflineQueue()' : line))
-		.join('\n')
-	context.submitOrQueue = submitOrQueue
-	await vm.runInContext(`(async () => {${script}\nglobalThis.__chw = { state, submitSymptomReport }\n})()`, context)
-	await new Promise((resolve) => setTimeout(resolve, 20))
+	// A fresh module per boot, and a fresh environment under it: the app holds
+	// `state`, `activeForm` and `window.lindelaQueue` at module scope, and eleven
+	// boots share one file.
+	const bootOptions = { online, indexedDB, respond: (url, init) => fakeFetch(url, init) }
+	const env = installBrowserEnv(bootOptions)
+	const mod = await importFrontEnd('chw/app.js', { env, fresh: true })
+	// The module's own boot (`await init()`) settles inside the import; this is
+	// for the two things it starts and does not await — the served-form read and
+	// the queue's first flush. A macrotask, so both have run.
+	await new Promise((resolve) => realSetTimeout(resolve, 20))
 
-	const el = (id) => documentStub.getElementById(id)
+	// Elements the app reaches for by id, created on the shared map so a test
+	// that sets a value on one is setting it on the element the app reads.
+	for (const id of ['incidentCategory', 'incidentDescription', 'incidentPhoto', 'replyMessage',
+		'incidentManualLat', 'incidentManualLon', 'alertText', 'toast', 'queueStatus']) {
+		env.getElementById(id)
+	}
+
+	const el = (id) => env.getElementById(id)
 	return {
-		context,
+		/** The wizard's own surface, exported by the module — not a probe. */
+		wizard: mod.wizard,
 		el,
 		fetchCalls,
-		restore,
-		/** Fire a handler the app registered on `id`, as a click would. */
-		click: (id, event = {}) => el(id).handlers[event.type || 'click']?.(event),
+		restore: env.restore,
+		/** Fire the handler the app registered on `id`, as a click would. */
+		click: (id, event = {}) => el(id).listeners(event.type || 'click')[0]?.({ target: el(id), ...event }),
 		toast: () => ({ text: el('toast').textContent, kind: el('toast').dataset.kind }),
-		state: () => context.__chw.state,
-		submitSymptomReport: () => context.__chw.submitSymptomReport(),
+		state: () => mod.wizard.state,
+		submitSymptomReport: () => mod.wizard.submitSymptomReport(),
 	}
 }
 

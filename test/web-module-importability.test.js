@@ -184,6 +184,36 @@ describe('R-74 — one sandbox, not seven', () => {
       'globalThis.navigator = ... cannot work on Node 26; browser-env.mjs replaces the ' +
       'property with defineProperty instead.')
   })
+
+  it('no test file evaluates a front-end module as text', () => {
+    // The surgery itself, and the reason R-73/R-74 existed: read the module as a
+    // string, drop its imports, and run the remainder in a `vm` with the symbols
+    // it imported spread onto the context by hand. Two things follow, and both
+    // were measured. A rename inside the module breaks the test with a
+    // `ReferenceError` from inside a template literal rather than a compile
+    // error. And the symbols supplied by hand are *reimplementations*: this
+    // file's sibling had a local `submitOrQueue`, in a test whose whole subject
+    // is whether a report was saved, so the product could have broken while the
+    // test stayed green.
+    //
+    // Both spellings are matched. A file that reaches for `node:vm` is doing the
+    // surgery; so is one that filters a module's source by its import lines, with
+    // or without a vm — a predicate matching only `runInContext` would let the
+    // second through, and the second is the half that decides what the module can
+    // see.
+    const offenders = []
+    for (const f of readdirSync(TESTS)) {
+      if (!f.endsWith('.test.js') || f === 'web-module-importability.test.js') continue
+      const src = readFileSync(path.join(TESTS, f), 'utf8')
+      const usesVm = /from\s+['"]node:vm['"]|require\(\s*['"]node:vm['"]\s*\)/.test(src)
+      const stripsImports = /startsWith\(\s*['"]import\s/.test(src)
+      if (usesVm || stripsImports) offenders.push(`${f}${usesVm ? ' (node:vm)' : ''}${stripsImports ? ' (import stripping)' : ''}`)
+    }
+    assert.deepEqual(offenders, [],
+      'these load a front-end module as text instead of importing it. Import it through ' +
+      'test/browser-env.mjs — the module exports its own test surface, and the harness ' +
+      'supplies the DOM, the resolver and the globals.')
+  })
 })
 
 describe('R-73 — the resolve hook does what it claims', () => {
