@@ -738,18 +738,32 @@ readiness endpoint are in `src/utils.js` (`collectionPage`, `jsonResponse`,
 idempotency wrapper). Tests in `test/api-substrate.test.js`; each piece was
 reverted and confirmed to fail before being restored.
 
-Two things in the spec above are **not** done and remain open:
+Two things in the spec above were **not** done when this was written. Both are now closed,
+and the paragraph is kept with the correction rather than deleted because the shape of what
+it got wrong is the register's own recurring failure.
 
-1. **Generated OpenAPI from the route table, diffed in CI.** The route table
-   lives in `scopeForRoute`'s two tables and in `handleApiRequest`'s chain of
-   `if` statements; neither is machine-readable as a specification. Extracting
-   one is real work and is not started.
-2. **The evidence line is now partly stale.** "Exports are uncapped and
-   unauthenticated (SEC-01)" was fixed earlier — exports now require
-   `read:export` and are scoped to the caller's partner organisation. The
-   uncapped part still stands:
-   `filterRecords` clamps `limit` to 5000, but the CSV and GeoJSON exports are
-   built from the whole store, not from a filtered page.
+1. **Generated OpenAPI from the route table, diffed in CI.** This said the extraction "is
+   real work and is not started". It shipped as **ENH-59 on 2026-10-15**:
+   `src/route-declaration.js` is the single `(METHOD, path)`-keyed source,
+   `docs/openapi.yaml` and `src/route-manifests.js` are generated from it, and two gates in
+   the self-contained tier hold it — `check-route-drift` (each committed table equals a fresh
+   generation) and `check-route-reachability` (the declared set equals the set the imperative
+   matchers actually serve, 193 paths from 37 matchers). CI runs the tier
+   (`.github/workflows/ci.yml:89`). The prediction was wrong for a reason worth naming: the
+   note treated a *policy* (a scope), a *measurement* (a manifest) and *prose* as things no
+   path declaration could carry, and concluded the table could not be derived. None is a
+   function of the path; all are values, and values live in one declaration. Derive versus
+   declare, not possible versus impossible.
+2. **The evidence line was partly stale, and the half called still-standing has since
+   closed too.** "Exports are uncapped and unauthenticated (SEC-01)" was right that the auth
+   half was fixed. The uncapped half read: `filterRecords` clamps `limit` to 5000, but the
+   CSV and GeoJSON exports are built from the whole store, not from a filtered page. That is
+   now backwards — both materialising routes pass `{ unlimited: true }` *and* a
+   `filterRecords` call, so they are filtered and uncapped
+   (`src/routes/exports.js:157`, `:174`), and the streaming route refuses `limit` and
+   `cursor` outright rather than silently honouring one. The failure this sentence was
+   describing — a silent truncation in the one format a partner cites — is what the module
+   header now names as the thing the family exists to prevent.
 
 `/api/v1/assessments` also had one unscoped list (`recent_events`); found and
 fixed while threading pagination.
