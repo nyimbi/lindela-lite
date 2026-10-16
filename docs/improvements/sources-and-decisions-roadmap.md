@@ -103,9 +103,12 @@ name. Recorded so the next reader does not re-open them as if nothing had moved:
 
 - **DEC-02** — a discharge *layer* shipped (`GET /api/v1/river-discharge`,
   `public/shared/discharge-bands.js`), but no alert rule can read discharge:
-  `evaluateAlertRules` resolves against `{counts, operations, data_quality}`
-  (`src/server.js:1108`) and `counts()` exposes no discharge key. The threshold
-  alerting the row asks for is still absent.
+  `evaluateAlertRules` resolves against `{counts, operations, data_quality}`,
+  built by `buildEvaluationContext` (`src/operations.js:102`) and passed at
+  `src/server.js:1120` — and `counts()` exposes no discharge key. The threshold
+  alerting the row asks for is still absent. (This cited `src/server.js:1108`
+  until 2026-10-16, when D11 collapsed the four hand-built context literals into
+  that one builder and left line 1108 inside an unrelated docstring.)
 - **DEC-04** — the forecast half now exists as `backtestTriggerProtocol`
   (`src/alerts.js:436`): a matched sample over a lead-time window yielding
   precision, recall, f1, event base rate and precision lift, guarded by

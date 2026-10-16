@@ -217,7 +217,7 @@ sequenceDiagram
   CB->>MX: "finally — http_requests_total, http_request_duration_ms, recordRequestOutcome, logger.info"
 ```
 
-The `emit` failure is deliberately swallowed (`src/server.js:1108-1124`, in
+The `emit` failure is deliberately swallowed (`src/server.js:1154-1171`, in
 `evaluateAndPersistAlerts`): an outbox write must not be able to fail a create
 that already committed.
 
