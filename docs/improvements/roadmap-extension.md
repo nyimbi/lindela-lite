@@ -328,37 +328,73 @@ The gaps are uneven in a way that matters:
 
 ## Summary
 
-| # | Item | Status |
-|---|---|---|
-| 1 | Quantile risk + calibration report | Partial — bands shipped, report not routed |
-| 2 | Ensemble & multi-model forcing | Partial — dead module, no live data |
-| 3 | Impact-based forecasting | Shipped — broken on Postgres, double-counted |
-| 4 | Bias-corrected downscaling | Partial — degenerate with one station |
-| 5 | Data-quality lineage graph | Partial — implemented, tested, wrong |
-| 6 | Trigger protocols + backtest | Shipped — backtest does not test the trigger |
-| 7 | Approval gate | Shipped on SMS, absent on CAP |
-| 8 | Two-way RapidPro correlation | Partial — no correlation, no delivery tracking |
-| 9 | Offline-first PWA | Shipped |
-| 10 | STAC / OGC | Shipped |
-| 11 | CAP export | Shipped — XML valid, semantics wrong |
-| 12 | Connector SDK + registry | Shipped |
-| 13 | Outbox event bus | Partial — signed path cannot work |
-| 14 | Auth + scoped tokens + audit | Partial — GET unauthenticated, fails open |
-| 15 | PII minimisation + retention | Partial — implemented, not wired, retention no-op |
-| 16 | Signed releases + SBOM | Partial — SBOM only |
-| 17 | OTel + Prometheus + logs | Partial — metrics and logs only |
-| 18 | Idempotent ingestion | Partial — dedup broken on Postgres |
-| 19 | Scenario workbench | Shipped |
-| 20 | Localization + RTL | Partial — 11 locales, missing on 3 key surfaces |
+> **Re-verified 2026-10-16. Nine of these twenty rows described a defect that
+> had already been fixed, and the status column is corrected below.** The
+> original statuses are kept in the right-hand column, because the gap between
+> what a row claimed and what the tree does is itself the finding: a register
+> nobody re-reads is a register that stops being evidence. Each correction names
+> the file and the test that closed it.
 
-**7 shipped, 13 partial, 0 rejected.** The footer read "5 shipped, 15 partial"
-until 2026-10-16, which its own table above has never said: counting the rows
-gives 7 `Shipped` and 13 `Partial`, where item 7 is the one that is partial in
-the strict sense — shipped on SMS, absent on CAP — and the other twelve carry a
-qualifier inside `Partial` that the count does not separate. A hand-kept total
-that disagrees with the table it summarises is the same failure this register
-catalogues elsewhere, and nothing checked it: `test/audit-register-structure.test.js`
-guards `audit-2026-10/`, and this file is outside its jurisdiction.
+| # | Item | Status now | Was |
+|---|---|---|---|
+| 1 | Quantile risk + calibration report | **Shipped** — `calibrationReport` is called on `/api/v1/assessments` (`src/routes/events.js:85`) | "report not routed" |
+| 2 | Ensemble & multi-model forcing | **Partial** — the ensemble has a live source (`src/connectors/open-meteo.js:126`, gated on `include_ensemble`); only `spreadSkillIndex` (`src/analytics/ensemble.js:43`) has no production caller | "dead module, no live data" |
+| 3 | Impact-based forecasting | **Shipped** — assets-outer `distinctAssets` (`src/analytics/impact.js:118`); `replaceAnalytics` writes all derived collections in one transaction (`src/postgres-store.js:1068`) | "broken on Postgres, double-counted" |
+| 4 | Bias-corrected downscaling | **Shipped** — `MIN_STATIONS_FOR_QUANTILE_MAP = 3`, null-refusing (`src/analytics/downscaling.js:18`), wired at `src/routes/compute.js:58` | "degenerate with one station" |
+| 5 | Data-quality lineage graph | **Shipped** — one lineage row per source run with its own counts and hashes (`src/provenance.js:223`, `test/record-provenance.test.js:385`) | "implemented, tested, wrong" |
+| 6 | Trigger protocols + backtest | **Shipped** — the backtest reads `protocol.metric`/`operator`/`threshold` (`src/alerts.js:454-491`, `test/trigger-backtest.test.js`) | "backtest does not test the trigger" |
+| 7 | Approval gate | **Partial** — SMS is approval-gated (`src/routes/rapidpro.js:145`); the CAP handler (`src/routes/alerting.js:206-245`) still has no gate | "Shipped on SMS, absent on CAP" |
+| 8 | Two-way RapidPro correlation | **Shipped** — `correlateReply` (`src/rapidpro.js:907`), `responseMetrics`, `deliveryReport` (`:1322`) | "no correlation, no delivery tracking" |
+| 9 | Offline-first PWA | **Shipped** | — |
+| 10 | STAC / OGC | **Shipped** | — |
+| 11 | CAP export | **Partial** — message-type mapping and scope validation are fixed (`src/cap.js:24-28`, `:171-180`); the circle geometry is still centroid-plus-radius (`:99-101`) | "XML valid, semantics wrong" |
+| 12 | Connector SDK + registry | **Shipped** — with two registry/connector key drifts still live (see below) | — |
+| 13 | Outbox event bus | **Shipped** — `x-signature` set on every delivery (`src/outbox.js:382`); `next_attempt_at` written and honoured with backoff | "signed path cannot work" |
+| 14 | Auth + scoped tokens + audit | **Shipped** — deny-by-default gate, `timingSafeEqual` (`src/auth.js:527`), `/metrics` behind the gate | "GET unauthenticated, fails open" |
+| 15 | PII minimisation + retention | **Shipped** — with one open gap (see below) | "implemented, not wired, retention no-op" |
+| 16 | Signed releases + SBOM | **Partial** — SLSA level 3 provenance runs (`ci.yml:271`) as well as the CycloneDX SBOM (`:160`); artifact signing (cosign) is still absent | "SBOM only" |
+| 17 | OTel + Prometheus + logs | **Partial** — `/metrics` gated and cardinality bounded (`src/observability.js:130-230`); OpenTelemetry is absent | "metrics and logs only" |
+| 18 | Idempotent ingestion | **Partial** — `payload_hash` persists (`src/postgres-store.js:649`); two id-drift defects remain (see below) | "dedup broken on Postgres" |
+| 19 | Scenario workbench | **Shipped** | — |
+| 20 | Localization + RTL | **Partial** — **10** locales, not 11, and RTL *is* implemented (`public/shared/fmt.js:299-334`); the pickers offer only English | "11 locales, missing on 3 key surfaces" |
+
+**13 shipped, 7 partial, 0 rejected.** The footer read "5 shipped, 15 partial"
+until 2026-10-16, which its own table above has never said — counting the rows
+gives 7 `Shipped` and 13 `Partial` at the time, and that count was itself made
+from rows a third of which were stale. A hand-kept total that disagrees with the
+table it summarises is the same failure this register catalogues elsewhere, and
+nothing checked it: `test/audit-register-structure.test.js` guards
+`audit-2026-10/`, and this file is outside its jurisdiction.
+
+### What the re-verification found still open
+
+Three residuals, each verified against the tree rather than inferred, and each
+narrower than the row it sits under:
+
+- **A write path calls no redactor (item 15).** `redactPii` has thirteen call
+  sites across `src/routes/rapidpro.js` and `src/routes/chw.js`; the generic
+  create path (`src/routes/operational.js:168`) calls `buildCreate` with none of
+  them. Tested through the live ingress: `POST /api/v1/field-reports` with
+  `reported_by: "Amina Nakuru"` returns and stores that string unhashed, where
+  `redactPii` hashes exactly that field (`src/pii.js:92`). The `reporter_name`
+  and `reporter_phone` fields are *not* leaked — `normalizeFieldReport`'s
+  allowlist drops them — so the exposure is the free-text attribution field, not
+  the contact details. The CHW door redacts `reported_by` only when the reporter
+  asks to be anonymous, so this is not a bypass of an established decision; it is
+  the operational door having no redaction step at all, which is the same shape
+  as the `stampQuality` comment at `src/operations.js:323` — "a gate at one of
+  two doors is not a gate" — applied to PII instead of quality.
+- **Two connector-registry key drifts (item 12).** `connectors.registry.json:288`
+  offers `gho_top_years` while `src/connectors/who-gho.js:87` reads
+  `gho_min_year`; and the registry's IPC default is `['KE','SO','SS']`
+  (`:250`) against the connector's 46 ISO3 codes (`src/connectors/ipc-hdx.js:58`).
+  A registry that disagrees with its connector is a configuration surface that
+  silently does nothing.
+- **Two id-drift defects in dedup (item 18).** `src/connectors/ipc-hdx.js:250`
+  stamps `fetched_at` inside `metadata`, which `canonicalHash`'s ignore list does
+  not strip, and `src/connectors/open-meteo-archive.js:209` includes `endDate` in
+  the id — so a re-run of either produces a new id for the same content. There is
+  also no lease or claim mechanism.
 
 The pattern is consistent and worth naming: this project builds the capability and
 then does not finish the wiring. Item 3 computes the impact figures and never stores
@@ -367,12 +403,27 @@ and attributes it wrongly. Item 11 emits standards-conformant CAP for alerts tha
 were rejected. Item 15 implements redaction and retention and calls neither from a
 request path.
 
+> **That paragraph is the register's thesis and nine of its examples are now
+> false.** Items 3, 5 and 15 all shipped, and item 11's semantics were corrected;
+> the wiring was finished in each case, which is the outcome the paragraph was
+> arguing for. It is kept because the failure mode it names is real and the
+> residual list above shows it still live in a narrower form — a second door with
+> no gate, a registry that drifts from its connector — but a reader should take
+> the four items named as a historical illustration, not as a current defect list.
+
 That is a good failure mode — the hard part, the part requiring judgement and
 domain knowledge, is done everywhere. What is missing is the class of check that
 verifies a built capability is actually reachable: an adapter conformance suite, an
 end-to-end "does the figure reach the caller" test, an assertion that a rejected
 alert is not published. Five of the fifteen partials would be Shipped by adding a
 test that fails today.
+
+> **The five are shipped, and this sentence was still here** (re-verified
+> 2026-10-16). It is the same claim `docs/improvements/README.md` carried and the
+> same one that file's own note now corrects: the items it points at were wired
+> on 2026-10-06 and 2026-10-07. What survives is the diagnosis rather than the
+> count — the missing check is still the missing check, which is why ENH-29 and
+> ENH-02 remain the two items worth most here even though the five are done.
 
 This is why **ENH-29's conformance suite** and **ENH-02's payload-honesty gate** are
 worth more than any single feature in this repository: they convert "we built it"
