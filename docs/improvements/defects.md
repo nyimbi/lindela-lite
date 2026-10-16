@@ -85,6 +85,77 @@ the facility-multiplication defect to the loop and was right, but under-stated
 it: the same root cause (a collection name list written in two places)
 reproduced it, which is why it and DAT-02 share a fix.
 
+**The findings that are fixed and not marked so, read 2026-10-16.** Ten ids in
+this register carry no fix anywhere — no `**Fixed …**` in the entry, no row in
+either table — while the tree has the repair and a test that fails without it.
+They are listed here rather than marked in place, because the entries are
+statements about the tree *as audited* (`b07bbe4`) and rewriting them would
+destroy the record of what was found; the same reasoning the storage section
+gives for R-05 one register over.
+
+| id | the repair in the tree | the guard |
+|---|---|---|
+| ING-05 | `canonicalHash` strips the nested fetch stamp (`withoutFetchStamp`, `src/utils.js:63`), so a re-run of unchanged content hashes the same | *keeps payload_hash through a full write so dedup survives*, `test/lite.test.js` |
+| ING-08 | the listing cap reports its pre-cap count; `counts_found` is `null` when nothing was found and no cap bound | `test/completeness-wiring.test.js` |
+| ING-09 | `src/freshness.js` judges each source against its own publication cadence, six distinct verdicts | `test/freshness-verdicts.test.js` |
+| ING-10 | `validateUpload` rejects the row with a named error, and `ok` means the *whole* file landed (`src/upload.js:278`) | `test/upload.test.js` |
+| ING-11 | `last_error` and `next_attempt_at` are written and consulted; a five-try event dead-letters as `failed` instead of vanishing (`src/outbox.js:431`) | `test/outbox-delivery.test.js` |
+| SEC-07 | `src/inbound-rate-limit.js`, charged in `src/server.js:643` | `test/inbound-rate-limit.test.js` |
+| SEC-13 | `USER lindela` at `Dockerfile:39`; `.dockerignore` lists `.omc` | `test/container-hardening.test.js` |
+
+**Two more are half-fixed and are marked here as such, not as fixed.**
+
+- **ING-03 — one of its two clauses is closed.** The entry makes two claims:
+  that Open-Meteo returns local time with no offset, and that the value is
+  parsed in the server's zone. The first is closed — the connector asks for
+  `timezone=UTC` (`src/connectors/open-meteo.js:176`, and the ensemble request
+  beside it at `:196`). The second is not, and the difference is measurable
+  rather than a matter of reading: an offset-less timestamp still shifts with
+  the server's zone. Measured under Node 22.23.0, `Date.parse('2026-10-15T03:00')`
+  is `2026-10-15T00:00:00.000Z` under `TZ=Africa/Nairobi` and
+  `2026-10-15T03:00:00.000Z` under `TZ=UTC` — the same input, three hours apart,
+  decided by an environment variable. `observed_at` is still written as
+  `data.current.time` with no suffix (`:215`, `:248`), and the readers that
+  parse it are still zone-dependent (`src/flood-probability.js:723`,
+  `src/utils.js:323`). The UTC request narrows the window in which this can bite
+  — upstream now answers in UTC — without making the stored value
+  self-describing, which is the thing the entry asks for.
+- **ING-04 — closed for the incremental path, open for both archive walks, and
+  the residual is narrower than "backfill".** The incremental path is genuinely
+  fixed: `fetchWindow` is derived from the stored mark rather than the clock
+  (`src/watermarks.js:272`), so two consecutive days with nothing new produce a
+  byte-identical window, and a mark sitting on today mints nothing at all —
+  measured against the archive connector, `requests: 0, records: 0`. Guard: *two
+  consecutive days with nothing new request an identical window*,
+  `test/watermarks.test.js`.
+
+  What survives is the id's *derivation*, and it is not confined to a resumable
+  backfill. The archive and flood walks mint their id from `[SOURCE,
+  region.name, startDate, endDate]` (`open-meteo-archive.js:209`,
+  `open-meteo-flood.js:183`), and `endDate` is today whenever the mark has not
+  reached today. Measured on the archive connector with the mark at `2026-10-02`:
+  the run requests `start_date=2026-10-03&end_date=2026-10-16` — `endDate` is the
+  run date — so the same mark on two different days mints two ids over two
+  different windows. That is the churn the entry names, and it is bounded rather
+  than eliminated: it needs *new data* to fire, where the original defect fired on
+  a run with nothing new at all. The id is a function of the requested window and
+  not of the bytes, which is a second, independent finding — measured by holding
+  the upstream response fixed and moving only `end_date`: `2026-10-02` gives
+  `climate_290ac34a6fd62c09` and `2026-10-16` gives `climate_15e3b44a7bd13086`,
+  with `series_end` reading `2026-10-02` in both. Two ids, one payload. So a
+  longer window does not supersede the shorter one's record; it lands beside it.
+- **ING-07 — the outer layer is live; the inner one is still doubled.** The
+  entry says connectors catch and return rather than throw, so only the 150/300 ms
+  inner retries ever run. The outer layer is real now — `runConnectorWithRetries`
+  (`src/ingestion.js:1141`) re-invokes the connector up to `source_retries` times
+  with its own 1 s/2 s/4 s backoff, and connectors that do throw (both Open-Meteo
+  backfills, `ipc-hdx`, `kobo`, `iot`, `dhis2`) reach it. What is unchanged is
+  the doubling: a source that declares `retries` gets that count at *both*
+  layers, so a connector that throws pays `retries × retries` attempts, and one
+  that catches-and-returns still pays only the inner 150/300 ms pair, because
+  its error never reaches the outer loop. Guard for the outer layer:
+  `test/ingestion-wiring.test.js`.
+
 ---
 
 ## Critical
