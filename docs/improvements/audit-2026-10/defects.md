@@ -753,7 +753,7 @@ requests. No correctness issue found; noted for completeness.
 watch the sweep work.
 
 ### ARC-01 — CRITICAL — `handleApiRequestInContext` is a 1,597-line god function
-`src/server.js:763–2360` held the entire `/api/v1` surface <!-- line-drift-ok: the range as audited, before the extraction; the file is 1,613 lines now -->
+`src/server.js:763–2360` held the entire `/api/v1` surface <!-- line-drift-ok: the range as audited, before the extraction; the file is 1,661 lines now -->
 at the time of the audit: 68 literal
 `url.pathname === …` tests plus 16 `match*Route()` helpers dispatched from 16 points
 inside the same function, three auth gates (one centralised, two copies at `:366`
@@ -761,10 +761,15 @@ and `:392`), per-route inline validation, and business logic that belongs in
 `kpi.js`/`reports.js`. A change to one route requires reading 1,600 lines. ENH-60.
 
 **Closed 2026-10-13 at the row's stated claim.** The title is "1,597-line god
-function", and the function is **80 lines** of table iteration with zero route
-logic in it — the claim is met, so this is Fixed. Every *family* lives under
-`src/routes/`: **34 modules, 35 matchers**, of which 32 are dispatched by
-`src/route-families.js`'s table. Three matchers are correctly outside it —
+function", and the function is **88 lines** of table iteration with zero route
+logic in it — the claim is met, so this is Fixed. (It was 80 when this note was
+written; the record-scoped read and the auth-gate extraction added eight lines of
+comments and one request field since, and nothing measured it — the same rot this
+entry is about, arriving in the note that closed it. Measured 2026-10-17:
+`src/server.js:1000–1087`.) Every *family* lives under
+`src/routes/`: **36 modules, 37 matchers**, of which 34 are dispatched by
+`src/route-families.js`'s table. (34/35/32 when this note was written; the
+`annotations` and `ask` families landed after it.) Three matchers are correctly outside it —
 `matchStacRoute` and `matchOgcRoute` (called from `handleApi`, above the
 dispatcher) and `alerting.js`'s `matchTriggeringRoute` (reached through
 `matchAlertingRoute`) — and `auth-gate.js` is the one module with no matcher,
@@ -827,11 +832,13 @@ met by absence.
 And the branches that remained became a table. The thirty-two `const X =
 matchYRoute(…)` / `if (X && await handleXRoute(X, {…}))` pairs are now
 `src/route-families.js`'s `ROUTE_FAMILIES`, and `handleApiRequestInContext`
-iterates it in two loops — `pre` above the store read, `post` below. Measured now:
-the dispatcher is **80 lines** (`functionBody('handleApiRequestInContext', src)`,
-line 973 to 1052) whose route logic is two `for` loops and a `dispatchFamily` call,
-with no inline validation and no business logic; `src/server.js` is **1,613
-lines**. That conversion was ENH-60's last move, not ENH-59's generator: the table
+iterates it in two loops — `pre` above the store read, `post` below. Measured now
+(2026-10-17): the dispatcher is **88 lines**
+(`functionBody('handleApiRequestInContext', src)`, line 1000 to 1087) whose route
+logic is two `for` loops and a `dispatchFamily` call, with no inline validation
+and no business logic; `src/server.js` is **1,661 lines**. (This paragraph said
+80 / `973 to 1052` / 1,613 when it was written; the numbers were right then and
+nothing re-measured them.) That conversion was ENH-60's last move, not ENH-59's generator: the table
 declares the dispatch, and `test/dispatch-order.test.js` reads it at runtime and
 checks the order, the side of the read, the matcher→handler binding and the
 dependency bag against the *handlers' own destructuring* rather than against a
@@ -1398,7 +1405,7 @@ flight — and `NaN` compares equal to everything, so a running run sorted
 unpredictably against finished ones. Both now share one helper.
 The dispatcher was 776 lines and `server.js` 2,366 at that point, from 1,903 and
 5,603 at the start. (Superseded 2026-10-13 by the ENH-60 table move: the
-dispatcher is now **80 lines** and `server.js` **1,613** — see ARC-01. The figure
+dispatcher is now **88 lines** and `server.js` **1,661** — see ARC-01. The figure
 is left standing as the before-state, not overwritten, because this entry's
 subject is a number that was right when written.)
 `check-openapi` reads all six new families as third-family route sources with no

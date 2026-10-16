@@ -65,6 +65,22 @@ function declaredRanges(text) {
 
 const DECLARED = declaredRanges(README)
 
+/**
+ * The enhancement verdict table's three rows, keyed by verdict.
+ *
+ * `| IMPLEMENTED | 51 | 31, 32, … |` — the count and the item list, as written.
+ * Two readers use it: the partition check below, and the entry-verdict check
+ * that compares a row against the note under the item it names.
+ */
+function verdictRows(text) {
+  const out = new Map()
+  for (const line of text.split('\n')) {
+    const row = /^\| (IMPLEMENTED|PARTIAL|ABSENT) \| (\d+) \| (.+) \|$/.exec(line)
+    if (row) out.set(row[1], { count: Number(row[2]), items: row[3].trim() })
+  }
+  return out
+}
+
 describe('the audit register’s skeleton, guarded', () => {
   it('parsed both documents, so a passing run is not a run over nothing', () => {
     // The canary-in-reverse: a guard that reads zero entries passes every
@@ -169,11 +185,7 @@ describe('the audit register’s skeleton, guarded', () => {
     // says "fifty" and its ranges say `ENH-31..ENH-80`; the extra one is ENH-81,
     // which the file lists. The count is taken from the table rather than from
     // the prose for that reason — the prose is what drifted.
-    const rows = new Map()
-    for (const line of ENHANCEMENTS.split('\n')) {
-      const row = /^\| (IMPLEMENTED|PARTIAL|ABSENT) \| (\d+) \| (.+) \|$/.exec(line)
-      if (row) rows.set(row[1], { count: Number(row[2]), items: row[3].trim() })
-    }
+    const rows = verdictRows(ENHANCEMENTS)
     assert.equal(rows.size, 3, `parsed ${rows.size} verdict rows; the table has three`)
 
     // `none` is the ABSENT row's spelling of an empty set. It is asserted
@@ -215,6 +227,72 @@ describe('the audit register’s skeleton, guarded', () => {
       assert.equal(Number(notStarted), rows.get('ABSENT').count, 'the header’s not-started count is not the ABSENT row’s')
     }
   })
+
+  it('an entry’s own last verdict agrees with the row the table puts it in', () => {
+    // The table above is guarded against itself — partitions, counts, header —
+    // and the per-item note beneath it was guarded against nothing. ENH-60 is
+    // the case: `be2f4d3` moved it to IMPLEMENTED in the table and closed the
+    // entry in prose, but the last bold span in the entry still opens "PARTIAL
+    // — 2026-10-12", so a reader who scrolled to the item read the opposite of
+    // the row summarising it, for four days. ENH-59 had the same shape and was
+    // caught by hand on 2026-10-15; nothing caught ENH-60.
+    //
+    // The reading rule, which is what makes this checkable at all: the verdict
+    // is the *last* bold span in the entry that names one, because the notes are
+    // append-only and each supersedes the one above it. A closure word wins over
+    // `PARTIAL` inside the same span, because the register's own idiom for a
+    // corrected entry is "IMPLEMENTED, mis-marked PARTIAL until <date>" — the
+    // span names both and only one is the current state. A span with neither is
+    // a paragraph heading and is skipped.
+    const CLOSED = /\b(IMPLEMENTED|Shipped|shipped|Fixed|closed|Closed|complete|Complete|done|Done|Wired|Served)\b/
+    const OPEN = /\b(PARTIAL|ABSENT)\b/
+
+    const starts = []
+    ENHANCEMENTS.split('\n').forEach((line, i) => {
+      const m = /^\*\*ENH-(\d+) — /.exec(line)
+      if (m) starts.push({ n: Number(m[1]), i })
+    })
+    starts.push({ n: null, i: Infinity })
+    assert.ok(starts.length > 45, `parsed ${starts.length - 1} entries; the heading regex stopped matching`)
+
+    const verdictOf = new Map()
+    for (const [verdict, { items }] of verdictRows(ENHANCEMENTS)) {
+      if (items === 'none') continue
+      for (const part of items.split(',')) verdictOf.set(Number(part.trim()), verdict)
+    }
+
+    const lines = ENHANCEMENTS.split('\n')
+    const disagreements = []
+    const silent = []
+    for (let k = 0; k < starts.length - 1; k += 1) {
+      const { n } = starts[k]
+      const body = lines.slice(starts[k].i, starts[k + 1].i).join('\n')
+      let last = null
+      for (const span of body.matchAll(/\*\*([\s\S]{0,400}?)\*\*/g)) {
+        if (CLOSED.test(span[1])) last = 'CLOSED'
+        else if (OPEN.test(span[1])) last = 'OPEN'
+      }
+      // An entry this check cannot read a verdict out of is *reported*, not
+      // skipped. Skipping is how the check fails open: narrowing `CLOSED` — drop
+      // one word and every entry closed with it becomes invisible — leaves the
+      // assertion with nothing to compare and a green run. Every entry states a
+      // verdict today (51 of 51), so "I read none" is a fact about the reader.
+      // Canaried by deleting `Fixed` from `CLOSED`: this list is what fails.
+      if (!last) { silent.push(`ENH-${n}`); continue }
+      const row = verdictOf.get(n)
+      if (row === 'IMPLEMENTED' && last === 'OPEN') {
+        disagreements.push(`ENH-${n}: the table says IMPLEMENTED, the entry’s last verdict still reads open`)
+      }
+    }
+    assert.deepEqual(silent, [],
+      `no verdict could be read from ${silent.length} entr${silent.length === 1 ? 'y' : 'ies'}: ${silent.join(', ')}. `
+      + 'Each entry states one; a blank here means this check’s vocabulary missed it, and a check '
+      + 'that reads nothing agrees with everything.')
+    assert.deepEqual(disagreements, [],
+      `${disagreements.join('\n')}\n`
+      + 'Append the closure to the entry in the word the table uses — the notes are append-only, '
+      + 'so a later note supersedes the "PARTIAL" heading rather than editing it.')
+  })
 })
 
 /**
@@ -229,7 +307,7 @@ describe('the audit register’s skeleton, guarded', () => {
  *
  * The cost is not cosmetic, and the size of it is measured below rather than
  * stated here — see `citationSpread()`. At the last measurement there were
- * **1,924** `ENH-nn` citations across **350** files, **343** of them in `src/`
+ * **1,928** `ENH-nn` citations across **350** files, **343** of them in `src/`
  * comment lines — so a reader following `// ENH-29` from a source file has a 50%
  * chance of landing on the wrong item, and `docs/improvements/status.md`
  * resolves every id against the *first* register. This is the same shape the

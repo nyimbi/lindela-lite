@@ -1457,7 +1457,7 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > the join was assumed hard because nobody had tried it. It took one query.
 
 **ENH-60 — Router extraction.** `handleApiRequestInContext` was 1,597 lines
-(`src/server.js:763–2360` <!-- line-drift-ok: the range as audited; ENH-60 is IMPLEMENTED and the dispatcher is 80 lines now -->) and entangled routing, auth, validation, business logic
+(`src/server.js:763–2360` <!-- line-drift-ok: the range as audited; ENH-60 is IMPLEMENTED and the dispatcher is 88 lines now, at `src/server.js:1000–1087` -->) and entangled routing, auth, validation, business logic
 and serialisation. Behind the ENH-59 table it splits into ~15 modules, each
 testable in isolation. This unblocks every other substrate item.
 
@@ -2043,6 +2043,17 @@ testable in isolation. This unblocks every other substrate item.
 > re-anchored to the route module the code moved to, or marked `line-drift-ok:`
 > where the entry means to quote the tree as audited. The citation gate caught the
 > move, which is the second time this session it has earned its keep.
+>
+> **IMPLEMENTED 2026-10-13 — the verdict, said in the word the other fifty use.**
+> Every paragraph above is dated history and the last of them still opens
+> "PARTIAL", so the entry read as open to anyone who stopped at its own heading
+> while the verdict table two hundred lines up moved this item to IMPLEMENTED in
+> the same commit (`be2f4d3`). Nothing compared the two: the table is guarded
+> against itself and the note was guarded against nothing. The claim the row
+> states is met and measured — the dispatcher is 88 lines of table iteration with
+> zero inline route conditions, and the 32 hand-written `match`/`handle` pairs are
+> `src/route-families.js`'s table. What remains is ENH-59's, not this entry's: the
+> dispatcher is short and it is no longer a list of routes.
 
 **ENH-61 — Streaming cursor reads.** `PostgresStore.read()` issues
 `SELECT collection, body FROM lite_records WHERE …` with no `LIMIT`
