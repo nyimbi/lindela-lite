@@ -169,7 +169,7 @@ assertions, not about the code.
 >   (`src/routes/upload.js:5-6`), 52 tests.
 > - **A charting layer shipped.** `public/shared/charts.js` — 17 exported
 >   primitives, pure string-returning functions with no DOM — with `co/` and the
->   console wired, 49 tests.
+>   console wired, 50 tests.
 > - **Rate limits are declared and still not enforced.** `src/rate-limit.js`
 >   normalises a connector's `rateLimit` declaration and the inbound limiter is
 >   live, but the *outbound* connector budget the finding is about — IPC's ~92
@@ -211,6 +211,6 @@ credited, not claimed as new findings.
    difference between an operator trusting source health and ignoring it.
 6. **ENH-16 first**, because the chart library makes the other seven visualization
    items composition rather than invention. **SHIPPED** 2026-10-03:
-   `public/shared/charts.js`, 5 primitives + `sparkline`, 49 tests; `co/` and
+   `public/shared/charts.js`, 5 primitives + `sparkline`, 50 tests; `co/` and
    the console wired. Pure string-returning functions, no DOM — see
    `enhancements.md` for why, and for the one existing chart deliberately kept.

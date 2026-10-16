@@ -291,4 +291,52 @@ describe('the improvement registers state totals their tables agree with', () =>
       + 'A count that does not follow the register is the drift this whole file exists to catch.',
     )
   })
+
+  it('every test count the registers state is the count the file has', () => {
+    // The same defect in a different unit. A register entry says "what shipped"
+    // and names the suite and its size — `test/charts.test.js` (50 tests) — and
+    // nothing read the suite. Five of the seven claims were wrong when this was
+    // written, and three of those were wrong at the very commit that wrote them:
+    // `fd37cb8` (2026-10-03) said 49 beside a file already holding 50, `6367197`
+    // said 27 beside 28, `da64321` said 29 beside 28. Only
+    // `test/dispatch-order.test.js` (7 → 12) is genuine drift; the rest are
+    // miscounts, and the distinction is the same one the remediation case draws.
+    //
+    // Counted statically, not by running the suites. Static and runtime agree on
+    // all seven today (checked), and a static read cannot be flaky: two of these
+    // files bind sockets and write temp dirs, and spawning seven node processes
+    // inside the suite is how this repo's contention flakes start. The claim is
+    // about the suite's size, which the source fixes.
+    //
+    // Scoped by the *shape* of the claim — a backticked `test/*.test.js` followed
+    // by `(N tests)`. A count stated without naming a file (`22/27`, in
+    // enhancements-50.md, meaning `test/anticipatory-action.test.js`) has no
+    // referent the reader can resolve, so it is out of jurisdiction rather than
+    // guessed at. That one is correct anyway (27).
+    const CLAIM = /`(test\/[a-z0-9-]+\.test\.js)`[\s\S]{0,12}?\((\d+)\s+tests?\)/g
+    const docs = ['docs/improvements/enhancements.md',
+      'docs/improvements/audit-2026-10/defects.md',
+      'docs/improvements/audit-2026-10/enhancements-50.md',
+      'docs/plans/vision-gap-closure.md']
+
+    const wrong = []
+    let seen = 0
+    for (const doc of docs) {
+      for (const m of read(doc).matchAll(CLAIM)) {
+        const [, file, stated] = m
+        seen += 1
+        // `it(` and `test(` both declare a case; the lookbehind keeps `.skip(`,
+        // `describe(` and a property access from counting as one.
+        const source = read(file)
+        const actual = (source.match(/(^|[^.\w])(it|test)\s*\(/g) ?? []).length
+        if (actual !== Number(stated)) wrong.push(`${doc} → ${file}: says ${stated}, the file has ${actual}`)
+      }
+    }
+
+    assert.ok(seen >= 6, `found only ${seen} test-count claims — the reader or the registers are wrong`)
+    assert.deepEqual(wrong, [],
+      `a register states a test count the suite does not have:\n  ${wrong.join('\n  ')}\n`
+      + 'Either fix the number, or — if the sentence is about what shipped at a commit rather than now — '
+      + 'say so, because this reads it as a claim about the file on disk.')
+  })
 })

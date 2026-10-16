@@ -1911,7 +1911,7 @@ testable in isolation. This unblocks every other substrate item.
 > unchanged", and the events family's note records how that was ever checked:
 > "verified by grepping the whole dispatcher for both literals, not by reading the
 > blocks". A grep run once by a person is a fact that was true when it was typed.
-> `test/dispatch-order.test.js` (7 tests) makes it checkable: it reads the 32
+> `test/dispatch-order.test.js` (12 tests) makes it checkable: it reads the 32
 > `const X = matchYRoute(…)` statements out of `handleApiRequestInContext` in
 > order, asserts the sequence against a table recorded in the test, and asserts
 > the four-above / twenty-eight-below split of `store.read(readRequest)`.
@@ -2640,7 +2640,7 @@ turn and the gate failed on each; all restored from a file backup, never
 `git checkout`.
 
 The tenant-isolation (VUL-03) and authz (VUL-04) halves of the entry were already
-build-failing specs before this: `test/partner-isolation.test.js` (27 tests) and
+build-failing specs before this: `test/partner-isolation.test.js` (28 tests) and
 `test/role-scope-honoured.test.js` assert the scope predicate on the listing, the
 by-id read and the alternation grammar. They are specs in the same sense the
 entry means — a regression fails the build — and they are what the SSRF gate is

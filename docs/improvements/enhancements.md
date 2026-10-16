@@ -388,7 +388,7 @@ districts side by side, each with its sample size, beats one headline district.
 
 **Effort:** M. — **SHIPPED** (2026-10-03).
 
-**What shipped.** `public/shared/charts.js` and `test/charts.test.js` (49 tests).
+**What shipped.** `public/shared/charts.js` and `test/charts.test.js` (50 tests).
 Five primitives — `lineChart` (with an optional uncertainty band), `barChart`,
 `stackedBar`, `heatmap`, `smallMultiples` — plus `sparkline` and the scale
 helpers they rest on (`extentOf`, `scale`, `ticks`, `completeness`).

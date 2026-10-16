@@ -70,7 +70,7 @@ is the one way a by-id route resolves a record, so thirty-one branches across ni
 handlers that had `data.reports.find((item) => item.id === route.id)` now carry the
 same predicate as their own listing, and a by-id read of another organisation's id
 returns `null` rather than confirming the id exists. `test/partner-isolation.test.js`
-(27 tests) asserts all three, including that the by-id form agrees with the listing
+(28 tests) asserts all three, including that the by-id form agrees with the listing
 about a record carrying no partner claim. Records written by a path that sets no
 `partner_org` are invisible to a partner token — the deny-by-default reading
 `src/auth.js:550` documents, which fails visibly rather than handing over the store.
@@ -2487,7 +2487,7 @@ entry conflates "no file named after the module" with "no behavioural test",
 which is wrong for most of the list:
 
 - Six of the ten have a dedicated behavioural suite under a feature name:
-  `audit-chain` → `test/audit-chain.test.js` (29 tests), `observability` →
+  `audit-chain` → `test/audit-chain.test.js` (28 tests), `observability` →
   `observability-substrate.test.js` + `observability-bounds.test.js`,
   `route-manifests` → `test/route-manifests.test.js`, `narrator` →
   `test/report-narrator.test.js`, `bitemporal` → `test/bitemporal-history.test.js`.
