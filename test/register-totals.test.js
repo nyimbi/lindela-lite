@@ -42,11 +42,18 @@ import { describe, it } from 'node:test'
  * needs a reader and is the registers' own business. This holds the skeleton.
  *
  * Also not checked: `defects.md`'s "Roughly 55 findings". It is hedged prose
- * rather than a derived total — the file carries 26 `###` headings and 50
+ * rather than a derived total — the file carries 26 `###` headings and 68
  * distinct ids across three shapes (headings, severity-table rows, and
  * cross-references from other entries), so "55" cannot be reconciled against a
  * set the file actually defines. A check would have to pick one of those shapes
  * and would then be measuring its own choice. It stays a reader's judgement.
+ *
+ * That figure was 50 when this note was written and is 68 now, which is the
+ * point rather than a defect in the note: the ids arrive from three directions
+ * and the file does not declare which is the finding set, so no assertion can be
+ * written that would not be about the reader's choice of shape. It is recorded
+ * here because a stale number in a comment about not checking numbers is exactly
+ * the thing this file exists to catch.
  */
 
 const ROOT = path.resolve(new URL('..', import.meta.url).pathname)
