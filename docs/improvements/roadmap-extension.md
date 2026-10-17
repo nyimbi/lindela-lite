@@ -88,6 +88,19 @@ people-at-risk and facilities-at-risk.*
 
 Shipped in shape, wrong in substance, and 100% line-covered while wrong.
 
+**Both closed 2026-10-17.** DAT-05 was two defects in three lines —
+`replaceAnalytics` took four parameters where the caller passes six, and used
+`merge()` where `replace()` was meant. It now takes one payload and rebuilds all
+six `DERIVED_COLLECTIONS` from it in a single transaction
+(`src/postgres-store.js:1068`), so the figures the model computes are the figures
+the production backend stores. DATA-03 is the assets-outer pass: `distinctAssets`
+(`src/analytics/impact.js:29`) collects each asset once and is called on both the
+per-hazard path (`:55`) and the union total (`:120`), which is why the note at
+`:51` can tell a reader not to sum `population_at_risk` across rows. Both are held
+by `test/facilities-at-risk-counting.test.js` and `test/store-conformance.test.js`.
+The heading is kept: it named the tree of 2026-10-05 and the *shape* it described —
+capability built, wiring missing — is the finding this whole document is about.
+
 ### 4. Bias-corrected downscaling for local skill — **Partial, degenerate**
 
 *Quantile-mapping against station observations or uploaded gauges.*
@@ -126,6 +139,16 @@ zero, so precision and recall are the same meaningless number, and it reports
 100%/100%. Under the roadmap's own stated motivation — donor pre-arranged finance
 requiring documented trigger histories — a backtest that does not test the trigger
 is worse than none, because it produces evidence.
+
+**Closed 2026-10-17.** The backtest evaluates the protocol's own condition:
+`resolveMetric(context, protocol.metric)` against
+`compare(value, protocol.operator, protocol.threshold)` (`src/alerts.js:467`,
+`:478`), and `misses` is incremented on the branch where the condition held and no
+hazard followed (`:487`) rather than being structurally zero. The three fields are
+carried onto the result (`:502`) so the report says which trigger it tested.
+Guard: `test/trigger-backtest.test.js`. The framing above is kept because it is
+the reason the check matters — a backtest that does not test the trigger is worse
+than none — not because it is still true.
 
 ### 7. Human-in-the-loop approval for high-severity alerts — **Shipped**
 
@@ -238,6 +261,20 @@ The registry has drifted from the code in two places: a `gho_top_years` option
 that does not exist, and an IPC default country list of `['KE','SO','SS']` against
 46 codes in the connector.
 
+**Both closed 2026-10-17, and the second was not what this note said.**
+`gho_top_years` is gone; the registry offers `gho_min_year`, which is what
+`src/connectors/who-gho.js` reads. The second was never a `defaults` key — it was
+prose inside the `schemas.input.countries` **description string**, naming a default
+the connector does not have (`DEFAULT_COUNTRIES` holds 46 Sub-Saharan ISO3 codes,
+`src/connectors/ipc-hdx.js:58`). So it was documentation that misinformed rather
+than configuration that did nothing, which is a weaker defect than the row claimed,
+and it is corrected rather than "fixed". The class needed the check:
+`test/connector-registry-parity.test.js` now compares the registry's
+`schemas.input` against each connector's live `spec.schema.requestSchema`, with the
+`INTERNAL` and `NO_SPEC` exemptions themselves asserted so neither outlives its
+reason. **What it compares is the key set, not the descriptions**, so the
+`countries` text would still drift silently — the honest scope of the fix.
+
 ### 13. Webhook-driven event bus (outbox pattern) — **Partial, and non-functional**
 
 *Durable `events_outbox`, subscription API, dispatcher.*
@@ -257,6 +294,20 @@ coverage**. Worse than thin coverage, the signed path cannot work:
 - Nothing schedules dispatch; it requires an explicit POST.
 
 This is the roadmap item that most needs finishing and least looks finished.
+
+**All four closed 2026-10-17.** The signed path works: `signPayload` is imported
+and called at `src/outbox.js:382`, setting `x-signature` on every delivery, where
+the note's `ReferenceError` was swallowed by an empty `catch`. The backoff is real
+— `next_attempt_at` is written and consulted (`src/outbox.js:114`, `:183`), and a
+five-try event dead-letters as `failed` rather than vanishing. The write is
+transactional with the state change that produced it: `emit` and `emitMany` take
+`store.withLock` (`:70`, `:146`) and decide and write inside one transaction, which
+is CON-01's fix. And dispatch is scheduled — `runPeriodicTick` drives it on a
+timer (`src/server.js:120`, started at `:437`) rather than waiting for a POST.
+Guards: `test/outbox-delivery.test.js`, `test/outbox-cross-replica.test.js`. What
+this note was right about is the *shape*: it was the item that least looked
+finished, and every one of its four claims had a mechanism present and a caller
+missing — which is the pattern this document exists to record.
 
 ## Security, privacy & compliance
 
@@ -442,6 +493,19 @@ and both #5 and #18 are blocked on the same structural weakness.
 specified, with one defect: scenario means are averaged over different region sets
 after perturbation (`src/scenarios.js:57`), so a before/after comparison is not
 like-for-like.
+
+**Closed 2026-10-17, and it was real.** The region set is *not* perturbation-invariant:
+`collectRegions` (`src/analytics.js:1560`) derives it from the points in the data,
+and the perturbation can remove them — `offline_asset_ids` filters service assets
+out of the clone (`src/scenarios.js:170`) — so the baseline and the scenario means
+were averaged over different denominators. The scenario run now recomputes the
+baseline from the unperturbed `data` in the same pass
+(`src/scenarios.js:188-206`), and the per-asset comparison is paired by
+`asset_id` with the baseline (`:222`), so a removed asset yields `null` rather
+than silently leaving the mean. `regions_compared` (`:256`) reports how many
+regions the delta is over. This was the item's own heading saying "Shipped" over a
+body describing a defect, which is the one direction the header's disagreement list
+counts — and it is not on that list, because the heading and the row agree.
 
 ### 20. Localization, plain-language rendering, RTL/Arabic — **Partial**
 
