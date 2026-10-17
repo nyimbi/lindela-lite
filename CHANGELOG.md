@@ -230,6 +230,54 @@ each with its own sample size, refused ones included.
 
 ### Fixed
 
+**Three more roadmap bodies named defects their own rows say are fixed, and one
+named a control that was never absent.** Items 3, 6, 12, 13, 14, 15 and 19 each
+described a defect in body prose while the Summary table, 300 lines below, marked
+it fixed. The header's disagreement guard compares a heading's status word to its
+table row, and all seven headings *agree* with their rows — "Shipped, broken on
+Postgres" over a row reading Shipped — so the guard could not see any of them.
+That is the same blind spot items 11, 16, 17 and 18 were found through, in the
+one direction the guard does not count, and the header now says so. Each body
+gained a `**Closed 2026-10-17.**` paragraph naming the fix and the guard, in the
+form item 7's already used.
+
+**Item 14's heading was the most wrong thing in the document.** "Worse than
+nothing" judged a tree where the auth gate failed open; SEC-01, SEC-03, SEC-04,
+SEC-06 and SEC-09 are all closed in the remediation table, and SEC-06 was not
+what the note said — `scopeToPartnerOrg` is not dead code, it was never *given*
+anything, because `authenticate()` returned no `partner_org` field, so it read
+`undefined` and passed every record through. The field is set now
+(`src/auth.js:543`) and the same predicate runs on both adapters
+(`src/store.js:562`, `src/postgres-store.js:173`). The item's audit-log sentence
+was closed too, and its second half was the larger claim: the log is hash-chained
+with verification that recomputes rather than comparing stored linkage
+(`src/audit-chain.js`), the portal re-walks the chain **in the browser**
+(`public/portal/app.js:212`), and the generic create/update/delete paths each
+write a row (`src/routes/operational.js:189`, `:223`, `:235`) where the note said
+they wrote none.
+
+**Item 15's "zero tests" was false when it was written.** `redactPii` and
+`applyRetention` are exercised by `test/pii.test.js`, and both wiring paths by
+`test/privacy-chw-report.test.js`, `test/privacy-rapidpro-inbound.test.js` and
+`test/maintenance-route-module.test.js`. All three bullets are closed: the generic
+create path calls `redactPii` on the built record (`src/routes/operational.js:188`,
+after the build and not before, so the builder's own `'operator'` default is not
+left in cleartext beside a hashed caller name); `redactNames` defaults true
+(`src/pii.js:12`) with a keyed HMAC-SHA256 pseudonym at 128 bits (`:329-331`) where
+the old scheme truncated the *prefixed* string and emitted the literal `sha256:a`
+for every name; the geo guard tests `lat !== null` (`:115`), so 0° is a
+coordinate; and retention calls a real `store.remove()` on both backends
+(`src/routes/maintenance.js:133`) where `merge` keyed on id left every expired
+record in place while reporting `expired: 1`.
+
+**Item 8's heading was wrong in the note's own favour.** Correlation exists
+(`correlateReply`, `src/rapidpro.js:907`), the rate counts distinct responders
+rather than replies (`:277-281`), delivery is reported (`:1322`), and inbound
+idempotency keys on `stableId('rapidpro_inbound', [source_id, from, text])`
+(`:948`), so a retried webhook is recognised rather than double-SMSed. What
+remains is ENH-26 and a narrower residual than the note: replies correlate, but
+the content of a free-text reply is not yet parsed into a structured assessment.
+
 **Item 18's body cited three things that do not exist and called a closed defect
 broken.** The same shape as items 16 and 17, one item over. All three of its
 "dedup shipped" citations were wrong: `canonicalHash` is `src/utils.js:75`, not

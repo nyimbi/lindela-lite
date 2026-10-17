@@ -194,6 +194,21 @@ and no inbound idempotency, so a retried webhook double-SMs (ALERT-06).
 
 This is **ENH-26**.
 
+**Both closed 2026-10-17, and the heading was wrong in the note's own favour.**
+Correlation *does* exist: `correlateReply` (`src/rapidpro.js:907`) matches an
+inbound reply to the dispatch it answers, `responseMetrics` counts **responders**
+— `metrics.response_count` is incremented inside a `responders.has` guard (`:278`),
+so a second message from one person does not raise the numerator and the rate
+cannot exceed 100% — and `deliveryReport` (`:1322`) reports delivery. ALERT-05 is
+held by `test/rapidpro-response-metrics.test.js`. The inbound idempotency exists
+too: `reconcileInbound` (`:948`) keys on
+`stableId('rapidpro_inbound', [source_id, from, text])`, so a retried webhook is
+recognised and not re-applied, and the send path has a real timeout with retry and
+backoff (`:419`, `:55`). Guard: `test/rapidpro-response-metrics.test.js`.
+**ENH-26 is what remains**, and the residual is narrower than the note: replies
+correlate, but the *content* of a free-text reply is not yet parsed into a
+structured assessment.
+
 ### 9. Offline-first PWA dashboard — **Shipped**
 
 *Service worker, IndexedDB caching of API responses, background sync queue.*
@@ -335,6 +350,41 @@ implementation did not resolve it:
 
 **ENH-01** and **ENH-28** are this item, finished.
 
+**All six closed 2026-10-17, and the heading is the most wrong thing in the
+document.** "Worse than nothing" was the audit note's judgement on a tree where
+the gate failed open; that tree is gone. SEC-01: the GET exemption is replaced by
+deny-by-default with an explicit, operator-named allowlist
+(`LINDELA_LITE_PUBLIC_PATHS`, `src/auth.js:400`, `:445`), so an unlisted GET is
+401 rather than served. SEC-03: the five special cases are replaced by explicit
+read and write scope tables, and a mutation with no row fails closed to `admin:*`
+(`src/auth.js:19`, `:205`, `:601`). SEC-04: a malformed token table throws
+instead of parsing to `[]`. SEC-06 was **not** what the note said — the function
+is not dead code, it was never *given* anything: `authenticate()` returned no
+`partner_org` field, so `scopeToPartnerOrg` read `undefined` and passed every
+record through. The field is set now (`src/auth.js:543`), and the same predicate
+is applied on both adapters — `scopeToPartner` filters every collection on the
+JSON store (`src/store.js:562`) and Postgres pushes `partner_org = $2` into the
+query (`src/postgres-store.js:173`) — with `?partner_org=` refused at the ingress
+and the caller's own scope reported by `GET /api/v1/auth-info`. SEC-09: the actor is a SHA-256 fingerprint
+(`src/auth.js:544`) and the comparison is `timingSafeEqual`, length-equalised
+first (`:526-528`); the note's `token_SUPERSEC` is not recoverable from a log.
+
+The audit-log sentence is closed too, and the second half of it was the larger
+claim. The log is no longer self-asserted: `src/audit-chain.js` chains each entry
+to its predecessor's *recomputed* hash and `verifyChain` never reads a stored
+linkage field as truth, so an attacker who rewrites the whole file and re-chains
+it consistently still fails. It has a UI — `public/portal/app.js:206` fetches
+`/api/v1/audit/verify` and re-walks the chain **in the browser**
+(`verifyChainInBrowser`, `/shared/audit-chain-core.js`), which is the property a
+tamper-evident log is for: the check runs somewhere the operator does not
+control, and the panel says so plainly when it has no entries to walk rather than
+claiming a check that did not run. And the parametric write paths write a row —
+the generic create, update and delete in `src/routes/operational.js` each carry
+one (`:189-190`, `:223-224`, `:235`), where the note's "three parametric write
+paths write none" was true. Guards: `test/auth-deny-by-default.test.js`,
+`test/partner-isolation.test.js`, `test/audit-chain.test.js`. What remains is
+**ENH-01's** and **ENH-28's** own residuals, not this item's.
+
 ### 15. Field-report PII minimisation + retention — **Partial, non-functional**
 
 *Configurable redaction and a background retention task that ages out raw personal
@@ -355,6 +405,36 @@ Neither is wired:
   `docs/api.md:567-573` documents a `dry_run` flag that does not exist.
 
 The legal exposure the roadmap identified is real and currently unmet.
+
+**All three closed 2026-10-17, and the "zero tests" claim was false when it was
+written.** `redactPii` and `applyRetention` are exercised by `test/pii.test.js`,
+and the two wiring paths by `test/privacy-chw-report.test.js`,
+`test/privacy-rapidpro-inbound.test.js` and
+`test/maintenance-route-module.test.js`. The first bullet is closed: the generic
+create path calls `redactPii` on the built record (`src/routes/operational.js:188`),
+so the two paths no longer disagree — and it is called *after* the build, not
+before, because `normalizeFieldReport` defaults `reported_by` to the literal
+`'operator'` and a redactor running first would hash a caller's name while
+leaving that system label in cleartext, two shapes in one column decided by
+whether the field was sent. The second is closed in all three parts:
+`redactNames` defaults **true** (`src/pii.js:12`) — a privacy control that ships
+off is a function nobody has to remember to call — the pseudonym is a keyed
+HMAC-SHA256 digest at 128 bits, not a truncated unsalted hash (`:329-331`; the
+old scheme truncated the *prefixed* string, so every redacted name came out as
+the literal `sha256:a`, a dictionary of one entry that names everyone), and the
+geo guard tests `lat !== null && lon !== null` (`:115-117`), so 0° is a
+coordinate rather than an absence. DAT-07 is closed and the fix is the one the
+note implies: `store.remove()` on both backends (`src/routes/maintenance.js:133`,
+`src/store.js:1137`, `src/postgres-store.js:841`) where `merge` keyed on id had
+left every expired record exactly where it was while the route reported
+`{success: true, expired: 1}`. `docs/api.md` now documents the route's real body
+— none, and a `400` that names every window the policy could have set — rather
+than a `dry_run` flag that does not exist on it. Guards: `test/pii.test.js`,
+`test/maintenance-route-module.test.js`, `test/store-conformance.test.js`. What
+stays Partial is the *scope*: retention covers `field_reports`,
+`rapidpro_inbound_messages`, `community_feedback` and annotations, each with its
+own window, and the legal exposure is a deployment's policy to set, not code
+still missing.
 
 ### 16. Signed, reproducible releases and SBOM — **Partial**
 
