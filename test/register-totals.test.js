@@ -368,6 +368,45 @@ describe('the improvement registers state totals their tables agree with', () =>
     )
   })
 
+  it('system-audit: the residuals heading agrees with the verdict its own body states', () => {
+    // The heading read "### Open, with the measurement or the blocker" from
+    // 2026-10-05 until 2026-10-17, by which point all four rows beneath it
+    // carried a disposition — closed, blocked, refuted, shipped — and the body
+    // two paragraphs down said the open set was "empty of actionable items".
+    // That is ENH-59's defect one register over: a reader who stops at the
+    // heading sees work that is not there. The register names this failure mode
+    // in its own text ("An open table that omits what is open is worse than no
+    // table") and had no check on the heading itself.
+    //
+    // The predicate is a *contradiction* check, not a row classifier. A first
+    // attempt classified each row by looking for a disposition word at the start
+    // of a bold span; its canary passed on the reverted heading, because ENH-12's
+    // row states its disposition mid-sentence ("**The read half is closed … and
+    // the table half is refuted**"), so the row read as open and the guard saw
+    // one open row where there were none. A classifier that enumerates one of the
+    // two spellings of a disposition is the bug wearing the gate's clothes. The
+    // heading and the body are each read for a single claim, and the failure is
+    // their disagreement.
+    const REMEDIATION = read('docs/improvements/system-audit/01-remediation.md')
+
+    const heading = /^### (Open|Residuals)\b.*$/m.exec(REMEDIATION)
+    assert.ok(heading, 'the register has no "### Open…" or "### Residuals…" section heading')
+    const headingSaysOpen = /^### Open\b/.test(heading[0])
+
+    // The body's own verdict, in the register's words.
+    const bodySaysEmpty = /empty of actionable items|no actionable items|nothing (?:is|remains) open/i.test(REMEDIATION)
+
+    // One-sided on purpose: "Residuals" with the set declared empty is the
+    // correct state and passes. What cannot stand is a heading that says "Open"
+    // over a body that says the set is empty.
+    assert.ok(
+      !(headingSaysOpen && bodySaysEmpty),
+      'the heading says "Open" and the body says the set is empty of actionable items. '
+      + 'Either an item is genuinely open and the body should say so, or the heading is stale — '
+      + 'a reader who stops at the heading must not be shown work that is not there.',
+    )
+  })
+
   it('every test count the registers state is the count the file has', () => {
     // The same defect in a different unit. A register entry says "what shipped"
     // and names the suite and its size — `test/charts.test.js` (50 tests) — and
