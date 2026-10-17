@@ -55,6 +55,14 @@ const SURFACES = [
   { dir: 'districts', module: 'public/districts/app.js' },
   { dir: 'parametric', module: 'public/parametric/app.js' },
   { dir: 'scenarios', module: 'public/scenarios/app.js' },
+  // `chw` was left out of this list, and it was the one surface carrying the
+  // defect R-63 exists to catch: `app.js` wrote
+  // `documentElement.dir = locale === 'ar' ? 'rtl' : 'ltr'` by hand, one line
+  // below a `__i18n.set()` call that already applies both attributes from the
+  // shared table. The gate could not see it — the surface was not enumerated,
+  // so a private RTL list in the only file the check never read was reported
+  // clean for as long as the check has existed.
+  { dir: 'chw', module: 'public/chw/app.js' },
 ]
 
 /* ================================================================== R-61 */
@@ -299,7 +307,9 @@ describe('R-63 — lang and dir are correct at boot on every surface', () => {
     // Not the fix — the fix is the boot call — but a surface with no `lang` at
     // all is wrong before any script runs, and the boot call can only correct
     // what it finds.
-    for (const dir of [...SURFACES.map((s) => s.dir), 'chw']) {
+    // `chw` used to be appended here because it was not in SURFACES; now that
+    // it is, the spread covers all seven and the extra entry would double it.
+    for (const dir of SURFACES.map((s) => s.dir)) {
       const html = read(`public/${dir}/index.html`)
       assert.match(html, /<html[^>]*\blang="/, `public/${dir}/index.html has no lang on <html>`)
       assert.match(html, /<html[^>]*\bdir="/, `public/${dir}/index.html has no dir on <html>`)

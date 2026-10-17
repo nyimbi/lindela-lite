@@ -230,6 +230,22 @@ each with its own sample size, refused ones included.
 
 ### Fixed
 
+**The one surface with the RTL defect was the one surface the gate never read.**
+`public/chw/app.js` wrote `document.documentElement.dir = state.locale === 'ar' ?
+'rtl' : 'ltr'` by hand, one line below a `__i18n.set()` call that already applies
+`lang` and `dir` from `fmt.js`'s locale table — so the line was redundant *and* a
+second spelling of the RTL list, correct today and silently missing the next RTL
+locale added. `test/web-locale-boot.test.js` exists to catch exactly this (R-63)
+and reported clean, because `chw` was absent from the test's own `SURFACES`
+enumeration: every assertion in that block loops over the list, and the surface
+carrying the defect was the one not in it. `chw` is enumerated now, the line is
+deleted, and no file in `public/` or `src/` sets `dir` or `lang` on the document
+by hand. Restoring the line reddens two assertions — the per-surface one and
+`fmt.js is the only module that maps a locale to a direction` — which is the
+canary the gate had never been pointed at. Roadmap item 20's residual is closed
+with it, and `fmt.js`'s own comment no longer claims three surfaces set it by
+hand.
+
 **An unapproved alert published to a national relay as cleared for action.** The
 SMS dispatch path refuses a `proposed` alert with `409 Alert not approved`
 (`src/routes/rapidpro.js:145`), but CAP was the second way out of the building and

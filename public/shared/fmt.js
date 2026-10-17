@@ -289,9 +289,10 @@ export function metres(value, { dash = '—' } = {}) {
 /**
  * What the product knows about each locale it ships.
  *
- * `rtl` drives `document.documentElement.dir`. Three surfaces set it by
- * hand and five do not, and the RTL block in styles.css could never be reached
- * from markup because every page hardcoded `dir="ltr"` on <html>.
+ * `rtl` drives `document.documentElement.dir`, through `isRtl` and the applier
+ * below — the only place the mapping exists. Every surface reaches it via
+ * `applyLocaleToDocument` or `initI18n`'s `set()`; a private
+ * `locale === 'ar' ? 'rtl' : 'ltr'` is the defect `web-locale-boot` fails on.
  *
  * `label` is the language's name in that language, which is what a reader
  * looking for their own language expects to see in a picker.

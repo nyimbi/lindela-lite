@@ -307,9 +307,13 @@ async function init() {
   localeSelect.addEventListener('change', async (e) => {
     state.locale = e.target.value
     localStorage.setItem('lindela_lite_locale', state.locale)
+    // `set()` applies lang and dir through the shared table. The two lines
+    // that used to follow it were redundant with the first and a second
+    // spelling of the RTL list for the second — a private
+    // `locale === 'ar' ? 'rtl' : 'ltr'` that adding a second RTL locale
+    // would have silently missed, which is the defect `isRtl` exists to
+    // prevent.
     await window.__i18n.set(state.locale)
-    document.documentElement.lang = state.locale
-    document.documentElement.dir = state.locale === 'ar' ? 'rtl' : 'ltr'
   })
 
   includeNameToggle.addEventListener('change', (e) => {

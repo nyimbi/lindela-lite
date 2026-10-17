@@ -367,14 +367,22 @@ The gaps are uneven in a way that matters:
   `ar: { label: 'العربية', rtl: true }`, and `public/focal-point/index.html:491`
   offers `ar` with the whole `focal-point.*` namespace translated to 100%. The
   surfaces a district officer uses still do not: `chw`, `districts`, `scenarios`
-  and `parametric` offer no `ar`, and `public/chw/app.js:312` writes
-  `dir = 'rtl'` from its own inline test rather than from `isRtl` — a second
-  spelling of the same decision, correct today and diverging the moment a second
-  RTL locale is added.
+  and `parametric` offer no `ar`.
   *(This bullet said "not implemented". It was implemented on 2026-10-13 and
   reachable through the focal-point surface; the residual is the four surfaces
-  that cannot reach it and the duplicate test, which is a narrower finding with a
-  different fix.)*
+  that cannot reach it.)*
+  The duplicate test it also named is **closed 2026-10-17**: `public/chw/app.js`
+  wrote `documentElement.dir = locale === 'ar' ? 'rtl' : 'ltr'` by hand, one line
+  below a `__i18n.set()` call that already applies both attributes from the shared
+  table, so the line was redundant *and* a second spelling of the RTL list. It is
+  deleted, and the gate that exists to prevent it — R-63's per-surface check in
+  `test/web-locale-boot.test.js` — could not see it, because `chw` was the one
+  surface absent from the test's own `SURFACES` enumeration. Adding it there
+  makes the surface list complete, and the check now fails on the defect it was
+  written for: restoring that line reddens two assertions, the per-surface one and
+  "fmt.js is the only module that maps a locale to a direction". No surface
+  writes `dir` by hand any more, so the "three surfaces" figure in `fmt.js`'s own
+  comment is corrected with it.
 - Alert SMS is monolingual (`src/rapidpro.js:301`), which is the one channel that
   reaches the field.
 - The plain-language report mode was not built. `src/reports.js` is **1,117** lines
