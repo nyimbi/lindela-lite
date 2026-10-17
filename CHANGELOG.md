@@ -230,6 +230,28 @@ each with its own sample size, refused ones included.
 
 ### Fixed
 
+**An unapproved alert published to a national relay as cleared for action.** The
+SMS dispatch path refuses a `proposed` alert with `409 Alert not approved`
+(`src/routes/rapidpro.js:145`), but CAP was the second way out of the building and
+carried no gate: `renderCapXml` hardcoded `<status>Actual</status>` for every
+alert, and CAP 1.2 defines `Actual` as *"actionable by all targeted recipients"*.
+So an alert no human had reviewed reached a national Early Warning System with
+this platform asserting it was cleared to act on — the stricter channel was the
+ungated one (ALERT-02; item 7 of `roadmap-extension.md`).
+
+CAP 1.2 already has the value for this state: `Draft` is *"a preliminary template
+or draft, not actionable in its current form"* (OASIS CAP v1.2, `<status>` code
+values, archived at `sources/CAP-v1.2-os.html`). `resolveCapStatus` (`src/cap.js`)
+now returns `Draft` unless the alert's `approval.state` is `approved` or
+`auto_approved` — the dispatch path's own predicate, so the two paths cannot
+disagree — and an absent approval is `proposed`, the same default `approveAlertEvent`
+takes. The Atom feed (`src/cap-profile.js`) marks an unapproved entry
+`DRAFT (not approved)` in its title rather than dropping it, because a consumer
+that dedupes on `<id>` would otherwise keep the last version it saw and never
+learn the alert was never approved. `test/cap-encoding.test.js` holds both paths
+and asserts the CAP gate and the dispatch gate agree on every state the store can
+hold.
+
 **A single service asset was unaddressable.** `GET /api/v1/service-assets/<id>`
 matched no route and 404'd while the collection itself listed fine, so a caller
 holding an asset id had no way to resolve one — including `POST

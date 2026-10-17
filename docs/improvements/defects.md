@@ -57,6 +57,7 @@ under **Unreleased**; this table is the index into them.
 | ING-06 | fixed | `gdacs_archive` declares `budget_ms`; the walk spends it and checks it before each window | `completeness-wiring.test.js`, `ingestion-wiring.test.js` |
 | ALERT-01 | fixed | lifecycle→msgtype table asserted against the alert-status vocabulary; unknown throws | `cap-encoding.test.js` |
 | ALERT-07 | fixed | `scopeOverride` honoured and validated; falsy-but-present values no longer fall back to `Public` | `cap-encoding.test.js` |
+| ALERT-02 | fixed | CAP `<status>` is `Draft` unless the alert was approved, taking the dispatch gate's own predicate; the feed marks an unapproved entry | `cap-encoding.test.js` |
 | DATA-03 | fixed | each asset counted once, from the shared collection list | `facilities-at-risk-counting.test.js` |
 | DATA-05 | fixed | full pagination with a real total; the 30-row slice is no longer the total | `district-rates.test.js` |
 | DATA-07 | fixed | one `false_alert_rate` definition, in both places, with the denominator exposed | `district-rates.test.js` |

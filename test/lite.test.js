@@ -197,7 +197,7 @@ describe('Lindela Lite CAP', () => {
   })
 
   it('publishes a resolved alert as a Cancel so downstream systems retire it', () => {
-    const xml = renderCapXml({ id: 'a', message: 'Situation resolved', status: 'resolved', severity: 'high' })
+    const xml = renderCapXml({ id: 'a', message: 'Situation resolved', status: 'resolved', severity: 'high', approval: { state: 'approved' } })
     assert.match(xml, /<msgType>Cancel<\/msgType>/)
     assert.match(xml, /<status>Actual<\/status>/, 'the message itself remains true')
   })

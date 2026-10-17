@@ -52,7 +52,7 @@ import { describe, it } from 'node:test'
  * needs a reader and is the registers' own business. This holds the skeleton.
  *
  * Also not checked: `defects.md`'s "Roughly 55 findings". It is hedged prose
- * rather than a derived total — the file carries 26 `###` headings, 50
+ * rather than a derived total — the file carries 26 `###` headings, 51
  * severity-table rows, and 80 distinct ids once cross-references from other
  * entries are counted, so "55" cannot be reconciled against a set the file
  * actually defines. A check would have to pick one of those shapes and would
@@ -65,6 +65,9 @@ import { describe, it } from 'node:test'
  * counted 26 ids twice. The distinct count at that commit was 42, not 68. A
  * number that is wrong by construction inside a comment about not checking
  * numbers is the tell — ask of any total whether its addends are disjoint.
+ * (The row count moved 50 → 51 on 2026-10-17, when ALERT-02's fix was recorded
+ * in the table; the distinct count did not move, because the id was already
+ * mentioned in the finding bullet above it.)
  */
 
 const ROOT = path.resolve(new URL('..', import.meta.url).pathname)
@@ -194,10 +197,20 @@ describe('the improvement registers state totals their tables agree with', () =>
       'read no heading/table disagreement in roadmap-extension.md — the reader or the register is wrong')
 
     // The list wraps across lines in the header, so the capture spans a newline.
-    const note = /Ten headings disagree with it \(([\d,\s]+?)\)/.exec(ROADMAP)
+    // The count is read too, and compared against the list's length: the earlier
+    // form pinned the literal word "Ten", so correcting the list without
+    // correcting the word — or the reverse — passed. Item 7 left this set on
+    // 2026-10-17, which is what surfaced it.
+    const note = /(\w+) headings disagree with it \(([\d,\s]+?)\)/.exec(ROADMAP)
     assert.ok(note, 'the roadmap-extension header no longer states which headings disagree with the table')
-    const declared = note[1].split(',').map((x) => Number(x.trim())).filter((x) => !Number.isNaN(x))
+    const WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 }
+    const statedCount = WORDS[note[1].toLowerCase()] ?? Number(note[1])
+    assert.ok(Number.isInteger(statedCount),
+      `the header states a count this check cannot read: '${note[1]}'`)
+    const declared = note[2].split(',').map((x) => Number(x.trim())).filter((x) => !Number.isNaN(x))
 
+    assert.equal(statedCount, declared.length,
+      `the header says ${statedCount} headings disagree but names ${declared.length} (${declared})`)
     assert.deepEqual(declared, disagree,
       `the header names items [${declared}] as disagreeing with the Summary table; the headings and rows `
       + `disagree at [${disagree}]. A hand-typed list that does not follow the document is the drift this `

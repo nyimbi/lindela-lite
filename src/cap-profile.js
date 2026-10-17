@@ -27,6 +27,8 @@
  * Determinism: nothing here reads a clock or a random source.
  */
 
+import { resolveCapStatus } from './cap.js'
+
 /**
  * The `<alert>` sub-elements, in schema order.
  *
@@ -374,9 +376,19 @@ export function renderCapFeed(alerts = [], { baseUrl = '', title = 'Lindela Lite
   const entries = rows.map((alert) => {
     const link = capPermalink(alert, { baseUrl })
     const when = alert.updated_at || alert.created_at || null
+    // The entry carries the approval state, because the feed is where a poller
+    // decides what to act on and the linked document is a second request away.
+    // A `Draft` alert is not actionable (CAP 1.2 `<status>`), so its title says
+    // so — the same treatment `CANCELLED:` gets in `renderCapXml`, and for the
+    // same reason: anything that keys on the text must not read a draft as a
+    // live warning. It stays in the feed rather than being dropped, because a
+    // consumer that dedupes on `<id>` would otherwise keep the last version it
+    // saw and never learn the alert was never approved.
+    const draft = resolveCapStatus(alert) === 'Draft'
+    const title = String(alert.message || alert.rule_name || alert.id)
     return `  <entry>
     <id>${escapeXml(String(alert.id))}</id>
-    <title>${escapeXml(String(alert.message || alert.rule_name || alert.id))}</title>
+    <title>${escapeXml(draft ? `DRAFT (not approved): ${title}` : title)}</title>
     <link rel="alternate" type="application/cap+xml" href="${escapeXml(link)}"/>
 ${when ? `    <updated>${escapeXml(String(when))}</updated>\n` : ''}    <summary>${escapeXml(String(alert.rule_name || alert.metric || 'Alert'))}</summary>
   </entry>`

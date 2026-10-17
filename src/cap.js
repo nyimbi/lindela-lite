@@ -75,10 +75,12 @@ export function renderCapXml(alertEvent = {}, options = {}) {
   const identifier = alertEvent.id || `lindela-${Date.now()}`
   const sent = new Date().toISOString()
 
-  // CAP status reflects the alert lifecycle: a withdrawn or resolved alert is
-  // still `Actual` (the message is true) but is published as a Cancel, so a
-  // downstream system retires it rather than leaving it live.
-  const status = 'Actual'
+  // CAP `status` and `msgType` are independent, and both matter to a consumer.
+  // `msgType` reflects the alert lifecycle: a withdrawn or resolved alert is
+  // still a true message, so it is published as a Cancel that retires the prior
+  // Alert by identifier rather than left live. `status` reflects whether a human
+  // approved it — see `resolveCapStatus`.
+  const status = resolveCapStatus(alertEvent)
   const msgType = resolveMsgType(alertEvent)
   const cancelled = msgType === 'Cancel'
   const scope = resolveScope(scopeOverride)
@@ -145,6 +147,30 @@ function resolveMsgType(alertEvent) {
     )
   }
   return CAP_MSG_TYPES[raw]
+}
+
+/**
+ * The CAP `status` for an alert event, from whether a human approved it.
+ *
+ * CAP 1.2 defines `<status>` as the message's actionability, and reserves the
+ * value for exactly this case: `Draft` is *"a preliminary template or draft, not
+ * actionable in its current form"* (OASIS CAP v1.2, `<status>` code values,
+ * archived at `sources/CAP-v1.2-os.html`). The renderer hardcoded `Actual` —
+ * *"actionable by all targeted recipients"* — for every alert, so an alert a
+ * human had not approved published to a national relay with the platform
+ * asserting it was cleared for action. That is the same defect the SMS dispatch
+ * path already refuses: `POST /api/v1/rapidpro/alert-events/:id/send` answers a
+ * `proposed` alert `409 Alert not approved` (`src/routes/rapidpro.js:145`), and
+ * the CAP document is the other way out of the building.
+ *
+ * The predicate is the dispatch path's, not a second rule: approved means
+ * `approved` or `auto_approved`, and an absent approval is `proposed` — the same
+ * default `approveAlertEvent` and the dispatch gate both take. A record that
+ * predates the approval field is therefore Draft rather than silently cleared.
+ */
+export function resolveCapStatus(alertEvent) {
+  const state = alertEvent?.approval?.state ?? 'proposed'
+  return state === 'approved' || state === 'auto_approved' ? 'Actual' : 'Draft'
 }
 
 /**

@@ -63,8 +63,19 @@ describe('ENH-36 — the validator refuses what a consumer would refuse', () => 
   it('rejects an element in the wrong order', () => {
     // `msgType` before `status` is a document a conforming parser rejects, and
     // it is the shape a renderer drifts into when someone reorders the template.
-    const broken = good()
-      .replace('<status>Actual</status>\n  <msgType>Alert</msgType>', '<msgType>Alert</msgType>\n  <status>Actual</status>')
+    //
+    // The swap is derived rather than written out: the earlier form was a literal
+    // `.replace('<status>Actual</status>\n  <msgType>Alert</msgType>', …)`, which
+    // stopped matching the moment `<status>` became approval-dependent — the
+    // replace was a no-op, `broken` equalled `good`, and this canary went on
+    // passing while planting nothing. Assert the patch landed before trusting
+    // the verdict.
+    const good = renderCapXml(alert({ approval: { state: 'approved' } }))
+    const broken = good.replace(
+      /(<status>[^<]+<\/status>)\n(\s*)(<msgType>[^<]+<\/msgType>)/,
+      (_m, statusEl, indent, msgTypeEl) => `${msgTypeEl}\n${indent}${statusEl}`
+    )
+    assert.notEqual(broken, good, 'the wrong-order patch did not apply — this canary is planting nothing')
     const verdict = validateCapProfile(broken)
     assert.equal(verdict.valid, false)
     assert.ok(verdict.errors.some((e) => /appears after/.test(e)), `no ordering error was reported: ${verdict.errors}`)

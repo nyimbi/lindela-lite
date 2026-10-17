@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, it } from 'node:test'
 import { renderCapXml } from '../src/cap.js'
+import { validateCapProfile } from '../src/cap-profile.js'
 import { ALERT_EVENT_STATUSES } from '../src/schema.js'
 import { createServer } from '../src/server.js'
 import { JsonStore } from '../src/store.js'
@@ -77,6 +78,52 @@ describe('CAP msgType follows the platform status vocabulary', () => {
   })
 })
 
+describe('CAP status is the approval gate', () => {
+  // Item 7 of roadmap-extension.md: "SMS is approval-gated; the CAP handler
+  // still has no gate". The renderer hardcoded `<status>Actual</status>` for
+  // every alert, and CAP 1.2 defines Actual as "actionable by all targeted
+  // recipients" against Draft's "not actionable in its current form". So an
+  // alert a human had not approved published to a national relay with this
+  // platform asserting it was cleared for action — while the SMS path answered
+  // the same alert `409 Alert not approved` (src/routes/rapidpro.js:145). Two
+  // ways out of the building, one gate.
+  it('publishes an unapproved alert as Draft, not Actual', () => {
+    assert.equal(tag(renderCapXml(alert({ approval: { state: 'proposed' } })), 'status'), 'Draft')
+    assert.equal(tag(renderCapXml(alert({ approval: { state: 'rejected' } })), 'status'), 'Draft')
+  })
+
+  it('publishes an approved or auto-approved alert as Actual', () => {
+    assert.equal(tag(renderCapXml(alert({ approval: { state: 'approved' } })), 'status'), 'Actual')
+    assert.equal(tag(renderCapXml(alert({ approval: { state: 'auto_approved' } })), 'status'), 'Actual')
+  })
+
+  it('treats a record with no approval field as Draft', () => {
+    // The same default the dispatch gate and `approveAlertEvent` take: absent
+    // means proposed. A record predating the field is not silently cleared.
+    assert.equal(tag(renderCapXml(alert()), 'status'), 'Draft')
+    assert.equal(tag(renderCapXml(alert({ approval: {} })), 'status'), 'Draft')
+    assert.equal(tag(renderCapXml(alert({ approval: null })), 'status'), 'Draft')
+  })
+
+  it('agrees with the dispatch gate on every state it can hold', () => {
+    // The predicate must be the dispatch path's, not a second rule. If the two
+    // ever disagree, one of them is wrong and this says which.
+    const dispatchAllows = (state) => state === 'approved' || state === 'auto_approved'
+    for (const state of ['proposed', 'approved', 'auto_approved', 'rejected']) {
+      const capAllows = tag(renderCapXml(alert({ approval: { state } })), 'status') === 'Actual'
+      assert.equal(capAllows, dispatchAllows(state),
+        `CAP and the dispatch gate disagree on approval state '${state}'`)
+    }
+  })
+
+  it('a Draft document still passes the CAP 1.2 profile', () => {
+    // The gate must not make the document unreadable: Draft is a real CAP 1.2
+    // status value, so a conforming consumer parses it and knows not to act.
+    const verdict = validateCapProfile(renderCapXml(alert({ approval: { state: 'proposed' } })))
+    assert.equal(verdict.valid, true, verdict.errors.join('; '))
+  })
+})
+
 describe('a resolved alert is rendered as a cancellation, not as the warning again', () => {
   it('says the alert is cancelled in the headline', () => {
     const xml = renderCapXml(alert({ status: 'resolved' }))
@@ -101,11 +148,16 @@ describe('a resolved alert is rendered as a cancellation, not as the warning aga
     // CAP Cancel exists to retire a prior Alert by identifier. Dropping the
     // message would leave the downstream system holding the original live
     // alert forever, which is the exact harm ALERT-01 describes.
-    const xml = renderCapXml(alert({ status: 'resolved' }))
+    //
+    // The record here is approved, because `<status>` is now the approval gate:
+    // a cancellation is a true statement about an approved alert, so it stays
+    // `Actual`. The separate assertion below covers the unapproved case, where
+    // `Draft` is the honest value regardless of msgType.
+    const xml = renderCapXml(alert({ status: 'resolved', approval: { state: 'approved' } }))
     assert.match(xml, /<identifier>alert_x<\/identifier>/,
       'the cancellation must carry the identifier of the alert it retires')
     assert.equal(tag(xml, 'status'), 'Actual',
-      'the cancellation itself is a true statement, so it stays Actual')
+      'an approved cancellation is a true statement, so it stays Actual')
   })
 
   it('reports an undetermined outcome only on a retired alert', () => {
@@ -262,6 +314,44 @@ describe('the CAP feed is the set a subscriber polls', () => {
       assert.equal(resolved.pathname, '/api/v1/alert-events/alert_open.cap')
       assert.equal((await fetch(resolved)).status, 200,
         `the feed advertised ${href}, which does not resolve`)
+    } finally {
+      listener.close()
+    }
+  })
+
+  it('marks an unapproved entry so a poller does not read it as a live warning', async () => {
+    // The feed is the other way out of the building, and it is where a poller
+    // decides what to act on. The entry carries the state in its title rather
+    // than being dropped, because a consumer that dedupes on `<id>` would
+    // otherwise keep the last version it saw and never learn the alert was
+    // never approved.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-lite-cap-draft-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    const server = createServer({ store })
+    const listener = server.listen(0)
+    const { port } = listener.address()
+
+    try {
+      await store.merge({
+        alert_events: [
+          alert({ id: 'alert_draft', approval: { state: 'proposed' } }),
+          alert({ id: 'alert_live', approval: { state: 'approved' } }),
+        ],
+      })
+
+      const feed = await (await fetch(`http://localhost:${port}/api/v1/alert-events/cap-feed`)).text()
+      const titleFor = (id) => {
+        const entry = new RegExp(`<id>${id}</id>[\\s\\S]*?</entry>`).exec(feed)?.[0] || ''
+        return (/<title>([\s\S]*?)<\/title>/.exec(entry) || [])[1] || ''
+      }
+
+      assert.match(titleFor('alert_draft'), /DRAFT/, 'an unapproved alert read as a live warning in the feed')
+      assert.doesNotMatch(titleFor('alert_live'), /DRAFT/, 'an approved alert was marked as a draft')
+      assert.match(feed, /<id>alert_draft<\/id>/, 'the draft was dropped, so a deduping poller keeps its stale copy')
+
+      // And the document it links to agrees, so the two paths cannot drift.
+      const doc = await (await fetch(`http://localhost:${port}/api/v1/alert-events/alert_draft.cap`)).text()
+      assert.match(doc, /<status>Draft<\/status>/, 'the linked document does not agree with the feed')
     } finally {
       listener.close()
     }

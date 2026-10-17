@@ -24,10 +24,12 @@ current one.** Items 1–20 below are the audit note as written on 2026-10-05: e
 names what was wrong at that tree, with the `file:line` that showed it. The
 [Summary](#summary) table near the end is the status **re-verified on 2026-10-16**,
 and where the two disagree the table is right — it names the file and the test
-that closed each defect. Ten headings disagree with it (1, 2, 4, 5, 7, 8, 11, 13,
+that closed each defect. Nine headings disagree with it (1, 2, 4, 5, 8, 11, 13,
 14, 15): eight were corrected upward, because the defect had already been fixed,
-and two downward, because a later check found the item was less complete than the
-heading claimed. The headings are kept as written rather than edited, because the
+and one downward, because a later check found the item was less complete than the
+heading claimed. (Item 7 was the tenth until 2026-10-17, when its CAP half was
+closed and its heading corrected with it.) The headings are kept as written rather
+than edited, because the
 gap between what a note claimed and what the tree does is the finding — but a
 reader who stops at a heading and not the table is reading a 2026-10-05 status.
 Several of the audit note's citations are to a tree that has since moved
@@ -121,20 +123,37 @@ zero, so precision and recall are the same meaningless number, and it reports
 requiring documented trigger histories — a backtest that does not test the trigger
 is worse than none, because it produces evidence.
 
-### 7. Human-in-the-loop approval for high-severity alerts — **Shipped on SMS, absent on CAP**
+### 7. Human-in-the-loop approval for high-severity alerts — **Shipped**
 
 *`alert_events.approval` state machine with reviewer identity; wire into the SMS
 send path.*
 
 The state machine shipped in `src/alerts.js` and `src/workflows.js`, and the SMS
 path is gated (then `src/server.js:1582`; now `src/routes/rapidpro.js`). The CAP
-endpoint (then `src/server.js:1649-1661`; now `src/routes/alerting.js`) has <!-- line-drift-ok: quoted as it was before the move -->
+endpoint (then `src/server.js:1649-1661`; now `src/routes/alerting.js`) had <!-- line-drift-ok: quoted as it was before the move -->
 **no approval gate**, so a human review requirement
 enforced on SMS is bypassed by requesting CAP XML instead — the stricter channel is
 the ungated one.
 
+**Closed 2026-10-17.** CAP was the second of the two ways an alert leaves the
+building, and it now carries the same gate as SMS. CAP 1.2 already has the value
+for it: `<status>Draft</status>` is *"a preliminary template or draft, not
+actionable in its current form"*, against `Actual`'s *"actionable by all targeted
+recipients"* (OASIS CAP v1.2, `<status>` code values, archived at
+`sources/CAP-v1.2-os.html`). The renderer hardcoded `Actual`, so an alert no human
+had approved published to a national relay with this platform asserting it was
+cleared for action. `resolveCapStatus` (`src/cap.js`) now takes the dispatch
+path's own predicate — approved means `approved` or `auto_approved`, and an absent
+approval is `proposed` — so the two paths cannot disagree. The feed
+(`src/cap-profile.js`) marks an unapproved entry `DRAFT (not approved)` rather than
+dropping it, because a consumer that dedupes on `<id>` would otherwise keep the
+last version it saw and never learn the alert was never approved. `test/cap-encoding.test.js`
+holds both paths, including an assertion that CAP and the dispatch gate agree on
+every state the store can hold.
+
 The roadmap's framing was right and remains right: *"the code doesn't enforce it
-yet"* is now only true of one of two paths.
+yet"* was true of the CAP path when this note was written, and is now true of
+neither.
 
 ### 8. Two-way RapidPro flow correlation — **Partial**
 
@@ -386,7 +405,7 @@ The gaps are uneven in a way that matters:
 | 4 | Bias-corrected downscaling | **Shipped** — `MIN_STATIONS_FOR_QUANTILE_MAP = 3`, null-refusing (`src/analytics/downscaling.js:18`), wired at `src/routes/compute.js:58` | "degenerate with one station" |
 | 5 | Data-quality lineage graph | **Shipped** — one lineage row per source run with its own counts and hashes (`src/provenance.js:223`, `test/record-provenance.test.js:385`) | "implemented, tested, wrong" |
 | 6 | Trigger protocols + backtest | **Shipped** — the backtest reads `protocol.metric`/`operator`/`threshold` (`src/alerts.js:454-491`, `test/trigger-backtest.test.js`) | "backtest does not test the trigger" |
-| 7 | Approval gate | **Partial** — SMS is approval-gated (`src/routes/rapidpro.js:145`); the CAP handler (`src/routes/alerting.js:206-245`) still has no gate | "Shipped on SMS, absent on CAP" |
+| 7 | Approval gate | **Shipped** — the SMS path is gated (`src/routes/rapidpro.js:145`) and so is CAP: `<status>` is now `Draft` ("not actionable in its current form", CAP 1.2) unless a human approved the alert (`src/cap.js`, `resolveCapStatus`), and the feed marks an unapproved entry (`src/cap-profile.js`). Guard: `test/cap-encoding.test.js` | "Shipped on SMS, absent on CAP" |
 | 8 | Two-way RapidPro correlation | **Shipped** — `correlateReply` (`src/rapidpro.js:907`), `responseMetrics`, `deliveryReport` (`:1322`) | "no correlation, no delivery tracking" |
 | 9 | Offline-first PWA | **Shipped** | — |
 | 10 | STAC / OGC | **Shipped** | — |
@@ -401,7 +420,7 @@ The gaps are uneven in a way that matters:
 | 19 | Scenario workbench | **Shipped** | — |
 | 20 | Localization + RTL | **Partial** — **10** locales, not 11, and RTL *is* implemented (`public/shared/fmt.js:299-334`); the pickers offer only English | "11 locales, missing on 3 key surfaces" |
 
-**14 shipped, 6 partial, 0 rejected.** The footer read "5 shipped, 15 partial"
+**15 shipped, 5 partial, 0 rejected.** The footer read "5 shipped, 15 partial"
 until 2026-10-16, which its own table above has never said — counting the rows
 gives 7 `Shipped` and 13 `Partial` at the time, and that count was itself made
 from rows a third of which were stale. Row 2 moved Partial → Shipped later the
