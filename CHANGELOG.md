@@ -230,6 +230,20 @@ each with its own sample size, refused ones included.
 
 ### Fixed
 
+**A CAP alert described its area as a boundary while emitting a disc.** The
+`<area>` block carries a centroid and a radius, and `areaDesc` called it a
+"district extent" — so the document asserted a boundary the circle does not
+trace. For Turkana the 200 km disc covers roughly 125,000 km² against a county
+area near 80,000, so a consumer activating on the circle alerts people well
+outside the district, and the text gave it no reason to check (D30). Real
+boundary polygons would settle it and the repo ingests none — `src/districts.js`
+carries a centroid and a radius per unit and no ring — so the fix is to make the
+prose agree with the geometry: `areaDesc` now reads `Bor district, approximate: a
+150 km radius around the centroid` and the description says `not the district
+boundary`. `test/lite.test.js` asserts both phrasings and that no `district
+extent` claim survives beside the circle. The `<polygon>` half remains open as a
+data-acquisition item.
+
 **The one surface with the RTL defect was the one surface the gate never read.**
 `public/chw/app.js` wrote `document.documentElement.dir = state.locale === 'ar' ?
 'rtl' : 'ltr'` by hand, one line below a `__i18n.set()` call that already applies

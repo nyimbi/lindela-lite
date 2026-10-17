@@ -56,9 +56,16 @@ const CAP_SCOPES = Object.freeze(['Public', 'Restricted', 'Private'])
  * would have placed every humanitarian alert in this system in open water.
  *
  * The area is now resolved from the alert's district, with that district's own
- * centroid and radius, and the description says it is a district extent rather
- * than a point. Where no district and no coordinates exist, no circle is emitted
- * at all — an absent location is honest, a fabricated one is not.
+ * centroid and radius, and the prose says what the geometry is: a disc of that
+ * radius around the centroid, not the district's boundary. It said "district
+ * extent" while emitting a circle, and the two disagreed — Turkana's 200 km
+ * radius covers ~125,000 km² against a county area near 80,000, so a consumer
+ * activating on the circle alerts people well outside the district (D30). Real
+ * boundary polygons would settle it and the repo ingests none; until they exist,
+ * a bounded approximation that says it is one is honest and a boundary claim the
+ * geometry does not support is not. Where no district and no coordinates exist,
+ * no circle is emitted at all — an absent location is honest, a fabricated one
+ * is not.
  */
 export function renderCapXml(alertEvent = {}, options = {}) {
   const {
@@ -96,7 +103,7 @@ export function renderCapXml(alertEvent = {}, options = {}) {
   const description = escapeXml(descriptionFor(alertEvent, district, cancelled))
 
   const areaDesc = escapeXml(
-    district ? `${district.name} district extent` : 'Affected area, extent not established'
+    district ? `${district.name} district, approximate: a ${district.radius_km} km radius around the centroid` : 'Affected area, extent not established'
   )
   const circle = district
     ? `      <circle>${district.center.lat},${district.center.lon} ${district.radius_km}</circle>`
@@ -275,7 +282,11 @@ function descriptionFor(alertEvent, district, cancelled) {
     const op = alertEvent.operator || '>='
     parts.push(`Trigger: ${alertEvent.metric} ${v ?? '—'} ${op} ${t ?? '—'}.`)
   }
-  if (district) parts.push(`Area: ${district.name} district extent, ${district.radius_km} km from the district centroid.`)
+  // Says "approximate" and gives the geometry's own parameters rather than
+  // calling the disc an extent: the circle is a centroid and a radius, and a
+  // reader deciding whether to activate on it needs to know that, because for
+  // Turkana the disc is half again the county's area (D30).
+  if (district) parts.push(`Area: ${district.name} district, approximate — a ${district.radius_km} km radius around the centroid, not the district boundary.`)
   else parts.push('Area: extent not established for this alert; no coordinates are asserted.')
   if (alertEvent.false_alert === true) parts.push('Reviewed outcome: recorded as a false alarm.')
   else if (alertEvent.false_alert === false) parts.push('Reviewed outcome: recorded as a warranted alert.')

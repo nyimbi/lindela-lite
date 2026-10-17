@@ -186,7 +186,16 @@ describe('Lindela Lite CAP', () => {
     })
     assert.match(xml, /<circle>6\.207,31\.548 150<\/circle>/,
       'the circle must be the district centroid and its radius')
-    assert.match(xml, /Bor district extent/)
+    // The prose must describe the geometry it is attached to. It said "district
+    // extent" while emitting a centroid and a radius, so the document claimed a
+    // boundary the circle does not trace — for Turkana the 200 km disc is half
+    // again the county's area (D30). Both the areaDesc and the description now
+    // say "approximate" and name the radius, so a consumer activating on the
+    // circle knows it is one.
+    assert.match(xml, /Bor district, approximate: a 150 km radius around the centroid/)
+    assert.match(xml, /not the district boundary/)
+    assert.doesNotMatch(xml, /district extent/,
+      'a centroid-and-radius disc must not be described as a district extent')
   })
 
   it('derives urgency from severity rather than a field that does not exist', () => {

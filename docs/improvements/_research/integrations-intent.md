@@ -805,6 +805,16 @@ district.
 change `areaDesc` to "approximate: 200 km radius around the district centroid" so the
 geometry and the prose agree about their own uncertainty.
 
+**Closed 2026-10-17, on the second half.** No district boundary polygons are in the tree —
+`src/districts.js` carries a centroid and a radius per unit and no ring — so the `<polygon>`
+half is a data-acquisition item rather than a renderer one, and the item stays open in that
+shape. What is fixed is the disagreement: `areaDesc` reads `Bor district, approximate: a 150
+km radius around the centroid` and the description says `not the district boundary`, so the
+document states the geometry it emits instead of claiming a boundary the circle does not
+trace. The wording is the one this finding proposed, one paragraph up. Guard:
+`test/lite.test.js` asserts both phrasings and asserts that no `district extent` claim
+survives beside the circle — canaried by restoring the old string, which reddens it.
+
 ---
 
 ### D31. Nothing validates the CAP output against the CAP schema

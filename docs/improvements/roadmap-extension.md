@@ -24,11 +24,15 @@ current one.** Items 1–20 below are the audit note as written on 2026-10-05: e
 names what was wrong at that tree, with the `file:line` that showed it. The
 [Summary](#summary) table near the end is the status **re-verified on 2026-10-16**,
 and where the two disagree the table is right — it names the file and the test
-that closed each defect. Nine headings disagree with it (1, 2, 4, 5, 8, 11, 13,
-14, 15): eight were corrected upward, because the defect had already been fixed,
-and one downward, because a later check found the item was less complete than the
-heading claimed. (Item 7 was the tenth until 2026-10-17, when its CAP half was
-closed and its heading corrected with it.) The headings are kept as written rather
+that closed each defect. Eight headings disagree with it (1, 2, 4, 5, 8, 13, 14,
+15): every one was corrected upward, because the defect had already been fixed.
+(Item 7 was the ninth until 2026-10-17, when its CAP half was closed and its
+heading corrected with it; item 11 was the tenth and the only one that disagreed
+*downward* — its heading said "Shipped, semantically broken" over a table reading
+Partial — and it left the list the same day, when the three semantic defects its
+body named were checked and all three were closed. A heading that contradicts its
+own table in either direction is the same defect, and this list counts both.) The
+headings are kept as written rather
 than edited, because the
 gap between what a note claimed and what the tree does is the finding — but a
 reader who stops at a heading and not the table is reading a 2026-10-05 status.
@@ -186,19 +190,44 @@ publishing 233 hazard events at Null Island. Conformance is asserted in
 `docs/architecture/system-overview.md` §6 and the standard outputs are correctly
 described there as trustworthy, which means errors in them propagate.
 
-### 11. CAP export — **Shipped, semantically broken**
+### 11. CAP export — **Shipped**
 
 `src/cap.js`. The XML itself is **schema-valid**: correct 1.2 namespace, correct
 `xs:sequence` ordering, all required elements, correct escaping in every
 server-populated field, and Circle is a legal CAP geometry. That is better than the
 roadmap asked for.
 
-The semantics are wrong: `Cancel` is unreachable (`src/cap.js:39` keys on
-`rejected`/`cancelled` while `ALERT_EVENT_STATUSES` is
-`open`/`acknowledged`/`resolved`), so rejected alerts keep publishing as live
-alerts (ALERT-01); `<scope>` is hardcoded `Public` for every alert including
-security and conflict (ALERT-07); a 200 km disc is labelled "district extent"
-(D30).
+Three semantic defects were found under it, and **all three are closed**:
+
+- **ALERT-01 — `Cancel` was unreachable**, because the renderer keyed on
+  `rejected`/`cancelled` while `ALERT_EVENT_STATUSES` is
+  `open`/`acknowledged`/`resolved`, so rejected alerts kept publishing as live
+  alerts. `CAP_MSG_TYPES` is now a total map over the status vocabulary and the
+  module **throws** on a status it cannot classify, so a status added to
+  `schema.js` without a CAP meaning fails at import rather than publishing as an
+  `Alert`. Guard: `test/cap-encoding.test.js`.
+- **ALERT-07 — `<scope>` was hardcoded `Public`** for every alert including
+  security and conflict. `resolveScope` honours a `scopeOverride` and refuses a
+  value outside CAP's three, so a misspelt scope is an error rather than a silent
+  `Public`. Guard: `test/cap-encoding.test.js`.
+- **ALERT-02 — the CAP path had no approval gate.** `renderCapXml` hardcoded
+  `<status>Actual</status>` — CAP 1.2's *"actionable by all targeted
+  recipients"* — for every alert, while the SMS dispatch path refuses a
+  `proposed` alert with a 409. The CAP document was the second way out of the
+  building and the ungated one. `resolveCapStatus` takes the dispatch path's own
+  predicate, and the feed marks an unapproved entry. Closed 2026-10-17; see
+  `CHANGELOG.md`.
+
+**One residual, and it is bounded rather than blocked.** D30: the area is a
+centroid and a radius, and the prose called it a "district extent" — Turkana's
+200 km disc covers ~125,000 km² against a county area near 80,000, so a consumer
+activating on the circle alerts people well outside the district. Real boundary
+polygons would settle it and the repo ingests none, so the fix is to make the
+prose agree with the geometry: `areaDesc` and the description now both say
+"approximate" and name the radius, and neither claims a boundary. **Closed
+2026-10-17** on that basis; the polygon half stays open and is a data-acquisition
+item, not a renderer one. Guard: `test/lite.test.js` asserts the wording *and*
+that no "district extent" claim survives beside the circle.
 
 ### 12. Pluggable connector SDK + registry manifest — **Shipped**
 
@@ -417,7 +446,7 @@ The gaps are uneven in a way that matters:
 | 8 | Two-way RapidPro correlation | **Shipped** — `correlateReply` (`src/rapidpro.js:907`), `responseMetrics`, `deliveryReport` (`:1322`) | "no correlation, no delivery tracking" |
 | 9 | Offline-first PWA | **Shipped** | — |
 | 10 | STAC / OGC | **Shipped** | — |
-| 11 | CAP export | **Partial** — message-type mapping and scope validation are fixed (`src/cap.js:24-28`, `:171-180`); the circle geometry is still centroid-plus-radius (`:99-101`) | "XML valid, semantics wrong" |
+| 11 | CAP export | **Shipped** — message-type mapping is a total map over the status vocabulary and throws on an unclassifiable one (`src/cap.js:24-28`), scope is validated (`:171-180`), and the area prose now describes the circle it emits rather than claiming a boundary (`:99`, `:278`) | "XML valid, semantics wrong" |
 | 12 | Connector SDK + registry | **Shipped** — the registry's option surface is compared against each connector's live `spec.schema.requestSchema` (`test/connector-registry-parity.test.js`), so a key the connector never reads fails the suite | — |
 | 13 | Outbox event bus | **Shipped** — `x-signature` set on every delivery (`src/outbox.js:382`); `next_attempt_at` written and honoured with backoff | "signed path cannot work" |
 | 14 | Auth + scoped tokens + audit | **Shipped** — deny-by-default gate, `timingSafeEqual` (`src/auth.js:527`), `/metrics` behind the gate | "GET unauthenticated, fails open" |
@@ -428,7 +457,7 @@ The gaps are uneven in a way that matters:
 | 19 | Scenario workbench | **Shipped** | — |
 | 20 | Localization + RTL | **Partial** — **10** locales, not 11, and RTL *is* implemented (`public/shared/fmt.js:299-334`); the pickers offer only English | "11 locales, missing on 3 key surfaces" |
 
-**15 shipped, 5 partial, 0 rejected.** The footer read "5 shipped, 15 partial"
+**16 shipped, 4 partial, 0 rejected.** The footer read "5 shipped, 15 partial"
 until 2026-10-16, which its own table above has never said — counting the rows
 gives 7 `Shipped` and 13 `Partial` at the time, and that count was itself made
 from rows a third of which were stale. Row 2 moved Partial → Shipped later the
