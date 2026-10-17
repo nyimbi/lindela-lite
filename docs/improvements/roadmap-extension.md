@@ -36,6 +36,13 @@ headings are kept as written rather
 than edited, because the
 gap between what a note claimed and what the tree does is the finding — but a
 reader who stops at a heading and not the table is reading a 2026-10-05 status.
+**The body prose was swept on 2026-10-17, and thirteen items had the same defect
+the heading list counts: their bodies named a defect the Summary table marks
+fixed.** Eight of the thirteen are the headings above (1, 2, 4, 5, 8, 13, 14, 15), and
+five more (3, 6, 9, 12, 19) have headings that *agree* with their rows, which is
+why the list could not count them. Each of the thirteen now carries a closure
+paragraph naming the fix and the guard, and the list above is unchanged — a
+closure paragraph corrects the body, not the heading.
 Several of the audit note's citations are to a tree that has since moved
 (`src/lineage.js` no longer exists; the route table split out of `src/server.js`
 into `src/routes/`), so treat a `file:line` in items 1–20 as a record of where the
@@ -59,6 +66,16 @@ What is missing: `calibrationReport` is computed at `src/analytics.js:5` and **n
 routed** (`src/server.js:835` exports no such endpoint). A calibration report nobody
 can fetch does not calibrate anything. Covered by **ENH-03** and **ENH-04**.
 
+**Both halves closed 2026-10-17, and the quantile half was a deliberate walk-back
+rather than a loss.** `calibrationReport` is routed: `src/routes/events.js:85`
+calls it on the assessment response under a `calibration` key, so the report is
+fetchable. The note's `src/server.js:835` is a citation to a tree that has since
+moved — the route table split out of `src/server.js` into `src/routes/`, which the
+header warns about. The rename the body describes is the better outcome the note
+itself concedes: `score_p10/p50/p90` read as predictive quantiles, they are
+sensitivity bands, and the aliases are kept for stored consumers. Guard:
+`test/lite.test.js`.
+
 ### 2. Ensemble & multi-model forcing — **Partial, and dead**
 
 *Persist raw ensemble members; add `src/analytics/ensemble.js`.*
@@ -72,6 +89,22 @@ inventory as a working capability.
 Decision required: wire it to a real ensemble source, or delete it. **ENH-21** is
 what would earn it a place, because ensemble skill verification is the only thing
 that would justify preferring `ensemble_p90`.
+
+**The decision was taken and the answer was "wire it", 2026-10-17.** Every claim
+in this body is now false against the tree. The module has a live source:
+`src/connectors/open-meteo.js:126` calls `computeEnsembleStats` on the members the
+API returns, gated on `include_ensemble`, and writes `ensemble_members`,
+`ensemble_p10/p50/p90` and `ensemble_source: 'open_meteo_ensemble'` (`:128-136`)
+where the connector previously returned quantiles and no members. `spreadSkillIndex`
+has a production caller — `src/analytics.js:892` calls it inside `computeFloodRisk`,
+which reports `ensemble_spread_index` / `ensemble_spread_basis` /
+`ensemble_spread_floor` — so the "zero callers" and "called only by a test" claims
+are both stale. The `ensemble_used` branch is reachable, and
+`docs/architecture/system-overview.md` §4 was right rather than wrong to list the
+module. ENH-21's verification is what justified the preference, which is exactly
+the condition this note set. Guards: `test/veracity-followups.test.js`,
+`test/lite.test.js`. What the note got right is that the module was dead *when it
+was written* — the wiring landed afterwards, and the heading was never revisited.
 
 ### 3. Impact-based forecasting (IBF) join — **Shipped, broken on Postgres**
 
@@ -111,6 +144,16 @@ its `|| 0` coercion puts missing rainfall at zero rather than absent — the sam
 null-vs-zero conflation the rest of the codebase warns against. The downscaled
 output is preferred over observation.
 
+**All three closed 2026-10-17.** The degeneracy is a named, null-refusing floor:
+`MIN_STATIONS_FOR_QUANTILE_MAP = 3` beside a grid floor (`src/analytics/downscaling.js:18`,
+checked at `:50` and again at `:134`), and below it the map returns `null` for
+both value and trace rather than a constant — so the caller is told the correction
+could not be made instead of being handed a number that looks like one. The
+`|| 0` coercion is gone: non-finite values are filtered out of both distributions
+before the mapping (`numericOrNull`, `:118`), so missing rainfall is absent rather
+than zero. The coverage figure was true of the tree it was written against and the
+body is exercised now. Guard: `test/lite.test.js`.
+
 ### 5. Data-quality lineage graph — **Partial, and wrong**
 
 *Emit per-record provenance into a `data_lineage` table.*
@@ -124,6 +167,22 @@ lineage rows with identical `record_count` and `upstream_checksum`.
 IPC and WHO are excluded entirely.
 
 This is **ENH-15**.
+
+**All four claims closed 2026-10-17, and `src/lineage.js` no longer exists.**
+`src/provenance.js` replaces it and its header states each of the note's four
+defects as the thing it was written to fix: the run-wide record union rebuilt
+inside the per-source loop is gone, so a nine-source run writes nine rows with
+their own `record_count` and `payload_hashes` rather than nine identical ones
+(`:227`, `:256`); `upstream_url_or_endpoint` is no longer always null; the
+`transform_version: '0.1.0'` constant is replaced by
+`summariseTransformVersions` (`:341`), which reports the versions actually
+present; and IPC and WHO are no longer excluded, because the envelope is built
+from the connector's own run rather than a hand-kept list. One lineage row per
+source run is the shape now (`:223`), with an id that is
+`stableId('lineage', [source, source_run_id])` and carries no clock. Guard:
+`test/record-provenance.test.js`. The note's judgement — "the single most
+genuinely open item on the roadmap" — was right when it was written and is the
+reason it got a module rather than a patch.
 
 ## Ops, triggering & response
 
@@ -218,6 +277,17 @@ graph and queues writes. The console boots offline (fixed in `2a74feb`).
 
 Two gaps remain: API responses are not cached for drill-down, and map tiles are
 not cached, so an offline map degrades to an empty frame (**ENH-22**).
+
+**Both closed 2026-10-17.** API GETs are network-first with a cache fallback
+under a tested eviction cap (`CACHE_POLICIES.api`, `public/sw.js:64`; the
+network-first path at `:689`, dispatched at `:540`), and raster basemap tiles
+have their own bucket — 400 entries, a 7-day TTL, routed by prefix at `:165`
+rather than sharing the 48-entry map bucket, so a panning session cannot evict
+the record payloads the offline path exists to serve. The note's second gap was
+the one with a real design question behind it and ADR-013 answers it: tiles are
+immutable imagery served same-origin under `/api/v1/basemap/tiles/`, so they get
+their own policy instead of the general API one. Guard: the offline round-trip
+drill (`test/web-chw-offline.test.js`).
 
 ## Platform & integrations
 

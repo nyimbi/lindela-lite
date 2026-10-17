@@ -230,16 +230,18 @@ each with its own sample size, refused ones included.
 
 ### Fixed
 
-**Three more roadmap bodies named defects their own rows say are fixed, and one
-named a control that was never absent.** Items 3, 6, 12, 13, 14, 15 and 19 each
-described a defect in body prose while the Summary table, 300 lines below, marked
-it fixed. The header's disagreement guard compares a heading's status word to its
-table row, and all seven headings *agree* with their rows — "Shipped, broken on
-Postgres" over a row reading Shipped — so the guard could not see any of them.
-That is the same blind spot items 11, 16, 17 and 18 were found through, in the
-one direction the guard does not count, and the header now says so. Each body
-gained a `**Closed 2026-10-17.**` paragraph naming the fix and the guard, in the
-form item 7's already used.
+**Thirteen roadmap bodies named defects their own rows say are fixed.** Items 1, 2, 3,
+4, 5, 6, 8, 9, 12, 13, 14, 15 and 19 each described a defect in body prose while
+the Summary table, 300 lines below, marked it fixed. Eight of the thirteen headings
+were already on the header's disagreement list (1, 2, 4, 5, 8, 13, 14, 15), because
+their status word differs from their row's — but the other five (3, 6, 9, 12, 19)
+*have* headings that agree with their rows: "Shipped, broken on Postgres" over a
+row reading Shipped. The header's guard compares a heading's status word to its
+table row, so it can only see the first eight, and the body prose in all thirteen is
+invisible to it either way. That is the same blind spot items 11, 16, 17 and 18
+were found through, in the one direction the guard does not count, and the header
+now says so. Each body gained a closure paragraph naming the fix and the guard, in
+the form item 7's already used.
 
 **Item 14's heading was the most wrong thing in the document.** "Worse than
 nothing" judged a tree where the auth gate failed open; SEC-01, SEC-03, SEC-04,
@@ -277,6 +279,21 @@ idempotency keys on `stableId('rapidpro_inbound', [source_id, from, text])`
 (`:948`), so a retried webhook is recognised rather than double-SMSed. What
 remains is ENH-26 and a narrower residual than the note: replies correlate, but
 the content of a free-text reply is not yet parsed into a structured assessment.
+
+**Five more roadmap bodies described a defect the tree has since fixed, and one
+heading agreed with its row.** Items 2, 4, 5 and 9 each carried a body whose
+claims are all refuted now: the ensemble module has a live connector source and a
+production caller for `spreadSkillIndex` (`src/connectors/open-meteo.js:126`,
+`src/analytics.js:892`) where the note said zero callers and an unreachable
+branch; downscaling refuses below three stations with `null` rather than returning
+a constant and no longer coerces missing rainfall to zero
+(`src/analytics/downscaling.js:18`, `:118`); `src/lineage.js` is gone and
+`src/provenance.js` writes one row per source run with its own `record_count` and
+a real `transform_version` (`:227`, `:256`, `:341`); and the service worker caches
+API responses network-first with a fallback plus a separate 400-entry tile bucket
+(`public/sw.js:64`, `:165`, `:689`) where item 9 said neither was cached. Item 9's
+heading read "Shipped" over a body naming two open gaps — the heading agreed with
+its row, so the header's list could not count it.
 
 **Item 18's body cited three things that do not exist and called a closed defect
 broken.** The same shape as items 16 and 17, one item over. All three of its
