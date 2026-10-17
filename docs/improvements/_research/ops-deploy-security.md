@@ -492,6 +492,26 @@ only `provenance`. Pin every action by 40-char commit SHA with the tag in a
 trailing comment. Add `github/codeql-action` (JS + actions). Reconcile
 `supply-chain.md` with reality, or make reality match the doc.
 
+**Closed 2026-10-17, except CodeQL and the `concurrency:` group.** Every fix
+above landed, and one of them was not a fix because the command never worked:
+`npx --yes trivy` is not a runnable package — Trivy is not published to npm — so
+that step failed rather than fetching anything, and "the repo's vulnerability
+scanner is fetched unpinned from npm on every run" described a control that did
+not exist rather than one fetched unsafely. It is
+`aquasecurity/trivy-action@a9c7b0f…` (v0.36.0) now. `@cyclonedx/cyclonedx-npm`
+and `wait-on` carry exact versions (`@6.0.1`, `@9.5.1`). A **top-level**
+`permissions: contents: read` covers every job, so the finding's own count ("no
+`permissions:` block on the `test`, `coverage`, `audit`, `sbom` and
+`live-sources` jobs") was right about job-level blocks and wrong about the
+effective permission — the default was least-privilege, not `contents: write`,
+and `provenance` adds the one block it needs. **All 17** `uses:` are SHA-pinned
+with the tag in a trailing comment; **0** are on a mutable tag.
+`slsa-github-generator` is pinned by 40-char SHA (`@c747fe7… # v1.10.0`) and runs
+with `compile-generator: true`, which is the documented short-SHA form the
+finding asked to verify. `scripts/check-workflows.mjs` guards the file. Still
+open, and stated rather than implied: **no CodeQL job** and **no `concurrency:`
+group**.
+
 ---
 
 ### D11 — `logger.error` is called with reversed arguments, corrupting the log line
@@ -536,6 +556,15 @@ not written verbatim to logs. Good.
 Serialise `err` explicitly — `JSON.stringify(new Error(...))` yields `{}` because
 `message` and `stack` are non-enumerable, so a naive swap silently loses the
 message too.
+
+**Closed 2026-10-17.** The fix above is the one that shipped, including the
+caveat: `src/routes/maintenance.js` logs
+`logger.error('demo_seed_failed', { err: { message: fallbackError.message, stack: fallbackError.stack } })`,
+so the error is serialised explicitly and the character-per-key line is gone. No
+`logger.<level>({…}, 'msg')` call survives anywhere in `src/` (0, measured), and
+`observability.js`'s signature is `(event, fields)`. The finding's own
+observation that this shipped *because* `logger.*` had no test is the part worth
+keeping — the class is a call-shape error no assertion covered.
 
 ---
 

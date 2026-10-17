@@ -230,6 +230,21 @@ each with its own sample size, refused ones included.
 
 ### Fixed
 
+**Two roadmap items listed closed defects as current, and one listed a control
+that never ran.** Item 16's body named three supply-chain defects and item 17's
+two reliability defects, while their own Summary rows — 300 lines below — said
+those were fixed. The heading-level guard compares a heading's status word to its
+table row and cannot see body prose, so both bodies had been false since the
+fixes landed. Checking each sub-claim against the tree closed most of them and
+refuted two outright: `npx --yes trivy` is not a runnable package — Trivy is not
+published to npm — so that step *failed* rather than fetching a scanner
+unpinned, and "no `permissions:` block" was right about job-level blocks and
+wrong about the effective permission, since a top-level `permissions: contents:
+read` covers every job. What remains open is stated rather than implied: no
+CodeQL, no `concurrency:` group, no cosign, no OpenTelemetry. The bodies now say
+so, and the two findings' `**Closed 2026-10-17.**` paragraphs in
+`_research/ops-deploy-security.md` carry the measurements.
+
 **A CAP alert described its area as a boundary while emitting a disc.** The
 `<area>` block carries a centroid and a radius, and `areaDesc` called it a
 "district extent" — so the document asserted a boundary the circle does not

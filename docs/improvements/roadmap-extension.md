@@ -309,16 +309,27 @@ The legal exposure the roadmap identified is real and currently unmet.
 
 *SLSA provenance, CycloneDX SBOM, cosign image signing.*
 
-SBOM shipped: the CycloneDX job at `.github/workflows/ci.yml:53`. The rest did not.
+SBOM shipped: the CycloneDX job at `.github/workflows/ci.yml:145`. The rest did not.
 
-- **Supply chain**: CI fetches unpinned packages at build time —
-  `npx --yes trivy` at `:44`, cyclonedx at `:53`, `wait-on` at `:103,108`. Trivy is
-  the least-safely-fetched thing in the repository.
-- Six of seven jobs have no `permissions:` block; every action is on a mutable tag;
-  no CodeQL.
-- No cosign, no provenance attestation, no release signing.
+Three supply-chain defects were named here, and **two of the three are closed**:
 
-## Reliability, observability & scale
+- **Unpinned build-time fetches.** Closed. `npx --yes trivy` was not even a
+  command — Trivy is not published to npm — so that step failed rather than
+  fetching anything; it is `aquasecurity/trivy-action@a9c7b0f…` (v0.36.0) now, and
+  the `cyclonedx-npm` and `wait-on` invocations carry exact versions
+  (`@6.0.1`, `@9.5.1`). All **17** `uses:` in the workflow are SHA-pinned with the
+  tag in a trailing comment; **0** are on a mutable tag. Guard:
+  `scripts/check-workflows.mjs`.
+- **Six of seven jobs have no `permissions:` block.** Closed, and the count was
+  wrong: the file carries a **top-level** `permissions: contents: read` that every
+  job inherits, so the correct statement was "no *job-level* block", which is a
+  different and weaker finding — the default is least-privilege, not
+  write-all. `provenance` adds the one block it needs (`id-token: write`,
+  `contents: write`). No CodeQL, which stands.
+- **No provenance attestation.** Closed. The `provenance` job invokes
+  `slsa-framework/slsa-github-generator` (SLSA level 3, `compile-generator: true`)
+  on `refs/tags/v*`, attesting exactly the SBOM's hashes. **No cosign** and no
+  release signing, which stands — the item is Partial on those two alone.
 
 ### 17. OpenTelemetry traces + Prometheus metrics + structured logs — **Partial**
 
@@ -326,15 +337,27 @@ SBOM shipped: the CycloneDX job at `.github/workflows/ci.yml:53`. The rest did n
 `/metrics`.*
 
 Metrics and structured logs shipped: `src/observability.js`, counters, histograms,
-Prometheus rendering at `/api/v1/metrics`, JSON request logging at
-`src/server.js:124`. No OpenTelemetry, no tracing, no spans.
+Prometheus rendering at `/api/v1/metrics`, JSON request logging. No OpenTelemetry,
+no tracing, no spans — that is the whole of the remaining gap.
 
-Two defects: `/metrics` is served **before** the auth gate (`src/server.js:105-109`),
-so it is public regardless of configuration (SEC-10); and the histogram map is
-unbounded with a client-controlled label (`src/observability.js:76`), which is a
-memory-growth primitive. One call site has arguments reversed
-(`src/server.js:404`, `logger.error({err}, 'msg')` against signature
-`(event, fields)`), emitting one key per character.
+**Both defects named here are closed, and the second was not a defect.**
+
+- `/metrics` was served **before** the auth gate and did its own `authenticate`, so
+  it enforced authentication and never authorization — any valid token read request
+  rates, error rates and route labels, the last an enumeration aid. It now goes
+  through `enforceAuthGate`, the same function the `/api/v1/` dispatch calls, so the
+  two cannot drift (VUL-08). This was the gate-at-19-of-27-paths shape: correct
+  policy in `auth.js`, no caller reading it.
+- The histogram map is **bounded** — `MAX_METRIC_SERIES = 512`, enforced by `touch`
+  across counters and histograms together, with an `overflow` series counting what
+  it refuses (R-37). "Unbounded with a client-controlled label" was true when the
+  note was written and the label is still client-controlled; the bound is what
+  closed it.
+- The reversed-arguments call site is gone: no `logger.<level>({…}, 'msg')` call
+  survives in `src/` (0, measured), and `observability.js`'s signature is
+  `(event, fields)`.
+
+## Reliability, observability & scale
 
 ### 18. Idempotent ingestion with content-addressed dedup — **Partial, broken on Postgres**
 
