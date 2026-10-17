@@ -52,18 +52,19 @@ import { describe, it } from 'node:test'
  * needs a reader and is the registers' own business. This holds the skeleton.
  *
  * Also not checked: `defects.md`'s "Roughly 55 findings". It is hedged prose
- * rather than a derived total — the file carries 26 `###` headings and 68
- * distinct ids across three shapes (headings, severity-table rows, and
- * cross-references from other entries), so "55" cannot be reconciled against a
- * set the file actually defines. A check would have to pick one of those shapes
- * and would then be measuring its own choice. It stays a reader's judgement.
+ * rather than a derived total — the file carries 26 `###` headings, 50
+ * severity-table rows, and 80 distinct ids once cross-references from other
+ * entries are counted, so "55" cannot be reconciled against a set the file
+ * actually defines. A check would have to pick one of those shapes and would
+ * then be measuring its own choice. It stays a reader's judgement.
  *
- * That figure was 50 when this note was written and is 68 now, which is the
- * point rather than a defect in the note: the ids arrive from three directions
- * and the file does not declare which is the finding set, so no assertion can be
- * written that would not be about the reader's choice of shape. It is recorded
- * here because a stale number in a comment about not checking numbers is exactly
- * the thing this file exists to catch.
+ * That figure was 50 when this note was written, then "68", and is 80 now. The
+ * 68 was wrong in a way worth recording, because it is the same defect this file
+ * exists to catch: it was the *sum* of the 26 headings and the 42 table rows,
+ * and every heading is also a row, so the two sets are not disjoint and 26 + 42
+ * counted 26 ids twice. The distinct count at that commit was 42, not 68. A
+ * number that is wrong by construction inside a comment about not checking
+ * numbers is the tell — ask of any total whether its addends are disjoint.
  */
 
 const ROOT = path.resolve(new URL('..', import.meta.url).pathname)
@@ -444,6 +445,42 @@ describe('the improvement registers state totals their tables agree with', () =>
       'the heading says "Open" and the body says the set is empty of actionable items. '
       + 'Either an item is genuinely open and the body should say so, or the heading is stale — '
       + 'a reader who stops at the heading must not be shown work that is not there.',
+    )
+  })
+
+  it('defects.md: the shape counts in this file\'s header are the shapes the file has', () => {
+    // The header above cites three figures to justify leaving `defects.md`'s
+    // "Roughly 55 findings" unchecked, and they have rotted twice: 50 → 68 → 80.
+    // The 68 was worse than stale — it was the *sum* of the 26 headings and the
+    // 42 table rows, and every heading is also a row, so it counted 26 ids twice
+    // and called the result "distinct". The judgement (a reader's call, because
+    // the file never says which shape is the finding set) is sound and stays;
+    // what was never sound is a hand-typed number in a comment about numbers.
+    //
+    // The three shapes are exactly derivable, so they are asserted here. The
+    // "55" itself is not, and that is the point the header makes: it names a set
+    // the file does not define, so no assertion about it could be about the file
+    // rather than about the reader's choice of shape.
+    const DEFECTS = read('docs/improvements/defects.md')
+    const SELF = read('test/register-totals.test.js')
+
+    const headings = new Set([...DEFECTS.matchAll(/^### ([A-Z]+-\d+)/gm)].map((m) => m[1]))
+    const rows = new Set([...DEFECTS.matchAll(/^\| ?\*{0,2}([A-Z]+-\d+)\*{0,2} ?\|/gm)].map((m) => m[1]))
+    const anyMention = new Set([...DEFECTS.matchAll(/\b([A-Z]+-\d+)\b/g)].map((m) => m[1]))
+
+    // The property that made "68" wrong: the heading set is a subset of the row
+    // set, so the two are not disjoint and must never be added.
+    assert.ok([...headings].every((h) => rows.has(h)),
+      'a defect heading is not also a severity-table row — the header\'s "headings are a subset of rows" '
+      + 'reasoning no longer holds, so re-derive the figures before trusting them')
+
+    const note = /the file carries (\d+) `###` headings, (\d+)\s*\n? \* severity-table rows, and (\d+) distinct ids/.exec(SELF)
+    assert.ok(note, 'the header no longer states the three shape counts — update this check with the sentence')
+    assert.deepEqual(
+      { headings: Number(note[1]), rows: Number(note[2]), distinct: Number(note[3]) },
+      { headings: headings.size, rows: rows.size, distinct: anyMention.size },
+      'the shape counts in this file\'s header disagree with the file they describe. '
+      + 'Re-derive them — and if the number you would write is the sum of the first two, it is the 68 bug again.',
     )
   })
 
