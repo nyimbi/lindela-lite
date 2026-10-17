@@ -134,7 +134,7 @@ function readmeCounts(docName, keys) {
 describe('the improvement registers state totals their tables agree with', () => {
   const ROADMAP = read('docs/improvements/roadmap-extension.md')
   const SOURCES = read('docs/improvements/sources-and-decisions-roadmap.md')
-  const STATUS = read('docs/improvements/status.md')
+  const STATUS_DOC = read('docs/improvements/status.md')
 
   it('roadmap-extension: the table, its footer, and the README index state one count', () => {
     const rows = numberedRows(ROADMAP)
@@ -161,6 +161,46 @@ describe('the improvement registers state totals their tables agree with', () =>
       readmeCounts('roadmap-extension.md', ['shipped', 'partial', 'rejected']),
       { shipped: counts.Shipped, partial: counts.Partial, rejected: counts.Rejected },
       'the README index row for roadmap-extension.md disagrees with the register it summarises')
+  })
+
+  it('roadmap-extension: the header names the headings that disagree with the table', () => {
+    // The document is in two parts. Items 1–20 are the audit note as written on
+    // 2026-10-05, each with the `file:line` that showed the defect; the Summary
+    // table is the status re-verified on 2026-10-16. Ten headings state a status
+    // the table contradicts, and the header now names them and says the table is
+    // right. Nothing read that list before, which is the same defect as the
+    // residuals heading one file over: a reader who stops at a section heading
+    // reads a status the document itself has since refuted.
+    //
+    // The list is *derived*, not pinned. If a heading is edited to match its row,
+    // the header's list is wrong and this fails; if the header is reworded, the
+    // numbers are re-read from it. A pinned literal would pass after either edit
+    // moved and the other did not, which is the drift this file exists to catch.
+    const heads = {}
+    for (const m of ROADMAP.matchAll(/^### (\d+)\. .*?— \*\*([^*]+)\*\*/gm)) heads[m[1]] = m[2].trim()
+
+    const rows = numberedRows(ROADMAP)
+    const statusToken = (cell) => (STATUS.exec(cell) || [])[1]
+
+    const disagree = []
+    for (const { n, cells: c } of rows) {
+      const h = heads[n]
+      if (!h) continue
+      const first = (s) => (s || '').split(/[,\s]/)[0]
+      if (first(h) !== first(statusToken(c[1] || ''))) disagree.push(n)
+    }
+    assert.ok(disagree.length > 0,
+      'read no heading/table disagreement in roadmap-extension.md — the reader or the register is wrong')
+
+    // The list wraps across lines in the header, so the capture spans a newline.
+    const note = /Ten headings disagree with it \(([\d,\s]+?)\)/.exec(ROADMAP)
+    assert.ok(note, 'the roadmap-extension header no longer states which headings disagree with the table')
+    const declared = note[1].split(',').map((x) => Number(x.trim())).filter((x) => !Number.isNaN(x))
+
+    assert.deepEqual(declared, disagree,
+      `the header names items [${declared}] as disagreeing with the Summary table; the headings and rows `
+      + `disagree at [${disagree}]. A hand-typed list that does not follow the document is the drift this `
+      + 'check exists to catch — either a heading was corrected, or the list was.')
   })
 
   it('sources-and-decisions: every declared id range matches the rows the register holds', () => {
@@ -309,7 +349,7 @@ describe('the improvement registers state totals their tables agree with', () =>
   })
 
   it('status.md: the bold total is the table, and the README agrees with both', () => {
-    const rows = [...STATUS.matchAll(/^\|\s*(ENH-\d+)\s*\|(.*)$/gm)]
+    const rows = [...STATUS_DOC.matchAll(/^\|\s*(ENH-\d+)\s*\|(.*)$/gm)]
       .map((m) => ({ id: m[1], cells: cells(m[2]) }))
     assert.equal(rows.length, 30, `read ${rows.length} enhancement rows — expected 30`)
 
@@ -317,7 +357,7 @@ describe('the improvement registers state totals their tables agree with', () =>
     assert.deepEqual(unrecognised, [],
       `status.md rows whose status this check cannot read:\n  ${unrecognised.join('\n  ')}`)
 
-    const bold = /\*\*(\d+) shipped, (\d+) partial, (\d+) not started,\*\* of (\d+)\./.exec(STATUS)
+    const bold = /\*\*(\d+) shipped, (\d+) partial, (\d+) not started,\*\* of (\d+)\./.exec(STATUS_DOC)
     assert.ok(bold, 'status.md states no "**N shipped, N partial, N not started,** of N." total')
     assert.deepEqual(
       { shipped: Number(bold[1]), partial: Number(bold[2]), 'not started': Number(bold[3]), of: Number(bold[4]) },

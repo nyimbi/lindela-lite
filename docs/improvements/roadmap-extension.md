@@ -19,6 +19,22 @@ Status vocabulary: **Shipped** — implemented and wired. **Partial** — exists
 does not do what the roadmap asked, usually for a reason worth reading.
 **Open** — not implemented. **Rejected** — deliberately not done, with reasoning.
 
+**This document is in two parts, and the status in a section heading is not the
+current one.** Items 1–20 below are the audit note as written on 2026-10-05: each
+names what was wrong at that tree, with the `file:line` that showed it. The
+[Summary](#summary) table near the end is the status **re-verified on 2026-10-16**,
+and where the two disagree the table is right — it names the file and the test
+that closed each defect. Ten headings disagree with it (1, 2, 4, 5, 7, 8, 11, 13,
+14, 15): eight were corrected upward, because the defect had already been fixed,
+and two downward, because a later check found the item was less complete than the
+heading claimed. The headings are kept as written rather than edited, because the
+gap between what a note claimed and what the tree does is the finding — but a
+reader who stops at a heading and not the table is reading a 2026-10-05 status.
+Several of the audit note's citations are to a tree that has since moved
+(`src/lineage.js` no longer exists; the route table split out of `src/server.js`
+into `src/routes/`), so treat a `file:line` in items 1–20 as a record of where the
+defect was, not as a pointer to code today.
+
 ---
 
 ## Data & science
