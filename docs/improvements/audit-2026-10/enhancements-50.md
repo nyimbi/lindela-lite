@@ -1455,6 +1455,26 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > the declaration 5,710. The expensive part was not any of those: it was that three
 > separate hand-kept tables had to be *joined* before they could be replaced, and
 > the join was assumed hard because nobody had tried it. It took one query.
+>
+> **IMPLEMENTED 2026-10-15 — the verdict, said in the word the other fifty use.**
+> Every paragraph above is dated history and the last of them still argues "ENH-59
+> staying PARTIAL", so the entry read as open to anyone who stopped at its own
+> heading while the verdict table two hundred lines up moved this item to
+> IMPLEMENTED in the same commit. Nothing compared the two. This is the ENH-60
+> failure one entry over, and it recurred because the fix was written into ENH-60's
+> entry rather than into the shape of the register: a dated paragraph records what
+> was true when it was written, and a *verdict* is a separate claim that has to be
+> restated when it changes. What shipped is `src/route-declaration.js` (5,805 lines,
+> one `(METHOD, path)`-keyed entry per operation), `scripts/generate-openapi.mjs`
+> and `scripts/generate-route-manifests.mjs` emitting `docs/openapi.yaml` and
+> `src/route-manifests.js` from it, and two registered gates —
+> `check-route-drift.mjs` (a committed file differs from its regeneration) and
+> `check-route-reachability.mjs` (a declared route is served by no matcher, or a
+> matcher serves a route no declaration names). The scope tables stay hand-kept and
+> that is a decision, not a residue: a scope is policy, and
+> `test/route-declaration.test.js` proves the agreement instead. What remains open
+> is a duplicate-key gate for the whole spec — the one live instance was fixed here,
+> and a general check is a separate unit.
 
 **ENH-60 — Router extraction.** `handleApiRequestInContext` was 1,597 lines
 (`src/server.js:763–2360` <!-- line-drift-ok: the range as audited; ENH-60 is IMPLEMENTED and the dispatcher is 88 lines now, at `src/server.js:1000–1087` -->) and entangled routing, auth, validation, business logic
