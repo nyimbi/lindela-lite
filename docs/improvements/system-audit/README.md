@@ -177,14 +177,16 @@ Recorded because a rejected idea is a result.
 - **More tests, as an end in itself.** `src/` is at 97.2% direct module coverage. The gap
   is that 7 of 17 gates never run in CI, not that tests are scarce.
   *Closed 2026-10-12 (R-76): both tiers run on every push, and the registry has since
-  grown to 32 gates — 25 self-contained, 7 `needs-browser`. The sentence above is true
+  grown to 33 gates — 26 self-contained, 7 `needs-browser`. The sentence above is true
   of the tree this audit was taken at, not of the tree now.*
   *Re-measured 2026-10-17: it said 31 gates — 24 self-contained — and both were right at
   the commit they were written for. `check-seed-metrics.mjs` is the 32nd, added the same
   day, and it is self-contained because it drives the demo seed into a temp store and
-  reads files rather than a server. Count the registry rather than this line: 32 entries,
+  reads files rather than a server. Count the registry rather than this line: 33 entries,
   `needs-server` is empty, and an import of `run-gates.mjs` hangs because the module runs
-  on import — read the `GATES` array out of the source.*
+  on import — read the `GATES` array out of the source. The 33rd is
+  `check-yaml-duplicate-keys.mjs`, self-contained, which closes the duplicate-key class
+  ENH-59's note left open.*
   *Re-measured 2026-10-17: the coverage figure is the audited tree's too. `src/` holds
   **167** modules and **166** are reached by a test — the 167th, `cors.js`, is a named
   allowlist entry — checked by `scripts/check-module-coverage.mjs`, a gate that did not

@@ -1472,9 +1472,14 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > `check-route-reachability.mjs` (a declared route is served by no matcher, or a
 > matcher serves a route no declaration names). The scope tables stay hand-kept and
 > that is a decision, not a residue: a scope is policy, and
-> `test/route-declaration.test.js` proves the agreement instead. What remains open
-> is a duplicate-key gate for the whole spec — the one live instance was fixed here,
-> and a general check is a separate unit.
+> `test/route-declaration.test.js` proves the agreement instead. The duplicate-key
+> gate this note left open shipped the next day —
+> `scripts/check-yaml-duplicate-keys.mjs`, registered as the 33rd gate — because
+> the class turned out to be reachable through the generator's own input: a
+> route's spec body is a `body:` template literal, which
+> `test/duplicate-object-keys.test.js` blanks by design, so a second `summary:`
+> planted inside one reaches `docs/openapi.yaml` with `check-openapi` and
+> `check-route-drift` both exiting 0. Measured by planting one, 2026-10-17.
 
 **ENH-60 — Router extraction.** `handleApiRequestInContext` was 1,597 lines
 (`src/server.js:763–2360` <!-- line-drift-ok: the range as audited; ENH-60 is IMPLEMENTED and the dispatcher is 88 lines now, at `src/server.js:1000–1087` -->) and entangled routing, auth, validation, business logic

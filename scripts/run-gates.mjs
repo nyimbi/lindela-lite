@@ -181,6 +181,12 @@ const GATES = [
     why: 'ENH-59. The declaration and the dispatch code must describe the same routes, and nothing checked that. The direction that matters is the one nobody watches: `/api/v1/districts/{id}` was served, fetched by the console on every page, and in no table at all — invisible to every check built on the tables, because it was absent from all of them in the same way. Derives the served set from the imperative matchers via `scripts/route-surface.mjs` (193 paths from 37 matchers) and requires set equality with the declaration. Parameter *names* are normalised, literals and segment count are not, so a route that matches a declared one only in shape is still a finding — a fuzzy match there would swallow exactly the route that is missing. Reads files only; carries eight canaries, driven by test/route-reachability-gate.test.js.',
   },
   {
+    name: 'check-yaml-duplicate-keys',
+    script: 'scripts/check-yaml-duplicate-keys.mjs',
+    tier: 'self-contained',
+    why: 'ENH-59\'s residue. The item fixed one duplicate `description:` in `docs/openapi.yaml` and left the class open, because the general check is a different unit. The class is reachable through the generator\'s own input: a route\'s spec body is a `body:` template literal in `src/route-declaration.js`, and `test/duplicate-object-keys.test.js` blanks strings by design, so a second `summary:` at the same indent inside one reaches the generated spec with every adjacent gate exiting 0 — measured 2026-10-17 by planting one and watching `check-openapi` and `check-route-drift` both pass. Reads every shipped `.yaml`/`.yml` by directory, and *refuses* a construct it does not model (a merge key, an anchor, a tag, an explicit key, a document marker) rather than skipping it, because a reader that cannot finish a file cannot clear it. Reads files only; carries eight canaries plus a refusal case, driven by test/yaml-duplicate-keys-gate.test.js.',
+  },
+  {
     name: 'check-dead-exports',
     script: 'scripts/check-dead-exports.mjs',
     tier: 'self-contained',
