@@ -33,6 +33,16 @@ import { describe, it } from 'node:test'
  * `status.md` against its generator — which is the one document whose total is
  * *derived* rather than typed, and therefore the one that was already right.
  *
+ * A third instance, found 2026-10-17: `sources-and-decisions-roadmap.md`'s
+ * header and its `README.md` index row both said **7 shipped, 6 partly built**
+ * where the tree has **6 complete, 7 partly built** — transposed, exactly the
+ * error this header's first bullet records on `roadmap-extension.md`, in the
+ * same family, a day later. The item-count check above passed throughout: it
+ * reads `30 capability items` and the split was outside its jurisdiction, and
+ * the register's split was outside every check's. Both statements are now
+ * derived from the three lists and compared, and a `Now` cell the classifier
+ * cannot read fails rather than being uncounted.
+ *
  * What this checks is arithmetic over the tables, not their prose: a status
  * cell that says something other than shipped/partial/not-started fails rather
  * than being silently uncounted, because an unrecognised cell is how a count
@@ -237,6 +247,65 @@ describe('the improvement registers state totals their tables agree with', () =>
     assert.equal(stated['capability items'], distinct.size,
       `README says ${stated['capability items']} capability items; the register carries ${distinct.size}. `
       + 'The count was the arithmetic of the declared ranges, not of the file.')
+  })
+
+  it('sources-and-decisions: the header split is the split the three lists have', () => {
+    // The header and the README both state the same three-way split, and for a
+    // day both said "7 shipped, 6 partly built" when the tree has six complete
+    // and seven partly built — transposed, the exact error this file's own
+    // header records on `roadmap-extension.md`. Nothing caught it: the README
+    // check above reads only "30 capability items", and the register's split
+    // was outside every check's jurisdiction.
+    //
+    // Derived here rather than restated. "Complete" is the `Now` table's
+    // `Shipped` and `Fixed` cells; "partly built" is everything else that moved
+    // — a `Half` cell in that table, plus the "partly done" bullets, which is
+    // the pairing the inversion got wrong (SRC-01 is one row and six bullets
+    // are six, so a reader who counted only the table saw 1 and 6 and swapped
+    // the labels).
+    const nowCells = [...SOURCES.matchAll(/^\|\s*\*\*((?:SRC|DEC|OPS|PLT|CC)-\d+)\*\*[^|]*\|\s*\*\*([A-Za-z]+)\*\*/gm)]
+      .map((m) => ({ id: m[1], status: m[2] }))
+    assert.ok(nowCells.length >= 4, `read ${nowCells.length} "Now" rows — the reader is wrong, not the header`)
+
+    const COMPLETE = new Set(['Shipped', 'Fixed'])
+    const unrecognised = nowCells.filter((r) => !COMPLETE.has(r.status) && r.status !== 'Half')
+    assert.deepEqual(unrecognised, [],
+      `"Now" cells this check cannot classify: ${unrecognised.map((r) => `${r.id}=${r.status}`).join(', ')}. `
+      + 'An unclassified cell is how the split goes wrong while every classified one stays consistent.')
+
+    const complete = nowCells.filter((r) => COMPLETE.has(r.status)).length
+    const half = nowCells.filter((r) => r.status === 'Half').length
+    const bullets = new Set([...SOURCES.matchAll(/^- \*\*((?:SRC|DEC|OPS|PLT|CC)-\d+)\*\*/gm)].map((m) => m[1]))
+    const partial = half + bullets.size
+    const unbuilt = 30 - complete - partial
+
+    // Both statements, read from the file rather than passed in. The header
+    // spells its numbers as words, so they are parsed rather than pattern-
+    // matched: a regex pinning the literal would fail on a rewording without
+    // ever saying what the new number should be.
+    const words = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20 }
+    const header = /(\w+) rows verified complete — (\w+) shipped and\s+(\w+) fixed — and (\w+) partly built/.exec(SOURCES)
+    assert.ok(header, 'the register header no longer states its split in the form this check reads')
+    const stated = { complete: words[header[1].toLowerCase()], shipped: words[header[2].toLowerCase()], fixed: words[header[3].toLowerCase()], partial: words[header[4].toLowerCase()] }
+    assert.ok(Object.values(stated).every(Number.isInteger),
+      `the header states a number this check cannot read: ${header.slice(1).join(' / ')}`)
+    assert.deepEqual(
+      { complete: stated.complete, partial: stated.partial },
+      { complete, partial },
+      `the header says ${stated.complete} complete and ${stated.partial} partly built; `
+      + `the three lists have ${complete} and ${partial}`,
+    )
+    assert.equal(stated.shipped + stated.fixed, complete,
+      `the header's ${stated.shipped} shipped + ${stated.fixed} fixed is not the table's ${complete} complete`)
+
+    const readme = readmeCounts('sources-and-decisions-roadmap.md', ['complete', 'partly built', 'unbuilt'])
+    assert.deepEqual(
+      { complete: readme.complete, 'partly built': readme['partly built'], unbuilt: readme.unbuilt },
+      { complete, 'partly built': partial, unbuilt },
+      'the README index row\'s split is not the split the register\'s three lists have',
+    )
+    assert.equal(complete + partial + unbuilt, 30,
+      `the three lists account for ${complete + partial + unbuilt} rows, not the register's 30`)
   })
 
   it('status.md: the bold total is the table, and the README agrees with both', () => {

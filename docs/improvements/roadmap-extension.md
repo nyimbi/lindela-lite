@@ -392,8 +392,14 @@ from rows a third of which were stale. Row 2 moved Partial → Shipped later the
 same day, when `spreadSkillIndex` acquired a production caller (see the row); the
 footer follows the table, which is the point. A hand-kept total that disagrees with the
 table it summarises is the same failure this register catalogues elsewhere, and
-nothing checked it: `test/audit-register-structure.test.js` guards
-`audit-2026-10/`, and this file is outside its jurisdiction.
+nothing checked it when this paragraph was written:
+`test/audit-register-structure.test.js` guards `audit-2026-10/`, and this file
+was outside its jurisdiction. That gap is closed —
+`test/register-totals.test.js` derives the count from these rows and fails when
+the footer, the table and the README index disagree, which is why the sentence
+above is dated rather than deleted: it records what the register looked like
+before the check existed. (It named the wrong file until 2026-10-17, having been
+written in the same commit that added the guard it said was absent.)
 
 ### What the re-verification found still open
 

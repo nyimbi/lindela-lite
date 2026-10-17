@@ -1,8 +1,9 @@
 # Sources and Decisions: the second capability roadmap
 
-Status: proposed — 2026-10-03. **Seven rows verified shipped and six partly
-built on 2026-10-16; see "Verified against the tree" below before reading any
-row's `Now` as current. That leaves seventeen unbuilt of thirty.**
+Status: proposed — 2026-10-03. **Six rows verified complete — five shipped and
+one fixed — and seven partly built on 2026-10-16; see "Verified against the
+tree" below before reading any row's `Now` as current. That leaves seventeen
+unbuilt of thirty.**
 Related: [enhancements.md](enhancements.md) (ENH-01..30), [roadmap-extension.md](roadmap-extension.md) (items 1–20), [world-class-roadmap.md](../plans/world-class-roadmap.md)
 
 ## What this document is
@@ -83,8 +84,9 @@ that outruns the file fails rather than being copied into a second document.
 ## Verified against the tree — 2026-10-16
 
 This document was written 2026-10-03 and its header said `Status: proposed`. That
-is true of most of it and false of seven rows, which the tree has since
-implemented. **Read the rows below as shipped, not proposed**; the body text
+is true of most of it and false of six rows, which the tree has since
+implemented — and half-false of a seventh, SRC-01, whose retirement half is
+still absent. **Read the rows below as shipped, not proposed**; the body text
 under each has been left as written, because it is the evidence the item rested
 on and it is worth seeing what was true when it was argued.
 
