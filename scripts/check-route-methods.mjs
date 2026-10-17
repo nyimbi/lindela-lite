@@ -159,6 +159,7 @@ export async function scanRoutes() {
   const base = `http://127.0.0.1:${listener.address().port}`
 
   const findings = []
+  const skipped = []
   let checked = 0
   try {
     for (const route of routes) {
@@ -173,7 +174,19 @@ export async function scanRoutes() {
             signal: AbortSignal.timeout(4000),
           })
           status = res.status
-        } catch {
+        } catch (error) {
+          // A probe that never got an answer is not a pass, and `continue` used
+          // to be the whole of it: the verb was dropped from `checked` and from
+          // the findings, so the gate's coverage silently shrank and the only
+          // number that could show it — the verb count — was compared to
+          // nothing. Three probes abort on a clean tree (`POST
+          // /api/v1/ingest/run`, `.../schedules/{id}/run` and `/api/v1/demo/seed`
+          // do real work and exceed the 4s budget), so a clean run reports 962
+          // verbs across 193 paths and reads as full coverage of 193 paths when
+          // three verbs were never driven. Named rather than counted: the
+          // timeout and a server that never bound are the same `catch` here, and
+          // only the reason tells them apart.
+          skipped.push({ path: route.path, verb, reason: error.name === 'TimeoutError' ? 'timeout' : error.message })
           continue
         }
         checked += 1
@@ -195,7 +208,7 @@ export async function scanRoutes() {
     // stray temp file is the failure this gate exists to avoid.
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }).catch(() => {})
   }
-  return { findings, checked, paths: routes.length }
+  return { findings, checked, paths: routes.length, skipped }
 }
 
 /**
@@ -250,12 +263,28 @@ async function selfTest() {
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 if (isMain) {
   if (process.argv.includes('--self-test')) process.exit(await selfTest())
-  const { findings, checked, paths } = await scanRoutes()
+  const { findings, checked, paths, skipped } = await scanRoutes()
+  // Coverage is asserted, not inferred from the verb count. Every documented
+  // path must yield one probe per verb, and the only way a probe leaves the loop
+  // without a status is the `catch` above, which records it. If the two do not
+  // add up, the gate lost coverage somewhere it does not know about, and a run
+  // whose coverage is unaccounted for is not evidence about the surface.
+  const expected = paths * VERBS.length
+  if (checked + skipped.length !== expected) {
+    console.error(`route method check: coverage is unaccounted for — ${checked} answered, ${skipped.length} skipped, ${expected} expected across ${paths} path(s)`)
+    process.exit(1)
+  }
+  // Named on every run, pass or fail. A skip that is only printed when something
+  // else fails is a skip nobody reads, and these three are the slow probes whose
+  // absence is exactly what a timing-sensitive failure would hide behind.
+  const skipNote = skipped.length
+    ? `\n  ${skipped.length} probe(s) got no answer and were not checked: ${skipped.map((s) => `${s.verb} ${s.path} (${s.reason})`).join(', ')}`
+    : ''
   if (findings.length === 0) {
-    console.log(`route method check: clean — ${checked} verb(s) across ${paths} documented path(s)`)
+    console.log(`route method check: clean — ${checked} of ${expected} verb(s) driven across ${paths} documented path(s)${skipNote}`)
     process.exit(0)
   }
-  console.error(`route method check: ${findings.length} finding(s) across ${checked} verb(s)\n`)
+  console.error(`route method check: ${findings.length} finding(s) across ${checked} of ${expected} verb(s)${skipNote}\n`)
   for (const f of findings) console.error(`  [${f.rule}] ${f.verb} ${f.route} → ${f.status}\n    ${f.detail}`)
   console.error('\nA method the contract does not declare must be refused. Answering it — with a')
   console.error('200 or, worse, a 500 — makes the served surface wider than the published one,')

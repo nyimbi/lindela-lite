@@ -46,7 +46,25 @@ describe('VER-14 / VER-17 the route-method gate is scoped to the undeclared verb
     const { code, output } = runGate()
     assert.equal(code, 0, `the gate fails on the current tree:\n${output}`)
     assert.match(output, /clean/)
-    assert.match(output, /verb\(s\) across/, 'the gate reported a result without driving any verb')
+    assert.match(output, /verb\(s\) driven across/, 'the gate reported a result without driving any verb')
+  })
+
+  it('accounts for every probe, and names the ones that got no answer', () => {
+    // The silent-skip bug this asserts against: `catch { continue }` dropped a
+    // probe from the findings *and* from the count, so the gate's coverage
+    // shrank without the verb count moving in any way a reader could compare to
+    // anything. Three probes exceed the 4s budget on a clean tree, so the run
+    // reports 962 of 965 — and the three are named, because a skip that is only
+    // printed when something else fails is a skip nobody reads.
+    const { output } = runGate()
+    const driven = Number(/(\d+) of (\d+) verb\(s\) driven/.exec(output)?.[1] ?? 0)
+    const expected = Number(/(\d+) of (\d+) verb\(s\) driven/.exec(output)?.[2] ?? 0)
+    assert.ok(expected > 100 * 5 - 1, `the gate expected only ${expected} probes, which is not the shipped surface`)
+    assert.ok(driven <= expected, `${driven} probes were driven out of an expected ${expected}`)
+    // Every probe is either answered or skipped, and the skipped ones are named.
+    const skipped = [...output.matchAll(/(?:GET|POST|PUT|PATCH|DELETE) (\/\S+) \((timeout|[^)]+)\)/g)]
+    assert.equal(driven + skipped.length, expected,
+      `coverage is unaccounted for: ${driven} driven + ${skipped.length} named = ${driven + skipped.length}, expected ${expected}`)
   })
 
   it('every declared canary passes, and they disagree with each other', () => {
@@ -124,8 +142,7 @@ describe('VER-14 / VER-17 the route-method gate is scoped to the undeclared verb
     // rather than trusting either one's number.
     const { output } = runGate()
     const paths = Number(/across (\d+) documented path\(s\)/.exec(output)?.[1] ?? 0)
-    assert.ok(paths > 100, `the gate scanned ${paths} documented paths, which is not the shipped surface`)
-  })
+    assert.ok(paths > 100, `the gate scanned ${paths} documented paths, which is not the shipped surface`)  })
 
   it('reads the documented methods out of the spec, both verbs on a two-verb path', () => {
     // The parser is the gate's only view of the contract. A path declared with
