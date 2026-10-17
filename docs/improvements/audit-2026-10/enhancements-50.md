@@ -1479,7 +1479,12 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > route's spec body is a `body:` template literal, which
 > `test/duplicate-object-keys.test.js` blanks by design, so a second `summary:`
 > planted inside one reaches `docs/openapi.yaml` with `check-openapi` and
-> `check-route-drift` both exiting 0. Measured by planting one, 2026-10-17.
+> `check-route-drift` both exiting 0. Measured by planting one, 2026-10-17: the
+> plant goes in `src/route-declaration.js` and the spec is regenerated. A plant
+> written straight into `docs/openapi.yaml` instead makes `check-route-drift`
+> fire — a hand-edited spec differs from its own regeneration — so the reachable
+> class is the input one, which is why the gate reads shipped `.yaml`/`.yml`
+> rather than the generated spec alone.
 
 **ENH-60 — Router extraction.** `handleApiRequestInContext` was 1,597 lines
 (`src/server.js:763–2360` <!-- line-drift-ok: the range as audited; ENH-60 is IMPLEMENTED and the dispatcher is 88 lines now, at `src/server.js:1000–1087` -->) and entangled routing, auth, validation, business logic
