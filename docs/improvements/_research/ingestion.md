@@ -271,6 +271,30 @@ assigns new feature ids. `normalizeServiceAsset` (`uploads.js:98`) prefers
 One-line fix: namespace the hash as `canonicalHash({ source: item.source, body: item })`
 or make the map key `${item.source}:${item.payload_hash}`.
 
+**That fix does not work, measured 2026-10-17.** Both records in the failure scenario
+above carry `source: 'service_assets'` — checked through `normalizeServiceAsset` on two
+assets differing only by `id` — so a `${source}:${hash}` key collides exactly as the
+bare hash does. Namespacing by source cannot separate two records from one source. The
+deeper reason is that this entry and D6 ask for opposite things on the same pair (one
+source, one hash, two ids): D6 wants a moved id to *not* create a record, and this one
+wants it to. No key over `(source, hash)` satisfies both, because it is the same input.
+What the product needs is a declared per-source identity policy — `SOURCE_POLICIES` has
+none — and until then the reporting half of this fix is the part that can land.
+
+**Still open, re-verified 2026-10-17.** `mergeById` (`src/store.js:1255`) still keys
+its map on `payload_hash` alone and `canonicalHash` still ignores `id`, so the
+failure scenario above reproduces: two service assets identical but for their id
+merge to one row, the second dropped with no error. The line numbers have moved
+(the map is at `:1257`, the skip at `:1269`) and `src/uploads.js:98` is now
+`src/connectors/uploads.js:88`, where `id: asset.id || stableId(...)` is unchanged.
+The consequence is worth stating more sharply than the entry does: the skip is
+*intended* — *merge() skips records whose payload_hash already exists*
+(`test/database.integration.test.js:98`) asserts it — so the defect is that nothing
+reports it. `POST /api/v1/upload` answers `success: true` with
+`imported: report.rows.length` (`src/routes/upload.js:196`), the count it submitted
+rather than the count that landed, so a GeoJSON re-import after an upstream re-id
+reads as a clean import of N records while N−1 were discarded.
+
 ---
 
 ### D9 — One unparseable date destroys an entire conflict CSV import

@@ -96,7 +96,7 @@ gives for R-05 one register over.
 
 | id | the repair in the tree | the guard |
 |---|---|---|
-| ING-05 | `canonicalHash` strips the nested fetch stamp (`withoutFetchStamp`, `src/utils.js:63`), so a re-run of unchanged content hashes the same | *keeps payload_hash through a full write so dedup survives*, `test/lite.test.js` |
+| ING-05 | `canonicalHash` strips the nested fetch stamp (`withoutFetchStamp`, `src/utils.js:63`), so a re-run of unchanged content hashes the same | *ignores a fetch stamp nested inside metadata, and nothing else nested*, `test/lite.test.js` |
 | ING-08 | the listing cap reports its pre-cap count; `counts_found` is `null` when nothing was found and no cap bound | `test/completeness-wiring.test.js` |
 | ING-09 | `src/freshness.js` judges each source against its own publication cadence, six distinct verdicts | `test/freshness-verdicts.test.js` |
 | ING-10 | `validateUpload` rejects the row with a named error, and `ok` means the *whole* file landed (`src/upload.js:278`) | `test/upload.test.js` |

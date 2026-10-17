@@ -359,24 +359,77 @@ no tracing, no spans — that is the whole of the remaining gap.
 
 ## Reliability, observability & scale
 
-### 18. Idempotent ingestion with content-addressed dedup — **Partial, broken on Postgres**
+### 18. Idempotent ingestion with content-addressed dedup — **Partial**
 
 *Key records by `sha256(canonicalized-payload)`; make `run-due` a resumable job
 with a lease.*
 
-Dedup shipped: `canonicalHash` at `src/ingestion.js:139-140`, a unique index on
-`(collection, payload_hash)` at `src/postgres-store.js:52`, and a
-`skip-duplicates` query at `:133`. It does not work reliably:
+**All three citations this note gave for "dedup shipped" were wrong.** The hash is
+`src/utils.js:75` — `src/ingestion.js:139-140` is a `catch` block, and was one at
+`b07bbe4` too, where the note's other citation pointed: the only thing at `:147`
+there is the *call* to `canonicalHash`, which the file imports at `:2` and never
+defines. There is **no** unique index on
+`(collection, payload_hash)`: `src/migrations.js:117` creates a *non-unique* partial
+index, and `:423` records the decision not to make it unique — `CREATE UNIQUE INDEX`
+fails on any deployment already holding the duplicate rows this defect produced, and
+the window is closed by an advisory lock instead. And `skip-duplicates` is a string
+that appears nowhere in `src/`; the check it names is a `SELECT … WHERE collection =
+$1 AND payload_hash = ANY($2)` over the batch's own hashes (`src/postgres-store.js:991`).
 
-- **DAT-01**: `PostgresStore.write()` (`src/postgres-store.js:70-82`) deletes the
-  whole table and re-inserts **without `payload_hash`**. After one `write()`, every
-  row has a null hash and dedup matches nothing again.
-- **ING-05**: `canonicalHash` strips only top-level keys, and five connectors stamp
-  `metadata.fetched_at`, so the hash changes every run.
-- **DATA-13**: the hash is not namespaced by anything but id.
-- **ING-04**: two backfill connectors mint a new id daily, so the id differs and the
-  hash never collides.
-- No lease. `run-due` is not resumable.
+Of the four defects named, two are closed, one is half closed, and one is open:
+
+- **DAT-01 — closed.** `write()` puts the whole store through one `#insert`
+  (`src/postgres-store.js:649`) that carries `payload_hash` as a column, so a full
+  write no longer nulls every hash. Guard: *keeps payload_hash through a full write
+  so dedup survives*, `test/store-conformance.test.js`.
+- **ING-05 — closed.** `canonicalHash` strips the nested fetch stamp at every depth
+  (`withoutFetchStamp`, `src/utils.js:63`). The five connectors that stamp
+  `metadata.fetched_at` are real; the stamp no longer reaches the hash. The register's
+  row cites DAT-01's test for this, which is the wrong guard — the one that fails
+  without the fix is *ignores a fetch stamp nested inside metadata, and nothing else
+  nested*, `test/lite.test.js`.
+- **ING-04 — closed for the incremental path, open for both archive walks.**
+  `fetchWindow` is derived from the stored mark rather than the clock
+  (`src/watermarks.js:272`), so two quiet days request an identical window and a mark
+  sitting on today mints nothing. The archive and flood walks still derive their id
+  from `[SOURCE, region.name, startDate, endDate]` (`open-meteo-archive.js:209`), and
+  `endDate` is today whenever the mark has not reached today — so the id is a function
+  of the requested window, not of the bytes. Measured in the residual note below.
+- **DATA-13 — open, and the one thing this item is still Partial on.** The hash is
+  not namespaced, so two records differing only by id collide. `mergeById`
+  (`src/store.js:1255`) keys its map on `payload_hash` alone and skips an incoming
+  record whose hash it already holds, and `canonicalHash` ignores `id`. Reproduced
+  against the store: two service assets identical but for their id merge to **one**,
+  the second dropped with no error. `POST /api/v1/upload` then answers `success: true`
+  with `imported` set to the rows it *submitted* (`src/routes/upload.js:196`), so a
+  GeoJSON re-imported after upstream re-ids its features reads as a successful import
+  of N records while N−1 were discarded. This is D8 in `_research/ingestion.md`, and
+  it is a reporting defect as much as a dedup one: the store's skip is asserted
+  deliberately by *merge() skips records whose payload_hash already exists*
+  (`test/database.integration.test.js:98`), and nothing tells the caller it happened.
+
+  **D8's proposed repair does not work, and its own scenario is the counterexample.**
+  It says to key the map on `${item.source}:${item.payload_hash}`. In the failure it
+  describes, both records carry `source: 'service_assets'` — measured through
+  `normalizeServiceAsset` on two assets that differ only by `id` — so the namespaced
+  key collides exactly as the bare one does. The reason is that the two scenarios this
+  item treats as one are opposite: the archive re-run *wants* content to be the
+  identity (a moved id is not a new record), and the upload re-import wants the id to
+  be (moved ids are new assets). No key over `(source, hash)` can give both, because
+  the same pair — one source, one hash, two ids — is the thing the two want decided
+  oppositely. What the product needs is a declared per-source identity policy, and
+  `SOURCE_POLICIES` carries none today; the honest interim is the second half of D8's
+  own suggestion, reporting the skip count so `/upload` can stop answering
+  `success: true` for rows it discarded.
+- **No lease.** Still true. `runDueIngestionSchedules` (`src/ingestion.js:850`) walks
+  the due schedules in a `for` loop that takes no claim, so nothing prevents a second
+  invocation of the same tick from running the same sources concurrently. The
+  per-source marks are committed as each source finishes (`src/ingestion.js:557`), so
+  a *sequential* re-run is cheap — which is not the same guarantee, and is not a lease.
+
+**The heading said "broken on Postgres" and that half is closed.** DAT-01 was the
+Postgres defect and it is fixed; DATA-13 lives in the shared `mergeById`, so it is a
+both-backends defect rather than a Postgres one.
 
 This was correctly identified as *"the foundation for the lineage graph in #5"*,
 and both #5 and #18 are blocked on the same structural weakness.
@@ -476,7 +529,7 @@ The gaps are uneven in a way that matters:
 | 15 | PII minimisation + retention | **Shipped** — with one open gap (see below) | "implemented, not wired, retention no-op" |
 | 16 | Signed releases + SBOM | **Partial** — SLSA level 3 provenance runs (`ci.yml:271`) as well as the CycloneDX SBOM (`:160`); artifact signing (cosign) is still absent | "SBOM only" |
 | 17 | OTel + Prometheus + logs | **Partial** — `/metrics` gated and cardinality bounded (`src/observability.js:130-230`); OpenTelemetry is absent | "metrics and logs only" |
-| 18 | Idempotent ingestion | **Partial** — `payload_hash` persists (`src/postgres-store.js:649`) and now ignores a `fetched_at` stamp nested in `metadata`, so a same-content re-run hashes alike; no lease or claim mechanism | "dedup broken on Postgres" |
+| 18 | Idempotent ingestion | **Partial** — DAT-01 and ING-05 are closed: `payload_hash` persists through a full write (`src/postgres-store.js:649`) and a `fetched_at` stamp nested in `metadata` no longer reaches the hash (`src/utils.js:63`). What is open is **DATA-13**: `mergeById` keys on `payload_hash` alone (`src/store.js:1255`) and `canonicalHash` ignores `id`, so a re-import whose records differ only by id is silently discarded and reported `success: true`. Also no lease on `run-due` | "dedup broken on Postgres" |
 | 19 | Scenario workbench | **Shipped** | — |
 | 20 | Localization + RTL | **Partial** — **10** locales, not 11, and RTL *is* implemented (`public/shared/fmt.js:299-334`); the pickers offer only English | "11 locales, missing on 3 key surfaces" |
 
@@ -566,6 +619,26 @@ actually was, and what closes it, is recorded below.
   already holds — so the `fetched_at` fix is what closes this, through the hash
   path. The id was never the guard. There is still no lease or claim mechanism,
   which is why item 18 stays Partial.
+- **The hash path is now the *only* guard, which is DATA-13 arriving from the
+  other side (item 18) — open.** The same precedence that closes the archive
+  churn discards a re-import whose records differ only by id: `canonicalHash`
+  drops `id`, so two records identical but for their id hash alike, and
+  `mergeById` keeps the stored one and drops the incoming one with no error.
+  Reproduced against the store — two service assets, same fields, ids `asset-A`
+  and `asset-B`, merge to one row. `POST /api/v1/upload` reports `success: true`
+  and `imported: report.rows.length` (`src/routes/upload.js:196`), which is the
+  count it *submitted*, not the count that landed. *merge() skips records whose
+  payload_hash already exists* (`test/database.integration.test.js:98`) asserts the
+  skip deliberately, so the behaviour is intended and the *silence*
+  is the defect: a GeoJSON re-imported after upstream re-ids its features reads
+  as a successful import of N records while N−1 were discarded. **D8's proposed
+  repair does not work**: keying on `${item.source}:${item.payload_hash}` still
+  collides here, because both records carry `source: 'service_assets'` — measured.
+  The two scenarios are opposite wants on the same pair (one source, one hash, two
+  ids): the archive re-run wants content to be the identity, the upload re-import
+  wants the id to be. What is needed is a declared per-source identity policy, which
+  `SOURCE_POLICIES` does not carry; the honest interim is to have the merge report
+  what it skipped, so `/upload` stops answering `success: true` for discarded rows.
 
 The pattern is consistent and worth naming: this project builds the capability and
 then does not finish the wiring. Item 3 computes the impact figures and never stores

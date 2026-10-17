@@ -230,6 +230,44 @@ each with its own sample size, refused ones included.
 
 ### Fixed
 
+**Item 18's body cited three things that do not exist and called a closed defect
+broken.** The same shape as items 16 and 17, one item over. All three of its
+"dedup shipped" citations were wrong: `canonicalHash` is `src/utils.js:75`, not
+`src/ingestion.js:139-140` (a `catch` block, and one at the audited revision too);
+there is no unique index on `(collection, payload_hash)` — `src/migrations.js:117`
+creates a non-unique partial index and `:423` records the decision not to make it
+unique, since `CREATE UNIQUE INDEX` fails on any deployment already holding the
+duplicates the defect produced; and `skip-duplicates` is a string that appears
+nowhere in `src/`. Of the four defects it named, DAT-01 and ING-05 are closed and
+ING-04 is closed for the incremental path, leaving **DATA-13 open** — the one thing
+the item is still Partial on. The heading said "broken on Postgres"; DAT-01 was the
+Postgres defect and it is fixed, while DATA-13 lives in the shared `mergeById`, so
+the heading was wrong about both the platform and the remaining work.
+
+**DATA-13, reproduced and now stated.** `mergeById` (`src/store.js:1255`) keys its
+map on `payload_hash` alone and `canonicalHash` ignores `id`, so two service assets
+identical but for their id merge to one row, the second dropped with no error. The
+skip is *intended* — *merge() skips records whose payload_hash already exists*
+(`test/database.integration.test.js:98`) asserts it — so the defect is the silence:
+`POST /api/v1/upload` answers `success: true` with `imported` set to the rows it
+submitted (`src/routes/upload.js:196`), so a GeoJSON re-imported after upstream
+re-ids its features reads as a clean import of N records while N−1 were discarded.
+
+**D8's proposed repair is refuted by D8's own scenario.** The research entry says to
+key the map on `${item.source}:${item.payload_hash}`. Both records in the failure it
+describes carry `source: 'service_assets'` — measured through `normalizeServiceAsset`
+on two assets differing only by `id` — so the namespaced key collides exactly as the
+bare one does. The two defects this item has been treating as one are opposite wants
+on the same pair (one source, one hash, two ids): D6 wants a moved id to *not* create
+a record, DATA-13 wants it to. No key over `(source, hash)` gives both. What is needed
+is a declared per-source identity policy, which `SOURCE_POLICIES` does not carry;
+until then the reporting half of the fix is the part that can land.
+
+**One wrong guard citation in the remediation table.** ING-05's row pointed at
+DAT-01's test, *keeps payload_hash through a full write so dedup survives*, which
+passes without the `withoutFetchStamp` fix. The guard that fails without it is
+*ignores a fetch stamp nested inside metadata, and nothing else nested*.
+
 **Two roadmap items listed closed defects as current, and one listed a control
 that never ran.** Item 16's body named three supply-chain defects and item 17's
 two reliability defects, while their own Summary rows — 300 lines below — said
