@@ -143,7 +143,14 @@ export function normalizeScenarioPerturbation(input) {
 
 export function runScenario(data, input = {}) {
   const perturbation = normalizeScenarioPerturbation(input)
-  const scenario_id = stableId('scenario', [JSON.stringify(perturbation), nowIso()])
+  // DATA-12. The clock was in this id, so sharing one scenario link and opening
+  // it twice produced two ids for one computation, and the "same" scenario had
+  // no stable name to cite. Nothing is stored under this id — `runScenario` is a
+  // pure read of `data` through the perturbation — so the id names the
+  // *perturbation*, which is the part the caller controls and the part a share
+  // token carries. Two runs over a store that has since changed are two answers
+  // to one scenario, and saying so is more honest than minting a second name.
+  const scenario_id = stableId('scenario', [JSON.stringify(perturbation)])
 
   const cloned = JSON.parse(JSON.stringify(data))
 

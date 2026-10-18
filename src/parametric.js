@@ -116,7 +116,21 @@ export function normalizeParametricRule(input, existing = null) {
   // negative threshold would be inventing a rule the schema does not state.
 
   return {
-    id: input.id || existing?.id || stableId('parametric_rule', [input.name, chain, now]),
+    // DATA-12. A rule's identity is its name and the chain it settles on — the
+    // two fields a reader uses to say "that rule". The clock was in this hash,
+    // so `POST /api/v1/parametric/rules` delivered twice defined the same
+    // payout twice, and the list endpoint showed two rules that pay for one
+    // condition. Measured before the change: the same `{ name, chain }`
+    // normalised twice a moment apart minted two ids.
+    //
+    // The name is hashed *after* `ruleName` resolves it, so the id commits to
+    // the string the record stores rather than to the raw body field. The
+    // limitation that leaves: two rules posted with no name at all on one chain
+    // are identical in every field this id sees, so the second supersedes the
+    // first. That is the right trade for a payout definition — two unnamed rules
+    // on one chain are far more likely a retry than two programmes — and the
+    // record says `name: "Unnamed rule"` either way, so nothing is hidden.
+    id: input.id || existing?.id || stableId('parametric_rule', [ruleName(input.name, existing), chain]),
     name: ruleName(input.name, existing),
     chain,
     contract_address: input.contract_address ?? existing?.contract_address ?? null,
@@ -237,7 +251,14 @@ export function simulateDisbursement(rule, { actor, focal_point_approved, sancti
 
   return {
     simulated: true,
-    disbursement_id: stableId('disbursement', [rule.id, trigger.metric, trigger.value, String(trigger.met), String(Date.now())]),
+    // DATA-12. The id named the clock, so the route's `replaceCollection` on
+    // every simulated payout appended a second row for a retried request and
+    // the disbursements list showed one payout twice. The identity of a payout
+    // is the rule, the metric, the value observed and whether it fired — the
+    // four facts that decide it. Two genuine payouts under one rule are two
+    // *observations*, which is what `trigger.value` distinguishes; a retry
+    // observes the same value again and is the same row.
+    disbursement_id: stableId('disbursement', [rule.id, trigger.metric, trigger.value, String(trigger.met)]),
     chain: rule.chain,
     contract_address: rule.contract_address || null,
     // null, not 0, when nothing is owed: zero is a measured payout of

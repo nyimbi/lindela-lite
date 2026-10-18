@@ -168,7 +168,26 @@ export function isDeleted(record) {
 export function actionLog(collection, action, record, actor = 'operator', subject = null, metadata = {}) {
   const now = new Date().toISOString()
   return {
-    id: stableId('log', [collection, action, record.id, now]),
+    // DATA-12. The id is the record the log is *about* plus the action, not the
+    // wall clock. With the clock in it, a retried request wrote a second log row
+    // for an action that happened once: probed against a live server, one
+    // `POST /api/v1/chw/report` delivered twice wrote one field report, two
+    // inbound rows and two action logs. The first two are idempotent because
+    // their ids are content-derived; the log was the one that counted twice, and
+    // an audit trail that grows when nothing happened is the opposite of what an
+    // audit trail is for.
+    //
+    // The same id for the same (collection, action, record) pair is the correct
+    // collapse. Two `updated` logs for one incident would differ only in
+    // `created_at`, so keeping both says "this was changed twice" when the only
+    // fact either row adds is when the second write arrived — and `_request_id`
+    // is what distinguishes two genuinely separate requests, which is the
+    // question a reader actually asks. A second *distinct* event is a different
+    // action, or a different record, and both change the id.
+    //
+    // `created_at` stays a wall clock. It is the time the log was written, and
+    // the record's own `updated_at` is the authority on when the change landed.
+    id: stableId('log', [collection, action, record.id]),
     collection,
     record_id: record.id,
     action,
@@ -232,7 +251,10 @@ function normalizeIntervention(input, data, existing = null) {
   const now = new Date().toISOString()
   const title = input.title || required(incident?.title, 'title')
   return stripUndefined({
-    id: input.id || stableId('intervention', [input.incident_id, title, input.start_at || now]),
+    // DATA-12. The clock stood in for a missing `start_at`, so two POSTs of one
+    // intervention with no start date minted two ids. An absent start date is
+    // `null` in the record and an empty string in the hash; it is not a time.
+    id: input.id || stableId('intervention', [input.incident_id, title, input.start_at || '']),
     incident_id: input.incident_id,
     title,
     objective: input.objective || input.description || '',
@@ -260,7 +282,9 @@ function normalizeTask(input, data, existing = null) {
   const intervention = findById(data.interventions, input.intervention_id)
   const now = new Date().toISOString()
   return stripUndefined({
-    id: input.id || stableId('task', [input.intervention_id, input.title, input.due_at || now]),
+    // DATA-12, the same substitution as the intervention above: an absent due date
+    // is not the moment the request arrived.
+    id: input.id || stableId('task', [input.intervention_id, input.title, input.due_at || '']),
     intervention_id: input.intervention_id,
     incident_id: input.incident_id || intervention?.incident_id || existing?.incident_id || null,
     title: input.title || required(existing?.title, 'title'),
@@ -319,10 +343,13 @@ function normalizeFieldReport(input, data, existing = null) {
     // wrote instead of appending a near-copy. The content hash below is the
     // fallback and stays as it was: it cannot tell a retry from two genuinely
     // identical reports, and an operator entering the same summary twice is
-    // filing twice.
+    // filing twice. DATA-12 removed the clock from that fallback's *empty* case
+    // only — an absent `observed_at` used to hash the arrival time, so the same
+    // report entered twice with no observation date was two rows. A caller that
+    // states an observation date still gets a row per distinct date.
     id: input.id
       || recordIdForSubmission(FIELD_REPORT_PREFIX, input.submission_id)
-      || stableId('report', [input.incident_id, input.intervention_id, input.summary, input.observed_at || now]),
+      || stableId('report', [input.incident_id, input.intervention_id, input.summary, input.observed_at || '']),
     submission_id: input.submission_id || existing?.submission_id || null,
     incident_id: input.incident_id || intervention?.incident_id || null,
     intervention_id: input.intervention_id || null,

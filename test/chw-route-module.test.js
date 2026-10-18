@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { describe, it } from 'node:test'
+import { describe, it, mock } from 'node:test'
 
 import { handleChwRoute, matchChwRoute } from '../src/routes/chw.js'
 
@@ -155,5 +155,79 @@ describe('ARC-01 — the reporter is redacted on the inbound', () => {
     const { handled, res } = await call({ kind: 'report' }, { method: 'GET', body: undefined })
     assert.equal(handled, true)
     assert.equal(res.status, 405)
+  })
+})
+
+describe('DATA-12 — a retried submission is one row, not one row per clock tick', () => {
+  /**
+   * The defect the register states as "record ids mix the current timestamp into
+   * the hash, so re-submitting identical content produces a different id and
+   * defeats dedup" was partly stale: the field report itself has been
+   * submission-keyed since ENH-39, and a whole-request replay is caught by
+   * `Idempotency-Key`. What survived was the *companion* rows — the inbound
+   * message and the action log both hashed `new Date().toISOString()`, so one
+   * report delivered twice wrote one report, two inbounds and two logs. Probed
+   * against a live server before the fix: `field_reports 1, inbound 2,
+   * action_logs 2`.
+   *
+   * The clock is mocked rather than the ids compared across two `await`s that
+   * happen to land in the same millisecond: a test that passes because the
+   * machine was fast is not testing the key.
+   */
+  const callAt = async (iso, store, body, kind = 'report') => {
+    mock.timers.enable({ apis: ['Date'], now: Date.parse(iso) })
+    try {
+      return await call({ kind }, { store, body })
+    } finally {
+      mock.timers.reset()
+    }
+  }
+
+  it('mints the same inbound and action-log ids for a retry, though the clock moved', async () => {
+    const body = { submission_id: 'sub-1', description: 'flooding at the market', category: 'healthcare' }
+    const first = await callAt('2026-10-18T09:00:00.000Z', recordingStore(), body)
+    const second = await callAt('2026-10-18T09:04:30.000Z', recordingStore(), body)
+
+    assert.equal(
+      first.store.state.field_reports[0].id,
+      second.store.state.field_reports[0].id,
+      'the field report id moved with the clock',
+    )
+    assert.equal(
+      first.store.state.rapidpro_inbound_messages[0].id,
+      second.store.state.rapidpro_inbound_messages[0].id,
+      'the inbound id moved with the clock, so one report acquired a second row',
+    )
+    assert.equal(
+      first.store.state.action_logs[0].id,
+      second.store.state.action_logs[0].id,
+      'the action-log id moved with the clock, so the operator log showed the write twice',
+    )
+  })
+
+  it('still mints distinct ids for two genuinely different reports', async () => {
+    // The control. A constant id would satisfy the test above and collapse every
+    // report in the deployment into one row, which is the opposite failure.
+    const first = await callAt('2026-10-18T09:00:00.000Z', recordingStore(), {
+      submission_id: 'sub-1', description: 'flooding at the market', category: 'healthcare',
+    })
+    const second = await callAt('2026-10-18T09:00:00.000Z', recordingStore(), {
+      submission_id: 'sub-2', description: 'flooding at the market', category: 'healthcare',
+    })
+    const ids = [first, second].map((r) => r.store.state.field_reports[0].id)
+    assert.notEqual(ids[0], ids[1], 'two submissions got one id')
+    assert.notEqual(
+      first.store.state.action_logs[0].id,
+      second.store.state.action_logs[0].id,
+      'two reports got one action-log row',
+    )
+  })
+
+  it('keys a reply on its content, so a retried reply is one row', async () => {
+    const body = { alert_event_id: 'alert-9', message: 'clinic confirms three cases' }
+    const first = await callAt('2026-10-18T09:00:00.000Z', recordingStore(), body, 'reply')
+    const second = await callAt('2026-10-18T09:07:00.000Z', recordingStore(), body, 'reply')
+    const ids = [first, second].map((r) => r.store.state.rapidpro_inbound_messages[0].id)
+    assert.equal(ids[0], ids[1], 'a retried reply wrote a second inbound row')
   })
 })

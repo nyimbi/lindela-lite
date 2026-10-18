@@ -198,8 +198,14 @@ export async function handleChwRoute(route, { store, data, req, res, jsonRespons
     // saw an object that never had the fields and passed them through untouched,
     // so both survived into `GET /api/v1/rapidpro/inbound` and export.csv. The
     // RapidPro path redacts the object it is about to store; this now does too.
+    // DATA-12. Keyed on the field report it accompanies, not on the clock. The
+    // report's id is already submission-derived (ENH-39), so a retried
+    // submission resolves to one report — but the inbound row hashed `now`, so
+    // one report acquired a second inbound row and the operator's queue showed
+    // the same message twice. `field_report_id` is the relation this row exists
+    // to state; it is the right key.
     const inbound = redactPii({
-      id: stableId('inbound', [redacted.id, now]),
+      id: stableId('inbound', [redacted.id]),
       text: body.description,
       contact_urn: body.reporter_phone || '',
       contact_name: body.reporter_name || '',
@@ -240,7 +246,9 @@ export async function handleChwRoute(route, { store, data, req, res, jsonRespons
     const body = await readRequestJson(req)
     const now = new Date().toISOString()
     const inbound = {
-      id: stableId('inbound', [body.alert_event_id, body.message, now]),
+      // DATA-12, the same key as the branch above: the alert and the message are
+      // the reply's content, and a retry of one reply is one row.
+      id: stableId('inbound', [body.alert_event_id, body.message]),
       text: body.message,
       event_type: 'chw_reply',
       alert_event_id: body.alert_event_id,

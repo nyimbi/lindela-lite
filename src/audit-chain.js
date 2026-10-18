@@ -188,9 +188,20 @@ export function chainGenesis() {
 export function chainWithdrawal(logEntries, targetEntryId, actor, now = new Date().toISOString()) {
   const target = (logEntries || []).find((entry) => entry.id === targetEntryId)
   if (!target) throw Object.assign(new Error(`No action-log entry with id ${targetEntryId}`), { statusCode: 404 })
+  // DATA-12. A second withdrawal of one entry is the same withdrawal arriving
+  // again — a retried request, or an operator clicking twice. It used to mint a
+  // second row because the id hashed the clock, and a donor reading the proof
+  // saw one row taken back twice. `verifyChain` reports a repeated id as a
+  // fatal `duplicate_id`, so returning the standing withdrawal is not merely
+  // tidier: appending a second one would break the chain's own verdict.
+  const standing = (logEntries || []).find(
+    (entry) => entry.action === 'withdraw' && entry.metadata?.withdraws === targetEntryId,
+  )
+  if (standing) return standing
   const head = resolveChainHead(logEntries)
   return chainEntry({
-    id: stableId('log_withdrawal', [targetEntryId, now]),
+    // The identity of a withdrawal is the entry it takes back.
+    id: stableId('log_withdrawal', [targetEntryId]),
     collection: 'action_logs',
     record_id: targetEntryId,
     action: 'withdraw',

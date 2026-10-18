@@ -95,7 +95,19 @@ export function normalizeWorkflowInstance(input, existing = null) {
   }
 
   return {
-    id: input.id || stableId('workflow', [type, input.subject_kind, input.subject_id, now]),
+    // DATA-12. A workflow instance is *the* record for one subject — the alert
+    // being reviewed, the district being audited — and the type says which
+    // process it is. The clock was in this hash, so `POST /api/v1/workflows`
+    // delivered twice opened two reviews of one alert, and
+    // `createEquityAuditWorkflows` — which is idempotent by a pre-read that a
+    // concurrent writer can race — could open two audits of one district.
+    // Measured before the change: the same
+    // `{ type, subject_kind, subject_id }` normalised twice 15 ms apart minted
+    // two ids.
+    //
+    // (type, subject_kind, subject_id) is the identity the pre-reads already
+    // treat as one instance; putting it in the id makes the store agree.
+    id: input.id || stableId('workflow', [type, input.subject_kind, input.subject_id]),
     type,
     subject_kind: input.subject_kind || existing?.subject_kind || 'alert_event',
     subject_id: input.subject_id || existing?.subject_id || '',

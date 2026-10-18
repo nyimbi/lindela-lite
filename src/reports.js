@@ -124,7 +124,14 @@ export function normalizeReport(input = {}, data, existing = null) {
     throw Object.assign(new Error('Report must be generated before approval or distribution'), { statusCode: 400 })
   }
   return stripUndefined({
-    id: existing?.id || input.id || stableId('report', [template?.id, reportType, title, createdAt]),
+    // DATA-12. The clock was in this hash, so a retried `POST /api/v1/reports`
+    // — or a schedule run repeated after a lost response — wrote a second
+    // draft with the same title, type and scope, and nothing on the list could
+    // tell the two apart. `createdAt` is replaced by `scope`: the title already
+    // carries the day, and scope is what actually distinguishes one SITREP from
+    // another on the same day. `created_at` is still recorded below, as the
+    // wall clock it is.
+    id: existing?.id || input.id || stableId('report', [template?.id, reportType, title, scope]),
     template_id: template?.id || input.template_id || existing?.template_id || null,
     report_type: reportType,
     status,
@@ -198,7 +205,18 @@ export function normalizeDistributionRun(input = {}, report, existing = null) {
   const now = new Date().toISOString()
   const channel = input.channel || existing?.channel || required(null, 'channel')
   return stripUndefined({
-    id: existing?.id || input.id || stableId('report_distribution', [report.id, channel, now]),
+    // DATA-12. A distribution is one report leaving by one channel. The clock
+    // was in this hash, so `POST /api/v1/reports/:id/distribute` delivered
+    // twice prepared two distribution runs for one send, and the run list
+    // showed the report going out twice. Measured before the change: the same
+    // `{ report, channel }` normalised twice a moment apart minted two ids.
+    //
+    // A genuine second send is a *retry*, and `retry_of` is the field that says
+    // so — it is in the record already. Keeping it out of the id is deliberate:
+    // a retry of the same channel for the same report supersedes the row it
+    // retries, which is what an operator wants to see, and the attempt count
+    // lives in the action log rather than in duplicate rows.
+    id: existing?.id || input.id || stableId('report_distribution', [report.id, channel]),
     report_id: report.id,
     template_id: report.template_id || null,
     channel,
@@ -221,7 +239,11 @@ export function normalizeReportSchedule(input = {}, data, existing = null) {
   if (!template) throw Object.assign(new Error('template_id is required'), { statusCode: 400 })
   const recurrence = objectValue(input.recurrence ?? existing?.recurrence ?? { type: 'daily', time: '07:00' })
   const schedule = stripUndefined({
-    id: existing?.id || input.id || stableId('report_schedule', [template.id, recurrence, now]),
+    // DATA-12. One template on one recurrence is one schedule. The clock was in
+    // this hash, so `POST /api/v1/report-schedules` delivered twice created two
+    // schedules that both fire daily at 07:00 for the same template — two
+    // SITREPs a day, from one request an operator made once.
+    id: existing?.id || input.id || stableId('report_schedule', [template.id, recurrence]),
     template_id: template.id,
     status: enumValue(input.status || existing?.status || 'active', REPORT_SCHEDULE_STATUSES, 'status'),
     timezone: input.timezone || existing?.timezone || 'UTC',

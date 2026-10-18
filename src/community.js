@@ -32,8 +32,19 @@ export function normalizeCommunityFeedback(input, existing = null) {
     ? hashUrn(input.reporter_urn)
     : (existing?.reporter_urn_hash ?? null)
 
+  // DATA-12. The clock was in this hash, so two POSTs of one feedback message
+  // wrote two rows — and the route has no submission id and no `Idempotency-Key`
+  // in front of it by default, so nothing downstream collapsed them either.
+  // Measured before the change: `normalizeCommunityFeedback` called twice with
+  // the same `{ alert_event_id, message }` 15 ms apart minted two ids.
+  //
+  // The key is the content the row is *about*: which alert, what was said, who
+  // said it. Two people reporting the same sentence about the same alert are
+  // two reports — that is what `reporter_urn_hash` distinguishes — and one
+  // person sending the same sentence twice is one. `created_at` stays a wall
+  // clock; the row still records when it arrived.
   const id = existing?.id ||
-    stableId('feedback', [input.alert_event_id, input.message, now])
+    stableId('feedback', [input.alert_event_id, input.message, reporter_urn_hash])
 
   return {
     id,

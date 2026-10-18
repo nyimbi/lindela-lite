@@ -257,7 +257,18 @@ export async function handleParametricRoute(route, { store, data, req, res, json
         triggerValue: body.trigger_value,
       })
       const log = actionLog('parametric_disbursements', 'simulated', result, body.actor, req.__auth?.subject)
-      const disbursements = [...(data.parametric_disbursements || []), result]
+      // DATA-12. Appending the simulated row put the same payout in the list
+      // twice when a request was retried, because the id it appends under used
+      // to be clock-derived. The id is now the four facts that decide the
+      // payout, so the row replaces rather than repeats — `replaceCollection`
+      // would otherwise write both copies back, sorted, since it stores the
+      // array it is handed. An existing row for the same id is superseded, and
+      // its `simulated_at` records the later evaluation, which is when the row
+      // on screen was last confirmed rather than when it was first minted.
+      const disbursements = [
+        ...(data.parametric_disbursements || []).filter((row) => row.disbursement_id !== result.disbursement_id),
+        result,
+      ]
       await store.replaceCollection('parametric_disbursements', disbursements)
       await store.merge({ action_logs: [log] })
       jsonResponse(res, 201, { success: true, data: result, sanctions })

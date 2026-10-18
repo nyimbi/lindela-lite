@@ -64,6 +64,7 @@ under **Unreleased**; this table is the index into them.
 | DATA-05 | fixed | full pagination with a real total; the 30-row slice is no longer the total | `district-rates.test.js` |
 | DATA-07 | fixed | one `false_alert_rate` definition, in both places, with the denominator exposed | `district-rates.test.js` |
 | DATA-09 | fixed | foreign vertical datum ⇒ every depth `null` with a reason; void cells serialise as `null` | `flood-depth-datum.test.js` |
+| DATA-12 | fixed | twelve record ids hash the content they name, not the clock; companion rows (inbound, action log) dedupe with their primary; withdrawal is once per entry | `data12-stable-ids.test.js` |
 | WEB-05 | fixed | `enqueue` resolves on transaction commit and throws without a database | `web-chw-offline.test.js` |
 | WEB-06 | fixed | precache derived from the import graph instead of a hand-written list | `web-chw-offline.test.js` |
 | WEB-08 | fixed | the CO dashboard requests the window it labels | `web-co-i18n.test.js` |
@@ -599,6 +600,31 @@ everything.
   (`src/operations.js:104`, `src/lineage.js:9`, `src/reports.js:187`, <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
   `src/workflows.js:98`, `src/community.js:36`, `src/server.js:2213`), so <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
   re-submitting identical content produces a different id and defeats dedup.
+  **Fixed 2026-10-18, after probing every site the entry names.** The probe was
+  the point: two of the six cited files no longer hold a clock-derived id
+  (`src/lineage.js` is `src/provenance.js` now and its id has been
+  `[source, source_run_id]` since DATA-10; the line the entry gives in
+  `src/server.js` is past the end of that file), and the site the entry does *not* name — `src/routes/chw.js`, where one
+  `POST /api/v1/chw/report` delivered twice wrote one field report, two inbound
+  rows and two action logs against a live server — was the one an operator
+  actually sees. The same probe found nine more: `actionLog` (`operations.js`),
+  the two CHW inbounds (`routes/chw.js`), `normalizeWorkflowInstance`,
+  `normalizeCommunityFeedback`, `normalizeParametricRule`, `simulateDisbursement`,
+  `normalizeReportSchedule`, `normalizeDistributionRun`, `normalizeReport`,
+  `chainWithdrawal`, `runScenario`, and the three operational ids that used the
+  arrival time as a *fallback* for a missing `start_at`/`due_at`/`observed_at`.
+  Each now hashes the content it is about; `created_at`/`updated_at` stay wall
+  clocks, because they record when the row landed and not what it is. The
+  standing test for the class is `test/data12-stable-ids.test.js`, which mocks
+  `Date` rather than racing two `await`s for the same millisecond, and pairs
+  every "a retry is one row" case with a control that changes one input field
+  and asserts the id moves — a constant id would satisfy the first half and
+  collapse the collection. Canaried against the pre-fix behaviour: 8 of 20
+  tests fire. The reporting family keeps one deliberate exception —
+  `normalizeReportSchedule` and `normalizeDistributionRun` are keyed without the
+  clock, so a *genuine* second distribution of one report by one channel
+  supersedes rather than appends; `retry_of` on the row is what names it a
+  retry, and the attempt history lives in the action log.
 - **DATA-13 — `payload_hash` dedup is not namespaced** (`src/store.js:114`): two
   records differing only by id collide, and a re-imported GeoJSON is silently
   discarded as a success. **Fixed 2026-10-18, as the honest interim the roadmap
