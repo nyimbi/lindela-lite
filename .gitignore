@@ -8,6 +8,8 @@ coverage/
 .omc/
 .omx/
 .playwright-mcp/
+# Agent session state and worktrees; settings.local.json is per-machine.
+.claude/
 *.png
 
 # zvec-grep local workspace index
