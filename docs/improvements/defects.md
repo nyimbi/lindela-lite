@@ -79,6 +79,10 @@ under **Unreleased**; this table is the index into them.
 | WEB-10 | measured | the 24px floor holds across 48 combinations on Chrome 154 / :9222; the gate canaried to exit 1 | `check-responsive.mjs` |
 | WEB-11 | fixed | every surface has a layer; 217 keys added to `en.json` | `check-i18n.mjs` |
 | WEB-12 | fixed | Phase 0 is true for a reason that cannot rot; Phase 2's "7 of 8" was stale when written — the console linked `components.css` the same day — and the linkage is now asserted | `test/web-component-layer.test.js` |
+| TEST-01 | fixed | the source-text guards are gone; the behavioural guard fails on the DAT-02 shape (canaried: two tests red) | `store-conformance.test.js`, `evaluation-context.test.js` |
+| TEST-02 | refuted | measured on the current tree: `postgres-store.js` 97.26 / 91.21 / 91.43 against the audit's 23.29 / — / 0.00; the whole glob runs, and the integration file provisions its own cluster | `store-conformance.test.js` |
+| TEST-03 | refuted | `auth.js` 99.45 / 95.97 / 100, `pii.js` 98.32 / 93.04 / 100, `rapidpro.js` 98.47 / 82.62 / 97.85 | `auth-deny-by-default.test.js`, `pii.test.js` |
+| TEST-04 | refuted | `alerts.js` 98.58 / 83.54 / 100 against the audit's 41.58 branch; the uncovered lines are named and small | `cap-encoding.test.js`, `alert-card-authorisation.test.js` |
 
 Two findings were found while fixing these and are also fixed, without
 original IDs: a dead second authorization path (`isAuthorizedMutation`,
@@ -819,27 +823,52 @@ everything.
 
 ### Tests and coverage
 
-- **TEST-01 — The registration guards are blind to the defect they name.** `main` is
-  green (370/370), which is the problem. The guards at `test/lite.test.js:5462` and
-  `:5519` assert that a string appears in `src/ingestion.js`, and they grep the
-  accumulator — which is correct — while DAT-02 lives in `countRecords` fifty lines
-  away. Demonstrated, not inferred: refactoring the accumulator to derive from the
-  same shared list as `countRecords` **fixes DAT-02**, and makes both tests fail.
-  The guard is blind to the bug in its own failure message and brittle to the fix.
-  Full analysis in
-  [_research/00-audit-baseline.md](_research/00-audit-baseline.md#b1-the-registration-guards-are-blind-to-the-defect-they-name-and-break-on-the-fix).
-- **TEST-02 — The production storage backend is effectively untested.**
-  `src/postgres-store.js` sits at **23.29% line and 0.00% function coverage** while
-  the aggregate reads 87.08% and the CI gate is 75%. Two mechanisms conspire: the
-  `test:coverage` script omits `test/database.integration.test.js`, and that file
-  skips itself without env vars CI never sets. Both DAT-01 and DAT-05 live here.
-- **TEST-03 — The security boundary has no tests.** `authenticate`, `parseTokens`
-  and `requireScope` have zero tests (`src/auth.js` at 47% branch).
-  `verifyRapidProWebhook` has zero tests. `src/pii.js` has no tests at all, and it
-  is the product's only PII control.
-- **TEST-04 — The human-in-the-loop control is untested.** `src/alerts.js` is at
-  41.58% branch with lines 164-224 uncovered: the approval gate, trigger
-  protocols, backtest and shadow mode.
+- **TEST-01 — fixed 2026-10-18; the guards now fail on the defect they name.**
+  The entry said `main` is green while the guards at `test/lite.test.js:5462` and
+  `:5519` assert a string appears in `src/ingestion.js`, grepping the accumulator
+  while DAT-02 lived in `countRecords` fifty lines away. Both guards are gone.
+  What replaced them asserts behaviour: *reports the records a single-collection
+  source actually produced* drives `runIngestion` with a stub `ipc_hdx` and
+  checks the stored rows, and *every collection the ingestion pipeline emits has
+  a count* (`test/evaluation-context.test.js:165`) asserts against
+  `OUTPUT_COLLECTIONS` rather than a literal. Canaried today by restoring the
+  DAT-02 shape — `countRecords` reading four collections while the pipeline
+  merges ten: **two tests fail**, one of them the behavioural one, with
+  `a successful run reported "degraded": ["Expected at least 1 records for
+  ipc_hdx; received 0."]`. The old guards would have passed that mutation; that
+  is the difference the entry asked for.
+- **TEST-02 — fixed; measured, not assumed.** The entry cited
+  `src/postgres-store.js` at **23.29% line and 0.00% function coverage**. On the
+  current tree, measured with the suite's own glob and a real cluster
+  provisioned by `test/pg-harness.mjs`, it reads **97.26% line / 91.21% branch /
+  91.43% function**, against an `all files` of 97.51 / 85.92 / 95.06. The two
+  mechanisms the entry names are both gone: `check-coverage.mjs` runs the whole
+  `test/*.test.js` glob rather than a hand-picked list, and `database.integration`
+  provisions its own cluster through the harness instead of skipping without env
+  vars. `test/store-conformance.test.js` runs one contract against both adapters
+  and **throws** rather than skipping when CI has a Postgres service it cannot
+  use. DAT-01 and DAT-05 — the two defects the entry says live here — both have
+  guards that drive the real backend.
+- **TEST-03 — fixed; the boundary is exercised, measured.** `src/auth.js` reads
+  99.45% line / 95.97% branch / 100% function, `src/pii.js` 98.32 / 93.04 / 100,
+  `src/rapidpro.js` 98.47 / 82.62 / 97.85. `authenticate` is driven by ten test
+  files, `parseTokens` by four, `requireScope` by three, `verifyRapidProWebhook`
+  by four — including a live-route suite that drives the real HTTP handler.
+  Guarded by `test/auth-deny-by-default.test.js`, `test/route-scope-coverage.test.js`
+  and `test/pii.test.js`. What remains uncovered in `auth.js` is lines 556-559.
+- **TEST-04 — fixed; the approval path is exercised.** `src/alerts.js` reads
+  98.58% line / 83.54% branch / 100% function, against the 41.58% branch the entry
+  cites. The uncovered branches are now named and small: 117-118, 120-121,
+  389-390, 695-697, 712, 730, 790. The approval gate and the CAP encoding are
+  driven by `test/cap-encoding.test.js`, `test/alert-card-authorisation.test.js`
+  and the dispatch suites.
+
+  **How these four were closed, and the one that was not a fix.** TEST-02, -03
+  and -04 were stale measurements, not live defects: the tree already exceeded
+  every figure the entry named. TEST-01 was live, and the difference is worth
+  stating — the other three are counts that rotted, and a count that rotted
+  upward costs a reader a wrong impression. TEST-01 was a guard that could not
+  fail on its own defect, which is worse: it made the other three look checked.
 
 ---
 
