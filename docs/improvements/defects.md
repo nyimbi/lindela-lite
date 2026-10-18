@@ -436,6 +436,17 @@ in a comment.)
 and recall, and is presented to a donor as evidence. The number describes
 incidence of hazards, not trigger performance.
 
+**Fixed 2026-10-18.** `backtestTriggerProtocol` (`src/alerts.js:448`) resolves
+`protocol.metric` against a point-in-time context built for each run and fires on
+`compare(value, protocol.operator, protocol.threshold)`. The four outcomes are
+counted separately, so `misses` is a real quantity rather than an arithmetic
+zero, and `recall` no longer equals `precision` by construction. Two additions
+the entry did not ask for and the fix needed: a run whose metric does not resolve
+is counted `unevaluable` and excluded rather than scored as a negative — a
+protocol is not punished for data that did not exist yet — and the report carries
+the **base rate**, because precision 0.60 when 60% of runs are followed by a
+hazard has learned nothing. Guarded by `test/trigger-backtest.test.js`.
+
 ### INT-03 — Parametric insurance stores a trigger and never reads it
 
 `src/parametric.js:46-49` persists `trigger_metric`, `trigger_threshold` and
@@ -447,6 +458,22 @@ approval (`src/workflows.js`) is unused. All three parametric write paths
 (`src/server.js:2073, 2095, 2162`) write no action log. <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 
 The money path is unaudited, unruled, and self-approved.
+
+**Fixed 2026-10-18.** `evaluateTrigger` (`src/parametric.js:170`) reads
+`trigger_metric`, `trigger_operator` and `trigger_threshold` and returns one of
+three states, because "not triggered" and "could not be evaluated" are different
+facts: `met: true` crossed the threshold, `met: false` did not and the record
+says by how much, `met: null` has no trigger to evaluate or a metric that did not
+resolve to a number. An unevaluated trigger is not a triggered one, and neither
+is payable. `simulateDisbursement` calls it and copies the static amount only on
+`met: true`.
+
+The approval is no longer self-asserted: `approval` from a
+`parametric_disbursement` workflow instance takes precedence over
+`focal_point_approved` in the request body, and the payout record carries
+`approval.verified`, `workflow_instance_id` and an `approval_source` that says
+which it was — a self-asserted approval is recorded as exactly that. All three
+write paths log. Guarded by `test/parametric-trigger.test.js`.
 
 ### SEC-06 — Multi-tenancy is a provable no-op that displays itself as working
 
@@ -476,23 +503,23 @@ everything.
   concurrent requests against a documented 20/min budget (`src/connectors/ipc-hdx.js:265`).
   Compounds SEC-01: the export endpoint is uncapped and unauthenticated.
 - **SEC-08 — Webhook glob patterns compile to unescaped regex.** `src/webhooks.js:51-59`
-  **Fixed 2026-10-03.** `globMatch` no longer compiles a regex at all — it is a two-pointer scan, so no pattern can be catastrophic. Escaping metacharacters was not enough: translating `*` to `.*` still leaves `*a*a*a…*b` a live combinatorial hang.
+  `globMatch` no longer compiles a regex at all — it is a two-pointer scan, so no pattern can be catastrophic. Escaping metacharacters was not enough: translating `*` to `.*` still leaves `*a*a*a…*b` a live combinatorial hang.
   escapes only `.` before mapping `*` to `.*`. A pattern containing `(`/`+` becomes
   a catastrophic-backtracking regex. **Measured 14,168 ms at n=26** on `(a+)+`.
   Duplicated at `src/outbox.js:119`. Patterns are user-supplied via
   `POST /api/v1/webhooks`, so this is an unauthenticated-cost DoS under SEC-03.
 - **SEC-09 — Token comparison is not constant-time**, `src/auth.js:31`
-  **Fixed 2026-10-03.** `crypto.timingSafeEqual` across every candidate token, length-equalised first. The audit subject is now a SHA-256 fingerprint — it previously put the first 8 characters of the secret into every log line that carried it.
+  `crypto.timingSafeEqual` across every candidate token, length-equalised first. The audit subject is now a SHA-256 fingerprint — it previously put the first 8 characters of the secret into every log line that carried it.
   (`t.token === token`), and **the first 8 characters of the bearer token are
   persisted as the actor** at `src/auth.js:37` into every `action_logs` row.
   **Reproduced:** `token_SUPERSEC` in a stored record. Action logs are exported
   and shipped in reports.
 - **SEC-10 — `/metrics` is served before the auth gate.** `src/server.js:105-109`
-  **Fixed 2026-10-03.** Metrics are served behind the auth gate rather than in front of it.
+  Metrics are served behind the auth gate rather than in front of it.
   returns before `handleApi` at `:110`. `/api/v1/metrics` is unauthenticated
   despite its namespace. Leaks route labels, rates and error counts.
 - **SEC-11 — Internal error messages reach the client.** `src/server.js:118-122`
-  **Fixed 2026-10-03.** Errors with an explicit 4xx `statusCode` are written for the caller and keep their message; anything else logs a stack server-side and returns `Internal server error` plus a correlation id.
+  Errors with an explicit 4xx `statusCode` are written for the caller and keep their message; anything else logs a stack server-side and returns `Internal server error` plus a correlation id.
   returns `error.message`. `pg` errors carry connection strings and statement
   text; `JSON.parse` errors carry payload fragments; filesystem errors carry
   absolute paths.
@@ -891,16 +918,16 @@ against the working tree; the guard named in each row is what keeps it fixed.
 
 | | Defect | State | Held by |
 |---|---|---|---|
-| WEB-01 | falsy coordinates drop records | **fixed** | `coordinatePair` (`public/districts/app.js:217`) refuses null/`''` explicitly rather than through `Number.isFinite`, which both coerce to 0; the shortfall is named in the SVG. `test/web-districts-scenarios.test.js` |
-| WEB-02 | severity filter admits the unseverified | **fixed** | `evaluateMapFilters` (`public/app.js:1236`), a pure function, driven directly by `test/web-console.test.js` |
-| WEB-03 | delta bars truncated and unlabelled | **fixed** | `niceExtent` / `deltaBar` (`public/scenarios/app.js:346`), data-derived shared extent, printed at both ends of the axis. `test/web-districts-scenarios.test.js` |
-| WEB-04 | severity by colour alone | **fixed** | shape and dash per severity plus a text `aria-label` naming it (`public/app.js:1479,1487,1670`) |
+| WEB-01 | falsy coordinates drop records | **fixed** | `coordinatePair` (`public/districts/app.js:262`) refuses null/`''` explicitly rather than through `Number.isFinite`, which both coerce to 0; the shortfall is named in the SVG. `test/web-districts-scenarios.test.js` |
+| WEB-02 | severity filter admits the unseverified | **fixed** | `evaluateMapFilters` (`public/app.js:2370`), a pure function, driven directly by `test/web-console.test.js` |
+| WEB-03 | delta bars truncated and unlabelled | **fixed** | `niceExtent` / `deltaBar` (`public/scenarios/app.js:543,575`), data-derived shared extent, printed at both ends of the axis. `test/web-districts-scenarios.test.js` |
+| WEB-04 | severity by colour alone | **fixed** | shape and dash per severity plus a text `aria-label` naming it (`public/app.js:2232,2249,2370`) |
 | WEB-05 | offline queue reports a discard as filed | **fixed** | `enqueue()` resolves on `tx.oncomplete` and throws otherwise; the CHW toast waits for the store's acknowledgement. `test/web-chw-offline.test.js` |
 | WEB-06 | precache omits three files | **fixed** | `shellGraph` derives the closure from the import graph instead of holding a list. `test/web-chw-offline.test.js` runs it against the real `public/` tree |
-| WEB-07 | 30s redraw destroys focus | **fixed** | focus and scroll are preserved across a rebuild (`public/app.js:1578,2458`) |
+| WEB-07 | 30s redraw destroys focus | **fixed** | focus and scroll are preserved across a rebuild (`public/app.js:5049,5065`) |
 | WEB-08 | CO charts under the wrong quarter's tiles | **fixed** | the window is anchored to the selected quarter and labelled with the range actually plotted. `test/web-co-i18n.test.js` |
-| WEB-09 | unconditional 12+ endpoint poll | **fixed** | backoff with failure memory, and a hidden document is not polled (`public/app.js:1964,2125,2143`) |
-| WEB-10 | markers below the touch-target floor | **fixed and measured, twice** | `hitRadiusUnits` (`public/app.js:1150`) derives a hit radius from the rendered width; the gate queries `[data-tap-target]` and checks width as well as height (`scripts/check-responsive.mjs`). Measured 2026-10-03 against Chrome 154 on :9222 with a live server on :4177: **8 surfaces x 3 viewports, all clean, 24px floor met.** Re-measured 2026-10-13 on the same Chrome: **48 combinations clean** (8 surfaces x 3 viewports x ltr/rtl), exit 0, and canaried by shrinking `--tap-target-min` to 8px in `tokens.css` — **34 FAILs, exit 1**, reverted from a file backup. The "24" this row carried was viewports-without-direction; the gate covers both directions and has for a while |
+| WEB-09 | unconditional 12+ endpoint poll | **fixed** | backoff with failure memory, and a hidden document is not polled (`public/app.js:4007,4010`) |
+| WEB-10 | markers below the touch-target floor | **fixed and measured, twice** | `hitRadiusUnits` (`public/app.js:2284`) derives a hit radius from the rendered width; the gate queries `[data-tap-target]` and checks width as well as height (`scripts/check-responsive.mjs`). Measured 2026-10-03 against Chrome 154 on :9222 with a live server on :4177: **8 surfaces x 3 viewports, all clean, 24px floor met.** Re-measured 2026-10-13 on the same Chrome: **48 combinations clean** (8 surfaces x 3 viewports x ltr/rtl), exit 0, and canaried by shrinking `--tap-target-min` to 8px in `tokens.css` — **34 FAILs, exit 1**, reverted from a file backup. The "24" this row carried was viewports-without-direction; the gate covers both directions and has for a while |
 | WEB-11 | i18n 17–92%, three surfaces none | **fixed** | `scripts/check-i18n.mjs` gates all eight surfaces and enforces coverage floors that may only rise. `districts/`, `scenarios/` and `parametric/` each gained a full layer — 217 keys, `en.json` 227 → 444. `chw`+`so` still lack `footer.powered`, named in `KNOWN_UNTRANSLATED` and printed every run rather than guessed |
 | WEB-12 | two plan claims are false | **fixed** | Phase 0 is true for a reason that cannot rot (WEB-06). Phase 2's "7 of 8" claim went stale the day it was written: the console gained `<link href="/components.css">` on 2026-10-03 (`2a247f5`), the same day the correction block recorded it as missing, and nothing failed because no check asserted the *linkage*. `test/web-component-layer.test.js` asserts it now — all eight surfaces link `styles.css` and `components.css`, and every one reaches `tokens.css` transitively |
 
@@ -926,6 +953,8 @@ three lines below asserts the count is honest.
 
 This is the third instance of the falsy-zero conflation. See **Root cause 6**.
 
+**Fixed 2026-10-03.** `coordinatePair` (`public/districts/app.js:262`) refuses a null or empty coordinate explicitly instead of testing truthiness, and the shortfall is named in the SVG rather than silently dropped. `test/web-districts-scenarios.test.js`.
+
 ### WEB-02 — The severity filter admits every record that has no severity
 
 `public/app.js:1173-1174`
@@ -944,17 +973,23 @@ same array, so the count in the filter bar is wrong too.
 A control that visibly changes and does not do what it says is worse than no
 control, because the operator trusts the map afterwards.
 
+**Fixed 2026-10-03.** `evaluateMapFilters` (`public/app.js:2370`) is a pure function that tests `== null`, and it drives both the map and the record list, so the filter bar's count and the map agree. `test/web-console.test.js`.
+
 ### WEB-03 — Scenario delta bars are truncated, unlabelled, and fixed-origin
 
 `public/scenarios/app.js:342`. Bars encode a change, but the axis has no labels, no
 units, and does not start at a meaningful baseline, so a −2% delta and a +40% delta
 can render at similar widths.
 
+**Fixed 2026-10-03.** `niceExtent` / `deltaBar` (`public/scenarios/app.js:543,575`) derive a shared, zero-anchored extent from the data and print it at both ends of the axis with units. `test/web-districts-scenarios.test.js`.
+
 ### WEB-04 — The map encodes hazard type and severity by colour alone
 
 `public/app.js`. No secondary encoding, so the three colour-vision deficiencies
 (~8% of men) read severity incorrectly. Severity is the one thing on this screen
 that must never be misread. This is the evidence behind **ENH-23**.
+
+**Fixed 2026-10-03.** `hazardShape` and `severityDash` add shape and stroke dash to colour, and every marker carries an `aria-label` naming its severity (`public/app.js:2232,2249,2370`). `test/web-console.test.js`.
 
 ### WEB-05 — The CHW offline queue reports success for a report it discarded
 
@@ -973,6 +1008,8 @@ This is the one surface where telling the user something untrue is most
 consequential: a health worker is told a health report was filed, and stops trying
 to file it.
 
+**Fixed 2026-10-03.** `enqueue()` resolves on `tx.oncomplete` and throws when it has no database, so a discard is never reported as a filing; the CHW toast waits for the store's acknowledgement. `test/web-chw-offline.test.js`.
+
 ### WEB-06 — The service worker precache omits three files of the console's import graph
 
 `public/sw.js:23-32` lists eight modules. `/shared/fmt.js`, `/shared/labels.js`
@@ -983,11 +1020,15 @@ As `docs/architecture/system-overview.md` §6 notes, a missing precache entry is
 hard boot failure offline, not a degradation — so the first offline load fails
 outright. Nothing verifies the list against the real import graph.
 
+**Fixed 2026-10-03.** `shellGraph(load, origin)` walks the import graph from eight entry points plus four bootstrap assets instead of holding a hand-maintained list, and `test/web-chw-offline.test.js` runs it against the real `public/` tree on disk — so an added import with no worker entry is a test failure, not an offline boot failure.
+
 ### WEB-07 — The console redraws every 30 seconds and destroys keyboard focus
 
 `public/app.js:3047` triggers a whitelisted `innerHTML` rebuild of the alerts list
 at `:2160`. Focus falls to `<body>` and all 30 items re-animate. A user
 mid-interaction with a keyboard loses their place twice a minute.
+
+**Fixed 2026-10-03.** The rebuild preserves focus and scroll position (`public/app.js:5049,5065`). `test/web-console.test.js`.
 
 ### WEB-08 — The CO dashboard shows last quarter's charts under this quarter's KPI tiles
 
@@ -996,12 +1037,16 @@ counts a section as "loaded" when it is *not hidden* — so a stale chart counts
 loaded. A reader comparing a headline number against the chart beneath it is
 looking at two different quarters presented as one.
 
+**Fixed 2026-10-03.** The window is anchored to the selected quarter and the chart is labelled with the range it actually plotted. `test/web-co-i18n.test.js`.
+
 ### WEB-09 — Twelve-plus endpoints polled every 30 seconds, unconditionally
 
 `public/app.js:1605-1630`. Every panel refetches on the same timer regardless of
 whether it is open or whether anything changed. On 2G, which is the stated
 constraint for the field surfaces, this is the single largest avoidable cost in the
 frontend and it runs constantly.
+
+**Fixed 2026-10-03.** The poll is gone; the cadence is owned by visibility and idle, with backoff and failure memory (`public/app.js:4007,4010`). `test/web-console.test.js`.
 
 ### WEB-10 — Map markers sit below the 24px touch-target floor
 
