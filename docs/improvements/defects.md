@@ -79,6 +79,7 @@ under **Unreleased**; this table is the index into them.
 | WEB-10 | measured | the 24px floor holds across 48 combinations on Chrome 154 / :9222; the gate canaried to exit 1 | `check-responsive.mjs` |
 | WEB-11 | fixed | every surface has a layer; 217 keys added to `en.json` | `check-i18n.mjs` |
 | WEB-12 | fixed | Phase 0 is true for a reason that cannot rot; Phase 2's "7 of 8" was stale when written — the console linked `components.css` the same day — and the linkage is now asserted | `test/web-component-layer.test.js` |
+| ALERT-06 | fixed | request timeout + retry policy; inbound idempotency now reaches the orphan and no-provider-id branches too, which keyed on the clock and wrote a second row per retry | `rapidpro-route-module.test.js`, `data12-stable-ids.test.js` |
 | TEST-01 | fixed | the source-text guards are gone; the behavioural guard fails on the DAT-02 shape (canaried: two tests red) | `store-conformance.test.js`, `evaluation-context.test.js` |
 | TEST-02 | refuted | measured on the current tree: `postgres-store.js` 97.26 / 91.21 / 91.43 against the audit's 23.29 / — / 0.00; the whole glob runs, and the integration file provisions its own cluster | `store-conformance.test.js` |
 | TEST-03 | refuted | `auth.js` 99.45 / 95.97 / 100, `pii.js` 98.32 / 93.04 / 100, `rapidpro.js` 98.47 / 82.62 / 97.85 | `auth-deny-by-default.test.js`, `pii.test.js` |
@@ -508,21 +509,25 @@ everything.
   a catastrophic-backtracking regex. **Measured 14,168 ms at n=26** on `(a+)+`.
   Duplicated at `src/outbox.js:119`. Patterns are user-supplied via
   `POST /api/v1/webhooks`, so this is an unauthenticated-cost DoS under SEC-03.
+  **Fixed 2026-10-03.** `globMatch` is a two-pointer scan, so no pattern can be catastrophic; escaping metacharacters was not enough, because `*` → `.*` still leaves `*a*a*a…*b` a live combinatorial hang. `test/webhook-security.test.js`.
 - **SEC-09 — Token comparison is not constant-time**, `src/auth.js:31`
   `crypto.timingSafeEqual` across every candidate token, length-equalised first. The audit subject is now a SHA-256 fingerprint — it previously put the first 8 characters of the secret into every log line that carried it.
   (`t.token === token`), and **the first 8 characters of the bearer token are
   persisted as the actor** at `src/auth.js:37` into every `action_logs` row.
   **Reproduced:** `token_SUPERSEC` in a stored record. Action logs are exported
   and shipped in reports.
+  **Fixed 2026-10-03.** `crypto.timingSafeEqual` over every candidate, length-equalised first, and the logged subject is a SHA-256 fingerprint rather than the token's first eight characters. `test/auth-deny-by-default.test.js`.
 - **SEC-10 — `/metrics` is served before the auth gate.** `src/server.js:105-109`
   Metrics are served behind the auth gate rather than in front of it.
   returns before `handleApi` at `:110`. `/api/v1/metrics` is unauthenticated
   despite its namespace. Leaks route labels, rates and error counts.
+  **Fixed 2026-10-03.** Metrics are served behind the auth gate rather than in front of it. `test/seed-metrics-gate.test.js`.
 - **SEC-11 — Internal error messages reach the client.** `src/server.js:118-122`
   Errors with an explicit 4xx `statusCode` are written for the caller and keep their message; anything else logs a stack server-side and returns `Internal server error` plus a correlation id.
   returns `error.message`. `pg` errors carry connection strings and statement
   text; `JSON.parse` errors carry payload fragments; filesystem errors carry
   absolute paths.
+  **Fixed 2026-10-03.** Errors with an explicit 4xx `statusCode` keep their message; anything else logs a stack server-side and returns `Internal server error` with a correlation id. `test/error-taxonomy.test.js`.
 - **SEC-12 — CSV export is formula-injectable.** **Reproduced:** a field name
   beginning with `=` survives into `export.csv`, and Excel executes it on open.
   Field reports contain attacker-supplied text by design.
@@ -634,6 +639,18 @@ everything.
 - **DATA-06 — Equity accuracy can go negative.** `src/equity.js:57` divides
   dispatched alerts by resolved alerts, and the numerator and denominator are
   different populations. It also drives workflow creation.
+
+  **Fixed 2026-10-18.** The two populations are one population now.
+  `dispatch_precision_pct` (`src/analytics/metrics.js:236`) iterates the alerts,
+  keeps the dispatched ones, and counts only those carrying a recorded
+  determination — numerator "determined and warranted", denominator "determined
+  and dispatched", so the ratio cannot exceed 1 and cannot go negative. An alert
+  with no determination is excluded rather than counted as a miss, and a sample
+  below the floor is **refused** with a sentence naming the count and the floor
+  rather than reported as a number. `accuracy_pct` survives as an alias of the
+  same value, marked as the old lie, so existing consumers keep rendering while
+  the name migrates. Guarded by `test/metric-registry.test.js` and
+  `test/sample-floors.test.js`.
 - **DATA-07 — Two surfaces disagree about missing false-alert rates.**
   `src/equity.js:43` renders `null` as "not yet measurable"; `src/districts.js:107`
   renders the same value as `0%`. One district's honest unknown is another's
@@ -642,6 +659,22 @@ everything.
   `occurred_at`, so a 1985 archive flood closes roads today. Road passability also
   has no elevation or depth input at all (`src/road-access.js:139`) and is not
   connected to `flood-depth.js`, which computes exactly that.
+
+  **Fixed 2026-10-18.** `temporalStatus` (`src/road-access.js:243`) reads
+  `occurred_at` and returns one of five states against the event type's own
+  window: `active`, `stale`, `undated`, `forecast`, and the unparseable case,
+  which is `undated`. A stale hazard is kept in the record rather than deleted —
+  the entry asked for the road not to be closed, not for the evidence to vanish —
+  and a future-dated one is a forecast, which blocks but is labelled as one.
+  `undated` and `stale` stay distinct because known-old and unknown-age are
+  different facts, and collapsing them would either let an archive entry close a
+  road or make an undated one look as examined as this morning's flood.
+
+  The depth clause is **not** closed and is not a one-line change: passability
+  still has no elevation or depth input, and connecting it to `flood-depth.js`
+  needs a datum per road point, which DATA-09 records as absent platform-wide.
+  Stating that rather than marking the entry fixed: the temporal half is a real
+  fix with a guard, the depth half is blocked on DATA-09.
 - **DATA-09 — `depthGrid` lacks the `NO_DATA_FLOOR_M` guard `depthAtPoint` has**
   (`src/flood-depth.js:214`), so coastal bathymetry is reported as flood depth.
   `src/flood-depth.js:43` asserts output is "above sea level" with no datum
@@ -652,10 +685,33 @@ everything.
   the same `record_count` and `upstream_checksum`. `upstream_url_or_endpoint` is
   always null and `transform_version` is a constant (`src/lineage.js:14-15`). <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
   IPC and WHO collections are excluded from lineage entirely.
+
+  **Fixed 2026-10-18, all three clauses.** `src/provenance.js` replaces
+  `src/lineage.js`: `recordLineageRow` takes the records *for its own run* and
+  derives its id from `[source, source_run_id]` with no clock in it, so a
+  nine-source run writes nine different rows instead of nine copies of the union.
+  `upstream_url_or_endpoint` is `firstRetrievalUrl(provenance)` rather than a
+  null, and `transform_version` comes from `transformVersionFor(fn)` — derived
+  from the source of the function that did the work, so a parser change moves it.
+  The exclusion is closed structurally rather than by adding the two names to a
+  list: nothing in the module knows which source it is looking at, because
+  `buildProvenance` takes a connector spec like any other, so a forgotten source
+  is a test failure rather than a silent gap. Wired at
+  `src/ingestion.js:376,563`. Guarded by `test/record-provenance.test.js`.
 - **DATA-11 — There is no migration path.** `src/postgres-store.js:47` issues a
   single hardcoded `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`; the `version: 1`
   written by `ensureSchema` is never read. A deployment that has been running
   when a record shape changes has no upgrade route.
+
+  **Fixed 2026-10-18.** `src/migrations.js` holds an ordered `MIGRATIONS` list
+  keyed on a real `schema_version` (`SCHEMA_VERSION = 7`), and
+  `src/postgres-store.js:5` imports `pendingMigrations` and `targetVersion` from
+  it — so the version written by `ensureSchema` is what decides what runs, and a
+  database below the build's version is migrated in order rather than re-issued
+  every statement inline. The third property the module states and the entry did
+  not ask for: a migration can be *declined*, so a statement that is wrong for a
+  particular deployment is refused rather than run. Guarded by
+  `test/migrations.test.js` and `test/migrations-postgres.test.js`.
 - **DATA-12 — Record ids mix the current timestamp into the hash**
   (`src/operations.js:104`, `src/lineage.js:9`, `src/reports.js:187`, <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
   `src/workflows.js:98`, `src/community.js:36`, `src/server.js:2213`), so <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
@@ -749,6 +805,19 @@ everything.
   an actor string the caller controls, there is no auth on many of the paths that
   write it, and `src/server.js:1162-1163` shows the outbox write is not
   transactional with the state change that produced it.
+
+  **Fixed 2026-10-18, all three clauses.** The actor string is still the caller's
+  — an audit log records who the caller said they were, and the fix for a claim
+  is not to invent a better one — but the *subject* beside it is not:
+  `actionLog(collection, action, record, actor, subject)` carries
+  `req.__auth?.subject`, the token identity the gate resolved, so a row's actor
+  and its authenticated subject are two fields a reader can compare, and a
+  disagreement is visible rather than laundered. The auth clause is SEC-01/03:
+  every write path is behind the gate now. The transactionality clause is
+  `emit(store, event, payload, writes)` (`src/outbox.js:63`) — the state change
+  and the outbox row land in **one** `withLock` merge, which is the only unit
+  this store has, so a failure cannot announce a transition that never happened.
+  `emitMany` folds a whole alert storm into one merge for the same reason.
 
 ### Ingestion fidelity
 
@@ -844,6 +913,24 @@ everything.
 - **ALERT-06 — RapidPro sends have no timeout, retry or backoff**
   (`src/rapidpro.js:29-37`); a 429 hangs the request. There is no inbound
   idempotency, so a retried webhook double-SMs.
+
+  **Fixed, and the last clause was still live until 2026-10-18.** The timeout and
+  the retry are in: `RAPIDPRO_REQUEST_TIMEOUT_MS` aborts the request with a 504
+  (`src/rapidpro.js:419`), and `dispatchRetryPolicy` gives three tries over about
+  eight seconds. Inbound idempotency arrived with `reconcileInbound`, which keys
+  on `[source_id, from, text]` — but two branches never went through it. Probed
+  today against the real route: **two identical deliveries from an unrecognised
+  sender wrote two inbound rows**, because the orphan branch keyed its id on
+  `Date.now()` under the prefix `inbound` while the correlated path uses
+  `rapidpro_inbound`, so the two could never dedupe against each other; and
+  `parseRapidProReply`'s no-provider-id fallback keyed on `now`, so a retried
+  reply with no `received_on` minted a new id too. Both key on the message the
+  provider sent now, under one prefix. Guards: *writes one row when a retried
+  webhook from an unrecognised sender arrives twice* and its control *gives a
+  genuinely different message from the same sender its own row*
+  (`test/rapidpro-route-module.test.js`), plus *is one row when the provider
+  echoes no id and the webhook is retried* (`test/data12-stable-ids.test.js`).
+  Canaried by restoring both clock keys: both guards fail, both controls pass.
 - **ALERT-07 — CAP `scope` is hardcoded `Public`** (`src/cap.js:42`) for every
   alert including security and conflict; the `scopeOverride` option is unreachable
   dead configuration.

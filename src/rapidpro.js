@@ -1468,7 +1468,17 @@ export function parseRapidProReply(payload = {}, data = null, options = {}) {
         observedAt: payload.observed_at || payload.created_on || payload.created_at || now,
       })
     : { recognised: false, verb: null, refusal: null, submission: null }
-  const sourceId = payload.id || payload.uuid || payload.message?.uuid || payload.run?.uuid || stableId('rapidpro_reply', [correlation.from, text, payload.received_on || now])
+  // DATA-12. The fallback keyed on `now` when the payload carried no
+  // `received_on`, so a webhook with no provider id minted a new id on every
+  // delivery — and RapidPro retries anything it thinks was not acknowledged, so
+  // the retry wrote a second inbound row. The key is the message the provider
+  // sent: a retry carries the same timestamp, and a genuinely repeated reply
+  // carries a different one or its own id. A payload with neither is
+  // indistinguishable from its own retry, and deduping is the right answer for
+  // a webhook.
+  const providerStamp = payload.received_on || payload.created_on || payload.observed_at || payload.created_at || null
+  const sourceId = payload.id || payload.uuid || payload.message?.uuid || payload.run?.uuid
+    || stableId('rapidpro_reply', [correlation.from, text, providerStamp])
 
   return {
     id: stableId('rapidpro_inbound', [sourceId, correlation.from, text]),

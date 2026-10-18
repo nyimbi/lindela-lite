@@ -168,6 +168,37 @@ describe('ARC-01 — a reply is correlated by sender, not by a payload field', (
     assert.equal(recorded[0].event_type, 'reply_unmatched')
   })
 
+  it('writes one row when a retried webhook from an unrecognised sender arrives twice', async () => {
+    // DATA-12, on the branch ALERT-06's own tests did not reach. The orphan id
+    // keyed on `Date.now()` under the prefix `inbound`, so two deliveries of one
+    // message wrote two rows — and neither could dedupe against a correlated
+    // reply, which is keyed `rapidpro_inbound`.
+    const store = recordingStore()
+    const body = { from: '+254799999999', text: 'ACK', received_on: '2026-10-18T09:00:00.000Z' }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await call({ kind: 'rapidpro-reply' }, { method: 'POST', req: secretReq('POST', body), store })
+    }
+    const rows = store.state.rapidpro_inbound_messages
+    assert.equal(rows.length, 2, 'the two deliveries were not both merged into the recording store')
+    assert.equal(new Set(rows.map((r) => r.id)).size, 1,
+      'a retried webhook from an unrecognised sender minted a second inbound id — the store keeps both rows')
+    assert.ok(rows[0].id.startsWith('rapidpro_inbound_'),
+      `the orphan id carries the prefix ${rows[0].id.split('_').slice(0, 2).join('_')}, which the correlated path never uses, so the two can never dedupe against each other`)
+  })
+
+  it('gives a genuinely different message from the same sender its own row', async () => {
+    // The control: a constant id would satisfy the case above and collapse every
+    // wrong number into one row.
+    const store = recordingStore()
+    for (const text of ['ACK', 'DONE']) {
+      await call({ kind: 'rapidpro-reply' }, {
+        method: 'POST', req: secretReq('POST', { from: '+254799999999', text, received_on: '2026-10-18T09:00:00.000Z' }), store,
+      })
+    }
+    const ids = new Set(store.state.rapidpro_inbound_messages.map((r) => r.id))
+    assert.equal(ids.size, 2, 'two different messages from one sender shared an id')
+  })
+
   it('correlates a reply from a dispatch recipient by sender', async () => {
     const store = recordingStore({ rapidpro_dispatches: [dispatch()] })
     const { res } = await call({ kind: 'rapidpro-reply' }, {

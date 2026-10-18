@@ -321,8 +321,14 @@ export async function handleRapidProRoute(route, { store, data, req, res, url, j
       // branches by accident; loading it where it is used is both correct and
       // what makes the scope obvious.
       const policy = await loadPolicy()
+      // DATA-12. The id keyed on `Date.now()`, so a webhook RapidPro retried
+      // wrote a second row for one message — and the prefix was `inbound` where
+      // `reconcileInbound` uses `rapidpro_inbound`, so an orphan could never
+      // dedupe against a correlated reply either. Keyed on the message, under
+      // the same prefix the correlated path uses.
+      const receivedOn = body.received_on || body.created_on || body.observed_at || body.created_at || null
       const orphan = redactPii({
-        id: stableId('inbound', ['orphan', body.from, body.text, Date.now()]),
+        id: stableId('rapidpro_inbound', ['orphan', body.from, body.text, receivedOn]),
         text: body.text || '',
         contact_urn: body.from || '',
         event_type: 'reply_unmatched',

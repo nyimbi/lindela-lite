@@ -142,7 +142,12 @@ function buildRecord({ glideId, disease, country, geo, locationNameFallback, cas
 	// as an ISO label and gets `unknown` geography.
 	const centroidCode = GLIDE_COUNTRY_SUFFIX[country] ? country : null
 	return {
-		id: stableId('disease', ['reliefweb_epidemics', glideId || rawName || String(Date.now())]),
+		// DATA-12. The last fallback was the clock, so a feed item with neither a
+		// GLIDE id nor a title — the two things this record is named by — minted
+		// a new id on every run and defeated dedup for exactly the items nothing
+		// else identifies. Keyed on what the item carries instead; a re-run of
+		// unchanged content is the same record.
+		id: stableId('disease', ['reliefweb_epidemics', glideId || rawName || sourceUrl || observedAt]),
 		source: 'reliefweb_epidemics',
 		source_id: glideId || null,
 		disease,

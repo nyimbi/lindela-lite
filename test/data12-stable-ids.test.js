@@ -8,6 +8,7 @@ import { normalizeParametricRule, simulateDisbursement } from '../src/parametric
 import { normalizeDistributionRun, normalizeReport, normalizeReportSchedule } from '../src/reports.js'
 import { runScenario } from '../src/scenarios.js'
 import { normalizeWorkflowInstance } from '../src/workflows.js'
+import { parseRapidProReply } from '../src/rapidpro.js'
 
 /**
  * DATA-12 — a record id names the record, not the moment it was written.
@@ -237,5 +238,24 @@ describe('DATA-12 — a scenario', () => {
     const a = await at(EARLY, () => runScenario(data, perturbation))
     const b = await at(EARLY, () => runScenario(data, { precipitation_multiplier: 2.5 }))
     assert.notEqual(a.scenario_id, b.scenario_id)
+  })
+})
+
+describe('DATA-12 — an inbound webhook', () => {
+  const payload = { from: '+254700000001', text: 'ACK blocked' }
+
+  it('is one row when the provider echoes no id and the webhook is retried', async () => {
+    // Probed before the fix: two parses a few milliseconds apart minted
+    // `rapidpro_inbound_be79f8bd5eb3b1d6` and `rapidpro_inbound_b58a378e5469c9bc`,
+    // so a retried webhook wrote a second inbound row for one message.
+    const first = await at(EARLY, () => parseRapidProReply(payload, null))
+    const second = await at(LATER, () => parseRapidProReply(payload, null))
+    assert.equal(first.id, second.id, 'a retried reply with no provider id wrote a second inbound row')
+  })
+
+  it('takes the provider stamp when there is one, so a real repeat keeps its own id', async () => {
+    const first = await at(EARLY, () => parseRapidProReply({ ...payload, received_on: '2026-10-18T09:00:00.000Z' }, null))
+    const second = await at(EARLY, () => parseRapidProReply({ ...payload, received_on: '2026-10-18T09:30:00.000Z' }, null))
+    assert.notEqual(first.id, second.id, 'two genuinely different messages collapsed into one row')
   })
 })
