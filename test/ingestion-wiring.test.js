@@ -32,6 +32,7 @@ import { emptyStore } from '../src/schema.js'
 import { quarantineCollectionName } from '../src/assertions.js'
 import { FRESHNESS_VERDICTS } from '../src/freshness.js'
 import { payloadHashFor } from '../src/provenance.js'
+import { fetchWithRetry } from '../src/connectors/http.js'
 
 /** A connector that returns `records` and can be told to throw. */
 const fake = (id, records, extra = {}) => ({
@@ -408,6 +409,89 @@ describe('the circuit is reached', () => {
     assert.equal(gate.allowed, false)
     assert.notEqual(gate.reason, 'ok')
     assert.notEqual(gate.reason, 'broken')
+  })
+})
+
+/**
+ * ING-07 — one declared retry budget, spent once.
+ *
+ * Two loops read the same `options.retries`: `fetchWithRetry` per request and
+ * `runConnectorWithRetries` per run. Nested, a source declaring 2 paid 3 × 3 =
+ * 9 requests for one failure. The declaration says how many times a source is
+ * retried; it cannot mean that number at two layers and also mean it.
+ *
+ * Counted end to end through a real connector, because the defect is the
+ * *product* of two layers and neither layer alone can observe it. A connector
+ * invoked 3 times proves nothing about how many requests each invocation made —
+ * which is exactly why the bug survived a suite that asserts on invocations.
+ */
+describe('ING-07 — retries are counted once, not squared', () => {
+  // A connector of the shape every real one has: it calls `fetchWithRetry` with
+  // `request.retries` and then either throws or returns an error list. Built
+  // here rather than imported because no shipped connector both throws out of
+  // `ingest` *and* fetches over HTTP — measured, all 19 that fetch catch and
+  // return — so the two layers can only be observed together in one that does.
+  const fetchOnce = (id, { throws }) => ({
+    id,
+    async ingest(request) {
+      try {
+        await fetchWithRetry('https://example.invalid/feed', {
+          retries: request.retries ?? 2,
+          timeoutMs: 50,
+          source: request.source,
+          // The backoff is a wall-clock fact about production, not about this
+          // count. Sleeping through 150/300 ms per attempt would make the test
+          // slow enough that someone would delete it.
+          sleep: async () => {},
+        })
+      } catch (error) {
+        if (throws) throw error
+        return { errors: [error.message] }
+      }
+      return {}
+    },
+  })
+
+  function countRequests() {
+    const original = globalThis.fetch
+    const counter = { requests: 0 }
+    globalThis.fetch = async () => {
+      counter.requests += 1
+      throw Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' })
+    }
+    counter.restore = () => { globalThis.fetch = original }
+    return counter
+  }
+
+  it('a connector that throws spends the declared budget, not its square', async () => {
+    const store = freshStore()
+    const counter = countRequests()
+    try {
+      // `retries: 1` so the outer backoff costs one second rather than three.
+      // The arithmetic it is asserting: 2 run attempts × 2 request attempts = 4
+      // before the fix, 2 + 1 = 3 after.
+      await runIngestion(store, { sources: ['gdacs'], retries: 1 }, { connectors: { gdacs: fetchOnce('gdacs', { throws: true }) } })
+      assert.equal(counter.requests, 3,
+        `a source declaring one retry must not pay four requests (saw ${counter.requests})`)
+    } finally {
+      counter.restore()
+    }
+  })
+
+  it('a connector that returns still gets its full inner pair', async () => {
+    // The control, and the reason the fix splits the budget instead of deleting
+    // the outer loop or disabling the inner one. Nine sources catch and return,
+    // so `fetchWithRetry` is their *only* retry; a fix that disabled it would
+    // leave them with none.
+    const store = freshStore()
+    const counter = countRequests()
+    try {
+      await runIngestion(store, { sources: ['gdacs'], retries: 1 }, { connectors: { gdacs: fetchOnce('gdacs', { throws: false }) } })
+      assert.equal(counter.requests, 2,
+        `the inner pair must survive for a returning connector (saw ${counter.requests})`)
+    } finally {
+      counter.restore()
+    }
   })
 })
 

@@ -1138,12 +1138,37 @@ function validateSources(sources) {
   }
 }
 
+/**
+ * ING-07. One retry budget per source per run, spent rather than squared.
+ *
+ * Two loops exist. `fetchWithRetry` (`src/connectors/http.js`) retries one
+ * request with a 150/300 ms backoff; this one re-runs a whole connector with
+ * 1 s/2 s/4 s. Both read the same `options.retries`, so a source declaring 2
+ * used to pay 3 × 3 = 9 requests for one failure — the inner pair nested inside
+ * every outer attempt. The budgets answer different questions (a blip on one
+ * request, a run that failed whole) and they must not multiply.
+ *
+ * So the inner budget is spent on the first attempt only, where the fast pair
+ * is the right response to a transient blip, and re-invocations run with it
+ * disabled: by the time this loop tries again, a second has already elapsed and
+ * the 150/300 ms pair would be a rounding error inside it.
+ *
+ * The arithmetic, for a source declaring `retries: 2`: a connector that throws
+ * used to cost 3 outer × 3 inner = 9 requests; it costs 3 + 1 + 1 = 5 now. A
+ * connector that catches and returns never reaches this loop at all, so it
+ * still costs exactly 3 — the inner pair is its only retry and is untouched,
+ * which is why the budget is split this way rather than simply disabled
+ * everywhere. Nine sources depend on that pair and none of them throw.
+ */
 async function runConnectorWithRetries(connector, request) {
   const sourceRetries = Math.max(toNumber(request.retries ?? request.source_retries, 0), 0)
   let lastError
   for (let attempt = 0; attempt <= sourceRetries; attempt += 1) {
     try {
-      const output = await connector.ingest(request)
+      // The inner budget belongs to the first attempt. Passing 0 rather than
+      // omitting the field matters: every connector reads `options.retries ?? 2`,
+      // so an omitted key would silently restore the default pair.
+      const output = await connector.ingest(attempt === 0 ? request : { ...request, retries: 0 })
       return { ...output, __attempts: attempt + 1 }
     } catch (error) {
       lastError = error

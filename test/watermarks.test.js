@@ -414,3 +414,121 @@ describe('WATERMARK_SOURCES', () => {
     assert.ok(archive.includes(SERIES_FLOOR.open_meteo_archive), 'archive series floor drifted from the connector')
   })
 })
+
+/**
+ * ING-04, the residual the window arithmetic does not reach.
+ *
+ * `fetchWindow` stopped deriving the window from the clock, which closed the
+ * churn for a run with nothing new. What survived is the id: both walks minted
+ * it from `[source, region, startDate, endDate]`, and `endDate` is today
+ * whenever the mark has not reached today — so the same mark on two different
+ * days minted two ids over two windows, and the longer window did not supersede
+ * the shorter one's record. It landed beside it: measured on the archive
+ * connector, `end_date=2026-10-02` gave `climate_290ac34a6fd62c09` and
+ * `end_date=2026-10-16` gave `climate_15e3b44a7bd13086`, with `series_end`
+ * reading `2026-10-02` in both. Two ids, one payload.
+ *
+ * These tests drive the real connectors with a stubbed fetch, hold the upstream
+ * response fixed, and move only the requested end date — which is the exact
+ * movement that used to mint a new record. The control is a genuinely different
+ * payload, because "the id never changes" would satisfy every assertion above
+ * while being a worse defect than the one being fixed.
+ */
+describe('ING-04 — the id is a function of the payload, not of the request', () => {
+  const REGION = [{ name: 'Turkana', country: 'KEN', lat: 3.11, lon: 35.6 }]
+
+  /** A fetch that answers the same daily arrays no matter what was asked. */
+  function stubFetch(daily) {
+    const original = globalThis.fetch
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ daily }),
+    })
+    return () => { globalThis.fetch = original }
+  }
+
+  const archivePayload = (end = '2026-01-03') => ({
+    time: ['2026-01-01', '2026-01-02', end],
+    precipitation_sum: [1.4, 0.2, 0],
+  })
+
+  const floodPayload = (end = '2026-01-03') => ({
+    time: ['2026-01-01', '2026-01-02', end],
+    river_discharge: [12.1, 13.4, 11.9],
+  })
+
+  it('the archive record keeps its id when only the requested end date moves', async () => {
+    const { spec } = await import('../src/connectors/open-meteo-archive.js')
+    const restore = stubFetch(archivePayload())
+    try {
+      const short = await spec.ingest({
+        regions: REGION, archive_start_date: '2026-01-01', archive_end_date: '2026-01-03', now: '2026-01-03',
+      })
+      const long = await spec.ingest({
+        regions: REGION, archive_start_date: '2026-01-01', archive_end_date: '2026-01-10', now: '2026-01-10',
+      })
+      assert.equal(short.errors.length, 0, short.errors.join('; '))
+      assert.equal(long.errors.length, 0, long.errors.join('; '))
+      const a = short.climate_observations[0]
+      const b = long.climate_observations[0]
+      assert.equal(a.series_end, b.series_end, 'the premise: the payload covers the same series either way')
+      assert.equal(a.id, b.id, 'the same bytes under a later end_date must be the same record, not a second one')
+      assert.equal(a.source_id, b.source_id)
+    } finally {
+      restore()
+    }
+  })
+
+  it('the flood record keeps its id when only the requested end date moves', async () => {
+    const { spec } = await import('../src/connectors/open-meteo-flood.js')
+    const restore = stubFetch(floodPayload())
+    try {
+      const short = await spec.ingest({
+        regions: REGION, flood_start_date: '2026-01-01', flood_end_date: '2026-01-03', now: '2026-01-03',
+      })
+      const long = await spec.ingest({
+        regions: REGION, flood_start_date: '2026-01-01', flood_end_date: '2026-01-10', now: '2026-01-10',
+      })
+      assert.equal(short.errors.length, 0, short.errors.join('; '))
+      assert.equal(long.errors.length, 0, long.errors.join('; '))
+      const a = short.climate_observations[0]
+      const b = long.climate_observations[0]
+      assert.equal(a.series_end, b.series_end, 'the premise: the payload covers the same series either way')
+      assert.equal(a.id, b.id, 'the same bytes under a later end_date must be the same record, not a second one')
+    } finally {
+      restore()
+    }
+  })
+
+  it('a genuinely longer series still gets its own id', async () => {
+    // The control. An id that ignores the payload would pass both tests above
+    // and collapse two real series into one record — the opposite failure, and
+    // the more destructive of the two because it overwrites data instead of
+    // duplicating it.
+    const { spec } = await import('../src/connectors/open-meteo-archive.js')
+    const short = stubFetch(archivePayload('2026-01-03'))
+    let first
+    try {
+      first = await spec.ingest({
+        regions: REGION, archive_start_date: '2026-01-01', archive_end_date: '2026-01-03', now: '2026-01-03',
+      })
+    } finally {
+      short()
+    }
+    const longer = stubFetch({
+      time: ['2026-01-01', '2026-01-02', '2026-01-03', '2026-01-04'],
+      precipitation_sum: [1.4, 0.2, 0, 3.1],
+    })
+    try {
+      const second = await spec.ingest({
+        regions: REGION, archive_start_date: '2026-01-01', archive_end_date: '2026-01-04', now: '2026-01-04',
+      })
+      assert.notEqual(second.climate_observations[0].series_end, first.climate_observations[0].series_end)
+      assert.notEqual(second.climate_observations[0].id, first.climate_observations[0].id,
+        'a series that really did grow is a different record')
+    } finally {
+      longer()
+    }
+  })
+})

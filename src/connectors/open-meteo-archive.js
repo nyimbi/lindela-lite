@@ -205,19 +205,27 @@ async function fetchRegion(region, startDate, endDate, { timeoutMs, retries, sou
     precipitation_mm: readMeasurement(values[i]),
   }))
   const missing = daily.filter((d) => d.precipitation_mm === null).length
+  // ING-04. The id was derived from the *requested* window, so a run whose
+  // `end_date` was today minted a new id every day over bytes it already held,
+  // and the longer window did not supersede the shorter one's record — it
+  // landed beside it, `series_end` reading the same date in both. Identity is
+  // the series the payload actually covers, which is what `series_end` already
+  // records and what every reader of this record joins on. The requested window
+  // is only the fallback for a response that carries no dates at all.
+  const seriesEnd = daily[daily.length - 1]?.date || endDate
   return {
-    id: stableId('climate', [SOURCE, region.name, startDate, endDate]),
+    id: stableId('climate', [SOURCE, region.name, daily[0]?.date || startDate, seriesEnd]),
     source: SOURCE,
-    source_id: `${SOURCE}:${region.name}:${startDate}:${endDate}`,
+    source_id: `${SOURCE}:${region.name}:${daily[0]?.date || startDate}:${seriesEnd}`,
     // One record per region. observed_at anchors the series end so stale
     // checks and ordering behave like other climate observations.
     region_name: region.name,
     country: region.country,
     latitude: Number(region.lat),
     longitude: Number(region.lon),
-    observed_at: `${daily[daily.length - 1]?.date || endDate}T00:00:00.000Z`,
+    observed_at: `${seriesEnd}T00:00:00.000Z`,
     series_start: daily[0]?.date || startDate,
-    series_end: daily[daily.length - 1]?.date || endDate,
+    series_end: seriesEnd,
     series_days: daily.length,
     days_missing_precipitation: missing,
     daily,
@@ -228,7 +236,7 @@ async function fetchRegion(region, startDate, endDate, { timeoutMs, retries, sou
       attribution: 'ERA5 reanalysis precipitation via archive-api.open-meteo.com, keyless',
       granularity: 'point, daily, whole archive',
       granularity_note: 'Reanalysis at the district headquarter point. District-scale flood response depends on local drainage, which a single point cannot resolve.',
-      staleness_note: `Series ends ${daily[daily.length - 1]?.date || endDate}; a training series must state where it ends.`,
+      staleness_note: `Series ends ${seriesEnd}; a training series must state where it ends.`,
       model_limit: 'Reanalysis precipitation, not gauge observations. In data-sparse regions the reanalysis is partially model-informed; treat as the rainfall record available, with its limits stated.',
       fetched_at: new Date().toISOString(),
     },

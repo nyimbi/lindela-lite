@@ -56,6 +56,8 @@ under **Unreleased**; this table is the index into them.
 | ING-01 | fixed | severity from the alert level alone; prose never consulted; unknown ⇒ `null` | `connector-severity.test.js` |
 | ING-02 | fixed | severity is `null` by construction, declared in `model_limit` | `connector-severity.test.js` |
 | ING-06 | fixed | `gdacs_archive` declares `budget_ms`; the walk spends it and checks it before each window | `completeness-wiring.test.js`, `ingestion-wiring.test.js` |
+| ING-04 | fixed | the archive and flood walks key the record on the series the payload covers, not on the requested window | `watermarks.test.js` |
+| ING-07 | fixed | one declared retry budget: the inner pair is spent on the first attempt only, so a throwing connector costs `2·retries + 1` requests | `ingestion-wiring.test.js` |
 | ALERT-01 | fixed | lifecycle→msgtype table asserted against the alert-status vocabulary; unknown throws | `cap-encoding.test.js` |
 | ALERT-07 | fixed | `scopeOverride` honoured and validated; falsy-but-present values no longer fall back to `Public` | `cap-encoding.test.js` |
 | ALERT-02 | fixed | CAP `<status>` is `Draft` unless the alert was approved, taking the dispatch gate's own predicate; the feed marks an unapproved entry | `cap-encoding.test.js` |
@@ -128,17 +130,16 @@ gives for R-05 one register over.
   in any zone*, the second of which parses the value in child processes under
   two different `TZ` values and canaries the unzoned control in the same test
   (`test/weather-forecast.test.js`).
-- **ING-04 — closed for the incremental path, open for both archive walks, and
-  the residual is narrower than "backfill".** The incremental path is genuinely
-  fixed: `fetchWindow` is derived from the stored mark rather than the clock
+- **ING-04 — fixed 2026-10-18.** The incremental path was already closed:
+  `fetchWindow` is derived from the stored mark rather than the clock
   (`src/watermarks.js:272`), so two consecutive days with nothing new produce a
   byte-identical window, and a mark sitting on today mints nothing at all —
   measured against the archive connector, `requests: 0, records: 0`. Guard: *two
   consecutive days with nothing new request an identical window*,
   `test/watermarks.test.js`.
 
-  What survives is the id's *derivation*, and it is not confined to a resumable
-  backfill. The archive and flood walks mint their id from `[SOURCE,
+  What survived was the id's *derivation*, and it was not confined to a
+  resumable backfill. The archive and flood walks minted their id from `[SOURCE,
   region.name, startDate, endDate]` (`open-meteo-archive.js:209`,
   `open-meteo-flood.js:183`), and `endDate` is today whenever the mark has not
   reached today. Measured on the archive connector with the mark at `2026-10-02`:
@@ -152,17 +153,44 @@ gives for R-05 one register over.
   `climate_290ac34a6fd62c09` and `2026-10-16` gives `climate_15e3b44a7bd13086`,
   with `series_end` reading `2026-10-02` in both. Two ids, one payload. So a
   longer window does not supersede the shorter one's record; it lands beside it.
-- **ING-07 — the outer layer is live; the inner one is still doubled.** The
-  entry says connectors catch and return rather than throw, so only the 150/300 ms
-  inner retries ever run. The outer layer is real now — `runConnectorWithRetries`
-  (`src/ingestion.js:1141`) re-invokes the connector up to `source_retries` times
-  with its own 1 s/2 s/4 s backoff, and connectors that do throw (both Open-Meteo
-  backfills, `ipc-hdx`, `kobo`, `iot`, `dhis2`) reach it. What is unchanged is
-  the doubling: a source that declares `retries` gets that count at *both*
-  layers, so a connector that throws pays `retries × retries` attempts, and one
-  that catches-and-returns still pays only the inner 150/300 ms pair, because
-  its error never reaches the outer loop. Guard for the outer layer:
-  `test/ingestion-wiring.test.js`.
+
+  **Fixed 2026-10-18.** Both connectors now derive the id from the series the
+  payload actually covers — `[SOURCE, region.name, series_start, series_end]`,
+  the same dates the record already states — so the id is a function of the
+  bytes and the requested window survives only as the fallback for a response
+  that carries no dates at all. Re-measured on the same probe: the two runs that
+  gave `climate_290ac34a6fd62c09` and `climate_15e3b44a7bd13086` now give one
+  id, and a series that genuinely grew still gets its own. Guards in
+  `test/watermarks.test.js`: *the archive record keeps its id when only the
+  requested end date moves*, the same for flood, and — the control that stops
+  the fix collapsing two real series into one — *a genuinely longer series still
+  gets its own id*. Canaried by restoring the old derivation: both id tests fail
+  and the control passes.
+- **ING-07 — fixed 2026-10-18: one budget, spent once.** The entry said
+  connectors catch and return rather than throw, so only the 150/300 ms inner
+  retries ever ran. The outer layer is real — `runConnectorWithRetries`
+  (`src/ingestion.js:1168`) re-invokes the connector up to `retries` times with
+  its own 1 s/2 s/4 s backoff — and measured, it is reached far less often than
+  the entry assumed: with `fetch` failing at the transport layer, **all 19
+  connectors that fetch return an error list rather than throwing**, and with a
+  malformed 200 body, all 19 again. The entry's list of throwers is wrong; the
+  doubling is real but only a connector that throws pays it.
+
+  What was unchanged was the doubling: both loops read the same
+  `options.retries`, so a source declaring 1 paid 2 run attempts × 2 request
+  attempts = 4 requests for one failure. The fix spends the inner budget on the
+  first attempt only and passes `retries: 0` to every re-invocation — by then a
+  second has elapsed and the 150/300 ms pair is a rounding error inside it. A
+  throwing connector now costs `2·retries + 1` requests (3 for `retries: 1`,
+  down from 4), and a connector that catches and returns is untouched, which is
+  the point: nine sources depend on that inner pair as their only retry.
+
+  Guards in `test/ingestion-wiring.test.js`, counted end to end because the
+  defect is the *product* of two layers and neither can observe it alone: *a
+  connector that throws spends the declared budget, not its square* (3 requests,
+  canaried to 4 by restoring the old call) and its control *a connector that
+  returns still gets its full inner pair* (2 requests, which a fix that simply
+  disabled the inner layer would fail).
 
 ---
 

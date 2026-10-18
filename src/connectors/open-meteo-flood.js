@@ -179,17 +179,24 @@ async function fetchRegion(region, startDate, endDate, { timeoutMs, retries, sou
     // record of zeros.
     throw new Error(`no GloFAS river reach at this grid cell (no non-null daily discharge across ${daily.length} days)`)
   }
+  // ING-04. Identity is the series the payload covers, not the window that was
+  // asked for. Keyed on the request, the same bytes landed under a new id every
+  // day `end_date` moved, and the longer window sat beside the shorter one
+  // instead of superseding it. The requested window is the fallback for a
+  // response that carries no dates at all.
+  const seriesStart = daily[0]?.date || startDate
+  const seriesEnd = daily[daily.length - 1]?.date || endDate
   return {
-    id: stableId('climate', [SOURCE, region.name, startDate, endDate]),
+    id: stableId('climate', [SOURCE, region.name, seriesStart, seriesEnd]),
     source: SOURCE,
-    source_id: `${SOURCE}:${region.name}:${startDate}:${endDate}`,
+    source_id: `${SOURCE}:${region.name}:${seriesStart}:${seriesEnd}`,
     region_name: region.name,
     country: region.country,
     latitude: Number(region.lat),
     longitude: Number(region.lon),
-    observed_at: `${daily[daily.length - 1]?.date || endDate}T00:00:00.000Z`,
-    series_start: daily[0]?.date || startDate,
-    series_end: daily[daily.length - 1]?.date || endDate,
+    observed_at: `${seriesEnd}T00:00:00.000Z`,
+    series_start: seriesStart,
+    series_end: seriesEnd,
     series_days: daily.length,
     discharge_first_valid: valid[0].date,
     discharge_last_valid: valid[valid.length - 1].date,
@@ -203,7 +210,7 @@ async function fetchRegion(region, startDate, endDate, { timeoutMs, retries, sou
       attribution: 'GloFAS v4 river discharge via flood-api.open-meteo.com, keyless',
       granularity: 'point, daily, whole record',
       granularity_note: 'Discharge at the river reach underlying the district reference point. Modelled hydrology, not gauge measurements; values before the first valid day are absent reach coverage, not zero flow.',
-      staleness_note: `Series ends ${daily[daily.length - 1]?.date || endDate}.`,
+      staleness_note: `Series ends ${seriesEnd}.`,
       model_limit: 'Modelled river discharge (GloFAS v4). Reanalysis to July 2022, seamlessly continued by the operational run. Not gauge observations; a cell without a river reach returns null throughout and is refused rather than stored.',
       fetched_at: new Date().toISOString(),
     },
