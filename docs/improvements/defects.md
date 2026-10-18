@@ -106,21 +106,24 @@ gives for R-05 one register over.
 
 **Two more are half-fixed and are marked here as such, not as fixed.**
 
-- **ING-03 — one of its two clauses is closed.** The entry makes two claims:
-  that Open-Meteo returns local time with no offset, and that the value is
-  parsed in the server's zone. The first is closed — the connector asks for
+- **ING-03 — both clauses are now closed.** The entry makes two claims: that
+  Open-Meteo returns local time with no offset, and that the value is parsed in
+  the server's zone. The first was closed first — the connector asks for
   `timezone=UTC` (`src/connectors/open-meteo.js:176`, and the ensemble request
-  beside it at `:196`). The second is not, and the difference is measurable
-  rather than a matter of reading: an offset-less timestamp still shifts with
-  the server's zone. Measured under Node 22.23.0, `Date.parse('2026-10-15T03:00')`
-  is `2026-10-15T00:00:00.000Z` under `TZ=Africa/Nairobi` and
-  `2026-10-15T03:00:00.000Z` under `TZ=UTC` — the same input, three hours apart,
-  decided by an environment variable. `observed_at` is still written as
-  `data.current.time` with no suffix (`:215`, `:248`), and the readers that
-  parse it are still zone-dependent (`src/flood-probability.js:723`,
-  `src/utils.js:323`). The UTC request narrows the window in which this can bite
-  — upstream now answers in UTC — without making the stored value
-  self-describing, which is the thing the entry asks for.
+  beside it at `:196`). The second is closed as of 2026-10-18: an offset-less
+  timestamp still shifts with the server's zone (measured under Node 22.23.0,
+  `Date.parse('2026-10-15T03:00')` is `2026-10-15T00:00:00.000Z` under
+  `TZ=Africa/Nairobi` and `2026-10-15T03:00:00.000Z` under `TZ=UTC`), so the
+  stored value now carries the zone it was read in. `asUtcTimestamp` stamps the
+  UTC connectors and `zonedTimestamp` stamps the forecast connector, which asks
+  for `Africa/Nairobi` on purpose — "today's rain" has to be the district's
+  today — and derives the `+03:00` from the zone via `Intl` rather than writing
+  a literal beside it. A value that already carries a zone is returned
+  untouched, so the fix cannot move an instant. Guards: *stamps observed_at with
+  the zone it was requested in* and *the stored instant is the same on a server
+  in any zone*, the second of which parses the value in child processes under
+  two different `TZ` values and canaries the unzoned control in the same test
+  (`test/weather-forecast.test.js`).
 - **ING-04 — closed for the incremental path, open for both archive walks, and
   the residual is narrower than "backfill".** The incremental path is genuinely
   fixed: `fetchWindow` is derived from the stored mark rather than the clock
@@ -575,7 +578,7 @@ everything.
 - **ING-03 — `open_meteo.observed_at` carries no timezone.**
   `src/connectors/open-meteo.js:85`. Open-Meteo returns local time without an
   offset, and it is parsed in the server's local zone, so observations shift by
-  the server's offset.
+  the server's offset. **Fixed 2026-10-18** — see the half-fixed note above.
 - **ING-04 — Backfills mint a new id every day.**
   `src/connectors/open-meteo-archive.js:73` and `open-meteo-flood.js:81` include
   `endDate` (defaulting to today) in the id, generating a fresh ~16k-entry series

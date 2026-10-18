@@ -1,6 +1,6 @@
 import { fetchWithRetry } from './http.js'
 import { DEFAULT_REGIONS } from '../schema.js'
-import { stableId } from '../utils.js'
+import { asUtcTimestamp, stableId } from '../utils.js'
 import { defineConnector } from './spec.js'
 import { computeEnsembleStats } from '../analytics/ensemble.js'
 
@@ -212,7 +212,7 @@ async function openMeteoIngest(options = {}) {
             country: region.country,
             latitude: Number(region.lat),
             longitude: Number(region.lon),
-            observed_at: data.current.time,
+            observed_at: asUtcTimestamp(data.current.time),
             precipitation_mm: readMeasurement(data.current.precipitation),
             temperature_c: readMeasurement(data.current.temperature_2m),
             humidity_pct: readMeasurement(data.current.relative_humidity_2m),
@@ -245,7 +245,7 @@ async function openMeteoIngest(options = {}) {
             country: region.country,
             latitude: Number(region.lat),
             longitude: Number(region.lon),
-            observed_at: daily.time[i],
+            observed_at: asUtcTimestamp(daily.time[i]),
             precipitation_mm: precip,
             precipitation_probability_pct: readMeasurement(daily.precipitation_probability_max?.[i]),
             temperature_max_c: readMeasurement(daily.temperature_2m_max?.[i]),

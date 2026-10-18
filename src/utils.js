@@ -83,6 +83,88 @@ export function nowIso() {
   return new Date().toISOString()
 }
 
+/**
+ * ING-03. An upstream timestamp, stamped with the zone it was requested in.
+ *
+ * Open-Meteo answers `2026-10-15T03:00` — a wall-clock reading with no offset —
+ * and `Date.parse` reads such a string in the *server's* zone. Measured under
+ * Node 22.23.0: `Date.parse('2026-10-15T03:00')` is `2026-10-15T00:00:00.000Z`
+ * under `TZ=Africa/Nairobi` and `2026-10-15T03:00:00.000Z` under `TZ=UTC`. The
+ * same stored record therefore denotes two different instants depending on an
+ * environment variable, and the readers that sort by `observed_at`
+ * (`src/flood-probability.js`, the query date filter in this file) inherit it.
+ *
+ * The connectors ask for `timezone=UTC`, so the value they receive is UTC — but
+ * the record does not say so, and a fact that lives only in another file's
+ * request parameter is not a fact about the record. This makes it self-describing
+ * without moving the instant: the wall clock is kept exactly as sent, and the
+ * suffix states the zone it was read in.
+ *
+ * A value that already carries a zone (`Z` or `±HH:MM`) is returned untouched —
+ * re-suffixing it would *change* the instant, which is the failure this exists
+ * to prevent. A date-only value is also returned untouched: `2026-10-15` is
+ * already parsed as UTC by the language, so appending a suffix would be the same
+ * no-op spelled more dangerously.
+ */
+/**
+ * ING-03, the local-zone half. A wall-clock reading, stamped with the offset
+ * its named zone had at that reading.
+ *
+ * `src/connectors/open-meteo-forecast.js` deliberately asks Open-Meteo for
+ * `Africa/Nairobi` rather than UTC — "today's rain" on the map has to be the
+ * district's today, and a UTC date rolls over at 03:00 East African time. The
+ * request is right and the record still lies: it stores `2026-10-15T03:00`,
+ * which any reader parses in *its own* zone.
+ *
+ * The offset is derived from the zone rather than written beside it. A literal
+ * `+03:00` next to the string `Africa/Nairobi` is a second source of truth, and
+ * the two agree until they do not — Kenya has no DST, so a wrong literal would
+ * never be caught by testing there. `Intl` knows the offset at a given instant,
+ * including the DST edges, so this asks it.
+ *
+ * The instant is resolved the way a reader would: the wall clock is the reading,
+ * and the offset is whatever the zone had around it. One refinement pass handles
+ * the hour a DST transition makes ambiguous.
+ */
+export function zonedTimestamp(value, zone) {
+  if (typeof value !== 'string' || !zone) return value
+  const trimmed = value.trim()
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed)) return value
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?$/.exec(trimmed)
+  if (!match) return value
+  const [, y, mo, d, h, mi, s = '00', frac = ''] = match
+  const wallAsUtc = Date.UTC(+y, +mo - 1, +d, +h, +mi, +s, Math.round(Number(`0${frac || '.000'}`) * 1000))
+  const offsetAt = (instantMs) => {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: zone, hour12: false,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      }).formatToParts(new Date(instantMs)).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]),
+    )
+    const seenAsUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day, Number(parts.hour) % 24, +parts.minute, +parts.second)
+    return seenAsUtc - instantMs
+  }
+  let offsetMs = offsetAt(wallAsUtc)
+  const refined = wallAsUtc - offsetMs
+  if (refined !== wallAsUtc) offsetMs = offsetAt(refined)
+  const sign = offsetMs < 0 ? '-' : '+'
+  const minutes = Math.abs(Math.round(offsetMs / 60000))
+  const suffix = `${sign}${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+  return `${y}-${mo}-${d}T${h}:${mi}:${s}${frac || '.000'}${suffix}`
+}
+
+export function asUtcTimestamp(value) {
+  if (typeof value !== 'string') return value
+  const trimmed = value.trim()
+  // Already zoned, date-only, or not a timestamp at all: leave it.
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed)) return value
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::(\d{2})(\.\d+)?)?$/.exec(trimmed)
+  if (!match) return value
+  const [, head, seconds = '00', fraction = ''] = match
+  return `${head}:${seconds}${fraction || '.000'}Z`
+}
+
 export function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }

@@ -1,6 +1,6 @@
 import { fetchWithRetry } from './http.js'
 import { KNOWN_DISTRICTS } from '../districts.js'
-import { nowIso, stableId } from '../utils.js'
+import { nowIso, stableId, zonedTimestamp } from '../utils.js'
 import { defineConnector } from './spec.js'
 import { ENSEMBLE_MODEL_LIMIT, readMeasurement } from './open-meteo.js'
 
@@ -39,6 +39,16 @@ import { ENSEMBLE_MODEL_LIMIT, readMeasurement } from './open-meteo.js'
 
 const SOURCE = 'open_meteo_forecast'
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
+
+/**
+ * ING-03. The zone the forecast is requested in, named once.
+ *
+ * The request parameter and the offset stamped on every stored `observed_at`
+ * are the same fact, so they read the same constant — a literal `+03:00`
+ * written beside the zone name is a second source of truth that agrees until
+ * it does not, and Kenya has no DST to disagree visibly.
+ */
+const FORECAST_TIMEZONE = 'Africa/Nairobi'
 
 /**
  * How old a forecast may be before the map stops showing it.
@@ -82,7 +92,7 @@ async function openMeteoForecastIngest(options = {}) {
       url.searchParams.set('forecast_days', String(options.forecast_days || 7))
       // Local dates, not UTC: "today's rain" on the map must be the district's
       // today, and a UTC date rolls over at 03:00 East African time.
-      url.searchParams.set('timezone', 'Africa/Nairobi')
+      url.searchParams.set('timezone', FORECAST_TIMEZONE)
 
       const data = await fetchWithRetry(url, {
         timeoutMs: options.timeout_ms || 20000,
@@ -101,7 +111,7 @@ async function openMeteoForecastIngest(options = {}) {
           country: region.country,
           latitude: Number(region.lat),
           longitude: Number(region.lon),
-          observed_at: data.current.time,
+          observed_at: zonedTimestamp(data.current.time, FORECAST_TIMEZONE),
           as_of: asOf,
           temperature_c: readMeasurement(data.current.temperature_2m),
           precipitation_mm: readMeasurement(data.current.precipitation),
@@ -125,7 +135,7 @@ async function openMeteoForecastIngest(options = {}) {
           country: region.country,
           latitude: Number(region.lat),
           longitude: Number(region.lon),
-          observed_at: daily.time[i],
+          observed_at: zonedTimestamp(daily.time[i], FORECAST_TIMEZONE),
           as_of: asOf,
           precipitation_mm: readMeasurement(daily.precipitation_sum?.[i]),
           precipitation_probability_pct: readMeasurement(daily.precipitation_probability_max?.[i]),

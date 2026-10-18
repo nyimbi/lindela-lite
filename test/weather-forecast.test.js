@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { afterEach, describe, it } from 'node:test'
 
 import {
@@ -122,6 +123,42 @@ describe('open_meteo_forecast connector', () => {
     const result = await openMeteoForecastConnector.ingest({ regions: [PILOT_FORECAST_REGIONS[0]], retries: 0 })
     const report = runAssertions({ source: 'open_meteo_forecast', records: result.weather_forecasts })
     assert.equal(report.ok, true, JSON.stringify(report.failures, null, 2))
+  })
+
+  it('stamps observed_at with the zone it was requested in', async () => {
+    // ING-03. The connector asks for Africa/Nairobi, so upstream answers a wall
+    // clock with no offset. Storing `2026-10-07T08:15` makes the instant depend
+    // on the zone of whoever parses it — the same record denotes 05:15Z on a
+    // UTC server and 08:15Z on a Nairobi one, decided by an environment
+    // variable. The value has to carry the offset it was read in.
+    mockFetchJson(forecastResponse())
+    const result = await openMeteoForecastConnector.ingest({ regions: [PILOT_FORECAST_REGIONS[0]], retries: 0 })
+    const current = result.weather_forecasts.find((r) => r.type === 'weather_current')
+    assert.equal(current.observed_at, '2026-10-07T08:15:00.000+03:00',
+      'the stored timestamp does not say which zone its wall clock was in')
+    // And the instant it denotes is the one a Nairobi reader would take from
+    // the same wall clock: 08:15 local is 05:15Z.
+    assert.equal(new Date(Date.parse(current.observed_at)).toISOString(), '2026-10-07T05:15:00.000Z')
+  })
+
+  it('the stored instant is the same on a server in any zone', () => {
+    // The claim the suffix exists to make, measured rather than argued: parse
+    // the same two strings in child processes whose TZ differs, and read the
+    // instants back. A zoned value must give one answer; the unzoned spelling
+    // is the control, and it must give two — otherwise this test cannot see the
+    // difference it exists to see, and a host that happened to be UTC would
+    // have made it pass vacuously.
+    const probe = (value, tz) => execFileSync(process.execPath, ['-e',
+      `process.stdout.write(String(Date.parse(${JSON.stringify(value)})))`],
+    { env: { ...process.env, TZ: tz }, encoding: 'utf8' })
+    const zoned = '2026-10-07T08:15:00.000+03:00'
+    const unzoned = '2026-10-07T08:15'
+
+    assert.equal(probe(zoned, 'UTC'), probe(zoned, 'Africa/Nairobi'),
+      'a zoned timestamp parsed to a different instant on a different host')
+    assert.equal(probe(zoned, 'UTC'), String(Date.parse('2026-10-07T05:15:00.000Z')))
+    assert.notEqual(probe(unzoned, 'UTC'), probe(unzoned, 'Africa/Nairobi'),
+      'the unzoned control gave the same instant in two zones, so it is not the defect this fix removes')
   })
 })
 
