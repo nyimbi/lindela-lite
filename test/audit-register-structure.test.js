@@ -30,7 +30,8 @@
  */
 
 import assert from 'node:assert/strict'
-import { readFileSync, readdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, it } from 'node:test'
 
@@ -307,7 +308,7 @@ describe('the audit register’s skeleton, guarded', () => {
  *
  * The cost is not cosmetic, and the size of it is measured below rather than
  * stated here — see `citationSpread()`. At the last measurement there were
- * **1,946** `ENH-nn` citations across **352** files, **343** of them in `src/`
+ * **1,945** `ENH-nn` citations across **351** files, **343** of them in `src/`
  * comment lines — so a reader following `// ENH-29` from a source file has a 50%
  * chance of landing on the wrong item, and `docs/improvements/status.md`
  * resolves every id against the *first* register. This is the same shape the
@@ -329,6 +330,15 @@ describe('the audit register’s skeleton, guarded', () => {
  * to the tree by a test, so a change that adds citations to the register's own
  * subject updates it in the same commit rather than leaving a stale count
  * behind.
+ *
+ * Those three read 1,946 / 352 until 2026-10-18, and the way they were wrong is
+ * worth keeping: `citationSpread()` walked the filesystem, so it measured
+ * whatever the person running it had lying around. A gitignored `.env.qa`
+ * citing one id made the total 1,946 locally and 1,945 on a CI checkout, and
+ * the note — asserting the *repository's* figure — failed on CI while passing
+ * here. It now walks `git ls-files`, because a claim about the repository has to
+ * be measured against the repository and not against a working tree that may
+ * hold files the repository does not have.
  *
  * The check below does not fix the collision — renaming 50 ids across ~1,900
  * citations is a change with its own review, and doing it inside a defect fix
@@ -441,33 +451,38 @@ describe('the two enhancement registers do not share an id space', () => {
  * a line is what a reader's eye lands on, and a block comment restating three
  * ids on one line is one place to be misled, not three. That definition is why
  * the number is 349 rather than the 376 raw tokens in `src/`.
+ *
+ * **Read from git, not the filesystem.** This walked the working tree, so the
+ * count depended on what the person running it happened to have checked out or
+ * left lying around: `.env.qa` is gitignored and cites one id, which made the
+ * total 1946 here and 1945 on CI, and the note — correctly asserting the
+ * repository's figure — failed there while passing locally. The note is a claim
+ * about the repository, so the measurement has to be one too. `test/docs-index.test.js`
+ * reads its doc list from `git ls-files` for the same reason.
  */
 function citationSpread() {
   const ROOT = path.resolve(new URL('..', import.meta.url).pathname)
-  const SKIP = new Set(['.git', 'node_modules', '.claude', 'coverage'])
   const RE = /\bENH-\d+\b/g
 
-  const walk = (dir, out = []) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (SKIP.has(entry.name)) continue
-      const p = path.join(dir, entry.name)
-      if (entry.isDirectory()) walk(p, out)
-      else out.push(p)
-    }
-    return out
-  }
+  // Tracked paths only, relative to ROOT. A file that exists but is not in the
+  // index is not part of the repository and cannot be part of a figure the
+  // repository's own header states.
+  const walk = () => execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' })
+    .split('\0')
+    .filter(Boolean)
+    .map((rel) => path.join(ROOT, rel))
 
   let total = 0
   let srcComments = 0
   const files = new Set()
-  for (const file of walk(ROOT)) {
+  for (const file of walk()) {
     let text
     try { text = readFileSync(file, 'utf8') } catch { continue }
     if (text.includes('\0')) continue
     const hits = text.match(RE)
     if (!hits) continue
     total += hits.length
-    files.add(file)
+    files.add(path.relative(ROOT, file))
     if (path.relative(ROOT, file).startsWith(`src${path.sep}`)) {
       for (const line of text.split('\n')) {
         if (RE.test(line) && /^\s*(\/\/|\*|\/\*)/.test(line)) srcComments += 1

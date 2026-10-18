@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, it } from 'node:test'
 
@@ -524,9 +524,19 @@ describe('the improvement registers state totals their tables agree with', () =>
       'docs/improvements/audit-2026-10/enhancements-50.md',
       'docs/plans/vision-gap-closure.md']
 
+    // `vision-gap-closure.md` is gitignored — internal tender analysis, never
+    // published — so it exists on a working tree and never on a CI checkout.
+    // Reading it unconditionally made this case fail with ENOENT on every CI run
+    // while passing locally, which is a gate that cannot pass and therefore is
+    // not a gate. Read it when it is there, skip it when it is not, and account
+    // for the skip so an absent file is a named fact rather than a silent one —
+    // the same rule `check-route-methods.mjs` applies to a probe that never got
+    // an answer.
     const wrong = []
+    const skipped = []
     let seen = 0
     for (const doc of docs) {
+      if (!existsSync(path.join(ROOT, doc))) { skipped.push(doc); continue }
       for (const m of read(doc).matchAll(CLAIM)) {
         const [, file, stated] = m
         seen += 1
@@ -538,7 +548,11 @@ describe('the improvement registers state totals their tables agree with', () =>
       }
     }
 
-    assert.ok(seen >= 6, `found only ${seen} test-count claims — the reader or the registers are wrong`)
+    // Six is the count the three tracked registers carry; the fourth adds one
+    // more when present. Asserting 6 rather than 7 is what keeps this passing on
+    // a CI checkout without letting the tracked registers go unchecked.
+    assert.ok(seen >= 6, `found only ${seen} test-count claims in ${docs.length - skipped.length} document(s) — the reader or the registers are wrong`)
+    assert.ok(skipped.length <= 1, `skipped ${skipped.length} documents, which is more than the one gitignored register: ${skipped.join(', ')}`)
     assert.deepEqual(wrong, [],
       `a register states a test count the suite does not have:\n  ${wrong.join('\n  ')}\n`
       + 'Either fix the number, or — if the sentence is about what shipped at a commit rather than now — '
