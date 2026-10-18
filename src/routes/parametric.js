@@ -265,10 +265,19 @@ export async function handleParametricRoute(route, { store, data, req, res, json
       // array it is handed. An existing row for the same id is superseded, and
       // its `simulated_at` records the later evaluation, which is when the row
       // on screen was last confirmed rather than when it was first minted.
-      const disbursements = [
-        ...(data.parametric_disbursements || []).filter((row) => row.disbursement_id !== result.disbursement_id),
-        result,
-      ]
+      // DATA-14. A row written before the payout carried an `id` has none, and
+      // `replaceCollection` now refuses one rather than letting Postgres drop
+      // it and JSON keep it. Those rows are not lost: `disbursement_id` is the
+      // same value under the name the record already used, so a legacy row is
+      // named from the field it already carries. A row with neither is a row
+      // this route cannot identify, and it is dropped here rather than
+      // resurrected under a guessed id — it can only have come from a build
+      // that wrote shapes this one does not.
+      const carried = (data.parametric_disbursements || [])
+        .filter((row) => row && row.disbursement_id !== result.disbursement_id)
+        .map((row) => (row.id ? row : { ...row, id: row.disbursement_id }))
+        .filter((row) => row.id)
+      const disbursements = [...carried, result]
       await store.replaceCollection('parametric_disbursements', disbursements)
       await store.merge({ action_logs: [log] })
       jsonResponse(res, 201, { success: true, data: result, sanctions })

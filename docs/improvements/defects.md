@@ -65,6 +65,7 @@ under **Unreleased**; this table is the index into them.
 | DATA-07 | fixed | one `false_alert_rate` definition, in both places, with the denominator exposed | `district-rates.test.js` |
 | DATA-09 | fixed | foreign vertical datum ⇒ every depth `null` with a reason; void cells serialise as `null` | `flood-depth-datum.test.js` |
 | DATA-12 | fixed | twelve record ids hash the content they name, not the clock; companion rows (inbound, action log) dedupe with their primary; withdrawal is once per entry | `data12-stable-ids.test.js` |
+| DATA-14 | fixed | every producer names its rows (`population_at_risk`, `facilities_at_risk`, parametric payouts); the store refuses an unnamed record on all four write paths of both adapters instead of Postgres dropping it and JSON keeping it | `data14-named-records.test.js`, `store-conformance.test.js` |
 | WEB-05 | fixed | `enqueue` resolves on transaction commit and throws without a database | `web-chw-offline.test.js` |
 | WEB-06 | fixed | precache derived from the import graph instead of a hand-written list | `web-chw-offline.test.js` |
 | WEB-08 | fixed | the CO dashboard requests the window it labels | `web-co-i18n.test.js` |
@@ -645,6 +646,46 @@ everything.
   per-source identity declaration in `SOURCE_POLICIES`, which carries none.
 - **DATA-14 — `schema.js` performs no validation.** There is no `extra=forbid`
   equivalent; arbitrary shapes are accepted and persisted.
+
+  **Fixed 2026-10-18, after probing every path the entry could mean.** The
+  stated claim was half wrong and half worse than stated. The route normalisers
+  are already closed-shape — `buildCreate`, `buildUpdate`,
+  `normalizeAlertRule`, `normalizeWebhookSubscription`,
+  `normalizeIngestionSchedule` and `normalizeTriggerProtocol` each build a
+  record from an explicit field list, and a probe carrying `not_a_field`,
+  `severity: 42` and a nested object through each returned `extra: undefined`.
+  The CSV path carries unknown headers on purpose, and says so at
+  `src/upload.js:175`; that is a trade, not a defect. What actually held was
+  worse: **the store accepted records it could not name, and the two backends
+  disagreed about what that means.** `JsonStore.merge` kept an id-less record
+  verbatim; `PostgresStore` filters `records.filter((item) => item?.id)` out of
+  every write. The same call succeeded on both backends and stored nothing on
+  one — the ARC-10 divergence class, with the tell that makes it worst: no
+  error anywhere.
+
+  It was not hypothetical. Probed against a real cluster, `replaceAnalytics`
+  with the producers' own output stored **0 of 1** `population_at_risk` rows on
+  Postgres and **1 of 1** on JSON; `replaceCollection` did the same to a
+  simulated parametric payout. `computePopulationAtRisk` (476 rows on the live
+  store), `computeFacilitiesAtRisk` (9) and `simulateDisbursement` all emitted
+  rows with no `id`, so the exposure figures and the payout ledger were written
+  on a file store and discarded on the database. DAT-05 is marked fixed and its
+  guard passes — because that fixture supplied `id: 'par-1'`, a field the real
+  producer never emitted. A test that invents its input confirms only the shape
+  it invented.
+
+  Three rows now carry the id they are keyed by, the conformance fixture is the
+  producers' own output, and `assertRecordsNamed` refuses an unnamed record on
+  all four write paths of both adapters rather than dropping it on one.
+  Canaried: 8 of 8 malformed writes fire, the well-formed control passes, and
+  reverting the producers makes the guard fire on the exact rows the live store
+  holds. A pre-fix store still upgrades — `planDerivedRefresh` recomputes a
+  collection whose stored rows are unnameable rather than carrying them into a
+  write that now refuses them, and the parametric route names a legacy row from
+  the `disbursement_id` it already carries. Removing that recompute clause
+  makes the refresh throw and the store un-refreshable, which is the canary
+  that it is load-bearing. Guarded by `data14-named-records.test.js` and the
+  rebuilt *replaceAnalytics stores all six derived collections*.
 - **DATA-15 — The audit trail is self-asserted.** `src/operations.js:101` records
   an actor string the caller controls, there is no auth on many of the paths that
   write it, and `src/server.js:1162-1163` shows the outbox write is not

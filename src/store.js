@@ -599,6 +599,61 @@ export function assertDeclaredCollections(payload, declared = COLLECTIONS) {
 }
 
 /**
+ * DATA-14. Every record a write hands the store must be one the store can name.
+ *
+ * Both adapters key records by `id`, and the Postgres one *filters* the rest
+ * out — `records.filter((item) => item?.id)` — so an id-less record is written
+ * on a JSON store and silently dropped on the database. That is the ARC-10
+ * divergence class with the worst possible tell: the same request reports
+ * success on both backends, and one of them stores nothing.
+ *
+ * It was not hypothetical. `computePopulationAtRisk` and
+ * `computeFacilitiesAtRisk` key their rows by hazard and by service type and
+ * emitted no `id` at all, so `population_at_risk` and `facilities_at_risk` —
+ * the figures that turn hazard intensity into consequence — were computed,
+ * passed to `replaceAnalytics`, and discarded on every Postgres deployment
+ * while the JSON store kept them. `simulateDisbursement` had the same shape
+ * under `disbursement_id`. The guard that was supposed to catch it,
+ * `store-conformance.test.js`, supplied `id: 'par-1'` in its fixture — a field
+ * the real producer never emits — so it asserted a contract nothing honoured.
+ *
+ * A refusal rather than an auto-generated id: the store cannot know what a row
+ * is *about*, and a hash of the body would silently dedupe two genuinely
+ * distinct rows that happen to be identical. The producer is the only thing
+ * that knows, so the producer names it — and a producer that forgets now fails
+ * loudly on the first write instead of on whichever backend an environment
+ * variable happened to select.
+ *
+ * `HISTORY_COLLECTION` is exempt: `record_versions` rows are written by the
+ * store itself through `versionRow`, which mints an id, and the check would be
+ * a second assertion of a fact this module already guarantees.
+ */
+export function assertRecordsNamed(payload, declared = COLLECTIONS) {
+  if (!payload || typeof payload !== 'object') return
+  const unnamed = []
+  for (const collection of declared) {
+    const records = payload[collection]
+    if (!Array.isArray(records)) continue
+    for (const record of records) {
+      if (!record || typeof record !== 'object' || Array.isArray(record)) {
+        unnamed.push(`${collection}: a ${record === null ? 'null' : Array.isArray(record) ? 'array' : typeof record} is not a record`)
+      } else if (typeof record.id !== 'string' || !record.id) {
+        unnamed.push(`${collection}: a record with no string id (${Object.keys(record).slice(0, 4).join(', ') || 'no fields'})`)
+      }
+      if (unnamed.length >= 3) break
+    }
+    if (unnamed.length >= 3) break
+  }
+  if (!unnamed.length) return
+  throw new Error(
+    `Unnamed record${unnamed.length > 1 ? 's' : ''}: ${unnamed.join('; ')}. `
+    + 'Postgres filters these out of every write while the JSON store keeps them, '
+    + 'so the same request succeeds on one backend and stores nothing on the other. '
+    + 'Give the record an `id` in the code that builds it.',
+  )
+}
+
+/**
  * R-40 — the field a row carries to name the request that wrote it.
  *
  * Underscore-prefixed because it is the store's own bookkeeping, like
@@ -1027,11 +1082,13 @@ export class JsonStore {
 
   async write(data) {
     assertDeclaredCollections(data)
+    assertRecordsNamed(data)
     return this.#serialise(() => this.#writeFile(data))
   }
 
   async merge(partial) {
     assertDeclaredCollections(partial)
+    assertRecordsNamed(partial)
     // R-40. Stamped here, at the one funnel every write passes through, rather
     // than in the two or three constructors somebody remembered. See
     // `stampRequestId` for why it is ambient and why an absent request stamps
@@ -1205,6 +1262,7 @@ export class JsonStore {
    */
   async replaceCollection(collection, records = []) {
     assertDeclaredCollection(collection)
+    assertRecordsNamed({ [collection]: records })
     return this.#serialise(async () => {
       const current = await this.#current()
       return this.#writeFile({ ...current, [collection]: sortRecords([...records]) })
@@ -1213,6 +1271,7 @@ export class JsonStore {
 
   async replaceAnalytics(payload = {}) {
     assertDeclaredCollections(payload)
+    assertRecordsNamed(payload)
     const replacement = Object.fromEntries(
       DERIVED_COLLECTIONS.map((collection) => [collection, payload[collection] || []]),
     )

@@ -259,6 +259,13 @@ export function simulateDisbursement(rule, { actor, focal_point_approved, sancti
     // *observations*, which is what `trigger.value` distinguishes; a retry
     // observes the same value again and is the same row.
     disbursement_id: stableId('disbursement', [rule.id, trigger.metric, trigger.value, String(trigger.met)]),
+    // DATA-14. The row carried `disbursement_id` and no `id`, and both store
+    // adapters key on `id` — the Postgres one filters id-less rows out of
+    // `replaceCollection` entirely. So a simulated payout was written on a JSON
+    // store and silently dropped on the database, and the disbursements list
+    // read empty on the backend production runs. `id` is the same value, under
+    // the name every collection is keyed by.
+    id: stableId('disbursement', [rule.id, trigger.metric, trigger.value, String(trigger.met)]),
     chain: rule.chain,
     contract_address: rule.contract_address || null,
     // null, not 0, when nothing is owed: zero is a measured payout of

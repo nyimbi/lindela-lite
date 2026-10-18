@@ -6,6 +6,7 @@ import { after, before, describe, it } from 'node:test'
 import { JsonStore, COLLECTIONS } from '../src/store.js'
 import { PostgresStore } from '../src/postgres-store.js'
 import { runIngestion, OUTPUT_COLLECTIONS } from '../src/ingestion.js'
+import { computeFacilitiesAtRisk, computePopulationAtRisk } from '../src/analytics/impact.js'
 import { postgresCluster } from './pg-harness.mjs'
 
 /**
@@ -164,23 +165,55 @@ describe('store conformance — both backends, one contract', () => {
 
       // DAT-05. Two defects in three lines: four parameters where the caller
       // passes six, and merge() where replace() was meant.
+      //
+      // DATA-14. The fixture here used to supply `id` on every row, which is
+      // why this test passed while the defect it was written to catch was live
+      // one layer down. `computePopulationAtRisk` and `computeFacilitiesAtRisk`
+      // key their rows by hazard and by service type and emitted no `id` at
+      // all, so the Postgres adapter's `records.filter((item) => item?.id)`
+      // dropped every one of them — this test asserted a contract with a field
+      // the real producer never produced, and the figures DAT-05 claims to
+      // have rescued were computed and discarded on every Postgres deployment.
+      //
+      // So the fixture is now the producers' own output, not a hand-built row.
+      // A test that invents its input can only ever confirm the shape it
+      // invented.
       it('replaceAnalytics stores all six derived collections', async () => {
         await store.write({})
-        await store.replaceAnalytics({
+        const data = {
+          service_assets: [{
+            id: 'asset-1', name: 'Clinic', latitude: -1.5, longitude: 36.2,
+            service_type: 'health', population_served: 12000,
+          }],
+          // Coordinates, because `computePopulationAtRisk` skips a hazard it
+          // cannot place: the fixture has to be one the producer actually
+          // answers, or the assertion measures an empty set.
+          hazard_events: [hazard('hz-par', { latitude: -1.5, longitude: 36.2 })],
+        }
+        await store.write(data)
+        const produced = {
           risk_scores: [{ id: 'rs-1', region: 'Turkana', score: 61 }],
           impact_assessments: [{ id: 'ia-1', region: 'Turkana' }],
           data_quality: [{ id: 'dq-1', source: 'chirps', completeness: 0.9 }],
-          population_at_risk: [{ id: 'par-1', at_risk_count: 12000 }],
-          facilities_at_risk: [{ id: 'far-1', at_risk_count: 34 }],
+          population_at_risk: computePopulationAtRisk(data),
+          facilities_at_risk: computeFacilitiesAtRisk(data),
           road_access: [{ id: 'ra-1', district: 'Turkana' }],
-        })
-        const data = await store.read()
-        assert.deepEqual(data.risk_scores.map((r) => r.id), ['rs-1'])
-        assert.deepEqual(data.impact_assessments.map((r) => r.id), ['ia-1'])
-        assert.deepEqual(data.data_quality.map((r) => r.id), ['dq-1'])
-        assert.equal(data.population_at_risk.length, 1, 'population_at_risk must reach the store on every backend')
-        assert.equal(data.facilities_at_risk.length, 1, 'facilities_at_risk must reach the store on every backend')
-        assert.deepEqual(data.road_access.map((r) => r.id), ['ra-1'])
+        }
+        // The premise of the whole assertion: a producer that emits no id is a
+        // producer whose rows this backend throws away. Assert it before
+        // writing, so a future producer that drops its id fails here with the
+        // reason rather than as a count mismatch two lines down.
+        assert.ok(produced.population_at_risk.every((row) => row.id), 'computePopulationAtRisk must name its rows')
+        assert.ok(produced.facilities_at_risk.every((row) => row.id), 'computeFacilitiesAtRisk must name its rows')
+
+        await store.replaceAnalytics(produced)
+        const stored = await store.read()
+        assert.deepEqual(stored.risk_scores.map((r) => r.id), ['rs-1'])
+        assert.deepEqual(stored.impact_assessments.map((r) => r.id), ['ia-1'])
+        assert.deepEqual(stored.data_quality.map((r) => r.id), ['dq-1'])
+        assert.equal(stored.population_at_risk.length, 1, 'population_at_risk must reach the store on every backend')
+        assert.equal(stored.facilities_at_risk.length, 1, 'facilities_at_risk must reach the store on every backend')
+        assert.deepEqual(stored.road_access.map((r) => r.id), ['ra-1'])
       })
 
       it('replaceAnalytics replaces rather than accumulates stale rows', async () => {

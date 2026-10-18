@@ -1,5 +1,5 @@
 import { emptyStore } from './schema.js'
-import { COLLECTIONS, DERIVED_COLLECTIONS, HISTORY_COLLECTION, assertDeclaredCollection, assertDeclaredCollections, normaliseReadOptions, readRowBudget, sortRecords, stampRequestId, supersededVersions, StoreReadBudgetExceeded } from './store.js'
+import { COLLECTIONS, DERIVED_COLLECTIONS, HISTORY_COLLECTION, assertDeclaredCollection, assertDeclaredCollections, assertRecordsNamed, normaliseReadOptions, readRowBudget, sortRecords, stampRequestId, supersededVersions, StoreReadBudgetExceeded } from './store.js'
 import { BITEMPORAL_COLLECTIONS, VERSIONS_PER_RECORD } from './bitemporal.js'
 import { nowIso } from './utils.js'
 import { pendingMigrations, targetVersion } from './migrations.js'
@@ -583,6 +583,7 @@ export class PostgresStore {
 
   async write(data) {
     assertDeclaredCollections(data)
+    assertRecordsNamed(data)
     await this.ensureSchema()
     const next = { ...emptyStore(), ...data, updated_at: nowIso() }
     // CON-02. This is the transaction that takes a row lock across essentially
@@ -686,6 +687,7 @@ export class PostgresStore {
    */
   async replaceCollection(collection, records = []) {
     assertDeclaredCollection(collection)
+    assertRecordsNamed({ [collection]: records })
     await this.ensureSchema()
     // CON-02. A full-collection DELETE racing a merge is the same inversion the
     // retry was written for; the lock removes it rather than surviving it.
@@ -710,6 +712,7 @@ export class PostgresStore {
 
   async merge(partial) {
     assertDeclaredCollections(partial)
+    assertRecordsNamed(partial)
     // R-40, the Postgres half of the same stamp. Applied in both adapters
     // because a caller cannot tell which one an environment variable gave it,
     // and a token present on one backend and absent on the other is the ARC-10
@@ -863,6 +866,7 @@ export class PostgresStore {
   /** The merge validation `merge()` does, without the transaction it owns. */
   async #mergeLocked(client, partial) {
     assertDeclaredCollections(partial)
+    assertRecordsNamed(partial)
     // R-40. The locked funnel is a *second* way into the same write, and the
     // outbox's read-modify-write takes it — so the third row of the audit's
     // example, the outbox row, would have gone unstamped while every test that
@@ -1093,6 +1097,7 @@ export class PostgresStore {
    */
   async replaceAnalytics(payload = {}) {
     assertDeclaredCollections(payload)
+    assertRecordsNamed(payload)
     await this.ensureSchema()
     const replacement = Object.fromEntries(
       DERIVED_COLLECTIONS.map((collection) => [collection, payload[collection] || []]),

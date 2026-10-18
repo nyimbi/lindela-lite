@@ -383,6 +383,22 @@ export function planDerivedRefresh(data, cache, stored = {}) {
       recompute.push(name)
       continue
     }
+    // DATA-14. A stored row with no `id` is a row the store cannot name, and
+    // `replaceAnalytics` now refuses one rather than writing it to a backend
+    // that would silently drop it. Reusing such a row would carry the refusal
+    // forward: the skip path hands the previous rows straight back to the
+    // write, so a store populated before the producers minted ids would throw
+    // on the next refresh and stay un-refreshable.
+    //
+    // It is the same rule the paragraph above states about a digest with no
+    // rows behind it, one field over: a cache entry whose rows are not
+    // nameable is a cache entry for a value that cannot be stored, so it is a
+    // recompute whatever the digest says. On a store written by the current
+    // producers this never fires.
+    if (rows.some((row) => !row || typeof row.id !== 'string' || !row.id)) {
+      recompute.push(name)
+      continue
+    }
     const current = derivedDigest(name, data)
     if (current !== null && cache && cache[name] === current) skip.push(name)
     else recompute.push(name)

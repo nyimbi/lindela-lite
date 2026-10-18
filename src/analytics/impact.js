@@ -1,4 +1,4 @@
-import { haversineKm } from '../utils.js'
+import { haversineKm, stableId } from '../utils.js'
 import { numericOrNull } from './numeric.js'
 
 const HIGH_SEVERITY = new Set(['high', 'critical'])
@@ -58,13 +58,22 @@ export function computePopulationAtRisk(data, { radiusKm = 25 } = {}) {
   // the intent here — each hazard has its own exposed population — and it is
   // the reason the sibling function below could get away with counting assets
   // rather than pairs.
-  for (const hazard of data.hazard_events || []) {
+  for (const [index, hazard] of (data.hazard_events || []).entries()) {
     if (!Number.isFinite(hazard.latitude) || !Number.isFinite(hazard.longitude)) continue
 
-    const hazardKey = hazard.id
+    // DATA-14. The row had no `id`, and both backends key records by one: the
+    // Postgres adapter filters id-less rows out of every write, so on the
+    // production backend these rows were computed and then thrown away — the
+    // exact figure DAT-05 claims to have rescued. JSON kept them, so the two
+    // backends disagreed on whether anyone is at risk. Keyed on the hazard the
+    // row is about, with the position standing in for a hazard that carries no
+    // id of its own, because a row the store cannot name is a row it cannot
+    // store.
+    const hazardKey = hazard.id || `at:${index}`
     if (!resultMap.has(hazardKey)) {
       resultMap.set(hazardKey, {
-        hazard_event_id: hazard.id,
+        id: stableId('population_at_risk', [hazardKey]),
+        hazard_event_id: hazard.id ?? null,
         hazard_type: hazard.event_type,
         population_at_risk: null,
         service_assets_affected: 0,
@@ -163,6 +172,12 @@ export function computeFacilitiesAtRisk(data, { radiusKm = 25 } = {}) {
     const serviceType = asset.service_type || 'unknown'
     if (!byServiceType.has(serviceType)) {
       byServiceType.set(serviceType, {
+        // DATA-14, the same key the sibling function above now carries: a row
+        // with no id is dropped by the Postgres adapter and kept by the JSON
+        // one, so "34 facilities at risk" reached an operator on a file store
+        // and vanished on the database. The service type is what the row is
+        // about, so it is what names it.
+        id: stableId('facilities_at_risk', [serviceType]),
         service_type: serviceType,
         at_risk_count: 0,
         high_severity_count: 0,
