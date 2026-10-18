@@ -60,6 +60,7 @@ under **Unreleased**; this table is the index into them.
 | ALERT-07 | fixed | `scopeOverride` honoured and validated; falsy-but-present values no longer fall back to `Public` | `cap-encoding.test.js` |
 | ALERT-02 | fixed | CAP `<status>` is `Draft` unless the alert was approved, taking the dispatch gate's own predicate; the feed marks an unapproved entry | `cap-encoding.test.js` |
 | DATA-03 | fixed | each asset counted once, from the shared collection list | `facilities-at-risk-counting.test.js` |
+| DATA-04 | fixed | hazard pressure counts only alerts inside a stated recency window (7 days, injectable); stale and undated counts named on the record; the same rule applied to the climate-conflict scorer | `flood-risk-veracity.test.js` |
 | DATA-05 | fixed | full pagination with a real total; the 30-row slice is no longer the total | `district-rates.test.js` |
 | DATA-07 | fixed | one `false_alert_rate` definition, in both places, with the denominator exposed | `district-rates.test.js` |
 | DATA-09 | fixed | foreign vertical datum ⇒ every depth `null` with a reason; void cells serialise as `null` | `flood-depth-datum.test.js` |
@@ -538,6 +539,34 @@ everything.
   Backfilling a historical archive raises every covered district's risk score
   toward 100 without any change in conditions. This compounds the 233-events-at-
   Null-Island incident already fixed in `36ad94e`.
+
+  **Fixed.** Probed first: four critical floods dated 2019 scored `100/critical`
+  — identical to four dated this week — and twenty 2019 floods also scored 100,
+  so the term was a count of what had been ingested rather than of conditions.
+  The cause is that `nearby()` selects on space only; `occurred_at` was carried
+  all the way to the score and never read. `splitByRecency` now separates
+  in-radius alerts into current and stale, and the pressure term sums only the
+  current ones. Seven days, the same window `src/road-access.js` uses for flood
+  for the same physical reason, and injectable as `options.hazardRecencyDays`
+  with `options.now` so the rule is testable at a chosen age.
+
+  Two choices worth stating because each could have been made the other way.
+  An **undated** alert is kept, not dropped: unknown age is not old age, and
+  dropping it would lower a score on missing evidence — the direction a risk
+  score must not fail. It is counted separately as `flood_hazard_events_undated`
+  so the record does not present an unknown-age input as a current one. A
+  **future-dated** alert is a forecast and is kept, because a forecast is about
+  the present.
+
+  The defect had a second instance one function away: `computeClimateConflictRisk`
+  summed the same collection over the same radius the same way, so an archived
+  earthquake counted toward present climate-conflict risk. Both now call one
+  helper, which is the argument ENH-45 made for a registry rather than a third
+  fix — the two lines sat in the same module and only one was found at a time.
+  `flood_hazard_events` keeps its name and now counts current alerts; the window
+  and the set-aside count travel in `drivers`, `methodology`, `limits` and the
+  honesty envelope's sample, so a reader cannot take the number for an all-time
+  count.
 - **DATA-05 — District overview truncates to 30 and reports the total.**
   `src/districts.js:73-74` applies `.slice(0, 30)` to field reports and alert
   events, which then feed `false_alert_rate` denominators.

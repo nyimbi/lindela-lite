@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { computeFloodRisk } from '../src/analytics.js'
+import { computeClimateConflictRisk, computeFloodRisk } from '../src/analytics.js'
 
 const EMPTY = {
   regions: [], hazard_events: [], conflict_events: [], service_assets: [], impact_assessments: [],
@@ -174,5 +174,91 @@ describe('VER-07 — a region is a district, not an integer-degree cell', () => 
     const regions = computeFloodRisk({ ...EMPTY, climate_observations: [a, b] })
     assert.equal(regions.length, 1, 'two stations in one town are one region')
     assert.equal(regions[0].drivers.precipitation_readings_used, 2)
+  })
+})
+
+// ---------------------------------------------------------------- DATA-04
+
+describe('DATA-04 — hazard pressure is about now, not about how much archive was ingested', () => {
+  // A fixed clock, so the window can be tested at a chosen age instead of
+  // waiting for real time to pass. Same argument `computeRoadAccess` makes for
+  // its injectable `now`.
+  const NOW = new Date('2026-10-18T12:00:00.000Z')
+  const daysAgo = (n) => new Date(NOW.getTime() - n * 86_400_000).toISOString()
+  const flood = (id, occurred_at, severity = 'critical') => ({
+    id, event_type: 'flood', severity, occurred_at, latitude: 3.12, longitude: 35.60,
+  })
+  const withFloods = (events) => ({ ...EMPTY, climate_observations: [station('s', 3.12, 35.60, 0, 0)], hazard_events: events })
+
+  it('scores four floods from 2019 below four from this week', () => {
+    // The defect: `hazards` was every alert within 250 km whatever its date, so
+    // backfilling `gdacs-archive` raised every covered district toward 100 with
+    // no change in conditions. Both sets below are four critical floods 250 km
+    // from the same station; only the date differs.
+    const archive = computeFloodRisk(withFloods([1, 2, 3, 4].map((n) => flood(`a${n}`, '2019-04-0' + n))), { now: NOW })[0]
+    const current = computeFloodRisk(withFloods([1, 2, 3, 4].map((n) => flood(`c${n}`, daysAgo(n)))), { now: NOW })[0]
+
+    assert.equal(archive.drivers.flood_hazard_events, 0, 'a 2019 flood is not current evidence')
+    assert.equal(current.drivers.flood_hazard_events, 4)
+    assert.ok(archive.score < current.score,
+      `history must not score as present: ${archive.score} vs ${current.score}`)
+    assert.equal(archive.drivers.flood_hazard_events_stale, 4, 'and the record says how much it set aside')
+    assert.equal(current.drivers.flood_hazard_events_stale, 0)
+  })
+
+  it('does not fall as the archive grows, which is what made it a count of ingestion', () => {
+    // The published failure was that a backfill *raised* a score. Twenty 2019
+    // floods and four 2019 floods must score identically, because neither says
+    // anything about this week.
+    const four = computeFloodRisk(withFloods([1, 2, 3, 4].map((n) => flood(`a${n}`, '2019-04-0' + n))), { now: NOW })[0]
+    const twenty = computeFloodRisk(withFloods(Array.from({ length: 20 }, (_, n) => flood(`b${n}`, '2019-05-01'))), { now: NOW })[0]
+    assert.equal(twenty.score, four.score, 'archive size is not a risk signal')
+    assert.equal(twenty.drivers.flood_hazard_events_stale, 20)
+  })
+
+  it('keeps an undated hazard, and says the record cannot vouch for its age', () => {
+    // The direction a risk score must not fail: dropping an undated hazard
+    // lowers the score on missing evidence. `road-access.js` settled this the
+    // same way — unknown age is not old age.
+    const undated = computeFloodRisk(withFloods([flood('u', null), flood('v', 'last Tuesday')]), { now: NOW })[0]
+    assert.equal(undated.drivers.flood_hazard_events, 2, 'an undated hazard is not safe to dismiss')
+    assert.equal(undated.drivers.flood_hazard_events_undated, 2)
+    assert.match(undated.limits, /no usable date/)
+  })
+
+  it('counts a forecast, because a forecast is about the present', () => {
+    const forecast = computeFloodRisk(withFloods([flood('f', new Date(NOW.getTime() + 2 * 86_400_000).toISOString())]), { now: NOW })[0]
+    assert.equal(forecast.drivers.flood_hazard_events, 1)
+    assert.equal(forecast.drivers.flood_hazard_events_undated, 0, 'a future date is a date')
+  })
+
+  it('names the window on the record, so the score cannot be read as all-time', () => {
+    const risk = computeFloodRisk(withFloods([flood('a1', '2019-04-01')]), { now: NOW })[0]
+    assert.equal(risk.drivers.hazard_recency_days, 7)
+    assert.match(risk.methodology, /7 days/)
+    assert.match(risk.limits, /7 days/)
+    assert.equal(risk.honesty.limits.sample.hazard_recency_days, undefined, 'the window is in drivers and prose, not duplicated in the sample')
+    assert.equal(risk.honesty.limits.sample.flood_hazard_events_stale, 1)
+  })
+
+  it('applies the same rule to the climate-conflict scorer', () => {
+    // The second instance, one function away in the same module — the argument
+    // ENH-45 made for a registry rather than a third fix.
+    const data = (events) => ({ ...EMPTY, climate_observations: [station('s', 3.12, 35.60, 0, 0)], hazard_events: events })
+    const archive = computeClimateConflictRisk(data([1, 2, 3, 4].map((n) => flood(`a${n}`, '2019-04-0' + n))), { now: NOW })[0]
+    const current = computeClimateConflictRisk(data([1, 2, 3, 4].map((n) => flood(`c${n}`, daysAgo(n)))), { now: NOW })[0]
+    assert.equal(archive.drivers.hazard_events, 0)
+    assert.equal(current.drivers.hazard_events, 4)
+    assert.ok(archive.score < current.score, `history must not score as present: ${archive.score} vs ${current.score}`)
+  })
+
+  it('takes the window as a parameter, so the rule is not a hardcoded seven', () => {
+    // A canary against the fix being a literal: with a 400-day window the same
+    // 2019 floods come back in. If this passes, the window is genuinely read.
+    const wide = computeFloodRisk(withFloods([flood('a1', daysAgo(100))]), { now: NOW, hazardRecencyDays: 400 })[0]
+    const narrow = computeFloodRisk(withFloods([flood('a1', daysAgo(100))]), { now: NOW })[0]
+    assert.equal(wide.drivers.flood_hazard_events, 1)
+    assert.equal(narrow.drivers.flood_hazard_events, 0)
+    assert.equal(wide.drivers.hazard_recency_days, 400)
   })
 })

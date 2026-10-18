@@ -827,9 +827,18 @@ async function reconcileRefresh(store, { before, after, now }) {
 
 export function computeFloodRisk(data, options = {}) {
   const regions = collectRegions(data, options)
+  // Injected for the same reason `computeRoadAccess` injects it: a recency rule
+  // whose clock is read inside the loop cannot be tested at a chosen age.
+  const now = options.now ?? new Date()
+  const recencyDays = options.hazardRecencyDays ?? DEFAULT_HAZARD_RECENCY_DAYS
   return regions.map((region) => {
     const climate = nearby(data.climate_observations, region, 125)
-    const hazards = nearby(data.hazard_events.filter((event) => /flood|storm|disaster/i.test(event.event_type)), region, 250)
+    const inRadius = nearby(data.hazard_events.filter((event) => /flood|storm|disaster/i.test(event.event_type)), region, 250)
+    // DATA-04. The radius selects *where*; this selects *when*. Without it the
+    // hazard term was a function of how much archive had been ingested, so
+    // backfilling `gdacs-archive` raised every covered district's score with no
+    // change in conditions.
+    const { current: hazards, stale, undated } = splitByRecency(inRadius, now, recencyDays)
 
     // Bias-corrected value, else the deterministic point value.
     //
@@ -965,7 +974,17 @@ export function computeFloodRisk(data, options = {}) {
       precipitation_period: rainfallMean.period,
       precipitation_period_mixed: rainfallMean.mixed,
       precipitation_by_period: rainfallMean.by_period,
+      // DATA-04. The count the pressure term is computed over — in radius *and*
+      // inside the recency window. The name is unchanged so existing consumers
+      // keep their field; what it counts is now stated rather than implied.
       flood_hazard_events: hazards.length,
+      // How much in-radius evidence was set aside as history, and how much of
+      // what was kept cannot say when it happened. A count alone cannot
+      // distinguish a quiet district from one whose archive has not been
+      // backfilled — the direction this defect failed in.
+      flood_hazard_events_stale: stale.length,
+      flood_hazard_events_undated: undated,
+      hazard_recency_days: recencyDays,
       // A score computed without the probability term is a different quantity
       // from one computed with it, and the difference is 0.35 of weight in the
       // unsafe direction. Named so it cannot be read as a dry forecast.
@@ -1006,7 +1025,7 @@ export function computeFloodRisk(data, options = {}) {
       confidence,
       generated_at,
       drivers,
-      methodology: 'Transparent baseline: precipitation forecast + flood/storm/disaster alerts near exposed locations.',
+      methodology: `Transparent baseline: precipitation forecast + flood/storm/disaster alerts within 250 km and ${recencyDays} days near exposed locations.`,
       // The band travels beside the tiers rather than inside them. It is a
       // function of input coverage (see ADR-004) and calling it a sampling tier
       // would say it measures the outcome rate when it measures neither.
@@ -1021,11 +1040,13 @@ export function computeFloodRisk(data, options = {}) {
       honesty: honestyEnvelope('flood_risk_score', {
         value: score,
         basis: {
-          description: `mean precipitation across in-scope observations x 1.5 + max rain probability x 0.35 + sum of severity-weighted flood/storm/disaster alerts within 250 km, over ${climate.length} climate observation(s) and ${hazards.length} hazard event(s)`,
+          description: `mean precipitation across in-scope observations x 1.5 + max rain probability x 0.35 + sum of severity-weighted flood/storm/disaster alerts within 250 km and ${recencyDays} days, over ${climate.length} climate observation(s) and ${hazards.length} current hazard event(s)`,
           sample: {
             climate_observations_in_scope: climate.length,
             missing_precipitation_records: missingPrecip,
             flood_hazard_events: hazards.length,
+            flood_hazard_events_stale: stale.length,
+            flood_hazard_events_undated: undated,
           },
         },
         notIncluded: [
@@ -1047,6 +1068,9 @@ export function computeFloodRisk(data, options = {}) {
           ? 'No in-scope observation carried a probability forecast, so the rain-probability term contributed nothing. That omission lowers this score by up to 35 points, so a low score here may be a missing forecast rather than a dry one.'
           : null,
         'Rainfall intensity/duration to flood probability is not modelled: that needs an agreed hydrological model basis and a validated record.',
+        // DATA-04. The window is the claim's scope, so it travels with the
+        // number rather than sitting in a constant a reader has to find.
+        `Hazard pressure counts alerts within ${recencyDays} days: ${stale.length} in-radius alert(s) older than that were set aside as history, so a district with a long archive scores on its current weather rather than on how much history was ingested.${undated ? ` ${undated} counted alert(s) carry no usable date and are kept — unknown age is not old age, but the record cannot vouch for them.` : ''}`,
       ].filter(Boolean).join(' '),
     }
   })
@@ -1054,9 +1078,19 @@ export function computeFloodRisk(data, options = {}) {
 
 export function computeClimateConflictRisk(data, options = {}) {
   const regions = collectRegions(data, options)
+  // Same clock and same window as the flood scorer above. The two are separate
+  // parameters rather than one shared option because they answer different
+  // questions — but the *rule* is one rule, which is why it is one helper.
+  const now = options.now ?? new Date()
+  const recencyDays = options.hazardRecencyDays ?? DEFAULT_HAZARD_RECENCY_DAYS
   return regions.map((region) => {
     const climate = nearby(data.climate_observations, region, 125)
-    const hazards = nearby(data.hazard_events, region, 250)
+    // DATA-04's second instance, found by the same argument ENH-45 used for
+    // VER-01: the flood scorer was fixed and this one, in the same module,
+    // summed the same collection the same way. An archived earthquake counted
+    // toward present climate-conflict risk exactly as a live one did.
+    const inRadius = nearby(data.hazard_events, region, 250)
+    const { current: hazards, stale, undated } = splitByRecency(inRadius, now, recencyDays)
     const conflicts = nearby(data.conflict_events, region, 125)
     const serviceAssets = nearby(data.service_assets, region, 75)
     // The mean of the readings, not their sum — the same defect VER-01 fixed in
@@ -1145,11 +1179,15 @@ export function computeClimateConflictRisk(data, options = {}) {
       drivers: {
         climate_observations: climate.length,
         hazard_events: hazards.length,
+        // DATA-04, same naming as the flood scorer.
+        hazard_events_stale: stale.length,
+        hazard_events_undated: undated,
+        hazard_recency_days: recencyDays,
         conflict_events: conflicts.length,
         nearby_service_assets: serviceAssets.length,
       },
-      methodology: 'Transparent baseline: climate stress + hazard pressure + user-supplied or licensed conflict events + exposed service assets.',
-      limits: 'Weighted sum of input counts and severities, with a sensitivity band driven by input coverage rather than a calibrated predictive distribution. A zero band means inputs were sufficient, not that the outcome is certain.',
+      methodology: `Transparent baseline: climate stress + hazard pressure (within ${recencyDays} days) + user-supplied or licensed conflict events + exposed service assets.`,
+      limits: `Weighted sum of input counts and severities, with a sensitivity band driven by input coverage rather than a calibrated predictive distribution. A zero band means inputs were sufficient, not that the outcome is certain. Hazard pressure counts alerts within ${recencyDays} days: ${stale.length} in-radius alert(s) older than that were set aside as history, so an archive backfill does not raise a present-tense score.${undated ? ` ${undated} counted alert(s) carry no usable date and are kept, because unknown age is not old age.` : ''}`,
       uncertainty: uncertaintyTiers({
         coverage: [
           'the causal direction between climate stress and conflict: both are counted, neither is claimed to cause the other',
@@ -1160,11 +1198,13 @@ export function computeClimateConflictRisk(data, options = {}) {
       honesty: honestyEnvelope('climate_conflict_risk_score', {
         value: score,
         basis: {
-          description: `climate stress (max 35) + hazard pressure (max 25) + conflict pressure (max 30) + exposed service assets (max 10), from ${climateWithRainfall} of ${climate.length} climate observation(s) carrying rainfall, ${hazards.length} hazard event(s), ${conflicts.length} conflict event(s), ${serviceAssets.length} nearby asset(s)`,
+          description: `climate stress (max 35) + hazard pressure (max 25) + conflict pressure (max 30) + exposed service assets (max 10), from ${climateWithRainfall} of ${climate.length} climate observation(s) carrying rainfall, ${hazards.length} current hazard event(s) within ${recencyDays} days, ${conflicts.length} conflict event(s), ${serviceAssets.length} nearby asset(s)`,
           sample: {
             climate_observations_with_rainfall: climateWithRainfall,
             climate_observations_in_scope: climate.length,
             hazard_events: hazards.length,
+            hazard_events_stale: stale.length,
+            hazard_events_undated: undated,
             conflict_events: conflicts.length,
             nearby_service_assets: serviceAssets.length,
           },
@@ -1625,6 +1665,60 @@ function collectRegions(data, options = {}) {
 
 function nearby(records, point, radiusKm) {
   return records.filter((record) => Number.isFinite(record.latitude) && Number.isFinite(record.longitude) && haversineKm(point, record) <= radiusKm)
+}
+
+/**
+ * How long a hazard alert speaks about *current* risk.
+ *
+ * DATA-04. `hazards` used to be every flood/storm/disaster alert within 250 km
+ * whatever its date, so the hazard term measured how much history had been
+ * ingested rather than what the weather was doing. `gdacs-archive` backfills
+ * historical floods; importing it raised every covered district toward 100 with
+ * no change in conditions, and four 2019 floods scored exactly what four from
+ * this week scored. A risk score is a statement about now, so an alert older
+ * than its window is evidence about the district's history, not its present.
+ *
+ * Seven days is `road-access.js`'s flood window, for the same physical reason
+ * it states there: standing water recedes within days. The window is a
+ * parameter rather than a literal so the rule can be tested without waiting for
+ * time to pass — the same argument `computeRoadAccess` makes for `options.now`.
+ */
+const DEFAULT_HAZARD_RECENCY_DAYS = 7
+
+/**
+ * Split hazards into the ones that speak about the present and the ones that do
+ * not. Returns `{ current, stale, undated }`.
+ *
+ * `current` is what a present-tense score may count. `stale` is history — still
+ * evidence about the district, no longer evidence about now, and counted so the
+ * record can say how much of its input it set aside.
+ *
+ * `undated` records are *inside* `current`, deliberately. An absent or
+ * unparseable date is unknown age, not old age, and `road-access.js` already
+ * settled this direction: an undated hazard is not safe to dismiss. Dropping it
+ * would lower the score on missing evidence, which is the one direction a risk
+ * score must not fail. It is returned separately so the payload can name how
+ * many of its inputs carry no date, rather than presenting an unknown-age record
+ * as a current one without saying so.
+ *
+ * A future-dated alert is a forecast, and a forecast is about the present, so
+ * `ageDays <= windowDays` keeps it.
+ */
+function splitByRecency(hazards, now, windowDays) {
+  const current = []
+  const stale = []
+  let undated = 0
+  for (const hazard of hazards) {
+    const occurred = hazard.occurred_at ? Date.parse(hazard.occurred_at) : NaN
+    if (!Number.isFinite(occurred)) {
+      current.push(hazard)
+      undated += 1
+      continue
+    }
+    if ((now.getTime() - occurred) / 86_400_000 <= windowDays) current.push(hazard)
+    else stale.push(hazard)
+  }
+  return { current, stale, undated }
 }
 
 function nearest(records, point) {

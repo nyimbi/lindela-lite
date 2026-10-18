@@ -87,11 +87,11 @@ export const SCORING_RULES = Object.freeze({
     terms: [
       { name: 'Precipitation', shape: 'linear', driver: 'precipitation_mm', weight: 1.5, unit: 'mm', driverLabel: 'mean forecast rainfall across in-scope observations' },
       { name: 'Rain probability', shape: 'linear', driver: 'precipitation_probability_pct', weight: 0.35, unit: '%', driverLabel: 'highest in-scope daily rain probability' },
-      { name: 'Hazard pressure', shape: 'sumOf', driver: 'flood_hazard_events', unit: 'events', driverLabel: 'count of in-scope hazard events', needs: 'the severity of each event', perEvent: 'severityWeight x 30' },
+      { name: 'Hazard pressure', shape: 'sumOf', driver: 'flood_hazard_events', unit: 'events', driverLabel: 'count of in-scope hazard events inside the recency window', needs: 'the severity of each event', perEvent: 'severityWeight x 30' },
     ],
     confidenceParts: [
       { part: 'observations carrying a rainfall reading', driver: 'climate_observations_in_scope', minus: 'missing_precipitation_records', weight: 45 },
-      { part: 'in-scope hazard events', driver: 'flood_hazard_events', weight: 40 },
+      { part: 'in-scope hazard events inside the recency window', driver: 'flood_hazard_events', weight: 40 },
       { part: 'observations carrying a probability forecast', driver: 'climate_observations_in_scope', minus: 'missing_probability_records', weight: 15 },
     ],
     confidenceNote: 'An absent input lowers how sure the score is rather than lowering the score.',
@@ -102,13 +102,13 @@ export const SCORING_RULES = Object.freeze({
     formula: 'min(35, rainfall) + min(25, 12 x severity weight per event) + min(30, 4 + 0.8 x fatalities per event) + min(10, 1.5 x assets)',
     terms: [
       { name: 'Climate pressure', shape: 'capped', cap: 35, driver: 'climate_observations', unit: 'mm', driverLabel: 'in-scope climate observations', needs: 'the rainfall reading on each one', aggregate: 'mean of precipitation_mm' },
-      { name: 'Hazard pressure', shape: 'capped', cap: 25, driver: 'hazard_events', unit: 'events', driverLabel: 'in-scope hazard events', needs: 'the severity of each event', aggregate: 'sum of 12 x severityWeight' },
+      { name: 'Hazard pressure', shape: 'capped', cap: 25, driver: 'hazard_events', unit: 'events', driverLabel: 'in-scope hazard events inside the recency window', needs: 'the severity of each event', aggregate: 'sum of 12 x severityWeight' },
       { name: 'Conflict pressure', shape: 'capped', cap: 30, driver: 'conflict_events', unit: 'events', driverLabel: 'in-scope conflict events', needs: 'the fatality count on each event', aggregate: 'sum of 4 + 0.8 x fatalities' },
       { name: 'Service exposure', shape: 'linear', cap: 10, driver: 'nearby_service_assets', weight: 1.5, unit: 'assets', driverLabel: 'in-scope service assets' },
     ],
     confidenceParts: [
       { part: 'climate observations carrying a rainfall reading', driver: 'climate_observations', minus: null, weight: 30 },
-      { part: 'hazard events', driver: 'hazard_events', weight: 25 },
+      { part: 'hazard events inside the recency window', driver: 'hazard_events', weight: 25 },
       { part: 'conflict events', driver: 'conflict_events', weight: 30 },
       { part: 'service assets', driver: 'nearby_service_assets', weight: 15 },
     ],

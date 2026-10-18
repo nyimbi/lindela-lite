@@ -87,7 +87,7 @@ flowchart TD
   subgraph score["Score — raises with evidence"]
     P["precipitation = sum of usable readings<br/>mm across in-scope observations"] --> S1["x 1.5"]
     MP["maxProbability = max precipitation_probability_pct<br/>clamped at 0, null if none"] --> S2["x 0.35"]
-    H["each hazard within 250 km<br/>matching /flood|storm|disaster/i"] --> S3["severityWeight x 30"]
+    H["each hazard within 250 km and 7 days<br/>matching /flood|storm|disaster/i"] --> S3["severityWeight x 30"]
     S1 --> SC["clamp(round(sum), 0, 100)"]
     S2 --> SC
     S3 --> SC
@@ -112,8 +112,10 @@ flowchart TD
 `low 0.25`, `unknown 0.18`.
 
 Exact constants: climate radius **125 km**, hazard radius **250 km**, hazard filter
-`/flood|storm|disaster/i`, precipitation weight **1.5**, probability weight **0.35**,
-per-hazard weight **30**, half-width factor **0.4**.
+`/flood|storm|disaster/i`, hazard recency window **7 days**, precipitation weight
+**1.5**, probability weight **0.35**, per-hazard weight **30**, half-width factor
+**0.4**. The recency window is DATA-04: without it the hazard term counted how much
+archive had been ingested. See the note under the climate-conflict table.
 
 ### Confidence counts what was *used*, not what was present
 
@@ -169,9 +171,14 @@ caps (`src/analytics.js:153`).
 | Term | Radius | Formula | Cap |
 |---|---|---|---|
 | `climatePressure` | 125 km | mean `precipitation_mm` | 35 |
-| `hazardPressure` | 250 km | Σ `severityWeight × 12`, **all** hazard types | 25 |
+| `hazardPressure` | 250 km, **7 days** | Σ `severityWeight × 12`, **all** hazard types | 25 |
 | `conflictPressure` | 125 km | Σ `(4 + fatalities × 0.8)` | 30 |
 | `servicePressure` | 75 km | `serviceAssets.length × 1.5` | 10 |
+
+Both hazard terms — here and in the flood scorer — count only alerts inside a
+recency window (DATA-04). Without it the term measured how much archive had been
+ingested rather than what the weather was doing. An undated alert is kept and
+counted separately, because unknown age is not old age.
 
 Score is the sum, rounded and clamped 0–100. The four caps sum to exactly 100, so
 the score saturates only when every term is at its cap.
