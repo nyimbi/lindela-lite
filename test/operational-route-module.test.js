@@ -3,6 +3,9 @@ import { EventEmitter } from 'node:events'
 import { describe, it } from 'node:test'
 
 import { handleOperationalRoute, matchOperationalRoute } from '../src/routes/operational.js'
+import { WRITABLE_COLLECTIONS, buildCreate } from '../src/operations.js'
+import { redactPii } from '../src/pii.js'
+import { RETENTION_COLLECTIONS } from '../src/routes/maintenance.js'
 import { runWithRequestContext } from '../src/utils.js'
 
 /**
@@ -336,5 +339,93 @@ describe('PRIV — the operational write door redacts, like the other two', () =
     const written = store.merges.flatMap((m) => m.response_resources || [])[0]
     assert.equal(written.name, 'Water treatment kits', 'the redactor hashed a resource name')
     assert.equal(written.location_name, 'Lodwar', 'the redactor hashed a place name')
+  })
+
+  it('pseudonymises a reported_by sent by PATCH, not just by POST', async () => {
+    // PRIV-03. The two write branches reach the same builder over the same
+    // collection, and only POST called the redactor — so the gate held at one
+    // of two doors. A PATCH naming a reporter stored the name in cleartext
+    // where the POST beside it stored a pseudonym, and nothing failed.
+    const data = { field_reports: [{
+      id: 'fr-1', summary: 'Water rising', incident_id: 'inc-1',
+      reported_by: 'operator', observed_at: '2026-10-01T00:00:00.000Z', created_at: '2026-10-01T00:00:00.000Z',
+    }], incidents: [{ id: 'inc-1', title: 'Flood', status: 'open' }] }
+    const { store } = await call({ kind: 'collection', collection: 'field_reports', id: 'fr-1' }, {
+      method: 'PATCH', body: { reported_by: 'Amina Nakuru' }, data,
+    })
+    const written = store.merges.flatMap((m) => m.field_reports || [])[0]
+    assert.ok(written, 'nothing was written')
+    assert.doesNotMatch(written.reported_by, /Amina/, 'a PATCH put the reporter name in the store in cleartext')
+    assert.match(written.reported_by, PSEUDONYM)
+  })
+
+  it('keeps the pseudonym a second door already wrote, rather than hashing it again', async () => {
+    // The reason the PATCH fix does not corrupt anything: a record that already
+    // carries a pseudonym must keep it. `redactPii` used to hash whatever string
+    // it found, its own output included, so two doors meant two pseudonyms for
+    // one person and `src/kpi.js` counted them as two reporters. Asserted
+    // against a value the redactor wrote, so the control is real rather than a
+    // literal this test happens to know.
+    const data = { field_reports: [{
+      id: 'fr-1', summary: 'Water rising', incident_id: 'inc-1',
+      reported_by: 'operator', observed_at: '2026-10-01T00:00:00.000Z', created_at: '2026-10-01T00:00:00.000Z',
+    }], incidents: [{ id: 'inc-1', title: 'Flood', status: 'open' }] }
+    const created = await call({ kind: 'collection', collection: 'field_reports' }, {
+      method: 'POST', body: { summary: 'Water rising', incident_id: 'inc-1', reported_by: 'Amina Nakuru' }, data,
+    })
+    const pseudonym = created.store.merges.flatMap((m) => m.field_reports || [])[0].reported_by
+    assert.match(pseudonym, PSEUDONYM)
+
+    const patched = await call({ kind: 'collection', collection: 'field_reports', id: 'fr-1' }, {
+      method: 'PATCH', body: { summary: 'Water rising at the clinic' },
+      data: { ...data, field_reports: [{ ...data.field_reports[0], reported_by: pseudonym }] },
+    })
+    const rewritten = patched.store.merges.flatMap((m) => m.field_reports || [])[0].reported_by
+    assert.equal(rewritten, pseudonym, 'a second pass through the redactor split one reporter into two pseudonyms')
+  })
+})
+
+describe('PRIV-03 — a soft-deletable collection that redacts must also expire', () => {
+  it('names every operational collection whose records the redactor changes in the retention set', () => {
+    // The structural gap, not a live leak. `apply-retention` expires the
+    // collections in `RETENTION_COLLECTIONS`, and the operational family can
+    // soft-delete five more — so a collection that redacts personal data and
+    // is *not* in the retention set keeps it forever, because a soft delete
+    // never reclaims storage (ADR-007). `retentionWindowFor` answers a window
+    // for any collection name, so the omission is invisible: nothing reads the
+    // two lists together, and `incidents` looks configured while never being
+    // enumerated.
+    //
+    // Derived from the builders rather than listed, so a sixth operational
+    // collection carrying a redactable field fails here instead of arriving in
+    // a store that keeps it forever. Today exactly one does — `field_reports`,
+    // through `reported_by` — and it is in the set.
+    const data = {
+      hazard_events: [], conflict_events: [], risk_scores: [],
+      incidents: [{ id: 'inc-1', title: 'Flood', status: 'open' }],
+      interventions: [{ id: 'int-1', incident_id: 'inc-1', title: 'Supply' }],
+      service_assets: [],
+    }
+    const seeded = {
+      reported_by: 'Amina Nakuru', reporter_name: 'Amina Nakuru', contact_name: 'Amina Nakuru',
+      phone: '+254700000001', urn: 'tel:+254700000001', contact_urn: 'tel:+254700000001',
+      from: '+254700000001', payload: { contact: { name: 'Amina Nakuru', urn: 'tel:+254700000001' } },
+      summary: 'Water rising', title: 'Flood', description: 'Water rising', name: 'Water treatment kits',
+      incident_id: 'inc-1', intervention_id: 'int-1', submission_id: 's1',
+      latitude: 3.1, longitude: 35.6,
+    }
+    const redactedCollections = []
+    for (const collection of WRITABLE_COLLECTIONS) {
+      const built = buildCreate(collection, { ...seeded }, data)
+      const redacted = redactPii(built, { redactNames: true, redactPhone: true })
+      const changed = Object.keys(redacted).filter((k) => JSON.stringify(redacted[k]) !== JSON.stringify(built[k]))
+      if (changed.length) redactedCollections.push(collection)
+    }
+    assert.deepEqual(redactedCollections.sort(), ['field_reports'],
+      'the set of operational collections that redact changed; check whether the new one has a retention window')
+
+    const uncovered = redactedCollections.filter((c) => !RETENTION_COLLECTIONS.includes(c))
+    assert.deepEqual(uncovered, [],
+      `these collections hold redacted personal data with no retention window, so a soft delete keeps it forever: ${uncovered.join(', ')}`)
   })
 })

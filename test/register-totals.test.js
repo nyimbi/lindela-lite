@@ -52,8 +52,8 @@ import { describe, it } from 'node:test'
  * needs a reader and is the registers' own business. This holds the skeleton.
  *
  * Also not checked: `defects.md`'s "Roughly 55 findings". It is hedged prose
- * rather than a derived total — the file carries 26 `###` headings, 51
- * severity-table rows, and 80 distinct ids once cross-references from other
+ * rather than a derived total — the file carries 26 `###` headings, 52
+ * severity-table rows, and 82 distinct ids once cross-references from other
  * entries are counted, so "55" cannot be reconciled against a set the file
  * actually defines. A check would have to pick one of those shapes and would
  * then be measuring its own choice. It stays a reader's judgement.

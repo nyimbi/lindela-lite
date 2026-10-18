@@ -52,6 +52,7 @@ under **Unreleased**; this table is the index into them.
 | SEC-12 | fixed | `csvEscape` neutralises `= + - @` in header rows as well as values | `csv-injection.test.js` |
 | PRIV-01 | fixed | one shared policy object; redaction applied to the object actually stored | `privacy-chw-report.test.js` |
 | PRIV-02 | fixed | redaction defaults on; HMAC-SHA256 digests with a configured salt; 0° is a coordinate | `pii.test.js` |
+| PRIV-03 | fixed | PATCH redacts like POST; `hashString` is idempotent on its own output; a redacting soft-deletable collection must be in `RETENTION_COLLECTIONS` | `operational-route-module.test.js`, `pii.test.js` |
 | ING-01 | fixed | severity from the alert level alone; prose never consulted; unknown ⇒ `null` | `connector-severity.test.js` |
 | ING-02 | fixed | severity is `null` by construction, declared in `model_limit` | `connector-severity.test.js` |
 | ING-06 | fixed | `gdacs_archive` declares `budget_ms`; the walk spends it and checks it before each window | `completeness-wiring.test.js`, `ingestion-wiring.test.js` |
@@ -485,6 +486,34 @@ everything.
   elsewhere in the same codebase.
 - **PRIV-03 — Soft delete retains PII permanently** (`src/operations.js:81`), and
   community feedback is in no retention list at all.
+  **Both clauses were refuted when checked on 2026-10-18, and the real defect was
+  the one the entry did not name.** The citation is `buildSoftDelete`, which
+  stamps `deleted_at` and re-runs the normaliser — it does not itself retain
+  anything. Retention reads `occurred_at || created_at` and does not filter on
+  `deleted_at`, so a soft-deleted record expires like any other: a
+  `field_reports` row with `occurred_at: 2025-01-01` and `deleted_at` set is
+  reported as expired by `applyRetention` and removed by `store.remove()`.
+  Community feedback gained its own window (`communityFeedbackDays`, 180 days)
+  and joined `RETENTION_COLLECTIONS` under R-12/ENH-74.
+  What the probe found instead: **`PATCH /api/v1/<collection>/:id` reached the
+  same builders as `POST` with no redactor behind it.** A CHW report that an
+  operator then patched stored `reported_by: "Amina Nakuru"` in cleartext on the
+  verb whose sibling hashed the same field — the "gate at one of two doors"
+  argument `src/operations.js` already makes for the quality verdict, applied to
+  PII. Fixing it exposed the second half: `redactPii` was not idempotent, so a
+  record passing two doors acquired two pseudonyms for one reporter and the
+  distinct-reporter count read them as two people. `hashString` now recognises
+  its own output (`PSEUDONYM_RE`). The structural gap is closed too — a
+  soft-deletable collection that redacts personal data must be in
+  `RETENTION_COLLECTIONS`, since a soft delete never reclaims storage — and it
+  is derived from the builders rather than listed. `owner` is deliberately not
+  redacted: it is a staff assignment (`?owner=` filters on it), not data-subject
+  PII, and hashing it would break the filter while protecting nobody. Guards:
+  *pseudonymises a reported_by sent by PATCH, not just by POST*, *keeps the
+  pseudonym a second door already wrote, rather than hashing it again*, *is
+  idempotent, so a record through two doors keeps one pseudonym*, and *names
+  every operational collection whose records the redactor changes in the
+  retention set*.
 
 ### Data correctness
 

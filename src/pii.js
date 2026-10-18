@@ -325,9 +325,42 @@ function finiteNumber(value) {
   return Number.isFinite(n) ? n : null
 }
 
+/**
+ * The shape `hashString` writes, so a value can be recognised as one of its own.
+ *
+ * PRIV-03. Redaction was not idempotent: `redactPii` hashed whatever string it
+ * found, including a string it had hashed a moment earlier. One record passing
+ * two doors — a CHW report that an operator then patches — came out with two
+ * pseudonyms for one reporter, and `src/kpi.js`'s distinct-reporter count
+ * counted them as two people. The damage is silent in exactly the direction a
+ * privacy control must not be: the more doors a record passes, the less the
+ * population is linkable, and nothing fails.
+ *
+ * Recognising the digest is also the honest reading. A pseudonym is not a name;
+ * running it through the masker again says the masker cannot tell a name from
+ * the thing it makes of one. A deployment that rotated its salt would produce a
+ * second pseudonym from the first, which is the one case where re-hashing looks
+ * useful — and it is still wrong, because the first pseudonym is already in the
+ * store and the second would not match it.
+ *
+ * The check is on the *prefix and length*, not on the salt id: a pseudonym
+ * written by a deployment with a different salt is still a pseudonym, and
+ * hashing it again would not make it match anything.
+ */
+// 128 bits of digest. The old scheme kept 32, and in practice kept none: it
+// truncated the *prefixed* string, so every redacted name came out as the
+// literal `sha256:a` — one value for the whole population, and a dictionary of
+// one confirmed entry names everyone. 32 bits over a modest population is a
+// birthday collision besides.
+const DIGEST_HEX_CHARS = 32
+
+const PSEUDONYM_RE = new RegExp(`^sha256:[0-9a-f]{8}:[0-9a-f]{${DIGEST_HEX_CHARS}}$`)
+
 function hashString(value) {
+  const str = String(value)
+  if (PSEUDONYM_RE.test(str)) return str
   const salt = resolveSalt()
-  const digest = crypto.createHmac('sha256', salt).update(String(value)).digest('hex')
+  const digest = crypto.createHmac('sha256', salt).update(str).digest('hex')
   return `sha256:${saltId(salt)}:${digest.slice(0, DIGEST_HEX_CHARS)}`
 }
 
@@ -389,13 +422,6 @@ function maskPhone(value) {
  */
 
 const SALT_ENV = 'LINDELA_LITE_PII_SALT'
-
-// 128 bits of digest. The old scheme kept 32, and in practice kept none: it
-// truncated the *prefixed* string, so every redacted name came out as the
-// literal `sha256:a` — one value for the whole population, and a dictionary of
-// one confirmed entry names everyone. 32 bits over a modest population is a
-// birthday collision besides.
-const DIGEST_HEX_CHARS = 32
 
 let generatedSalt = null
 

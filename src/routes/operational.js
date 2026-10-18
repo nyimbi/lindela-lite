@@ -219,7 +219,20 @@ export async function handleOperationalRoute(route, { data, req, res, url, jsonR
       jsonResponse(res, 409, { success: false, error: 'Record is deleted', code: ERROR_CODES.RECORD_DELETED })
       return true
     }
-    const record = buildUpdate(route.collection, existing, { ...body, id: route.id }, data)
+    // PRIV-03. The POST branch above redacts and this one did not, so the same
+    // path held a gate at one of two doors: `POST /api/v1/field-reports` hashed
+    // a caller-supplied `reported_by`, and `PATCH /api/v1/field-reports/:id`
+    // with the same field wrote the name in cleartext. Both branches reach the
+    // same builders over the same collection, so the choice was never about the
+    // verb — it was about which branch someone remembered.
+    //
+    // Redacting the built record rather than the patch is what keeps the two
+    // doors agreeing: `buildUpdate` merges the patch over the existing row, and
+    // redacting only the patch would leave an untouched `reported_by` from a
+    // previous unredacted write in place. `redactPii` is idempotent on its own
+    // output (`src/pii.js`'s `PSEUDONYM_RE`), so a record that already carries a
+    // pseudonym keeps it instead of acquiring a second one for the same person.
+    const record = redactPii(buildUpdate(route.collection, existing, { ...body, id: route.id }, data), await loadPolicy())
     const log = actionLog(route.collection, 'updated', record, body.actor, req.__auth?.subject)
     await store.merge({ [route.collection]: [record], action_logs: [log] })
     jsonResponse(res, 200, { success: true, data: record, action_log: log })

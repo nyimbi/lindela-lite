@@ -153,6 +153,26 @@ describe('pii name pseudonym', () => {
     )
   })
 
+  it('is idempotent, so a record through two doors keeps one pseudonym', () => {
+    // PRIV-03. `redactPii` hashed whatever string it found, including one it
+    // had hashed a moment earlier. A record that passed two doors — a CHW
+    // report an operator then patched — came out with two pseudonyms for one
+    // reporter, and the distinct-reporter count read them as two people. The
+    // failure is silent in the direction a privacy control must not fail: more
+    // doors, less linkability, nothing red.
+    const once = redactPii({ reported_by: 'Amina Nakuru', contact_name: 'Amina Nakuru' }, { redactNames: true, redactPhone: true })
+    const twice = redactPii(once, { redactNames: true, redactPhone: true })
+    assert.equal(twice.reported_by, once.reported_by, 'a second pass re-hashed the pseudonym')
+    assert.equal(twice.contact_name, once.contact_name, 'a second pass re-hashed the pseudonym')
+    // The control: a value that is *not* a pseudonym must still be hashed, or
+    // the guard is a passthrough wearing an idempotence check's clothes.
+    assert.notEqual(
+      redactPii({ reported_by: 'sha256:deadbeef:Amina' }, { redactNames: true }).reported_by,
+      'sha256:deadbeef:Amina',
+      'a string that only looks like a pseudonym was left in cleartext',
+    )
+  })
+
   it('is stable within a process, so two records of one person still link', () => {
     const first = redactPii({ reporter_name: 'Miriam Wanjiru' }, { redactNames: true }).reporter_name
     const second = redactPii({ contact_name: 'Miriam Wanjiru', id: 'b' }, { redactNames: true }).contact_name
