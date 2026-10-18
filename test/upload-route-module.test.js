@@ -111,15 +111,55 @@ describe('ENH-60 — a failed batch writes nothing', () => {
 
   it('imports a valid batch and reports how many rows landed', async () => {
     const merges = []
-    const store = { merge: async (partial) => { merges.push(partial); return partial } }
+    const store = { merge: async (partial) => { merges.push(partial); return { discarded: [] } } }
     const { res } = await call({ kind: 'upload-ingest' }, { store, body: { csv: VALID_CSV, collection: 'service_assets' } })
     assert.equal(res.status, 201)
     assert.equal(res.json().imported, 1)
-    assert.equal(merges.at(-1).service_assets.length, 1)
+    // The rows are merged first and the log second, so the log can state what
+    // the merge kept. `merges[0]` is the batch.
+    assert.equal(merges[0].service_assets.length, 1)
+  })
+
+  it('reports the rows the store discarded instead of counting them as imported', async () => {
+    // DATA-13. `mergeById` skips an incoming record whose `payload_hash` is
+    // already held by a *different* id, and `canonicalHash` ignores `id` — so a
+    // re-export under fresh ids lands nothing. The route used to answer
+    // `imported: rows.length` regardless, which is the input counted as the
+    // output.
+    const store = {
+      merge: async (partial) => {
+        if (!partial.action_logs) {
+          return { discarded: partial.service_assets.map((row) => ({ collection: 'service_assets', id: row.id })) }
+        }
+        return { discarded: [] }
+      },
+    }
+    const { res } = await call({ kind: 'upload-ingest' }, { store, body: { csv: VALID_CSV, collection: 'service_assets' } })
+    const body = res.json()
+    assert.equal(res.status, 201)
+    assert.equal(body.imported, 0, 'a discarded row was counted as imported')
+    assert.equal(body.duplicates_skipped, 1)
+    assert.equal(body.duplicate_ids.length, 1)
+    // The arithmetic a client can check without knowing how the store dedups.
+    assert.equal(body.imported + body.duplicates_skipped, body.valid_rows)
+  })
+
+  it('records the discard in the audit row, not just the response', async () => {
+    let log = null
+    const store = {
+      merge: async (partial) => {
+        if (partial.action_logs) { log = partial.action_logs[0]; return { discarded: [] } }
+        return { discarded: [{ collection: 'service_assets', id: 'sa-1' }] }
+      },
+    }
+    await call({ kind: 'upload-ingest' }, { store, body: { csv: VALID_CSV, collection: 'service_assets' } })
+    assert.equal(log.metadata.imported, 0)
+    assert.equal(log.metadata.duplicates_skipped, 1)
+    assert.deepEqual(log.metadata.duplicate_ids, ['sa-1'])
   })
 
   it('gives two posts of the same bytes the same batch id', async () => {
-    // The route merges twice: the log first, then the records. Only the log
+    // The route merges twice: the rows first, then the log. Only the log
     // carries a batch id, so the double has to read the key rather than assume
     // the shape.
     const ids = []

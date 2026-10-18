@@ -5281,6 +5281,27 @@ describe('Lindela Lite payload hashing', () => {
     assert.equal(merged.length, 1,
       'one region-day of unchanged content must be one record, whatever id the window minted')
   })
+
+  it('names the record it discarded, which is the only evidence the id was thrown away', async () => {
+    // DATA-13. The merge above is correct and silent, and silence is the defect
+    // when the caller is an import route: `/upload` answered `imported:
+    // rows.length` for rows this function dropped. `mergeByIdReporting` is the
+    // same merge with an account of what it declined to keep.
+    const { mergeByIdReporting } = await import('../src/store.js')
+    const { canonicalHash } = await import('../src/utils.js')
+
+    const stored = { id: 'obs-1', source: 'x', value: 1 }
+    stored.payload_hash = canonicalHash(stored)
+    // Same content, different id: the hash collides, the id does not.
+    const collides = { ...stored, id: 'obs-2' }
+    // Same content, same id: the dedup working as designed, not a discard.
+    const repeat = { ...stored }
+
+    const { records, discarded } = mergeByIdReporting([stored], [collides, repeat])
+    assert.equal(records.length, 1)
+    assert.deepEqual(discarded.map((r) => r.id), ['obs-2'],
+      'a same-id repeat must not be reported as a discard, or every idempotent re-run looks like data loss')
+  })
 })
 
 describe('Lindela Lite ENSO index labelling', () => {

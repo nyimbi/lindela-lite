@@ -723,20 +723,22 @@ export class PostgresStore {
     }
     // ENH-11 / R-24. Nothing below reads the store back, and every one of the
     // 44 call sites discards what it used to return. Return early, not
-    // expensively.
-    if (!writes.length) return
+    // expensively — but the early return still carries the (empty) report, so
+    // a caller reading `.discarded` does not have to special-case a no-op.
+    if (!writes.length) return { discarded: [] }
 
     // CON-02. The whole transaction is retried, not the statement: a deadlock
     // aborts the transaction, so the only correct retry starts a new one.
-    await withWriteRetry(() => this.#mergeOnce(writes))
+    return withWriteRetry(() => this.#mergeOnce(writes))
   }
 
   async #mergeOnce(writes) {
     const client = await this.pool.connect()
+    let report
     try {
       await client.query('BEGIN')
       await this.#lockWrites(client)
-      await this.#mergeBody(client, writes)
+      report = await this.#mergeBody(client, writes)
       await client.query('COMMIT')
     } catch (error) {
       await client.query('ROLLBACK')
@@ -744,6 +746,7 @@ export class PostgresStore {
     } finally {
       client.release()
     }
+    return report
     // ENH-11 / R-24. No read-back. Every call site in this repository discards
     // the return value, and the read it used to end on was a full materialisation
     // of every row in the table — so every write cost twice what it wrote.
@@ -763,6 +766,7 @@ export class PostgresStore {
    * No BEGIN, COMMIT or lock here; the caller owns the transaction.
    */
   async #mergeBody(client, writes) {
+    const discarded = []
     for (const { collection, items } of writes) {
       // ENH-13. Read the predecessors before the upsert overwrites them.
       // Doing this inside the same transaction as the write is the whole
@@ -798,8 +802,10 @@ export class PostgresStore {
           await this.insertRecords(client, HISTORY_COLLECTION, superseded)
         }
       }
-      await this.upsertCollection(client, collection, items)
+      const upserted = await this.upsertCollection(client, collection, items)
+      if (upserted?.discarded?.length) discarded.push(...upserted.discarded)
     }
+    return { discarded }
   }
 
   /**
@@ -868,8 +874,8 @@ export class PostgresStore {
       const incoming = (partial[collection] || []).filter((item) => item?.id)
       if (incoming.length) writes.push({ collection, items: incoming })
     }
-    if (!writes.length) return
-    await this.#mergeBody(client, writes)
+    if (!writes.length) return { discarded: [] }
+    return this.#mergeBody(client, writes)
   }
 
   /**
@@ -994,13 +1000,32 @@ export class PostgresStore {
       )
       for (const row of existingHashes) seen.add(row.payload_hash)
     }
+    // DATA-13, the Postgres half. `seen` holds the hashes the *collection*
+    // already carries; a hash met again inside this batch is also a skip. Both
+    // are counted, but only where the incoming id differs from the id that
+    // holds the hash — a same-id repeat is the dedup working, and reporting it
+    // as a discard would make every idempotent re-run look like data loss.
+    const idByHash = new Map()
+    if (hashes.length) {
+      const { rows: holders } = await client.query(
+        `SELECT id, payload_hash FROM lite_records
+         WHERE collection = $1 AND payload_hash = ANY($2::text[])`,
+        [collection, hashes],
+      )
+      for (const row of holders) if (!idByHash.has(row.payload_hash)) idByHash.set(row.payload_hash, row.id)
+    }
     const fresh = []
+    const discarded = []
     for (const item of items) {
-      if (item.payload_hash && seen.has(item.payload_hash)) continue
+      if (item.payload_hash && seen.has(item.payload_hash)) {
+        const holder = idByHash.get(item.payload_hash)
+        if (holder && holder !== item.id) discarded.push({ collection, id: item.id })
+        continue
+      }
       if (item.payload_hash) seen.add(item.payload_hash)
       fresh.push(item)
     }
-    if (!fresh.length) return
+    if (!fresh.length) return { discarded }
 
     await client.query(
       `INSERT INTO lite_records (collection, id, body, payload_hash, updated_at)
@@ -1018,6 +1043,7 @@ export class PostgresStore {
         fresh.map((item) => item.payload_hash ?? null),
       ],
     )
+    return { discarded }
   }
 
   /**

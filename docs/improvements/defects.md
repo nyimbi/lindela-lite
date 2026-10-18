@@ -540,7 +540,22 @@ everything.
   re-submitting identical content produces a different id and defeats dedup.
 - **DATA-13 — `payload_hash` dedup is not namespaced** (`src/store.js:114`): two
   records differing only by id collide, and a re-imported GeoJSON is silently
-  discarded as a success.
+  discarded as a success. **Fixed 2026-10-18, as the honest interim the roadmap
+  names rather than as a namespace.** The skip itself is correct and stays: two
+  records that agree on every field but their id *are* one record, and the
+  `canonicalHash` that ignores `id` is what makes an archive connector's
+  day-shifted window a no-op. What was wrong was the silence. `mergeById` now
+  delegates to `mergeByIdReporting`, which returns the incoming records it
+  declined to keep and distinguishes a cross-id discard from a same-id repeat;
+  both stores thread that report out of `merge()`, and `POST /api/v1/upload`
+  answers `imported: kept` with `duplicates_skipped` and the discarded ids
+  beside it, and records the same two numbers in its action log. Guards: *names
+  the record it discarded, which is the only evidence the id was thrown away*
+  (`test/lite.test.js`), *reports the rows the store discarded instead of
+  counting them as imported* and *records the discard in the audit row*
+  (`test/upload-route-module.test.js`). Both canaried against the pre-fix
+  behaviour. What remains open is the policy the namespace would need: a
+  per-source identity declaration in `SOURCE_POLICIES`, which carries none.
 - **DATA-14 — `schema.js` performs no validation.** There is no `extra=forbid`
   equivalent; arbitrary shapes are accepted and persisted.
 - **DATA-15 — The audit trail is self-asserted.** `src/operations.js:101` records

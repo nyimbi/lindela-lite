@@ -142,20 +142,19 @@ export async function handleUploadRoute(route, { store, data, req, res, url, jso
   // import ran twice.
   const batchId = `upload_${createHash('sha256').update(csvText).digest('hex').slice(0, 12)}`
 
-  await store.merge({
-    action_logs: [actionLog(collection, dryRun ? 'upload_validated' : 'uploaded',
-      { id: batchId }, body.actor || req.__auth?.subject, req.__auth?.subject, {
-        batch_id: batchId,
-        collection,
-        filename,
-        dry_run: dryRun,
-        ...report.summary,
-        errors: report.errors.slice(0, 25),
-        error_count_total: report.errors.length,
-      })],
-  })
-
   if (dryRun) {
+    await store.merge({
+      action_logs: [actionLog(collection, 'upload_validated',
+        { id: batchId }, body.actor || req.__auth?.subject, req.__auth?.subject, {
+          batch_id: batchId,
+          collection,
+          filename,
+          dry_run: true,
+          ...report.summary,
+          errors: report.errors.slice(0, 25),
+          error_count_total: report.errors.length,
+        })],
+    })
     jsonResponse(res, 200, {
       success: true,
       dry_run: true,
@@ -170,6 +169,22 @@ export async function handleUploadRoute(route, { store, data, req, res, url, jso
   }
 
   if (!report.ok) {
+    // The refusal is still an event. `uploaded` is the action name the audit
+    // has always used for a POST that reached the store path, and the metadata
+    // carries `invalid_rows` — so a refused batch is distinguishable from one
+    // that never arrived without reading the message text.
+    await store.merge({
+      action_logs: [actionLog(collection, 'uploaded',
+        { id: batchId }, body.actor || req.__auth?.subject, req.__auth?.subject, {
+          batch_id: batchId,
+          collection,
+          filename,
+          dry_run: false,
+          ...report.summary,
+          errors: report.errors.slice(0, 25),
+          error_count_total: report.errors.length,
+        })],
+    })
     // Nothing is written. A partial import is the outcome nobody wants: the
     // caller has to work out which half landed, and the half that landed is the
     // half they did not look at.
@@ -188,13 +203,53 @@ export async function handleUploadRoute(route, { store, data, req, res, url, jso
     return true
   }
 
-  await store.merge({ [collection]: report.rows })
+  // DATA-13. `imported` is what the store kept, not what the file offered.
+  //
+  // `merge` skips an incoming record whose `payload_hash` the collection
+  // already holds, and `canonicalHash` ignores `id` — so a re-export of the
+  // same rows under fresh ids imports none of them. The route used to answer
+  // `201 {imported: rows.length}`, which is a count of the input wearing the
+  // output's name: an operator re-importing a GeoJSON they had just fixed was
+  // told every row landed while the store declined all of them.
+  //
+  // A discard is not an error. The row is genuinely already stored; what was
+  // wrong was the silence, so the response names the count and the ids (capped,
+  // like the error list) and the batch id — which is a fingerprint of the
+  // bytes — so the operator can point at the import that did it.
+  const { discarded = [] } = (await store.merge({ [collection]: report.rows })) || {}
+  const imported = report.rows.length - discarded.length
+  // Logged after the merge, so the audit row carries what landed rather than
+  // what was offered — the same distinction the response now makes. One merge
+  // for the rows and one for the log, in that order: a log written first would
+  // be the pre-merge claim this fix exists to remove.
+  await store.merge({
+    action_logs: [actionLog(collection, 'uploaded',
+      { id: batchId }, body.actor || req.__auth?.subject, req.__auth?.subject, {
+        batch_id: batchId,
+        collection,
+        filename,
+        dry_run: false,
+        imported,
+        duplicates_skipped: discarded.length,
+        duplicate_ids: discarded.slice(0, 25).map((item) => item.id),
+        ...report.summary,
+        errors: report.errors.slice(0, 25),
+        error_count_total: report.errors.length,
+      })],
+  })
   jsonResponse(res, 201, {
     success: true,
     collection: report.collection,
     filename,
-    imported: report.rows.length,
+    imported,
     ...report.summary,
+    // `imported + discarded === report.rows.length` by construction, and
+    // `duplicates_skipped` is the same number as `discarded` under the name a
+    // client reads. Stated on the response so the arithmetic is checkable
+    // without knowing how the store dedups.
+    duplicates_skipped: discarded.length,
+    duplicate_ids: discarded.slice(0, 20).map((item) => item.id),
+    duplicates_truncated: discarded.length > 20,
   })
   return true
 }

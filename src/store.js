@@ -1073,7 +1073,9 @@ export class JsonStore {
   /** The merge, assuming the caller already holds the write chain. */
   async #mergeNow(partial) {
     const current = await this.#current()
-    return this.#writeFile(this.#mergedStore(current, partial))
+    const { store, discarded } = this.#mergedStore(current, partial)
+    await this.#writeFile(store)
+    return { discarded }
   }
 
   /**
@@ -1082,10 +1084,16 @@ export class JsonStore {
   #mergedStore(current, partial) {
     const next = { ...current }
     const superseded = []
+    // DATA-13. Every collection's discards, flattened. The caller that cares is
+    // `/upload`, which offers rows under ids it was given and needs to know how
+    // many of them the store declined to keep.
+    const discarded = []
     for (const collection of COLLECTIONS) {
       const incoming = partial[collection] || []
       if (!incoming.length) continue
-      next[collection] = mergeById(current[collection] || [], incoming)
+      const merged = mergeByIdReporting(current[collection] || [], incoming)
+      next[collection] = merged.records
+      for (const item of merged.discarded) discarded.push({ collection, id: item.id })
       if (BITEMPORAL_COLLECTIONS.includes(collection)) {
         superseded.push(...supersededVersions(collection, current[collection] || [], incoming))
       }
@@ -1099,7 +1107,7 @@ export class JsonStore {
         mergeById(current.record_versions || [], superseded),
       )
     }
-    return next
+    return { store: next, discarded }
   }
 
   /**
@@ -1253,6 +1261,29 @@ export function supersededVersions(collection, existing, incoming, { sourceRunId
 }
 
 export function mergeById(existing, incoming) {
+  return mergeByIdReporting(existing, incoming).records
+}
+
+/**
+ * DATA-13. `mergeById` plus an account of what it threw away.
+ *
+ * The skip below is by `payload_hash` alone, and `canonicalHash` deliberately
+ * ignores `id`. So two records that agree on every field except their id
+ * produce one hash, and the second one is discarded — not merged, not updated,
+ * not reported. Re-importing a GeoJSON export under fresh ids therefore
+ * imports nothing and answers `success: true` with a full `imported` count,
+ * because the count is `rows.length`, which is the rows *offered*.
+ *
+ * That is the same class as the accumulator in `countRecords`: a number that
+ * describes the input presented as a number that describes the output. The
+ * honest interim is to report the skip, which is what this returns — an
+ * incoming record whose hash is already held by a *different* id is a discard,
+ * and the caller can say so instead of claiming it landed.
+ *
+ * A same-id hash match is not a discard: it is the same record arriving twice,
+ * which is the dedup working as designed. Only the cross-id case is counted.
+ */
+export function mergeByIdReporting(existing, incoming) {
   const map = new Map()
   const hashMap = new Map()
 
@@ -1265,8 +1296,14 @@ export function mergeById(existing, incoming) {
     }
   }
 
+  const discarded = []
   for (const item of incoming) {
     if (item.payload_hash && hashMap.has(item.payload_hash)) {
+      const holder = hashMap.get(item.payload_hash)
+      // `holder.id !== item.id` is the whole distinction. Same id means the
+      // record is already stored and this is a no-op; different id means this
+      // record will never exist in the store and nothing else will say so.
+      if (holder.id !== item.id) discarded.push(item)
       continue
     }
     map.set(item.id, { ...map.get(item.id), ...item })
@@ -1275,7 +1312,7 @@ export function mergeById(existing, incoming) {
     }
   }
 
-  return sortRecords([...map.values()])
+  return { records: sortRecords([...map.values()]), discarded }
 }
 
 /**

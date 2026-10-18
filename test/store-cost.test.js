@@ -373,9 +373,21 @@ describe('PostgresStore against a real cluster', () => {
     assert.equal(Object.keys(data).includes('__schema'), false)
   })
 
-  it('ENH-11: merge() and remove() return nothing rather than a discarded store', async (t) => {
+  it('ENH-11: merge() returns a discard report, never the store it wrote', async (t) => {
     if (needs(t)) return
-    assert.equal(await store.merge({ hazard_events: [hazard('hz-r')] }), undefined)
+    // ENH-11 removed a read-back that materialised every row so `merge()` could
+    // return the whole store. DATA-13 added the one thing a caller needs back:
+    // how many incoming records the dedup dropped, because `/upload` was
+    // answering `imported: rows.length` for rows the store declined.
+    //
+    // The claim ENH-11 actually makes is that the return is not the store, and
+    // that is what this asserts now — the old `=== undefined` was a stricter
+    // spelling of the same claim and would have made the fix impossible. A
+    // report of a few ids is not a materialisation: its size is bounded by the
+    // batch, not by the table.
+    const merged = await store.merge({ hazard_events: [hazard('hz-r')] })
+    assert.deepEqual(merged, { discarded: [] }, 'merge() returned something other than the discard report')
+    assert.equal(merged.hazard_events, undefined, 'merge() returned the store')
     assert.equal(await store.remove({ collection: { hazard_events: ['hz-r'] } }), undefined)
     assert.equal(await store.replaceAnalytics({ risk_scores: [{ id: 'rs-1' }] }), undefined)
     // And the data is actually there, so this is not a no-op returning no-op.
