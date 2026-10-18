@@ -1053,6 +1053,16 @@ frontend and it runs constantly.
 `public/app.js:1032`. Radius 5 on low severity against an 800-unit viewport, with
 no hit padding. `scripts/check-responsive.mjs` cannot see SVG, so CI is blind to it.
 
+**Fixed and measured, twice.** `hitRadiusUnits` (`public/app.js:2284`) derives a
+hit radius from the rendered width so the target clears 24 CSS px at any viewport,
+and the gate now queries `[data-tap-target]` and checks width as well as height —
+the audit's claim that the gate cannot see SVG is what the fix had to repair, not
+only the radius. **Measured 2026-10-03** against Chrome 154 on `:9222` with a live
+server on `:4177`: 8 surfaces × 3 viewports, clean. **Re-measured 2026-10-13:**
+48 combinations (adding ltr/rtl), exit 0, and canaried by shrinking
+`--tap-target-min` to 8px in `tokens.css` — **34 failures, exit 1**, reverted from
+a file backup. The earlier figure of "24" counted viewports without direction.
+
 ### WEB-11 — i18n coverage ran 17% to 92%, and three surfaces had none
 
 **Fixed 2026-10-03.** `en.json` went from 227 keys to 444. All three surfaces now
