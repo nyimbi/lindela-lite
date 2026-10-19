@@ -233,6 +233,10 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     let assertionReport = null
     let provenance = []
     let retrieval = []
+    // Set when the connector declined to fetch because the watermark already
+    // covered the window. Read by the assertion gate and recorded on the run so
+    // the next reader can tell "nothing was due" from "nothing arrived".
+    let caughtUp = false
 
     // ENH-10. `failure_streak` was computed by this file and acted on by
     // nothing: a dead source was retried in full on every run-due tick,
@@ -317,8 +321,27 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
       attempts = output.__attempts || 1
       errors = output.errors || []
       const records = countRecords(output)
-      if (errors.length || records < (policy.minimum_records || 0)) status = 'degraded'
-      if (records < (policy.minimum_records || 0)) {
+      // A connector that reports `watermark.mode === 'empty'` with reason
+      // `caught-up` made no request: the watermark already covered the window,
+      // so there was nothing to ask for. That is the watermark working, and it
+      // is the one outcome where zero records is not a measurement of the
+      // source at all.
+      //
+      // Treated as a floor shortfall until now, so the run was written
+      // `degraded` with a fabricated "Expected at least 1 records" and then
+      // tripped the count assertion against the trailing median as well.
+      // `freshness` reads a tripped assertion as `broken`, so the run *after*
+      // a backfill finished reported a fully stocked archive as down — every
+      // time, by construction, which is the "a working pipeline and a dead one
+      // report the same thing" failure this file keeps re-fixing.
+      //
+      // Deliberately narrow: only `caught-up`. `cursor-ahead-of-now` is also
+      // `mode: 'empty'` and is a broken watermark an operator has to correct,
+      // so a reason-blind exemption would hide exactly that state.
+      const watermarkBlock = output && typeof output.watermark === 'object' ? output.watermark : null
+      caughtUp = watermarkBlock?.mode === 'empty' && watermarkBlock?.reason === 'caught-up'
+      if (errors.length || (!caughtUp && records < (policy.minimum_records || 0))) status = 'degraded'
+      if (!caughtUp && records < (policy.minimum_records || 0)) {
         errors = [...errors, `Expected at least ${policy.minimum_records} records for ${source}; received ${records}.`]
       }
     } catch (error) {
@@ -394,7 +417,15 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     // the GDACS archive silently caps at ~100 results per query, so a run
     // returning 4,000 of 40,000 parses cleanly and reports success. Nothing in
     // the codebase noticed for the life of the product.
-    if (status !== 'failed') {
+    //
+    // Skipped for a caught-up run, and for a reason that is not leniency: every
+    // assertion in the map is a statement about a batch the connector fetched.
+    // `min_count_vs_trailing` judges that batch against what the same walk
+    // returned before, so running it on a batch nobody asked for reports the
+    // watermark as a collapse. The run keeps `assertion_report: null` — the
+    // same value a failed fetch carries, and here it means the same thing:
+    // no assertion was evaluated, which is not a pass.
+    if (status !== 'failed' && !caughtUp) {
       // R-42. `trailingRecords` is passed, from `source_runs` in the snapshot
       // taken before this run started. Without it `median([])` is null, the
       // count assertion reports itself `unmeasured`, and the assertion that
@@ -491,6 +522,19 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
       records_processed: recordsProcessed,
       records_by_collection: countRecordsByCollection(output),
       completeness,
+      // What the connector says it did, when it says anything. `caught_up` is
+      // the one reason a run can report zero records without that being a
+      // measurement of the source, and `freshness` reads it to keep such a run
+      // out of `empty_response` — which would otherwise accumulate over three
+      // no-op runs and claim the publisher had nothing for us, when in fact we
+      // never asked.
+      watermark: output?.watermark && typeof output.watermark === 'object'
+        ? {
+            mode: output.watermark.mode ?? null,
+            reason: output.watermark.reason ?? null,
+            as_of: output.watermark.as_of ?? null,
+          }
+        : null,
       errors,
       // R-43. The report used to be computed and dropped on the floor. What
       // survived was `assertionReport.failures.map((f) => f.message)` flattened

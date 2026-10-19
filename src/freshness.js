@@ -212,6 +212,30 @@ function runFailed(run) {
 }
 
 /**
+ * A run that made no request because the watermark already covered the window.
+ *
+ * `runIngestion` records the connector's `watermark` block on the run for
+ * exactly this: a caught-up connector never asks the publisher anything, so its
+ * zero records is a fact about the watermark and not about the feed. Everything
+ * downstream that reasons over record counts has to be able to see that.
+ */
+function caughtUpRun(run) {
+  return run?.watermark?.mode === 'empty' && run?.watermark?.reason === 'caught-up'
+}
+
+/**
+ * The record count a run contributes to a trailing window, or null for a run
+ * whose zero is not a measurement.
+ *
+ * A caught-up run returned no records because it fetched nothing. Counting it
+ * as a zero would let three no-op runs accumulate into `empty_response`, which
+ * claims the publisher has had nothing for us — a claim nothing observed.
+ */
+function recordCountForWindow(run) {
+  return caughtUpRun(run) ? null : run?.records_processed
+}
+
+/**
  * Whether the run proves the source was reached and answered.
  *
  * A `degraded` run whose only complaint is the record count counts as an
@@ -430,6 +454,22 @@ export function explainVerdict({
     }
   }
 
+  // Caught up: the connector made no request because the watermark already
+  // covered the window. Its zero is not a measurement of the publisher, so it
+  // must not reach `ok` (nothing arrived) or the empty-run logic below (the
+  // source has had nothing for us) — both are claims about a fetch that did
+  // not happen. Checked after the failure and assertion branches, so a run
+  // that caught up *and* reported an error is still read as broken.
+  if (caughtUpRun(lastRun)) {
+    const covered = lastRun.watermark?.as_of ? ` through ${lastRun.watermark.as_of}` : ''
+    return {
+      ...base,
+      verdict: 'quiet',
+      reason: `watermark already covers the window${covered}, ${deadline},`
+        + ' no request made — nothing was due, so nothing was measured',
+    }
+  }
+
   // `ok` means data arrived. Zero is not an arrival, whatever the floor is:
   // an on-demand backfill that found nothing new has not succeeded at
   // producing data, it has told us the archive is already stocked, and that is
@@ -523,7 +563,7 @@ export function freshnessReport({ sourceRuns = [], policies = SOURCE_POLICIES, n
     const sourceRunsForSource = runs.filter((run) => run?.source === source)
     const lastRun = sourceRunsForSource[0] || null
     const lastSuccessRun = sourceRunsForSource.find((run) => run?.status === 'success') || null
-    const recentRecordCounts = sourceRunsForSource.slice(0, FRESHNESS_RECORD_WINDOW).map((run) => run?.records_processed)
+    const recentRecordCounts = sourceRunsForSource.slice(0, FRESHNESS_RECORD_WINDOW).map((run) => recordCountForWindow(run))
     return explainVerdict({
       source,
       policy: policies[source] || {},
@@ -555,7 +595,7 @@ export function freshnessReportBySource({ sourceRunsBySource = {}, policies = SO
     const sourceRunsForSource = sourceRunsBySource[source] || []
     const lastRun = sourceRunsForSource[0] || null
     const lastSuccessRun = sourceRunsForSource.find((run) => run?.status === 'success') || null
-    const recentRecordCounts = sourceRunsForSource.slice(0, FRESHNESS_RECORD_WINDOW).map((run) => run?.records_processed)
+    const recentRecordCounts = sourceRunsForSource.slice(0, FRESHNESS_RECORD_WINDOW).map((run) => recordCountForWindow(run))
     out[source] = explainVerdict({
       source,
       policy: policies[source] || {},
