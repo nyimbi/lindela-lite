@@ -548,12 +548,23 @@ export const SOURCE_ASSERTIONS = deepFreeze({
       kind: 'min_count_vs_trailing',
       ratio: 0.5,
       zero_is_legitimate: false,
-      // The highest-value assertion in this file, and the reason the module
-      // exists. The archive answers each quarterly query with at most ~100
-      // features and no indication of it, so a forty-year walk that returns
-      // 4,000 of 40,000 rows is a clean parse, no error, and status success.
-      // The count can only be judged against what the same walk returned before.
-      note: 'The ~100-result per-query cap is undocumented and silent; against a trailing window it is a 20x shortfall and nothing else catches it.',
+      // Scoped to runs that walked a comparable number of quarters. The batch
+      // size is the quarter count times the density of floods in those
+      // quarters, and ENH-27 made the quarter count vary by design: the first
+      // run walks the whole archive, every run after it re-reads the one
+      // quarter still open. Comparing a one-quarter batch against a
+      // hundred-and-sixty-eight-quarter baseline is not a collapse, it is two
+      // different objects, and without this the second run of every archive
+      // read as degraded.
+      //
+      // The ~100-per-query cap that motivated the assertion is caught
+      // independently by `assessPagination` — a window that comes back exactly
+      // full is `possibly_incomplete` and the walk says which windows hit it.
+      // This one covers what that cannot: a walk that read every planned
+      // window, hit no cap, and still returned far fewer events than the same
+      // walk did before.
+      scope: 'windows',
+      note: 'Same number of quarters, a fraction of the events: the walk completed and the feed shrank.',
     },
   ],
 
@@ -1233,8 +1244,40 @@ function checkValueVocabulary(assertion, { batch, unmeasured }) {
 }
 
 
-function checkCount(assertion, { batch, trailingRecords, unmeasured }) {
-  const counts = trailingCounts(trailingRecords)
+/**
+ * The trailing runs a count assertion may legitimately be judged against.
+ *
+ * A count is a measurement of the ground the run covered as much as of the feed
+ * it read, so two counts are comparable only when the ground is. `gdacs_archive`
+ * is the source that made this visible: ENH-27 gave it a cursor, and from the
+ * second run on it re-reads the one quarter still open instead of the whole
+ * archive. Its batch went from thousands of events to a handful, and the count
+ * assertion — comparing against a baseline built from full walks — reported
+ * every resumed run as a collapse. The number was right and the comparison was
+ * wrong.
+ *
+ * The rule is per-assertion because the ground is per-source: `scope` names a
+ * field the trailing window carries, and a run whose scope differs from this
+ * run's is dropped from the baseline rather than allowed to poison it. Runs
+ * from before the scope was recorded (`undefined`) are kept, so adding a scope
+ * to a source does not silently empty its history.
+ */
+function scopeTrailing(assertion, trailingRecords, options) {
+  const field = assertion?.scope
+  if (!field) return trailingRecords
+  const entries = Array.isArray(trailingRecords) ? trailingRecords : []
+  const mine = options?.scope?.[field] ?? null
+  if (mine === null) return entries
+  return entries.filter((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return true
+    const theirs = Number(entry[field])
+    return !Number.isFinite(theirs) || theirs === mine
+  })
+}
+
+function checkCount(assertion, { batch, trailingRecords, unmeasured, options }) {
+  const scoped = scopeTrailing(assertion, trailingRecords, options)
+  const counts = trailingCounts(scoped)
   const baseline = median(counts)
   const count = batch.length
   const zeroAllowed = assertion.zero_is_legitimate === true
@@ -1342,8 +1385,7 @@ export function trailingCounts(trailingRecords) {
         // counts once. Returning NaN here instead would silently drop the whole
         // window and leave the count assertion permanently unmeasured.
         return 1
-      }
-      return NaN
+      }      return NaN
     })
     .filter((count) => Number.isFinite(count))
 }

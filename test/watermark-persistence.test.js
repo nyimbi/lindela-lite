@@ -252,3 +252,187 @@ describe('a watermark-caught-up run is not a degraded one', () => {
     assert.equal(run.status, 'degraded', 'a watermark ahead of the clock was reported as a healthy no-op')
   })
 })
+
+/**
+ * ENH-27 — the archive's walk is resumable, not restarted.
+ *
+ * `gdacs_archive` is listed in `WATERMARK_SOURCES` and its connector read no
+ * watermark at all: every run walked 1985 → now quarter by quarter, 168
+ * requests to rediscover that nothing had changed. The list was the declaration
+ * and the walk was the fact, and only one of them was checked.
+ *
+ * The cursor is quarter-granular because the walk is. A date cursor would put
+ * the boundary mid-quarter and the next run would re-request a quarter it had
+ * already read, which is the daily-id churn the watermark exists to stop, one
+ * level up.
+ */
+describe('gdacs_archive resumes rather than restarting', () => {
+  const archiveResponse = (count, from) => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
+      features: Array.from({ length: count }, (_, i) => ({
+        geometry: { coordinates: [35.0, 3.5] },
+        properties: {
+          eventtype: 'FL', iso3: 'KEN', eventid: `${from}-${i}`,
+          eventname: `Flood ${i}`, alertlevel: 'Green',
+          fromdate: '2026-01-02T00:00:00Z', todate: '2026-01-09T00:00:00Z',
+          severitydata: { severity: 0.0, severitytext: 'Magnitude 0.00' },
+        },
+      })),
+    }),
+  })
+
+  /** Every window answered with `count` floods; the calls are recorded. */
+  function stubbedArchive(count) {
+    const calls = []
+    const original = globalThis.fetch
+    globalThis.fetch = async (url) => {
+      const target = new URL(String(url))
+      const from = target.searchParams.get('fromDate')
+      calls.push(from)
+      return archiveResponse(count, from)
+    }
+    return { calls, restore: () => { globalThis.fetch = original } }
+  }
+
+  const THIS_YEAR = new Date().getUTCFullYear()
+  const connector = () => import('../src/connectors/gdacs-archive.js').then((m) => m.gdacsArchiveConnector)
+
+  it('reports the quarters it read and the state to resume from', async () => {
+    const stub = stubbedArchive(2)
+    try {
+      const { ingest } = await connector()
+      const out = await ingest({ archive_start_year: THIS_YEAR - 1, retries: 0 })
+      assert.ok(out.watermark_state, 'the connector returned no watermark state; nothing can resume')
+      const entry = out.watermark_state.gdacs_archive
+      assert.ok(entry, 'the state carries no entry for its own source')
+      // Clamped to today, not to the current quarter's calendar end: the
+      // quarter is open, and a cursor on 12-31 would claim days that have not
+      // happened — which the next run reads as ahead-of-now and refuses.
+      assert.equal(entry.last_cursor, new Date().toISOString().slice(0, 10),
+        'the cursor did not land on the last day the walk could actually have covered')
+      assert.ok(out.watermark, 'the connector reported no watermark block for the run to record')
+      assert.equal(out.watermark.mode, 'backfill')
+      // 2025 has four quarters and the current year has one per quarter so far.
+      assert.equal(out.completeness.windows_planned, 4 + (Math.floor(new Date().getUTCMonth() / 3) + 1))
+      assert.ok(stub.calls.length >= 4, `the first walk read only ${stub.calls.length} windows`)
+    } finally { stub.restore() }
+  })
+
+  it('does not re-read a quarter the cursor already covers', async () => {
+    // The whole point. Run two re-reads only the quarter still open — a
+    // partial quarter gains events until it ends — and none of the finished
+    // quarters behind it. That is 168 requests becoming 1.
+    const stub = stubbedArchive(2)
+    try {
+      const { ingest } = await connector()
+      const first = await ingest({ archive_start_year: THIS_YEAR - 1, retries: 0 })
+      const firstCalls = [...stub.calls]
+      stub.calls.length = 0
+
+      const second = await ingest({ archive_start_year: THIS_YEAR - 1, retries: 0, watermark_state: first.watermark_state })
+      const q = Math.floor(new Date().getUTCMonth() / 3) + 1
+      const openQuarter = `${THIS_YEAR}-${String((q - 1) * 3 + 1).padStart(2, '0')}-01`
+      assert.deepEqual(stub.calls, [openQuarter],
+        `the second run re-requested ${stub.calls.length} window(s) instead of only the one still open`)
+      assert.ok(firstCalls.includes(openQuarter))
+      assert.ok(second.watermark_state, 'the resumed run returned no state')
+    } finally { stub.restore() }
+  })
+
+  it('re-reads only the quarter still open, not the archive behind it', async () => {
+    // The current quarter is partial and gains events until it ends, so it is
+    // read again — one request. Everything behind it is finished and is not.
+    // That is the whole saving: 168 requests become 1.
+    const stub = stubbedArchive(2)
+    try {
+      const { ingest } = await connector()
+      const first = await ingest({ archive_start_year: THIS_YEAR - 1, retries: 0 })
+      assert.ok(stub.calls.length > 1, 'the first walk read only one window; nothing to save')
+      stub.calls.length = 0
+      const second = await ingest({ archive_start_year: THIS_YEAR - 1, retries: 0, watermark_state: first.watermark_state })
+      assert.equal(stub.calls.length, 1,
+        `a caught-up archive made ${stub.calls.length} request(s) instead of re-reading the open quarter`)
+      const q = Math.floor(new Date().getUTCMonth() / 3) + 1
+      assert.equal(stub.calls[0], `${THIS_YEAR}-${String((q - 1) * 3 + 1).padStart(2, '0')}-01`,
+        'the one request was not for the quarter still open')
+      assert.equal(second.watermark.mode, 'backfill')
+      assert.deepEqual(second.errors, [], 'a resumed archive reported an error')
+    } finally { stub.restore() }
+  })
+
+  it('refuses to walk when the cursor is past the current quarter', async () => {
+    // Ahead of the clock is a bad write or a copied state, and it must be said
+    // rather than skipped: a cursor past now silently ends the walk forever,
+    // and nothing else would report it. Deliberately *not* exempted from the
+    // record floor by `runIngestion` — the same reason `fetchWindow` does not
+    // call this case `caught-up`.
+    const stub = stubbedArchive(2)
+    try {
+      const { ingest } = await connector()
+      const ahead = { gdacs_archive: { last_cursor: `${THIS_YEAR + 1}-12-31` } }
+      const out = await ingest({ archive_start_year: THIS_YEAR - 1, retries: 0, watermark_state: ahead })
+      assert.equal(stub.calls.length, 0, 'a cursor ahead of the clock was walked anyway')
+      assert.equal(out.watermark.mode, 'empty')
+      assert.equal(out.watermark.reason, 'cursor-ahead-of-now')
+      assert.ok(out.errors.some((e) => /past the current quarter/.test(e)),
+        `the run did not say why it stopped: ${JSON.stringify(out.errors)}`)
+    } finally { stub.restore() }
+  })
+
+  it('does not move the cursor past a quarter that failed to read', async () => {
+    // The control that matters most. A cursor that advances over an unread
+    // window is worse than no cursor: that quarter is never requested again and
+    // nothing reports the hole.
+    const original = globalThis.fetch
+    let calls = 0
+    globalThis.fetch = async (url) => {
+      calls += 1
+      const target = new URL(String(url))
+      const from = target.searchParams.get('fromDate')
+      if (calls === 2) return { ok: false, status: 503, text: async () => '' }
+      return archiveResponse(2, from)
+    }
+    try {
+      const { ingest } = await connector()
+      const out = await ingest({ archive_start_year: THIS_YEAR - 1, retries: 0 })
+      const entry = out.watermark_state.gdacs_archive
+      // Quarter 1 read clean, quarter 2 failed. The cursor must sit at the end
+      // of Q1, not at the end of Q2.
+      assert.equal(entry.last_cursor, `${THIS_YEAR - 1}-03-31`,
+        `the cursor advanced to ${entry.last_cursor} across a window that was never read`)
+    } finally { globalThis.fetch = original }
+  })
+
+  it('is not reported as a collapse when it resumes', async () => {
+    // The interaction that made the cursor worth less than it looked. A
+    // resumed walk reads one quarter where the run before it read eight, so its
+    // batch is a fraction of the trailing median — and `min_count_vs_trailing`
+    // read that as the feed collapsing, quarantined a perfectly good batch and
+    // marked the run degraded. Every run after the first backfill would have
+    // reported the archive as broken.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lindela-gdacs-scope-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await store.write({})
+    const stub = stubbedArchive(2)
+    try {
+      const request = { sources: ['gdacs_archive'], archive_start_year: THIS_YEAR - 1, retries: 0 }
+      await runIngestion(store, request, {})
+      const first = (await store.read()).source_runs[0]
+      assert.equal(first.status, 'success', `the full walk failed: ${JSON.stringify(first.errors)}`)
+      assert.equal(first.watermark.reason, 'full-walk',
+        'a first walk that skipped nothing called itself a resume')
+
+      await runIngestion(store, request, {})
+      const second = (await store.read()).source_runs[0]
+      assert.equal(second.watermark.reason, 'resumed-walk')
+      assert.ok(second.records_processed < first.records_processed,
+        'the resumed run read as many records as the full walk; the fixture proves nothing')
+      assert.equal(second.status, 'success',
+        `a resumed walk was recorded "${second.status}": ${JSON.stringify(second.errors)}`)
+      assert.equal(second.assertions_failed, 0,
+        'the count assertion judged a one-quarter batch against a whole-archive baseline')
+    } finally { stub.restore() }
+  })
+})

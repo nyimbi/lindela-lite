@@ -4,6 +4,7 @@ import { stableId } from '../utils.js'
 import { defineConnector } from './spec.js'
 import { DEFAULT_COUNTRIES } from './ipc-hdx.js'
 import { assessPagination, completenessVerdictName, mergeCompleteness } from '../completeness.js'
+import { advanceWatermark, readWatermark } from '../watermarks.js'
 
 /**
  * GDACS historical flood events, from the event-search archive API.
@@ -51,6 +52,9 @@ import { assessPagination, completenessVerdictName, mergeCompleteness } from '..
 
 const ARCHIVE_ROOT = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH'
 
+/** The id this connector ingests under, and the key its watermark is stored at. */
+const SOURCE = 'gdacs_archive'
+
 /** GDACS' own per-query result cap. The verdict depends on knowing its value. */
 const WINDOW_CAP = 100
 
@@ -62,7 +66,52 @@ async function connectorIngest(options = {}) {
     ? Number(options.archive_start_year)
     : 1985
   const thisQuarter = quarterOf(new Date())
+  // Today, as the clamp for the current quarter's end. The walk asks for the
+  // whole quarter and the archive answers with what it has, but the cursor may
+  // not claim days the clock has not reached.
+  const todayIso = new Date().toISOString().slice(0, 10)
   const countries = optionCountrySet(options)
+
+  // ENH-27. The walk resumes from the stored cursor rather than from
+  // `archive_start_year`. It was listed in `WATERMARK_SOURCES` and read no
+  // watermark at all, so the declaration and the behaviour disagreed and
+  // nothing compared them: every run re-walked 1985 → now, 168 requests to
+  // rediscover that nothing had changed.
+  //
+  // The cursor is quarter-granular because the walk is. A date cursor would
+  // land mid-quarter and the next run would re-request a quarter it had already
+  // read — the same daily-id churn `open-meteo-archive` had, one level up.
+  //
+  // `archive_start_year` still applies as the *floor*: it says where this
+  // operator's archive begins, and a stored cursor from an earlier run only
+  // moves the walk forward from there.
+  const state = options.watermark_state && typeof options.watermark_state === 'object'
+    ? options.watermark_state
+    : {}
+  const storedCursor = readWatermark(state, SOURCE)
+  const cursorDay = newestCursorDay(storedCursor)
+  const resumeFrom = nextQuarterAfter(cursorDay, thisQuarter)
+  // A cursor past the current quarter is ahead of the clock — a bad write, a
+  // clock skew, a state copied off a later deployment. Reported rather than
+  // skipped: skipping it silently is how the archive stops being walked at all
+  // and nothing says so. `cursor-ahead-of-now` is the same word `fetchWindow`
+  // uses, and `runIngestion` deliberately does *not* exempt it from the record
+  // floor — it is a state an operator has to correct.
+  if (resumeFrom && quarterIndex(resumeFrom.year, resumeFrom.quarter) > quarterIndex(thisQuarter.year, thisQuarter.quarter)) {
+    return {
+      hazard_events,
+      errors: [`gdacs_archive: watermark cursor ${fromCursorDay(cursorDay)} is past the current quarter `
+        + `(${thisQuarter.year}-Q${thisQuarter.quarter}); the walk was skipped and the cursor needs correcting`],
+      watermark_state: state,
+      watermark: {
+        source: SOURCE,
+        mode: 'empty',
+        reason: 'cursor-ahead-of-now',
+        as_of: fromCursorDay(cursorDay),
+        windows: 0,
+      },
+    }
+  }
 
   // One entry per planned window, in order. The walk's verdict is merged from
   // these at the end: a crawl needs one answer, not a verdict per page.
@@ -71,6 +120,20 @@ async function connectorIngest(options = {}) {
   let windowsPlanned = 0
   let pagesFetched = 0
   let recordsSeen = 0
+  // The end of the newest quarter that read clean. The cursor lands here and
+  // nowhere else: a cursor that advances past a failed window declares that
+  // quarter complete, so it is never requested again and nothing reports the
+  // hole. `null` means nothing completed and the stored cursor stands.
+  let completedThrough = null
+  // Set the first time a window is not read — a failed fetch, an empty answer,
+  // or a budget stop. The walk keeps going, but the cursor may not move past a
+  // gap: a cursor that steps over an unread quarter declares it complete, so it
+  // is never requested again and nothing reports the hole. Everything after the
+  // gap is still read and still stored; it just does not earn a cursor.
+  let gapSeen = false
+  // The start of the first window this run actually opened, so the run record
+  // says what it covered rather than only where it ended.
+  let firstWindowStart = null
 
   // ENH-11 / ING-06. A deadline for the *source*, where `timeout_ms` bounds one
   // request. This walk is 1985→now quarter by quarter; with two retries each
@@ -90,6 +153,11 @@ async function connectorIngest(options = {}) {
   // finished" from "the walk was stopped" — a truncated crawl reported as
   // complete is the silence this file exists to remove.
   let windowsSkippedByBudget = 0
+  // Quarters the cursor already covered, so the run can say how much of the
+  // archive it did not look at. This is the scope of the batch: `windows_planned`
+  // is what this run actually asked for, and the two together are what a count
+  // comparison against a previous run needs in order to compare like with like.
+  let windowsSkippedByCursor = 0
 
   for (let year = startYear; year <= thisQuarter.year; year += 1) {
     // The current quarter is only complete up to today, but partial is fine —
@@ -97,6 +165,14 @@ async function connectorIngest(options = {}) {
     const lastQuarter = year === thisQuarter.year ? thisQuarter.quarter : 4
     for (let q = 1; q <= lastQuarter; q += 1) {
       const label = `${year}-Q${q}`
+      // Skipped, not counted as planned: a quarter the cursor already covers is
+      // not part of this run's walk, and counting it would make
+      // `walk_end: 'plan_abandoned'` fire on every resumed run — reporting a
+      // correct resume as a truncated crawl.
+      if (resumeFrom && quarterIndex(year, q) < quarterIndex(resumeFrom.year, resumeFrom.quarter)) {
+        windowsSkippedByCursor += 1
+        continue
+      }
       windowsPlanned += 1
       // Checked before the request, not after: the budget bounds what the walk
       // *starts*, so a window that would run past the deadline is not opened at
@@ -107,6 +183,7 @@ async function connectorIngest(options = {}) {
         const spent = budget.issue()
         if (!spent.allowed) {
           windowsSkippedByBudget += 1
+          gapSeen = true
           // Recorded as its own verdict rather than left out, so the merge
           // cannot read the gap as a quiet quarter. Same reasoning as the
           // failed-window branch below: an unread window is unknown, not zero.
@@ -121,6 +198,7 @@ async function connectorIngest(options = {}) {
       }
       try {
         const window = quarterRange(year, q)
+        if (firstWindowStart === null) firstWindowStart = window.from
         const text = await fetchWithRetry(`${ARCHIVE_ROOT}?fromDate=${window.from}&toDate=${window.to}`, {
           timeoutMs: options.timeout_ms || 30000,
           retries: options.retries ?? 2,
@@ -152,6 +230,7 @@ async function connectorIngest(options = {}) {
 
         if (!features.length) {
           errors.push(`gdacs_archive: window ${window.from}..${window.to} returned no features`)
+          gapSeen = true
           // Recorded as `incomplete` rather than left out: a window that read as
           // empty may be a quiet quarter or an empty answer, and mergeCompleteness
           // treats an entry that claims nothing as the worst case rather than
@@ -168,8 +247,22 @@ async function connectorIngest(options = {}) {
           const record = recordFromFeature(feature, countries)
           if (record) hazard_events.push(record)
         }
+        // The quarter read clean. `completedThrough` holds the end of the
+        // newest such quarter, so a later failure does not rewind it and an
+        // earlier failure does not block it.
+        //
+        // Clamped to today, because the current quarter is only complete up to
+        // the clock: recording its calendar end would claim coverage of days
+        // that have not happened, and the next run would read that cursor as
+        // ahead of now and refuse to walk.
+        //
+        // Only while no gap has been seen. After one, everything read is still
+        // stored but nothing earns a cursor, so the next run resumes at the
+        // quarter after the gap rather than after the last quarter read.
+        if (!gapSeen) completedThrough = window.to > todayIso ? todayIso : window.to
       } catch (error) {
         errors.push(`gdacs_archive: window ${year}-Q${q}: ${error.message}`)
+        gapSeen = true
         // The window was never read, so whatever GDACS holds for it is unknown —
         // not zero. Merged as incomplete, which outranks the full-page guess a
         // successful window would have contributed.
@@ -235,7 +328,84 @@ async function connectorIngest(options = {}) {
   if (!hazard_events.length && !errors.some((e) => /window/.test(e))) {
     errors.push('gdacs_archive: no flood events retained across the archive')
   }
-  return { hazard_events, errors, completeness }
+
+  // The cursor moves only over quarters that read clean, and only forward. A
+  // run that read nothing (a budget stop on the first window, a first window
+  // that failed) keeps the position it was seeded with rather than resetting
+  // it, which is the same rule `open-meteo-archive` follows.
+  let nextState = state
+  if (completedThrough) {
+    nextState = advanceWatermark(state, SOURCE, {
+      cursor: completedThrough,
+      recordDate: completedThrough,
+      at: new Date().toISOString(),
+    })
+  }
+
+  return {
+    hazard_events,
+    errors,
+    completeness,
+    watermark_state: nextState,
+    watermark: {
+      source: SOURCE,
+      mode: 'backfill',
+      // `resumed-walk` means the cursor took work off this run, not merely that
+      // something completed. The first run of an archive completes plenty and
+      // resumes nothing, and calling that a resume would make the reason
+      // useless as a way to tell the two apart — which is what the count
+      // assertion reads it for.
+      reason: !completedThrough ? 'nothing-completed' : (windowsSkippedByCursor > 0 ? 'resumed-walk' : 'full-walk'),
+      as_of: completedThrough ? fromCursorDay(toDayNumberSafe(completedThrough)) : null,
+      windows: pagesFetched,
+      windows_skipped_by_cursor: windowsSkippedByCursor,
+      start_date: firstWindowStart,
+      end_date: completedThrough,
+    },
+  }
+}
+
+/**
+ * The quarter after the one a cursor sits at the end of.
+ *
+ * `last_cursor` is the last day of the last quarter that read clean, so the
+ * next quarter to request begins the day after it. A cursor that is not the end
+ * of a quarter — one written by an earlier date-granular wave, or hand-edited —
+ * is moved to the next quarter boundary rather than trusted, because
+ * re-requesting part of a quarter is cheap and skipping part of one is a hole.
+ */
+function nextQuarterAfter(cursorDay, thisQuarter) {
+  if (cursorDay === null) return null
+  const date = new Date(cursorDay * 86400000)
+  const year = date.getUTCFullYear()
+  const quarter = Math.floor(date.getUTCMonth() / 3) + 1
+  const endOfQuarter = quarterRange(year, quarter).to
+  const atEnd = fromCursorDay(cursorDay) === endOfQuarter
+  if (atEnd) return quarter === 4 ? { year: year + 1, quarter: 1 } : { year, quarter: quarter + 1 }
+  // Mid-quarter: the cursor covers part of it, and the rest has not been read.
+  return { year, quarter }
+}
+
+/** A cursor entry's newest day, as a day number, or null. */
+function newestCursorDay(entry) {
+  return toDayNumberSafe(entry?.last_cursor) ?? toDayNumberSafe(entry?.last_record_date)
+}
+
+function toDayNumberSafe(value) {
+  if (typeof value !== 'string') return null
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim())
+  if (!m) return null
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  return Number.isFinite(t) ? t / 86400000 : null
+}
+
+function fromCursorDay(day) {
+  return day === null ? null : new Date(day * 86400000).toISOString().slice(0, 10)
+}
+
+/** Quarters as a single increasing integer, so two of them compare. */
+function quarterIndex(year, quarter) {
+  return year * 4 + (quarter - 1)
 }
 
 function quarterOf(date) {

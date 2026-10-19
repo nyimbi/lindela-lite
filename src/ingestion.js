@@ -533,6 +533,13 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
             mode: output.watermark.mode ?? null,
             reason: output.watermark.reason ?? null,
             as_of: output.watermark.as_of ?? null,
+            // How many requests the run made. The count assertion compares
+            // batches, and a batch is only comparable to another taken over the
+            // same number of windows; `null` for a connector that does not
+            // page, which means its batch size is not a function of scope.
+            windows: Number.isFinite(Number(output.watermark.windows))
+              ? Number(output.watermark.windows)
+              : null,
           }
         : null,
       errors,
@@ -728,7 +735,18 @@ export function groupRunsBySource(runs = []) {
 const TRAILING_RUN_WINDOW = 12
 
 function trailingCountsFor(runs) {
-  return runs.slice(0, TRAILING_RUN_WINDOW).map((run) => Number(run?.records_processed ?? 0))
+  return runs.slice(0, TRAILING_RUN_WINDOW).map((run) => ({
+    records_processed: Number(run?.records_processed ?? 0),
+    // The ground the count was measured over, when the connector states one. A
+    // count is only comparable to a count taken over the same ground: a resumed
+    // gdacs_archive walk re-reads one quarter where the run before it read a
+    // hundred and sixty-eight, and comparing those two numbers compares a
+    // quarter to an archive. `null` for every source that states no window
+    // count, which is most of them and means "always comparable".
+    windows: Number.isFinite(Number(run?.watermark?.windows))
+      ? Number(run.watermark.windows)
+      : null,
+  }))
 }
 
 /**
@@ -1142,7 +1160,15 @@ export function ingestionStatus(data) {
  */
 function runSourceAssertions({ source, output, trailingRecords = [] }) {
   const records = OUTPUT_COLLECTIONS.flatMap((key) => output?.[key] || [])
-  const report = runAssertions({ source, records, trailingRecords })
+  // This run's own scope, so the count assertion compares it only against runs
+  // that covered the same ground. Absent when the connector does not page.
+  const windows = Number(output?.watermark?.windows)
+  const report = runAssertions({
+    source,
+    records,
+    trailingRecords,
+    options: { scope: { windows: Number.isFinite(windows) ? windows : null } },
+  })
   if (report.ok) {
     return { ...report, published: output, quarantined: {} }
   }

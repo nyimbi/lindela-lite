@@ -313,6 +313,48 @@ describe('the GDACS cap: 4,000 of 40,000 is not a clean run', () => {
     assert.equal(at.ok, true, '50 of 100 meets the declared ratio exactly')
   })
 
+  it('compares a resumed walk only against other resumed walks', () => {
+    // ENH-27. The cursor made the walk's scope vary: the first run reads the
+    // whole archive, every later run re-reads the one quarter still open. Two
+    // counts over different ground are not comparable, and comparing them read
+    // every resumed run as a collapse.
+    //
+    // The fixture has to make the two baselines differ, or it proves nothing:
+    // the lower median of [1000, 10] is 10 whether or not anything is filtered.
+    // Two full walks and one resumed walk put the unscoped median at 900 and
+    // the scoped median at 10, which is the difference under test.
+    const resumed = Array.from({ length: 10 }, (_, index) => archiveEvent(index))
+    const trailing = [
+      { records_processed: 1_000, windows: 8 },
+      { records_processed: 900, windows: 8 },
+      { records_processed: 10, windows: 1 },
+    ]
+
+    const judged = runAssertions({
+      source: 'gdacs_archive', records: resumed, trailingRecords: trailing, options: { now: NOW, scope: { windows: 1 } },
+    })
+    assert.equal(judged.ok, true,
+      `a 10-event resumed walk was judged against the full-archive baseline: ${JSON.stringify(judged.failures)}`)
+
+    // The control. Same scope, a real collapse: the filter must not have turned
+    // the assertion off. Ten events against a resumed baseline of a hundred is
+    // the finding the assertion exists to report, and it must still fire.
+    const collapsed = runAssertions({
+      source: 'gdacs_archive',
+      records: resumed,
+      trailingRecords: [
+        { records_processed: 1_000, windows: 8 },
+        { records_processed: 900, windows: 8 },
+        { records_processed: 100, windows: 1 },
+      ],
+      options: { now: NOW, scope: { windows: 1 } },
+    })
+    assert.equal(collapsed.ok, false, 'a same-scope collapse must still trip')
+    const failure = collapsed.failures.find((item) => item.kind === 'min_count_vs_trailing')
+    assert.equal(failure.detail.trailing_median, 100, 'the baseline must be the resumed walk, not the full ones')
+    assert.equal(failure.detail.runs_compared, 1, 'the full walks were not filtered out of the comparison')
+  })
+
   it('reads the trailing window out of every shape the store hands back', () => {
     assert.deepEqual(trailingCounts([10, 20, 30]), [10, 20, 30])
     assert.deepEqual(trailingCounts([[1, 2], [1, 2, 3]]), [2, 3])
