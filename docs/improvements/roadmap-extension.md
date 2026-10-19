@@ -589,25 +589,32 @@ Of the four defects named, two are closed, one is half closed, and one is open:
   row cites DAT-01's test for this, which is the wrong guard — the one that fails
   without the fix is *ignores a fetch stamp nested inside metadata, and nothing else
   nested*, `test/lite.test.js`.
-- **ING-04 — closed for the incremental path, open for both archive walks.**
+- **ING-04 — closed 2026-10-18, both halves.**
   `fetchWindow` is derived from the stored mark rather than the clock
   (`src/watermarks.js:272`), so two quiet days request an identical window and a mark
-  sitting on today mints nothing. The archive and flood walks still derive their id
+  sitting on today mints nothing. The archive and flood walks used to derive their id
   from `[SOURCE, region.name, startDate, endDate]` (`open-meteo-archive.js:209`), and
-  `endDate` is today whenever the mark has not reached today — so the id is a function
-  of the requested window, not of the bytes. Measured in the residual note below.
-- **DATA-13 — open, and the one thing this item is still Partial on.** The hash is
+  `endDate` is today whenever the mark has not reached today — so the id was a
+  function of the requested window, not of the bytes. Both now key on the series the
+  payload covers (`series_start`/`series_end`), with the requested window surviving
+  only as the fallback for a response carrying no dates. Measured in the residual
+  note below: the two runs that minted two ids for one payload now mint one, and a
+  series that genuinely grew still gets its own.
+- **DATA-13 — the silence is closed; the policy is what remains.** The hash is
   not namespaced, so two records differing only by id collide. `mergeById`
   (`src/store.js:1255`) keys its map on `payload_hash` alone and skips an incoming
   record whose hash it already holds, and `canonicalHash` ignores `id`. Reproduced
   against the store: two service assets identical but for their id merge to **one**,
-  the second dropped with no error. `POST /api/v1/upload` then answers `success: true`
-  with `imported` set to the rows it *submitted* (`src/routes/upload.js:196`), so a
-  GeoJSON re-imported after upstream re-ids its features reads as a successful import
-  of N records while N−1 were discarded. This is D8 in `_research/ingestion.md`, and
-  it is a reporting defect as much as a dedup one: the store's skip is asserted
-  deliberately by *merge() skips records whose payload_hash already exists*
-  (`test/database.integration.test.js:98`), and nothing tells the caller it happened.
+  the second dropped with no error. That skip is deliberate and stays —
+  *merge() skips records whose payload_hash already exists*
+  (`test/database.integration.test.js:98`) asserts it, because two records that
+  agree on every field but their id *are* one record. **The reporting half shipped
+  2026-10-18:** `mergeById` delegates to `mergeByIdReporting`, both adapters thread
+  the discards out of `merge()`, and `POST /api/v1/upload` answers
+  `imported: kept` with `duplicates_skipped` and the discarded ids beside it, and
+  records the same two numbers in its action log (`src/routes/upload.js:233`). A
+  cross-id discard is counted; a same-id repeat is not, because that is the dedup
+  working. What remains open is the policy, not the silence.
 
   **D8's proposed repair does not work, and its own scenario is the counterexample.**
   It says to key the map on `${item.source}:${item.payload_hash}`. In the failure it
@@ -622,11 +629,14 @@ Of the four defects named, two are closed, one is half closed, and one is open:
   `SOURCE_POLICIES` carries none today; the honest interim is the second half of D8's
   own suggestion, reporting the skip count so `/upload` can stop answering
   `success: true` for rows it discarded.
-- **No lease.** Still true. `runDueIngestionSchedules` (`src/ingestion.js:850`) walks
-  the due schedules in a `for` loop that takes no claim, so nothing prevents a second
-  invocation of the same tick from running the same sources concurrently. The
-  per-source marks are committed as each source finishes (`src/ingestion.js:557`), so
-  a *sequential* re-run is cheap — which is not the same guarantee, and is not a lease.
+- **No lease — closed 2026-10-19.** `runDueIngestionSchedules` used to walk the due
+  schedules in a `for` loop that took no claim, so nothing prevented a second
+  invocation of the same tick from running the same sources concurrently. Measured:
+  two ticks handed the same snapshot each ran the one due schedule — **two fetches,
+  two `source_runs` rows**. `claimIngestionSchedule` now takes the claim as a
+  read-modify-write under `store.withLock`; the run stays outside the lock because
+  on Postgres it is the advisory lock every writer queues behind. Guards in
+  `test/schedule-lease.test.js`.
 
 **The heading said "broken on Postgres" and that half is closed.** DAT-01 was the
 Postgres defect and it is fixed; DATA-13 lives in the shared `mergeById`, so it is a
