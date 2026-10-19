@@ -36,7 +36,7 @@ import {
   resolveReportContext,
   rowProvenanceLine,
 } from '../src/reports.js'
-import { renderQuarterlyReportPdf, renderQuarterlyReportMarkdown } from '../src/pdf.js'
+import { renderQuarterlyReportPdf, renderQuarterlyReportMarkdown, reportContentDigest } from '../src/pdf.js'
 import { quarterlyPdfSections } from '../src/kpi.js'
 import { MIN_EVENTS, MIN_MONTHS, MODEL_BASIS } from '../src/flood-probability.js'
 import { isReplayDerived, stampReplayProvenance } from '../src/capture.js'
@@ -545,5 +545,72 @@ describe('QUA-10 — the renderer refuses a locale it cannot honour', () => {
     assert.match(en, /^# T/)
     const implicit = renderReportMarkdown({ id: 'r', title: 'T', status: 'ready', sections: [] })
     assert.equal(implicit, en, 'the default must be the same document as an explicit en')
+  })
+})
+
+describe('the report footer is a digest of the document, not a signature of its input', () => {
+  // The footer read `Signature (SHA-256/16)` and was neither. It hashed the
+  // input object — so an edit to the rendered body that left the object alone
+  // did not move it — truncated to 64 bits, with no key, so anyone holding the
+  // PDF could recompute it. And the object carries `generated_at`, so two
+  // renders of identical figures printed two different values: it detected
+  // nothing in either direction while reading as a line a recipient should
+  // check. Each property below is one way the old footer failed.
+  const kpi = {
+    generated_at: NOW,
+    period: { quarter: 'Q3', year: 2026, from: '2026-07-01', to: '2026-09-30' },
+    people_reached: 12000,
+    cohort: { total: 12000, u18: 4800 },
+  }
+  const digestOf = (buffer) => /Content digest: ([0-9a-f]+)/.exec(buffer.toString('latin1'))?.[1]
+
+  it('is stable across two renders of the same figures', () => {
+    const first = digestOf(renderQuarterlyReportPdf(kpi))
+    const second = digestOf(renderQuarterlyReportPdf({ ...kpi }))
+    assert.ok(first, 'the footer must carry a digest')
+    assert.equal(first, second, 'a digest that moves on every render detects nothing')
+  })
+
+  it('changes when a rendered figure changes', () => {
+    // The old footer hashed the input, so this is the direction it *did* catch;
+    // it is asserted because the replacement must not lose it. The figure is
+    // edited rather than the object reshaped, so the assertion is about what
+    // reached the page.
+    const before = digestOf(renderQuarterlyReportPdf(kpi))
+    const after = digestOf(renderQuarterlyReportPdf({ ...kpi, people_reached: 12001 }))
+    assert.notEqual(before, after)
+  })
+
+  it('says it is unkeyed when no signing key is configured', () => {
+    // A recipient who cannot tell an HMAC from an unkeyed digest will read the
+    // second as the first. The label is the only thing that distinguishes them.
+    const text = renderQuarterlyReportPdf(kpi).toString('latin1')
+    assert.doesNotMatch(text, /Signature \(SHA/)
+    // The em dash reaches the stream as its WinAnsi byte 0x97, so the assertion
+    // is written against the encoded form rather than the source character.
+    assert.match(text, /unkeyed \x97 not a signature/)
+  })
+
+  it('signs with the configured key and names its id', () => {
+    const signed = reportContentDigest('body', { key: 'k', keyId: 'k-2026' })
+    assert.equal(signed.keyed, true)
+    assert.match(signed.label, /HMAC-SHA-256\/32, key k-2026/)
+    assert.notEqual(signed.value, reportContentDigest('body', { key: 'other', keyId: 'k-2026' }).value)
+  })
+
+  it('prints one digest for the whole document, not one per page', () => {
+    // A per-page footer covers that page's lines and reads as a statement about
+    // the file. The multi-page export is the case where the two differ.
+    const text = renderQuarterlyReportPdf(kpi, {
+      narrative: { measured: ['one'], refused: [], limits: [] },
+    }).toString('latin1')
+    assert.equal((text.match(/Content digest:/g) || []).length, 1)
+  })
+
+  it('gives the Markdown twin the same digest when the body is the same', () => {
+    // Both formats take the same inputs from the same helpers; a reader who
+    // receives the .md instead of the .pdf must be able to check the same text.
+    const md = renderQuarterlyReportMarkdown(kpi)
+    assert.match(md, /Content digest: [0-9a-f]{32} \(SHA-256\/32 content digest, unkeyed/)
   })
 })

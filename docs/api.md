@@ -1061,7 +1061,7 @@ Result is cached 5 minutes keyed on quarter/year/record-counts. Null fields deno
 
 ### `GET /api/v1/kpi/quarterly.pdf`
 
-Auth: none required. Returns the quarterly KPI report as a minimal PDF 1.4 document (Helvetica, single page, title + KPI table + cohort table + SHA-256 signature footer).
+Auth: none required. Returns the quarterly KPI report as a minimal PDF 1.4 document (Helvetica, title + KPI table + cohort table, then the narrative and dashboard sections). The last line is a content digest over the rendered document. It is an HMAC-SHA-256 under `LINDELA_LITE_REPORT_SIGNING_KEY` and names `LINDELA_LITE_REPORT_SIGNING_KEY_ID` when a key is configured; with no key it is an unkeyed SHA-256 and the footer says so, because a digest anyone can recompute authenticates nothing.
 
 Query: same as `/api/v1/kpi/quarterly`.
 

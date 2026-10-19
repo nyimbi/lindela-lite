@@ -59,8 +59,50 @@ function toWinAnsi(text) {
   return out
 }
 
-function signatureHash(kpi) {
-  return crypto.createHash('sha256').update(JSON.stringify(kpi)).digest('hex').slice(0, 16)
+/**
+ * The document's content digest, and whether it is keyed.
+ *
+ * The footer this replaces read `Signature (SHA-256/16)` and was neither a
+ * signature nor a digest of the document. It hashed the *input object* — so an
+ * edit to the rendered body that left the object alone would not move it —
+ * truncated to 64 bits, with no key. Anyone holding the PDF could recompute it,
+ * which authenticates nothing; and the object carries `generated_at`, so two
+ * renders of the same figures printed two different values, which detects
+ * nothing either. A trust claim that holds in neither direction is worse than
+ * no footer, because it is the line a reader checks.
+ *
+ * What is printed now is a digest over the rendered body, which is the text a
+ * reader actually holds, and which excludes the footer itself. The same content
+ * yields the same value and an edit to any figure breaks it. When
+ * `LINDELA_LITE_REPORT_SIGNING_KEY` is set the digest is an HMAC under that key
+ * and the footer names `LINDELA_LITE_REPORT_SIGNING_KEY_ID` — the only form a
+ * recipient can verify against a key they were given. Without a key the footer
+ * says `unkeyed`, because a recipient who cannot tell the two apart will read
+ * the first as the second.
+ */
+export function reportContentDigest(body, { key, keyId } = {}) {
+  const signingKey = key ?? process.env.LINDELA_LITE_REPORT_SIGNING_KEY
+  const signingKeyId = keyId ?? process.env.LINDELA_LITE_REPORT_SIGNING_KEY_ID
+  const bytes = Buffer.from(String(body ?? ''), 'utf8')
+  if (signingKey) {
+    return {
+      value: crypto.createHmac('sha256', signingKey).update(bytes).digest('hex').slice(0, 32),
+      label: `HMAC-SHA-256/32, key ${signingKeyId || 'id not configured'}`,
+      keyed: true,
+    }
+  }
+  return {
+    value: crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 32),
+    label: 'SHA-256/32 content digest, unkeyed — not a signature',
+    keyed: false,
+  }
+}
+
+/** The footer line for a fully assembled document, in PDF page form. */
+function digestFooterLine(pages) {
+  const body = pages.map((lines) => lines.map((line) => line.text).join('\n')).join('\n')
+  const digest = reportContentDigest(body)
+  return `Content digest: ${digest.value} (${digest.label})`
 }
 
 function buildTextLines(kpi) {
@@ -128,8 +170,10 @@ function buildTextLines(kpi) {
   lines.push({ text: `External target for reference: warning-to-action < 24h. The signal-to-dispatch`, size: 7, y: 56 })
   lines.push({ text: `median above is this platform's own SMS latency, not a field action, and is not`, size: 7, y: 48 })
   lines.push({ text: `comparable to that target. A low value does not mean the response was fast.`, size: 7, y: 40 })
-  lines.push({ text: `Signature (SHA-256/16): ${signatureHash(kpi)}`, size: 8, y: 28 })
-
+  // No per-page footer here. A digest printed on one page of a multi-page
+  // document covers that page's lines and nothing else, so it would verify a
+  // fragment while reading as a statement about the file. The digest is
+  // appended once, over every page, by `renderQuarterlyReportPdf`.
   return lines
 }
 
@@ -208,7 +252,6 @@ function buildNarrativeLines(narrative) {
     if (narrative.provenance.as_of && !para(`Underlying bodies retrieved as of ${narrative.provenance.as_of}.`)) return lines
   }
 
-  lines.push({ text: `Signature (SHA-256/16): ${signatureHash(narrative)}`, size: 8, y: 40 })
   return lines
 }
 
@@ -433,6 +476,14 @@ export function renderQuarterlyReportPdf(kpi, options = {}) {
     }))
   }
 
+  // The digest is appended once, over every page, on the last page — the
+  // document's own text, so an edit to any figure on any page breaks it. It
+  // goes below the last page's lowest line rather than at a fixed y, because a
+  // fixed y landed on top of the caveat block the page ends with.
+  const lastPage = pages[pages.length - 1]
+  const lowest = lastPage.reduce((min, line) => Math.min(min, line.y ?? min), 40)
+  lastPage.push({ text: digestFooterLine(pages), size: 7, y: Math.max(20, lowest - 12) })
+
   // One content stream per page.
   //
   // These were all flattened into a single stream and every page object pointed
@@ -654,8 +705,6 @@ export function renderQuarterlyReportMarkdown(kpi, options = {}) {
       if (narrative.provenance.as_of) push(`Underlying bodies retrieved as of ${narrative.provenance.as_of}.`)
       push('')
     }
-    push(`Signature (SHA-256/16): ${signatureHash(narrative)}`)
-    push('')
   }
 
   // The dashboard sections — the same arrays buildSectionPages renders.
@@ -731,6 +780,11 @@ export function renderQuarterlyReportMarkdown(kpi, options = {}) {
     push('')
   }
 
-  push(`Signature (SHA-256/16): ${signatureHash(kpi)}`)
+  // The digest covers the assembled document, footer excluded, so it is
+  // computed here rather than per section and printed once at the end. See
+  // `reportContentDigest` for why this is not called a signature when unkeyed.
+  const digest = reportContentDigest(md.join('\n'))
+  push('')
+  push(`Content digest: ${digest.value} (${digest.label})`)
   return md.join('\n')
 }
