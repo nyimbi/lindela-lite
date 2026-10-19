@@ -2706,7 +2706,7 @@ turn and the gate failed on each; all restored from a file backup, never
 `git checkout`.
 
 The tenant-isolation (VUL-03) and authz (VUL-04) halves of the entry were already
-build-failing specs before this: `test/partner-isolation.test.js` (28 tests) and
+build-failing specs before this: `test/partner-isolation.test.js` (31 tests) and
 `test/role-scope-honoured.test.js` assert the scope predicate on the listing, the
 by-id read and the alternation grammar. They are specs in the same sense the
 entry means — a regression fails the build — and they are what the SSRF gate is

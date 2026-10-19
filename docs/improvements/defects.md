@@ -537,6 +537,24 @@ code, and the remaining gap is that operators must supply it — which is a
 better state than a filter that displays itself as applied while returning
 everything.
 
+**Re-verified 2026-10-19 by probe**, not by reading the entry. Two tokens
+(`orgA`, `orgB`), a seeded store carrying one incident and one service asset
+per organisation in Turkana, and a live server:
+
+- `GET /api/v1/districts/turkana` as A → `counts.incidents` 1, `counts.service_assets`
+  1, no `B secret` anywhere in the body; as B → its own incident only; as an
+  unscoped token → both.
+- `GET /api/v1/service-assets` as A → `sa-A` alone.
+
+The route worth naming is the district one: `districtOverview`
+(`src/districts.js:277`) filters by geography alone and never calls
+`filterRecords`, so its isolation rests entirely on `store.read()` applying
+`scopeToPartner` (`src/store.js:563-571`) to every collection. Every other
+family has both layers, so a test there passes with either one broken. Nothing
+asserted the single-layer route; `test/partner-isolation.test.js` now drives it
+directly, and the canary (replacing the `filter` with the collection whole)
+fails exactly the two scoped cases and leaves the unscoped control green.
+
 ---
 
 ## High

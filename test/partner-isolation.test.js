@@ -390,3 +390,52 @@ describe('a partner claim is enforced on the by-id read too', () => {
 		})
 	})
 })
+
+describe('a partner claim is enforced where filterRecords is never called', () => {
+	// The district family reads `data` directly and never calls `filterRecords`:
+	// `districtOverview` filters by geography alone, so its isolation rests
+	// entirely on the store read carrying `partnerOrg`. Every other family has
+	// two layers and a test that would pass with either one missing; this one
+	// has a single layer, and until this test nothing asserted it. A regression
+	// in `scopeToPartner` shows up here and nowhere else in the suite.
+	const records = {
+		incidents: [
+			{ id: 'inc_a', district: 'Turkana', partner_org: 'orgA', title: 'A leak', severity: 'high' },
+			{ id: 'inc_b', district: 'Turkana', partner_org: 'orgB', title: 'B secret', severity: 'critical' },
+		],
+		service_assets: [
+			{ id: 'sa_a', district: 'Turkana', partner_org: 'orgA', name: 'A clinic', lat: 3.1, lon: 35.6 },
+			{ id: 'sa_b', district: 'Turkana', partner_org: 'orgB', name: 'B secret clinic', lat: 3.1, lon: 35.6 },
+		],
+	}
+
+	it('serves a district overview from the caller\'s records only', async () => {
+		await withServer(async (base, store) => {
+			await store.merge(records)
+			const body = await (await get(base, '/api/v1/districts/turkana', 'tok-a')).json()
+			const text = JSON.stringify(body)
+			assert.ok(!text.includes('B secret'), "orgB's incident appeared in orgA's district overview")
+			assert.equal(body.data.counts.incidents, 1)
+			assert.equal(body.data.counts.service_assets, 1)
+			assert.deepEqual(body.data.incidents.map((i) => i.id), ['inc_a'])
+		})
+	})
+
+	it('gives the other partner its own overview from the same store', async () => {
+		await withServer(async (base, store) => {
+			await store.merge(records)
+			const body = await (await get(base, '/api/v1/districts/turkana', 'tok-b')).json()
+			assert.deepEqual(body.data.incidents.map((i) => i.id), ['inc_b'])
+		})
+	})
+
+	it('leaves an unscoped token the whole district', async () => {
+		// The restriction must be the token's claim, not the route's habit: a
+		// platform token is the operator and sees every organisation's records.
+		await withServer(async (base, store) => {
+			await store.merge(records)
+			const body = await (await get(base, '/api/v1/districts/turkana', 'tok-plain')).json()
+			assert.equal(body.data.counts.incidents, 2)
+		})
+	})
+})
