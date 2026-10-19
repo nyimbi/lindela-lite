@@ -48,7 +48,7 @@ import {
  *
  * So the watermark is the caller's, read and written across this boundary:
  *
- *   // in runIngestion (src/ingestion.js — not yet wired, see the report)
+ *   // in runIngestion (src/ingestion.js, `sourceRequest` and `nextWatermarks`)
  *   const state = await loadWatermarkState(store)        // persists as you like
  *   const output = await connector.ingest({
  *     ...sourceRequest,

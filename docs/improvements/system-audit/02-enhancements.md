@@ -281,7 +281,9 @@ veracity sweep. It sits at the end of Wave 3 because it is a veracity item.)*
 ### ENH-27 — Resumable backfill, wired end to end
 **Metric:** redundant network on `gdacs_archive` **~166 requests/run → ~0** when nothing changed · **Score: 8.1/2 = 4.1**
 **Change:** pass `on_watermark_state` at `src/ingestion.js:144-154`; add `gdacs_archive` to `WATERMARK_SOURCES` with a quarter-granular cursor, as `open-meteo-archive.js` already does.
-**Why not incremental:** the machinery exists and is inert — `on_watermark_state` has zero callers outside two connectors, and the module's own contract says to persist "every chunk, or resumption buys nothing".
+**Status (2026-10-19): closed.** `gdacs_archive` now reads a stored cursor and resumes from it, in `4b791a7`. Measured on a stubbed walk of eight quarters: the first run makes 8 requests, the second makes 1 — the quarter still open — and none of the finished ones. The 166 is the full 1985→now walk; what a resumed run costs is the one partial quarter, which cannot be skipped without losing events that land in it before it closes.
+**What the change surfaced:** a resumed walk reads a fraction of the events, so `gdacs_archive.windows are not silently truncated` judged it against a whole-archive baseline and reported every resumed run as degraded. The assertion now declares a `scope` and is judged only against runs that covered the same ground. The ~100-per-query cap it was written for is caught independently by `assessPagination`; the count assertion covers what that cannot — a walk that read every planned window, hit no cap, and still returned far less than before.
+**Why not incremental:** the machinery existed and was inert — `on_watermark_state` has zero callers outside two connectors, and the module's own contract says to persist "every chunk, or resumption buys nothing". The state now round-trips through `sourceRequest` and `nextWatermarks` instead; the callback is still uncalled, so a run that dies mid-crawl resumes at the last completed run rather than the last chunk.
 **Remediation:** R-11 (declared limits) applies to the same wiring.
 
 ### ENH-28 — The idempotency key is claimed before the work

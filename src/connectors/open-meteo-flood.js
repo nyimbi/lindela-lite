@@ -47,7 +47,11 @@ import {
  * `watermark_state` in, `watermark_state` out, with `on_watermark_state`
  * called after every completed backfill chunk so an interrupted crawl resumes
  * at the chunk it died on rather than at 1984. `src/ingestion.js` passes
- * neither yet, and that is where the wiring belongs.
+ * `watermark_state` in through `sourceRequest` and persists what the connector
+ * returns through `nextWatermarks`; it does not pass `on_watermark_state`,
+ * which is why the chunk callback above is belt-and-braces rather than the
+ * mechanism — a run that dies mid-crawl resumes at the last *completed run*,
+ * not the last chunk.
  */
 
 const FLOOD_URL = 'https://flood-api.open-meteo.com/v1/flood'

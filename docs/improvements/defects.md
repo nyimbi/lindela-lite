@@ -58,6 +58,8 @@ under **Unreleased**; this table is the index into them.
 | ING-06 | fixed | `gdacs_archive` declares `budget_ms`; the walk spends it and checks it before each window | `completeness-wiring.test.js`, `ingestion-wiring.test.js` |
 | ING-04 | fixed | the archive and flood walks key the record on the series the payload covers, not on the requested window | `watermarks.test.js` |
 | ING-07 | fixed | one declared retry budget: the inner pair is spent on the first attempt only, so a throwing connector costs `2·retries + 1` requests | `ingestion-wiring.test.js` |
+| ENH-27 | fixed | `gdacs_archive` reads a quarter-granular cursor and resumes; only clean quarters earn one, and a gap stops it | `watermark-persistence.test.js` |
+| ING-12 | fixed | a caught-up run is `success`/`quiet`, not a fabricated shortfall; a resumed walk is judged only against runs of the same scope | `watermark-persistence.test.js`, `source-assertions.test.js` |
 | ALERT-01 | fixed | lifecycle→msgtype table asserted against the alert-status vocabulary; unknown throws | `cap-encoding.test.js` |
 | ALERT-07 | fixed | `scopeOverride` honoured and validated; falsy-but-present values no longer fall back to `Public` | `cap-encoding.test.js` |
 | ALERT-02 | fixed | CAP `<status>` is `Draft` unless the alert was approved, taking the dispatch gate's own predicate; the feed marks an unapproved entry | `cap-encoding.test.js` |
@@ -196,6 +198,40 @@ gives for R-05 one register over.
   canaried to 4 by restoring the old call) and its control *a connector that
   returns still gets its full inner pair* (2 requests, which a fix that simply
   disabled the inner layer would fail).
+- **ING-12 — fixed 2026-10-19: a run that asked nothing is not a run that
+  found nothing.** Found by probing the watermark round-trip rather than by
+  reading it, and not in the original audit. `fetchWindow` returns
+  `mode: 'empty'`, `reason: 'caught-up'` when the mark already covers today, and
+  the connector makes no request at all — that is the watermark working.
+  `runIngestion` read only `watermark_state` and never `watermark`, so it saw
+  zero records against a floor of one, wrote `Expected at least 1 records`, and
+  then ran `min_count_vs_trailing` against the trailing median and tripped that
+  too. `freshness` treats any tripped assertion as `broken`, so every run after
+  a backfill finished reported a fully up-to-date source as down.
+
+  The fix keeps the connector's own distinction. `caught-up` is exempt from the
+  floor and from the assertion pass, and the run records `watermark` so the
+  verdict can say *nothing was due* instead of *nothing arrived*. The
+  neighbouring reason, `cursor-ahead-of-now`, is deliberately **not** exempt: it
+  is a broken watermark an operator has to correct, and a reason-blind exemption
+  would have hidden exactly the state that needs a human. Guards in
+  `test/watermark-persistence.test.js`: *records the run as a success rather
+  than inventing a shortfall*, *is not reported broken by the freshness
+  verdict*, *stays quiet across repeated caught-up runs instead of becoming
+  `empty_response`*, and the control *still degrades a run that fetched and got
+  nothing*, which a fix that simply deleted the record floor would fail. The
+  `cursor-ahead-of-now` case is its own control: *does not exempt a cursor that
+  is ahead of the clock*.
+
+  **The same shape recurred in ENH-27** and is fixed with it. Once the archive
+  walk resumes, its batch covers one quarter instead of a hundred and
+  sixty-eight, so the count assertion judged a resumed run against a
+  whole-archive baseline and marked a working archive degraded. A count measures
+  the ground as much as the feed, so `min_count_vs_trailing` now declares a
+  `scope` and is judged only against runs that covered the same ground.
+  Canaried both ways in `test/source-assertions.test.js`: disabling the filter
+  restores the false degradation, and a filter that keeps everything fails the
+  same-scope collapse control.
 
 ---
 
