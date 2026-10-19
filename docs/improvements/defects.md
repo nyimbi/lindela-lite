@@ -233,6 +233,14 @@ gives for R-05 one register over.
   restores the false degradation, and a filter that keeps everything fails the
   same-scope collapse control.
 
+  **All three `WATERMARK_SOURCES` entries now resume, measured by probe.** Each
+  connector was driven twice with `fetch` stubbed and the request count read off
+  the stub: `open_meteo_archive` **46 → 0** and `open_meteo_flood` **43 → 0**,
+  both second runs reporting `mode: empty, reason: caught-up` and returning no
+  records; `gdacs_archive` **8 → 1**, the one being the quarter still open. The
+  declared list and the behaviour now agree, which is the check that would have
+  caught ENH-27 when it was written.
+
 ---
 
 ## Critical
