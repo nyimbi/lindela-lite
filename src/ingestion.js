@@ -893,6 +893,14 @@ export function normalizeIngestionSchedule(input = {}, existing = null) {
     stale_after_minutes: toNumber(input.stale_after_minutes ?? existing?.stale_after_minutes ?? policy.stale_after_minutes, policy.stale_after_minutes),
     next_run_at: input.next_run_at || existing?.next_run_at || computeNextIngestionRunAt({ interval_minutes: interval }, now),
     last_run_at: input.last_run_at || existing?.last_run_at || null,
+    // The claim `runDueIngestionSchedules` takes while a run is in flight.
+    // Carried through the normaliser rather than left to `merge`, because this
+    // function builds the record from an explicit field list: a PATCH to an
+    // unrelated field would otherwise drop a claim another tick is holding and
+    // let the same interval run twice. Null on a schedule nobody is running,
+    // which is every schedule between runs.
+    lease_owner: input.lease_owner ?? existing?.lease_owner ?? null,
+    lease_until: input.lease_until ?? existing?.lease_until ?? null,
     default_options: objectValue(input.default_options ?? existing?.default_options),
     owner: input.owner || existing?.owner || 'ops',
     created_at: createdAt,
@@ -909,12 +917,78 @@ export function defaultIngestionSchedules(data = {}, options = {}) {
     .map((source) => normalizeIngestionSchedule({ source, next_run_at: options.next_run_at }))
 }
 
+/**
+ * How long a claim on a due schedule lasts before another tick may take it.
+ *
+ * It has to outlive the slowest run and not outlive it by much. `ipc_hdx` is
+ * the slowest measured source at 174.8 s against a 30 s per-request timeout and
+ * two retries, so a run that is making progress can take ~9 minutes; a
+ * `gdacs_archive` walk is bounded by its own 15-minute `budget_ms`. Twenty
+ * minutes covers both, and a tick that died mid-run blocks its schedule for one
+ * interval at worst rather than for ever.
+ */
+const SCHEDULE_LEASE_MS = 20 * 60 * 1000
+
+/**
+ * Take the claim on one due schedule, or return null if someone else holds it.
+ *
+ * The claim is a read-modify-write, so it runs under `withLock` where the store
+ * has one: two ticks arriving together both read the schedule from the snapshot
+ * they were handed, and only the lock makes "nobody has claimed this" and "I
+ * claim it" one decision. Measured before this existed, two concurrent ticks
+ * over one due schedule made two fetches and wrote two `source_runs` rows —
+ * the duplicate the whole watermark and dedup machinery then has to absorb.
+ *
+ * The run itself is deliberately *not* inside the lock. On Postgres `withLock`
+ * holds an advisory lock that every writer in the platform queues behind, and
+ * an ingestion is minutes.
+ */
+async function claimIngestionSchedule(store, schedule, { now = new Date() } = {}) {
+  const at = now instanceof Date ? now : new Date(now)
+  const claimed = {
+    ...schedule,
+    lease_owner: LEASE_OWNER,
+    lease_until: new Date(at.getTime() + SCHEDULE_LEASE_MS).toISOString(),
+    updated_at: at.toISOString(),
+  }
+  if (typeof store?.withLock !== 'function') {
+    // A store with no lock cannot make the decision atomic. Claiming anyway is
+    // still right: the second writer's merge is last-writer-wins on the same
+    // row, so it does not duplicate a run it never observed the claim for —
+    // it just cannot be shown to be safe. The tests that pass a merge-only stub
+    // are the reason this branch exists at all.
+    await store.merge({ ingestion_schedules: [claimed] })
+    return claimed
+  }
+  return store.withLock(async (locked) => {
+    const rows = (await locked.read(['ingestion_schedules'])).ingestion_schedules || []
+    const current = rows.find((row) => row.id === schedule.id)
+    if (!current || !ingestionScheduleIsDue(current, at)) return null
+    if (scheduleLeaseIsHeld(current, at)) return null
+    await locked.merge({ ingestion_schedules: [claimed] })
+    return claimed
+  })
+}
+
+/** True while another tick's claim is still live. An expired claim is nobody's. */
+export function scheduleLeaseIsHeld(schedule, now = new Date()) {
+  if (!schedule?.lease_until) return false
+  const until = Date.parse(schedule.lease_until)
+  if (!Number.isFinite(until)) return false
+  const at = now instanceof Date ? now.getTime() : Date.parse(now)
+  return until > at
+}
+
+const LEASE_OWNER = `tick-${process.pid}-${Math.random().toString(36).slice(2, 10)}`
+
 export async function runDueIngestionSchedules(store, data, options = {}) {
   const due = (data.ingestion_schedules || []).filter((schedule) => ingestionScheduleIsDue(schedule, options.now))
   const runs = []
   const schedules = []
   const analytics = []
-  for (const schedule of due) {
+  for (const candidate of due) {
+    const schedule = await claimIngestionSchedule(store, candidate, options)
+    if (!schedule) continue
     const result = await runIngestion(store, {
       ...(schedule.default_options || {}),
       sources: [schedule.source],
@@ -942,6 +1016,11 @@ export async function runDueIngestionSchedules(store, data, options = {}) {
       next_run_at: computeNextIngestionRunAt(schedule, completedAt, { now: startedAt }),
       last_slip_ms: slip.slip_ms,
       last_slip_at: startedAt,
+      // The claim is released by the run that finished, not by the lease
+      // expiring: a schedule left holding one would be skipped by the next
+      // tick even though nothing is running.
+      lease_owner: null,
+      lease_until: null,
       updated_at: nowIso(),
     })
     analytics.push(result)

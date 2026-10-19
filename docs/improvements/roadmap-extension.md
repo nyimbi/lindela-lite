@@ -743,7 +743,7 @@ The gaps are uneven in a way that matters:
 | 15 | PII minimisation + retention | **Shipped** — with one open gap (see below) | "implemented, not wired, retention no-op" |
 | 16 | Signed releases + SBOM | **Partial** — SLSA level 3 provenance runs (`ci.yml:271`) as well as the CycloneDX SBOM (`:160`); artifact signing (cosign) is still absent | "SBOM only" |
 | 17 | OTel + Prometheus + logs | **Partial** — `/metrics` gated and cardinality bounded (`src/observability.js:130-230`); OpenTelemetry is absent | "metrics and logs only" |
-| 18 | Idempotent ingestion | **Partial** — DAT-01 and ING-05 are closed: `payload_hash` persists through a full write (`src/postgres-store.js:649`) and a `fetched_at` stamp nested in `metadata` no longer reaches the hash (`src/utils.js:63`). What is open is **DATA-13**: `mergeById` keys on `payload_hash` alone (`src/store.js:1255`) and `canonicalHash` ignores `id`, so a re-import whose records differ only by id is silently discarded and reported `success: true`. Also no lease on `run-due` | "dedup broken on Postgres" |
+| 18 | Idempotent ingestion | **Partial** — DAT-01 and ING-05 are closed: `payload_hash` persists through a full write (`src/postgres-store.js:649`) and a `fetched_at` stamp nested in `metadata` no longer reaches the hash (`src/utils.js:63`). DATA-13's *silence* is closed — the merge reports what it discarded and `/upload` answers `duplicates_skipped` beside `imported` — while the per-source identity policy it would need remains unwritten. The `run-due` lease is closed (2026-10-19): a due schedule is claimed under the store lock, so two ticks handed the same snapshot run it once | "dedup broken on Postgres" |
 | 19 | Scenario workbench | **Shipped** | — |
 | 20 | Localization + RTL | **Partial** — **10** locales, not 11, and RTL *is* implemented (`public/shared/fmt.js:299-334`); the pickers offer only English | "11 locales, missing on 3 key surfaces" |
 
@@ -831,8 +831,8 @@ actually was, and what closes it, is recorded below.
   prevents the duplicate is that `mergeById` (`src/store.js:1255`) checks
   `payload_hash` **before** the id and skips an incoming record whose hash it
   already holds — so the `fetched_at` fix is what closes this, through the hash
-  path. The id was never the guard. There is still no lease or claim mechanism,
-  which is why item 18 stays Partial.
+  path. The id was never the guard. There is now a claim mechanism (2026-10-19,
+  below), but item 18 stays Partial for the reason the next bullet gives.
 - **The hash path is now the *only* guard, which is DATA-13 arriving from the
   other side (item 18) — open.** The same precedence that closes the archive
   churn discards a re-import whose records differ only by id: `canonicalHash`
@@ -853,6 +853,33 @@ actually was, and what closes it, is recorded below.
   wants the id to be. What is needed is a declared per-source identity policy, which
   `SOURCE_POLICIES` does not carry; the honest interim is to have the merge report
   what it skipped, so `/upload` stops answering `success: true` for discarded rows.
+  **The interim shipped 2026-10-18 and this bullet's heading is stale with it:**
+  `mergeById` delegates to `mergeByIdReporting`, both adapters thread the
+  discards out of `merge()`, and `/upload` answers `imported: kept` with
+  `duplicates_skipped` and the discarded ids beside it (`src/routes/upload.js:233`).
+  What remains open is the policy, not the silence.
+- **`run-due` had no claim (item 18) — fixed 2026-10-19.** Measured before the
+  fix: two ticks handed the same snapshot over one due schedule each ran it —
+  **two fetches, two `source_runs` rows** for one interval. That is the arrival
+  pattern a sidecar retry and a second replica behind one ingress both produce,
+  and everything downstream (the trailing-median assertion, the watermark
+  round-trip, the dedup hash) then absorbs a run that should not exist.
+  `claimIngestionSchedule` takes the claim as a read-modify-write under
+  `store.withLock`, so "nobody has claimed this" and "I claim it" are one
+  decision; the run itself stays outside the lock, because on Postgres that lock
+  is the advisory lock every writer queues behind and an ingestion is minutes.
+  The claim carries a 20-minute expiry (the slowest measured source is `ipc_hdx`
+  at 174.8 s; a `gdacs_archive` walk is bounded at 15 minutes), so a tick that
+  dies mid-run blocks its schedule for one interval rather than for ever. The
+  normaliser carries `lease_owner`/`lease_until` through, because it builds from
+  an explicit field list — a PATCH to an unrelated field would otherwise clear a
+  claim another tick is holding. Guards in `test/schedule-lease.test.js`: *runs
+  the schedule for the first tick that claims it*, *refuses the second of two
+  ticks handed the same snapshot*, *skips a schedule another tick is running*,
+  *releases the claim when the run finishes* with its control *runs again on the
+  next due interval*, and *takes over a schedule whose claim expired*. Canaried
+  three ways — removing the claim check, the release, and the normaliser's carry
+  each fail a disjoint set.
 
 The pattern is consistent and worth naming: this project builds the capability and
 then does not finish the wiring. Item 3 computes the impact figures and never stores
