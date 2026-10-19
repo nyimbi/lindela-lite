@@ -1331,15 +1331,34 @@ response *and* its body — a server that sends headers then stalls aborts insid
 the body read, not inside the fetch, so a `.catch` on the fetch alone leaves that
 case uncovered. `Retry-After` is parsed off the error response and reaches the
 backoff as its own term (`src/connectors/http.js:322,364`), widened on 2026-10-04.
-RapidPro outbound is bounded at 10 s (`src/rapidpro.js:9,418`). What remains
-unfixed in this paragraph is the report-webhook *signature*: report webhooks are
-timed but still unsigned.
+RapidPro outbound is bounded at 10 s (`src/rapidpro.js:9,418`). The report-webhook
+*signature* named here as still unfixed is **fixed 2026-10-19**: a `webhook`
+distribution channel takes a `secret`, signs the exact bytes it sends with
+`x-signature` (the outbox's own rule), and the key is stripped before the run
+row is written. Guard: `test/reporting-route-module.test.js`, three tests.
 
 **Reports** — `markdown_download` records a byte count rather than the artefact
 (`src/reports.js:1373`), so the exported report is not retrievable later. Report <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
 webhooks are unsigned and untimed. `src/pdf.js:11` computes a "signature" that is
 a self-referential 64-bit digest. Export returns only the record appendix;
-the narrative exists solely in `export.md` with nothing saying so.
+the narrative exists solely in `export.md` with nothing saying so. Both the
+webhook signature and the digest are fixed — see above and below.
+
+**The PDF footer — fixed 2026-10-19.** The old line hashed the *input object*,
+truncated to 64 bits, unkeyed, and printed as `Signature (SHA-256/16)`. Measured
+before the change: two renders of identical figures printed two different values
+(the object carries `generated_at`), so it detected nothing across renders; an
+edit to the rendered body that left the object alone did not move it, so it
+detected nothing within one; and anyone holding the PDF could recompute it, so
+it authenticated nothing. `reportContentDigest` now hashes the assembled
+document text, footer excluded — stable across renders of the same content,
+broken by any figure edit — and signs it as HMAC-SHA-256/32 under
+`LINDELA_LITE_REPORT_SIGNING_KEY` when one is set, naming
+`LINDELA_LITE_REPORT_SIGNING_KEY_ID`. With no key the footer reads `unkeyed —
+not a signature`, because a recipient who cannot tell the two apart reads the
+second as the first. Guard: `test/export-narrative.test.js`, six tests, four of
+which fail against the old footer. The report-webhook *signature* in the
+paragraph above is still unfixed.
 
 **Dead code** — corrected against the tree on 2026-10-03; two of the original
 claims were false and one is a third copy of the same shape as the code it

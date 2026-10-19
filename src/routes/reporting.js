@@ -45,7 +45,7 @@ import { metrics, logger } from '../observability.js'
 import { narrateReport, NARRATOR_BASIS } from '../narrator.js'
 import { actionLog } from '../operations.js'
 import { emit } from '../outbox.js'
-import { assertSafeWebhookUrl } from '../webhooks.js'
+import { assertSafeWebhookUrl, signPayload } from '../webhooks.js'
 import { collectionPage, readRequestJson, toCsv, toGeoJson } from '../utils.js'
 import { findVisible } from '../visibility.js'
 import {
@@ -632,11 +632,16 @@ async function distributeReport(report, body = {}, actor = 'operator', data = nu
   const runs = []
   const rapidproDispatches = []
   for (const channel of channels) {
+    // A webhook channel's `secret` signs the body and must not land in the run
+    // row. `runInput.options` is the channel object, and a distribution run is
+    // a readable record — persisting the key beside the delivery it signed puts
+    // the secret in the store, in any export, and in the action log's payload.
+    const { secret: channelSecret, ...channelWithoutSecret } = channel
     const runInput = {
       channel: channel.channel,
       recipients: channel.recipients || recipientFields(channel),
       payload_summary: formatReportSmsSummary(report),
-      options: channel,
+      options: channelWithoutSecret,
       retry_of: body.retry_of || null,
     }
     try {
@@ -671,12 +676,19 @@ async function distributeReport(report, body = {}, actor = 'operator', data = nu
         // is what would otherwise land in the run row an operator reads.
         const signal = AbortSignal.timeout(webhookTimeoutMs)
         const responseBody = await (async () => {
-          const response = await fetch(target, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json', ...(channel.headers || {}) },
-            body: JSON.stringify({ report, markdown: renderReportMarkdown(report) }),
-            signal,
-          })
+          // The body is serialised once and both sent and signed. Signing a
+          // re-serialisation is how a signature stops matching its payload:
+          // key order or whitespace differs and the receiver rejects a genuine
+          // message. `x-signature` is the same header the outbox sets, so a
+          // subscriber verifies a report and an event with one rule.
+          //
+          // A channel with no secret is sent unsigned, which is what it was
+          // before this — the register's complaint was that there was no way to
+          // sign, not that unsigned delivery was wrong for a local receiver.
+          const payload = JSON.stringify({ report, markdown: renderReportMarkdown(report) })
+          const headers = { 'content-type': 'application/json', ...(channel.headers || {}) }
+          if (channelSecret) headers['x-signature'] = signPayload(channelSecret, payload)
+          const response = await fetch(target, { method: 'POST', headers, body: payload, signal }) // caller-url-ok: guarded-by-caller — `target` is `checkWebhookUrl(channel.url)` above
           const body = await readExternalResponse(response)
           return { response, body }
         })().catch((error) => {

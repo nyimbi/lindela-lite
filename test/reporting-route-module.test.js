@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHmac } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import http from 'node:http'
 import { describe, it } from 'node:test'
@@ -296,6 +297,93 @@ describe('ENH-11 — a distribution webhook is bounded by a deadline', () => {
       assert.deepEqual(run.response_body, { ok: true })
     } finally {
       await new Promise((done) => server.close(done))
+    }
+  })
+})
+
+describe('a report webhook can be signed, and its key stays out of the run row', () => {
+  // The register said report webhooks were "timed but still unsigned". The
+  // outbox has signed subscription deliveries with `x-signature` since INT-01;
+  // the distribution path never did, so a partner receiving both had one rule
+  // for events and none for reports. Two properties are asserted, and the
+  // second is the one a naive fix gets wrong: `runInput.options` is the channel
+  // object, so copying the key into it puts the signing secret in the store, in
+  // every export, and in the action log beside the delivery it authenticated.
+  const capturingServer = () => new Promise((resolve) => {
+    const seen = []
+    const server = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        seen.push({ headers: req.headers, body })
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end('{"ok":true}')
+      })
+    })
+    server.listen(0, '127.0.0.1', () => resolve({
+      url: `http://127.0.0.1:${server.address().port}/hook`,
+      seen,
+      close: () => new Promise((done) => server.close(done)),
+    }))
+  })
+
+  it('signs the body it sends, and the signature verifies against that body', async () => {
+    const server = await capturingServer()
+    try {
+      const store = recordingStore({ reports: [report({ status: 'approved' })] })
+      await call({ kind: 'reports', id: 'r1', action: 'distribute' }, {
+        method: 'POST',
+        body: { channels: [{ channel: 'webhook', url: server.url, secret: 'partner-key' }] },
+        checkWebhookUrl: async (raw) => raw,
+        store,
+      })
+      const delivered = server.seen.at(-1)
+      assert.ok(delivered, 'nothing reached the receiver')
+      const signature = delivered.headers['x-signature']
+      assert.ok(signature, 'the report went out unsigned')
+      // Recomputed from the bytes that arrived, not from what the sender
+      // believes it sent: a signature over a re-serialisation verifies against
+      // nothing the receiver holds.
+      assert.equal(signature, createHmac('sha256', 'partner-key').update(delivered.body).digest('hex'))
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('keeps the signing key out of the stored run', async () => {
+    const server = await capturingServer()
+    try {
+      const store = recordingStore({ reports: [report({ status: 'approved' })] })
+      await call({ kind: 'reports', id: 'r1', action: 'distribute' }, {
+        method: 'POST',
+        body: { channels: [{ channel: 'webhook', url: server.url, secret: 'partner-key' }] },
+        checkWebhookUrl: async (raw) => raw,
+        store,
+      })
+      const run = store.state.report_distribution_runs.at(-1)
+      assert.equal(run.status, 'sent')
+      assert.equal(JSON.stringify(run).includes('partner-key'), false,
+        'the signing key was persisted beside the delivery it signed')
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('still delivers unsigned when no key is given', async () => {
+    // The control: a blanket "always sign with something" would pass both tests
+    // above and break every receiver that has no key.
+    const server = await capturingServer()
+    try {
+      const store = recordingStore({ reports: [report({ status: 'approved' })] })
+      await call({ kind: 'reports', id: 'r1', action: 'distribute' }, {
+        method: 'POST',
+        body: { channels: [{ channel: 'webhook', url: server.url }] },
+        checkWebhookUrl: async (raw) => raw,
+        store,
+      })
+      assert.equal(server.seen.at(-1).headers['x-signature'], undefined)
+    } finally {
+      await server.close()
     }
   })
 })

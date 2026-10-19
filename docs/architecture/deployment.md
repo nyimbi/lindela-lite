@@ -252,6 +252,8 @@ and WHO GHO endpoints and their polling intervals — is in `src/connectors/*` a
 |---|---|
 | `LINDELA_LITE_PII_SALT` | Key for `pii.js`. |
 | `LINDELA_LITE_PII_POLICY` | Redaction policy. |
+| `LINDELA_LITE_REPORT_SIGNING_KEY` | HMAC key for the KPI report footer (`src/pdf.js`). Unset, the footer prints an unkeyed content digest and says so. |
+| `LINDELA_LITE_REPORT_SIGNING_KEY_ID` | Printed beside the keyed digest, so a recipient knows which key to verify with. |
 | `OFAC_SDN_CACHE_TTL_MS` | Sanctions list cache lifetime. |
 
 Note `redactPii` is implemented and tested but **never called from a request path** —

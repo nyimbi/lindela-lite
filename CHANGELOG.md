@@ -230,6 +230,40 @@ each with its own sample size, refused ones included.
 
 ### Fixed
 
+**The KPI report footer claimed a signature it did not compute.** It hashed the
+input object, truncated to 64 bits, unkeyed, and printed `Signature
+(SHA-256/16)`. Two renders of identical figures printed two different values
+(the object carries `generated_at`), an edit to the rendered body that left the
+object alone did not move it, and anyone holding the PDF could recompute it —
+so it detected nothing across renders, nothing within one, and authenticated
+nothing. `reportContentDigest` now hashes the assembled document text, footer
+excluded: stable across renders of the same content, broken by any figure edit.
+It signs as HMAC-SHA-256 under `LINDELA_LITE_REPORT_SIGNING_KEY`, naming
+`LINDELA_LITE_REPORT_SIGNING_KEY_ID`, and with no key the footer says `unkeyed —
+not a signature` rather than leaving a reader to assume the stronger claim.
+Both the PDF and its Markdown twin carry it once, over the whole document.
+Guarded by six tests in `test/export-narrative.test.js`, four of which fail
+against the old footer.
+
+**Report distribution webhooks can be signed.** The outbox has set
+`x-signature` on subscription deliveries since INT-01; the distribution path
+sent the same kind of payload with no way to sign it. A `webhook` channel now
+takes a `secret` and signs the exact bytes it sends, so a receiver verifies a
+report and an event with one rule. The key is stripped before the run row is
+written — `runInput.options` is the channel object, so the naive fix would have
+persisted the signing secret beside the delivery it authenticated, in the store
+and in every export. A channel with no secret still delivers unsigned.
+
+**A due ingestion schedule was claimed twice.** `run-due` is what a sidecar
+POSTs, and a retried request or two replicas behind one ingress each ran the
+same schedule: measured, two fetches and two `source_runs` rows for one
+interval. `claimIngestionSchedule` is now a read-modify-write under
+`store.withLock`, with a 20-minute lease that expires so a tick that dies
+mid-run does not block the schedule for ever, and the lease is released when
+the run finishes. `normalizeIngestionSchedule` carries the two lease fields, so
+a PATCH can no longer clear a live claim. Guarded by
+`test/schedule-lease.test.js`.
+
 **Thirteen roadmap bodies named defects their own rows say are fixed.** Items 1, 2, 3,
 4, 5, 6, 8, 9, 12, 13, 14, 15 and 19 each described a defect in body prose while
 the Summary table, 300 lines below, marked it fixed. Eight of the thirteen headings
