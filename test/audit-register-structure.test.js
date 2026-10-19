@@ -308,7 +308,7 @@ describe('the audit register’s skeleton, guarded', () => {
  *
  * The cost is not cosmetic, and the size of it is measured below rather than
  * stated here — see `citationSpread()`. At the last measurement there were
- * **1,953** `ENH-nn` citations across **352** files, **345** of them in `src/`
+ * **1,960** `ENH-nn` citations across **353** files, **348** of them in `src/`
  * comment lines — so a reader following `// ENH-29` from a source file has a 50%
  * chance of landing on the wrong item, and `docs/improvements/status.md`
  * resolves every id against the *first* register. This is the same shape the
