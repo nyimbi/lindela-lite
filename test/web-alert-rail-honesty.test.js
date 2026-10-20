@@ -260,3 +260,90 @@ describe('R-64 — the failure state is visibly not the reassuring one', () => {
     }
   })
 })
+describe('the alert rail is a list only when it holds items', () => {
+  // axe's `aria-required-children` failed the dashboard in every theme at both
+  // viewports: `#alertsList` carries `role="list"` in index.html, and the empty
+  // and error branches each write a single `role="status"` message into it. A
+  // list may hold only list items, so the container promised a structure its
+  // children did not have — and a screen reader announced "list, 1 item" over
+  // one paragraph.
+  //
+  // The role has to be read from the element, not from `boot()`'s returned
+  // HTML, because the attribute lives on the container and not in its children.
+  const roleOf = async (respond) => {
+    boots += 1
+    const elements = new Map()
+    installBrowserEnv({
+      elements,
+      respond: (url) => {
+        if (url.includes('/i18n/en.json')) return { body: EN }
+        if (url.includes('/api/v1/alert-events')) return respond
+        return undefined
+      },
+    })
+    await import(new URL(`app.js?role=${boots}`, PUBLIC_ROOT).href)
+    await new Promise((r) => realSetTimeout(r, 5))
+    return elements.get('alertsList')?.getAttribute('role')
+  }
+
+  it('drops the list role when the feed failed', async () => {
+    assert.equal(await roleOf(deadAlerts()), 'status',
+      'an error message is not a list item, so the container must not say "list"')
+  })
+
+  it('drops the list role when the feed is empty', async () => {
+    assert.equal(await roleOf(emptyAlerts()), 'status',
+      'an empty-state sentence is not a list item either')
+  })
+
+  it('keeps the list role when there are alerts to list', async () => {
+    // The control. A blanket `role="status"` would pass both tests above and
+    // stop announcing the rail as a list on every page that has alerts.
+    const role = await roleOf({
+      body: {
+        success: true,
+        data: [{
+          id: 'al_1', status: 'pending', severity: 'high', rule_name: 'Flood watch',
+          metric: 'precipitation_mm', created_at: '2026-10-01T00:00:00.000Z',
+        }],
+        returned: 1, limit: 200, total: 1, has_more: false, next_cursor: null,
+      },
+    })
+    assert.equal(role, 'list')
+  })
+})
+
+describe('the workflow tray is a list only when it holds tiles', () => {
+  // `#workflowMetricsGrid` carries the same `role="list"` and the same empty
+  // branch — one `<p class="workflow-empty">` — so it is the same defect with a
+  // different element id. Fixed together because a rule about what a container
+  // may promise is not a rule about one container.
+  const roleOfGrid = async (respond) => {
+    boots += 1
+    const elements = new Map()
+    installBrowserEnv({
+      elements,
+      respond: (url) => {
+        if (url.includes('/i18n/en.json')) return { body: EN }
+        if (url.includes('/api/v1/workflows/metrics')) return respond
+        return undefined
+      },
+    })
+    await import(new URL(`app.js?grid=${boots}`, PUBLIC_ROOT).href)
+    await new Promise((r) => realSetTimeout(r, 5))
+    return elements.get('workflowMetricsGrid')?.getAttribute('role')
+  }
+
+  it('drops the list role when no workflow type has instances', async () => {
+    const role = await roleOfGrid({ body: { success: true, data: { by_type: {}, open: 0, closed: 0, rejected: 0 } } })
+    assert.equal(role, 'status',
+      'the empty tray holds one paragraph, so it must not announce itself as a list')
+  })
+
+  it('keeps the list role when tiles render', async () => {
+    const role = await roleOfGrid({
+      body: { success: true, data: { by_type: { anticipatory_alert: { open: 2 } }, open: 2, closed: 0, rejected: 0 } },
+    })
+    assert.equal(role, 'list')
+  })
+})
