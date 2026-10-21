@@ -1632,6 +1632,78 @@ function contentType(filePath) {
   return 'text/html; charset=utf-8'
 }
 
+/**
+ * Stop accepting connections, let the tick in flight finish, close the store.
+ *
+ * R-60. There was no SIGTERM handler anywhere in `src/`, so `docker stop` and
+ * every systemd unit took the default action — the process died on the signal,
+ * mid-request, with the periodic driver's tick possibly halfway through a write
+ * and the Postgres pool's sockets torn down by the kernel rather than returned.
+ * The JSON store survives that because `#writeFile` renames a temp file into
+ * place, so the *file* is never truncated; what it does not survive is the tick
+ * that was going to run next, and a caller whose request was in flight learns
+ * nothing. Measured before the fix: SIGTERM, exit reported as
+ * `code: null, signal: 'SIGTERM'` 14 ms later.
+ *
+ * The bound is the part that matters. A handler that waits forever turns a
+ * stuck tick into a process an orchestrator has to SIGKILL, which is the state
+ * this is meant to avoid — so the second signal, or `LINDELA_LITE_SHUTDOWN_MS`
+ * elapsing, exits immediately. The first signal is the polite one.
+ */
+export function installShutdown(server, {
+  timeoutMs = Number(process.env.LINDELA_LITE_SHUTDOWN_MS) || 10_000,
+  // Injectable so the handler can be driven without ending the test process.
+  // The default is the real exit; a test supplies its own and reads the
+  // sequence of calls, which is the only way to assert *ordering* here — that
+  // the store closes after the last connection and not before it.
+  exit = (code) => process.exit(code),
+  onStop = stopPeriodicDriver,
+} = {}) {
+  let stopping = false
+  const shutdown = (signal) => {
+    if (stopping) {
+      // A second signal is an operator saying the polite path is not working.
+      // Saying so and exiting beats a process that has to be killed.
+      logger.warn('shutdown_forced', { message: `received ${signal} while already shutting down; exiting now` })
+      exit(1)
+    }
+    stopping = true
+    onStop()
+    // `close` waits for open connections to finish, which is the point: a
+    // request already being served gets its response. The timer is the bound
+    // on that wait.
+    const deadline = setTimeout(() => {
+      logger.warn('shutdown_timeout', {
+        message: `connections did not close within ${timeoutMs} ms; exiting anyway`,
+        timeout_ms: timeoutMs,
+      })
+      exit(1)
+    }, timeoutMs)
+    deadline.unref?.()
+    // `server.close()` stops accepting and waits for open connections, but a
+    // keep-alive socket that goes idle *after* the call is not one it lets go
+    // of: measured, a server with one completed request on the wire took
+    // 3135 ms to report closed against a 120 ms route, so every ordinary
+    // shutdown would have run out the deadline and exited 1. Sweeping idle
+    // connections until the close reports is what makes the wait mean "a
+    // request is being served" rather than "a socket is open". Measured with
+    // the sweep: 129 ms, and the in-flight response still arrives.
+    const sweeper = setInterval(() => server.closeIdleConnections?.(), 20)
+    sweeper.unref?.()
+    server.close(() => {
+      clearInterval(sweeper)
+      clearTimeout(deadline)
+      getDefaultStore()
+        .then((store) => store.close?.())
+        .catch(() => {})
+        .finally(() => exit(0))
+    })
+  }
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
+  process.on('SIGINT', () => shutdown('SIGINT'))
+  return shutdown
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.LINDELA_LITE_PORT || 4177)
   // `LINDELA_LITE_HOST` defaults to 0.0.0.0 because that is what the container
@@ -1648,7 +1720,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // The default is unchanged. What changes is that the line tells the truth,
   // and `scripts/run.sh` binds loopback on purpose rather than by accident.
   const host = process.env.LINDELA_LITE_HOST || '0.0.0.0'
-  createServer().listen(port, host, () => {
+  const server = createServer()
+  installShutdown(server)
+  server.listen(port, host, () => {
     // The driver owns what a tick includes; the sidecar still owns when ticks
     // happen. Both may run — the tick is idempotent and the heartbeat records
     // which came last.

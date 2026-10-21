@@ -43,7 +43,7 @@ console's feature set would make it worse at the one job it has. See
 
 ### What the console is
 
-`public/app.js` is 6,451 lines — larger than every other surface combined — because
+`public/app.js` is 6,453 lines — larger than every other surface combined — because
 it carries the situation map, twelve polled panels, alert triage and dispatch.
 `public/index.html` is the only surface with an inline `<style>` block of
 consequence, and the only one that does not link `components.css`.

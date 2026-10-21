@@ -230,6 +230,21 @@ each with its own sample size, refused ones included.
 
 ### Fixed
 
+**The process had no SIGTERM handler.** `docker stop` and every systemd unit
+took the default action: measured, the entry point exited with `code: null,
+signal: 'SIGTERM'` 14 ms after the signal. The JSON store's temp-file-and-rename
+kept the file intact, but the periodic tick in flight, the Postgres pool's
+connections and any request being served were dropped without a word to their
+callers. `installShutdown` now stops the driver, closes the listener, lets
+in-flight requests finish, closes the store and exits 0, bounded by
+`LINDELA_LITE_SHUTDOWN_MS` (default 10 s), with a second signal forcing exit 1.
+`server.close()` alone was not enough and the measurement says why: a keep-alive
+socket that goes idle after the call is not released by it, so one completed
+request held the close open for 3135 ms against a 120 ms route — long enough
+that every ordinary shutdown would have hit the deadline and exited 1. Sweeping
+idle connections brings that to 129 ms with the in-flight response still
+delivered.
+
 **The KPI report footer claimed a signature it did not compute.** It hashed the
 input object, truncated to 64 bits, unkeyed, and printed `Signature
 (SHA-256/16)`. Two renders of identical figures printed two different values

@@ -1304,16 +1304,58 @@ gained the link, and a dated note above the table explains both.
 
 ## Medium and low, grouped
 
-**Persistence** — Postgres and JSON disagree on ordering
-(`postgres-store.js:60` `ORDER BY updated_at DESC` with no tiebreaker vs
-`store.js:123` body timestamp; `now()` is transaction-scoped, so a whole batch
-ties and report slices of 8 differ per backend). The JSON store writes in place
-with no temp-file rename, no `fsync` and mode 0644 (`store.js:71`), so a power cut
-mid-write truncates the file and every later request 500s. There is no SIGTERM
-handler in `src/`. Unlisted collections are dropped silently by both adapters
-(`store.js:78`, `postgres-store.js:63,100`), and the guard against that is a
-comment, not code. `min(…spread)` (`Math.min(...array)`) can OOM on large
-collections.
+**Persistence** — re-probed against the tree on 2026-10-21; three of the six
+claims were false when written and one is now fixed.
+
+*Refuted — ordering.* The two adapters do not disagree. Postgres carried an
+`ORDER BY updated_at DESC` that was never the return order; it was removed and
+both adapters now sort through the same `sortRecords`
+(`src/store.js:1388`), which breaks ties on `id`. Guarded by
+`test/store-conformance.test.js`.
+
+*Refuted — no temp-file rename.* `#writeFile` writes
+`store.json.<pid>.<random>.tmp` and renames it into place, with the temp file
+unlinked on any failure (`src/store.js:1035`). The claim was true at `b07bbe4`.
+
+*Still true — no `fsync`, and mode 0644.* Measured: a fresh store writes with
+mode `644`. The rename makes a torn file impossible; what it does not survive is
+the directory entry reaching disk before the data does, so a power cut can leave
+the *old* store rather than a corrupt one. That is the benign failure, and it is
+why this is recorded rather than urgent. A tighter mode is not obviously right
+either — the file is read by whatever user the service runs as.
+
+*Fixed 2026-10-21 — no SIGTERM handler.* Measured before the fix: the entry
+point exited with `code: null, signal: 'SIGTERM'` 14 ms after the signal. The
+file survived because of the rename; the periodic tick in flight, the Postgres
+pool's connections and any request being served did not. `installShutdown`
+(`src/server.js:1653`) now stops the driver, closes the listener, waits for
+in-flight requests, closes the store and exits 0, with
+`LINDELA_LITE_SHUTDOWN_MS` (default 10 s) as the bound and a second signal
+forcing an exit 1.
+
+  Two measurements shaped the fix rather than decorating it. **`server.close()`
+  alone does not terminate:** a keep-alive socket that goes idle *after* the
+  call is not one it releases, so a server with one completed request took
+  3135 ms to report closed against a 120 ms route — every ordinary shutdown
+  would have run out the deadline and exited 1. Sweeping
+  `closeIdleConnections()` brings that to 129 ms with the in-flight response
+  still delivered, and the canary that removes the sweep fails three of the four
+  guards. **And a request must be in flight, not merely connected**, to test the
+  claim: `server.close()` closes idle sockets immediately and correctly, so the
+  first version of that guard passed a request the server had not started
+  serving and failed on the real one. Guards in
+  `test/shutdown-honesty.test.js`, four tests, canaried both ways.
+
+*Still true — unlisted collections.* Both adapters now call
+`assertDeclaredCollection` on every write path (`src/store.js:1084,1090,1232,1264,1273`,
+`src/postgres-store.js:585,689,714,868,895,924,1099`), so the "guard is a comment"
+claim is stale; what remains is that the *read* path filters rather than
+refuses, which is deliberate.
+
+*Still true — `min(…spread)`.* `src/capture.js:503-506,640` and
+`src/flood-depth.js:479-480` spread an unbounded array into `Math.min`/`Math.max`,
+which throws `RangeError` past roughly 100k arguments rather than OOMing. The
+alert path already learned this (`src/alerts.js:761` carries the CON-05 note).
 
 **Audit trail** — `actionLog` built `metadata` as a fixed two-key literal from
 `record.status` and `record.priority`, with no way for a caller to say anything
@@ -1339,8 +1381,9 @@ row is written. Guard: `test/reporting-route-module.test.js`, three tests.
 
 **Reports** — `markdown_download` records a byte count rather than the artefact
 (`src/reports.js:1373`), so the exported report is not retrievable later. Report <!-- line-drift-ok: quoted as it was; the audit entry is a statement about the tree as audited -->
-webhooks are unsigned and untimed. `src/pdf.js:11` computes a "signature" that is
-a self-referential 64-bit digest. Export returns only the record appendix;
+webhooks are unsigned and untimed, both fixed 2026-10-19 (signing and a 5 s
+deadline). `src/pdf.js:11` computed a "signature" that is a self-referential
+64-bit digest. Export returns only the record appendix;
 the narrative exists solely in `export.md` with nothing saying so. Both the
 webhook signature and the digest are fixed — see above and below.
 
@@ -1357,8 +1400,8 @@ broken by any figure edit — and signs it as HMAC-SHA-256/32 under
 `LINDELA_LITE_REPORT_SIGNING_KEY_ID`. With no key the footer reads `unkeyed —
 not a signature`, because a recipient who cannot tell the two apart reads the
 second as the first. Guard: `test/export-narrative.test.js`, six tests, four of
-which fail against the old footer. The report-webhook *signature* in the
-paragraph above is still unfixed.
+which fail against the old footer. The report-webhook *signature* named in the
+same paragraph is fixed too — see **Outbound HTTP** above for its guard.
 
 **Dead code** — corrected against the tree on 2026-10-03; two of the original
 claims were false and one is a third copy of the same shape as the code it

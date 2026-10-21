@@ -4115,9 +4115,6 @@ function renderWorkflowsTab(byType, totals = {}) {
   const shown = WORKFLOW_TYPES.filter((type) => (byType[type]?.open || byType[type]?.closed || byType[type]?.rejected))
   set('workflowTypeCount', shown.length ? `${shown.length} types` : '')
 
-  // Same rule as `#alertsList`: `role="list"` is a promise that the children
-  // are list items, and the empty branch below writes one paragraph. The role
-  // follows what was written, not what the container usually holds.
   grid.setAttribute('role', shown.length ? 'list' : 'status')
   grid.innerHTML = shown.map((type) => {
     const m = byType[type] || { open: 0, closed: 0, rejected: 0 }
@@ -5289,20 +5286,8 @@ function _renderAlertsPanel() {
   const container = $('alertsList')
   if (!container) return
 
-  // The container is declared `role="list"` in index.html, and a list may hold
-  // only list items. Two of the three branches below write a *message* into it
-  // — an error state and an empty state, each `role="status"` — which made the
-  // dashboard fail axe's `aria-required-children` in every theme at both
-  // viewports. The role follows what the container actually holds rather than
-  // what it usually holds: a list when it has cards, a plain container when it
-  // has a sentence. Leaving it as `list` over one paragraph is a promise to a
-  // screen reader that the children below it are items, and they are not.
-  container.setAttribute('role', 'list')
-
-  // A rebuild that does not know where the caret is will take it. The list is
-  // marked live so `shouldDeferRedraw` stands down while a field is focused,
-  // and every control carries a stable key so focus and caret survive the
-  // rebuilds that do happen.
+  // Marked live so `shouldDeferRedraw` stands down while a field is focused;
+  // every control carries a stable key so focus and caret survive a rebuild.
   container.setAttribute('data-live-region', 'alerts')
 
   // Once per paint, not once per row: the line is one fact about the deployment.
@@ -5320,7 +5305,7 @@ function _renderAlertsPanel() {
   if (outcome.state !== 'ok' && outcome.state !== 'empty') {
     const desc = describeState(ERROR, { subject: 'Alerts', noun: 'the alert feed' })
     container.setAttribute('role', 'status')
-    container.innerHTML = '<div class="empty-state empty-state-error" role="status">'
+    container.innerHTML = '<div class="empty-state empty-state-error">'
       + `<p class="empty-state-title">${escapeHtml(desc.title)}</p>`
       + `<p>${escapeHtml(desc.body)}</p>`
       + (outcome.neverChecked
@@ -5355,6 +5340,7 @@ function _renderAlertsPanel() {
   const slice = pageWindow('alerts', filtered.length)
   const page = filtered.slice(slice.start, slice.end)
 
+  container.setAttribute('role', 'list')
   container.innerHTML = (barActive
     ? `<p class="filter-scope-note">${escapeHtml(barScopeNote(bar, barUndetermined))}</p>`
     : '') + page.map((alert, i) => {
