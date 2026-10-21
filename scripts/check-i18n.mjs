@@ -409,7 +409,9 @@ for (const surface of surfaces) {
       console.error(
         `✖ ${surface.dir} offers "${code}" but ${missing.length} of its ${surface.keys.length} strings are missing:\n`
         + `    ${missing.join('\n    ')}\n`
-        + '  A missing key renders as the raw key name in the UI. Either translate these or\n'
+        + '  A missing key renders in English, because `set()` re-reads `en.json` as the base\n'
+        + '  layer before the locale — so the surface is not broken, it is only partly\n'
+        + '  translated under a picker that promised the language. Either translate these or\n'
         + '  remove "' + code + '" from the selector until it is complete.',
       )
       problems.push(`${code}: ${missing.length} missing`)
@@ -498,6 +500,18 @@ const unlayered = surfaces.filter((s) => !s.keys.length).map((s) => s.dir)
 if (unlayered.length) {
   notes.push(`  surfaces with no i18n layer at all: ${unlayered.join(', ')}`)
 }
+
+// The console is `public/index.html`, not a directory under `public/`, so the
+// walk above has never seen it — and it is the surface with the most locales on
+// its picker. It is checked, by `check-i18n-offers.mjs`, against a 25% floor
+// rather than rule 2's completeness, because its picker is the product's and
+// English is the base layer: a partly-translated console reads English for the
+// keys its locale lacks rather than rendering a key id. Saying so here is the
+// point. A surface missing from a report and a surface with nothing to report
+// look identical, and this gate's own history is a list of the second being
+// read as the first.
+notes.push('  console (public/index.html) is not a directory under public/, so the walk above skips it;'
+  + ' `check-i18n-offers.mjs` checks it against a 25% offer floor instead')
 
 for (const n of notes) console.log(n)
 
