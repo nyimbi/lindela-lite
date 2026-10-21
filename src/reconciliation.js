@@ -9,7 +9,7 @@
  * reason its inputs can name?*
  *
  * The finding ENH-51 turns into a first-class event already existed as a log
- * line. `src/analytics.js` (ENH-23, `reconcileDerivedNumbers`) writes a row and
+ * line. `src/analytics.js` (SAE-23, `reconcileDerivedNumbers`) writes a row and
  * an `logger.error` when a derived value moved while its input counts stood
  * still. A log line is a thing an operator may see; an event is a thing a donor
  * can be answered on. This ledger is the latter, and it is the substrate for the
@@ -36,7 +36,7 @@
  *
  * ## Where the undefined-input classification comes from
  *
- * The declared inputs are the key set of `input_counts`, which ENH-23 stamps
+ * The declared inputs are the key set of `input_counts`, which SAE-23 stamps
  * onto each derived row from the collections it reads. A recompute path can be
  * handed inputs it did not declare — a clock, a seed — and those arrive in
  * `undeclared_inputs` on the observation. When a value moved over unchanged
@@ -123,10 +123,10 @@ function valueOf(record) {
  * The key a published number is compared under.
  *
  * `derivedKey` from `src/analytics.js`, not a spelling local to this module. The
- * reconciliation in ENH-23 already keys derived rows on `collection:type:place`,
+ * reconciliation in SAE-23 already keys derived rows on `collection:type:place`,
  * and a ledger that keyed them differently would compare a flood score against a
  * conflict score for the same grid cell and call the difference a finding —
- * exactly the collapse ENH-23's comment warns against. One key function,
+ * exactly the collapse SAE-23's comment warns against. One key function,
  * imported, so the two cannot drift.
  */
 export function publishedKey(collection, record) {
@@ -143,7 +143,7 @@ export function publishedKey(collection, record) {
  * fed straight back in without being rebuilt or losing its value.
  *
  * `input_counts` is taken from the record's own `input_counts` when the caller
- * did not supply one, because that is where ENH-23 stamps it. The inputs are
+ * did not supply one, because that is where SAE-23 stamps it. The inputs are
  * hashed to a digest rather than compared by identity: two count maps that agree
  * field for field are the same inputs however they were spelled, and one digest
  * is one comparable value to store in the event.
@@ -195,7 +195,7 @@ function compareValues(before, after) {
   const b = after.value
   if (a === null || b === null) return { comparable: false, changed: null, delta: null }
   if (typeof a === 'number' && typeof b === 'number') {
-    // `!==`, not a band. The band belongs to ENH-23's anomaly detector, which
+    // `!==`, not a band. The band belongs to SAE-23's anomaly detector, which
     // fires on a *material* move. The ledger answers the narrower question "did
     // it change at all", and a band here would let a value move by a hair over
     // unchanged inputs and report reconciled, which is the false negative this

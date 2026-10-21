@@ -312,7 +312,7 @@ describe('the store round-trip', () => {
     await store.merge({ hazard_events: [hazard({ payload_hash: 'h1' })] })
     await store.merge({ hazard_events: [hazard({ payload_hash: 'h2', severity: 'critical' })] })
 
-    // ENH-08 keeps history off the default read — it is 60% of a real store by
+    // SAE-08 keeps history off the default read — it is 60% of a real store by
     // bytes — so a caller that wants it asks. The default read is asserted
     // empty here rather than left implicit, because "the history is there" and
     // "the default read does not pay for it" are two claims and this test is

@@ -207,7 +207,7 @@ describe('ENH-51 — the ledger runs inside the refresh, and only reports findin
   })
 
   it('records a number that held while its inputs moved', async () => {
-    // ENH-23's finding, reached through the ledger: the inputs moved and the
+    // SAE-23's finding, reached through the ledger: the inputs moved and the
     // number did not, which usually means the input is not wired in.
     //
     // The fixture has to produce this deliberately. Adding hazards *inside* the

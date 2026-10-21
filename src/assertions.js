@@ -550,7 +550,7 @@ export const SOURCE_ASSERTIONS = deepFreeze({
       zero_is_legitimate: false,
       // Scoped to runs that walked a comparable number of quarters. The batch
       // size is the quarter count times the density of floods in those
-      // quarters, and ENH-27 made the quarter count vary by design: the first
+      // quarters, and SAE-27 made the quarter count vary by design: the first
       // run walks the whole archive, every run after it re-reads the one
       // quarter still open. Comparing a one-quarter batch against a
       // hundred-and-sixty-eight-quarter baseline is not a collapse, it is two
@@ -1249,7 +1249,7 @@ function checkValueVocabulary(assertion, { batch, unmeasured }) {
  *
  * A count is a measurement of the ground the run covered as much as of the feed
  * it read, so two counts are comparable only when the ground is. `gdacs_archive`
- * is the source that made this visible: ENH-27 gave it a cursor, and from the
+ * is the source that made this visible: SAE-27 gave it a cursor, and from the
  * second run on it re-reads the one quarter still open instead of the whole
  * archive. Its batch went from thousands of events to a handful, and the count
  * assertion — comparing against a baseline built from full walks — reported

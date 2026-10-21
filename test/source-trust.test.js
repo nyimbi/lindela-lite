@@ -405,7 +405,7 @@ describe('a truncated walk says so where an operator will see it', () => {
     // argued from the latency percentile alone — a p95 from three points is
     // thin. The score is also a *success rate*, and a proportion over three
     // observations is one of three numbers (33 / 67 / 100), which is not a
-    // weaker health score, it is a claim. ENH-21 moved the floor to
+    // weaker health score, it is a claim. SAE-21 moved the floor to
     // MIN_OPERATIONAL_SAMPLES, the same one the metric registry uses, so that a
     // source's connector score and its published rates are floored once.
     //

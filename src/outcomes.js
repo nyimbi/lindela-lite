@@ -1,7 +1,7 @@
 import { stableId, toNumber } from './utils.js'
 
 /**
- * ENH-19 — the outcome channel.
+ * SAE-19 — the outcome channel.
  *
  * Every calibration surface this platform has shipped reports "not estimable",
  * and the reason is one line long: nothing records whether the warning was

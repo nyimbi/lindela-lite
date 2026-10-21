@@ -9,7 +9,7 @@ import { emptyStore } from '../src/schema.js'
 import { STORE_METADATA_KEYS } from '../src/store.js'
 
 /**
- * ENH-07 — a manifest that nobody keeps honest decays into the thing it replaced.
+ * SAE-07 — a manifest that nobody keeps honest decays into the thing it replaced.
  *
  * The store could take a collection manifest for months with no caller for it,
  * and the reason it stayed unused is the cost of getting it right: 96 routes, each
@@ -61,7 +61,7 @@ const SPEC_ROUTES = declaredRoutes().flatMap(({ path, methods }) =>
   methods.map((method) => ({ key: `${method} ${path.replace(/\{[^}]+\}/g, ':id')}`, path })))
 const SPEC_PATHS = [...new Set(declaredRoutes().map((r) => r.path))]
 
-describe('ENH-07 — every documented route is accounted for', () => {
+describe('SAE-07 — every documented route is accounted for', () => {
   const keys = new Set([...Object.keys(ROUTE_MANIFESTS), ...WIDE_ROUTES])
 
   it('no route is unmapped, so a new one cannot arrive silently expensive', () => {
@@ -109,7 +109,7 @@ describe('ENH-07 — every documented route is accounted for', () => {
   })
 })
 
-describe('ENH-07 — the manifest is looked up by the route, not the record', () => {
+describe('SAE-07 — the manifest is looked up by the route, not the record', () => {
   it('an id segment does not change the answer', () => {
     assert.deepEqual(
       collectionsForRequest('GET', '/api/v1/incidents'),
@@ -133,7 +133,7 @@ describe('ENH-07 — the manifest is looked up by the route, not the record', ()
   })
 })
 
-describe('ENH-07 — the measurement still reproduces', () => {
+describe('SAE-07 — the measurement still reproduces', () => {
   it('driving the routes again reads no collection the table omits', async () => {
     // The staleness check. If a handler starts reading a new collection, this
     // fails — which is the moment to re-run the collector and commit its output,
@@ -279,9 +279,9 @@ describe('explain', () => {
 })
 
 /**
- * ENH-49 and ENH-08 — the history routes have to ask for history.
+ * ENH-49 and SAE-08 — the history routes have to ask for history.
  *
- * ENH-08 keeps `record_versions` off the default read. The two `/history` routes
+ * SAE-08 keeps `record_versions` off the default read. The two `/history` routes
  * hand their snapshot to `series.js`, which reads `snapshot.record_versions`, so
  * they must ask. They did not: they are whole-store readers, and a whole-store
  * read excludes history like any other, so both routes returned an empty series

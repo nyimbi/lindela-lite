@@ -314,7 +314,7 @@ describe('the GDACS cap: 4,000 of 40,000 is not a clean run', () => {
   })
 
   it('compares a resumed walk only against other resumed walks', () => {
-    // ENH-27. The cursor made the walk's scope vary: the first run reads the
+    // SAE-27. The cursor made the walk's scope vary: the first run reads the
     // whole archive, every later run re-reads the one quarter still open. Two
     // counts over different ground are not comparable, and comparing them read
     // every resumed run as a collapse.

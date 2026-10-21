@@ -53,7 +53,7 @@ exist, Background Sync never registers, `replayQueue()` (sw.js:626) never runs, 
 none of the `install`/`activate`/`fetch`/`sync`/`message` listeners ever attach.
 
 `git log --reverse public/sw.js` — the exports were introduced by `aaac84f`
-(fix:offline), `b7e1297` (fix:sw) and `363adc1` (fix:offline, **ENH-22**). Three
+(fix:offline), `b7e1297` (fix:sw) and `363adc1` (fix:offline, **SAE-22**). Three
 consecutive offline-hardening commits, one of them a shipped enhancement, hardened a
 worker no browser will install.
 
@@ -151,7 +151,7 @@ data.
 (eight surfaces). `on_watermark_state` has zero call sites outside two connectors.
 `beginCapture` has zero call sites. `schemaStatus()` has zero call sites. The read
 fallback in `scopeForRoute` is `read:hazards`, and `test/route-scope-coverage.test.js:161`
-asserts it. ENH-05, ENH-06, ENH-07, ENH-08, ENH-10, ENH-11, ENH-12 each shipped a
+asserts it. SAE-05, SAE-06, SAE-07, SAE-08, SAE-10, SAE-11, SAE-12 each shipped a
 mechanism; several shipped a mechanism and, separately, a test that exercises the
 mechanism directly rather than the thing it exists to serve.
 

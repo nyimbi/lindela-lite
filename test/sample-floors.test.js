@@ -5,7 +5,7 @@ import { computeMetric, declaredMetrics } from '../src/analytics/metrics.js'
 import { scoreConnector as scoreFromStatus } from '../src/circuit.js'
 
 /**
- * ENH-21 — a floor enforced in the view is a floor the API does not have.
+ * SAE-21 — a floor enforced in the view is a floor the API does not have.
  *
  * The metric registry already refuses to publish a rate computed from too few
  * observations, and every published surface reads it from there. This file
@@ -26,7 +26,7 @@ const outcomes = (n, extra = {}) => Array.from({ length: n }, (_, i) => ({
   ...extra,
 }))
 
-describe('ENH-21 — a health score needs enough observations to be one', () => {
+describe('SAE-21 — a health score needs enough observations to be one', () => {
   it('refuses a score from fewer than the floor', () => {
     for (const n of [1, 2, CIRCUIT_SCORE_MIN_OUTCOMES - 1]) {
       const scored = scoreConnector({ outcomes: outcomes(n) })
@@ -71,7 +71,7 @@ describe('ENH-21 — a health score needs enough observations to be one', () => 
   })
 })
 
-describe('ENH-21 — every declared metric carries a floor or is a count', () => {
+describe('SAE-21 — every declared metric carries a floor or is a count', () => {
   it('a rate refuses on an empty input, and a count is allowed to be zero', () => {
     // The distinction the assertion has to keep, because flattening it is the
     // bug: "no people were reached" is a true zero, and "the false-alert rate is

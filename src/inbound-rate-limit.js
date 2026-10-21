@@ -30,7 +30,7 @@ export const INBOUND_POLICIES = Object.freeze({
   //
   // The rate moved from 120 to 300 for a measured reason: it was set when a
   // read materialised the whole store — 110 ms and 143 MB for one endpoint,
-  // measured at 39,696 records. ENH-07 gave `read()` a collection manifest, and a
+  // measured at 39,696 records. SAE-07 gave `read()` a collection manifest, and a
   // single-collection read is now 14 ms. The budget is a claim about what a read
   // costs, so it has to follow the cost: at 300/min a supervisor can keep four
   // consoles polling (12 endpoints every 30 s each) and still navigate, while a

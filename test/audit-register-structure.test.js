@@ -297,117 +297,102 @@ describe('the audit register’s skeleton, guarded', () => {
 })
 
 /**
- * The two enhancement registers, read as documents.
+ * The three enhancement registers, and the id space each one owns.
  *
- * `docs/improvements/enhancements.md` numbers `ENH-01..ENH-30` and
- * `docs/improvements/system-audit/02-enhancements.md` numbers
- * `ENH-01..ENH-50`. They are separate registers that both use the id space
- * `ENH-nn`, so **every one of the 30 shared ids means two different things**:
- * `ENH-01` is "Deny-by-default authorization" in one and "The field app works
- * for a week offline" in the other, and so on for all thirty.
+ * Three registers numbered the same ids:
  *
- * The cost is not cosmetic, and the size of it is measured below rather than
- * stated here — see `citationSpread()`. At the last measurement there were
- * **1,961** `ENH-nn` citations across **353** files, **348** of them in `src/`
- * comment lines — so a reader following `// ENH-29` from a source file has a 50%
- * chance of landing on the wrong item, and `docs/improvements/status.md`
- * resolves every id against the *first* register. This is the same shape the
- * file's own header catalogues: a hand-kept table that nothing cross-checks
- * drifts, and the drift looks like a clean result.
+ *   - `docs/improvements/enhancements.md` — `ENH-01..ENH-30`
+ *   - `docs/improvements/system-audit/02-enhancements.md` — `ENH-01..ENH-50`
+ *   - `docs/improvements/audit-2026-10/enhancements-50.md` — `ENH-31..ENH-81`
  *
- * That paragraph used to say "1,855 citations across 338 files, 100 of them in
- * `src/` comments", and it closed by claiming "the numbers above are asserted".
- * They were not — only the collision counts were — and they had already rotted
- * when they were written. Measured at the commit that added them (`41ff308`,
- * 2026-10-15, in a temp worktree): 1,872 citations, 338 files, **336** in `src/`
- * comments. So the file count was right, the total was low by 17, and the
- * `src/` figure was wrong by a factor of 3.4 — it named a tenth of the real
- * cost in the sentence arguing that the cost was large. `citationSpread()` now
- * derives all three, so they cannot be typed wrong again.
+ * The first and third are disjoint by construction; the *second* overlapped both,
+ * so every one of its fifty ids meant two or three different things. `ENH-07`
+ * was "Per-source data assertions" in the first register, "`read()` takes a
+ * collection manifest" in the second, and nothing in the third. `ENH-35` was an
+ * OGC/STAC catalogue in the third and a watermark probe in the second. A reader
+ * following `// ENH-07` from `src/route-manifests.js` and the same token from
+ * `src/assertions.js` was reading about two unrelated features, with nothing on
+ * either line to say so.
  *
- * The figures moved by 7 citations, 3 files and 4 `src/` comments when the
- * rate-limit budget landed, which is the mechanism working: the number is held
- * to the tree by a test, so a change that adds citations to the register's own
- * subject updates it in the same commit rather than leaving a stale count
- * behind.
+ * Both headers stated the first/second half of that and neither stated the
+ * third, and both closed by calling the rename "outstanding work". It was done
+ * on 2026-10-21: the second register is now `SAE-01..SAE-50`, which no other
+ * register uses. The prefix was chosen so a reader can still tell at a glance
+ * which audit an id belongs to — `SAE` for the system-audit register.
  *
- * Those three read 1,946 / 352 until 2026-10-18, and the way they were wrong is
- * worth keeping: `citationSpread()` walked the filesystem, so it measured
- * whatever the person running it had lying around. A gitignored `.env.qa`
- * citing one id made the total 1,946 locally and 1,945 on a CI checkout, and
- * the note — asserting the *repository's* figure — failed on CI while passing
- * here. It now walks `git ls-files`, because a claim about the repository has to
- * be measured against the repository and not against a working tree that may
- * hold files the repository does not have.
+ * What the check below holds, now that the collision is gone:
  *
- * The check below does not fix the collision — renaming 50 ids across ~1,900
- * citations is a change with its own review, and doing it inside a defect fix
- * would bury it. What it does is make the collision *measured* rather than
- * discovered, and hold the scale of it to the tree rather than to a memory.
+ *   - the three registers still parse, so a green run is not a run over nothing;
+ *   - their id spaces are pairwise disjoint, which is the property that was
+ *     missing and is the one that must not regress;
+ *   - every `ENH-nn` and `SAE-nn` citation in the tree resolves against exactly
+ *     one register — the claim the rename exists to make true, measured against
+ *     `git ls-files` rather than a working tree (see `citationSpread()`);
+ *   - each register's header says which id space it owns, because the header is
+ *     where a reader who hits an unfamiliar id will look.
  */
-describe('the two enhancement registers do not share an id space', () => {
+describe('the enhancement registers do not share an id space', () => {
   const FIRST = readFileSync(new URL('../docs/improvements/enhancements.md', import.meta.url), 'utf8')
   const SECOND = readFileSync(new URL('../docs/improvements/system-audit/02-enhancements.md', import.meta.url), 'utf8')
+  const THIRD = readFileSync(new URL('../docs/improvements/audit-2026-10/enhancements-50.md', import.meta.url), 'utf8')
 
-  /** id -> title, for `### ENH-NN — Title`. */
+  /** id -> title, for `### ENH-NN — Title` (or `### SAE-NN — Title`). */
   function titled(text) {
-    return new Map([...text.matchAll(/^### (ENH-\d+) — (.+)$/gm)].map((m) => [m[1], m[2].trim()]))
+    return new Map([...text.matchAll(/^### ((?:ENH|SAE)-\d+) — (.+)$/gm)].map((m) => [m[1], m[2].trim()]))
   }
 
-  it('parsed both registers, so a passing run is not a run over nothing', () => {
+  /** id -> title, for the third register's `**ENH-NN — Title.**` style. */
+  function boldTitled(text) {
+    return new Map([...text.matchAll(/^\*\*(ENH-\d+) — (.+?)\.?\*\*/gm)].map((m) => [m[1], m[2].trim()]))
+  }
+
+  it('parsed all three registers, so a passing run is not a run over nothing', () => {
     const a = titled(FIRST)
     const b = titled(SECOND)
+    const c = boldTitled(THIRD)
     assert.ok(a.size >= 25, `parsed ${a.size} ids from enhancements.md, which is not the register`)
     assert.ok(b.size >= 45, `parsed ${b.size} ids from 02-enhancements.md, which is not the register`)
+    assert.ok(c.size >= 45, `parsed ${c.size} ids from enhancements-50.md, which is not the register`)
+    // The prefixes are the whole point: a register that silently went back to
+    // `ENH-` headings would still parse, and would still pass a disjointness
+    // check if the *other* register moved instead. Pin the one that was renamed.
+    assert.ok(
+      [...b.keys()].every((id) => id.startsWith('SAE-')),
+      'system-audit/02-enhancements.md must number its items SAE-nn; it was renamed off the ENH- space on 2026-10-21',
+    )
   })
 
-  it('records how many ids the two registers share, and that each means two things', () => {
+  it('no two registers share an id', () => {
     const a = titled(FIRST)
     const b = titled(SECOND)
-    const shared = [...a.keys()].filter((id) => b.has(id))
-    const ambiguous = shared.filter((id) => a.get(id) !== b.get(id))
-
-    // The collision itself. Asserted as a floor rather than an equality: if a
-    // future change renames one register's ids the number drops, and this test
-    // failing then is correct — it means the collision was addressed and this
-    // note is stale. What it must not do is pass while the number is zero for
-    // the wrong reason (a regex that stopped matching), which the parse check
-    // above covers.
-    assert.ok(
-      shared.length >= 25,
-      `the registers share only ${shared.length} ids — if the collision was fixed, update this note rather than the count`,
-    )
-    assert.equal(
-      ambiguous.length,
-      shared.length,
-      `${shared.length - ambiguous.length} shared id(s) now agree on meaning; the collision is partial rather than total`,
-    )
-  })
-
-  it('names the collision where a reader following an id will look', () => {
-    // The note is the deliverable: a reader who hits `ENH-29` in a source
-    // comment has to be able to find out it is ambiguous. A silent test that
-    // only fails on a change does not help them.
-    for (const [file, text] of [['enhancements.md', FIRST], ['system-audit/02-enhancements.md', SECOND]]) {
-      assert.match(
-        text,
-        /ENH-nn|id space|collide|collision/i,
-        `${file} does not warn that ENH ids are shared with the other register`,
-      )
+    const c = boldTitled(THIRD)
+    const spaces = [['enhancements.md', a], ['system-audit/02-enhancements.md', b], ['audit-2026-10/enhancements-50.md', c]]
+    const problems = []
+    for (let i = 0; i < spaces.length; i += 1) {
+      for (let j = i + 1; j < spaces.length; j += 1) {
+        const [na, da] = spaces[i]
+        const [nb, db] = spaces[j]
+        const shared = [...da.keys()].filter((id) => db.has(id))
+        if (shared.length) problems.push(`${na} and ${nb} both number ${shared.slice(0, 6).join(', ')}${shared.length > 6 ? ` (+${shared.length - 6} more)` : ''}`)
+      }
     }
+    assert.deepEqual(problems, [],
+      `${problems.join('\n')}\n`
+      + 'An id that appears in two registers is an id whose meaning depends on which file the reader opened. '
+      + 'The system-audit register was renamed SAE-nn precisely to stop this; a new item added back into the '
+      + 'ENH- space re-opens it.')
   })
 
   it('the scale the note states is the scale the tree has', () => {
-    // The header's paragraph quotes three numbers, and the version of it before
-    // this case claimed they were asserted while asserting none of them — so
-    // they rotted the moment the tree grew, which is the failure this whole file
-    // exists to catch, reproduced inside the file itself.
+    // The header of `citationSpread()` quotes three numbers, and an earlier
+    // version of this note claimed they were asserted while asserting none of
+    // them — so they rotted the moment the tree grew, which is the failure this
+    // whole file exists to catch, reproduced inside the file itself.
     //
-    // The assertion is deliberately loose on the total and exact on the shape.
-    // The repository grows: a new file with one citation is normal and must not
-    // fail a test. What must not pass silently is the note naming a *scale* the
-    // tree has left behind — the `src/` figure was off by 3.4x, which is not
-    // drift, it is a different number.
+    // The count is now *lower* than it was, because 400-odd citations moved from
+    // the shared `ENH-` space to `SAE-`. That is the number telling the truth
+    // about a rename rather than a number that drifted: it is why the check is
+    // exact rather than tolerant.
     const { total, files, srcComments } = citationSpread()
     assert.ok(total > 500, `counted ${total} ENH-nn citations — the walk or the regex is wrong, not the note`)
     assert.ok(files > 100, `counted citations in ${files} files — the walk is wrong`)
@@ -422,21 +407,39 @@ describe('the two enhancement registers do not share an id space', () => {
     assert.ok(note, 'the header note no longer states its counts in the form this check reads')
 
     const stated = { total: Number(note[1].replace(/,/g, '')), files: Number(note[2].replace(/,/g, '')), srcComments: Number(note[3].replace(/,/g, '')) }
-    // Tight, and deliberately so. The first version allowed 10% slack and passed
+    // Tight, and deliberately so. An earlier version allowed 10% slack and passed
     // a note that said 349 where the tree has 338 — the slack swallowed a wrong
-    // number, which is the failure this case exists to prevent. `citationSpread()`
-    // is deterministic (measured three times: 1,917 / 348 / 338 on each run), so
-    // the note can be held to the exact figure. If the tree moves, the note moves
-    // with it in the same commit; that is the point.
+    // number, which is the failure this case exists to prevent. If the tree
+    // moves, the note moves with it in the same commit; that is the point.
     for (const key of ['total', 'files', 'srcComments']) {
       const actual = { total, files, srcComments }[key]
       assert.equal(
         stated[key],
         actual,
         `the header note says ${key} = ${stated[key]}, the tree has ${actual}. `
-        + 'Update the note — it is the sentence that tells a reader how much the collision costs.',
+        + 'Update the note — it is the sentence that tells a reader how far these ids reach.',
       )
     }
+  })
+
+  it('every id citation in the tree resolves against exactly one register', () => {
+    // The claim the rename makes, tested rather than asserted. A citation is
+    // checked in its file's own register: `SAE-nn` must exist in the system-audit
+    // register, `ENH-nn` must exist in the first or third. An id that exists in
+    // neither is a dangling citation — the reader follows it and lands nowhere.
+    //
+    // This is deliberately a *resolution* check, not a semantic one. Whether
+    // `// SAE-07` in a given file means the manifest item is a judgement no
+    // machine can make here; that was adjudicated by reading, in the same
+    // commit. What a machine can hold is that every id names a real item.
+    const known = { ENH: new Set([...titled(FIRST).keys(), ...boldTitled(THIRD).keys()]), SAE: new Set(titled(SECOND).keys()) }
+    const { cited } = citationSpread()
+    assert.ok(cited.length > 500, `collected ${cited.length} id citations — the walk or the regex is wrong`)
+    const dangling = cited
+      .filter(({ id }) => !known[id.slice(0, 3)].has(id))
+      .map(({ id, file }) => `${file}: ${id}`)
+    assert.deepEqual(dangling, [],
+      `${dangling.length} citation(s) name an id no register holds:\n${dangling.slice(0, 20).join('\n')}`)
   })
 })
 
@@ -447,10 +450,16 @@ describe('the two enhancement registers do not share an id space', () => {
  * ones that are in a `src/` comment — which is the figure that decides whether a
  * reader following an id from source code can be misled.
  *
+ * At the last measurement there were **1,516** `ENH-nn` citations across
+ * **327** files, **280** of them in `src/` comment lines. Those three read
+ * 1,961 / 353 / 348 before the `SAE-` rename on 2026-10-21, and the drop is the
+ * rename: 445 citations left the `ENH-` prefix when the system-audit register
+ * moved off it. A figure that *fell* by a known quantity is a different thing
+ * from a figure that rotted, and this is the former.
+ *
  * `srcComments` is comment *lines* carrying at least one citation, not tokens:
  * a line is what a reader's eye lands on, and a block comment restating three
- * ids on one line is one place to be misled, not three. That definition is why
- * the number is 349 rather than the 376 raw tokens in `src/`.
+ * ids on one line is one place to be misled, not three.
  *
  * **Read from git, not the filesystem.** This walked the working tree, so the
  * count depended on what the person running it happened to have checked out or
@@ -475,20 +484,28 @@ function citationSpread() {
   let total = 0
   let srcComments = 0
   const files = new Set()
+  // Every id token the tree cites, with where it was cited, so a caller can
+  // check the citation resolves. `SAE-` is collected alongside `ENH-` because
+  // the rename moved 400-odd citations out of the shared space and an id that
+  // no register holds is a dead end wherever it lives.
+  const ALL = /\b((?:ENH|SAE)-\d+)\b/g
+  const cited = []
   for (const file of walk()) {
     let text
     try { text = readFileSync(file, 'utf8') } catch { continue }
     if (text.includes('\0')) continue
+    const rel = path.relative(ROOT, file)
+    for (const hit of text.matchAll(ALL)) cited.push({ id: hit[1], file: rel })
     const hits = text.match(RE)
     if (!hits) continue
     total += hits.length
-    files.add(path.relative(ROOT, file))
-    if (path.relative(ROOT, file).startsWith(`src${path.sep}`)) {
+    files.add(rel)
+    if (rel.startsWith(`src${path.sep}`)) {
       for (const line of text.split('\n')) {
         if (RE.test(line) && /^\s*(\/\/|\*|\/\*)/.test(line)) srcComments += 1
         RE.lastIndex = 0
       }
     }
   }
-  return { total, files: files.size, srcComments }
+  return { total, files: files.size, srcComments, cited }
 }

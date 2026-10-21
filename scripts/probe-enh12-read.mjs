@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * ENH-12 probe, the read half: can `/history/:collection/record` be answered
+ * SAE-12 probe, the read half: can `/history/:collection/record` be answered
  * from an index instead of scanning every version row?
  *
- * The prune half of ENH-12 shipped as migration 4's expression index on
+ * The prune half of SAE-12 shipped as migration 4's expression index on
  * `((body->>'record_id'), (body->>'valid_to'))`. The read path still loads the
  * whole `record_versions` collection and filters it in JavaScript, so a request
  * about one record pays for all of them. This measures whether the *existing*

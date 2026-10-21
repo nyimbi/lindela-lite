@@ -338,7 +338,7 @@ function derivedDigest(name, data) {
  * the same guard, and the same reason, as `derivedDigest` above.
  *
  * Not `INPUT_COUNTS`, which is the obvious set and the wrong one. That set is
- * the counts stamped *on* a derived record for ENH-23 to compare against, so it
+ * the counts stamped *on* a derived record for SAE-23 to compare against, so it
  * names the derived collections as inputs — and this refresh stamps every derived
  * row with an envelope before the swap. Hashing them made the run id a function
  * of the *previous* run id: seeded(1) → `743a33e6`, seeded(6) → `32ca17f7`, back
@@ -453,7 +453,7 @@ export async function refreshAnalytics(store) {
   // accumulating under evidence that has since moved.
   if (need('region_trust')) computed.region_trust = calibrationByRegion({ ...data, risk_scores: computed.risk_scores || data.risk_scores || [] })
   if (need('model_drift')) computed.model_drift = driftFromStore(data)
-  // ENH-23. The counts a value was computed from travel *with the value*, so
+  // SAE-23. The counts a value was computed from travel *with the value*, so
   // the next refresh has two real sides to compare: the number that was stored
   // and the counts it was stored from. Without them the only available
   // comparison is a number against itself, which is a check that cannot fail.
@@ -521,12 +521,12 @@ export async function refreshAnalytics(store) {
   // moved" for a collection nothing measured. The reconciliation is for values
   // that moved, and a skip is the case where they could not have.
   const reconciliation = await reconcileDerivedNumbers(store, data, { previous: previousValues, now: new Date().toISOString() })
-  // ENH-51. ENH-23's reconciliation answers "did a value move by more than the
+  // ENH-51. SAE-23's reconciliation answers "did a value move by more than the
   // band"; the ledger answers the narrower "did it move at all, and if its
   // inputs held, what moved it". Both are written, because they are different
   // questions with different bands and a caller reading one is not reading the
   // other. The ledger's events go to `reconciliation_events` rather than into
-  // `unexpected_changes`, which ENH-23 owns and whose shape its readers depend
+  // `unexpected_changes`, which SAE-23 owns and whose shape its readers depend
   // on.
   const ledger = await reconcileRefresh(store, { before: previousValues, after: payload, now: new Date().toISOString() })
   rememberDigests(store, digestsAfter(plan, data, previousDigests))
@@ -664,7 +664,7 @@ function comparableValue(record) {
 }
 
 /**
- * ENH-23 — "this number changed and nobody knows why" has to be answerable.
+ * SAE-23 — "this number changed and nobody knows why" has to be answerable.
  *
  * `replaceAnalytics` swaps eight collections wholesale, so a change in the
  * engine, or a source that quietly stops contributing, moves every district's
@@ -805,10 +805,10 @@ export async function reconcileDerivedNumbers(store, data, { previous, now = new
 /**
  * ENH-51 — the reconciliation ledger, run over one refresh.
  *
- * ENH-23 asks whether a number moved by more than a band over unchanged input
+ * SAE-23 asks whether a number moved by more than a band over unchanged input
  * *counts*. This asks the four-way question the ledger exists for, and the two
  * are not the same question: a value that moved by a hair is a finding here and
- * is deliberately below ENH-23's band, and a number that could not be traced at
+ * is deliberately below SAE-23's band, and a number that could not be traced at
  * all is a refusal here and is invisible there. Both are written because both
  * are read.
  *

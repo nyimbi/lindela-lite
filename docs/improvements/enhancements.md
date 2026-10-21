@@ -1,15 +1,18 @@
 # Thirty high-impact enhancements
 
-> **These ids are not unique across the repository.** This register numbers
-> `ENH-01..ENH-30`; [`system-audit/02-enhancements.md`](system-audit/02-enhancements.md)
-> numbers `ENH-01..ENH-50` in the same `ENH-nn` space, and **all thirty ids
-> below mean something different there** — this file's `ENH-01` is
-> deny-by-default authorization, that file's is an offline field app. Every
-> `ENH-nn` citation in `src/` and `docs/` is therefore ambiguous unless it names
-> its register. `docs/improvements/status.md` resolves against *this* file.
-> `test/audit-register-structure.test.js` measures the collision so it cannot
-> grow silently. Renaming either register is outstanding work, not a fixed
-> thing.
+> **`ENH-01..ENH-30` means one thing.** This register and
+> [`audit-2026-10/enhancements-50.md`](audit-2026-10/enhancements-50.md) share
+> the `ENH-` prefix by design, and their ranges do not overlap: this file holds
+> 01–30, that one holds 31–81.
+>
+> That was not true before 2026-10-21. [`system-audit/02-enhancements.md`](system-audit/02-enhancements.md)
+> numbered `ENH-01..ENH-50`, colliding with both this register (01–30) and the
+> 2026-10 audit (31–50), so thirty ids meant two things and twenty meant three.
+> It is now `SAE-01..SAE-50`, and the roughly 550 citations in `src/`, `public/`,
+> `scripts/` and `test/` were re-pointed by reading the code around each one.
+> `docs/improvements/status.md` resolves against *this* file.
+> `test/audit-register-structure.test.js` asserts the id spaces are disjoint and
+> that every citation in the tree names an id some register holds.
 
 Each entry names the evidence, the change, the value to a user, and what it
 deliberately does **not** license. Effort is rough: S is under a day, M is a

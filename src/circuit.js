@@ -87,7 +87,7 @@ export const CIRCUIT_SCORE_WEIGHTS = Object.freeze({
 // vocabulary drifts from the code.
 export const CIRCUIT_SCORE_REASONS = Object.freeze({
   NO_OUTCOMES: 'no_outcomes',
-  // ENH-21. A success rate over two calls is two calls. The floor is the same
+  // SAE-21. A success rate over two calls is two calls. The floor is the same
   // one the metric registry uses for operational rates, because it is the same
   // claim: a proportion computed from too few observations is not a weaker
   // number, it is not a number.

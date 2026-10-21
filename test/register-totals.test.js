@@ -434,7 +434,7 @@ describe('the improvement registers state totals their tables agree with', () =>
     //
     // The predicate is a *contradiction* check, not a row classifier. A first
     // attempt classified each row by looking for a disposition word at the start
-    // of a bold span; its canary passed on the reverted heading, because ENH-12's
+    // of a bold span; its canary passed on the reverted heading, because SAE-12's
     // row states its disposition mid-sentence ("**The read half is closed … and
     // the table half is refuted**"), so the row read as open and the guard saw
     // one open row where there were none. A classifier that enumerates one of the

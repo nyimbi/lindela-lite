@@ -19,7 +19,7 @@
  * The peer's whole store is the message. That is not a shortcut: a store read
  * already returns the declared shape with every collection present
  * (`manifestShape`), already honours a row budget (SCL-01) and already excludes
- * history unless asked (ENH-08). Inventing a second envelope would be a second
+ * history unless asked (SAE-08). Inventing a second envelope would be a second
  * contract to keep in step with the first, which is the defect class this
  * repository keeps paying for.
  *

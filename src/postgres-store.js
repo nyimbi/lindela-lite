@@ -120,7 +120,7 @@ export function readPredicate(options = {}) {
     clauses.push(`collection = ANY($${params.length}::text[])`)
   }
   if (!includeHistory) clauses.push(`collection <> '${HISTORY_COLLECTION}'`)
-  // ENH-12, the read half. Two branches under one `OR`, and the form matters:
+  // SAE-12, the read half. Two branches under one `OR`, and the form matters:
   //
   //   - the live branch keys on `id`, served by `lite_records_pkey` on
   //     `(collection, id)`;
@@ -152,7 +152,7 @@ export function readPredicate(options = {}) {
       )
     }
   }
-  // ENH-17: the partner-organisation predicate in the WHERE clause, not in a
+  // SAE-17: the partner-organisation predicate in the WHERE clause, not in a
   // filter over what was already fetched. An index lookup on (collection,
   // partner_org) instead of an O(N) scan over rows the caller may not see.
   //
@@ -482,7 +482,7 @@ export class PostgresStore {
     const { collections } = normaliseReadOptions(options)
     const { clauses, params } = readPredicate(options)
 
-    // ENH-07 / ENH-08. This used to be
+    // SAE-07 / SAE-08. This used to be
     //
     //     SELECT collection, body, updated_at FROM lite_records
     //      ORDER BY updated_at DESC, collection, id
@@ -724,7 +724,7 @@ export class PostgresStore {
       const incoming = (partial[collection] || []).filter((item) => item?.id)
       if (incoming.length) writes.push({ collection, items: incoming })
     }
-    // ENH-11 / R-24. Nothing below reads the store back, and every one of the
+    // SAE-11 / R-24. Nothing below reads the store back, and every one of the
     // 44 call sites discards what it used to return. Return early, not
     // expensively — but the early return still carries the (empty) report, so
     // a caller reading `.discarded` does not have to special-case a no-op.
@@ -750,7 +750,7 @@ export class PostgresStore {
       client.release()
     }
     return report
-    // ENH-11 / R-24. No read-back. Every call site in this repository discards
+    // SAE-11 / R-24. No read-back. Every call site in this repository discards
     // the return value, and the read it used to end on was a full materialisation
     // of every row in the table — so every write cost twice what it wrote.
     // `src/ingestion.js:392` still destructures the result into `data` and hands
@@ -1079,7 +1079,7 @@ export class PostgresStore {
     } finally {
       client.release()
     }
-    // ENH-11 / R-24. See `merge()` — no consumer, so no read-back.
+    // SAE-11 / R-24. See `merge()` — no consumer, so no read-back.
   }
 
   /**
@@ -1123,7 +1123,7 @@ export class PostgresStore {
     } finally {
       client.release()
     }
-    // ENH-11 / R-24. See `merge()` — no consumer, so no read-back.
+    // SAE-11 / R-24. See `merge()` — no consumer, so no read-back.
   }
 
   /**

@@ -4403,7 +4403,7 @@ $('dispatchGateDialog')?.addEventListener('close', () => {
   restoreDialogFocus($('dispatchGateDialog'))
 })
 
-// ENH-19. The determination dialog's markup is deferred (public/panels/
+// SAE-19. The determination dialog's markup is deferred (public/panels/
 // outcome.html) because eight controls at boot is eight controls a console on a
 // field connection pays for, to open a dialog an operator opens about once a
 // week. So its wiring cannot be a module-level element listener on an id —
@@ -4438,7 +4438,7 @@ async function loadOutcomeTemplate() {
 }
 
 /**
- * The determination dialog. ENH-19's way in.
+ * The determination dialog. SAE-19's way in.
  *
  * Three decisions worth stating, because each is a place this could have claimed
  * something it does not know:
@@ -5478,7 +5478,7 @@ $('alertFilterChips')?.addEventListener('click', (e) => {
 })
 
 /**
- * ENH-19 — the alert rail's part of the outcome channel.
+ * SAE-19 — the alert rail's part of the outcome channel.
  *
  * Three small functions, and each answers a question an operator has while
  * looking at a row rather than a question about the data model: what does the

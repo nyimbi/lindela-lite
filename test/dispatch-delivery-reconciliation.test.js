@@ -10,7 +10,7 @@ import {
 } from '../src/rapidpro.js'
 
 /**
- * R-04 and ENH-06 — a focal point approves a trigger, the SMS fails, and the
+ * R-04 and SAE-06 — a focal point approves a trigger, the SMS fails, and the
  * system records that the chain was dispatched.
  *
  * The failure had two independent halves, and fixing one does not fix the other.
@@ -85,7 +85,7 @@ describe('R-04 — a failed notification is retried, and says how many tries it 
   })
 })
 
-describe('ENH-06 — a chain that never delivered raises an alert about itself', () => {
+describe('SAE-06 — a chain that never delivered raises an alert about itself', () => {
   it('finds the chain with no accepted dispatch behind it', () => {
     const data = {
       alert_events: [originalAlert()],

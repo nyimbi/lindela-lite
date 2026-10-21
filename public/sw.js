@@ -307,7 +307,7 @@ export const BOOTSTRAP_ASSETS = [
 	'/panels/ingestion.html',
 	'/panels/reports.html',
 	'/panels/settings.html',
-	// ENH-19. The determination dialog is deferred out of the shell, which makes
+	// SAE-19. The determination dialog is deferred out of the shell, which makes
 	// it unavailable offline unless it is listed here — and offline is precisely
 	// when a worker has a freshly-received alert to judge. A missing entry here
 	// is not a slower dialog; it is the whole outcome channel, closed, on the

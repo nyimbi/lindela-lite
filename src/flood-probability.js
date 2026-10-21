@@ -122,7 +122,7 @@ export function buildDistrictSamples(daily, floodEvents, district, options = {})
     if (!stats) continue
     const matched = monthFloodEvents(month, events)
     for (const event of matched) labelled.add(event)
-    // The month key travels with the sample: ENH-20 needs a block to measure
+    // The month key travels with the sample: SAE-20 needs a block to measure
     // clustering over, and a sample that does not say when it was is a sample
     // nobody can group.
     samples.push({ ...stats, month: month.key, label: matched.length > 0 })
@@ -342,7 +342,7 @@ export function contingencyCount(samples, feature, percentile) {
   const threshold = quantile(values, percentile)
   const above = samples.filter((s) => s[feature] > threshold)
   const positives = above.filter((s) => s.label).length
-  // ENH-20. The interval is computed over the months that crossed the
+  // SAE-20. The interval is computed over the months that crossed the
   // threshold, because that is the population the conditional probability
   // describes — the clustering of the months below it does not narrow it.
   const design = designEffectForMonths(above)
@@ -391,7 +391,7 @@ function baseRate(samples) {
 }
 
 /**
- * ENH-20 — months are not independent, and the interval said they were.
+ * SAE-20 — months are not independent, and the interval said they were.
  *
  * The conditional probability is a rate over *months*, and consecutive months
  * are not independent draws: two flood months in a row share a season, a river

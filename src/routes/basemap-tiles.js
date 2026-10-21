@@ -7,7 +7,7 @@ import { loadRasterTile, upstreamTileUrl } from '../basemap-tiles.js'
  * families were: **the route reads no collection, and it sat below the store
  * read.** Every pan of the map is a fresh tile, so the whole store was
  * materialised — every collection, every row — to answer a request that reads
- * none of it. That is the "silently expensive" failure `ENH-07`'s table exists
+ * none of it. That is the "silently expensive" failure `SAE-07`'s table exists
  * to prevent, and it went unnoticed because the route was invisible to the
  * route-surface parser: it was written `/<literal>/.exec(url.pathname)`, a
  * spelling the parser did not read, so it appeared in no manifest, no document,

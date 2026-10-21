@@ -31,7 +31,7 @@ export const SCHEMA_VERSION = 7
  * The eight filters `filterRecords` implements in JavaScript with no index
  * behind them, and the generated-column expression each one answers from.
  *
- * ENH-10. Every expression is the *whole* set of names that filter accepts for
+ * SAE-10. Every expression is the *whole* set of names that filter accepts for
  * that field, joined by COALESCE — because an index over one spelling answers
  * for one connector and silently answers nothing for the other, which is worse
  * than no index: the query still returns the right rows, just by scanning.
@@ -229,7 +229,7 @@ export const MIGRATIONS = Object.freeze([
     //
     // `record_id` is an expression index rather than a real column because the
     // version rows are written by `versionRow()` and read by nothing; promoting
-    // it to a first-class column is ENH-12's larger change and this index is
+    // it to a first-class column is SAE-12's larger change and this index is
     // the part of it that pays immediately.
     //
     // `valid_to` is in the key so the ranking sort is answered from the index
@@ -252,7 +252,7 @@ export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 5,
     name: 'extracted filter columns',
-    // ENH-10. Eight filters that `filterRecords` implements in JavaScript, with
+    // SAE-10. Eight filters that `filterRecords` implements in JavaScript, with
     // no index of any kind behind them, so `?severity=critical` over 39,715
     // rows is a full scan of an already-materialised array — and the array
     // itself is materialised by a query that fetches every row.
@@ -294,7 +294,7 @@ export const MIGRATIONS = Object.freeze([
   }),
 
   /**
-   * ENH-17 — the partner-organisation predicate becomes an index lookup, and
+   * SAE-17 — the partner-organisation predicate becomes an index lookup, and
    * moves into the engine's WHERE clause rather than into a filter over a
    * materialised array.
    *
@@ -329,8 +329,8 @@ export const MIGRATIONS = Object.freeze([
    * `current_setting('app.partner_org')`, with a non-superuser role and per-request
    * session plumbing — was aimed at making cross-*tenant* reads inexpressible.
    * That remedy belongs to a deployment model this product does not have, so
-   * ENH-17's RLS half is recorded as not applicable rather than as blocked on a
-   * superuser. What is left of ENH-17 is the half this migration delivers.
+   * SAE-17's RLS half is recorded as not applicable rather than as blocked on a
+   * superuser. What is left of SAE-17 is the half this migration delivers.
    */
   Object.freeze({
     version: 6,

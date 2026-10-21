@@ -1,8 +1,8 @@
 /**
  * The store stops being materialised per request.
  *
- * Wave 1 of the system audit: R-24, R-28, R-29, R-32, R-35, R-36, ENH-07,
- * ENH-08, ENH-10, ENH-11, ENH-13. Every assertion here is about cost or about a
+ * Wave 1 of the system audit: R-24, R-28, R-29, R-32, R-35, R-36, SAE-07,
+ * SAE-08, SAE-10, SAE-11, SAE-13. Every assertion here is about cost or about a
  * contract that used to be silently different between the two adapters — not
  * about whether a record survives, which the conformance suite already covers.
  *
@@ -209,7 +209,7 @@ describe('R-25 — replaceCollection touches one collection', () => {
   })
 })
 
-describe('ENH-11 — writes do not end in a discarded full read', () => {
+describe('SAE-11 — writes do not end in a discarded full read', () => {
   it('merge() returns nothing, because no call site wants what it returned', async () => {
     const { store, cleanup } = await tempStore('merge-return')
     try {
@@ -245,7 +245,7 @@ describe('the migration ledger', () => {
   })
 
   it('gives each unindexed filter a generated column and a partial index', () => {
-    // ENH-10. Eight filters `filterRecords` implements in JS with no index
+    // SAE-10. Eight filters `filterRecords` implements in JS with no index
     // behind them.
     const v5 = MIGRATIONS.find((m) => m.version === 5)
     assert.ok(v5, 'there is no migration 5')
@@ -311,7 +311,7 @@ describe('PostgresStore against a real cluster', () => {
     return false
   }
 
-  it('ENH-08: leaves record_versions out of the default read', async (t) => {
+  it('SAE-08: leaves record_versions out of the default read', async (t) => {
     if (needs(t)) return
     await store.write({})
     // Six revisions of one record: five history rows, at the cap.
@@ -325,14 +325,14 @@ describe('PostgresStore against a real cluster', () => {
     assert.deepEqual(data.record_versions, [], 'history was materialised for nothing')
   })
 
-  it('ENH-08: still serves history to a caller that asks for it', async (t) => {
+  it('SAE-08: still serves history to a caller that asks for it', async (t) => {
     if (needs(t)) return
     const withHistory = await store.read({ includeHistory: true })
     assert.ok(withHistory.record_versions.length > 0,
       'the collection stays queryable — the claim is that nothing reads it by default')
   })
 
-  it('ENH-08: admits a read() call that has been passing nothing all along', async (t) => {
+  it('SAE-08: admits a read() call that has been passing nothing all along', async (t) => {
     if (needs(t)) return
     // The signature is backward-compatible on purpose: every existing call site
     // in server.js and analytics.js is `store.read()` and none of them may break.
@@ -343,7 +343,7 @@ describe('PostgresStore against a real cluster', () => {
     assert.equal(typeof bare.updated_at, 'string')
   })
 
-  it('ENH-07: a collection manifest narrows the read', async (t) => {
+  it('SAE-07: a collection manifest narrows the read', async (t) => {
     if (needs(t)) return
     await store.write({
       hazard_events: [hazard('hz-1')],
@@ -358,7 +358,7 @@ describe('PostgresStore against a real cluster', () => {
     assert.deepEqual(asObject.hazard_events, [])
   })
 
-  it('ENH-07: an empty manifest reads nothing rather than everything', async (t) => {
+  it('SAE-07: an empty manifest reads nothing rather than everything', async (t) => {
     if (needs(t)) return
     const none = await store.read([])
     for (const collection of COLLECTIONS) {
@@ -366,21 +366,21 @@ describe('PostgresStore against a real cluster', () => {
     }
   })
 
-  it('ENH-07: the ledger is never materialised into a store', async (t) => {
+  it('SAE-07: the ledger is never materialised into a store', async (t) => {
     if (needs(t)) return
     const data = await store.read()
     assert.equal(data.__schema, undefined, 'a migration row is not a record')
     assert.equal(Object.keys(data).includes('__schema'), false)
   })
 
-  it('ENH-11: merge() returns a discard report, never the store it wrote', async (t) => {
+  it('SAE-11: merge() returns a discard report, never the store it wrote', async (t) => {
     if (needs(t)) return
-    // ENH-11 removed a read-back that materialised every row so `merge()` could
+    // SAE-11 removed a read-back that materialised every row so `merge()` could
     // return the whole store. DATA-13 added the one thing a caller needs back:
     // how many incoming records the dedup dropped, because `/upload` was
     // answering `imported: rows.length` for rows the store declined.
     //
-    // The claim ENH-11 actually makes is that the return is not the store, and
+    // The claim SAE-11 actually makes is that the return is not the store, and
     // that is what this asserts now — the old `=== undefined` was a stricter
     // spelling of the same claim and would have made the fix impossible. A
     // report of a few ids is not a materialisation: its size is bounded by the

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * ENH-12, the read half — the end-to-end measurement.
+ * SAE-12, the read half — the end-to-end measurement.
  *
  * Drives the real route against the real demo store, with the read instrumented,
  * and reports what the record scope actually saves. This is the number the

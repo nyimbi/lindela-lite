@@ -72,7 +72,7 @@ async function connectorIngest(options = {}) {
   const todayIso = new Date().toISOString().slice(0, 10)
   const countries = optionCountrySet(options)
 
-  // ENH-27. The walk resumes from the stored cursor rather than from
+  // SAE-27. The walk resumes from the stored cursor rather than from
   // `archive_start_year`. It was listed in `WATERMARK_SOURCES` and read no
   // watermark at all, so the declaration and the behaviour disagreed and
   // nothing compared them: every run re-walked 1985 → now, 168 requests to

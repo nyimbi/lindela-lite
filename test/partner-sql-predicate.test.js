@@ -6,7 +6,7 @@ import { MIGRATIONS } from '../src/migrations.js'
 import { postgresCluster } from './pg-harness.mjs'
 
 /**
- * ENH-17's SQL half, against a real PostgreSQL.
+ * SAE-17's SQL half, against a real PostgreSQL.
  *
  * `filterRecords` has always applied the partner predicate in JavaScript, and
  * `test/partner-isolation.test.js` proves it does. That guard survives anything
@@ -41,7 +41,7 @@ const SEED = [
   { id: 'p-empty', partner_org: '', name: 'Empty-string partner', updated_at: '2026-01-01T00:00:00.000Z' },
 ]
 
-describe('ENH-17 — the partner predicate in the store read, against a real PostgreSQL', () => {
+describe('SAE-17 — the partner predicate in the store read, against a real PostgreSQL', () => {
   let cluster
   let store
   let sql
@@ -52,7 +52,7 @@ describe('ENH-17 — the partner predicate in the store read, against a real Pos
     if (!reason) return false
     if (process.env.CI) {
       throw new Error(
-        `CI ran the ENH-17 suite without a database: ${reason}. Every test here would have `
+        `CI ran the SAE-17 suite without a database: ${reason}. Every test here would have `
         + 'passed without executing a single statement.',
       )
     }

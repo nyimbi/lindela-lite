@@ -93,7 +93,7 @@ describe('R-09 — a request over budget gets 429 and an honest Retry-After', ()
   })
 
   it('a field worker draining a queued week of reports is inside the write budget', async () => {
-    // The failure this has to avoid: ENH-02's exactly-once queue drains in a
+    // The failure this has to avoid: SAE-02's exactly-once queue drains in a
     // burst when signal returns, on a phone that was offline for days. A write
     // budget of 6/minute would reject that worker and re-queue their reports.
     const clock = fakeClock()

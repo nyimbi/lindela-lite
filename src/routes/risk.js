@@ -79,7 +79,7 @@ export function contingencyByFeature(rows) {
       flood_months_above_threshold: row.flood_months_above_threshold,
       conditional_probability: row.conditional_probability,
       conditional_probability_wilson: row.conditional_probability_wilson,
-      // ENH-20. A wider interval with no stated reason is a number nobody trusts
+      // SAE-20. A wider interval with no stated reason is a number nobody trusts
       // twice, so the design effect that produced it travels with it. Projecting
       // the interval without this is how a corrected number would arrive looking
       // like the uncorrected one.

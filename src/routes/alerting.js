@@ -76,7 +76,7 @@ export function matchAlertingRoute(pathname) {
   const action = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\/(approve|reject)$/)
   if (action) return { kind: 'alert-event-action', id: decodeURIComponent(action[1]), action: action[2] }
 
-  // ENH-19. The outcome channel, addressed through the alert it is about: a
+  // SAE-19. The outcome channel, addressed through the alert it is about: a
   // determination filed against an id is about that alert, and a body carrying a
   // different id is a mistake worth making impossible.
   const outcome = pathname.match(/^\/api\/v1\/alert-events\/([^/]+)\/outcome$/)

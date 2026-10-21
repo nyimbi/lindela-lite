@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * ENH-12 probe: does the shipped expression index serve the version prune, or
+ * SAE-12 probe: does the shipped expression index serve the version prune, or
  * does the window scan still materialise the collection?
  *
  * Migration 4 added `lite_records_version_record_idx` on
  * `((body->>'record_id'), (body->>'valid_to')) WHERE collection = 'record_versions'`.
- * ENH-12's remaining half claims the table needs a *real* `record_id` column
+ * SAE-12's remaining half claims the table needs a *real* `record_id` column
  * instead. This measures what the expression index actually buys at scale, so
  * the decision is made on a plan rather than on the shape of the DDL.
  *
@@ -93,7 +93,7 @@ try {
      WHERE collection = 'record_versions'`)
   const expr = await timePrune('expr index')
 
-  // The proposed alternative: a real column, which is what ENH-12's remaining
+  // The proposed alternative: a real column, which is what SAE-12's remaining
   // half is. If the expression index already plans the same way, the column is
   // a schema change that buys nothing.
   await pool.query('ALTER TABLE probe ADD COLUMN record_id text GENERATED ALWAYS AS (body->>\'record_id\') STORED')

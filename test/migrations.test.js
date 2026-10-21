@@ -198,7 +198,7 @@ describe('the statements this build used to write inline', () => {
   })
 
   it('added the columns the region and time queries were meant to need, then dropped them', () => {
-    // ENH-29 part 3 and ENH-10 added these to make the hot filters indexable.
+    // ENH-29 part 3 and SAE-10 added these to make the hot filters indexable.
     // They never became indexable: `PostgresStore.read` takes no filter, so no
     // query names any of them, and R-30/R-31 remove the write amplification
     // they cost. Migration 7 drops them.
@@ -233,7 +233,7 @@ describe('the statements this build used to write inline', () => {
       assert.ok(dropped.includes(column), `${column} is still written and reindexed on every INSERT`)
     }
     // The three that DO have readers stay: `payload_hash` is the dedupe key,
-    // `partner_org` is ENH-17's predicate and is in the read's WHERE clause,
+    // `partner_org` is SAE-17's predicate and is in the read's WHERE clause,
     // and `schema_version` is the ledger's own column.
     for (const kept of ['payload_hash', 'partner_org', 'schema_version']) {
       assert.ok(!dropped.includes(kept), `${kept} has a reader and must not be dropped`)

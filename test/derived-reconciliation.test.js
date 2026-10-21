@@ -9,7 +9,7 @@ import {
 } from '../src/analytics.js'
 
 /**
- * ENH-23 — "this number changed and nobody knows why" has to be answerable.
+ * SAE-23 — "this number changed and nobody knows why" has to be answerable.
  *
  * `replaceAnalytics` swaps eight collections wholesale. A change in the engine,
  * or a source that quietly stops contributing, moves every district's numbers at
@@ -55,7 +55,7 @@ async function seeded(store, { region = 'Turkana', value = 40, inputCounts = cou
   })
 }
 
-describe('ENH-23 — a value that moved with unmoved inputs is recorded', () => {
+describe('SAE-23 — a value that moved with unmoved inputs is recorded', () => {
   it('fires when the value moved and the inputs did not', async () => {
     await withStore(async (store) => {
       await seeded(store, { value: 40, inputCounts: counts(5) })
@@ -156,7 +156,7 @@ describe('ENH-23 — a value that moved with unmoved inputs is recorded', () => 
   })
 })
 
-describe('ENH-23 — the counts a value was computed from', () => {
+describe('SAE-23 — the counts a value was computed from', () => {
   it('count what a district actually has, per input collection', () => {
     const digest = inputDigestFor('Turkana', {
       hazard_events: [{ id: 'h1', district: 'Turkana' }, { id: 'h2', district: 'Mogadishu' }],

@@ -2,7 +2,7 @@
 /**
  * Measure, do not guess: which collections does each route actually read?
  *
- * ENH-07's manifest has to be exact in both directions. Too wide and the
+ * SAE-07's manifest has to be exact in both directions. Too wide and the
  * 2,900× is a 200×; too narrow and a handler reads `undefined` and returns a
  * 500. Neither is acceptable to derive by reading 28 route handlers and hoping.
  *

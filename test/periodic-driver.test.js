@@ -17,13 +17,13 @@ import { JsonStore } from '../src/store.js'
  * from a broken store — all produced the same silence, and the sidecar was the
  * only record that any of it had run.
  *
- * Meanwhile the app process has run its own driver since ENH-05: ingestion
+ * Meanwhile the app process has run its own driver since SAE-05: ingestion
  * schedules, alert evaluation, outbox dispatch, each recorded on a heartbeat
  * that `/health` reads. So the sidecar's first job ran twice per interval, and
  * the second job — report schedules — was the only periodic item the driver
  * did not own.
  *
- * The fix is the one ENH-05 named: one driver, and no shell loop. Report
+ * The fix is the one SAE-05 named: one driver, and no shell loop. Report
  * schedules moved into the driver first, so removing the sidecar costs nothing.
  */
 

@@ -144,7 +144,7 @@ export function alertOutcomeCalibration(alerts = []) {
       // Wilson on the resolved count only. Widening it over `raised` would
       // pretend the unresolved alerts were resolved and not-wrong.
       false_alert_rate_wilson: refusal ? null : wilsonInterval(row.false_alerts, row.resolved),
-      // ENH-19. Why the alerts were false, not how many. A region's rate is an
+      // SAE-19. Why the alerts were false, not how many. A region's rate is an
       // input to a decision; the reasons are the decision — a region whose false
       // alerts are all sensor faults needs a maintenance visit, and one whose
       // false alerts are mistuned thresholds needs its rules changed. The same

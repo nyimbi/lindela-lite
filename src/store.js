@@ -172,7 +172,7 @@ export const SCHEMA = Object.freeze([
   // replace rather than accumulate.
   { key: 'region_trust', derived: true },
   { key: 'model_drift', derived: true },
-  // ENH-23. A derived number that moved while its inputs did not. The
+  // SAE-23. A derived number that moved while its inputs did not. The
   // repository has payload_hash, data_lineage and per-record provenance — every
   // primitive for tracing one record's origin, and none for noticing that eight
   // collections were swapped at once under a moving engine.
@@ -195,7 +195,7 @@ export const SCHEMA = Object.freeze([
   { key: 'action_logs' },
   { key: 'alert_rules' },
   { key: 'alert_events' },
-  // ENH-19. The outcome channel. Calibration is unmeasurable without it: every
+  // SAE-19. The outcome channel. Calibration is unmeasurable without it: every
   // surface reports "not estimable" because nothing records whether a warning
   // was justified. The record is separate from the alert because one alert can
   // be determined more than once (a first determination, later corrected), and
@@ -326,7 +326,7 @@ const COLLECTION_SET = new Set(COLLECTIONS)
 /**
  * The collection holding bitemporal history, excluded from the default read.
  *
- * ENH-08: it is 60% of a real store by bytes — 85 MB of 143 MB — and the
+ * SAE-08: it is 60% of a real store by bytes — 85 MB of 143 MB — and the
  * default read paid for it on every request. One spelling, declared here rather
  * than in either adapter, because the two disagreeing about it is the defect
  * (`ARC-10`) this constant exists to end.
@@ -392,7 +392,7 @@ export function countReadRows(source, collections, includeHistory, recordScope =
       total += source[collection]?.length || 0
       continue
     }
-    // ENH-12. Counted over the rows the scope selects, not the collection, or
+    // SAE-12. Counted over the rows the scope selects, not the collection, or
     // the budget would refuse a read it is about to serve — the same set the
     // Postgres adapter's `WHERE` matches, which is the property SCL-01 asserts.
     total += (source[collection] || []).filter((row) => inRecordScope(row, collection, recordScope)).length
@@ -423,14 +423,14 @@ export function normaliseReadOptions(options) {
   return {
     collections: collections === null || collections === undefined ? null : [...collections],
     includeHistory: Boolean(includeHistory),
-    // ENH-12, the read half. One record's live row plus that record's own
+    // SAE-12, the read half. One record's live row plus that record's own
     // revisions, instead of the whole store. `/history/:collection/record` was
     // measured reading 50,111 rows to answer about a record with one revision:
     // `record_versions` is one physical collection holding every record's
     // history, so `versionsFor`'s `v.record_id === recordId` filter was applied
     // in JavaScript over all 34,058 version rows. Migration 4's expression index
     // already carries `(body->>'record_id')`, so the scope is answerable from an
-    // index and needs no schema change — which is what refutes ENH-12's
+    // index and needs no schema change — which is what refutes SAE-12's
     // remaining half rather than deferring it.
     //
     // `null` means "no record scope", which is every other route. The collection
@@ -438,7 +438,7 @@ export function normaliseReadOptions(options) {
     // collection alone, and `null` there is a statement about the read rather
     // than about a record.
     recordScope: normaliseRecordScope(recordScope),
-    // ENH-17. Null means "this token is not scoped to a partner organisation",
+    // SAE-17. Null means "this token is not scoped to a partner organisation",
     // which is a different statement from "this caller may see everything" and
     // has to stay distinguishable: `partner_org = $2` with a null parameter
     // matches nothing, which would blank every partner's view rather than
@@ -448,7 +448,7 @@ export function normaliseReadOptions(options) {
 }
 
 /**
- * ENH-12, the read half — the record scope, normalised in one place.
+ * SAE-12, the read half — the record scope, normalised in one place.
  *
  * The scope is `{ collection, recordId }` and both adapters have to agree on
  * what it means, for the same reason `normaliseReadOptions` exists: two adapters
@@ -525,7 +525,7 @@ export function manifestShape(source, collections, recordScope = null) {
   for (const collection of COLLECTIONS) {
     const rows = source[collection] || []
     const kept = wanted === null || wanted.has(collection) ? rows : []
-    // ENH-12. The scope narrows what is *in* a collection, so it is applied here
+    // SAE-12. The scope narrows what is *in* a collection, so it is applied here
     // rather than folded into `wanted`: a collection the scope excludes is
     // present and empty, exactly as one the manifest excludes is. Conflating the
     // two would make a scoped read return `undefined` for a collection the
@@ -814,7 +814,7 @@ export class JsonStore {
       return this.#defaultView
     }
     const scoped = partnerOrg ? scopeToPartner(read, partnerOrg) : read
-    // ENH-12. Narrowed to the scope's rows before the manifest shape is taken,
+    // SAE-12. Narrowed to the scope's rows before the manifest shape is taken,
     // so the two compose the way the Postgres `WHERE` does: the scope selects
     // rows and the manifest decides which collections are present at all.
     return manifestShape(
@@ -929,7 +929,7 @@ export class JsonStore {
     for (const collection of COLLECTIONS) {
       if (wanted !== null && !wanted.has(collection)) continue
       for (const body of source[collection] || []) {
-        // ENH-12, the streaming half. The scope has to apply here as well as in
+        // SAE-12, the streaming half. The scope has to apply here as well as in
         // `read()`, or an export and a read of the same options would disagree
         // about what the store holds — the two-adapter drift ARC-10 is about,
         // one level in.
@@ -1042,7 +1042,7 @@ export class JsonStore {
     // a different problem and a different answer.
     const tmp = `${this.filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
     await fs.mkdir(path.dirname(this.filePath), { recursive: true })
-    // ENH-13 / R-29. Compact, not `null, 2`. Measured at 37.8 MB: 112.6 ms
+    // SAE-13 / R-29. Compact, not `null, 2`. Measured at 37.8 MB: 112.6 ms
     // pretty-printed against 17.6 ms compact — indentation is 84% of merge
     // cost, for a file whose bytes are machine-read. It also inflates the file
     // ~40%, and every one of those bytes is re-parsed on a cold read.
@@ -1066,7 +1066,7 @@ export class JsonStore {
     // cannot race the filesystem's timestamp granularity and serve the previous
     // snapshot — a mtime that has not visibly advanced yet.
     //
-    // ENH-13 / R-28. The stamp is the *post-rename* identity, not null. This
+    // SAE-13 / R-28. The stamp is the *post-rename* identity, not null. This
     // line used to null it, which contradicted the `read()` docstring directly
     // above and cost a whole-file re-parse on the next read: 24.9 ms cold
     // against 0.2 ms warm, on the write-then-read sequence every API mutation
@@ -1115,7 +1115,7 @@ export class JsonStore {
    * The whole store as it is on disk, for a read-modify-write.
    *
    * Every mutator below reads through this, not through `read()`. `read()` is
-   * the *caller's* view and ENH-08 strips `record_versions` from it, so a
+   * the *caller's* view and SAE-08 strips `record_versions` from it, so a
    * read-modify-write built on `read()` would append this write's history to an
    * empty array and write that back — every merge silently erasing every
    * revision the store had accumulated. The rule is that a read-modify-write

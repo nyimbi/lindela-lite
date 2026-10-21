@@ -11,7 +11,7 @@ import {
 import { evaluateAlertRules } from '../src/alerts.js'
 
 /**
- * ENH-19 — every calibration surface reports "not estimable", for one reason.
+ * SAE-19 — every calibration surface reports "not estimable", for one reason.
  *
  * Nothing records whether the warning was justified. `false_alert` is a field on
  * the alert, filled in by hand when somebody remembers, and for a long time a
@@ -61,7 +61,7 @@ const record = (body) => fetch(`${globalThis.__base}/api/v1/alert-events/alert-1
   body: JSON.stringify(body),
 })
 
-describe('ENH-19 — a determination is a reason, not a note', () => {
+describe('SAE-19 — a determination is a reason, not a note', () => {
   it('refuses a reason outside the closed set', () => {
     // The whole reason the record is countable. A free-text reason cannot be
     // aggregated, so accepting one would put a value in the denominator that no
@@ -119,7 +119,7 @@ describe('ENH-19 — a determination is a reason, not a note', () => {
   })
 })
 
-describe('ENH-19 — a correction supersedes, and the sequence stays readable', () => {
+describe('SAE-19 — a correction supersedes, and the sequence stays readable', () => {
   it('the latest revision wins, and the earlier one is still there', async () => {
     await withServer(async (base) => {
       globalThis.__base = base
@@ -152,7 +152,7 @@ describe('ENH-19 — a correction supersedes, and the sequence stays readable', 
   })
 })
 
-describe('ENH-19 — coverage is a number, not a feeling', () => {
+describe('SAE-19 — coverage is a number, not a feeling', () => {
   it('a platform with almost no determinations says so', () => {
     const alerts = Array.from({ length: 400 }, (_, i) => ({ id: `a${i}` }))
     const outcomes = alerts.slice(0, 12).map((a, i) => ({
@@ -182,7 +182,7 @@ describe('ENH-19 — coverage is a number, not a feeling', () => {
   })
 })
 
-describe('ENH-24 — every alert says why it fired', () => {
+describe('SAE-24 — every alert says why it fired', () => {
   const data = {
     alert_rules: [{
       id: 'rule-1',

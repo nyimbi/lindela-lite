@@ -1126,7 +1126,7 @@ export function applyEscalation(dispatch, escalation) {
  *   4. A recipient already escalated is not escalated again.
  */
 /**
- * ENH-06 / R-04 — the alerts whose notification never left.
+ * SAE-06 / R-04 — the alerts whose notification never left.
  *
  * The escalation path only ever looks at dispatches the gateway *accepted*
  * (`dispatchAccepted`). That is correct for "nobody has responded yet" and

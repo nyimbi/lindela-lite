@@ -249,7 +249,7 @@ export function evaluateAlertRules(data, context) {
 }
 
 /**
- * ENH-24 — why did this fire?
+ * SAE-24 — why did this fire?
  *
  * The alert carried the metric, the operator, the threshold and the value, and
  * none of the four is enough: the rule has been editable since it fired, the
@@ -288,7 +288,7 @@ function buildAlert(rule, value, { bucket, now, supersedes = null, prior_value =
     suppression_bucket: bucket,
     approval: { state: approvalState },
     ...(supersedes ? { supersedes, prior_value } : {}),
-    // ENH-24. Read at the moment of the decision, not re-derived later.
+    // SAE-24. Read at the moment of the decision, not re-derived later.
     derivation: {
       rule_id: rule.id,
       rule_version: rule.version ?? null,

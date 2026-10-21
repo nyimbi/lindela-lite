@@ -131,7 +131,7 @@ const DRIVER_ITEMS = [
   // comment in a JSON file, and the thing it was written to protect keeps
   // accumulating.
   { id: 'retention', label: 'retention', run: (store, data) => applyScheduledRetention(store, data) },
-  // ENH-06. The escalation path only sees dispatches the gateway accepted, so a
+  // SAE-06. The escalation path only sees dispatches the gateway accepted, so a
   // failed one was invisible: the workflow instance sat in `chain_dispatched`
   // — a chain the system believes it ran — and nobody was ever told. This is the
   // pass that notices, and it raises one synthetic alert per original, ever.
@@ -1012,24 +1012,24 @@ async function handleApiRequestInContext(store, req, res, url, auth, { checkWebh
   if (gate.outcome === 'handled') return
   auth = gate.auth
 
-  // ENH-07. The manifest is what the route reads, measured rather than guessed
+  // SAE-07. The manifest is what the route reads, measured rather than guessed
   // (`src/route-manifests.js`). `null` — a whole-store read — is the answer for
   // an unrecognised path and for the surfaces measured as genuinely wide, so
   // this fails towards the old cost and never towards a 500.
-  // ENH-07 and ENH-17 in one call: which collections this route reads, and which
+  // SAE-07 and SAE-17 in one call: which collections this route reads, and which
   // partner organisation's rows it may see. The organisation comes from the
   // request context rather than from a parameter, for the same reason the scope
   // does — a caller that forgets to pass it must not see another organisation's
   // data, and one that does pass it wrong must not either. `filterRecords`
   // applies the same predicate in JavaScript to what comes back; this keeps the
   // rows the caller may not see off the query in the first place.
-  // ENH-49 and ENH-08 together. The history routes are the only ones that read
-  // `record_versions`, and ENH-08 keeps it off every other read — so a route
+  // ENH-49 and SAE-08 together. The history routes are the only ones that read
+  // `record_versions`, and SAE-08 keeps it off every other read — so a route
   // whose handler calls `series.js` has to ask for it. Without this the two
   // `/history` routes returned an empty series on Postgres while working on a
   // JSON box, because `JsonStore` ignored the flag and `PostgresStore` honoured
   // it (ARC-10). The adapters agree now, so the request has to be explicit.
-  // ENH-12, the read half. `/history/:collection/record` reads one record and
+  // SAE-12, the read half. `/history/:collection/record` reads one record and
   // its revisions instead of the whole store: 50,111 rows to answer about a
   // record with one revision, measured, against 6 rows scoped. The scope is
   // separate from the manifest because it narrows to a *row* and a manifest

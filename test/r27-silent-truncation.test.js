@@ -27,7 +27,7 @@ import { JsonStore } from '../src/store.js'
  * the list route beside it was computing them over one.
  *
  * The tests below assert the shape, not the timing. Keyset pagination in SQL is
- * ENH-09 and is deliberately not started: the audit re-measured it at 6.96 ms,
+ * SAE-09 and is deliberately not started: the audit re-measured it at 6.96 ms,
  * flat in page depth, for the largest collection *any paginated route can
  * actually reach*. This is the correctness half, and it is a different defect.
  */

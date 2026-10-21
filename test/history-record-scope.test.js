@@ -10,7 +10,7 @@ import { JsonStore, normaliseRecordScope } from '../src/store.js'
 import { postgresCluster } from './pg-harness.mjs'
 
 /**
- * ENH-12, the read half — a record-scoped read of the version history.
+ * SAE-12, the read half — a record-scoped read of the version history.
  *
  * `/api/v1/history/:collection/record` answers about *one* record, and it did so
  * by reading the whole store. Both history routes resolve to a `null` manifest —
@@ -22,7 +22,7 @@ import { postgresCluster } from './pg-harness.mjs'
  * The scope is the fix, and it needs no schema change: migration 4's
  * `lite_records_version_record_idx` already carries `(body->>'record_id')`, so
  * the version branch is answerable from an index. That is what refutes the
- * remaining half of ENH-12 rather than deferring it — the proposed real
+ * remaining half of SAE-12 rather than deferring it — the proposed real
  * `record_id` column buys a further 1.4× on a plan that is already 66× faster
  * than the sequential scan, which is not a four-week migration.
  *
@@ -51,7 +51,7 @@ async function seed(store) {
   await store.merge({ climate_observations: [{ id: 'c1', district: 'Turkana', rainfall: 40, ...stamp(2) }] })
 }
 
-describe('ENH-12 — the record scope, resolved from the request', () => {
+describe('SAE-12 — the record scope, resolved from the request', () => {
   const search = (q) => new URLSearchParams(q)
 
   it('names the collection from the path and the record from ?id=', () => {
@@ -97,7 +97,7 @@ describe('ENH-12 — the record scope, resolved from the request', () => {
   })
 })
 
-describe('ENH-12 — the scope reaches the read', () => {
+describe('SAE-12 — the scope reaches the read', () => {
   let store
   let dir
 
@@ -169,7 +169,7 @@ describe('ENH-12 — the scope reaches the read', () => {
   })
 })
 
-describe('ENH-12 — the SQL predicate, and both adapters agreeing', () => {
+describe('SAE-12 — the SQL predicate, and both adapters agreeing', () => {
   it('pushes the scope into the WHERE clause rather than filtering after the fact', () => {
     const { clauses, params } = readPredicate({
       collections: null, includeHistory: true,

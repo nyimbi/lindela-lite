@@ -254,7 +254,7 @@ describe('a watermark-caught-up run is not a degraded one', () => {
 })
 
 /**
- * ENH-27 — the archive's walk is resumable, not restarted.
+ * SAE-27 — the archive's walk is resumable, not restarted.
  *
  * `gdacs_archive` is listed in `WATERMARK_SOURCES` and its connector read no
  * watermark at all: every run walked 1985 → now quarter by quarter, 168

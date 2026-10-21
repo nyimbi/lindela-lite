@@ -589,7 +589,7 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
     metrics.counter('ingestion_runs_total', { source, status })
     metrics.histogram('ingestion_duration_ms', durationMs, { source })
 
-    // R-05 / ENH-25. Commit per source, inside the loop.
+    // R-05 / SAE-25. Commit per source, inside the loop.
     //
     // The single merge at the end meant a run's records existed only in RAM
     // until every source finished. `gdacs_archive` alone is ~166 requests and

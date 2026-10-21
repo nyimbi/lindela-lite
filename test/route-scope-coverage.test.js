@@ -232,7 +232,7 @@ describe('every mutating route is on the list', () => {
 
   it('maps every documented read that the gate checks', () => {
     // The half that was missing. The suite above enumerates *mutating* routes,
-    // so when ENH-15 turned the read fallback from `read:hazards` into a denial
+    // so when SAE-15 turned the read fallback from `read:hazards` into a denial
     // nothing failed — the routes the fallback had been quietly serving were
     // never enumerated. They 403'd instead, and the first caller to notice was
     // the console's own map overlay: `/api/v1/weather` and every basemap tile

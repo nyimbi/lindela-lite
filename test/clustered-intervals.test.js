@@ -5,7 +5,7 @@ import {
 } from '../src/flood-probability.js'
 
 /**
- * ENH-20 — the interval said the months were independent, and they are not.
+ * SAE-20 — the interval said the months were independent, and they are not.
  *
  * The conditional probability is a rate over months, and consecutive months
  * share a season, a basin and a fortnight of rain. Wilson's interval assumes
@@ -59,7 +59,7 @@ const keysWith = (moves) => Array.from({ length: MONTHS }, (_, i) => {
   return `${2023 + Math.floor((MONTHS - 1 - i) / 12)}-${String(((MONTHS - 1 - i) % 12) + 1).padStart(2, '0')}`
 })
 
-describe('ENH-20 — the design effect measures what clustering costs', () => {
+describe('SAE-20 — the design effect measures what clustering costs', () => {
   it('is 1 when the blocks carry no information beyond their members', () => {
     // Each block has the same rate: between-block variance is zero, so the
     // sample size is worth its face value and the interval does not move.
@@ -91,7 +91,7 @@ describe('ENH-20 — the design effect measures what clustering costs', () => {
   })
 })
 
-describe('ENH-20 — the interval widens by exactly what the clustering justifies', () => {
+describe('SAE-20 — the interval widens by exactly what the clustering justifies', () => {
   it('leaves the plain interval alone when deff is 1', () => {
     const plain = wilsonInterval(4, 40)
     const clustered = clusteredWilsonInterval(4, 40, 1)
@@ -123,7 +123,7 @@ describe('ENH-20 — the interval widens by exactly what the clustering justifie
   })
 })
 
-describe('ENH-20 — the interval a district actually publishes', () => {
+describe('SAE-20 — the interval a district actually publishes', () => {
   it('carries the clustering that produced it', () => {
     // A series where every flood month falls in a different year: no
     // clustering, so the ordinary interval.
@@ -154,7 +154,7 @@ describe('ENH-20 — the interval a district actually publishes', () => {
     const flatWidth = b.counts.conditional_probability_wilson.high - b.counts.conditional_probability_wilson.low
     assert.ok(clusteredWidth > flatWidth,
       `the clustered series produced the same width (${clusteredWidth}) as the unclustered one ` +
-      `(${flatWidth}); ENH-20 exists because it did not`)
+      `(${flatWidth}); SAE-20 exists because it did not`)
     assert.ok(a.counts.clustering.design_effect >= 1)
   })
 

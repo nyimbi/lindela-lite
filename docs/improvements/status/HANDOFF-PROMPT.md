@@ -2,11 +2,11 @@
 
 > **Historical — the handoff this describes was executed.** Kept as the record of
 > what the pass was asked to do. The task list below is stale in one respect worth
-> knowing before copying it anywhere: its §4 lists ENH-17 (`partner_org` row
+> knowing before copying it anywhere: its §4 lists SAE-17 (`partner_org` row
 > scoping) as outstanding. That landed on 2026-10-07 — see
 > [STATUS-2026-10-05.md](STATUS-2026-10-05.md#2026-10-07--enh-17-landed-and-its-framing-corrected).
 > Everything else it lists as open has since been addressed, and the only items
-> still open in the audit are R-27/ENH-09 and ENH-12. Do not start from this file;
+> still open in the audit are R-27/SAE-09 and SAE-12. Do not start from this file;
 > start from the audit's own status tables.
 
 Copy everything below the line into the new agent's first message verbatim.
@@ -87,7 +87,7 @@ Leave the **reply** handler (~line 884) alone: it already uses `t('chw.reply_sen
 
    The single observable change a test should catch: `initI18n('so')` on a partial so.json now falls back to English for missing keys. `scripts/check-i18n-offers.mjs`' comment becomes true rather than false after this — do not touch it. Verify: `node --test test/web-chw-offline.test.js` and the i18n describe blocks still pass.
 
-3. **R-65/ENH-41 — precache closure.** `test/web-precache-report.test.js` is a written report with the exact change specified in its header comment (lines 106-135) — use those patterns verbatim:
+3. **R-65/SAE-41 — precache closure.** `test/web-precache-report.test.js` is a written report with the exact change specified in its header comment (lines 106-135) — use those patterns verbatim:
    ```js
    // In REFERENCE_PATTERNS, after the existing five:
    /(?:import|require)\s*\(\s*(?:\/\*[\s\S]*?\*\/\s*)?[`'"]([^`'"]+)[`'"]\s*\)/g,  // dynamic import, comment-tolerant
@@ -104,7 +104,7 @@ Leave the **reply** handler (~line 884) alone: it already uses `t('chw.reply_sen
 ## §3 P0/P2 finish line (each item: read the audit's evidence column first, then fix, then verify)
 
 7. **R-03** — `docker-compose.yml:59-61`: the scheduler loop `|| true`s over `curl` failures, making 401/500/nothing-due indistinguishable. Capture the response code and body to the loop's stdout with timestamps, distinguish 2xx/4xx/5xx, and keep the loop alive. Canary: point it at a URL that 500s and confirm the log says 500.
-8. **R-04 + ENH-06** — `src/rapidpro.js` failed dispatch has no retry, no timer, no self-alert. Implement ENH-06 as the audit specifies: a reconciliation pass in the periodic driver (`startPeriodicDriver` in src/server.js) that finds `alert_events` in `chain_dispatched` with no `rapidpro_dispatches` of `status:'sent'` in the window `src/rapidpro.js:681` computes, and raises one synthetic high alert naming the original — one per original, ever. Tests with a fixture store (see existing test patterns, no mocks).
+8. **R-04 + SAE-06** — `src/rapidpro.js` failed dispatch has no retry, no timer, no self-alert. Implement SAE-06 as the audit specifies: a reconciliation pass in the periodic driver (`startPeriodicDriver` in src/server.js) that finds `alert_events` in `chain_dispatched` with no `rapidpro_dispatches` of `status:'sent'` in the window `src/rapidpro.js:681` computes, and raises one synthetic high alert naming the original — one per original, ever. Tests with a fixture store (see existing test patterns, no mocks).
 9. **R-10** — shared-cache leak across tokens. `src/utils.js` `jsonResponse` must emit `Vary: Authorization` (or set-cookie), and the worker's API cache keys must incorporate the auth identity. `test/` has a web suite pattern for sw.js assertions — write the guard before the fix, watch it fail, then fix.
 10. **R-13** — `/stac/*` and `/ogc/*` dispatch before `handleApiRequest` in src/server.js (~lines 104-107). Move the auth gate in front of them; redact fields the audit lists from `stacItem`'s spread in `src/stac.js:171`. Verify with a partner-scoped token test.
 11. **R-14** — `Dockerfile`: add a non-root `USER`; `.dockerignore` missing `.omc`; confirm `docs/` is either dropped from the runtime image or `/docs` is gated.
@@ -116,12 +116,12 @@ Leave the **reply** handler (~line 884) alone: it already uses `t('chw.reply_sen
 For each id below: read the item's row in the audit, check whether the cited evidence still holds in the current code, and fix only if it holds. Some of these may already be fixed by commits you didn't make — say so in the commit message of the doc-status update rather than "fixing" a non-defect.
 
 - R-17 (watermark backwards merge), R-18 (store tmp filename keyed on pid only — confirmed still live), R-19 (fetch-recording leak), R-20/R-21/R-22 (outbox retry reset, dispatch mutex, emit-before-merge), R-15 (`isPublicPath` prefix match), R-25 (full-table DELETE+reinsert for one-record edits), R-27 (SQL keyset pagination), R-28 (write-cache invalidation), R-11 (dead outbound limiter call sites), R-53 (schedule-slip metric), R-52 (watermark route — check the obs agent's commits before touching).
-- ENH-07 (read() collection manifest), ENH-08 (version history off the default read path), ENH-09, ENH-10 (generated columns for filtered fields), ENH-12 (version-table real columns to completion — compaction already done in this branch), ENH-17 (partner_org row scoping), ENH-36-adjacent gate work already partly shipped.
+- SAE-07 (read() collection manifest), SAE-08 (version history off the default read path), SAE-09, SAE-10 (generated columns for filtered fields), SAE-12 (version-table real columns to completion — compaction already done in this branch), SAE-17 (partner_org row scoping), SAE-36-adjacent gate work already partly shipped.
 
 ## §5 P4 veracity core (the largest remaining block; budget ~8 engineer-weeks, do after everything above)
 
-14. **ENH-19 outcome channel** — alert outcomes are recorded end-to-end: an alert that resolves records its own outcome, making calibration estimable. Follow the audit's spec (schema fields, who writes them, sample floors from `src/analytics/metrics.js`).
-15. **ENH-20 cluster-interval statistics.** 16. **ENH-23 derived-number reconciliation** (a pass in the driver that recomputes every published derived number the cheap way and compares — a reconciliation script that measures nothing must fail, not report success). 17. **ENH-24 alert derivation.** 18. **ENH-49 history queryable.**
+14. **SAE-19 outcome channel** — alert outcomes are recorded end-to-end: an alert that resolves records its own outcome, making calibration estimable. Follow the audit's spec (schema fields, who writes them, sample floors from `src/analytics/metrics.js`).
+15. **SAE-20 cluster-interval statistics.** 16. **SAE-23 derived-number reconciliation** (a pass in the driver that recomputes every published derived number the cheap way and compares — a reconciliation script that measures nothing must fail, not report success). 17. **SAE-24 alert derivation.** 18. **SAE-49 history queryable.**
 
 Write tests per item in `test/`, run in batches at each commit boundary.
 

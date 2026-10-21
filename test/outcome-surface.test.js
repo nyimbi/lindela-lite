@@ -13,7 +13,7 @@ const PUBLIC_ROOT = new URL('../public/', import.meta.url)
 const realSetTimeout = globalThis.setTimeout.bind(globalThis)
 
 /**
- * ENH-19 — the outcome channel had no way in.
+ * SAE-19 — the outcome channel had no way in.
  *
  * The server records a determination, the metric registry counts it, the
  * calibration rollup reports coverage — and before this, nobody could enter one.
@@ -38,7 +38,7 @@ const REASONS = {
   false: ['sensor_fault', 'threshold_mistuned', 'no_hazard_observed'],
 }
 
-describe('ENH-19 — what the dialog offers for an alert', () => {
+describe('SAE-19 — what the dialog offers for an alert', () => {
   it('an alert with nothing recorded is offered the choice', () => {
     const decision = determinationFor({ id: 'alert-1' }, { reasons: REASONS })
     assert.equal(decision.kind, 'offered')
@@ -72,7 +72,7 @@ describe('ENH-19 — what the dialog offers for an alert', () => {
   })
 })
 
-describe('ENH-19 — a determination cannot be filed without a reason', () => {
+describe('SAE-19 — a determination cannot be filed without a reason', () => {
   it('refuses a bare verdict', async () => {
     const result = await submitOutcome({ alertId: 'a1', determination: 'false', determinedBy: 'me' }, { post: async () => ({ success: true }) })
     assert.equal(result.ok, false)
@@ -126,7 +126,7 @@ describe('ENH-19 — a determination cannot be filed without a reason', () => {
   })
 })
 
-describe('ENH-19 — the coverage line says what it knows', () => {
+describe('SAE-19 — the coverage line says what it knows', () => {
   it('says plainly that nothing has been judged', () => {
     const note = coverageNote({ alerts: 400, determined: 0, false_alerts: 0, justified: 0 })
     assert.match(note, /coverage_none/)
@@ -146,7 +146,7 @@ describe('ENH-19 — the coverage line says what it knows', () => {
   })
 })
 
-describe('ENH-19 — the surface is reachable and the reason catalogue comes from one place', () => {
+describe('SAE-19 — the surface is reachable and the reason catalogue comes from one place', () => {
   // QUA-02. This block read `app.js` as text and asserted on the shape of the
   // code — `assert.match(APP, /data-action="outcome"/)`. Every one of those
   // passes when the string exists in a dead branch and fails when a rename
@@ -357,7 +357,7 @@ describe('ENH-19 — the surface is reachable and the reason catalogue comes fro
   })
 })
 
-describe('ENH-19 — the fetches degrade without lying', () => {
+describe('SAE-19 — the fetches degrade without lying', () => {
   it('an unreachable reason catalogue falls back rather than offering nothing', async () => {
     const reasons = await fetchReasons({ fetchImpl: async () => { throw new Error('offline') } })
     assert.ok(reasons.justified.length > 0 && reasons.false.length > 0,

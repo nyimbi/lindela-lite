@@ -269,7 +269,7 @@ describe('store conformance — both backends, one contract', () => {
         await store.write(payload)
         // `includeHistory`, because this test is about the write/read round trip
         // for *every* declared collection and `record_versions` is one of them.
-        // ENH-08 keeps history off the default read path, so a bare `read()`
+        // SAE-08 keeps history off the default read path, so a bare `read()`
         // would have been asserting that a deliberate exclusion did not happen.
         const data = await store.read({ includeHistory: true })
         for (const collection of COLLECTIONS) {
@@ -278,7 +278,7 @@ describe('store conformance — both backends, one contract', () => {
       })
 
       // ARC-10. The two adapters disagreed on the default read: PostgresStore
-      // left `record_versions` out (ENH-08) while JsonStore returned it
+      // left `record_versions` out (SAE-08) while JsonStore returned it
       // regardless, so the same call returned different shapes depending on
       // which backend an environment variable had selected. A caller cannot
       // know which one it has, which is the property the whole storage design

@@ -143,7 +143,7 @@ export const READ_SCOPES = Object.freeze([
   ['/api/v1/parametric-rules', 'read:parametric'],
   ['/api/v1/parametric-disbursements', 'read:parametric'],
 
-  // ENH-15 / R-08, the half that never landed. The read fallback became a
+  // SAE-15 / R-08, the half that never landed. The read fallback became a
   // denial, which closed the leak and — because nothing classified the routes
   // the fallback had been serving — turned it into an outage for every caller
   // already using them. `test/route-scope-coverage.test.js` only enumerated

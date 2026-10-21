@@ -364,7 +364,7 @@ describe('against a real PostgreSQL', () => {
     await store.write({})
     await store.write(Object.fromEntries(COLLECTIONS.map((c) => [c, [{ id: `${c}-1` }]])))
     // `includeHistory` because `record_versions` is 60% of a real store by bytes
-    // and nothing reads it, so the default read leaves it out (ENH-08). This
+    // and nothing reads it, so the default read leaves it out (SAE-08). This
     // test is the one place that is specifically about it surviving a round
     // trip, which is a different question from whether a normal read pays for
     // it.

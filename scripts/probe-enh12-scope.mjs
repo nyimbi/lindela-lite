@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * ENH-12 probe, the predicate: what does a *record-scoped* read of the history
+ * SAE-12 probe, the predicate: what does a *record-scoped* read of the history
  * actually cost, and does the planner reach an index for both branches?
  *
  * The live rows key on `id` under a `(collection, id)` primary key; a version

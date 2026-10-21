@@ -1,5 +1,5 @@
 /**
- * ENH-07 — which collections each route reads.
+ * SAE-07 — which collections each route reads.
  *
  * The store could already take a collection manifest and had no caller for it,
  * so every request materialised the whole store before the first route test: 143
@@ -452,7 +452,7 @@ export const UNMAPPED_COUNT = WIDE_ROUTES.length
 /**
  * The routes that read bitemporal history, and so must ask for it.
  *
- * ENH-08 keeps `record_versions` off the default read path — 60% of a real
+ * SAE-08 keeps `record_versions` off the default read path — 60% of a real
  * store by bytes, and no request paid for it unless it asked. These routes are
  * the ones that ask: `/history/:collection` and `/history/:collection/record`
  * both hand their snapshot to `series.js`, which reads `snapshot.record_versions`
@@ -481,7 +481,7 @@ export function needsHistory(method, pathname) {
 }
 
 /**
- * ENH-12, the read half — the record scope for one request, or `null`.
+ * SAE-12, the read half — the record scope for one request, or `null`.
  *
  * `/history/:collection/record` asks about *one record*, and answered it by
  * reading the whole store: the two history routes resolve to a `null` manifest,

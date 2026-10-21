@@ -1,7 +1,7 @@
 import { apiFetch } from './runtime.js'
 
 /**
- * The determination surface — ENH-19's other half.
+ * The determination surface — SAE-19's other half.
  *
  * The outcome channel on the server is worthless without somebody entering one.
  * Every calibration surface this platform ships reports "not estimable" for the
