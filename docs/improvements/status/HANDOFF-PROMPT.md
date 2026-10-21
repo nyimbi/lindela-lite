@@ -15,11 +15,7 @@ Copy everything below the line into the new agent's first message verbatim.
 
 You are continuing an in-flight remediation of Lindela Lite at `/Users/nyimbiodero/src/pjs/Lindela-Lite`, branch `fix/storage-and-ingestion-correctness`. The audit you are implementing lives in `docs/improvements/system-audit/` (read 01-remediation.md, 02-enhancements.md, 03-roadmap.md first — every item id below refers there). Progress so far is catalogued in [STATUS-2026-10-05.md](STATUS-2026-10-05.md): 2321 of 2323 tests pass, P0 is mostly done, P1 mostly done, P2/P3/P4 partial.
 
-Work through the tasks **in order**. Each says what done means and how to verify it. After each numbered task: commit (explicit file paths, never `git add -A`) and push. Commit subject = the defect it fixes, in the style of recent history (`git log --oneline -15`), ending with:
-
-```
-Co-Authored-By: Claude Code <noreply@anthropic.com>
-```
+Work through the tasks **in order**. Each says what done means and how to verify it. After each numbered task: commit (explicit file paths, never `git add -A`) and push. Commit subject = the defect it fixes, in the style of recent history (`git log --oneline -15`). **No attribution trailer of any kind** — not `Co-Authored-By: Claude`, not a "Generated with" footer. This repository's history is written as the work of the people who commissioned it.
 
 ## Non-negotiable rules
 
