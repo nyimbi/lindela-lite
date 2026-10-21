@@ -73,6 +73,23 @@ const SKIP_DIRS = new Set(['node_modules', 'vendor', 'dist', '.git'])
  */
 const FALLBACK = /(\?\?|\|\|)\s*(-?0(?:\.0+)?|NaN)\b/
 
+/**
+ * The *test* shape, which is the same defect and was not covered.
+ *
+ * All three instances this repository paid for were written this way —
+ * `record.latitude && record.longitude`, `p.lat && p.lon`,
+ * `sevFilter && r.severity && r.severity !== sevFilter` — and a gate that only
+ * reads fallbacks would have reported the tree clean through all three. A
+ * truthiness test on a numeric field treats 0 as absent, so a coordinate on the
+ * equator, a severity of 0 or a count of 0 is read as "not there".
+ *
+ * Matched as a leading operand rather than as a bare `&&` anywhere, because
+ * `a && b` is legitimate on booleans and the defect needs a *field* being
+ * tested for presence. The field has to name a subject a refusal declared, the
+ * same jurisdiction the fallback rule uses.
+ */
+const PRESENCE_TEST = /(?:^|[^\w.$])([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)\s*&&/
+
 /** `foo_refusal: …` — the declaration that marks `foo` (and its siblings) nullable. */
 const REFUSAL_DECL = /\b([a-z][a-z0-9_]*)_refusal\b\s*[:(]/g
 
@@ -151,11 +168,23 @@ export function scanSource(source, { file = '<memory>' } = {}) {
     // in a comment explaining why it was removed — and flagging the explanation
     // is the failure mode that gets a gate deleted.
     const code = stripComment(line)
-    if (!FALLBACK.test(code)) continue
+    const isFallback = FALLBACK.test(code)
+    // The presence test is checked on the operand that `&&` guards, and only
+    // when that operand names a declared-nullable subject. `Boolean(x) && …`
+    // and `x !== null && …` are the correct spellings and do not match.
+    const presence = PRESENCE_TEST.exec(code)
+    // `!row.x_refusal && …` tests the *declaration*, not the measurement — it is
+    // how a caller asks whether a refusal exists, which is the opposite of the
+    // defect. The refusal field names the stem by construction, so without this
+    // exclusion every correct use of the pattern would fire.
+    const isPresenceTest = Boolean(
+      presence && !/_refusal\b/.test(presence[1]) && nullableFieldOn(presence[1], stems),
+    )
+    if (!isFallback && !isPresenceTest) continue
     const stem = nullableFieldOn(code, stems)
     if (!stem) continue
     if (ALLOW.test(allowedContext(lines, i))) continue
-    findings.push({ file, line: i + 1, stem, text: line.trim() })
+    findings.push({ file, line: i + 1, stem, shape: isFallback ? 'fallback' : 'presence-test', text: line.trim() })
   }
   return findings
 }
@@ -321,6 +350,38 @@ export const CANARIES = [
     source: [
       'id_refusal: r.refusal,',
       'const n = row.id ?? 0',
+    ].join('\n'),
+    expect: 0,
+  },
+  {
+    name: 'flags a presence test on a declared-nullable field, which reads 0 as absent',
+    source: [
+      'latitude_refusal: geo.refusal,',
+      'if (record.latitude_value && record.longitude_value) coarsen(record)',
+    ].join('\n'),
+    expect: 1,
+  },
+  {
+    name: 'passes the explicit null check that is the correct spelling',
+    source: [
+      'latitude_refusal: geo.refusal,',
+      'if (record.latitude_value !== null && record.longitude_value !== null) coarsen(record)',
+    ].join('\n'),
+    expect: 0,
+  },
+  {
+    name: 'passes a presence test on the refusal field itself, which is the correct question',
+    source: [
+      'warning_to_action_field_refusal: kpi.refusal,',
+      'gap: !kpi.warning_to_action_field_refusal && kpi.warning_to_action_field_median_hours === null,',
+    ].join('\n'),
+    expect: 0,
+  },
+  {
+    name: 'does not flag a presence test on a field no refusal declared',
+    source: [
+      'latitude_refusal: geo.refusal,',
+      'if (user.is_admin && record.latitude_value !== null) show(user)',
     ].join('\n'),
     expect: 0,
   },

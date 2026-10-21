@@ -1540,6 +1540,21 @@ twice and a dedicated commit enforcing it. A lint rule banning truthiness tests 
 `latitude`, `longitude`, `severity` and any `?count` field would catch all three,
 and the fourth instance that has not been found yet.
 
+**All three are fixed, and the rule the paragraph asked for now exists — in the
+gate that already owned this defect family.** `check-absent-values` caught
+`x ?? 0` and `x || 0` but not the *test* shape, which is how all three instances
+were actually written (`record.latitude && record.longitude`,
+`p.lat && p.lon`, `sevFilter && r.severity && …`). It now flags a presence test
+on any field whose subject a `_refusal` declares nullable, in the same
+jurisdiction the fallback rule uses — a module that declares no refusal is out
+of scope, which is why the first canary attempt against `src/pii.js` correctly
+did not fire. Three canaries cover it, including the control that the correct
+spelling (`x !== null && y !== null`) and a test on the refusal field itself
+(`!row.x_refusal && …`) both pass. Canaried on a real file: a planted
+`far.false_alert_rate && …` in `src/districts.js` fires, and the tree is clean
+after restore. No fourth instance exists today; the rule is what keeps that
+true.
+
 **A seventh:** honesty is well policed in prose and poorly policed in payloads.
 `scripts/check-no-flood-probability.mjs` enforces capability vocabulary across
 `src/`, `public/`, `scripts/`, `test/` and `docs/`, which is genuinely unusual
