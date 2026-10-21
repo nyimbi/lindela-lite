@@ -450,12 +450,15 @@ describe('the enhancement registers do not share an id space', () => {
  * ones that are in a `src/` comment — which is the figure that decides whether a
  * reader following an id from source code can be misled.
  *
- * At the last measurement there were **1,516** `ENH-nn` citations across
+ * At the last measurement there were **1,517** `ENH-nn` citations across
  * **327** files, **280** of them in `src/` comment lines. Those three read
  * 1,961 / 353 / 348 before the `SAE-` rename on 2026-10-21, and the drop is the
  * rename: 445 citations left the `ENH-` prefix when the system-audit register
  * moved off it. A figure that *fell* by a known quantity is a different thing
- * from a figure that rotted, and this is the former.
+ * from a figure that rotted, and this is the former. The one added since is the
+ * register-3 header naming its late entry, which exists and previously had no
+ * header mention at all — spelled without an id here, because this walk counts
+ * its own source and a note that names an id counts itself.
  *
  * `srcComments` is comment *lines* carrying at least one citation, not tokens:
  * a line is what a reader's eye lands on, and a block comment restating three

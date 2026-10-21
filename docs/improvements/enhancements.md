@@ -8,7 +8,7 @@
 > That was not true before 2026-10-21. [`system-audit/02-enhancements.md`](system-audit/02-enhancements.md)
 > numbered `ENH-01..ENH-50`, colliding with both this register (01–30) and the
 > 2026-10 audit (31–50), so thirty ids meant two things and twenty meant three.
-> It is now `SAE-01..SAE-50`, and the roughly 550 citations in `src/`, `public/`,
+> It is now `SAE-01..SAE-50`, and 445 of the citations in `src/`, `public/`,
 > `scripts/` and `test/` were re-pointed by reading the code around each one.
 > `docs/improvements/status.md` resolves against *this* file.
 > `test/audit-register-structure.test.js` asserts the id spaces are disjoint and

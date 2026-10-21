@@ -4,7 +4,7 @@ A second audit, commissioned after the first (`docs/improvements/`) had been
 implemented. The first asked whether the platform is honest and whether its claims
 work. This one asks two different questions:
 
-- **What can it not yet do?** — fifty non-incremental enhancements (`ENH-31..80`).
+- **What can it not yet do?** — fifty non-incremental enhancements (`ENH-31..81`).
 - **What is wrong right now?** — sixty-eight defects across eight domains, thirteen
   more found since (`VER-13..VER-20`, `QUA-08..QUA-11` and `VUL-08`; each says
   where it was found, and the ones not found by the audit say so).

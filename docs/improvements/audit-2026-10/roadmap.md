@@ -1,6 +1,6 @@
 # Phased roadmap — audit 2026-10
 
-Fifty enhancements (`ENH-31..80`) and sixty-eight defects (`VUL/VER/CON/SCL/OBS/ARC/CAP/QUA`)
+Fifty enhancements (`ENH-31..81`) and sixty-eight defects (`VUL/VER/CON/SCL/OBS/ARC/CAP/QUA`)
 do not all ship at once. This sequences them by dependency, marks the critical path,
 and allocates the two scarce resources: engineering weeks and reviewer attention.
 

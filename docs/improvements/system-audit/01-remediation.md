@@ -3,7 +3,7 @@
 93 defects requiring remediation. **Disjoint from the 50 enhancements** in
 [02-enhancements.md](02-enhancements.md): nothing here is a proposal, everything here
 is a repair. Where a repair is large enough to be a proposal, it is filed there and
-cross-referenced with a `→ ENH-nn` tag rather than duplicated.
+cross-referenced with a `→ SAE-nn` tag rather than duplicated.
 
 Severity is consequence-in-the-field, not exploitability:
 **S1** the system does not do the thing it exists to do ·

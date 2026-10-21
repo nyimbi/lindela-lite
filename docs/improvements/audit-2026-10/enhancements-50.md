@@ -8,7 +8,10 @@ cannot state its order-of-magnitude claim in one sentence does not appear here.
 
 **Relation to the prior audit.** `docs/improvements/enhancements.md` holds
 `ENH-01..ENH-30` (trust, ingestion, visualisation, response, foundations). This
-set is `ENH-31..ENH-80` and is disjoint from it; no item below restates one above.
+set is `ENH-31..ENH-81` — fifty numbered entries plus `ENH-81`, filed after the
+audit and marked as such — and is disjoint from it; no item below restates one
+above. Neither range collides with [`../system-audit/02-enhancements.md`](../system-audit/02-enhancements.md),
+which owns `SAE-01..SAE-50` since 2026-10-21.
 The prior audit asked whether the platform is honest and whether its claims work.
 This one asks what it cannot yet *do*, and what it does too slowly.
 
