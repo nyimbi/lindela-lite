@@ -1,5 +1,17 @@
 # 20 High-Impact Improvements for Lindela Lite
 
+> **Status: written as a proposal, and largely built since.** Read this as a
+> record of what was proposed in 2026-09, not as a list of open work. Measured
+> against the tree on 2026-10-21, every module this document says to add exists
+> — `src/analytics/impact.js`, `src/analytics/ensemble.js`, `src/bitemporal.js`,
+> `src/freshness.js`, `src/watermarks.js` — and the trigger protocols it asks to
+> formalise are versioned under `examples/trigger-protocols/`. The register that
+> tracks what shipped and what guards it is
+> [`docs/improvements/status.md`](../improvements/status.md); the open defects
+> are in [`docs/improvements/defects.md`](../improvements/defects.md). Proposing
+> work from this file without checking those two is how the same feature gets
+> built twice.
+
 Grouped by theme. Each names *what*, *where it plugs in*, and *why it matters* for a world-class humanitarian climate-ops platform.
 
 ## Data & Science (the credibility layer)

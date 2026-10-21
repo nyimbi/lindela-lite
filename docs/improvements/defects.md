@@ -1458,19 +1458,33 @@ it was never true — a duplicated `globMatch` is a good way to explain how a bu
 happened twice, which is presumably why it was written down without being
 checked.
 
-**Supply chain** — CI fetches unpinned packages at build time:
-`npx --yes trivy` (`.github/workflows/ci.yml:44`, the scanner being the
-least-safely-fetched thing in the repo), cyclonedx at `:53`, `wait-on` at
-`:103,108`. Six of seven jobs have no `permissions:` block, all actions use mutable
-tags, and there is no CodeQL job.
+**Supply chain** — **all four claims refuted against the tree on 2026-10-21.**
 
-**Documentation** — eight broken internal links in `docs/architecture/`, pointing
-at `frontend.md`, `deployment.md` and `decisions/`, which are referenced by the
-reading-order README but were never written. Nine live routes are missing from
-`docs/openapi.yaml`, including `/api/v1/impact/facilities-at-risk` while its
-sibling is documented. `docs/plans/world-class-roadmap.md` is stale: at least 14 of
-its 20 items have shipped, so a reader re-proposes work that exists. Full tables in
-[_research/00-audit-baseline.md](_research/00-audit-baseline.md).
+The scanner named here did not work: `npx --yes trivy` is not a command, because
+Trivy is not published to npm. It is `aquasecurity/trivy-action` pinned to a
+commit now, and the ci.yml comment at `:132` records why. Every action reference
+in the workflow is a 40-character commit SHA — checkout, setup-node,
+upload-artifact, trivy-action and the SLSA generator — so "mutable tags" is
+false. A workflow-level `permissions: contents: read` covers every job, with the
+`provenance` job narrowing further at `:267`, so "six of seven jobs" is false as
+well (there are eight jobs). The two remaining `npx --yes` calls are version-
+pinned: `@cyclonedx/cyclonedx-npm@6.0.1` and `wait-on@9.5.1`. What is still true
+is that both are fetched at build time from a registry rather than installed from
+the lockfile, and that there is no CodeQL job.
+
+**Documentation** — **refuted 2026-10-21.** `frontend.md`, `deployment.md` and
+`decisions/` all exist, and `scripts/check-doc-links.mjs` resolves all 335
+relative links in the docs tree. `scripts/check-openapi.mjs` parses 193 served
+routes against 193 documented paths with no ghost entries, including
+`/api/v1/impact/facilities-at-risk` at `docs/openapi.yaml:3462`. What was true
+when written — nine live routes missing from the spec, `facilities-at-risk` among
+them — is closed.
+
+`docs/plans/world-class-roadmap.md` read as a list of unbuilt work with at least
+14 of its 20 items shipped, so a reader re-proposed what existed. **Fixed
+2026-10-21** with a status header stating that, naming the modules it asked for
+that now exist, and pointing at the two registers that say what shipped. Full
+tables in [_research/00-audit-baseline.md](_research/00-audit-baseline.md).
 
 ---
 
