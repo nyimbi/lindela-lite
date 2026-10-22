@@ -49,10 +49,10 @@ export const NARRATOR_MAX_CHARS = 1200
  * same explicit opt-in as `LINDELA_LITE_TRUST_PROXY=1` — because a model
  * server that is merely present is not a narrator a deployment asked for.
  *
- * `override` is createServer's injection point: a caller that built the server
- * with a narrator option names the endpoint explicitly rather than through env
- * (the pattern `options.inboundLimiter` set, and which a test needs to reach a
- * per-test model server on an ephemeral port).
+ * `override` names the endpoint explicitly rather than through env, which is
+ * what a test needs to reach a per-test model server on an ephemeral port. It
+ * is not a `createServer` option: `createServer` reads no `narrator` key, and
+ * the served narrate route configures this through `process.env`.
  */
 export function narratorStatus(env = process.env, override = null) {
   const source = override || {}

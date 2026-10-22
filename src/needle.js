@@ -97,10 +97,13 @@ export const NEEDLE_CONFIDENCE_FLOOR = 0.5
 /**
  * Needle's configuration. Off until an operator switches it on.
  *
- * `override` is createServer's injection point, the pattern `narratorStatus`
- * set: a caller that built the server with a needle option names the endpoint
- * explicitly rather than through env, which a test needs to reach a per-test
- * sidecar on an ephemeral port.
+ * `override` names the endpoint explicitly rather than through env, which is
+ * what a test needs to reach a per-test sidecar on an ephemeral port. It is
+ * *not* a `createServer` option — the docstring here used to say it was, and
+ * `createServer` reads no `needle` key, so that sentence described a wiring
+ * that did not exist. The served path (`POST /api/v1/ask`) configures the
+ * adapter through `process.env`, which `answerQueryWithModel` reads when the
+ * caller names no `env`.
  */
 export function needleStatus(env = process.env, override = null) {
   const source = override || {}
