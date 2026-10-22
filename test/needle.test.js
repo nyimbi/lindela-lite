@@ -122,6 +122,32 @@ describe('every proposed slot is validated before it is used', () => {
     }
   })
 
+  it('refuses a call that names a different tool, rather than reading it as ours', () => {
+    // The card's contract is one call per action with the name the app
+    // registered. A turn naming `get_weather` is the model choosing something
+    // this adapter did not offer, and its arguments are not a proposal about
+    // this question. The old `|| calls[0]` fallback applied it anyway, which is
+    // the adapter inventing a call the model did not make.
+    const out = readNeedleProposal(reply({ subject: 'flood_risk' }, {
+      function_calls: [{ name: 'get_weather', arguments: { subject: 'flood_risk' } }],
+    }))
+    assert.equal(out.status, 'refused')
+    assert.equal(out.code, 'unexpected_tool')
+  })
+
+  it('accepts a call with no name, which is the card\'s own turn shape', () => {
+    // The control for the test above: the Python API returns the turn as the
+    // call with no `name` key at all, so an unnamed call must still be read.
+    // Without this, refusing every non-matching name would refuse the shape the
+    // model card documents.
+    const out = readNeedleProposal({
+      function_calls: [{ arguments: { subject: 'flood_risk' } }],
+      confidence: 0.9,
+    })
+    assert.equal(out.status, 'proposed')
+    assert.equal(out.subject, 'flood_risk')
+  })
+
   it('still tells a genuine zero from an absent score', () => {
     // The control for the test above: a model that scores its own guess 0 is
     // refusing, not silent, and the two must not collapse into one code.

@@ -74,8 +74,9 @@ platform does not have. Recorded and rejected.
 - **Sidecar over HTTP.** It talks to a `cactus-needle` server process, because
   that is the only binding that exists. The endpoint is configurable.
 - **Refusals are data, never thrown.** Unreachable sidecar, HTTP error, malformed
-  JSON, empty `function_calls`, a missing confidence score, and a low one are
-  each a refusal with its own code — the narrator's contract.
+  JSON, empty `function_calls`, a call naming another tool, a missing confidence
+  score, and a low one are each a refusal with its own code — the narrator's
+  contract.
 - **Every slot is validated against the declared vocabulary before it is used.**
   This is the load-bearing property: Needle proposes, `nl-query` disposes. A slot
   naming a subject not in `SUBJECTS` is dropped, and if that leaves no subject the

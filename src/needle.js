@@ -33,6 +33,15 @@
  *   - A proposal that carries **no** score is refused too. Absence is not a
  *     high score: the card's routing needs the number, and a sidecar that omits
  *     it has not said the model is confident.
+ *   - A call that **names a different tool** is refused, not reinterpreted.
+ *     The model chose something this adapter did not offer, and its arguments
+ *     are not a proposal about this question.
+ *
+ * Each of the last three was a fail-open found by probing the adapter rather
+ * than by reading it: the omitted confidence skipped the threshold, and the
+ * `|| calls[0]` fallback applied a call named `get_weather`. The card's own
+ * "empty list rather than a guess" is the principle; these were the places the
+ * adapter guessed on the model's behalf.
  *
  * So a question Needle misreads produces a *worse* parse than no model at all,
  * and never a fabricated subject — the deterministic parser still refuses.
@@ -66,7 +75,7 @@ export const NEEDLE_BASIS = Object.freeze({
   basis: 'Cactus Needle 3 — 121M parameters at 2.125 bits per weight (8-29 MB), Apache-2.0, Laddered Simple Attention Network, run as a local sidecar and asked for one grammar-constrained tool call',
   serves: 'candidate slot values for a natural-language question — subject, region, window, predicates, threshold — which the deterministic parser in src/nl-query.js then validates against its own declared vocabulary',
   not: 'never a source of answers, figures or actions, and never a replacement for the parser: a slot it proposes that the vocabulary does not carry is discarded, and a question it misreads still refuses exactly as the parser refuses with no model present',
-  refusals: 'needle not configured · sidecar unreachable · HTTP error · malformed JSON · empty function_calls · no confidence score · confidence below the floor · no slot survives validation',
+  refusals: 'needle not configured · sidecar unreachable · HTTP error · malformed JSON · empty function_calls · a call naming another tool · no confidence score · confidence below the floor · no slot survives validation',
   checked: 'every proposed slot is re-validated against SUBJECTS, PREDICATES, WINDOWS and the district list before use; the count of slots that survived ships with the proposal (slots_validated)',
 })
 
@@ -211,7 +220,20 @@ export function readNeedleProposal(reply, { confidenceFloor = NEEDLE_CONFIDENCE_
   if (!calls.length) {
     return refuse('no_function_call', 'the model returned no function call, which for an off-topic question is its documented answer rather than a failure', { confidence: Number.isFinite(confidence) ? confidence : null })
   }
-  const call = calls.find((c) => String(c?.name || c?.function?.name || '') === NEEDLE_TOOL_NAME) || calls[0]
+  // Three shapes reach here and only two of them are ours. The card's Python
+  // API returns a call with no `name` at all (the turn is the call), and an
+  // OpenAI-shaped sidecar nests it under `function`. A call that *names* a
+  // different tool is a third thing: the model chose something else, and
+  // reading its arguments as ours would be the adapter inventing a proposal the
+  // model did not make. The old `|| calls[0]` did exactly that, and it also
+  // swallowed a turn whose `function_calls` held only unrelated tools.
+  const named = (c) => String(c?.name ?? c?.function?.name ?? '')
+  const call = calls.find((c) => named(c) === NEEDLE_TOOL_NAME)
+    ?? calls.find((c) => named(c) === '')
+  if (!call) {
+    const offered = calls.map(named).filter(Boolean).join(', ')
+    return refuse('unexpected_tool', `the model called ${offered || 'no named tool'}, which is not ${NEEDLE_TOOL_NAME}`, { confidence })
+  }
   const raw = call?.arguments ?? call?.function?.arguments ?? call?.parameters
   let args = raw
   if (typeof raw === 'string') {

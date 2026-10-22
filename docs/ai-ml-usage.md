@@ -141,8 +141,9 @@ per weight, 8-29 MB, Apache-2.0), opt-in via `LINDELA_LITE_NEEDLE=1`.
   that one refusal; a genuine `0` stays `low_confidence`, because a model
   scoring its own guess zero is refusing rather than silent.
 - **Refusals are data, never thrown.** Off, unreachable, HTTP error, malformed
-  JSON, empty `function_calls`, no confidence, low confidence, unknown subject —
-  each is a refusal with its own code, the narrator's contract.
+  JSON, empty `function_calls`, a call naming another tool, no confidence, low
+  confidence, unknown subject — each is a refusal with its own code, the
+  narrator's contract.
 - **Its production surface is one route.** `POST /api/v1/ask`
   (`src/routes/ask.js`) serves `answerQueryWithModel`, so a Needle-proposed
   subject runs the same grounding audit as a deterministically parsed one, and
