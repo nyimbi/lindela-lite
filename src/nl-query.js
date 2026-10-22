@@ -59,7 +59,7 @@ export const NL_QUERY_BASIS = Object.freeze({
   basis: 'a deterministic parser and resolver over a declared vocabulary — no model, no network, no free-text interpretation',
   serves: 'one grounded answer over the store\'s derived collections, carrying the facts it read',
   not: 'the answer is not a search result and not an estimate: every figure it states is a value it retrieved, the sentence is audited against its own fact set before it is returned, and a figure the facts do not contain is refused rather than published',
-  refusals: 'no question · unknown subject · ambiguous region · unknown field · no data · unmeasured · model refusal · invented figure',
+  refusals: 'no question · unknown subject · ambiguous region · unknown field · no data · unreadable record · unmeasured · model refusal · invented figure',
   checked: 'the count of digit figures the answer restated ships with it (numbers_checked), so a reader can see the sentence was audited, not trusted',
   window: 'the store holds the latest value per district, not a history; a window scopes the event collections (alerts, dispatches, hazards) and is stated on the answer rather than assumed silently',
 })
@@ -443,6 +443,13 @@ function observedForModel(region, data) {
 function runModelQuery(query, data) {
   const subject = SUBJECTS[query.subject]
   const source = (data[subject.collection] || [])
+  // The same guard `runQuery` applies, for the same reason: `m.model` on a
+  // non-record throws, and a model subject is a `collectionPage` read like any
+  // other.
+  const malformed = source.filter((m) => !m || typeof m !== 'object' || Array.isArray(m)).length
+  if (malformed) {
+    return refuse('unreadable_record', `the store's ${subject.collection} collection holds ${malformed} of ${source.length} entries that are not records, so the model floor cannot be read over the rest`)
+  }
   const region = query.region
   if (!region) {
     const regions = [...new Set(source.filter((m) => m.model).map((m) => m.region_name))]
@@ -513,6 +520,19 @@ export function runQuery(query, data = {}) {
   const rows = data[subject.collection]
   if (!Array.isArray(rows) || !rows.length) {
     return refuse('no_data', `the store holds no ${subject.collection} records, so there is nothing to answer from`)
+  }
+  // A collection can carry an entry that is not a record — a `null` in a
+  // hand-edited JSON store, which Postgres's `body JSONB NOT NULL` admits as the
+  // JSON value `null` and whose write-time `assertRecordsNamed` only sees on the
+  // path that wrote it. Every predicate below dereferences a record, so one such
+  // entry threw a TypeError out of the route: a 500 where this module promises a
+  // 200. Skipping it silently would be worse, because the answer's counts state
+  // what was read — a row dropped without a word turns "no match" into a claim
+  // about a collection nobody fully looked at. So it is a refusal that names the
+  // count, in the same voice as `unmeasured`.
+  const malformed = rows.filter((r) => !r || typeof r !== 'object' || Array.isArray(r)).length
+  if (malformed) {
+    return refuse('unreadable_record', `the store's ${subject.collection} collection holds ${malformed} of ${rows.length} entries that are not records, so a count over it would describe the readable ones and say nothing about the rest`)
   }
   const source = subject.filter ? rows.filter(subject.filter) : rows
   if (!source.length) {

@@ -232,4 +232,36 @@ describe('grounded natural-language query (ENH-68)', () => {
     assert.ok(MODEL_REGISTRY.flood_probability)
     assert.equal(typeof refusalSentence('flood_probability'), 'string')
   })
+
+  it('refuses a collection carrying a non-record instead of throwing out of the route', () => {
+    // `body JSONB NOT NULL` admits the JSON value `null`, and the JSON adapter
+    // asserts record shape only on the path that writes — so a collection can
+    // arrive here with an entry that is not a record. Every predicate in
+    // `runQuery` dereferences a record, so one such entry used to throw a
+    // TypeError out of the ask route: a 500 where this module promises a 200.
+    // Silently skipping it would be worse than the throw, because the answer
+    // states `records_read`: a row dropped without a word turns "no match" into
+    // a claim about a collection nobody fully read. So it refuses, with the
+    // count, and the two spellings a store can carry (`null` and an array) are
+    // both named.
+    for (const [label, junk] of [['null', null], ['array', []]]) {
+      const data = fixture()
+      data.risk_scores = [...data.risk_scores, junk]
+      const parsed = parseQuery('Which districts crossed the flood threshold?', { now: NOW })
+      const resolved = runQuery(parsed, data)
+      assert.equal(resolved.status, 'refused', `${label}: a non-record must not be counted or skipped`)
+      assert.equal(resolved.code, 'unreadable_record')
+      assert.match(resolved.reason, /1 of 3 entries/)
+    }
+  })
+
+  it('refuses a model collection carrying a non-record, rather than reading the floor over it', () => {
+    // `runModelQuery` reads `m.model` off each entry for the same reason, and it
+    // is a separate function — the guard in `runQuery` does not reach it.
+    const parsed = parseQuery('What is the flood probability for Turkana?', { now: NOW })
+    assert.equal(parsed.status, 'parsed')
+    const resolved = runQuery(parsed, { flood_probability_models: [null], climate_observations: [] })
+    assert.equal(resolved.status, 'refused')
+    assert.equal(resolved.code, 'unreadable_record')
+  })
 })

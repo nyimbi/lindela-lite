@@ -146,6 +146,12 @@ per weight, 8-29 MB, Apache-2.0), opt-in via `LINDELA_LITE_NEEDLE=1`.
   deterministic parse *refused*, and a refusal carries no window, so inheriting
   one from it left `window: undefined` and the render threw; a question Needle
   widened answered 500 where this contract promises 200.
+- **A collection that carries a non-record is refused, not skimmed.** A
+  `null` in a hand-edited store — which Postgres's `body JSONB NOT NULL` admits
+  as the JSON value `null` — reached the predicates and threw a TypeError out of
+  the route. Skipping it would be worse: the answer states `records_read`, so a
+  row dropped without a word turns "no match" into a claim about a collection
+  nobody fully read. It refuses as `unreadable_record`, naming the count.
 - **Refusals are data, never thrown.** Off, unreachable, HTTP error, malformed
   JSON, empty `function_calls`, a call naming another tool, no confidence, low
   confidence, unknown subject — each is a refusal with its own code, the
