@@ -203,6 +203,18 @@ function findSubject(text) {
   return { status: 'matched', key: longest.key, subject: longest.subject }
 }
 
+/**
+ * The declared default window, stamped `assumed`.
+ *
+ * The single spelling of "no window was named", because there are two callers
+ * and a second copy would be a second thing to keep in step: `findWindow` falls
+ * back to it, and so does `parseQueryWithModel` when Needle proposes no window.
+ */
+function defaultWindow() {
+  const fallback = WINDOWS.find((w) => w.key === DEFAULT_WINDOW)
+  return { ...fallback, assumed: true }
+}
+
 /** The window the question names, or the declared default, stamped `assumed`. */
 function findWindow(text) {
   const phrases = []
@@ -211,8 +223,7 @@ function findWindow(text) {
   for (const { window, phrase } of phrases) {
     if (phrasePattern(phrase).test(text)) return { ...window, assumed: false }
   }
-  const fallback = WINDOWS.find((w) => w.key === DEFAULT_WINDOW)
-  return { ...fallback, assumed: true }
+  return defaultWindow()
 }
 
 /** The predicates the question names. */
@@ -315,11 +326,18 @@ export async function parseQueryWithModel(question, {
   if (!subject) return { ...parsed, needle: { code: 'unknown_subject', reason: `'${proposal.subject}' is not a subject this layer carries` } }
 
   // The window is resolved to the vocabulary's own entry, so a proposal naming a
-  // real window key carries that window's phrases and `assumed: false`; a
-  // proposal naming none keeps the deterministic default, stamped assumed.
+  // real window key carries that window's phrases and `assumed: false`.
+  //
+  // A proposal naming none takes the same declared default `findWindow` falls
+  // back to — NOT `parsed.window`. This path is only reached when `parseQuery`
+  // *refused*, and a refusal carries no window, so inheriting from it produced
+  // `window: undefined` and the first `query.window.days` downstream threw a
+  // TypeError out of `renderAnswer`. The route has no try/catch there, so a
+  // question Needle widened into a windowed subject answered 500 instead of
+  // 200-with-a-refusal. `defaultWindow()` is the one spelling of that fallback.
   const window = proposal.window
     ? { ...WINDOWS.find((w) => w.key === proposal.window), assumed: false }
-    : parsed.window
+    : defaultWindow()
 
   return {
     status: 'parsed',

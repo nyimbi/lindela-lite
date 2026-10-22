@@ -140,6 +140,12 @@ per weight, 8-29 MB, Apache-2.0), opt-in via `LINDELA_LITE_NEEDLE=1`.
   model is confident. Both spellings of absence — omitted and `null` — reach
   that one refusal; a genuine `0` stays `low_confidence`, because a model
   scoring its own guess zero is refusing rather than silent.
+- **A slot the model omits takes the parser's own default, not a hole.** A
+  proposal naming no window gets `DEFAULT_WINDOW` stamped `assumed: true` —
+  the same fallback `findWindow` uses. The model path is only reached when the
+  deterministic parse *refused*, and a refusal carries no window, so inheriting
+  one from it left `window: undefined` and the render threw; a question Needle
+  widened answered 500 where this contract promises 200.
 - **Refusals are data, never thrown.** Off, unreachable, HTTP error, malformed
   JSON, empty `function_calls`, a call naming another tool, no confidence, low
   confidence, unknown subject — each is a refusal with its own code, the

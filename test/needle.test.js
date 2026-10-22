@@ -6,7 +6,7 @@ import {
   NEEDLE_BASIS, NEEDLE_CONFIDENCE_FLOOR, NEEDLE_TOOL_NAME,
   buildNeedleRequest, needleStatus, needleToolSchema, proposeSlots, readNeedleProposal,
 } from '../src/needle.js'
-import { SUBJECTS, WINDOWS, PREDICATES, parseQuery, parseQueryWithModel } from '../src/nl-query.js'
+import { DEFAULT_WINDOW, SUBJECTS, WINDOWS, PREDICATES, answerQueryWithModel, parseQuery, parseQueryWithModel } from '../src/nl-query.js'
 
 /**
  * Needle — the on-device model asked to propose slots, never to answer.
@@ -219,6 +219,32 @@ describe('the model is consulted only where the vocabulary fails', () => {
     assert.equal(parsed.region.slug, 'turkana')
     assert.equal(parsed.proposed_by, 'needle')
     assert.equal(parsed.needle.confidence, 0.88)
+  })
+
+  it('falls back to the declared default window when the model proposes none', async () => {
+    // The model path is only reached when `parseQuery` REFUSED, and a refusal
+    // carries no `window`. Inheriting `parsed.window` therefore produced
+    // `window: undefined`, and the first `query.window.days` in `runQuery`
+    // threw a TypeError out of the route — a 500 where the module's contract
+    // promises a 200. A proposal that names no window must take the same
+    // declared default `findWindow` uses, stamped assumed.
+    const http = async () => ({
+      ok: true,
+      json: async () => ({ function_calls: [{ name: NEEDLE_TOOL_NAME, arguments: { subject: 'hazards' } }], confidence: 0.9 }),
+    })
+    const parsed = await parseQueryWithModel('what has been going on lately', { needle: { enabled: true }, http })
+    assert.equal(parsed.status, 'parsed')
+    assert.ok(parsed.window, 'a parsed query always carries a window')
+    assert.equal(parsed.window.key, DEFAULT_WINDOW)
+    assert.equal(parsed.window.assumed, true, 'and it is marked as assumed, not as something the question said')
+
+    // And the whole answer path runs: `hazards` is windowed, so this is the
+    // shape that used to throw.
+    const answer = await answerQueryWithModel('what has been going on lately', {
+      hazard_events: [{ id: 'h1', event_type: 'flood', severity: 'high', region_name: 'Turkana', started_at: '2026-10-20T00:00:00Z' }],
+    }, { needle: { enabled: true }, http, now: '2026-10-22T00:00:00Z' })
+    assert.equal(answer.status, 'answered')
+    assert.match(answer.text, /hazard events/)
   })
 
   it('keeps the deterministic refusal when the model proposes an unknown subject', async () => {

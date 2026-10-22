@@ -90,6 +90,14 @@ the deterministic parse refused with `unknown_subject`, and falls back to the
 deterministic refusal when Needle is off, unreachable, or unconfident. The
 deterministic path is unchanged and remains the default.
 
+That fallback has to be a *whole* parse. The model path is only reached on a
+refusal, and a refusal carries no `window`, so a proposal naming none inherits
+`DEFAULT_WINDOW` from `defaultWindow()` — the same function `findWindow` ends
+in — rather than a field the refusal does not have. Reading it from the refusal
+was a live `TypeError` out of `renderAnswer`, found by probing the adapter, and
+the route has no try/catch there, so it surfaced as a 500 rather than the 200
+this contract promises.
+
 ## What this is not
 
 It is not a claim that Needle is *enabled*. It is off unless
