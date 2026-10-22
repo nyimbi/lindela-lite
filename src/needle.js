@@ -199,6 +199,16 @@ function acceptPredicates(value) {
 }
 
 function acceptThreshold(value) {
+  // `Number(null)` is 0 and `Number('')` is 0, so the two spellings of "the
+  // model proposed no threshold" became a threshold of *zero* — which every
+  // record crosses. A proposal carrying `above_threshold` and an explicit
+  // `null` therefore answered "at or above 0" and matched the whole collection,
+  // where the same proposal omitting the field falls back to the declared
+  // default. Two spellings of one absence, two different questions, and the one
+  // the sidecar actually sends is the one that widens the answer. Absence is now
+  // absence; a genuine `0` stays a threshold, because "above zero" is a question
+  // someone can mean.
+  if (value === undefined || value === null || value === '') return undefined
   const number = Number(value)
   return Number.isFinite(number) ? number : undefined
 }

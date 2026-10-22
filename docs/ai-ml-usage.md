@@ -132,6 +132,13 @@ per weight, 8-29 MB, Apache-2.0), opt-in via `LINDELA_LITE_NEEDLE=1`.
   promise and this is the platform's, and the platform does not take the
   model's. A proposed subject not in `SUBJECTS` is refused, and the question
   refuses exactly as it does with no model present.
+- **An absent slot is absent, not zero.** `Number(null)` and `Number('')` are
+  both `0`, so a sidecar sending `threshold: null` alongside `above_threshold`
+  used to produce a threshold of zero — and `score >= 0` is every record with a
+  score, so the answer read "at or above 0" over the whole collection while the
+  same proposal omitting the field fell back to the declared default. Both
+  absences are now absence; a genuine `0` stays a threshold. Same class as the
+  confidence bug above, one slot over.
 - **A low-confidence proposal is refused whole, not partly applied.** Half a
   parse is the failure mode this module exists to avoid. Below
   `NEEDLE_CONFIDENCE_FLOOR` the call is refused and the score is named. A

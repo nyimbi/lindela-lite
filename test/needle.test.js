@@ -157,6 +157,27 @@ describe('every proposed slot is validated before it is used', () => {
     assert.equal(out.confidence, 0)
   })
 
+  it('tells an absent threshold from a proposed zero, which every record crosses', () => {
+    // The same absence-versus-zero bug as the confidence one, one slot over.
+    // `Number(null)` and `Number('')` are both 0, so a sidecar sending
+    // `threshold: null` alongside `above_threshold` produced a threshold of
+    // zero: `runQuery` filters `score >= 0`, which every record with a score
+    // crosses, and the answer reads "at or above 0" over the whole collection.
+    // The omitted spelling falls back to the declared default instead, so the
+    // two spellings of one absence answered two different questions — and the
+    // one a sidecar sends is the one that widens the answer.
+    for (const [label, value] of [['null', null], ['empty string', '']]) {
+      const out = readNeedleProposal(reply({ subject: 'flood_risk', predicates: ['above_threshold'], threshold: value }))
+      assert.equal(out.status, 'proposed')
+      assert.equal(out.threshold, null, `${label}: an absent threshold must not become 0`)
+      assert.equal(out.slots_validated, 2, `${label}: and it must not count as a validated slot`)
+    }
+    // The control: an explicit zero is a question someone can mean, and it stays.
+    const zero = readNeedleProposal(reply({ subject: 'flood_risk', predicates: ['above_threshold'], threshold: 0 }))
+    assert.equal(zero.threshold, 0)
+    assert.equal(zero.slots_validated, 3)
+  })
+
   it('treats an empty function_calls list as the model\'s documented refusal', () => {
     // The card: "an off-topic request returns an empty list rather than a guess."
     // That is not a transport failure and must not read as one.
