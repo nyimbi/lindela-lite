@@ -100,6 +100,37 @@ describe('every proposed slot is validated before it is used', () => {
     assert.equal(out.confidence, 0.2)
   })
 
+  it('refuses a proposal that carries no confidence score, in every spelling of "absent"', () => {
+    // The fail-open this closes: `Number(undefined)` is NaN, so the old
+    // `Number.isFinite(confidence) && confidence < floor` guard skipped the
+    // threshold entirely for a reply that omitted the field — while the same
+    // reply spelling it `null` became `Number(null) === 0` and was refused as
+    // low-confidence. Two spellings of one absence, opposite verdicts, and the
+    // omitted one is what a sidecar written against the card's Python turn
+    // shape produces. Each is now the same refusal.
+    const args = { subject: 'flood_risk' }
+    const omitted = { function_calls: [{ name: NEEDLE_TOOL_NAME, arguments: args }] }
+    for (const [label, payload] of [
+      ['omitted', omitted],
+      ['null', { ...omitted, confidence: null }],
+      ['empty string', { ...omitted, confidence: '' }],
+      ['not a number', { ...omitted, confidence: 'high' }],
+    ]) {
+      const out = readNeedleProposal(payload)
+      assert.equal(out.status, 'refused', `${label}: an unroutable proposal must not be applied`)
+      assert.equal(out.code, 'no_confidence', `${label}: expected no_confidence`)
+    }
+  })
+
+  it('still tells a genuine zero from an absent score', () => {
+    // The control for the test above: a model that scores its own guess 0 is
+    // refusing, not silent, and the two must not collapse into one code.
+    const out = readNeedleProposal(reply({ subject: 'flood_risk' }, { confidence: 0 }))
+    assert.equal(out.status, 'refused')
+    assert.equal(out.code, 'low_confidence')
+    assert.equal(out.confidence, 0)
+  })
+
   it('treats an empty function_calls list as the model\'s documented refusal', () => {
     // The card: "an off-topic request returns an empty list rather than a guess."
     // That is not a transport failure and must not read as one.

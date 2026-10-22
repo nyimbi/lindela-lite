@@ -30,6 +30,9 @@
  *   - A proposal below `NEEDLE_CONFIDENCE_FLOOR` is refused, not used. The card's
  *     confidence head exists to route on "act, confirm or refuse"; a number that
  *     does not change the outcome is a decoration.
+ *   - A proposal that carries **no** score is refused too. Absence is not a
+ *     high score: the card's routing needs the number, and a sidecar that omits
+ *     it has not said the model is confident.
  *
  * So a question Needle misreads produces a *worse* parse than no model at all,
  * and never a fabricated subject — the deterministic parser still refuses.
@@ -63,7 +66,7 @@ export const NEEDLE_BASIS = Object.freeze({
   basis: 'Cactus Needle 3 — 121M parameters at 2.125 bits per weight (8-29 MB), Apache-2.0, Laddered Simple Attention Network, run as a local sidecar and asked for one grammar-constrained tool call',
   serves: 'candidate slot values for a natural-language question — subject, region, window, predicates, threshold — which the deterministic parser in src/nl-query.js then validates against its own declared vocabulary',
   not: 'never a source of answers, figures or actions, and never a replacement for the parser: a slot it proposes that the vocabulary does not carry is discarded, and a question it misreads still refuses exactly as the parser refuses with no model present',
-  refusals: 'needle not configured · sidecar unreachable · HTTP error · malformed JSON · empty function_calls · confidence below the floor · no slot survives validation',
+  refusals: 'needle not configured · sidecar unreachable · HTTP error · malformed JSON · empty function_calls · no confidence score · confidence below the floor · no slot survives validation',
   checked: 'every proposed slot is re-validated against SUBJECTS, PREDICATES, WINDOWS and the district list before use; the count of slots that survived ships with the proposal (slots_validated)',
 })
 
@@ -197,7 +200,13 @@ function acceptThreshold(value) {
  */
 export function readNeedleProposal(reply, { confidenceFloor = NEEDLE_CONFIDENCE_FLOOR } = {}) {
   if (!reply || typeof reply !== 'object') return refuse('malformed_reply', 'the sidecar returned no JSON object')
-  const confidence = Number(reply.confidence)
+  // `Number(null)` is 0 and `Number(undefined)` is NaN, so a sidecar that sends
+  // no confidence must be told apart from one that sends a genuine zero — the
+  // first is a proposal that cannot be routed, the second is the model refusing
+  // its own guess. Normalising the absent spellings to NaN here is what lets the
+  // single `no_confidence` branch below cover all of them.
+  const absent = reply.confidence === undefined || reply.confidence === null || reply.confidence === ''
+  const confidence = absent ? Number.NaN : Number(reply.confidence)
   const calls = Array.isArray(reply.function_calls) ? reply.function_calls : []
   if (!calls.length) {
     return refuse('no_function_call', 'the model returned no function call, which for an off-topic question is its documented answer rather than a failure', { confidence: Number.isFinite(confidence) ? confidence : null })
@@ -213,7 +222,20 @@ export function readNeedleProposal(reply, { confidenceFloor = NEEDLE_CONFIDENCE_
   // The confidence check is after the call is found and before any slot is used:
   // a low-confidence call is refused whole, not partially applied, because half
   // a parse is the failure mode this module exists to avoid.
-  if (Number.isFinite(confidence) && confidence < confidenceFloor) {
+  //
+  // An absent score is its own refusal, not a pass. `Number(undefined)` is NaN
+  // and `Number(null)` is 0, so the two spellings of "the sidecar sent no
+  // confidence" used to reach opposite verdicts: the omitted one skipped this
+  // check entirely and the call was applied, while the null one was refused as
+  // `low_confidence` with a reason naming a score the model never sent. The
+  // omitted spelling is the one a sidecar written against the card's *Python*
+  // turn shape produces, so the fail-open direction was the likely one. The
+  // card's confidence head exists to route on act/confirm/refuse; a proposal
+  // that arrives without it cannot be routed and is not used.
+  if (!Number.isFinite(confidence)) {
+    return refuse('no_confidence', 'the sidecar returned no confidence score, so the proposal cannot be routed on act, confirm or refuse')
+  }
+  if (confidence < confidenceFloor) {
     return refuse('low_confidence', `the model's confidence ${confidence} is below the floor ${confidenceFloor}; its own routing guide reserves this band for confirm-or-refuse`, { confidence })
   }
 
@@ -241,7 +263,9 @@ export function readNeedleProposal(reply, { confidenceFloor = NEEDLE_CONFIDENCE_
   return {
     status: 'proposed',
     ...slots,
-    confidence: Number.isFinite(confidence) ? confidence : null,
+    // Always finite here: a non-finite score refused above, so a `proposed`
+    // result carries the number the threshold was applied to.
+    confidence,
     reasoning: String(reply.reasoning ?? ''),
     slots_validated: slotsValidated,
   }

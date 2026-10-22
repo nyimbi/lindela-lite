@@ -134,10 +134,15 @@ per weight, 8-29 MB, Apache-2.0), opt-in via `LINDELA_LITE_NEEDLE=1`.
   refuses exactly as it does with no model present.
 - **A low-confidence proposal is refused whole, not partly applied.** Half a
   parse is the failure mode this module exists to avoid. Below
-  `NEEDLE_CONFIDENCE_FLOOR` the call is refused and the score is named.
+  `NEEDLE_CONFIDENCE_FLOOR` the call is refused and the score is named. A
+  proposal carrying **no** score is refused as `no_confidence`: the card's
+  routing needs the number, and a sidecar that omits the field has not said the
+  model is confident. Both spellings of absence — omitted and `null` — reach
+  that one refusal; a genuine `0` stays `low_confidence`, because a model
+  scoring its own guess zero is refusing rather than silent.
 - **Refusals are data, never thrown.** Off, unreachable, HTTP error, malformed
-  JSON, empty `function_calls`, low confidence, unknown subject — each is a
-  refusal with its own code, the narrator's contract.
+  JSON, empty `function_calls`, no confidence, low confidence, unknown subject —
+  each is a refusal with its own code, the narrator's contract.
 - **Its production surface is one route.** `POST /api/v1/ask`
   (`src/routes/ask.js`) serves `answerQueryWithModel`, so a Needle-proposed
   subject runs the same grounding audit as a deterministically parsed one, and
