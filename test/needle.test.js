@@ -178,6 +178,30 @@ describe('every proposed slot is validated before it is used', () => {
     assert.equal(zero.slots_validated, 3)
   })
 
+  it('refuses a threshold outside the declared type rather than coercing it', () => {
+    // `Number()` accepts more than a threshold can be: `true` is 1, `false` is
+    // 0, `[]` is 0. The grammar declares `type: 'number'` and would not emit
+    // those — but the grammar is the model's promise and this module does not
+    // take it. A boolean here used to become a threshold of 1 or 0, i.e. a
+    // filter the model never proposed.
+    for (const value of [true, false, [], {}]) {
+      const out = readNeedleProposal(reply({ subject: 'flood_risk', predicates: ['above_threshold'], threshold: value }))
+      assert.equal(out.threshold, null, `${JSON.stringify(value)} is not a threshold`)
+      assert.equal(out.slots_validated, 2)
+    }
+    // A numeric string is what an OpenAI-shaped sidecar sends, and stays read.
+    assert.equal(readNeedleProposal(reply({ subject: 'flood_risk', threshold: '70' })).threshold, 70)
+  })
+
+  it('counts a repeated predicate once, so slots_validated is not the model\'s padding', () => {
+    // `runQuery` branches on `.includes`, so a duplicate changes nothing about
+    // the answer — it only inflates the count a reader checks the validation
+    // with.
+    const out = readNeedleProposal(reply({ subject: 'flood_risk', predicates: ['above_threshold', 'above_threshold'] }))
+    assert.deepEqual(out.predicates, ['above_threshold'])
+    assert.equal(out.slots_validated, 2)
+  })
+
   it('treats an empty function_calls list as the model\'s documented refusal', () => {
     // The card: "an off-topic request returns an empty list rather than a guess."
     // That is not a transport failure and must not read as one.

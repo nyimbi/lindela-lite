@@ -194,8 +194,13 @@ function acceptWindow(value) {
 }
 
 function acceptPredicates(value) {
+  // A repeated predicate is dropped rather than carried twice: `runQuery`
+  // branches on `.includes`, so a duplicate changes nothing about the answer and
+  // only inflates `slots_validated`, which is the count a reader uses to check
+  // that the validation ran. The count must describe distinct accepted slots or
+  // it is counting the model's padding.
   if (!Array.isArray(value)) return []
-  return value.map((v) => String(v)).filter((key) => Object.hasOwn(PREDICATES, key))
+  return [...new Set(value.map((v) => String(v)).filter((key) => Object.hasOwn(PREDICATES, key)))]
 }
 
 function acceptThreshold(value) {
@@ -208,7 +213,15 @@ function acceptThreshold(value) {
   // the sidecar actually sends is the one that widens the answer. Absence is now
   // absence; a genuine `0` stays a threshold, because "above zero" is a question
   // someone can mean.
+  //
+  // The coercion is also narrowed to numbers and numeric strings, because
+  // `Number()` accepts more than a threshold can be: `true` is 1, `false` is 0
+  // and `[]` is 0. The grammar says `type: 'number'` and would not emit those,
+  // but this module's whole premise is that the grammar is the model's promise
+  // and the code does not take it — so a boolean here is a value outside the
+  // declared type, and the honest reading is that no threshold was proposed.
   if (value === undefined || value === null || value === '') return undefined
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined
   const number = Number(value)
   return Number.isFinite(number) ? number : undefined
 }
