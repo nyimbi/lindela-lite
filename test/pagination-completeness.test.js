@@ -89,6 +89,25 @@ describe('assessPagination — the last page decides', () => {
     assert.ok(withoutTotal.reason.includes('rests on the last-page heuristic alone'))
   })
 
+  it('treats a non-scalar provider total as absent, not as zero', () => {
+    // `numericTotal` tested `typeof value === 'boolean'` but not arrays, so
+    // `providerTotal: []` arrived as a provider total of **0** and `[100]` as
+    // **100** — the assessment then compared a page count against a total the
+    // provider never reported, in the one direction that reads as complete.
+    // It now delegates to `numericOrNull`, which rejects both.
+    const junk = [
+      assessPagination({ recordsSeen: 100, pageSize: 100, lastPageFull: true, providerTotal: [] }),
+      assessPagination({ recordsSeen: 100, pageSize: 100, lastPageFull: true, providerTotal: [100] }),
+    ]
+    const absent = assessPagination({ recordsSeen: 100, pageSize: 100, lastPageFull: true, providerTotal: null })
+    for (const result of junk) {
+      assert.equal(result.reason, absent.reason, 'a non-scalar total must read exactly as no total')
+      assert.equal(result.possibly_incomplete, true)
+    }
+    // The control: a genuine numeric total still decides.
+    assert.equal(assessPagination({ recordsSeen: 100, pageSize: 100, lastPageFull: true, providerTotal: 100 }).complete, true)
+  })
+
   it('reaching the source cap is flagged even when the last page was partial', () => {
     // CHIRPS' shape: 30 kept out of a capped source, last page not full, but the
     // cap bound and anything behind it is unknown.

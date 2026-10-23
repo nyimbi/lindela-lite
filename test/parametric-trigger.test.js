@@ -118,6 +118,35 @@ describe('the parametric trigger is read, not stored', () => {
     )
   })
 
+  it('rejects a non-scalar amount or threshold rather than coercing it to a payout', () => {
+    // `Number(true)` is 1, `Number(false)` is 0, `Number([])` is 0 — and every
+    // one of those is valid JSON for a field the schema declares a number. This
+    // is the money field: before the fix, `{"disbursement_amount_local_currency":
+    // true}` normalised to a payout of **1**, and `trigger_threshold: false`
+    // became a rule that pays whenever the metric is at or above zero. The
+    // module already imported `numericOrNull` for the *observed* value and then
+    // reimplemented the same rule with `Number` for the stored ones.
+    for (const [field, value] of [
+      ['disbursement_amount_local_currency', true],
+      ['disbursement_amount_local_currency', false],
+      ['disbursement_amount_local_currency', []],
+      ['trigger_threshold', true],
+      ['trigger_threshold', false],
+      ['trigger_threshold', [50]],
+    ]) {
+      assert.throws(
+        () => normalizeParametricRule({ name: 'x', chain: 'ethereum-sepolia', [field]: value }),
+        (err) => err.statusCode === 400 && err.message.includes(field),
+        `${field}: ${JSON.stringify(value)} is not a number and must not become one`,
+      )
+    }
+    // The controls: a numeric string is what the form posts, a genuine zero is
+    // a real amount, and an absent field stays absent.
+    assert.equal(normalizeParametricRule({ name: 'x', chain: 'ethereum-sepolia', trigger_threshold: '50' }).trigger_threshold, 50)
+    assert.equal(normalizeParametricRule({ name: 'x', chain: 'ethereum-sepolia', disbursement_amount_local_currency: 0 }).disbursement_amount_local_currency, 0)
+    assert.equal(normalizeParametricRule({ name: 'x', chain: 'ethereum-sepolia', trigger_threshold: null }).trigger_threshold, null)
+  })
+
   it('still blocks on sanctions whatever the trigger says', () => {
     assert.throws(
       () => simulateDisbursement(rule(), {

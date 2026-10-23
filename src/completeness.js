@@ -43,6 +43,8 @@
  * timestamp to make flaky — the verdict is a function of page shape alone.
  */
 
+import { numericOrNull } from './analytics/numeric.js'
+
 /** The verdict vocabulary. Frozen and iterable; consumers assert against it. */
 export const COMPLETENESS_VERDICTS = Object.freeze([
   'complete',
@@ -114,11 +116,14 @@ export function completenessVerdictName(verdict) {
  * non-numeric string are all "the provider told us nothing", and 0 is a real
  * total of zero — the falsy-zero case that loses records at exactly the
  * boundary it was written to protect.
+ *
+ * Delegates to `numericOrNull`, which is the same rule written once. The copy
+ * here tested `typeof value === 'boolean'` but not arrays, so `[]` arrived as a
+ * provider total of **0** and `[12]` as **12** — the completeness assessment
+ * then compared a page count against a total that was never reported.
  */
 function numericTotal(value) {
-  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null
-  const n = Number(value)
-  return Number.isFinite(n) ? n : null
+  return numericOrNull(value)
 }
 
 /**

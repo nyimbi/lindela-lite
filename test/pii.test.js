@@ -281,6 +281,15 @@ describe('pii geo coarsening at zero', () => {
       { latitude: '', longitude: '' },
       { latitude: 'north-ish', longitude: 'somewhere' },
       { latitude: NaN, longitude: 36.8 },
+      // The two spellings the copy of this guard in `pii.js` missed while the
+      // canonical `numericOrNull` rejected them: `Number(true)` is 1 and
+      // `Number([])` is 0, so a boolean or an array coordinate was coarsened to
+      // a real point and reported `geo_precision_deg` for a location nobody
+      // measured. `finiteNumber` now delegates to `numericOrNull`, and this is
+      // what holds it there.
+      { latitude: true, longitude: 36.8 },
+      { latitude: 3.1167, longitude: [] },
+      { latitude: [3.1167], longitude: 36.8 },
     ]) {
       const out = redactPii(record, COARSE)
       assert.equal(out.geo_precision_deg, undefined, `coarsened an absent coordinate: ${JSON.stringify(record)}`)

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import crypto from 'node:crypto'
+import { numericOrNull } from './analytics/numeric.js'
 
 const DEFAULT_POLICY = {
   // A privacy control that ships off is not a control; it is a function nobody
@@ -318,11 +319,16 @@ export function retentionWindowFor(policy, collection) {
  * `Number(null)` and `Number('')` are both 0, so a null coordinate and an
  * empty one both sail through as a point on the equator. A value that is
  * present and non-finite is also absent in every sense that matters here.
+ *
+ * `numericOrNull` is the same rule, written once for the whole platform, and
+ * this delegates to it. The copy here was narrower than the original in the two
+ * spellings that matter for a coordinate: `Number(true)` is 1 and `Number([])`
+ * is 0, so a boolean or an array latitude was coarsened to a real point — a
+ * privacy control applying to a value nobody measured, and reporting the point
+ * it invented.
  */
 function finiteNumber(value) {
-  if (value === null || value === undefined || value === '') return null
-  const n = Number(value)
-  return Number.isFinite(n) ? n : null
+  return numericOrNull(value)
 }
 
 /**

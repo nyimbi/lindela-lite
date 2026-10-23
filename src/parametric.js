@@ -33,11 +33,24 @@ function badRequest(message) {
  * applying it here means a record is never persisted in a form the trigger
  * cannot be evaluated from. `"50"` stored as a string compares as 50 and works
  * by accident; `"abc"` compares as NaN and pays on every run.
+ *
+ * The conversion is `numericOrNull`, not `Number`, and the difference is money.
+ * `Number(true)` is 1, `Number(false)` is 0, `Number([])` is 0 and
+ * `Number([5])` is 5 — all of them valid JSON for a field the schema declares a
+ * number, all of them a disbursement amount nobody proposed. Measured before
+ * this fix: `{"disbursement_amount_local_currency": true}` normalised to **1**,
+ * and `trigger_threshold: false` to **0**, which is a rule that pays whenever
+ * the metric is at or above zero.
+ *
+ * An *absent* field stays absent (null), and a field that is present but is not
+ * a scalar is a 400 rather than a silent null: a caller that sent `true` meant
+ * to set something, and telling it the field is not a number is the only answer
+ * that does not guess which number it meant.
  */
 function numberOrNull(value, field) {
   if (value === null || value === undefined || value === '') return null
-  const n = Number(value)
-  if (!Number.isFinite(n)) throw badRequest(`${field} must be a number, got ${JSON.stringify(value)}`)
+  const n = numericOrNull(value)
+  if (n === null) throw badRequest(`${field} must be a number, got ${JSON.stringify(value)}`)
   return n
 }
 
