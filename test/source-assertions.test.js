@@ -650,3 +650,42 @@ describe('an unknown source is stated, not passed', () => {
     assert.equal(runAssertions({ source: 'usgs_earthquake', records: [null, undefined] }).ok, false)
   })
 })
+/**
+ * The falsy-zero class, on the two helpers a connector calls directly.
+ *
+ * Both are exported, both take caller-supplied numbers, and both tested
+ * `Number.isFinite(Number(x))` after an explicit `null` check. That combination
+ * catches `null` and `undefined` and lets every other absence through, because
+ * `Number('')`, `Number('  ')`, `Number(false)` and `Number([])` are all 0.
+ */
+describe('an uncounted batch is not a batch of zero', () => {
+  it('recordCountsFound records an absent count as absent', () => {
+    for (const absent of [null, undefined, '', '   ', false, []]) {
+      const result = recordCountsFound({ source: 'chirps', collection: 'climate_observations', found: absent, returned: 10 })
+      assert.equal(result.counts_found, null,
+        `${JSON.stringify(absent)} was recorded as ${result.counts_found} records found`)
+      assert.equal(result.capped, false, 'nothing was dropped from a count that does not exist')
+      assert.equal(result.records_dropped, null)
+    }
+    // The control: a real zero is a count. `found: 0, returned: 0` is a run that
+    // asked and got nothing, which is a measurement.
+    const zero = recordCountsFound({ source: 'chirps', collection: 'climate_observations', found: 0, returned: 0 })
+    assert.equal(zero.counts_found, 0, 'zero found is a count, not an absence')
+    assert.equal(zero.capped, false)
+  })
+
+  it('capRecords treats a blank limit as no limit, not as keep-nothing', () => {
+    const records = Array.from({ length: 12 }, (_, index) => ({ id: `c${index}` }))
+    for (const noLimit of [null, undefined, '', '   ', false, []]) {
+      const { records: kept } = capRecords({ records, limit: noLimit })
+      assert.equal(kept.length, 12,
+        `a limit of ${JSON.stringify(noLimit)} kept ${kept.length} of 12 — an uncapped batch became an empty one`)
+    }
+    // The control: a real zero limit keeps nothing, and that is the setting
+    // saying so rather than an absence being read as one.
+    const { records: none } = capRecords({ records, limit: 0 })
+    assert.equal(none.length, 0, 'a declared limit of 0 keeps nothing')
+    const { records: capped } = capRecords({ records, limit: 5 })
+    assert.equal(capped.length, 5)
+  })
+})

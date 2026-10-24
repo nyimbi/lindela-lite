@@ -44,7 +44,7 @@
  * empty string carries no value and this repo's own `required()` says so.
  */
 
-import { canonicalHash, nowIso, stableId } from './utils.js'
+import { canonicalHash, nowIso, stableId, toNumber } from './utils.js'
 import { numericOrNull } from './analytics/numeric.js'
 // The IoT normalizer's own sensor-type enum, so the assertion below cannot
 // drift from the set the normalizer accepts. `field-signals.js` imports only
@@ -1024,8 +1024,12 @@ export function quarantineCollectionName(collection) {
  * @returns {object} a diagnostics fragment; spread it into `diagnostics`
  */
 export function recordCountsFound({ source, collection, found, returned, cap = null, capName = null, reason = null } = {}) {
-  const foundCount = Number.isFinite(Number(found)) ? Number(found) : null
-  const returnedCount = Number.isFinite(Number(returned)) ? Number(returned) : null
+  // `numericOrNull` for the same reason as everywhere else in this file: a
+  // caller that passes `found: null` — the honest value when nothing was
+  // counted — was recorded as having found zero, and `capped` then compared
+  // against it.
+  const foundCount = numericOrNull(found)
+  const returnedCount = numericOrNull(returned)
   const capped = foundCount !== null && returnedCount !== null ? returnedCount < foundCount : false
   return {
     source: source ?? null,
@@ -1055,7 +1059,12 @@ export function capRecords({ records = [], limit = null, source = null, collecti
   // as "keep nothing" and every uncapped batch silently becomes an empty one.
   // The null check comes first, and this is exactly the falsy-zero class the
   // rest of this module is about, caught by its own test.
-  const bounded = limit === null || limit === undefined ? null : (Number.isFinite(Number(limit)) && Number(limit) >= 0 ? Number(limit) : null)
+  //
+  // `numericOrNull` closes the rest of the same hole: the explicit null check
+  // caught `null` and `undefined` and left `''`, `'  '`, `false` and `[]` to
+  // reach `Number`, each of which is 0 — so an empty-string limit kept nothing.
+  const parsedLimit = numericOrNull(limit)
+  const bounded = parsedLimit !== null && parsedLimit >= 0 ? parsedLimit : null
   const kept = bounded === null ? all : all.slice(0, bounded)
   return {
     records: kept,
@@ -1305,7 +1314,21 @@ function checkCount(assertion, { batch, trailingRecords, unmeasured, options }) 
     return []
   }
 
-  const ratio = Number.isFinite(Number(assertion.ratio)) ? Number(assertion.ratio) : 0.25
+  // `toNumber`, not `Number.isFinite(Number(x))`. The old expression returned
+  // `Number(null)` for an absent ratio — 0 — and `required` is
+  // `Math.ceil(baseline * ratio)`, so a declared assertion with no ratio
+  // required **zero** records and could never fire. That is the count assertion
+  // switched off by the field that configures it, which is the worst possible
+  // failure for the one check that catches a source collapsing from 40,000
+  // records to 4,000.
+  //
+  // A literal `ratio: 0` is treated the same way, and deliberately. No assertion
+  // in this file declares one, `required` would be 0, and the assertion would be
+  // dead on arrival — a value whose only effect is to disable its own check is a
+  // typo, not a setting. If a source ever genuinely needs "never collapse-alarm",
+  // it should say so by not declaring the assertion.
+  const configured = toNumber(assertion.ratio)
+  const ratio = configured !== null && configured > 0 ? configured : 0.25
   const required = Math.ceil(baseline * ratio)
   if (count >= required) return []
 
