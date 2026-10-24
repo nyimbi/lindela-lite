@@ -117,7 +117,16 @@ export const APP_VERSION = (() => {
 const DRIVER_ITEMS = [
   { id: 'ingestion', label: 'ingestion schedules', run: (store, data) => runDueIngestionSchedules(store, data) },
   { id: 'alerts', label: 'alert evaluation', run: (store, data) => evaluateAndPersistAlerts(store, data) },
-  { id: 'outbox', label: 'outbox dispatch', run: (store) => dispatchPending(store) },
+  // The subscriptions are passed in, and that is the whole difference between
+  // this item working and it not. `dispatchPending` defaults `webhooks` to `[]`
+  // when the option is absent, and every event then matches nothing — so each
+  // due row was rewritten `undeliverable: true` with
+  // "no active webhook is subscribed to this event", a statement about the
+  // deployment that was false whenever a subscriber existed. The row is not
+  // lost, but the reason attached to it is a lie, and nothing was ever
+  // delivered from the periodic driver: only `POST /api/v1/outbox/dispatch`,
+  // which does pass `webhooks`, could send.
+  { id: 'outbox', label: 'outbox dispatch', run: (store, data) => dispatchPending(store, { webhooks: data?.webhook_subscriptions || [] }) },
   // The sidecar's second job, taken over with it. Report schedules were the one
   // periodic item the driver did not run, which is why the shell loop had a
   // reason to exist; with this in place it does not, and the loop's `|| true`
@@ -363,7 +372,20 @@ export async function runPeriodicTick(store, { at = new Date().toISOString() } =
 function summarise(id, value) {
   if (!value) return null
   if (id === 'alerts') return { raised: value.raised?.length ?? 0, updated: value.updated?.length ?? 0 }
-  if (id === 'outbox') return { sent: Number(value) || 0 }
+  // `dispatchPending` returns `{ dispatched, failed, undeliverable, deferred }`,
+  // and `Number({...})` is `NaN` — so `sent` read 0 on every tick that sent
+  // anything, and the heartbeat reported a draining queue as an idle one. Each
+  // count is reported rather than only the sent total: `failed` is a
+  // dead-letter and `undeliverable` is a missing subscription, which are the
+  // two states an operator has to act on differently.
+  if (id === 'outbox') {
+    return {
+      dispatched: Number(value?.dispatched) || 0,
+      failed: Number(value?.failed) || 0,
+      undeliverable: Number(value?.undeliverable) || 0,
+      deferred: Number(value?.deferred) || 0,
+    }
+  }
   if (id === 'ingestion') return { ran: value?.source_runs?.length ?? 0 }
   if (id === 'reports') return { ran: value?.runs?.length ?? 0, reports: value?.reports?.length ?? 0 }
   if (id === 'retention') return { expired: Number(value?.expired) || 0 }

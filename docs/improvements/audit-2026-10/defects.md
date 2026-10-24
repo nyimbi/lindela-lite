@@ -844,16 +844,19 @@ matchYRoute(…)` / `if (X && await handleXRoute(X, {…}))` pairs are now
 `src/route-families.js`'s `ROUTE_FAMILIES`, and `handleApiRequestInContext`
 iterates it in two loops — `pre` above the store read, `post` below. Measured now
 (2026-10-17): the dispatcher is **88 lines**
-(`functionBody('handleApiRequestInContext', src)`, line 1000 to 1087) whose route
+(`functionBody('handleApiRequestInContext', src)`, line 1022 to 1109) whose route
 logic is two `for` loops and a `dispatchFamily` call, with no inline validation
-and no business logic; `src/server.js` is **1,742 lines** (re-measured 2026-10-21). (This paragraph said
+and no business logic; `src/server.js` is **1,764 lines** (re-measured 2026-10-25). (This paragraph said
 80 / `973 to 1052` / 1,613 when it was written; the numbers were right then and
 nothing re-measured them. It then said 1,661 for a day, which was this
 correction's own miscount — the file had 1,660 lines by `wc -l`, and 1,661 was
 read off a range endpoint rather than measured. It then moved to 1,668 with the
 D11 return-value fix in `evaluateAndPersistAlerts`, which is below the
 dispatcher and so left the 88 lines untouched, and to **1,742 on 2026-10-21**
-with the `installShutdown` handler, which is also below the dispatcher.) That conversion was ENH-60's last move, not ENH-59's generator: the table
+with the `installShutdown` handler, which is also below the dispatcher. The
+**1,764** is the outbox driver-item fix, also below it; the range moved with the
+file and is `1022 to 1109` — the 88 is the one number that did not, which is
+what a function size measures and a file size does not.) That conversion was ENH-60's last move, not ENH-59's generator: the table
 declares the dispatch, and `test/dispatch-order.test.js` reads it at runtime and
 checks the order, the side of the read, the matcher→handler binding and the
 dependency bag against the *handlers' own destructuring* rather than against a
