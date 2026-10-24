@@ -1,5 +1,5 @@
 import { fetchWithRetry } from './http.js'
-import { stableId } from '../utils.js'
+import { stableId, readCoordinate } from '../utils.js'
 import { defineConnector } from './spec.js'
 import { geocodeOutbreakLocation } from '../../public/shared/outbreak-geocode.js'
 
@@ -107,9 +107,22 @@ export function buildApiUrl(appname = DEFAULT_APPNAME) {
 		'&sort[]=date:desc&limit=50'
 }
 
-/** Subnational-first coordinate resolution on an API item, before any centroid is tried. A coordinate that is null must NOT become Number(null)===0 — the Null Island bug the demo audit already caught once in the CAP feed. */
+/**
+ * A coordinate the API actually reported, or `null`.
+ *
+ * This was `value !== null && value !== undefined && Number.isFinite(Number(value))`
+ * — an explicit null check and then the same coercion the comment above it
+ * warns about. It caught `null` and `undefined` and let every other absence
+ * through: `Number('')`, `Number('  ')`, `Number(false)` and `Number([])` are
+ * all 0, so a location block with `lat: ""` — which is how an API says the field
+ * is empty — was a coordinate on the equator. `Number([5])` is 5, which is a
+ * coincidence dressed as a measurement.
+ *
+ * `readCoordinate` is the same rule `toGeoJson` and the field-signal map layers
+ * use: absence first, then parse. One predicate, not four spellings of it.
+ */
 function isCoordinate(value) {
-	return value !== null && value !== undefined && Number.isFinite(Number(value))
+	return readCoordinate(value) !== null
 }
 
 function apiItemCoordinates(item) {

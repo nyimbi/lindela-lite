@@ -264,6 +264,19 @@ describe('there is one GeoJSON renderer, and it agrees about coordinates', () =>
 		assert.equal(readCoordinate('-1.28'), -1.28)
 	})
 
+	it('refuses every non-scalar the old hand-rolled guard let through', () => {
+		// `readCoordinate` tested null, undefined and blank text and then called
+		// `Number`, which left `false` as 0 and `[5]` as 5 — a boolean and an
+		// array arriving as coordinates on the equator and at 5°N. It now
+		// delegates to `numericOrNull`, so this test pins the whole input table
+		// rather than the three cases that were noticed.
+		for (const notACoordinate of [null, undefined, '', '   ', '\t', false, true, [], [5], [0], {}, NaN, Infinity]) {
+			assert.equal(readCoordinate(notACoordinate), null,
+				`${JSON.stringify(notACoordinate) ?? String(notACoordinate)} was accepted as a coordinate`)
+		}
+		assert.equal(readCoordinate(0), 0, '0° is a place, and the one zero that survives')
+	})
+
 	it('produces the same features from both renderers', () => {
 		const records = [
 			{ id: 'a', latitude: 1.5, longitude: 2.5, name: 'here' },

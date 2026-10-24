@@ -19,15 +19,20 @@
  * A finite number, or null.
  *
  * Accepts a numeric string (`'42'`), because half the store arrives from
- * connectors as text. Rejects `null`, `undefined`, `''`, `[]`, `[5]` (one
- * element is not a scalar), booleans, `NaN`, `Infinity` and objects. Returns
- * null for anything it cannot vouch for rather than guessing.
+ * connectors as text. Rejects `null`, `undefined`, `''`, whitespace-only text,
+ * `[]`, `[5]` (one element is not a scalar), booleans, `NaN`, `Infinity` and
+ * objects. Returns null for anything it cannot vouch for rather than guessing.
+ *
+ * Whitespace-only text is rejected because `Number('  ')` is 0. A field that
+ * arrives as spaces is a field an upstream system left empty, and the whole
+ * point of this function is that an empty field is not a zero.
  */
 export function numericOrNull(value) {
   if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null
   // An array is not a scalar. `Number([])` is 0 and `Number([5])` is 5; both
   // would be a coincidence dressed as a measurement.
   if (Array.isArray(value)) return null
+  if (typeof value === 'string' && value.trim() === '') return null
   const n = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(n) ? n : null
 }

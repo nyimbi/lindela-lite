@@ -194,3 +194,59 @@ describe('reliefweb epidemics connector', () => {
     assert.deepEqual(extractCounts('2 cases'), { cases: 2, deaths: null })
   })
 })
+/**
+ * A location block that says `lat: ""` is a location block with no latitude.
+ *
+ * `isCoordinate` was `value !== null && value !== undefined &&
+ * Number.isFinite(Number(value))` — an explicit null check and then the very
+ * coercion the comment above it warns about. `Number('')`, `Number('  ')`,
+ * `Number(false)` and `Number([])` are all 0, so every one of those passed and
+ * became a coordinate on the equator; `Number([5])` passed as 5. The API
+ * serialises an empty field as `""`, which is exactly the case the null check
+ * does not cover.
+ */
+describe('a location block with an empty field is not a coordinate', () => {
+  const item = (lat, lon) => ({
+    id: 'EP-2026-000999-KEN',
+    fields: {
+      name: 'Cholera Outbreak - Kenya',
+      country: [{ iso3: 'KEN' }],
+      primary_location: { lat, lon, name: 'Turkana' },
+      date: { created: '2026-10-01T00:00:00Z' },
+    },
+  })
+
+  it('does not place a record whose primary_location carries empty strings', () => {
+    // The record still gets coordinates — the country-centroid fallback is the
+    // next rung down and it is doing its job. What must not happen is the item
+    // being accepted as *subnational* evidence, which is the claim the empty
+    // block would have made: a district centroid is a different assertion from
+    // a national one, and the map draws them differently.
+    const [record] = recordsFromApiItems([item('', '')])
+    assert.notEqual(record.granularity, 'subnational',
+      `an empty location block was accepted as a subnational fix at ${record.latitude}, ${record.longitude}`)
+    assert.equal(record.granularity, 'national', 'the fallback is the country centroid')
+    assert.ok(Number.isFinite(record.latitude), 'the centroid fallback still places the record')
+  })
+
+  it('does not accept booleans or arrays as a subnational fix', () => {
+    for (const [lat, lon] of [[false, false], [[], []], [[5], [6]], ['  ', '  ']]) {
+      const [record] = recordsFromApiItems([item(lat, lon)])
+      assert.notEqual(record.granularity, 'subnational',
+        `${JSON.stringify(lat)} was accepted as a subnational latitude (${record.latitude})`)
+    }
+  })
+
+  it('still accepts a real coordinate, including one sent as a string', () => {
+    // The control. `readCoordinate` accepts numeric strings on purpose — half
+    // the store arrives from connectors as text — so a fix that rejected all
+    // strings would break the case the old guard got right.
+    const [numeric] = recordsFromApiItems([item(3.1, 36.5)])
+    assert.equal(numeric.latitude, 3.1)
+    assert.equal(numeric.granularity, 'subnational')
+
+    const [text] = recordsFromApiItems([item('3.1', '36.5')])
+    assert.equal(text.latitude, 3.1, 'a coordinate that arrived as text is still a coordinate')
+    assert.equal(text.granularity, 'subnational')
+  })
+})

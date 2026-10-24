@@ -44,6 +44,15 @@ describe('R-86 — numericOrNull returns null for everything it cannot vouch for
     }
   })
 
+  it('rejects whitespace-only text, which `Number` reads as zero', () => {
+    // `Number('  ')` is 0, so a field an upstream system left as spaces read as
+    // a real zero. This is the same class as `Number('')`, one character later,
+    // and it was the only hole left in the predicate.
+    for (const blank of [' ', '  ', '\t', '\n', ' \t\n ']) {
+      assert.equal(numericOrNull(blank), null, `${JSON.stringify(blank)} is an empty field, not a zero`)
+    }
+  })
+
   it('keeps a real zero', () => {
     // A facility that serves nobody today reports 0, and 0 is the answer. This
     // is the distinction the old `asset.population_served || asset.beneficiaries`

@@ -5466,6 +5466,11 @@ describe('Lindela Lite absence is not zero', () => {
     for (const absent of [null, undefined, '', [], false, Number.NaN]) {
       assert.equal(toNumber(absent), null, `${JSON.stringify(absent)} must not coerce to a number`)
     }
+    // Whitespace-only text is the same absence one character later: `Number('  ')`
+    // is 0, so a field an upstream system left as spaces read as a real zero.
+    for (const blank of [' ', '  ', '\t', '\n']) {
+      assert.equal(toNumber(blank), null, `${JSON.stringify(blank)} is an empty field, not a zero`)
+    }
     assert.equal(toNumber(0), 0, 'a real zero is a value and must survive')
     assert.equal(toNumber('0'), 0, 'a numeric string zero is a value')
     assert.equal(toNumber('3.5'), 3.5, 'numeric strings still coerce')

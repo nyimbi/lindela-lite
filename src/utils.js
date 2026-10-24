@@ -4,6 +4,7 @@ import { KNOWN_DISTRICTS } from './districts.js'
 import { orgUnitFor, rollupSlugsFor } from './org-units.js'
 import { errorEnvelope } from './errors.js'
 import { hxlRow } from './hxl.js'
+import { numericOrNull } from './analytics/numeric.js'
 
 export function stableId(prefix, value) {
   const hash = crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16)
@@ -180,10 +181,14 @@ export function clamp(value, min, max) {
  * updated or soft-deleted it through the operational API, the normaliser read
  * those nulls and wrote 0 — putting the report back at Null Island in the Gulf
  * of Guinea. A null is an absence; a zero is a location.
+ *
+ * Whitespace-only text is absence too: `Number('  ')` is 0, and a field an
+ * upstream system left as spaces is a field it left empty.
  */
 export function toNumber(value, fallback = null) {
   if (value === null || value === undefined || value === '' || typeof value === 'boolean') return fallback
   if (Array.isArray(value)) return fallback
+  if (typeof value === 'string' && value.trim() === '') return fallback
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
 }
@@ -748,15 +753,19 @@ function csvEscape(value) {
  * record with no coordinates at all are the same point. Whitespace is trimmed
  * for the same reason — `Number('  ')` is 0 as well.
  *
+ * The rule is `numericOrNull`, not a private copy of it. This function's own
+ * first version tested `null`/`undefined` and a blank string and then called
+ * `Number`, which left `false` as 0 and `[5]` as 5 — the two spellings the
+ * analytics conversion already refuses. One predicate for "is this a
+ * measurement", used by the map layers, the STAC renderer and the CHW door
+ * alike, so a hole in it is a hole in all of them.
+ *
  * This is why `toGeoJson` filters on `readCoordinate` rather than on
  * `Number.isFinite(item.latitude)`: a coordinate that arrived as the string
  * `"3.12"` is a real coordinate, and the STAC path has always accepted it.
  */
 export function readCoordinate(value) {
-  if (value === null || value === undefined) return null
-  if (typeof value === 'string' && value.trim() === '') return null
-  const number = Number(value)
-  return Number.isFinite(number) ? number : null
+  return numericOrNull(value)
 }
 
 /**
