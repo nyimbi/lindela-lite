@@ -40,7 +40,7 @@ import { actionLog } from '../operations.js'
 import { loadPolicy, redactPii } from '../pii.js'
 import { stampQuality } from '../quality.js'
 import { assertCategory } from '../taxonomy.js'
-import { stableId, readRequestJson } from '../utils.js'
+import { stableId, readRequestJson, readCoordinate, toNumber } from '../utils.js'
 import { FIELD_REPORT_PREFIX, recordIdForSubmission } from '../submission-id.js'
 import { formFor, mergeForms, validateAnswers } from '../forms.js'
 
@@ -96,9 +96,15 @@ export async function handleChwRoute(route, { store, data, req, res, jsonRespons
     //
     // When there is no fix, the record says so via location_source, so a caller
     // can tell "the CHW is standing in it" from "we do not know where".
-    const reportedLat = Number(body.location?.latitude)
-    const reportedLon = Number(body.location?.longitude)
-    const hasFix = Number.isFinite(reportedLat) && Number.isFinite(reportedLon)
+    // `readCoordinate`, not `Number(...)` behind an `isFinite` test. The test
+    // asks whether the *coerced* value is finite, and `Number(null)` is 0, so a
+    // report carrying a longitude and no latitude satisfied it and was placed at
+    // (0, lon) — the same Null Island the comment above is about, one axis at a
+    // time. The `!(lat === 0 && lon === 0)` guard below only catches the case
+    // where *both* axes are absent, which is why it did not fire.
+    const reportedLat = readCoordinate(body.location?.latitude)
+    const reportedLon = readCoordinate(body.location?.longitude)
+    const hasFix = reportedLat !== null && reportedLon !== null
       && !(reportedLat === 0 && reportedLon === 0)
     const record = {
       // ENH-39. The device mints a submission id once, before its first attempt,
@@ -125,9 +131,13 @@ export async function handleChwRoute(route, { store, data, req, res, jsonRespons
       location_source: hasFix
         ? (body.location?.source === 'gps' ? 'gps' : 'reported')
         : (body.location?.source || 'unknown'),
-      location_accuracy_m: hasFix && Number.isFinite(Number(body.location?.accuracy_m))
-        ? Number(body.location.accuracy_m)
-        : null,
+      // `readCoordinate`'s sibling, `toNumber`, for the same reason: the fix
+      // above is real, but an accuracy the device did not send is not 0 metres.
+      // `Number(null)` is 0, and `assessAccuracy(0)` bands as *precise* — "a 0 m
+      // fix is precise enough to place the report at a household". A device that
+      // reported no accuracy therefore produced the strongest placement claim
+      // the field can make.
+      location_accuracy_m: hasFix ? toNumber(body.location?.accuracy_m) : null,
       reported_by: req.__auth?.subject,
       // CAP-01. The exact `(id, version)` this report was filled against.
       // Without it a record is only interpretable against whichever version of

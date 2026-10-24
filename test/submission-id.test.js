@@ -310,3 +310,103 @@ describe('ENH-39 — the operational door honours the same identity', () => {
     })
   })
 })
+
+/**
+ * A report with one coordinate axis is not a report with a location.
+ *
+ * `hasFix` tested `Number.isFinite(Number(body.location?.latitude))`, and
+ * `Number(null)` is 0 — so a report carrying a longitude and no latitude passed
+ * the test and was stored at (0, lon). The `!(lat === 0 && lon === 0)` guard
+ * beside it only catches both axes absent, which is the one case that was never
+ * going to happen: a device that loses its latitude fix usually keeps the other.
+ *
+ * The same expression made an unreported accuracy into `0`, which `assessAccuracy`
+ * bands as `precise` — "precise enough to place the report at a household".
+ */
+describe('a partial fix is not a fix', () => {
+  it('does not place a report that carries only a longitude', async () => {
+    await withServer(async ({ post, store }) => {
+      // `latitude: null`, explicitly. An *omitted* latitude is `undefined`, and
+      // `Number(undefined)` is `NaN` — which fails the old `isFinite` test and
+      // so never reproduced the bug. A device that loses its fix sends `null`,
+      // and `Number(null)` is 0: finite, on the equator, and placed.
+      const res = await post({
+        description: 'flooding at the school',
+        category: 'fever',
+        location: { latitude: null, longitude: 36.5, source: 'gps' },
+      })
+      assert.equal(res.status, 201)
+      const [row] = await reports(store)
+      assert.equal(row.latitude, null,
+        `a report with no latitude was placed at latitude ${row.latitude} — the equator, not where the health worker was`)
+      assert.equal(row.longitude, null, 'a half-fix is not a fix, so neither axis is placed')
+      // `location_source` still echoes what the device *claimed*. That field is
+      // the device's own statement, and the route keeps it so an operator can
+      // see a device that reports `gps` while sending one axis — which is the
+      // condition this test exists to stop acting on. What must not happen is
+      // the coordinate being written.
+      assert.equal(row.location_source, 'gps')
+    })
+  })
+
+  it('does not place a report whose latitude arrived as an empty string', async () => {
+    // The other spelling. `Number('')` is 0 as well, so a device that serialised
+    // an absent fix as `""` was placed on the equator by the same expression.
+    await withServer(async ({ post, store }) => {
+      await post({
+        description: 'empty latitude',
+        category: 'fever',
+        location: { latitude: '', longitude: 36.5, source: 'gps' },
+      })
+      const [row] = await reports(store)
+      assert.equal(row.latitude, null, `an empty-string latitude was placed at ${row.latitude}`)
+      assert.equal(row.longitude, null)
+    })
+  })
+
+  it('still places a genuine fix, and still refuses the both-zero placeholder', async () => {
+    // The control, both directions. A null-coalescing fix would leave a real fix
+    // unplaced; a fix that stopped rejecting the 0/0 placeholder would undo the
+    // Null Island guard this route was written with.
+    await withServer(async ({ post, store }) => {
+      await post({
+        description: 'real fix',
+        category: 'fever',
+        location: { latitude: -1.29, longitude: 36.82, source: 'gps', accuracy_m: 12 },
+      })
+      await post({
+        description: 'placeholder fix',
+        category: 'fever',
+        location: { latitude: 0, longitude: 0, source: 'gps' },
+      })
+      const rows = await reports(store)
+      const real = rows.find((r) => r.summary === 'real fix')
+      const placeholder = rows.find((r) => r.summary === 'placeholder fix')
+      // Coarsened to 1/8 of a degree by `coarsenGeoToH3Cell: 3` in the route's
+      // request policy, so the assertion is "a fix is placed near here", not the
+      // raw device value. `-1.29 / 0.125 = -10.32` → `-10` → `-1.25`; `36.82 / 0.125
+      // = 294.56` → `295` → `36.875`.
+      assert.equal(real.latitude, -1.25, 'a real fix is placed (coarsened for privacy)')
+      assert.equal(real.longitude, 36.875)
+      assert.equal(real.location_accuracy_m, 12)
+      assert.equal(placeholder.latitude, null, 'the 0/0 placeholder is not a fix')
+      assert.equal(placeholder.longitude, null)
+    })
+  })
+
+  it('records an unreported accuracy as absent, not as zero metres', async () => {
+    // `accuracy_m: null` is the device saying it does not know how good the fix
+    // is. Stored as 0 it bands as `precise`, the strongest claim the field makes.
+    await withServer(async ({ post, store }) => {
+      await post({
+        description: 'fix with no accuracy',
+        category: 'fever',
+        location: { latitude: -1.29, longitude: 36.82, source: 'gps', accuracy_m: null },
+      })
+      const [row] = await reports(store)
+      assert.equal(row.latitude, -1.25, 'the fix itself is real')
+      assert.equal(row.location_accuracy_m, null,
+        `an unreported accuracy was stored as ${row.location_accuracy_m} m, which bands as "precise"`)
+    })
+  })
+})
