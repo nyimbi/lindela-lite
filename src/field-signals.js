@@ -1,4 +1,5 @@
 import { stableId, toNumber } from './utils.js'
+import { numericOrNull } from './analytics/numeric.js'
 
 /**
  * Field signals: school attendance and IoT sensor readings.
@@ -147,8 +148,24 @@ export function districtAttendanceRate(data, { district, since = null, until = n
     return true
   })
   if (!rows.length) return null
-  const enrolled = rows.reduce((total, row) => total + (Number(row.enrolled) || 0), 0)
-  const present = rows.reduce((total, row) => total + (Number(row.present) || 0), 0)
+  // `numericOrNull`, not `Number(x) || 0`. A row whose `present` is blank, `''`,
+  // spaces, `false` or an empty array contributed zero to the numerator while
+  // its `enrolled` still counted in the denominator — so a school that reported
+  // enrolment and no attendance count was published as a school where nobody
+  // came. Two schools at 100 enrolled, one at 100 present and one at blank,
+  // read 50% instead of 100%; the same defect in reverse turned a blank
+  // `enrolled` into a school with no pupils, which the `enrolled > 0` guard then
+  // discarded from both sides.
+  //
+  // A row that states neither number is not a row this rate can use, and it is
+  // skipped rather than counted as a zero. A genuine `0` present is a measured
+  // answer and is summed as one.
+  const measured = rows
+    .map((row) => ({ enrolled: numericOrNull(row.enrolled), present: numericOrNull(row.present) }))
+    .filter((row) => row.enrolled !== null && row.present !== null)
+  if (!measured.length) return null
+  const enrolled = measured.reduce((total, row) => total + row.enrolled, 0)
+  const present = measured.reduce((total, row) => total + row.present, 0)
   if (!(enrolled > 0)) return null
   return Math.round((present / enrolled) * 1000) / 10
 }

@@ -103,6 +103,43 @@ describe('districtAttendanceRate', () => {
     assert.equal(districtAttendanceRate({}), null)
     assert.equal(districtAttendanceRate(data, { district: 'mandera' }), null)
   })
+
+  it('does not read a school with no attendance count as a school where nobody came', () => {
+    // The rate is enrolment-weighted, so a row whose `present` was blank still
+    // contributed its `enrolled` to the denominator. `Number('') || 0` made that
+    // row zero present: two schools of 100, one reporting 100 present and one
+    // reporting nothing, read 50% — a district attendance collapse that did not
+    // happen, on the figure a protocol rule thresholds on.
+    const blank = (present) => ({
+      school_attendance_observations: [
+        { district: 'turkana', date: '2026-10-01', enrolled: 100, present: 100 },
+        { district: 'turkana', date: '2026-10-02', enrolled: 100, present },
+      ],
+    })
+    for (const spelling of [null, '', '  ', false, []]) {
+      assert.equal(districtAttendanceRate(blank(spelling)), 100,
+        `${JSON.stringify(spelling)} is an absence, not an attendance figure`)
+    }
+
+    // Both controls. A genuine zero present is a measurement and halves the
+    // rate; a real figure is weighted in as usual.
+    assert.equal(districtAttendanceRate(blank(0)), 50, 'a reported zero is a measurement')
+    assert.equal(districtAttendanceRate(blank(90)), 95)
+  })
+
+  it('skips a row that states no enrolment rather than treating it as an empty school', () => {
+    // The same coercion on the denominator side: a blank `enrolled` became 0,
+    // and the `enrolled > 0` guard then discarded the row — which quietly
+    // dropped a real attendance figure from the numerator.
+    const data = {
+      school_attendance_observations: [
+        { district: 'turkana', date: '2026-10-01', enrolled: 100, present: 80 },
+        { district: 'turkana', date: '2026-10-02', enrolled: '', present: 10 },
+      ],
+    }
+    assert.equal(districtAttendanceRate(data), 80,
+      'the row with no enrolment states no rate, so it contributes to neither side')
+  })
 })
 
 describe('latestSensorReadings', () => {
