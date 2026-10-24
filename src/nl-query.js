@@ -54,6 +54,7 @@
 import { KNOWN_DISTRICTS, resolveDistrict } from './districts.js'
 import { ORG_UNITS, ORG_UNIT_SYNONYMS } from './org-units.js'
 import { floorsMissed, refusalSentence } from './model-registry.js'
+import { numericOrNull } from './analytics/numeric.js'
 
 export const NL_QUERY_BASIS = Object.freeze({
   basis: 'a deterministic parser and resolver over a declared vocabulary — no model, no network, no free-text interpretation',
@@ -548,7 +549,19 @@ export function runQuery(query, data = {}) {
       return refuse('unknown_field', `'${subject.label}' carries no threshold to cross, so the question asked for a field this subject does not have`)
     }
     const threshold = query.threshold ?? NL_FLOOD_THRESHOLD_SCORE
-    matches = matches.filter((r) => Number.isFinite(Number(r[subject.valueField])) && Number(r[subject.valueField]) >= threshold)
+    // `numericOrNull`, not `Number.isFinite(Number(x))`. The coercion turns
+    // "this district has no score" into a score: `Number(null)` and `Number('')`
+    // are 0, and `Number(true)` is 1, `Number([90])` is 90. Below a threshold of
+    // 60 those fail the comparison and the district is dropped, so the answer's
+    // count is right for the wrong reason — but a question that asks "at or
+    // above 0" matches every record whose score is merely absent, and reports it
+    // as a district that crossed. Measured before the fix: with the default
+    // threshold, `score: [90]` matched as 90 — a number nobody wrote in that
+    // field — and `score: null` matched every threshold at or below zero.
+    matches = matches.filter((r) => {
+      const score = numericOrNull(r[subject.valueField])
+      return score !== null && score >= threshold
+    })
   }
 
   if (query.predicates.includes('no_dispatch')) {

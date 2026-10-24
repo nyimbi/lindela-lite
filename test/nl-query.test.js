@@ -233,8 +233,36 @@ describe('grounded natural-language query (ENH-68)', () => {
     assert.equal(typeof refusalSentence('flood_probability'), 'string')
   })
 
-  it('refuses a collection carrying a non-record instead of throwing out of the route', () => {
-    // `body JSONB NOT NULL` admits the JSON value `null`, and the JSON adapter
+  it('reads a threshold off a real number, not a coercion of whatever the field holds', () => {
+    // `Number.isFinite(Number(x))` converts "no score" into a score: `null` and
+    // `''` become 0, `true` becomes 1, `[90]` becomes 90. At the default
+    // threshold those fail the comparison and the count comes out right by
+    // accident — but a question asking "at or above 0" matches every record
+    // whose score is merely absent, and reports it as a district that crossed.
+    // `[90]` is the worst of them: a number nobody wrote in that field, read as
+    // a reading and stated in the answer.
+    const data = {
+      risk_scores: [
+        { id: 'r1', type: 'flood_risk', region_name: 'Turkana', score: 82, generated_at: day(1) },
+        { id: 'r2', type: 'flood_risk', region_name: 'Mandera', score: null, generated_at: day(1) },
+        { id: 'r3', type: 'flood_risk', region_name: 'Marsabit', score: '', generated_at: day(1) },
+        { id: 'r4', type: 'flood_risk', region_name: 'Isiolo', score: true, generated_at: day(1) },
+        { id: 'r5', type: 'flood_risk', region_name: 'Garissa', score: [90], generated_at: day(1) },
+        { id: 'r6', type: 'flood_risk', region_name: 'Wajir', score: 0, generated_at: day(1) },
+      ],
+    }
+    const atZero = answerQuery('Which districts crossed the flood threshold above 0 last week?', data, { now: NOW })
+    assert.equal(atZero.status, 'answered')
+    const named = atZero.facts.filter((f) => f.subject === 'flood_risk').map((f) => f.region)
+    assert.deepEqual([...new Set(named)].sort(), ['Turkana', 'Wajir'],
+      'only records carrying a real number at or above zero; the genuine zero stays, the absences and the array do not')
+    assert.equal(atZero.text.includes('Garissa'), false, 'an array is not a reading')
+    // The control: the same fixture at the default threshold still finds Turkana.
+    const atDefault = answerQuery('Which districts crossed the flood threshold last week?', data, { now: NOW })
+    assert.match(atDefault.text, /Turkana/)
+  })
+
+  it('refuses a collection carrying a non-record instead of throwing out of the route', () => {    // `body JSONB NOT NULL` admits the JSON value `null`, and the JSON adapter
     // asserts record shape only on the path that writes — so a collection can
     // arrive here with an entry that is not a record. Every predicate in
     // `runQuery` dereferences a record, so one such entry used to throw a
