@@ -45,6 +45,7 @@
  */
 
 import { canonicalHash, nowIso, stableId } from './utils.js'
+import { numericOrNull } from './analytics/numeric.js'
 // The IoT normalizer's own sensor-type enum, so the assertion below cannot
 // drift from the set the normalizer accepts. `field-signals.js` imports only
 // `utils.js`, so this is not a cycle.
@@ -1270,8 +1271,15 @@ function scopeTrailing(assertion, trailingRecords, options) {
   if (mine === null) return entries
   return entries.filter((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return true
-    const theirs = Number(entry[field])
-    return !Number.isFinite(theirs) || theirs === mine
+    // `numericOrNull`, not `Number`. A run that recorded `windows: null` — the
+    // second spelling of "not recorded", and the one a JSON round-trip produces
+    // from an `undefined` — became `Number(null) === 0`, so it compared as a run
+    // that covered *zero* windows. Against a current run covering one window it
+    // was dropped from the baseline, which is the opposite of the rule above:
+    // a run with no recorded scope is kept, because dropping it is what empties
+    // the history this function exists to preserve.
+    const theirs = numericOrNull(entry[field])
+    return theirs === null || theirs === mine
   })
 }
 

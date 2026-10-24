@@ -355,6 +355,47 @@ describe('the GDACS cap: 4,000 of 40,000 is not a clean run', () => {
     assert.equal(failure.detail.runs_compared, 1, 'the full walks were not filtered out of the comparison')
   })
 
+  it('keeps a run whose scope was recorded as null, which is the same absence as undefined', () => {
+    // `scopeTrailing`'s own rule is that a run with no recorded scope is kept —
+    // dropping it is what empties the history. It honoured that for `undefined`
+    // and not for `null`: `Number(null)` is 0, so a run whose `windows` was
+    // recorded as null compared as a run covering *zero* windows and was
+    // filtered out against a current run covering one. A JSON round-trip
+    // produces exactly that null from the undefined the rule was written for,
+    // so the two spellings of one absence reached opposite verdicts.
+    //
+    // The fixture makes the difference visible in the median: the null-scoped
+    // runs carry 1,000 events each and the one scoped run carries 10, so
+    // dropping them lowers the baseline to 10 and the assertion passes; keeping
+    // them raises it and the same batch is reported as a collapse.
+    const resumed = Array.from({ length: 10 }, (_, index) => archiveEvent(index))
+    const trailing = [
+      { records_processed: 10, windows: 1 },
+      { records_processed: 1_000, windows: null },
+      { records_processed: 1_000, windows: null },
+    ]
+    const judged = runAssertions({
+      source: 'gdacs_archive', records: resumed, trailingRecords: trailing, options: { now: NOW, scope: { windows: 1 } },
+    })
+    const failure = judged.failures.find((item) => item.kind === 'min_count_vs_trailing')
+    assert.ok(failure, 'the null-scoped runs are part of the baseline, and 10 events against them is a collapse')
+    assert.equal(failure.detail.runs_compared, 3, 'all three runs were compared')
+    assert.equal(failure.detail.trailing_median, 1000)
+
+    // The control: a run that genuinely covered zero windows is still a
+    // different object from one covering one, and is still filtered out.
+    const zeroScoped = runAssertions({
+      source: 'gdacs_archive',
+      records: resumed,
+      trailingRecords: [
+        { records_processed: 10, windows: 1 },
+        { records_processed: 1_000, windows: 0 },
+      ],
+      options: { now: NOW, scope: { windows: 1 } },
+    })
+    assert.equal(zeroScoped.ok, true, 'a zero-window run is a different scope, not an absent one')
+  })
+
   it('reads the trailing window out of every shape the store hands back', () => {
     assert.deepEqual(trailingCounts([10, 20, 30]), [10, 20, 30])
     assert.deepEqual(trailingCounts([[1, 2], [1, 2, 3]]), [2, 3])
