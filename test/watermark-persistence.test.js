@@ -504,3 +504,86 @@ describe('a connector that does not page records no window count', () => {
     assert.equal(run.watermark.windows, null, 'an omitted field is an absence, not a zero-window walk')
   })
 })
+
+/**
+ * The reader end of `windows`, and the reason it had to change with the writer.
+ *
+ * `runSourceAssertions` read the connector's own window count with
+ * `Number(output?.watermark?.windows)` behind an `isFinite` test. `Number(null)`
+ * is 0, so a connector that reports `windows: null` — the ordinary way of saying
+ * "I did not page" — was scoped as a *zero-window* walk. The run record stores
+ * `null` for that now, so this reader was the last place turning the absence
+ * back into a zero.
+ *
+ * The consequence is not cosmetic. `scopeTrailing` keeps a trailing run whose
+ * scope is absent and drops one whose scope differs. A zero-window scope
+ * therefore filtered out the full-walk history, the baseline became null, and
+ * the count assertion reported itself unmeasured — the collapse detector
+ * silently off. With the coercion in place this fixture's 2-of-40 collapse
+ * comes back `success`.
+ *
+ * The fixture needs a *paging* source: `scope: 'windows'` is declared only on
+ * `gdacs_archive`'s count assertion, so a non-paging connector never reaches the
+ * scoped path and cannot tell the two spellings apart. That is what the first
+ * version of this test got wrong — it passed under both, which is a test that
+ * measured nothing.
+ */
+describe('a run that reports no window count is scoped as absent, not as zero windows', () => {
+  const event = (i) => ({
+    id: `ev-${i}`,
+    event_type: 'FL',
+    country: 'KEN',
+    latitude: 1,
+    longitude: 35,
+    severity: 0.5,
+    occurred_at: '2026-10-01T00:00:00.000Z',
+    source: 'gdacs_archive',
+    source_id: `g-${i}`,
+  })
+  const paging = (count, windows) => ({
+    id: 'gdacs_archive',
+    async ingest() {
+      return {
+        hazard_events: Array.from({ length: count }, (_, i) => event(i)),
+        errors: [],
+        watermark: { windows },
+      }
+    },
+  })
+
+  it('reports a collapse against full walks even when this run states no window count', async () => {
+    const store = scratchStore()
+    // Three full walks of 40 events over 8 windows each.
+    for (let i = 0; i < 3; i += 1) {
+      await runIngestion(store, { sources: ['gdacs_archive'] }, { connectors: { gdacs_archive: paging(40, 8) } })
+    }
+    // Then a run that reports `windows: null` and returns 2 events.
+    await runIngestion(store, { sources: ['gdacs_archive'] }, { connectors: { gdacs_archive: paging(2, null) } })
+
+    const run = (await store.read()).source_runs[0]
+    assert.equal(run.assertions_failed, 1,
+      `a 2-of-40 collapse reported no failure: ${JSON.stringify(run.errors)}`)
+    const message = run.errors.join(' ')
+    assert.match(message, /trailing median of 40/,
+      `the baseline was not the full-walk history: ${message}`)
+    assert.match(message, /3 prior run\(s\)/,
+      `the full walks were filtered out of the comparison: ${message}`)
+  })
+
+  it('still treats a stated zero as a real scope, distinct from an absent one', async () => {
+    // The control. `windows: 0` is a measurement — a walk that found nothing due
+    // — and must still be filtered against a one-window run. A null-coalescing
+    // fix (`?? 0`) would erase the distinction in the other direction.
+    const store = scratchStore()
+    await runIngestion(store, { sources: ['gdacs_archive'] }, { connectors: { gdacs_archive: paging(40, 8) } })
+    await runIngestion(store, { sources: ['gdacs_archive'] }, { connectors: { gdacs_archive: paging(2, 0) } })
+
+    const run = (await store.read()).source_runs[0]
+    const stored = (await store.read()).source_runs
+    // The zero-window run is a different scope, so the 8-window history is
+    // filtered out and the assertion has nothing to compare against.
+    assert.equal(run.assertions_failed, 0,
+      `a zero-window run was judged against an eight-window baseline: ${JSON.stringify(run.errors)}`)
+    assert.ok(stored.length >= 2, 'both runs were recorded')
+  })
+})

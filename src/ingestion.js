@@ -1252,12 +1252,21 @@ function runSourceAssertions({ source, output, trailingRecords = [] }) {
   const records = OUTPUT_COLLECTIONS.flatMap((key) => output?.[key] || [])
   // This run's own scope, so the count assertion compares it only against runs
   // that covered the same ground. Absent when the connector does not page.
-  const windows = Number(output?.watermark?.windows)
+  //
+  // `toNumber`, not `Number(x)` behind an `isFinite` test. The comment above
+  // says "absent when the connector does not page", and the coercion made that
+  // sentence false for every such connector: `Number(null)` is 0, so this run's
+  // scope was a genuine zero-window walk. `scopeTrailing` keeps a trailing run
+  // whose scope is absent and drops one whose scope differs, so a null-scope
+  // run was compared against nothing at all — and since the run record now
+  // stores `null` for "did not page" (see `runIngestion`), this reader was the
+  // last place that turned that null back into a zero.
+  const windows = toNumber(output?.watermark?.windows)
   const report = runAssertions({
     source,
     records,
     trailingRecords,
-    options: { scope: { windows: Number.isFinite(windows) ? windows : null } },
+    options: { scope: { windows } },
   })
   if (report.ok) {
     return { ...report, published: output, quarantined: {} }

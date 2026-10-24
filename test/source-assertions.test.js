@@ -405,6 +405,21 @@ describe('the GDACS cap: 4,000 of 40,000 is not a clean run', () => {
     assert.deepEqual(trailingCounts('nonsense'), [])
   })
 
+  it('does not read a blank count as a zero-count run', () => {
+    // `Number('')` and `Number(false)` are 0, so a prior run whose count was
+    // recorded as blank joined the baseline as a genuine zero and dragged the
+    // median down — making the collapse this assertion exists to catch look
+    // ordinary. "No count stated" has its own fallbacks below this branch.
+    assert.deepEqual(trailingCounts([{ records_processed: '' }]), [1],
+      'a blank count falls through to the one-record default, not to zero')
+    assert.deepEqual(trailingCounts([{ records_processed: false }]), [1])
+    assert.deepEqual(trailingCounts([{ count: '   ' }]), [1])
+    // The control: a stated zero is a count, and stays one.
+    assert.deepEqual(trailingCounts([{ records_processed: 0 }]), [0],
+      'zero is a measurement and must survive')
+    assert.deepEqual(trailingCounts([{ records_processed: '40' }]), [40])
+  })
+
   it('uses the lower median, so one backfill among daily runs does not become the norm', () => {
     const records = Array.from({ length: 20 }, (_, index) => archiveEvent(index))
     const withBackfill = runAssertions({ source: 'gdacs_archive', records, trailingRecords: [40, 40, 40, 40_000], options: { now: NOW } })

@@ -1409,8 +1409,14 @@ export function trailingCounts(trailingRecords) {
       if (typeof entry === 'number') return entry
       if (Array.isArray(entry)) return entry.length
       if (entry && typeof entry === 'object') {
-        const stated = Number(entry.records_processed ?? entry.count)
-        if (Number.isFinite(stated)) return stated
+        // `numericOrNull`, not `Number(...)` behind an `isFinite` test. A
+        // trailing run that recorded `''` or `false` as its count became 0 and
+        // joined the baseline as a genuine zero-count run, which drags the
+        // median down and makes the collapse this assertion exists to catch
+        // look ordinary. The fallback below is what "no count stated" is meant
+        // to reach, and the coercion was short-circuiting it.
+        const stated = numericOrNull(entry.records_processed ?? entry.count)
+        if (stated !== null) return stated
         if (Array.isArray(entry.records)) return entry.records.length
         // Anything else object-shaped is a record from one previous run, so it
         // counts once. Returning NaN here instead would silently drop the whole
