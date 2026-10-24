@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, it } from 'node:test'
-import { createServer } from '../src/server.js'
+import { createServer, withTimeout } from '../src/server.js'
 import { JsonStore } from '../src/store.js'
 import { collectionPage, createIdempotencyStore } from '../src/utils.js'
 import { isPublicPath, publicPaths } from '../src/auth.js'
@@ -580,5 +580,37 @@ describe('a sensor batch is recorded once per batch, not once per batch size', (
       const data = await store.read()
       assert.equal(data.iot_observations.length, 2, 'a retried batch is one batch')
     }, { tokens })
+  })
+})
+
+describe('a timeout bound that is not a number is refused, not raced', () => {
+  /**
+   * `setTimeout(fn, NaN)` fires on the next tick — Node warns and substitutes
+   * 1 ms — so a `NaN` reaching `withTimeout` does not mean "wait forever" or
+   * "use the default". It means the raced promise loses to the event loop's
+   * next turn, and the caller reports the dependency as unresponsive when
+   * nothing was ever waited on. That is how `?timeout_ms=abc` answered 503 on
+   * `/ready` before the route parsed its bound properly.
+   *
+   * The route no longer produces a `NaN`, so this is the guard beneath it: any
+   * caller that hands this function a bound it cannot use gets a refusal it can
+   * see rather than a timeout it cannot distinguish from a real one.
+   */
+  it('refuses every unusable bound', async () => {
+    for (const bad of [Number.NaN, 0, -1, Number.POSITIVE_INFINITY, 'abc', null, undefined]) {
+      await assert.rejects(
+        withTimeout(Promise.resolve('ok'), bad),
+        (error) => error.name === 'TypeError' && /positive finite bound/.test(error.message),
+        `${String(bad)} is not a bound this function can honour`)
+    }
+  })
+
+  it('races a usable bound, and the slow side still loses', async () => {
+    // The controls, both ways: a resolvable promise within the bound resolves,
+    // and one that outlives it rejects with a TimeoutError rather than hanging.
+    assert.equal(await withTimeout(Promise.resolve('ok'), 50), 'ok')
+    await assert.rejects(
+      withTimeout(new Promise((resolve) => setTimeout(resolve, 200)), 10),
+      (error) => error.name === 'TimeoutError')
   })
 })

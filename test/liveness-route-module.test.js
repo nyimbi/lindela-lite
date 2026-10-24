@@ -122,6 +122,41 @@ const call = async (route, { uptimeSeconds = 0, ...over } = {}) => {
   return { handled, res, json: res.json() }
 }
 
+describe('a malformed timeout_ms is not a zero timeout', () => {
+  /**
+   * `Number(url.searchParams.get('timeout_ms') || 2000)`. A blank parameter fell
+   * to the default through the `||`, but any other non-numeric value —
+   * `?timeout_ms=abc`, `?timeout_ms=5s` — became `NaN`, and `setTimeout(fn, NaN)`
+   * fires on the next tick. A typo in a monitoring config therefore answered
+   * 503 "the store did not respond" on the endpoint the deployment's own probe
+   * polls, with nothing wrong with the store.
+   *
+   * The bound is captured from the `withTimeout` the route calls, which is the
+   * only place the number is observable: the route reports its own message, so
+   * a test reading the body would be reading prose rather than the timeout.
+   */
+  const boundFor = async (query) => {
+    let seen = null
+    await call({ kind: 'ready' }, {
+      url: new URL(`http://x/api/v1/ready${query}`),
+      withTimeout: (promise, ms) => { seen = ms; return promise },
+    })
+    return seen
+  }
+
+  it('falls back to the default rather than to NaN', async () => {
+    for (const query of ['?timeout_ms=abc', '?timeout_ms=5s', '?timeout_ms=', '?timeout_ms=-1', '?timeout_ms=0']) {
+      assert.equal(await boundFor(query), 2000,
+        `${query} is not a usable bound, so the default applies rather than NaN`)
+    }
+  })
+
+  it('honours a usable bound, which is the control', async () => {
+    assert.equal(await boundFor('?timeout_ms=150'), 150)
+    assert.equal(await boundFor(''), 2000)
+  })
+})
+
 describe('ENH-60 — matchLivenessRoute serves the two liveness paths', () => {
   it('matches health and ready, and nothing else', () => {
     assert.deepEqual(matchLivenessRoute('/api/v1/health'), { kind: 'health' })

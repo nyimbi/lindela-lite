@@ -1314,7 +1314,18 @@ function acceptsGzip(req) {
   return /(^|,)\s*gzip\s*(;|,|$)/i.test(header) && !/gzip\s*;\s*q=0(\.0+)?\s*(;|,|$)/i.test(header)
 }
 
-function withTimeout(promise, ms) {
+export function withTimeout(promise, ms) {
+  // A non-finite bound is not a bound. `setTimeout(fn, NaN)` fires on the next
+  // tick (Node warns and substitutes 1 ms), so a `NaN` reaching here from any
+  // caller turns a timeout into an instant rejection — the caller reports the
+  // dependency as unresponsive when nothing was ever waited on. Refuse loudly
+  // rather than racing a promise against the event loop's next turn.
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return Promise.reject(Object.assign(
+      new Error(`withTimeout needs a positive finite bound, got ${String(ms)}`),
+      { name: 'TypeError' },
+    ))
+  }
   let timer
   return Promise.race([
     promise,

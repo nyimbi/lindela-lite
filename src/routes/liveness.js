@@ -44,6 +44,7 @@ import { counts } from '../operations.js'
 import { outboxRollup } from '../outbox.js'
 import { piiSaltStatus } from '../pii.js'
 import { publicSourceCatalog } from '../schema.js'
+import { toNumber } from '../utils.js'
 
 /**
  * What the store occupies and what the disk has left, or an honest refusal.
@@ -120,7 +121,16 @@ export async function handleLivenessRoute(route, {
   // One timeout for both routes. It bounds the store read on `/ready` and the
   // disk probe on `/health`; SCL-07's rule is that an unresponsive store costs
   // one timeout, not one per thing asked of it.
-  const timeoutMs = Number(url.searchParams.get('timeout_ms') || 2000)
+  //
+  // `toNumber`, not `Number(... || 2000)`. A blank `?timeout_ms=` fell to the
+  // default through the `||`, but any non-numeric value — `?timeout_ms=abc`,
+  // `?timeout_ms=5s` — became `NaN`, and `setTimeout(fn, NaN)` fires on the
+  // next tick. A malformed query therefore collapsed the store read to an
+  // immediate timeout, and the deployment's own health probe answered 503
+  // "the store is unresponsive" because of a typo in a monitoring config. A
+  // bound the route cannot read is not a bound; the default applies.
+  const requestedTimeout = toNumber(url.searchParams.get('timeout_ms'))
+  const timeoutMs = requestedTimeout !== null && requestedTimeout > 0 ? requestedTimeout : 2000
 
   if (route.kind === 'health') {
     // `/health` reports on the pipeline and counts the collections, so it reads
