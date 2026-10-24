@@ -436,3 +436,71 @@ describe('gdacs_archive resumes rather than restarting', () => {
     } finally { stub.restore() }
   })
 })
+
+/**
+ * A connector that reports no window count says "my batch size is not a
+ * function of scope", and that has to survive the round trip.
+ *
+ * `windows` is the ground a count assertion compares over: two batches are
+ * comparable only if they were taken over the same number of windows.
+ * `Number.isFinite(Number(null))` is `true` — `Number(null)` is 0 — so a
+ * connector that reported `windows: null` was recorded as having covered
+ * *zero* windows, which is a scope rather than an absence. `scopeTrailing` then
+ * compared that run against a resumed walk's one window, found them different,
+ * and dropped the run from the baseline: the recorded history emptied, and the
+ * assertion fell back to "no trailing window to judge against".
+ */
+describe('a connector that does not page records no window count', () => {
+  const nonPaging = (windows) => ({
+    id: 'open_meteo_archive',
+    async ingest() {
+      return {
+        // The full record shape, so no field-coverage assertion fires. A failed
+        // assertion rebuilds `output` from the output collections alone and
+        // drops `watermark` with it, which would make this test measure the
+        // quarantine path rather than the window count.
+        climate_observations: [{
+          id: 'obs-1',
+          region_name: 'Turkana',
+          observed_at: '2026-10-01T00:00:00.000Z',
+          series_start: '1981-01-01',
+          series_end: '2026-10-01',
+          series_days: 30,
+          daily: [],
+        }],
+        errors: [],
+        watermark: { source: 'open_meteo_archive', mode: 'backfill', reason: 'no-watermark', windows },
+      }
+    },
+  })
+
+  it('stores null rather than zero when the connector reports null', async () => {
+    const store = scratchStore()
+    await runIngestion(store, { sources: ['open_meteo_archive'] }, { connectors: { open_meteo_archive: nonPaging(null) } })
+    const run = (await store.read()).source_runs[0]
+    assert.equal(run.watermark.windows, null,
+      'a connector that does not page covered no scope, which is not the same as covering zero windows')
+  })
+
+  it('still stores a real count, and a real zero', async () => {
+    // The control, both ways. A null-coalescing fix (`windows || null`) would
+    // turn a genuine zero-window run — a walk that found nothing due — into an
+    // absent one, and a `?? 0` would undo the fix entirely.
+    const store = scratchStore()
+    await runIngestion(store, { sources: ['open_meteo_archive'] }, { connectors: { open_meteo_archive: nonPaging(1) } })
+    const first = (await store.read()).source_runs[0]
+    assert.equal(first.watermark.windows, 1, 'a one-window walk records one window')
+
+    const second = scratchStore()
+    await runIngestion(second, { sources: ['open_meteo_archive'] }, { connectors: { open_meteo_archive: nonPaging(0) } })
+    const zero = (await second.read()).source_runs[0]
+    assert.equal(zero.watermark.windows, 0, 'a zero-window walk is a measurement and must survive as zero')
+  })
+
+  it('stores null when the connector states no window field at all', async () => {
+    const store = scratchStore()
+    await runIngestion(store, { sources: ['open_meteo_archive'] }, { connectors: { open_meteo_archive: nonPaging(undefined) } })
+    const run = (await store.read()).source_runs[0]
+    assert.equal(run.watermark.windows, null, 'an omitted field is an absence, not a zero-window walk')
+  })
+})

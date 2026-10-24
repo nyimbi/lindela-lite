@@ -112,6 +112,35 @@ describe('R-53 — a slipping schedule is visible', () => {
     assert.match(unknown.reason, /no due time/)
   })
 
+  it('a source with no cadence has no slip threshold, rather than a zero one', () => {
+    // Three real policies carry `interval_minutes: null` — `service_assets`,
+    // `acled_csv`, `conflict_csv` — because they are uploaded rather than
+    // scheduled. `Number(null)` is 0, so the coercion gave every one of them a
+    // threshold of zero milliseconds: every run later than the instant it was
+    // due, which is every run. The route then reported a source that has no
+    // cadence at all as permanently slipping.
+    const status = ingestionStatus({
+      ingestion_schedules: [{
+        id: 'sched-none',
+        type: 'ingestion_schedule',
+        source: 'service_assets',
+        status: 'active',
+        interval_minutes: null,
+        last_run_at: at(-1),
+        last_slip_at: at(-1),
+        last_slip_ms: 1000,
+        next_run_at: at(29),
+      }],
+      source_runs: [],
+      connector_circuit: [],
+    })
+    const row = status.find((s) => s.source === 'service_assets')
+    assert.equal(row.cadence.slip_threshold_ms, null,
+      'an absent cadence is not a zero-minute cadence: zero is a threshold every run exceeds')
+    assert.equal(row.cadence.slipping, false,
+      'a source with no cadence cannot be behind it')
+  })
+
   it('the status route carries the slip, so "ok" cannot mean "drifting"', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-r53-'))
     const store = new JsonStore(path.join(dir, 'store.json'))

@@ -537,9 +537,16 @@ export async function runIngestion(store, request = {}, { connectors = CONNECTOR
             // batches, and a batch is only comparable to another taken over the
             // same number of windows; `null` for a connector that does not
             // page, which means its batch size is not a function of scope.
-            windows: Number.isFinite(Number(output.watermark.windows))
-              ? Number(output.watermark.windows)
-              : null,
+            //
+            // `toNumber`, not `Number.isFinite(Number(x))`: a connector that
+            // reports `windows: null` — which is how a paging connector says
+            // "I did not page" — became `Number(null) === 0`, so the run was
+            // recorded as having covered *zero* windows. That is a real scope,
+            // not an absence: `scopeTrailing` compares it against a resumed
+            // walk's one window and drops it from the baseline. The comment
+            // above is about the null case and the coercion made it
+            // unreachable for every spelling but a non-numeric string.
+            windows: toNumber(output.watermark.windows),
           }
         : null,
       errors,
@@ -742,10 +749,10 @@ function trailingCountsFor(runs) {
     // gdacs_archive walk re-reads one quarter where the run before it read a
     // hundred and sixty-eight, and comparing those two numbers compares a
     // quarter to an archive. `null` for every source that states no window
-    // count, which is most of them and means "always comparable".
-    windows: Number.isFinite(Number(run?.watermark?.windows))
-      ? Number(run.watermark.windows)
-      : null,
+    // count, which is most of them and means "always comparable" — and
+    // `toNumber` is what makes that sentence true for a recorded `null`,
+    // which the coercion read as a zero-window walk.
+    windows: toNumber(run?.watermark?.windows),
   }))
 }
 
@@ -1142,9 +1149,13 @@ export function ingestionStatus(data) {
       ? (schedule.interval_minutes ?? policy.interval_minutes ?? null)
       : null
     const slipMs = schedule?.last_slip_ms ?? null
-    const slipThresholdMs = Number.isFinite(Number(intervalMinutes))
-      ? Number(intervalMinutes) * 60 * 1000
-      : null
+    // `toNumber` rather than `Number.isFinite(Number(x))`: an unset interval is
+    // `null`, and `Number(null)` is 0, so a schedule with no cadence recorded
+    // had a slip threshold of **zero milliseconds** — every run later than the
+    // instant it was due. Zero minutes is a cadence nobody configures; absence
+    // is the case this branch exists for.
+    const interval = toNumber(intervalMinutes)
+    const slipThresholdMs = interval === null ? null : interval * 60 * 1000
     return {
       source,
       regular: Boolean(policy.regular),
