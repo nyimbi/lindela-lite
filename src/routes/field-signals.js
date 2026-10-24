@@ -32,6 +32,7 @@ import { summarizeDiseaseObservations } from '../connectors/who-gho.js'
 import { actionLog } from '../operations.js'
 import { emit } from '../outbox.js'
 import { collectionPage, matchedAndPage, readCoordinate, readRequestJson, stableId } from '../utils.js'
+import { numericOrNull } from '../analytics/numeric.js'
 
 /**
  * Which field-signal route a request is, or null.
@@ -81,8 +82,14 @@ function diseaseMapLayer(rows) {
       longitude: readCoordinate(record.longitude),
       location_name: record.location_name || null,
       granularity: record.granularity || 'unknown',
-      cases: Number.isFinite(Number(record.cases)) ? Number(record.cases) : null,
-      deaths: Number.isFinite(Number(record.deaths)) ? Number(record.deaths) : null,
+      // `numericOrNull`, not `Number.isFinite(Number(x))`. The coercion turns a
+      // record with no case count into a record with **0** cases: `Number(null)`
+      // and `Number('')` are 0, `Number(false)` is 0, `Number([])` is 0. On a
+      // disease map that reads as a district that reported zero cases, which is
+      // a finding, where the truth is that nobody reported. `null` is rendered
+      // as "not stated" by the layer; zero is drawn.
+      cases: numericOrNull(record.cases),
+      deaths: numericOrNull(record.deaths),
       observed_at: record.observed_at || null,
       source_url: record.source_url || null,
     }))

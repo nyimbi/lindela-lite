@@ -105,6 +105,17 @@ describe('disease-observations map endpoint', () => {
       }
       assert.equal(sub.latitude, 8.767)
       assert.equal(sub.cases, 300)
+      // A record with no case count stays `null`, not `0`. `Number(null)` is 0,
+      // so the old coercion told the map that Somalia reported zero cases — a
+      // finding — where the truth is that nobody reported. The national row is
+      // on the map (it has coordinates) and is the control for the one above.
+      const national = body.data.find((r) => r.granularity === 'national')
+      assert.ok(national, 'the national-centroid row is placed')
+      assert.equal(national.cases, null, 'an unreported case count is not zero cases')
+      assert.equal(national.deaths, null)
+      // And a genuine zero survives as zero, which is the half a null-coalescing
+      // fix would break.
+      assert.equal(sub.deaths, null)
 
       assert.ok(body.data.every((r) => Number.isFinite(r.latitude) && Number.isFinite(r.longitude)))
       assert.ok(body.as_of >= '2026-08-20', `as_of is the latest observed_at, got ${body.as_of}`)
