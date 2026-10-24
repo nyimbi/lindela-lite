@@ -495,6 +495,44 @@ describe('zero is a value', () => {
     assert.equal(zeroCases.ok, true, JSON.stringify(zeroCases.failures, null, 2))
   })
 
+  it('a blank count is an absence, not a measured zero that passes the floor', () => {
+    // `value_range` called `Number` after guarding only `null`/`undefined`.
+    // `Number('')`, `Number('  ')`, `Number(false)` and `Number([])` are all 0,
+    // and a count's floor is 0 — so a blank fatality field passed every count
+    // range in the table *and* incremented `values_checked`, which reported the
+    // field as measured. A source whose fatality column is blank on every row
+    // was reported as a clean range check over a measured field.
+    const blank = (fatalities) => runAssertions({
+      source: 'acled_csv',
+      records: [{
+        id: 'c1', source_id: 'evt', event_type: 'conflict_event',
+        occurred_at: '2026-10-01T00:00:00.000Z', latitude: 2.0, longitude: 36.0, fatalities,
+      }],
+      options: { now: NOW },
+    })
+
+    for (const spelling of ['', '  ', false, []]) {
+      const result = blank(spelling)
+      const failure = result.failures.find((item) => item.kind === 'value_range')
+      assert.equal(failure, undefined,
+        `${JSON.stringify(spelling)} is an absence and has nothing to bound, ` +
+        'so it is skipped rather than failed')
+      assert.ok(result.stats.unmeasured.some((name) => /fatal/i.test(name)),
+        `${JSON.stringify(spelling)} must not count as a measured value: ` +
+        JSON.stringify(result.stats.unmeasured))
+    }
+
+    // The two controls, both ways. A genuine 0 is a measurement and still
+    // passes; text that is not a number is still the failure this exists for.
+    assert.equal(blank(0).failures.find((item) => item.kind === 'value_range'), undefined,
+      'a genuine zero is a count and the floor is inclusive')
+    const text = blank('12.5 mm')
+    const failure = text.failures.find((item) => item.kind === 'value_range')
+    assert.ok(failure, 'a unit string is a value that is not a number, which is the failure')
+    assert.equal(failure.detail.offenders[0].value, '12.5 mm')
+    assert.equal(failure.detail.values_checked, 1, 'and it counts as checked, because it was')
+  })
+
   it('0 survives value_range because the minimum is 0 and the bound is inclusive', () => {
     const result = runAssertions({
       source: 'nasa_firms',

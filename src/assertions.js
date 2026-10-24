@@ -1195,13 +1195,25 @@ function checkValueRange(assertion, { batch, unmeasured }) {
 
   for (const record of batch) {
     const value = readPath(record, assertion.field)
-    if (value === null || value === undefined) continue
+    // Absence passes, and it has to be spelled out. The assertion notes say a
+    // field that was not in the response has nothing to bound; a blank string,
+    // a whitespace string, a boolean and an empty array are the same statement
+    // in other spellings, and a failure would quarantine a batch over an
+    // optional field.
+    //
+    // `Number` did not skip them. `Number('')`, `Number('  ')`, `Number(false)`
+    // and `Number([])` are all 0, so a blank fatality count, a blank case count
+    // or a blank sensor reading passed every range whose floor is 0 — which is
+    // most of them, because a count's floor is 0 — *and* incremented
+    // `values_checked`, so the field was reported as measured.
+    if (value === null || value === undefined || typeof value === 'boolean' || Array.isArray(value)) continue
+    if (typeof value === 'string' && value.trim() === '') continue
     checked += 1
-    const numeric = Number(value)
-    // A string where a number belongs is itself the failure this is here for:
-    // "1,234", "12.5 mm", a shifted CSV column. Range-checking a NaN silently
-    // passes, which is how a unit string got stored as a measurement.
-    if (!Number.isFinite(numeric) || numeric < assertion.min || numeric > assertion.max) {
+    // Text that is not a number is still the failure this is here for: "1,234",
+    // "12.5 mm", a shifted CSV column. Range-checking a NaN silently passes,
+    // which is how a unit string got stored as a measurement.
+    const numeric = numericOrNull(value)
+    if (numeric === null || numeric < assertion.min || numeric > assertion.max) {
       if (offenders.length < 5) {
         offenders.push({ record_id: record?.id ?? null, field: assertion.field, value, allowed: { min: assertion.min, max: assertion.max } })
       }
