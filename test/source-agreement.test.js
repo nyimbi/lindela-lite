@@ -31,6 +31,7 @@ import {
   signDisagreementRate,
   spearman,
 } from '../src/agreement.js'
+import { monthlySeries } from '../src/source-agreement.js'
 
 /** Twelve months of two products that track each other closely. */
 const agreeing = (values) => values
@@ -313,5 +314,52 @@ describe('the vocabulary is checkable', () => {
     assert.ok(AGREEMENT_THRESHOLDS.minPairedMonths >= 3, 'two points correlate at exactly ±1')
     assert.ok(AGREEMENT_THRESHOLDS.maxSignDisagreementRate < 1)
     assert.ok(Object.isFrozen(AGREEMENT_THRESHOLDS))
+  })
+})
+/**
+ * A day the product sent as an empty field is not a zero-millimetre day.
+ *
+ * `monthlySeries` guards `null` and `undefined` and then calls `Number`. That
+ * covers the two spellings a JSON round-trip produces and lets the rest through:
+ * `Number('')` and `Number('  ')` are 0. A blank day therefore counted as
+ * *measured*, which inflates `days_measured`, clears `MIN_MONTH_COVERAGE`, and
+ * publishes a monthly total built mostly from days nobody measured — a month
+ * with five real days read as a complete one, at the full 80% coverage bar.
+ */
+describe('a blank rainfall day is not a measured zero', () => {
+  // `observed_at`, the one-record-per-day shape CHIRPS writes. The other shape
+  // (`daily: [...]`) is covered where it is used; this fixture stays on the
+  // shape the bug was found on.
+  const day = (n, mm) => ({ observed_at: `2026-10-${String(n).padStart(2, '0')}`, precipitation_mm: mm })
+
+  it('drops a month whose only measurements are a handful of real days', () => {
+    // 5 days of 20 mm, 26 days the product sent as an empty field.
+    const records = []
+    for (let d = 1; d <= 31; d += 1) records.push(day(d, d <= 5 ? 20 : ''))
+    const { series, thin_months } = monthlySeries(records)
+    assert.deepEqual(series, [],
+      `a month with 5 measured days of 31 was published as complete: ${JSON.stringify(series)}`)
+    assert.deepEqual(thin_months, ['2026-10'], 'the month is named as thin rather than silently dropped')
+  })
+
+  it('publishes a month that genuinely is covered, and totals only real days', () => {
+    // The control, both ways. 28 of 31 days measured clears the 80% floor
+    // (31 * 0.8 = 24.8 → 25), and the three blanks must not add zeroes.
+    const records = []
+    for (let d = 1; d <= 31; d += 1) records.push(day(d, d <= 28 ? 2 : ''))
+    const { series, thin_months } = monthlySeries(records)
+    assert.deepEqual(thin_months, [], '28 of 31 days is covered')
+    assert.equal(series.length, 1)
+    assert.equal(series[0].precipitation_mm, 56, '28 days of 2 mm, with the 3 blanks contributing nothing')
+  })
+
+  it('still counts a genuine zero-millimetre day as measured', () => {
+    // The half a null-coalescing fix would break: a dry day reported as 0 is a
+    // measurement, and it must count toward coverage.
+    const records = []
+    for (let d = 1; d <= 31; d += 1) records.push(day(d, 0))
+    const { series, thin_months } = monthlySeries(records)
+    assert.deepEqual(thin_months, [], 'a month of reported zeroes is fully covered')
+    assert.equal(series[0].precipitation_mm, 0)
   })
 })

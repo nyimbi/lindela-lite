@@ -36,6 +36,7 @@
  */
 
 import { AGREEMENT_THRESHOLDS, COMPARABLE_PRODUCTS, agreementReport, compareSeries } from './agreement.js'
+import { numericOrNull } from './analytics/numeric.js'
 
 /**
  * The sources that are a comparable rainfall product, and the product each one
@@ -139,8 +140,15 @@ export function monthlySeries(records = []) {
       // day inside one source is a defect in that source, and averaging it away
       // here would hide the defect behind a plausible total.
       if (month.has(point.date)) continue
-      const mm = point.mm === null || point.mm === undefined ? null : Number(point.mm)
-      if (mm !== null && (!Number.isFinite(mm) || mm < 0)) {
+      // `numericOrNull`, not an explicit null check followed by `Number`. The
+      // null check caught the two spellings a JSON round-trip produces and let
+      // the rest through: `Number('')` and `Number('  ')` are 0, so a day the
+      // product sent as an empty field counted as a *measured* zero-millimetre
+      // day. That inflates `days_measured`, clears `MIN_MONTH_COVERAGE`, and
+      // publishes a monthly total built mostly from days nobody measured — a
+      // month with five real days read as a complete one.
+      const mm = numericOrNull(point.mm)
+      if (mm !== null && mm < 0) {
         implausibleDays += 1
         month.set(point.date, null)
         continue
