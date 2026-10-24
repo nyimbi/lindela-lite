@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { computeShortTermSuccessRate } from './observability.js'
 import { METRICS, computeMetric } from './analytics/metrics.js'
-import { median } from './analytics/numeric.js'
+import { median, numericOrNull } from './analytics/numeric.js'
 // Neither of these imports back from kpi.js, so the quarterly export can compute the
 // dashboard's equity and feedback sections from the same helpers the page uses —
 // which is the point: a figure cannot be one thing on screen and another in the file.
@@ -173,7 +173,15 @@ export function kpiSnapshotForPeriod(records, from, to, dateField = null) {
  */
 export function computeApiUptime(ringRate) {
   const override = process.env.LINDELA_LITE_UPTIME_OVERRIDE
-  if (override !== undefined) return parseFloat(override)
+  // `numericOrNull`, not `parseFloat`. `parseFloat('abc')` and `parseFloat(' ')`
+  // are both `NaN`, and `typeof NaN` is `'number'`, so a mistyped or blank
+  // override published NaN as a percentage. It does not throw, it does not
+  // read as absent, and `JSON.stringify` renders it `null` — so the wire looks
+  // like this module's own "not measured" while the in-process value is a
+  // number that compares false against every bound. A value the function cannot
+  // vouch for falls through to the measured ring instead of becoming a figure.
+  const pinned = numericOrNull(override)
+  if (pinned !== null) return pinned
   const rate = ringRate === undefined ? computeShortTermSuccessRate() : ringRate
   if (rate !== null) return Math.round(rate * 100) / 100
   // No requests in the ring buffer is not "perfect uptime" — it is no

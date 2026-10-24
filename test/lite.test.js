@@ -4418,6 +4418,31 @@ describe('Lindela Lite Phase 2 — Parametric, DHIS2, Demographics, Observabilit
     }
   })
 
+  it('an unparseable uptime override is not a published percentage', () => {
+    // `parseFloat` was the whole guard. `parseFloat('abc')` and `parseFloat(' ')`
+    // are both `NaN`, and `typeof NaN` is `'number'`, so a mistyped or blank
+    // override published NaN as the API's uptime. It does not throw and it does
+    // not read as absent; `JSON.stringify` renders it `null`, so the wire looked
+    // like this module's own "not measured" while the in-process value was a
+    // number that compares false against every bound — a monitor reading
+    // `uptime_pct < 99` would report an outage from a typo.
+    const orig = process.env.LINDELA_LITE_UPTIME_OVERRIDE
+    try {
+      for (const bad of ['abc', ' ', '']) {
+        process.env.LINDELA_LITE_UPTIME_OVERRIDE = bad
+        const value = computeApiUptime(0.8734)
+        assert.equal(value, 0.87,
+          `${JSON.stringify(bad)} is not a percentage, so the measured ring answers instead`)
+      }
+      // The control: a real number still wins over the ring.
+      process.env.LINDELA_LITE_UPTIME_OVERRIDE = '97.5'
+      assert.equal(computeApiUptime(0.8734), 97.5)
+    } finally {
+      if (orig === undefined) delete process.env.LINDELA_LITE_UPTIME_OVERRIDE
+      else process.env.LINDELA_LITE_UPTIME_OVERRIDE = orig
+    }
+  })
+
   it('uptimeStats returns uptime_seconds as a positive number', () => {
     const stats = uptimeStats()
     assert.ok(typeof stats.uptime_seconds === 'number', 'uptime_seconds should be a number')
