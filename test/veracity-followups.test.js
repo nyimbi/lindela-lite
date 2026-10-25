@@ -136,6 +136,35 @@ describe('VER-12 service-impact confidence is absent, not zero, without a readin
     ])
     assert.equal(impact.confidence, 55)
   })
+
+  it('does not let an unreadable upstream score erase the assessment', () => {
+    // The borrowed score went into the weighted sum unread, so one bad region
+    // score — `undefined`, `NaN`, a string that is not a number — made
+    // `impact_score` NaN. `JSON.stringify` published it `null`, `riskLevel(NaN)`
+    // graded the asset `low`, and `recommendedActions` returned an empty list:
+    // every facility within 150 km of a single malformed region score lost its
+    // assessment, and the one it lost was the one saying "look here".
+    for (const score of [undefined, NaN, 'abc', {}, []]) {
+      const [impact] = computeServiceImpacts({ service_assets: [asset] }, [
+        { ...risk('flood_risk', 80), score },
+      ])
+      assert.ok(Number.isFinite(impact.impact_score),
+        `score ${JSON.stringify(score)} published impact_score ${impact.impact_score}`)
+      assert.equal(impact.honesty.value, impact.impact_score, 'the envelope carries the same number')
+    }
+
+    // A genuine 0 and an unreadable score both contribute 0, and the row must
+    // not say they are the same thing: one is a finding, the other is a gap.
+    const [measured] = computeServiceImpacts({ service_assets: [asset] }, [{ ...risk('flood_risk', 80), score: 0 }])
+    const [unreadable] = computeServiceImpacts({ service_assets: [asset] }, [{ ...risk('flood_risk', 80), score: undefined }])
+    assert.equal(measured.impact_score, unreadable.impact_score, 'both contribute nothing to the arithmetic')
+    assert.equal(measured.drivers.flood_risk_unreadable, false, 'a measured zero is not unreadable')
+    assert.equal(unreadable.drivers.flood_risk_unreadable, true, 'the row names the gap')
+    assert.ok(unreadable.honesty.refused.some((line) => /unreadable input rather than as a measured zero/.test(line)),
+      'the envelope says why the term is missing, in words')
+    assert.ok(!measured.honesty.refused.some((line) => /unreadable/.test(line)),
+      'a measured zero must not be reported as unreadable')
+  })
 })
 
 describe('VER-10 the spread-skill floor matches the sentence describing it', () => {

@@ -527,6 +527,15 @@ read by the backtest.
   on optional inputs, where `computeFloodRisk` uses `null` and routes absence to
   confidence. Whether the flood scorer's policy is intended to apply to the other two
   is not stated.
+  **Partly resolved 2026-10-25** — the two `|| 0` sites that could publish a `NaN`
+  are fixed; the question of whether absence should lower *confidence* on these two
+  the way it does on the flood scorer is still open. `conflictPressure` reads
+  `fatalities` through `numericOrNull`, so an unparseable toll contributes the
+  event's base and cannot make the district's score, its p10/p90 band or
+  `honesty.value` `NaN`; `computeServiceImpacts` reads a borrowed region score the
+  same way and names the unreadable case in `drivers.*_unreadable` and in the
+  envelope's `refused` list, so a nearby region that scored a genuine zero is
+  distinguishable from one whose score nobody could read.
 - ~~`confidence_sum` in `computeDataQuality` is initialised and read but never
   incremented, so `mean_confidence` is always `0`. No comment marks this as
   deliberate.~~ **Fixed 2026-10-03** — see above; the accumulator is now

@@ -252,6 +252,43 @@ describe('DATA-04 — hazard pressure is about now, not about how much archive w
     assert.ok(archive.score < current.score, `history must not score as present: ${archive.score} vs ${current.score}`)
   })
 
+  it('does not let an unparseable fatality count poison the district score', () => {
+    // `Number(event.fatalities || 0)` reads as a presence check and is not one:
+    // `''`, `'  '`, `false`, `[]` and `null` all coerce to 0 — the right answer
+    // for them — but `Number('12 dead')` and `Number({})` are NaN, and one NaN
+    // took `Math.min(30, …)` and then the whole score with it. `JSON.stringify`
+    // renders the result `null` on the wire, `riskLevel(NaN)` grades it `low`,
+    // and `computeServiceImpacts` copies it onto every asset within 150 km. A
+    // licensed ACLED export with one malformed cell published a district as
+    // low-risk with no score at all.
+    const withFatalities = (fatalities) => ({
+      ...EMPTY,
+      climate_observations: [],
+      conflict_events: [{ id: 'c1', latitude: 3.12, longitude: 35.60, fatalities, occurred_at: NOW.toISOString() }],
+    })
+
+    for (const value of ['12 dead', 'abc', {}, [3], true]) {
+      const risk = computeClimateConflictRisk(withFatalities(value), { now: NOW })[0]
+      assert.ok(Number.isFinite(risk.score),
+        `fatalities ${JSON.stringify(value)} made the score ${risk.score}; the wire would carry ${JSON.stringify(risk.score)}`)
+      assert.ok(Number.isFinite(risk.score_p10) && Number.isFinite(risk.score_p90),
+        'the sensitivity band must be finite too')
+      assert.equal(risk.honesty.value, risk.score, 'the envelope carries the same number as the row')
+    }
+
+    // A missing toll and an unreadable one are the same fact — nothing recorded —
+    // so both contribute the event's 4-point base and neither can move the score.
+    const absent = computeClimateConflictRisk(withFatalities(null), { now: NOW })[0]
+    const unreadable = computeClimateConflictRisk(withFatalities('12 dead'), { now: NOW })[0]
+    assert.equal(unreadable.score, absent.score, 'an unreadable toll is not a different risk from an unrecorded one')
+
+    // A real toll still counts, or the fix would be a term that cannot move.
+    const twelve = computeClimateConflictRisk(withFatalities(12), { now: NOW })[0]
+    assert.ok(twelve.score > absent.score, `12 deaths must score above an unrecorded toll: ${twelve.score} vs ${absent.score}`)
+    // ...and 0 is a measurement, not an absence: it scores with the base only.
+    assert.equal(computeClimateConflictRisk(withFatalities(0), { now: NOW })[0].score, absent.score)
+  })
+
   it('takes the window as a parameter, so the rule is not a hardcoded seven', () => {
     // A canary against the fix being a literal: with a 400-day window the same
     // 2019 floods come back in. If this passes, the window is genuinely read.

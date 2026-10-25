@@ -6,6 +6,7 @@ import { KNOWN_DISTRICTS } from './districts.js'
 import { computePopulationAtRisk, computeFacilitiesAtRisk } from './analytics/impact.js'
 import { spreadSkillIndex, MIN_ENSEMBLES_FOR_SPREAD_SKILL } from './analytics/ensemble.js'
 import { meanMeasured } from '../public/shared/units.js'
+import { numericOrNull } from './analytics/numeric.js'
 import { compoundHazardScore, MIN_COMPOUND_MONTHS } from './compound-hazard.js'
 import { computeRoadAccess } from './road-access.js'
 import { logger, metrics } from './observability.js'
@@ -1153,7 +1154,24 @@ export function computeClimateConflictRisk(data, options = {}) {
     // above, and `confidence` is what the p10/p90 band is drawn from.
     const climateWithRainfall = rainfall.length
     const hazardPressure = Math.min(25, hazards.reduce((sum, event) => sum + severityWeight(event.severity) * 12, 0))
-    const conflictPressure = Math.min(30, conflicts.reduce((sum, event) => sum + 4 + Number(event.fatalities || 0) * 0.8, 0))
+    // `Number(event.fatalities || 0)` is a presence check that passes for every
+    // absence. `''`, `'  '`, `false`, `[]` and `null` all coerce to 0 and are the
+    // right answer for them — a conflict event with no death toll recorded is not
+    // a zero-toll event, but 0 is what the term contributes either way. What it
+    // does *not* survive is text that is not a number at all: `Number('12 dead')`
+    // is NaN, `Math.min(30, NaN)` is NaN, and the whole district's score, its
+    // p10/p90 band and `honesty.value` became NaN — which `JSON.stringify`
+    // renders as `null` on the wire and `riskLevel(NaN)` grades `low`. A licensed
+    // ACLED export with one malformed fatalities cell published a district as
+    // "low climate-conflict risk" with a null score, and the service-impact
+    // scorer downstream of it copied the NaN onto every asset in radius.
+    //
+    // Absent and unparseable are both "no toll recorded", so both contribute the
+    // 4-point base and neither can poison the sum.
+    const conflictPressure = Math.min(30, conflicts.reduce(
+      (sum, event) => sum + 4 + (numericOrNull(event.fatalities) ?? 0) * 0.8,
+      0,
+    ))
     const servicePressure = Math.min(10, serviceAssets.length * 1.5)
     const score = clamp(Math.round(climatePressure + hazardPressure + conflictPressure + servicePressure), 0, 100)
     const confidence = confidenceScore([
@@ -1304,8 +1322,25 @@ export function computeServiceImpacts(data, riskScores) {
     const assetPoint = { latitude: asset.latitude, longitude: asset.longitude }
     const nearestFlood = nearest(floodRisks, assetPoint)
     const nearestConflict = nearest(conflictRisks, assetPoint)
-    const floodScore = nearestFlood && nearestFlood.distance_km <= 150 ? nearestFlood.item.score : 0
-    const conflictScore = nearestConflict && nearestConflict.distance_km <= 150 ? nearestConflict.item.score : 0
+    // A borrowed score is read the same way the asset's own numbers are: a
+    // number, or nothing. `nearestFlood.item.score` passed straight into the
+    // weighted sum, so an unreadable upstream score — `undefined`, `NaN`, a
+    // string that is not a number — made `score` NaN, `JSON.stringify` published
+    // it as `null`, `riskLevel(NaN)` graded the asset `low`, and
+    // `recommendedActions` returned nothing. Every asset within 150 km of one bad
+    // region score lost its assessment.
+    //
+    // Unreadable is not the same as zero, and the row must not say it is: the
+    // `*_in_radius` flags and the honesty envelope's `refused` list carry the
+    // difference, because a genuine 0 from a nearby region and a score nobody
+    // could read both contribute 0 to the arithmetic and only one of them is a
+    // finding.
+    const floodInRadius = Boolean(nearestFlood && nearestFlood.distance_km <= 150)
+    const conflictInRadius = Boolean(nearestConflict && nearestConflict.distance_km <= 150)
+    const floodBorrowed = floodInRadius ? numericOrNull(nearestFlood.item.score) : null
+    const conflictBorrowed = conflictInRadius ? numericOrNull(nearestConflict.item.score) : null
+    const floodScore = floodBorrowed ?? 0
+    const conflictScore = conflictBorrowed ?? 0
     const score = clamp(Math.round(floodScore * 0.55 + conflictScore * 0.45), 0, 100)
     // Only the regions actually inside the borrowing radius have a confidence to
     // report. `|| 0` turned an absent reading into "certain the risk is zero",
@@ -1356,8 +1391,14 @@ export function computeServiceImpacts(data, riskScores) {
         // is too far to borrow from", and those read identically above.
         nearest_flood_risk_km: nearestFlood ? Math.round(nearestFlood.distance_km * 10) / 10 : null,
         nearest_conflict_risk_km: nearestConflict ? Math.round(nearestConflict.distance_km * 10) / 10 : null,
-        flood_risk_in_radius: Boolean(nearestFlood && nearestFlood.distance_km <= 150),
-        conflict_risk_in_radius: Boolean(nearestConflict && nearestConflict.distance_km <= 150),
+        flood_risk_in_radius: floodInRadius,
+        conflict_risk_in_radius: conflictInRadius,
+        // A region inside the radius whose score could not be read. Without this
+        // the asset's zero contribution is indistinguishable from a region that
+        // scored a genuine zero, and the envelope's `refused` list names it in
+        // words so the difference survives the wire.
+        flood_risk_unreadable: floodInRadius && floodBorrowed === null,
+        conflict_risk_unreadable: conflictInRadius && conflictBorrowed === null,
       },
       recommended_actions: recommendedActions(asset.service_type, score),
       uncertainty: uncertaintyTiers({
@@ -1390,6 +1431,12 @@ export function computeServiceImpacts(data, riskScores) {
             : []),
           ...(nearestConflict && nearestConflict.distance_km > 150
             ? [`the nearest climate-conflict region is ${Math.round(nearestConflict.distance_km)} km away, beyond the 150 km borrowing radius, so its score contributed 0 rather than a small amount`]
+            : []),
+          ...(floodInRadius && floodBorrowed === null
+            ? [`the nearest flood risk region is ${Math.round(nearestFlood.distance_km)} km away but its score is not a number, so it contributed 0 as an unreadable input rather than as a measured zero`]
+            : []),
+          ...(conflictInRadius && conflictBorrowed === null
+            ? [`the nearest climate-conflict region is ${Math.round(nearestConflict.distance_km)} km away but its score is not a number, so it contributed 0 as an unreadable input rather than as a measured zero`]
             : []),
           ...(nearestFlood || nearestConflict ? [] : ['no scored region lies within 150 km of this asset, so the score is 0 for lack of nearby evidence rather than for lack of risk']),
         ],
