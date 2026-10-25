@@ -147,4 +147,32 @@ describe('the process does not claim loopback it is not binding', () => {
     assert.equal(await acceptsConnection('127.0.0.1', wildcard.port), true,
       'the wildcard bind should also answer on loopback')
   })
+
+  it('refuses a port it cannot serve rather than announcing one it is not on', async (t) => {
+    // `Number(env.X || 4177)` reads three different absences as port 0: `''`,
+    // `'  '` and a literal `'0'`. `listen(0)` succeeds on an ephemeral port, so
+    // the process came up healthy and logged `listening on http://127.0.0.1:0`
+    // — a URL nothing answers on. A non-numeric value was worse: `listen(NaN)`
+    // threw `ERR_SOCKET_BAD_PORT` from inside the listen call, after the store
+    // and the driver were already up.
+    //
+    // Each of these must fail before it binds anything, and say which variable
+    // it was. The child is spawned directly here rather than through
+    // `startServer`, because the case under test never reaches a startup line.
+    for (const bad of ['abc', '0', '70000']) {
+      const child = spawn(process.execPath, ['src/server.js'], {
+        cwd: new URL('..', import.meta.url).pathname,
+        env: { ...process.env, LINDELA_LITE_PORT: bad, LINDELA_LITE_HOST: '127.0.0.1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let out = ''
+      child.stdout.on('data', (chunk) => { out += chunk })
+      child.stderr.on('data', (chunk) => { out += chunk })
+      const code = await new Promise((resolve) => child.on('exit', resolve))
+      assert.notEqual(code, 0, `LINDELA_LITE_PORT=${JSON.stringify(bad)} started anyway: ${out}`)
+      assert.match(out, /LINDELA_LITE_PORT must be an integer/,
+        `LINDELA_LITE_PORT=${JSON.stringify(bad)} must name the variable it refused: ${out}`)
+      assert.doesNotMatch(out, /listening on/, 'a refused port must not reach the startup line')
+    }
+  })
 })

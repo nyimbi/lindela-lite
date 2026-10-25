@@ -6,7 +6,8 @@ This guide lists environment variables and configuration patterns for Lindela Li
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `LINDELA_LITE_PORT` | `4177` | HTTP port used by the Node server. |
+| `LINDELA_LITE_PORT` | `4177` | HTTP port used by the Node server. Must be an integer from 1 to 65535; a value that is not is refused at startup with the variable named, rather than binding an ephemeral port and announcing `:0`. |
+| `LINDELA_LITE_SHUTDOWN_MS` | `10000` | Grace period after SIGTERM/SIGINT before the process exits anyway. Must be a positive number of milliseconds; a value that is not is refused when the handler is installed. |
 | `LINDELA_LITE_API_KEY` | unset | Optional API key required as `x-api-key` for non-GET API requests. |
 | `LINDELA_LITE_MAX_BODY_BYTES` | `5242880` (5 MB) | Maximum accepted request body size. Larger bodies return HTTP 413. |
 | `NODE_ENV` | unset | Runtime environment flag. Docker sets `production`. |
@@ -52,7 +53,7 @@ Mode behavior:
 | `PG0_USERNAME` | `postgres` | pg0 user. |
 | `PG0_PASSWORD` | `postgres` | pg0 password. |
 | `PG0_DATABASE` | `postgres` | pg0 database. |
-| `LINDELA_LITE_PG0_TIMEOUT_MS` | `20000` | pg0 startup timeout. |
+| `LINDELA_LITE_PG0_TIMEOUT_MS` | `20000` | pg0 startup timeout. Must be a positive number of milliseconds; a value that is not is refused at the first pg0 subprocess call rather than collapsing every call to a 1 ms timeout. |
 
 ## Public Sources
 

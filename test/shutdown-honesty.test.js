@@ -129,4 +129,34 @@ describe('R-60 — the process stops when it is told to', () => {
     assert.equal(signal, null, 'the handler must own the exit, not the signal')
     assert.ok(ms < 5000, `shutdown took ${ms} ms against a 150 ms bound`)
   })
+
+  it('refuses a bound it cannot read rather than firing it on the next tick', () => {
+    // `Number(env.X) || 10_000` read a typo as a bound and handed it to
+    // `setTimeout`, which fires a negative or NaN duration on the next tick.
+    // `LINDELA_LITE_SHUTDOWN_MS=10s` — a unit the variable's name does not carry
+    // — SIGTERMed the process 1 ms into every shutdown, cutting off the
+    // in-flight request and the store close the grace period exists for, and
+    // logging "connections did not close within -1 ms". The default is for an
+    // absent bound; a present, unreadable one is a configuration error.
+    const saved = process.env.LINDELA_LITE_SHUTDOWN_MS
+    const server = http.createServer()
+    try {
+      for (const bad of ['abc', '10s', '0', '-1']) {
+        process.env.LINDELA_LITE_SHUTDOWN_MS = bad
+        assert.throws(() => installShutdown(server, { exit: () => {}, onStop: () => {} }),
+          (error) => error instanceof TypeError && /LINDELA_LITE_SHUTDOWN_MS must be a positive number/.test(error.message),
+          `LINDELA_LITE_SHUTDOWN_MS=${JSON.stringify(bad)} was accepted; setTimeout would fire on the next tick`)
+      }
+      for (const blank of [undefined, '', '  ']) {
+        if (blank === undefined) delete process.env.LINDELA_LITE_SHUTDOWN_MS
+        else process.env.LINDELA_LITE_SHUTDOWN_MS = blank
+        assert.equal(typeof installShutdown(server, { exit: () => {}, onStop: () => {} }), 'function',
+          `an absent bound ${JSON.stringify(blank)} must take the default, not be refused`)
+      }
+    } finally {
+      if (saved === undefined) delete process.env.LINDELA_LITE_SHUTDOWN_MS
+      else process.env.LINDELA_LITE_SHUTDOWN_MS = saved
+      server.close()
+    }
+  })
 })

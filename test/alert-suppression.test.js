@@ -311,6 +311,34 @@ describe('hysteresis', () => {
     assert.equal(r.hysteresis, 0)
     assert.equal(r.suppression_minutes, 120)
   })
+
+  it('refuses a margin it cannot read rather than silently releasing at the threshold', () => {
+    // `toNumber(x, 0)` is right for an absent margin and wrong for a present one
+    // it cannot parse. `hysteresis: '0.5°C'` — a form that captured the unit —
+    // stored 0, and 0 releases the alert the moment the value returns *to* the
+    // threshold, which is the flapping the margin exists to stop. The operator
+    // asked for a margin, got none, and the resolution note still said "release
+    // margin". A negative margin was stored and then ignored by the positivity
+    // gate on the release, which is the same silence in a different sign.
+    const base = { name: 'Cold chain', metric: 'iot.max_temp', operator: '>', threshold: 8 }
+    for (const bad of ['0.5°C', 'abc', {}, -5, true]) {
+      assert.throws(
+        () => normalizeAlertRule({ ...base, hysteresis: bad }),
+        (error) => error.statusCode === 400 && /hysteresis must be a number/.test(error.message),
+        `hysteresis ${JSON.stringify(bad)} was accepted; it would have been stored as 0 and released at the threshold`,
+      )
+    }
+
+    // The absent and blank cases keep the default, because "no margin declared"
+    // is what the default is for.
+    for (const blank of [undefined, null, '', '  ']) {
+      assert.equal(normalizeAlertRule({ ...base, hysteresis: blank }).hysteresis, 0,
+        `a blank hysteresis ${JSON.stringify(blank)} is an absent one, not an unreadable one`)
+    }
+
+    // A numeric string is a real measurement from a form field and is read.
+    assert.equal(normalizeAlertRule({ ...base, hysteresis: '0.5' }).hysteresis, 0.5)
+  })
 })
 describe('CON-05 evaluation groups events once and folds without an argument limit', () => {
   const context = { counts: { hazard_events: 3 } }

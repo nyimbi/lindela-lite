@@ -1,4 +1,31 @@
 import { spawn } from 'node:child_process'
+import { toNumber } from './utils.js'
+
+/**
+ * How long to wait for a `pg0` subprocess, in ms.
+ *
+ * `Number(env.X || 20000)` reads a typo as a bound and hands it to
+ * `setTimeout`, where `NaN` and a negative number both fire on the next tick:
+ * `LINDELA_LITE_PG0_TIMEOUT_MS=20s` (a unit the variable's name does not carry)
+ * made every `pg0 start` fail within 2 ms with "timed out after NaNms", and
+ * `=0` — which is what an unset shell variable interpolates to — did the same.
+ * The failure message blamed pg0 for a value the caller wrote.
+ *
+ * A value that is present but not a positive finite number is a configuration
+ * error, so it is refused rather than defaulted. Absent or blank keeps the 20 s
+ * default. Resolved at the point of use rather than in the constructor: `auto`
+ * mode builds a `Pg0Manager` on every start, including deployments that end up
+ * on the JSON store and never call a subprocess, and a JSON deployment must not
+ * fail on a variable it does not use.
+ */
+function pg0Timeout(raw, fallbackMs = 20_000) {
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) return fallbackMs
+  const parsed = toNumber(raw)
+  if (parsed === null || parsed <= 0) {
+    throw new TypeError(`LINDELA_LITE_PG0_TIMEOUT_MS must be a positive number of milliseconds, got ${JSON.stringify(raw)}`)
+  }
+  return parsed
+}
 
 export class Pg0Manager {
   constructor({
@@ -10,7 +37,7 @@ export class Pg0Manager {
     password = process.env.PG0_PASSWORD || 'postgres',
     database = process.env.PG0_DATABASE || 'postgres',
     databaseUrl = process.env.LINDELA_LITE_DATABASE_URL || process.env.DATABASE_URL || null,
-    timeoutMs = Number(process.env.LINDELA_LITE_PG0_TIMEOUT_MS || 20000),
+    timeoutMs = undefined,
   } = {}) {
     this.command = command
     this.name = name
@@ -20,7 +47,18 @@ export class Pg0Manager {
     this.password = password
     this.database = database
     this.databaseUrl = databaseUrl
-    this.timeoutMs = timeoutMs
+    // Resolved on each use, not here, so a JSON deployment that builds a manager
+    // in `auto` mode and never calls a subprocess is not failed by a variable it
+    // does not use. A caller that supplies one explicitly is held to it now.
+    this.timeoutMs = timeoutMs === undefined ? undefined : pg0Timeout(timeoutMs)
+  }
+
+  /**
+   * The bound for one subprocess call. An explicit constructor value wins;
+   * otherwise the environment is read here, at the point of use.
+   */
+  commandTimeout() {
+    return this.timeoutMs === undefined ? pg0Timeout(process.env.LINDELA_LITE_PG0_TIMEOUT_MS) : this.timeoutMs
   }
 
   async available() {
@@ -32,7 +70,7 @@ export class Pg0Manager {
     const args = ['start', '--name', this.name, '--username', this.username, '--password', this.password, '--database', this.database]
     if (this.port) args.push('--port', String(this.port))
     if (this.dataDir) args.push('--data-dir', this.dataDir)
-    const result = await runCommand(this.command, args, { timeoutMs: this.timeoutMs, rejectOnExit: false })
+    const result = await runCommand(this.command, args, { timeoutMs: this.commandTimeout(), rejectOnExit: false })
     const output = `${result.stdout}
 ${result.stderr}`
     if (result.code !== 0 && !/already|running|started|listening/i.test(output)) {
@@ -52,11 +90,11 @@ ${result.stderr}`
   }
 
   async stop() {
-    return runCommand(this.command, ['stop', '--name', this.name], { timeoutMs: this.timeoutMs, rejectOnExit: false })
+    return runCommand(this.command, ['stop', '--name', this.name], { timeoutMs: this.commandTimeout(), rejectOnExit: false })
   }
 
   async drop() {
-    return runCommand(this.command, ['drop', '--name', this.name, '--force'], { timeoutMs: this.timeoutMs, rejectOnExit: false })
+    return runCommand(this.command, ['drop', '--name', this.name, '--force'], { timeoutMs: this.commandTimeout(), rejectOnExit: false })
   }
 
   defaultUri() {

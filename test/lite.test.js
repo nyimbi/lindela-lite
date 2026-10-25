@@ -1075,6 +1075,46 @@ describe('Lindela Lite storage modes', () => {
     assert.equal(await pg0.available(), false)
   })
 
+  it('refuses a pg0 timeout it cannot read rather than collapsing every call to 2 ms', () => {
+    // `Number(env.X || 20000)` handed `NaN` and negative values to `setTimeout`,
+    // which fires on the next tick. `LINDELA_LITE_PG0_TIMEOUT_MS=20s` — a unit
+    // the variable's name does not carry — made every `pg0 start` fail within
+    // 2 ms with "timed out after NaNms", blaming pg0 for a value the operator
+    // wrote. `=0` is what an unset shell variable interpolates to and did the
+    // same. The default is for an *absent* bound; a present, unreadable one is a
+    // configuration error and says so.
+    const saved = process.env.LINDELA_LITE_PG0_TIMEOUT_MS
+    try {
+      for (const bad of ['abc', '20s', '0', '-1']) {
+        process.env.LINDELA_LITE_PG0_TIMEOUT_MS = bad
+        // Constructing is not the test — `auto` mode builds a manager on every
+        // start, including JSON deployments that never spawn a subprocess, so
+        // the refusal has to be at the point of use.
+        const manager = new Pg0Manager({ command: 'pg0' })
+        assert.throws(() => manager.commandTimeout(),
+          (error) => error instanceof TypeError && /LINDELA_LITE_PG0_TIMEOUT_MS must be a positive number/.test(error.message),
+          `LINDELA_LITE_PG0_TIMEOUT_MS=${JSON.stringify(bad)} was accepted; setTimeout would fire on the next tick`)
+      }
+
+      // Absent and blank keep the 20 s default, which is what the default is for.
+      for (const blank of [undefined, '', '  ']) {
+        if (blank === undefined) delete process.env.LINDELA_LITE_PG0_TIMEOUT_MS
+        else process.env.LINDELA_LITE_PG0_TIMEOUT_MS = blank
+        assert.equal(new Pg0Manager({ command: 'pg0' }).commandTimeout(), 20_000,
+          `an absent timeout ${JSON.stringify(blank)} is not an unreadable one`)
+      }
+
+      // A real bound is read, and an explicit constructor value beats the
+      // environment so a caller that knows its bound is not overruled by one.
+      process.env.LINDELA_LITE_PG0_TIMEOUT_MS = '4500'
+      assert.equal(new Pg0Manager({ command: 'pg0' }).commandTimeout(), 4500)
+      assert.equal(new Pg0Manager({ command: 'pg0', timeoutMs: 900 }).commandTimeout(), 900)
+    } finally {
+      if (saved === undefined) delete process.env.LINDELA_LITE_PG0_TIMEOUT_MS
+      else process.env.LINDELA_LITE_PG0_TIMEOUT_MS = saved
+    }
+  })
+
   it('requires a database URL for explicit postgres mode', async () => {
     await assert.rejects(
       () => createStoreFromEnv({ LINDELA_LITE_DB_MODE: 'postgres' }),

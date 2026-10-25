@@ -20,7 +20,7 @@ import { actionLog, buildEvaluationContext } from './operations.js'
 import { createReplicaFromEnv, createStoreFromEnv } from './storage.js'
 import { budgetedStore, queryBudgetLimits, runWithQueryBudget, WIDE_QUERY_BUDGET } from './query-budget.js'
 import { readReplicaStore } from './read-replica.js'
-import { currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext } from './utils.js'
+import { currentRequestAuth, filterRecords, jsonResponse, readRawBody, readRequestJson, runWithRequestContext, toNumber } from './utils.js'
 import { createIdempotencyFor } from './idempotency.js'
 import { applyRetention, loadPolicy, retentionWindowFor } from './pii.js'
 import { createInboundLimiter } from './inbound-rate-limit.js'
@@ -1683,8 +1683,33 @@ function contentType(filePath) {
  * this is meant to avoid — so the second signal, or `LINDELA_LITE_SHUTDOWN_MS`
  * elapsing, exits immediately. The first signal is the polite one.
  */
+/**
+ * A positive number of milliseconds from the environment, or a refusal.
+ *
+ * Absent and blank keep `fallbackMs`, because an unset variable is a deployment
+ * that did not configure the bound and the default is what it is for. Anything
+ * present but not a positive finite number is a typo in a safety bound, and a
+ * bound that silently becomes 0 or NaN is worse than no bound: `setTimeout`
+ * treats both as "next tick", so the guard fires before the thing it guards.
+ */
+function positiveMs(name, raw, fallbackMs) {
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) return fallbackMs
+  const parsed = toNumber(raw)
+  if (parsed === null || parsed <= 0) {
+    throw new TypeError(`${name} must be a positive number of milliseconds, got ${JSON.stringify(raw)}`)
+  }
+  return parsed
+}
+
 export function installShutdown(server, {
-  timeoutMs = Number(process.env.LINDELA_LITE_SHUTDOWN_MS) || 10_000,
+  // `Number(env.X) || 10_000` reads a typo as a bound and hands it to
+  // `setTimeout`, which fires a negative or NaN duration on the next tick: a
+  // deployment with `LINDELA_LITE_SHUTDOWN_MS=10s` (a unit the variable's name
+  // does not carry) would SIGTERM the process 1 ms into every shutdown, cutting
+  // off the in-flight request and the store close the grace period exists for,
+  // and logging "connections did not close within -1 ms". The default is for an
+  // absent bound; a present, unreadable one is a configuration error.
+  timeoutMs = positiveMs('LINDELA_LITE_SHUTDOWN_MS', process.env.LINDELA_LITE_SHUTDOWN_MS, 10_000),
   // Injectable so the handler can be driven without ending the test process.
   // The default is the real exit; a test supplies its own and reads the
   // sequence of calls, which is the only way to assert *ordering* here — that
@@ -1737,8 +1762,36 @@ export function installShutdown(server, {
   return shutdown
 }
 
+/**
+ * The TCP port to listen on, or a refusal naming the variable.
+ *
+ * Absent and blank are the default 4177. `0` is refused rather than honoured:
+ * it is what an unset shell variable interpolates to, and it means "any free
+ * port", which starts a healthy server at an address nobody can be told in
+ * advance. A test that wants an ephemeral port binds one directly rather than
+ * going through this function.
+ */
+function listenPort(raw, fallback = 4177) {
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) return fallback
+  const parsed = toNumber(raw)
+  if (parsed === null || !Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new TypeError(`LINDELA_LITE_PORT must be an integer between 1 and 65535, got ${JSON.stringify(raw)}`)
+  }
+  return parsed
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const port = Number(process.env.LINDELA_LITE_PORT || 4177)
+  // `Number(env.X || 4177)` reads three different absences as a port: `''` and
+  // `'  '` both reach `Number` as 0, and so does a literal `'0'`. `listen(0)`
+  // succeeds on an ephemeral port, so the process came up healthy, logged
+  // `listening on http://127.0.0.1:0`, and was unreachable at the URL it printed
+  // — a deploy script that interpolates an unset variable gets exactly this. A
+  // non-numeric value is worse: `listen(NaN)` throws `ERR_SOCKET_BAD_PORT` from
+  // inside the listen call, after the store and the driver are up.
+  //
+  // Resolved and checked before anything is started, so a bad port fails at
+  // line one with the variable's own name in the message.
+  const port = listenPort(process.env.LINDELA_LITE_PORT)
   // `LINDELA_LITE_HOST` defaults to 0.0.0.0 because that is what the container
   // needs: binding 127.0.0.1 inside a container makes the published port
   // unreachable, so the default cannot move without breaking every deployment.

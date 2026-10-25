@@ -21,6 +21,31 @@ import { buildEvaluationContext } from './operations.js'
 export const OPERATORS = Object.freeze(['>', '>=', '<', '<=', '==', '!='])
 const TRIGGER_MODES = Object.freeze(['shadow', 'live'])
 
+/**
+ * A rule's release margin, or a 400 explaining what is wrong with it.
+ *
+ * Absent is 0 — a rule that never declared a margin keeps the old behaviour.
+ * Present but unreadable, or negative, is a refusal: `releaseValue` releases as
+ * soon as the value returns to the threshold when the margin is 0, and the
+ * release itself is gated on `Number(rule.hysteresis) > 0`, so a silently
+ * defaulted or negative margin is a configured safety net that is not there.
+ */
+function hysteresisValue(value) {
+  // An absent margin and a blank form field are the same fact, so both take the
+  // default. `'  '` is blank, not unreadable: `Number('  ')` is 0 and the field
+  // arrived empty, which is the case the default exists for.
+  if (value === null || value === undefined) return 0
+  if (typeof value === 'string' && value.trim() === '') return 0
+  const margin = toNumber(value)
+  if (margin === null || margin < 0) {
+    throw Object.assign(
+      new Error(`hysteresis must be a number of metric units, zero or more, got ${JSON.stringify(value)}`),
+      { statusCode: 400 },
+    )
+  }
+  return margin
+}
+
 export function normalizeAlertRule(input, existing = null) {
   const now = new Date().toISOString()
   const metric = input.metric || input.metric_path || existing?.metric
@@ -45,7 +70,18 @@ export function normalizeAlertRule(input, existing = null) {
     // How far past the threshold the metric must fall back before an open alert
     // is considered cleared. Zero disables the behaviour entirely, so an
     // existing rule's behaviour does not change by upgrading.
-    hysteresis: toNumber(input.hysteresis ?? existing?.hysteresis, 0),
+    //
+    // A hysteresis the rule states but this cannot read is refused rather than
+    // defaulted. `toNumber(x, 0)` is right for an *absent* margin — a legacy
+    // rule that never declared one keeps the old behaviour — and wrong for a
+    // present one it cannot parse: `hysteresis: '0.5°C'` from a form that
+    // captured the unit became 0, and `releaseValue` then released the alert the
+    // moment the value fell back *to* the threshold. The operator asked for a
+    // margin, got none, and the resolution note still said "release margin".
+    // A negative margin is refused for the same reason: `Number(rule.hysteresis)
+    // > 0` gates the release on positivity, so a stored -5 silently disabled it
+    // too.
+    hysteresis: hysteresisValue(input.hysteresis ?? existing?.hysteresis),
     created_at: existing?.created_at || input.created_at || now,
     updated_at: input.updated_at || now,
     metadata: objectValue(input.metadata || existing?.metadata),
