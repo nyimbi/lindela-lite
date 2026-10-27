@@ -196,6 +196,31 @@ describe('public source connector fixtures', () => {
     assert.match(firms.credential_hint, /NASA_FIRMS_MAP_KEY/)
   })
 
+  it('binds the CHIRPS date cap whatever form the limit arrives in', async () => {
+    // `options.limit || 30` kept any truthy value, and the cap is compared as
+    // `datesKept >= limit`. A schedule whose `default_options` carried
+    // `"limit": "2"` — a string, which is what a JSON form field produces —
+    // made every comparison false, so the cap did not bind and the walk kept
+    // every date the index offered. That is the only bound on a run that
+    // downloads multi-megabyte rasters, removed by a quoting mistake. A
+    // negative limit did the opposite and kept nothing; both now take the
+    // default, which is the direction where the cap still applies.
+    const datesFor = async (limit) => {
+      mockChirpsIndex()
+      const result = await chirpsConnector.ingest({
+        chirps_index_url: 'https://fixture.test/chirps/', retries: 0, chirps_read_values: false, limit,
+      })
+      return { dates: new Set(result.climate_observations.map((o) => o.observed_at)).size, cap: result.completeness.cap }
+    }
+
+    assert.deepEqual(await datesFor('2'), { dates: 2, cap: 2 }, 'a string limit did not bind')
+    assert.deepEqual(await datesFor(2), { dates: 2, cap: 2 })
+    for (const unreadable of ['abc', '', 0, -5]) {
+      const { cap } = await datesFor(unreadable)
+      assert.equal(cap, 30, `limit ${JSON.stringify(unreadable)} left the run with cap ${cap}`)
+    }
+  })
+
   it('walks CHIRPS year directories to find daily files', async () => {
     // The product root lists year directories, not files. Matching filenames
     // on the root listing returned zero records while reporting no error, so

@@ -2,7 +2,7 @@ import { gunzipSync } from 'node:zlib'
 import { fetchWithRetry } from './http.js'
 import { decodeGeoTiff, sampleAt } from '../geotiff.js'
 import { DEFAULT_REGIONS } from '../schema.js'
-import { stableId } from '../utils.js'
+import { stableId, toNumber } from '../utils.js'
 import { assessPagination, completenessVerdictName, recordCap } from '../completeness.js'
 
 const INDEX_URL = 'https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/'
@@ -128,7 +128,21 @@ export const chirpsConnector = {
     // daily files, not building a catalogue of the whole archive.
     const maxYears = Number.isFinite(options.chirps_years) ? Number(options.chirps_years) : 2
     // Keep only the most recent requested number of dates.
-    const limit = options.limit || 30
+    //
+    // `options.limit || 30` kept any truthy value, and the cap is compared as
+    // `datesKept >= limit`. A schedule whose `default_options` said `"limit":
+    // "30"` — a string, which is what a JSON form field produces — made every
+    // comparison false, so the cap did not bind at all and the walk kept every
+    // date the index offered: the one bound on a run that downloads multi-MB
+    // rasters, switched off by a quoting mistake. `-5` did the opposite and kept
+    // nothing, and `0` fell through to the default while `-5` fell through to
+    // nothing, so two spellings of "none" behaved differently.
+    //
+    // Absent, unreadable and non-positive all take the default. Defaulting is
+    // the safe direction — the cap applies — where the old coercion let the
+    // unreadable case remove it entirely.
+    const requestedLimit = toNumber(options.limit, 30)
+    const limit = requestedLimit > 0 ? requestedLimit : 30
     // Decoding is on by default. It is switchable because a caller that only
     // wants the availability census should not pay ~3 MB a day for it, but the
     // default has to be the useful one — an off-by-default reader is the state
