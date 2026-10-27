@@ -104,6 +104,34 @@ function _currentYear() {
   return new Date().getUTCFullYear()
 }
 
+/**
+ * The report's year, from a query string, an option, or nothing.
+ *
+ * `year || _currentYear()` read `'abc'` as a value, and `Number('abc')` is
+ * `NaN` — which the period then interpolated as the literal `NaN-07-01T00:00Z`.
+ * `kpiSnapshotForPeriod` parses that with `new Date(...)`, gets `NaN`, and
+ * `ts >= NaN` is false for every record, so an unreadable year answered a
+ * quarterly report with zeros across the board and `success: true`. A report
+ * that says nothing happened in the quarter is not a recoverable reading of a
+ * typo; it is the one number an approver would act on.
+ *
+ * `0` and `-5` went the same way for the same reason: they are numbers, so the
+ * `||` kept them, and neither is a calendar year. Absent is the only value that
+ * defaults.
+ */
+function quarterYear(year) {
+  const text = year === null || year === undefined ? '' : String(year).trim()
+  if (text === '') return _currentYear()
+  const value = Number(text)
+  if (!Number.isInteger(value) || value < 1000 || value > 9999) {
+    throw Object.assign(
+      new Error(`year must be a four-digit year, got ${JSON.stringify(String(year))}`),
+      { statusCode: 400 },
+    )
+  }
+  return value
+}
+
 function _quarterDateRange(quarter, year) {
   const y = Number(year)
   const ranges = {
@@ -193,7 +221,7 @@ export function computeApiUptime(ringRate) {
 
 export function computeQuarterlyKpi(data, { quarter, year, now = Date.now(), ringRate } = {}) {
   const q = quarter || _currentQuarter()
-  const y = year || _currentYear()
+  const y = quarterYear(year)
 
   // Validate quarter
   if (!['Q1', 'Q2', 'Q3', 'Q4'].includes(q)) {
@@ -563,7 +591,9 @@ function _quarterEndMonth(quarter) {
  */
 export function quarterlyPdfSections(data, { quarter, year, ringRate } = {}) {
   const q = quarter || _currentQuarter()
-  const y = Number(year || _currentYear())
+  // Same reader as `computeQuarterlyKpi`, so a year the route accepted cannot
+  // render a page of zeros under a header naming a period that does not exist.
+  const y = quarterYear(year)
   const endMonth = _quarterEndMonth(q)
   const { from, to } = _quarterDateRange(q, y)
 

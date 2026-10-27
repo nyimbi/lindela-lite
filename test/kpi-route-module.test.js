@@ -132,6 +132,40 @@ describe('ARC-01 — the module handles what the dispatcher hands it', () => {
     assert.deepEqual(JSON.parse(snapRes.text()).data, [{ id: 'k1' }])
   })
 
+  it('refuses a year it cannot read rather than exporting a period that does not exist', async () => {
+    // `year || _currentYear()` kept `'abc'`, `Number('abc')` is `NaN`, and the
+    // period interpolated it as the literal `NaN-07-01T00:00Z`. Every count
+    // filters through `new Date(from).getTime()`, so `ts >= NaN` was false for
+    // every record and the route answered `success: true` with zeros across the
+    // board — a quarterly report saying nothing happened, which is the one
+    // reading an approver would act on. `0` and `-5` were honoured the same
+    // way. All three are now refused; absent still defaults to this year.
+    const exportWith = async (search) => {
+      const res = fakeResponse()
+      await handleKpiRoute({ kind: 'quarterly' }, {
+        store: {}, data: {}, req: req(), res,
+        url: new URL(`http://127.0.0.1/api/v1/kpi/quarterly${search}`),
+        jsonResponse, requestRing: null,
+      })
+      return { status: res.status, body: JSON.parse(res.text()) }
+    }
+
+    for (const search of ['?year=abc', '?year=0', '?year=-5', '?year=99999', '?year=20.5']) {
+      const { status, body } = await exportWith(search)
+      assert.equal(status, 400, `${search} was served as a real period`)
+      assert.match(body.error, /year must be a four-digit year/)
+    }
+
+    const ok = await exportWith('?year=2026')
+    assert.equal(ok.status, 200)
+    assert.equal(ok.body.data.period.year, 2026)
+    assert.equal(ok.body.data.period.from, '2026-10-01T00:00:00.000Z')
+
+    const dflt = await exportWith('')
+    assert.equal(dflt.status, 200, 'an absent year must still default')
+    assert.equal(dflt.body.data.period.year, new Date().getUTCFullYear())
+  })
+
   it('refuses a window it cannot read rather than answering with no months', async () => {
     // `Number(x) || 12` read `-5` as a real window, and `computeMonthlyKpiSeries`
     // loops `for (i = 0; i < monthsBack; i++)`, so the route answered with an

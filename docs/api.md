@@ -1029,7 +1029,7 @@ Response: `{ success, data: RapidProInboundMessage }` — 201.
 
 Auth: none required. Returns the quarterly KPI computation.
 
-Query: `quarter` (Q1|Q2|Q3|Q4, default current), `year` (int, default current).
+Query: `quarter` (Q1|Q2|Q3|Q4, default current), `year` (four-digit year, default current). A `year` that is not a four-digit integer — `abc`, `0`, `-5`, `20.5` — is a `400`, not a period: it used to be interpolated into the range as `NaN-07-01T00:00Z`, which filters out every record, so a typo answered a quarterly report with zeros and `success: true`.
 
 Response:
 
