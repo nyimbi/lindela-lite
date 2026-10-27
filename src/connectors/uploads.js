@@ -1,3 +1,4 @@
+import { numericOrNull } from '../analytics/numeric.js'
 import { ROAD_CLASSES, ROAD_PASSABILITY, SERVICE_TYPES, normalizeSeverity } from '../schema.js'
 import { parseCsv, stableId, toNumber } from '../utils.js'
 
@@ -188,6 +189,17 @@ function normalizeConflictEvent(row, source) {
   // from costs nothing and keeps the row citable; the flag says it came from us
   // rather than the operator, so nobody reads it as an upstream key.
   const upstreamId = row.event_id_cnty || row.source_id || row.id || null
+  // A toll the row states but this cannot read is not a toll of zero. `toNumber(x,
+  // 0)` folded `''`, `'12 dead'` and `'  '` into 0, and 0 is the most common
+  // real value in a conflict export — so the `value_range` assertion passed it,
+  // `analytics.js` contributed the 4-point base with no fatality term, and a
+  // district with a broken fatalities column scored exactly like one where
+  // nothing happened. `null` is what the assertion engine and the risk scorer
+  // both already read as "no toll recorded": absence, not a measurement.
+  //
+  // A genuine 0 still arrives as 0 — `numericOrNull` passes it through, and a
+  // protest with no deaths is a real observation.
+  const fatalities = numericOrNull(row.fatalities)
   return {
     id,
     source,
@@ -195,7 +207,9 @@ function normalizeConflictEvent(row, source) {
     source_id_minted: !upstreamId,
     event_type: row.event_type || row.type || 'conflict_event',
     sub_event_type: row.sub_event_type || null,
-    severity: normalizeSeverity(toNumber(row.fatalities, 0) > 10 ? 'high' : toNumber(row.fatalities, 0) > 0 ? 'medium' : row.severity),
+    severity: normalizeSeverity(fatalities === null
+      ? row.severity
+      : fatalities > 10 ? 'high' : fatalities > 0 ? 'medium' : row.severity),
     title: row.title || row.notes || row.event_type || 'Conflict event',
     description: row.description || row.notes || '',
     occurred_at: new Date(eventDate).toISOString(),
@@ -203,7 +217,7 @@ function normalizeConflictEvent(row, source) {
     admin1: row.admin1 || null,
     latitude,
     longitude,
-    fatalities: toNumber(row.fatalities, 0),
+    fatalities,
     actor1: row.actor1 || null,
     actor2: row.actor2 || null,
     metadata: {

@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import { chirpsConnector } from '../src/connectors/chirps.js'
+import { conflictCsvConnector } from '../src/connectors/uploads.js'
 import { gzipSync } from 'node:zlib'
 import { buildChirpsShapedTiff } from './tiff-fixture.mjs'
 import { gdacsConnector } from '../src/connectors/gdacs.js'
@@ -415,6 +416,42 @@ describe('public source connector fixtures', () => {
     assert.equal(result.hazard_events.length, 0)
     assert.equal(result.errors.length, 1)
     assert.match(result.errors[0], /usgs_earthquake/)
+  })
+})
+
+describe('conflict uploads preserve the difference between no toll and a zero toll', () => {
+  // `toNumber(row.fatalities, 0)` folded `''`, `'  '`, `'12 dead'` and a missing
+  // column into 0. Zero is the most common real value in a conflict export, so
+  // the `value_range` assertion passed it and `analytics.js` contributed the
+  // 4-point base with no fatality term — a district with a broken fatalities
+  // column scored exactly like one where nothing happened. `null` is the value
+  // both the assertion engine and the risk scorer already read as "no toll
+  // recorded".
+  const toll = async (fatalities) => {
+    const result = await conflictCsvConnector.ingest({
+      conflict_events: [{ event_date: '2026-05-01', title: 'x', severity: 'low', fatalities }],
+    })
+    return result.conflict_events[0]
+  }
+
+  it('stores a toll it cannot read as absent, not as zero', async () => {
+    for (const value of ['', '  ', 'abc', '12 dead', undefined, null]) {
+      const event = await toll(value)
+      assert.equal(event.fatalities, null, `${JSON.stringify(value)} became a death toll of ${event.fatalities}`)
+    }
+  })
+
+  it('keeps a genuine zero and a genuine count', async () => {
+    assert.equal((await toll('0')).fatalities, 0, 'a protest with no deaths is a real observation')
+    assert.equal((await toll(0)).fatalities, 0)
+    assert.equal((await toll('7')).fatalities, 7)
+    assert.equal((await toll(7)).fatalities, 7)
+  })
+
+  it('grades severity from a toll it can read', async () => {
+    assert.equal((await toll('12')).severity, 'high')
+    assert.equal((await toll('3')).severity, 'medium')
+    assert.equal((await toll('0')).severity, 'low', 'the row severity stands when the toll is a real zero')
   })
 })
 
