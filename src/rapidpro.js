@@ -46,9 +46,51 @@ export function dispatchRetryPolicy(env = process.env) {
   // this retry exists to fix, on the one path where silence is the harm.
   const declared = Number(env.RAPIDPRO_DISPATCH_ATTEMPTS)
   const attempts = Number.isFinite(declared) && declared >= 1 ? Math.floor(declared) : 3
-  const baseMs = Math.max(0, Number(env.RAPIDPRO_DISPATCH_RETRY_BASE_MS) || 2000)
+  // `Math.max(0, Number(x) || 2000)` handled a negative base by clamping it to
+  // 0, which is not a delay at all: three tries went out back-to-back, which is
+  // the shape of a retry storm against a gateway that is already failing, and
+  // the caller could not tell it apart from a deliberate configuration. A base
+  // of 0 is refused for the same reason `attempts` below 1 is — this is the one
+  // path where silence is the harm, and a retry with no wait is silence with
+  // extra load. Absent keeps the 2 s default.
+  const baseMs = positiveMs('RAPIDPRO_DISPATCH_RETRY_BASE_MS', env.RAPIDPRO_DISPATCH_RETRY_BASE_MS, 2000)
   const sleep = env.RAPIDPRO_DISPATCH_SLEEP
   return { attempts, baseMs, sleep: typeof sleep === 'function' ? sleep : null }
+}
+
+/**
+ * A positive number from the environment, or a refusal naming the variable.
+ *
+ * Absent and blank take the default. A value that is present but not a positive
+ * finite number is a typo in a bound, and every bound in this file is one where
+ * a silently-collapsed value changes behaviour rather than failing.
+ */
+function positiveMs(name, raw, fallbackMs) {
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) return fallbackMs
+  const parsed = toNumber(raw)
+  if (parsed === null || parsed <= 0) {
+    throw new TypeError(`${name} must be a positive number, got ${JSON.stringify(raw)}`)
+  }
+  return parsed
+}
+
+/**
+ * The correlation window for an inbound reply, in hours.
+ *
+ * `Number(env.X) || 24` collapsed `0` and an unreadable value to 24 — harmless —
+ * and passed a negative through, which made `nowMs - created <= windowMs` false
+ * for every dispatch: correlation silently stopped working, so no reply closed
+ * an SLA, and the only trace was the ordinary "no dispatch matched this sender
+ * inside the correlation window" note that also appears when nothing matched for
+ * the right reason. A window is a bound, so a value that is not one is refused.
+ */
+function correlationWindowHours(raw, fallbackHours = 24) {
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) return fallbackHours
+  const parsed = toNumber(raw)
+  if (parsed === null || parsed <= 0) {
+    throw new TypeError(`RAPIDPRO_REPLY_CORRELATION_HOURS must be a positive number of hours, got ${JSON.stringify(raw)}`)
+  }
+  return parsed
 }
 
 /** Exponential, and never longer than the caller is willing to wait. */
@@ -1435,7 +1477,20 @@ export function parseRapidProReply(payload = {}, data = null, options = {}) {
   const { env = process.env, now = new Date().toISOString() } = options
   let text = String(payload.content || payload.text || payload.input?.text || payload.message?.text || '').trim()
   const contact = payload.contact || {}
-  const correlation = correlateReply(payload, data, { now, windowHours: Number(env.RAPIDPRO_REPLY_CORRELATION_HOURS) || 24 })
+  // `correlationWindowMinutes` is what the reply route passes and what
+  // `RAPIDPRO_REPLY_WINDOW_MINUTES` configures. Neither was read: the option was
+  // destructured nowhere, so the route's window had no effect and the correlation
+  // always ran on the 24 h default. An operator narrowing the window to ten
+  // minutes — the setting exists so a number reassigned within a day cannot
+  // inherit an old alert — got 24 h and could not tell. Minutes win over hours
+  // when both are given, because the route's unit is the more specific one.
+  const windowMinutes = options.correlationWindowMinutes === undefined
+    ? null
+    : positiveMs('correlationWindowMinutes', options.correlationWindowMinutes, 1440)
+  const windowHours = windowMinutes === null
+    ? correlationWindowHours(env.RAPIDPRO_REPLY_CORRELATION_HOURS)
+    : windowMinutes / 60
+  const correlation = correlateReply(payload, data, { now, windowHours })
   const channel = detectReplyChannel(payload)
   const channelVerb = parseChannelVerb(payload)
   // USSD/IVR payloads often carry no `text` at all. Keep the raw session input

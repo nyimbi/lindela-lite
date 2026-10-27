@@ -233,6 +233,59 @@ describe('ARC-01 — a reply is correlated by sender, not by a payload field', (
     assert.equal(body.dispatch_id, 'd2', 'correlation did not pick the most recent dispatch to this sender')
     assert.equal(body.alert_event_id, 'alert_2')
   })
+
+  it('applies the reply window the operator configured, not the 24 h default', async () => {
+    // `RAPIDPRO_REPLY_WINDOW_MINUTES` was read as `Number(x || 1440)` and then
+    // handed to a function that never looked at the option, so the setting had
+    // no effect at all. The route now passes the raw value, which is what makes
+    // an absent variable fall through to `RAPIDPRO_REPLY_CORRELATION_HOURS`
+    // instead of being replaced by a 1440-minute window that silently overrides
+    // the hours setting an operator configured.
+    const older = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    const store = recordingStore({ rapidpro_dispatches: [dispatch({ created_at: older })] })
+    const saved = {
+      window: process.env.RAPIDPRO_REPLY_WINDOW_MINUTES,
+      hours: process.env.RAPIDPRO_REPLY_CORRELATION_HOURS,
+    }
+    delete process.env.RAPIDPRO_REPLY_WINDOW_MINUTES
+    // Six minutes. An hour-old dispatch is outside it, inside the 24 h default.
+    process.env.RAPIDPRO_REPLY_CORRELATION_HOURS = '0.1'
+    try {
+      const { res } = await call({ kind: 'rapidpro-reply' }, {
+        method: 'POST', req: secretReq('POST', { from: 'tel:+254700000001', text: 'ACK' }), store,
+      })
+      assert.equal(res.json().correlated, false,
+        'an hour-old dispatch still correlated with the hours setting narrowed to six minutes')
+    } finally {
+      if (saved.window === undefined) delete process.env.RAPIDPRO_REPLY_WINDOW_MINUTES
+      else process.env.RAPIDPRO_REPLY_WINDOW_MINUTES = saved.window
+      if (saved.hours === undefined) delete process.env.RAPIDPRO_REPLY_CORRELATION_HOURS
+      else process.env.RAPIDPRO_REPLY_CORRELATION_HOURS = saved.hours
+    }
+  })
+
+  it('refuses a reply window it cannot read rather than widening it to a day', async () => {
+    // `Number('0') || 1440` turned a zero into 24 hours: the one value an
+    // operator would set to close the window immediately was the one that
+    // opened it widest, and nothing said so.
+    const store = recordingStore({ rapidpro_dispatches: [dispatch()] })
+    const saved = process.env.RAPIDPRO_REPLY_WINDOW_MINUTES
+    try {
+      for (const bad of ['0', '-5', 'abc']) {
+        process.env.RAPIDPRO_REPLY_WINDOW_MINUTES = bad
+        await assert.rejects(
+          call({ kind: 'rapidpro-reply' }, {
+            method: 'POST', req: secretReq('POST', { from: 'tel:+254700000001', text: 'ACK' }), store,
+          }),
+          /correlationWindowMinutes must be a positive number/,
+          `accepted ${JSON.stringify(bad)}`,
+        )
+      }
+    } finally {
+      if (saved === undefined) delete process.env.RAPIDPRO_REPLY_WINDOW_MINUTES
+      else process.env.RAPIDPRO_REPLY_WINDOW_MINUTES = saved
+    }
+  })
 })
 
 describe('ARC-01 — a correlated DONE writes the inbound and the outcome in one merge', () => {

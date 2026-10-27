@@ -77,6 +77,24 @@ describe('R-04 — a failed notification is retried, and says how many tries it 
     assert.equal(dispatchRetryPolicy({ RAPIDPRO_DISPATCH_ATTEMPTS: 'not-a-number' }).attempts, 3)
   })
 
+  it('refuses a backoff it cannot read rather than retrying with no wait', () => {
+    // `Math.max(0, Number(x) || 2000)` clamped a negative base to 0, so three
+    // tries went out back-to-back against a gateway that was already failing —
+    // a retry storm, indistinguishable from a deliberate configuration. A base
+    // is a bound, so a value that is not one is refused at policy construction.
+    assert.equal(dispatchRetryPolicy({}).baseMs, 2000)
+    assert.equal(dispatchRetryPolicy({ RAPIDPRO_DISPATCH_RETRY_BASE_MS: '500' }).baseMs, 500)
+    // Blank is an unset variable, not a typo: it takes the default.
+    assert.equal(dispatchRetryPolicy({ RAPIDPRO_DISPATCH_RETRY_BASE_MS: '  ' }).baseMs, 2000)
+    for (const bad of ['0', '-500', '-1', 'abc', '2s']) {
+      assert.throws(
+        () => dispatchRetryPolicy({ RAPIDPRO_DISPATCH_RETRY_BASE_MS: bad }),
+        /RAPIDPRO_DISPATCH_RETRY_BASE_MS must be a positive number/,
+        `accepted ${JSON.stringify(bad)}`,
+      )
+    }
+  })
+
   it('a 4xx is not retried, because the request itself is wrong', () => {
     // Retrying a rejected request sends the same wrong request again. The audit
     // failure is silence, not impatience.

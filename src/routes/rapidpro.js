@@ -200,7 +200,13 @@ export async function handleRapidProRoute(route, { store, data, req, res, url, j
       // before parsing anything. Nothing caught it because no test posted to
       // this route: the Phase E end-to-end cases are the first thing to reach
       // this line, which is how an unrunnable endpoint survived.
-      correlationWindowMinutes: Number(process.env.RAPIDPRO_REPLY_WINDOW_MINUTES || 1440),
+      //
+      // The value is passed as written, not `Number(x || 1440)`: an absent
+      // variable has to reach `parseRapidProReply` as absent so the documented
+      // `RAPIDPRO_REPLY_CORRELATION_HOURS` fallback still applies, and a typo has
+      // to be refused rather than read as a 1440-minute window that silently
+      // overrides the hours setting an operator configured.
+      correlationWindowMinutes: process.env.RAPIDPRO_REPLY_WINDOW_MINUTES,
     })
 
     // ENH-43. A submission is handled before the correlation branch, and the

@@ -142,9 +142,11 @@ openssl rand -hex 32   # → LINDELA_LITE_PII_SALT
 | `RAPIDPRO_BASE_LANGUAGE` | `eng` | Broadcast language code. |
 | `RAPIDPRO_WEBHOOK_SECRET` | unset | Shared secret for inbound field-report webhooks. |
 | `RAPIDPRO_DISPATCH_ATTEMPTS` | `3` | Tries per alert dispatch. Below 1 is a configuration error and falls back to 3 — a typo must not restore "notify once and say nothing". A 4xx is never retried: the gateway has rejected the request. |
-| `RAPIDPRO_DISPATCH_RETRY_BASE_MS` | `2000` | First backoff; doubles per attempt, capped at 30s. |
+| `RAPIDPRO_DISPATCH_RETRY_BASE_MS` | `2000` | First backoff; doubles per attempt, capped at 30s. Must be a positive number of milliseconds; a value that is not is refused rather than clamped to 0, which would send three tries back-to-back against a gateway that is already failing. |
 | `RAPIDPRO_DISPATCH_GRACE_MINUTES` | `15` | How long a chain may sit in a dispatched state with no accepted dispatch before the reconciliation calls it a delivery failure. A grace period, not a retry budget. |
 | `RAPIDPRO_ACK_SLA_MINUTES` | by severity | Acknowledgement deadline, which is also when an unanswered page escalates. |
+| `RAPIDPRO_REPLY_WINDOW_MINUTES` | unset (falls through to the hours setting) | How far back a reply may match the dispatch it answers, in minutes. Unset leaves `RAPIDPRO_REPLY_CORRELATION_HOURS` in charge; a value that is present but not a positive number is refused rather than widened to a 24 h window, which is what `0` used to mean. |
+| `RAPIDPRO_REPLY_CORRELATION_HOURS` | `24` | The same window in hours, used when the minutes setting is unset. Must be a positive number; a negative value used to pass through and disable correlation entirely while every reply still reported the ordinary "nothing matched" note. |
 | `RAPIDPRO_ESCALATION_URNS` | unset | Where escalations go. Empty is reported as `escalation_target_unresolved`, never as "paged". |
 
 ## Docker Compose

@@ -185,6 +185,45 @@ describe('reply correlation', () => {
     assert.equal(result.correlated, false)
   })
 
+  it('honours the window the caller passes rather than always running the 24 h default', () => {
+    // `parseRapidProReply` never read `options.correlationWindowMinutes`, so the
+    // reply route's `RAPIDPRO_REPLY_WINDOW_MINUTES` had no effect: an operator
+    // narrowing the window so a reassigned number cannot inherit yesterday's
+    // alert got 24 h and no way to tell.
+    const near = '2026-10-01T08:05:00.000Z'
+    assert.equal(parseRapidProReply({ from: URN_A, text: 'ACK' }, data(dispatches), {
+      now: near, correlationWindowMinutes: '10',
+    }).correlated, true, 'a five-minute-old dispatch is inside a ten-minute window')
+    // An hour after dispatch a 10-minute window has closed; the 24 h default has not.
+    const later = '2026-10-01T09:00:00.000Z'
+    const wide = parseRapidProReply({ from: URN_A, text: 'ACK' }, data(dispatches), { now: later, env: {} })
+    assert.equal(wide.correlated, true)
+    const narrow = parseRapidProReply({ from: URN_A, text: 'ACK' }, data(dispatches), {
+      now: later, correlationWindowMinutes: '10',
+    })
+    assert.equal(narrow.correlated, false, 'a 10-minute window still matched an hour-old dispatch')
+    assert.equal(narrow.alert_event_id, null)
+  })
+
+  it('refuses a correlation window it cannot read rather than silently disabling correlation', () => {
+    // `Number(env.X) || 24` turned `0` and a typo into the default — harmless —
+    // and let a negative through, which made the window comparison false for
+    // every dispatch: correlation stopped working and the only trace was the
+    // ordinary "nothing matched" note.
+    for (const bad of ['-1', '-24', '0', 'abc']) {
+      assert.throws(
+        () => parseRapidProReply({ from: URN_A, text: 'ACK' }, data(dispatches), {
+          now: '2026-10-01T09:00:00.000Z', env: { RAPIDPRO_REPLY_CORRELATION_HOURS: bad },
+        }),
+        /RAPIDPRO_REPLY_CORRELATION_HOURS must be a positive number of hours/,
+        `accepted ${JSON.stringify(bad)}`,
+      )
+    }
+    assert.equal(parseRapidProReply({ from: URN_A, text: 'ACK' }, data(dispatches), {
+      now: '2026-10-01T09:00:00.000Z', env: { RAPIDPRO_REPLY_CORRELATION_HOURS: '48' },
+    }).correlated, true)
+  })
+
   it('correlates to the most recent dispatch when an alert was sent twice', () => {
     const later = dispatch({ id: 'd2', created_at: '2026-10-01T07:30:00.000Z' })
     const result = correlateReply({ from: URN_A }, data([dispatch(), later]), { now: '2026-10-01T09:00:00.000Z' })
