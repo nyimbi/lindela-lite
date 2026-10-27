@@ -464,7 +464,7 @@ than its absence, because the code invites reliance on it.
 
 **Severity: Medium**
 
-`src/utils.js:272-304` enforces a 5 MB ceiling (`DEFAULT_MAX_BODY_BYTES`) on the raw body. Nothing
+`src/utils.js:1004-1033` enforces a 5 MB ceiling (`DEFAULT_MAX_BODY_BYTES`) on the raw body. Nothing
 bounds what is inside it.
 
 **Failure scenario.** `POST /api/v1/analytics/bias-correct` (`src/server.js:660-667`) with

@@ -1115,6 +1115,35 @@ describe('Lindela Lite storage modes', () => {
     }
   })
 
+  it('refuses a body cap it cannot read rather than serving without one', async () => {
+    // `Number(env.X || 5MB)` read `'1MB'` and `'abc'` as `NaN`, every
+    // `size > maxBytes` comparison against `NaN` is false, and the process
+    // served any body a client cared to send — the exact resource the cap
+    // exists to protect, on endpoints reachable without a key. The constant is
+    // resolved at import, so the refusal has to be observed in a fresh process:
+    // the test's own `utils.js` is already loaded with whatever the shell had.
+    const probe = async (value) => {
+      const env = { ...process.env }
+      if (value === undefined) delete env.LINDELA_LITE_MAX_BODY_BYTES
+      else env.LINDELA_LITE_MAX_BODY_BYTES = value
+      try {
+        await execFileAsync(process.execPath, ['-e', 'await import("./src/utils.js")'], { cwd: process.cwd(), env })
+        return null
+      } catch (error) {
+        return `${error.stderr || ''}${error.stdout || ''}`
+      }
+    }
+    for (const bad of ['abc', '1MB', '0', '-5']) {
+      const failure = await probe(bad)
+      assert.ok(failure, `LINDELA_LITE_MAX_BODY_BYTES=${JSON.stringify(bad)} was accepted; the body cap would be NaN`)
+      assert.match(failure, /LINDELA_LITE_MAX_BODY_BYTES must be a positive number of bytes/,
+        `LINDELA_LITE_MAX_BODY_BYTES=${JSON.stringify(bad)} was refused for the wrong reason`)
+    }
+    for (const good of [undefined, '', '  ', '1048576']) {
+      assert.equal(await probe(good), null, `a valid body cap ${JSON.stringify(good)} was refused`)
+    }
+  })
+
   it('requires a database URL for explicit postgres mode', async () => {
     await assert.rejects(
       () => createStoreFromEnv({ LINDELA_LITE_DB_MODE: 'postgres' }),

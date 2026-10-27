@@ -357,7 +357,7 @@ traversal check already applied upstream.
   response, not multi-tenancy: one deployment is one operator running one
   country programme against one database.
 - **`LINDELA_LITE_MAX_BODY_BYTES` is read once, at module load.**
-  `DEFAULT_MAX_BODY_BYTES` (`src/utils.js:270`) is a module-level constant
+  `DEFAULT_MAX_BODY_BYTES` (`src/utils.js:994`) is a module-level constant
   initialised from `process.env`, so changing the variable after the process
   starts has no effect.
 - **The `/metrics` exposure is intentional but unbounded in detail.** It is

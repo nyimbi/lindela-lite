@@ -9,7 +9,7 @@ This guide lists environment variables and configuration patterns for Lindela Li
 | `LINDELA_LITE_PORT` | `4177` | HTTP port used by the Node server. Must be an integer from 1 to 65535; a value that is not is refused at startup with the variable named, rather than binding an ephemeral port and announcing `:0`. |
 | `LINDELA_LITE_SHUTDOWN_MS` | `10000` | Grace period after SIGTERM/SIGINT before the process exits anyway. Must be a positive number of milliseconds; a value that is not is refused when the handler is installed. |
 | `LINDELA_LITE_API_KEY` | unset | Optional API key required as `x-api-key` for non-GET API requests. |
-| `LINDELA_LITE_MAX_BODY_BYTES` | `5242880` (5 MB) | Maximum accepted request body size. Larger bodies return HTTP 413. |
+| `LINDELA_LITE_MAX_BODY_BYTES` | `5242880` (5 MB) | Maximum accepted request body size. Larger bodies return HTTP 413. Must be a positive number of bytes; a value that is not (`1MB`, `abc`) is refused at startup rather than read as no ceiling at all. |
 | `NODE_ENV` | unset | Runtime environment flag. Docker sets `production`. |
 
 When `LINDELA_LITE_API_KEY` is set:

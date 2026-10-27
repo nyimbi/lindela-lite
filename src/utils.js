@@ -971,7 +971,27 @@ export function decodeCursor(raw) {
   }
 }
 
-const DEFAULT_MAX_BODY_BYTES = Number(process.env.LINDELA_LITE_MAX_BODY_BYTES || 5 * 1024 * 1024)
+/**
+ * The request body ceiling, or a refusal naming the variable.
+ *
+ * `Number(env.X || 5MB)` read a typo as no ceiling at all: `'1MB'` and `'abc'`
+ * both parse to `NaN`, every `size > maxBytes` comparison against `NaN` is
+ * false, and the body buffer is the only bound left — the exact resource the
+ * cap exists to protect, on an endpoint reachable without a key. The default is
+ * for an unset variable; a present one that is not a positive number of bytes
+ * is a configuration error, and it is raised at import so a deployment finds
+ * out at startup rather than on the first large upload.
+ */
+function maxBodyBytes(raw) {
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) return 5 * 1024 * 1024
+  const parsed = toNumber(raw)
+  if (parsed === null || parsed <= 0) {
+    throw new TypeError(`LINDELA_LITE_MAX_BODY_BYTES must be a positive number of bytes, got ${JSON.stringify(raw)}`)
+  }
+  return parsed
+}
+
+const DEFAULT_MAX_BODY_BYTES = maxBodyBytes(process.env.LINDELA_LITE_MAX_BODY_BYTES)
 
 /**
  * Buffers the request body once and caches it on `req.__rawBody`.
