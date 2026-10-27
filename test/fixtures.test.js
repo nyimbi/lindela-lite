@@ -139,6 +139,54 @@ describe('public source connector fixtures', () => {
     }
   })
 
+  it('reads an unreadable FIRMS day count as the default rather than putting NaN in the path', async () => {
+    // `Math.min(Math.max(Number(days || 1), 1), 10)` clamps a number, and NaN
+    // survives both bounds because every comparison against it is false. A
+    // schedule configured with `days: "7d"` therefore built
+    // `/…/{bbox}/NaN`, which FIRMS answers with a 400 — and a typo in an
+    // option was recorded as a source outage. The clamp only makes sense over
+    // a value that is absent when it cannot be read.
+    const urlsFor = async (days) => {
+      const urls = []
+      globalThis.fetch = async (url) => {
+        urls.push(String(url))
+        return { ok: true, status: 200, headers: new Map([['content-type', 'text/csv']]), text: async () => '', json: async () => ({}) }
+      }
+      await nasaFirmsConnector.ingest({
+        nasa_firms_key: 'k', days, retries: 0,
+        firms_bboxes: [{ name: 'x', bbox: '33,-5,52,15', country: 'KE' }],
+      })
+      return urls[0]
+    }
+    assert.match(await urlsFor('abc'), /\/33,-5,52,15\/1$/, 'an unreadable day count reached the request path')
+    assert.match(await urlsFor(''), /\/33,-5,52,15\/1$/)
+    assert.match(await urlsFor('3'), /\/33,-5,52,15\/3$/, 'a readable day count was not honoured')
+    assert.match(await urlsFor('99'), /\/33,-5,52,15\/10$/, 'the cap was not applied')
+  })
+
+  it('drops an undated FIRMS detection and says so, rather than stamping it today', async () => {
+    // D21. `row.acq_date || new Date()…` gave a detection the provider could
+    // not date today's date, which put it at the top of every "recent fire
+    // activity" query and inside every freshness window — a row with no time
+    // reading as the newest thing on the map. Dropping it silently would trade
+    // one lie for another (a run with a smaller count and no note), so the
+    // count is reported and the run reads degraded.
+    const csv = 'latitude,longitude,brightness,frp,acq_date,acq_time,satellite,confidence\n'
+      + '3.1,35.6,320,12.5,2026-10-26,0412,N,VIIRS\n'
+      + '3.2,35.7,310,9.0,,,N,VIIRS\n'
+    globalThis.fetch = async () => ({
+      ok: true, status: 200, headers: new Map([['content-type', 'text/csv']]), text: async () => csv, json: async () => ({}),
+    })
+    const result = await nasaFirmsConnector.ingest({
+      nasa_firms_key: 'k', retries: 0,
+      firms_bboxes: [{ name: 'x', bbox: '33,-5,52,15', country: 'KE' }],
+    })
+    assert.equal(result.hazard_events.length, 1, 'an undated detection was published')
+    assert.equal(result.hazard_events[0].occurred_at, '2026-10-26T04:12:00Z')
+    assert.equal(result.errors.length, 1, 'the drop was silent')
+    assert.match(result.errors[0], /1 detection\(s\) carried no acq_date/)
+  })
+
   it('marks FIRMS as requiring credentials in the source catalog', async () => {
     // The catalog is what an operator reads to decide what needs configuring.
     const { publicSourceCatalog } = await import('../src/schema.js')

@@ -635,9 +635,10 @@ working integration.
 
 ### D21 — FIRMS fabricates an acquisition date when the CSV omits one
 
-**Severity: Low** (a detection with no known time gets today's date)
+**Severity: Low** (a detection with no known time gets today's date) — **fixed
+2026-10-27**
 
-`src/connectors/nasa-firms.js:54`
+`src/connectors/nasa-firms.js` (`occurred_at`)
 
 ```js
 occurred_at: `${row.acq_date || new Date().toISOString().slice(0, 10)}T${...}Z`,
@@ -645,22 +646,32 @@ occurred_at: `${row.acq_date || new Date().toISOString().slice(0, 10)}T${...}Z`,
 
 Every other connector in this codebase is careful to preserve the difference
 between "no reading" and "a reading of zero" (`readMeasurement`, open-meteo.js:36;
-`toNumber`, utils.js:49). Here a fire detection with a missing `acq_date` is
-stamped with **today**, which places it at the top of every "recent fire
+`toNumber`, utils.js:49). Here a fire detection with a missing `acq_date` was
+stamped with **today**, which placed it at the top of every "recent fire
 activity" query and inside every recent-activity freshness window. Same class of
 defect as the one already fixed in analytics (commit 4a1ce17, "a missing forecast
 is not a measured dry spell").
 
-The `days` clamp (firms.js:35) and the region loop are otherwise correct, and the
-API-key handling is clean: the key is read from env or option (line 24), never
-logged, and never included in an error string — `fetchWithRetry` throws a bare
-`HTTP 400`, so `errors.push(\`${region.name}: ${error.message}\`)` is safe. (Minor
-caveat: accepting the key from a request body means it can land in a reverse
-proxy's access log; `options.nasa_firms_key` is undocumented in the request
-schema.)
+The fix drops the row and counts it, rather than publishing it undated:
+`acq_date` is a column FIRMS always fills, so an empty one means the response
+shape changed. The count is pushed to `errors`, which the ingestion loop maps to
+`degraded` — the same treatment `dhis2` gives a skipped reading. A silent
+`continue` would have traded the fabricated date for an unanswerable difference
+between what the provider returned and what was published.
 
-One-line fix: skip the detection, or store `occurred_at: null` with the source
-date range in metadata.
+The `days` clamp (then `firms.js:35`) was **not** correct, contrary to this
+note's earlier claim: `Math.min(Math.max(Number(x || 1), 1), 10)` clamps a
+number, and `NaN` survives both bounds, so `days: "7d"` built `/…/{bbox}/NaN`
+and FIRMS answered 400 — an option typo recorded as a source outage. Now read
+through `toNumber`, which treats an unreadable value as absent (also fixed
+2026-10-27).
+
+The API-key handling is clean: the key is read from env or option, never logged,
+and never included in an error string — `fetchWithRetry` throws a bare
+`HTTP 400`, so `errors.push(\`${region.name}: ${error.message}\`)` is safe.
+(Minor caveat, still open: accepting the key from a request body means it can
+land in a reverse proxy's access log; `options.nasa_firms_key` is undocumented in
+the request schema.)
 
 ---
 
@@ -979,7 +990,7 @@ push.
 | `gdacs` | one combined RSS feed, all hazard types | none — single feed, ~222 items; ~30 days deep | 2 retries, 20 s | 180 min policy | severity from substring match: `red` in *predicted* / *Red Sea* (D1) |
 | `glofas` | Copernicus flood forecast RSS | none — single feed | 2 retries, 20 s | 180 min policy; feed was serving an HTML app as of 2026-10-01 | severity fabricated for every item; no `unknown` (D12). Also no country, no coordinates, no extent |
 | `chirps` | CHIRPS-2.0 daily raster **file index**, 2 most recent year dirs | year dirs probed one level down; `limit` default 30 vs up to ~730 available (D10) | 2 retries, 20 s | 1440 min policy | delivers `precipitation_mm: null` (D11) — catalogued as rainfall, is a file listing |
-| `nasa_firms` | VIIRS active fire CSV, 3 regional bboxes | `days` clamped 1–10; per-region request; rows uncapped | 2 retries, 30 s | 720 min policy | missing `acq_date` stamps the detection today (D21). FRP→severity band is a local invention; no confidence filtering (`row.confidence` stored but never used) |
+| `nasa_firms` | VIIRS active fire CSV, 3 regional bboxes | `days` clamped 1–10 (read via `toNumber`, so an unreadable value is absent, not `NaN`); per-region request; rows uncapped | 2 retries, 30 s | 720 min policy | missing `acq_date` now drops the row and reports the count (D21, fixed 2026-10-27). FRP→severity band is a local invention; no confidence filtering (`row.confidence` stored but never used) |
 | `usgs_earthquake` | GeoJSON summary feed, default `2.5_day` | 4 windows available; no pagination | 2 retries, 20 s | 180 min policy | `country` is always null — no reverse geocode (`:55`); preliminary `automatic` magnitudes stored as final, no revision tracking (E11) |
 | `noaa_enso` | CPC Niño 3.4 monthly SST anomaly, fixed-width ASCII, full file every run | full 900-row file re-fetched; window of 18 months stored | 2 retries, 20 s | 1440 min policy vs a **monthly** cadence (D13) | `observed_at` stamped at mid-month (`-15T00:00Z`) — a fabricated instant within the month; base period revised every 5 years with no version stamp |
 | `ipc_hdx` | IPC national + area classifications via HDX; 2 CSVs + per-country GeoJSON | 2 CSVs re-fetched whole each run (44k rows); **~92 concurrent requests**, no cap (D15) | 2 retries, 30 s; backoff 150/300 ms, no `Retry-After` | 2880 min policy vs a **monthly** analysis cycle (D13) | `observed_at` = window start makes a current window look months stale; duplicate phase rows silently overwrite in `record.phases[row.Phase]` (`:225`) |

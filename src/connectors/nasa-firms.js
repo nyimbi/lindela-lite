@@ -32,7 +32,19 @@ export const nasaFirmsConnector = {
     }
 
     const regions = options.firms_bboxes?.length ? options.firms_bboxes : REGIONAL_BBOXES
-    const days = Math.min(Math.max(Number(options.days || 1), 1), 10)
+    // `Math.min(Math.max(Number(x || 1), 1), 10)` clamps a *number*, and `NaN`
+    // survives both bounds — every comparison against it is false, so `abc`
+    // fell through and the URL was built with the literal `NaN` where the day
+    // count belongs: `/…/{bbox}/NaN`. FIRMS answers that with a 400, the
+    // connector records an error, and a typo in a schedule's options reads as a
+    // source outage. `toNumber` reads an unreadable value as absent, which is
+    // what the clamp already assumes it is.
+    const days = Math.min(Math.max(toNumber(options.days, 1), 1), 10)
+    // A row dropped for having no date is a detection the source reported and
+    // this run did not. Counted rather than swallowed: an operator comparing
+    // "what FIRMS said it had" against "what arrived" needs the difference to
+    // be a number, and a silent `continue` makes it unanswerable.
+    let undated = 0
 
     for (const region of regions) {
       try {
@@ -42,6 +54,13 @@ export const nasaFirmsConnector = {
           const lat = toNumber(row.latitude)
           const lon = toNumber(row.longitude)
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
+          // A detection with no acquisition date used to be stamped with today,
+          // which put it at the top of every "recent fire activity" query and
+          // inside every freshness window — a row the provider could not date
+          // reading as the newest thing on the map. The date is what a fire
+          // detection is *for*, so an undated row is dropped the same way a row
+          // with unreadable coordinates is, rather than given one.
+          if (!row.acq_date) { undated += 1; continue }
           const frp = toNumber(row.frp, 0)
           hazard_events.push({
             id: stableId('hazard', ['nasa_firms', row.latitude, row.longitude, row.acq_date, row.acq_time, row.satellite]),
@@ -51,7 +70,7 @@ export const nasaFirmsConnector = {
             severity: normalizeSeverity(frp > 100 ? 'high' : frp > 25 ? 'medium' : 'low'),
             title: `Active fire detection (${frp || 0} MW FRP)`,
             description: `VIIRS active fire detection from NASA FIRMS.`,
-            occurred_at: `${row.acq_date || new Date().toISOString().slice(0, 10)}T${String(row.acq_time || '0000').padStart(4, '0').slice(0, 2)}:${String(row.acq_time || '0000').padStart(4, '0').slice(2, 4)}:00Z`,
+            occurred_at: `${row.acq_date}T${String(row.acq_time || '0000').padStart(4, '0').slice(0, 2)}:${String(row.acq_time || '0000').padStart(4, '0').slice(2, 4)}:00Z`,
             source_url: 'https://firms.modaps.eosdis.nasa.gov/',
             country: region.country,
             latitude: lat,
@@ -68,6 +87,13 @@ export const nasaFirmsConnector = {
       } catch (error) {
         errors.push(`${region.name}: ${error.message}`)
       }
+    }
+    // An undated row means the CSV shape changed, not that the fires were
+    // undated: `acq_date` is a column FIRMS always fills. Reported as an error
+    // line so the run reads `degraded` — the same treatment `dhis2` gives a
+    // skipped reading — rather than a clean run with a smaller count.
+    if (undated > 0) {
+      errors.push(`nasa_firms: ${undated} detection(s) carried no acq_date and were dropped; FIRMS always fills that column, so the response shape has changed.`)
     }
     return { hazard_events, errors }
   },
