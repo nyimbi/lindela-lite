@@ -207,7 +207,7 @@ Every environment variable the runtime reads, grouped by who sets it.
 | `LINDELA_LITE_API_KEY` | — | **Sets auth to a single `*`-scoped token.** See §6. |
 | `LINDELA_LITE_TOKENS` | — | JSON array of `{token, scopes, partner_org?}`. Malformed throws. |
 | `LINDELA_LITE_PUBLIC_PATHS` | — | Comma-separated, widens the public list. |
-| `LINDELA_LITE_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
+| `LINDELA_LITE_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`, case-insensitive. Anything else is refused at startup: an unknown name used to compare as `undefined`, which suppressed nothing. |
 | `LINDELA_LITE_MAX_BODY_BYTES` | — | Request body cap. |
 | `LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` | `900` | **Read only by `docker-compose.yml`**, never by `src/`. In the sidecar's shell, not in the app. |
 | `LINDELA_LITE_UPTIME_OVERRIDE` | — | Pins the reported uptime. For load-balancer warm-up. |

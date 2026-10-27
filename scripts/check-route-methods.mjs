@@ -126,13 +126,13 @@ export function judge({ path: routePath, verb, declared, status }) {
 
 /** Drive the whole surface and collect the findings. */
 export async function scanRoutes() {
-  // `error`, not `fatal`: `LOG_LEVELS` in `observability.js` declares debug,
-  // info, warn and error, and an unrecognised name compares as `undefined`, so
-  // `LOG_LEVELS.info < undefined` is false and the info line is logged anyway.
-  // This line read `fatal` and silenced nothing — 963 `http_request` lines on a
-  // clean run, one per probe, into a 975-line stderr the runner only prints when
-  // the gate *fails*. A level name that is not a level is the same class as a
-  // gate that is not a gate: it reads as a control and controls nothing.
+  // `error`, because the gate does not want 963 `http_request` lines on a clean
+  // run — one per probe — in the 975-line stderr the runner only prints when the
+  // gate *fails*. This line used to read `fatal`, which silenced nothing: an
+  // unrecognised name indexed `LOG_LEVELS` as `undefined`, and
+  // `LOG_LEVELS.info < undefined` is false, so every line was logged anyway.
+  // `observability.js` now refuses an unknown level at import rather than
+  // reading it as no filter at all, so this line must name a real one.
   process.env.LINDELA_LITE_LOG_LEVEL ||= 'error'
   const { createServer } = await import('../src/server.js')
   const { JsonStore } = await import('../src/store.js')

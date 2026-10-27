@@ -15,7 +15,9 @@
  */
 
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { beforeEach, describe, it } from 'node:test'
+import { promisify } from 'node:util'
 
 import {
   logger,
@@ -26,6 +28,8 @@ import {
   resetMetrics,
   UNMATCHED_LABEL,
 } from '../src/observability.js'
+
+const execFileAsync = promisify(execFile)
 
 beforeEach(() => {
   resetMetrics()
@@ -166,6 +170,34 @@ describe('the logger honours the level it declares (R-55)', () => {
     // set, so the two cannot drift again silently.
     for (const level of ['debug', 'info', 'warn', 'error']) {
       assert.equal(typeof logger[level], 'function', `logger.${level} is missing`)
+    }
+  })
+
+  it('refuses a level it does not have rather than logging everything', async () => {
+    // `process.env.X || 'info'` passed any other string through unread:
+    // `LOG_LEVEL=fatal` indexed the table as `undefined`, and `rank < undefined`
+    // is false for every level, so nothing was suppressed. The setting an
+    // operator reaches for to quiet a host was the one that made it loudest.
+    // The level is resolved at import, so this needs a fresh process.
+    const probe = async (value) => {
+      const env = { ...process.env }
+      if (value === undefined) delete env.LINDELA_LITE_LOG_LEVEL
+      else env.LINDELA_LITE_LOG_LEVEL = value
+      try {
+        await execFileAsync(process.execPath, ['-e', 'await import("./src/observability.js")'], { cwd: process.cwd(), env })
+        return null
+      } catch (error) {
+        return `${error.stderr || ''}${error.stdout || ''}`
+      }
+    }
+    for (const bad of ['fatal', 'WARNING', 'verbose']) {
+      const failure = await probe(bad)
+      assert.ok(failure, `LINDELA_LITE_LOG_LEVEL=${JSON.stringify(bad)} was accepted; every level would be logged`)
+      assert.match(failure, /LINDELA_LITE_LOG_LEVEL must be one of debug, info, warn, error/,
+        `LINDELA_LITE_LOG_LEVEL=${JSON.stringify(bad)} was refused for the wrong reason`)
+    }
+    for (const good of [undefined, '', 'debug', 'WARN']) {
+      assert.equal(await probe(good), null, `a valid level ${JSON.stringify(good)} was refused`)
     }
   })
 })

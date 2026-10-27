@@ -92,8 +92,30 @@ export function computeShortTermSuccessRate() {
   return processRing.successRate()
 }
 
-const LOG_LEVEL = process.env.LINDELA_LITE_LOG_LEVEL || 'info'
 const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 }
+
+/**
+ * The configured level's rank, or the refusal to pretend there is one.
+ *
+ * `process.env.X || 'info'` handled an absent level and passed every other
+ * string through unread: `LOG_LEVEL=fatal` and `LOG_LEVEL=WARNING` indexed the
+ * table as `undefined`, and `rank < undefined` is false for every level, so
+ * *nothing* was suppressed — the one setting an operator reaches for to quiet a
+ * noisy host was the setting that made it loudest, and the log gave no sign.
+ * An unknown level is a typo, and a typo in a filter is refused by name at
+ * startup rather than silently disabling the filter.
+ */
+function logLevelRank(raw) {
+  const level = raw === undefined || raw === null ? 'info' : String(raw).trim().toLowerCase()
+  if (level === '') return LOG_LEVELS.info
+  const rank = LOG_LEVELS[level]
+  if (rank === undefined) {
+    throw new TypeError(`LINDELA_LITE_LOG_LEVEL must be one of ${Object.keys(LOG_LEVELS).join(', ')}, got ${JSON.stringify(raw)}`)
+  }
+  return rank
+}
+
+const LOG_LEVEL_RANK = logLevelRank(process.env.LINDELA_LITE_LOG_LEVEL)
 
 export const logger = {
   // R-55. `LOG_LEVELS` has always declared `debug`, so
@@ -107,7 +129,7 @@ export const logger = {
 }
 
 function logEvent(level, event, fields) {
-  if (LOG_LEVELS[level] < LOG_LEVELS[LOG_LEVEL]) return
+  if (LOG_LEVELS[level] < LOG_LEVEL_RANK) return
   const requestId = currentRequestId()
   // The envelope is written last, so a payload field cannot overwrite it. With
   // `...fields` last, a call site that passed `{ event: 'report.created' }` as a
