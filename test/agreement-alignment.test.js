@@ -200,6 +200,47 @@ describe('R-90 — coverage is a measurement axis too', () => {
     assert.equal(out.paired_months, 1, 'one month both products measured')
   })
 
+  it('a blank reading is unmeasured, not a measured zero', () => {
+    // `Number('')`, `Number('  ')`, `Number([])` and `Number(false)` are all 0,
+    // so a month a connector keyed but left blank arrived as a measurement of
+    // 0 mm. Against a product reporting 55 mm that month was then scored a
+    // *sign disagreement* — the one output of this module a downstream score
+    // acts on — and it entered the mean absolute difference as a dry month.
+    // The store carries exactly this shape: a connector that lists a month it
+    // has no raster for writes the key with no value.
+    const out = compareSeries({
+      district: 'Turkana',
+      period: '2026-Q1',
+      recordsA: [
+        month('2026-01', ''), month('2026-02', '  '), month('2026-03', []), month('2026-04', false),
+      ],
+      recordsB: [
+        month('2026-01', 55), month('2026-02', 55), month('2026-03', 55), month('2026-04', 55),
+      ],
+      productA: 'chirps',
+      productB: 'era5',
+    })
+    assert.equal(out.paired_months, 0, 'a blank reading was counted as a paired measurement')
+    assert.equal(out.unmeasured_months, 4)
+    assert.equal(out.sign_disagreement_rate, null, 'blanks were scored as dry months contradicting a wet product')
+    assert.equal(out.verdict, 'unavailable')
+  })
+
+  it('a genuine zero is still a measurement', () => {
+    // The fix must not turn "it did not rain" into "nobody measured". 0 mm is
+    // the answer a dry month gives, and `numericOrNull` passes it through.
+    const out = compareSeries({
+      district: 'Turkana',
+      period: '2026-Q1',
+      recordsA: [month('2026-01', 0), month('2026-02', 20), month('2026-03', 40)],
+      recordsB: [month('2026-01', 0), month('2026-02', 21), month('2026-03', 39)],
+      productA: 'chirps',
+      productB: 'era5',
+    })
+    assert.equal(out.paired_months, 3)
+    assert.equal(out.unmeasured_months, 0)
+  })
+
   it('a genuinely shared, measured month is still "both"', () => {
     const out = compareSeries({
       district: 'Turkana',

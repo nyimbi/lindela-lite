@@ -15,6 +15,7 @@
  * are expected to pass it through rather than average it away.
  */
 
+import { numericOrNull } from './analytics/numeric.js'
 import { nowIso } from './utils.js'
 
 /** The verdict vocabulary, exported so a route can iterate it. */
@@ -419,7 +420,15 @@ function indexByPeriod(records = []) {
     // that source, and silently averaging it here would hide the defect behind
     // a plausible-looking number.
     if (index.has(period)) continue
-    index.set(period, Number(record.precipitation_mm ?? record.value))
+    // `numericOrNull`, not `Number`. `Number('')`, `Number('  ')`, `Number([])`
+    // and `Number(false)` are all 0, so a month CHIRPS keyed but did not
+    // measure arrived here as a measurement of 0 mm. It then counted as a
+    // paired month, entered the mean absolute difference as a dry month, and —
+    // against a product that reported 55 mm — was scored as a *sign
+    // disagreement*, which is the one output of this module a downstream score
+    // acts on. The null is what `compareMonth` reads as keyed-but-unmeasured,
+    // which is the distinction the rest of this file is built around.
+    index.set(period, numericOrNull(record.precipitation_mm ?? record.value))
   }
   return index
 }
