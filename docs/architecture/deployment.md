@@ -218,7 +218,7 @@ Every environment variable the runtime reads, grouped by who sets it.
 | `LINDELA_LITE_PUBLIC_PATHS` | — | Comma-separated, widens the public list. |
 | `LINDELA_LITE_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`, case-insensitive. Anything else is refused at startup: an unknown name used to compare as `undefined`, which suppressed nothing. |
 | `LINDELA_LITE_MAX_BODY_BYTES` | — | Request body cap. |
-| `LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` | `900` | **Read only by `docker-compose.yml`**, never by `src/`. In the sidecar's shell, not in the app. |
+| `LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` | `900` | Driver interval, read by `driverIntervalSeconds` (`src/server.js:409`) and used as the `/api/v1/health` staleness threshold. A value that is not a positive number falls back to 900. |
 | `LINDELA_LITE_UPTIME_OVERRIDE` | — | Pins the reported uptime. For load-balancer warm-up. |
 | `NODE_ENV` | — | Set to `production` in the `Dockerfile`. |
 
@@ -571,8 +571,10 @@ Recorded because a reader who finds them in the code will assume a bug.
   whose first tick fails every item still passes.
 - **`deploy/one-click.sh` re-running does not rotate secrets**, and the sed
   substitution will silently no-op if `.env.example` is ever restructured.
-- **`LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` in `.env.example` suggests it is an
-  app setting.** It is not read by `src/`.
+- **`LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` in `.env.example` reads like a
+  sidecar setting.** It is an app setting: the in-process driver reads it, and so
+  does the `/health` staleness threshold. The name survives from the external
+  scheduler ADR-009 retired.
 - **The compose `app` healthcheck hardcodes `4177`** while the `Dockerfile`'s uses
   `${LINDELA_LITE_PORT}`. Two healthchecks, one configurable.
 - **`process_up` is a hardcoded `1`.** It is not a liveness measurement and should
