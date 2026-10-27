@@ -97,13 +97,16 @@ flowchart LR
   class APP,DB,SCHED svc
 ```
 
-The scheduler is a shell loop in a sidecar that `curl`s the API. **There is no
-in-process timer anywhere in `src/`** — no `setInterval`, no cron, no worker. This
-is a deliberate trade: a crash-looping app cannot also silently accumulate timers,
-and a deployment that forgets a scheduled job cannot also forget its lock.
+Recurrence is a `setInterval` inside the server process
+(`createPeriodicDriver`, `src/server.js:443`), started from the listen callback.
+Each tick runs every driver item, records each one's verdict on a
+`system_heartbeat` row, and `/api/v1/health` returns 503 when that heartbeat is
+older than the interval — so a stalled pipeline says so instead of looking idle.
 
-The cost is real and worth stating: if the scheduler container dies, ingestion
-stops silently. Nothing in the app notices. `docs/deployment.md` covers the check.
+The trade ADR-009 recorded is still worth stating from the other side: the timer
+lives and dies with the process. A crash-looping app takes its scheduler with it,
+which is what makes the container restart the recovery action, and why the
+heartbeat — not a lock — is what tells an operator anything ran.
 
 ## 4. The backend, module by module
 

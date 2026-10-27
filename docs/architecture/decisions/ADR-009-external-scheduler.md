@@ -1,6 +1,8 @@
 # ADR-009: An external scheduler sidecar rather than in-process timers
 
-**Status:** Accepted
+**Status:** Superseded in part (2026-10) — the external loop is gone; see
+[Superseded](#superseded-2026-10) at the end. The reasoning below is kept because
+the constraints it identifies still bind the replacement.
 **Applies to:** `docker-compose.yml`, `src/ingestion.js`, `src/outbox.js`
 **Deciders:** whoever operates a deployment
 
@@ -98,6 +100,39 @@ requirement to a product that installs on a laptop is the wrong trade.
   `interval_minutes: 0` with a computed `next_run_at`, not to add a scheduler.
 - Outbox dispatch moves from manual to scheduled, which is the single highest-value thing to add to
   the loop — a webhook that only fires when someone POSTs is not a webhook.
+
+## Superseded (2026-10)
+
+The decision above was reversed. `createPeriodicDriver` (`src/server.js:443`) is
+a `setInterval` inside the app process, started from the listen callback, and
+`docker-compose.yml` declares two services rather than three. Every option the
+table above assessed is now in play, so each objection is answered here rather
+than left as an unexamined assumption:
+
+- **Overlap.** The `inFlight` flag makes a tick that arrives mid-run return
+  immediately, so a slow item stalls the cadence instead of stacking a second
+  pass on top of the first. That is the same guarantee the single loop gave.
+- **Restart.** The timer is started from the listen callback, so a restart
+  restarts it. `next_run_at` is still the app's state, so a missed cycle is
+  caught up by the next one — unchanged.
+- **Testability.** `createPeriodicDriver()` returns an instance with its own
+  timer, so a test drives `runPeriodicTick` directly and never waits on a clock.
+- **Multi-instance.** Still unhandled, and now unhandled in a new place: two
+  processes against one store both tick and both write `system_heartbeat`. The
+  tick is idempotent per item, so the cost is duplicated work, not a wrong
+  record. `docs/architecture/deployment.md` §10 records it.
+- **Legibility.** The cadence moved from the compose file to
+  `LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` (`src/server.js:409`), which is a
+  worse place to find it. The heartbeat on `/api/v1/health` is what replaces it
+  as the thing an operator reads.
+- **The four manual capabilities** — outbox dispatch, retention, KPI refresh,
+  bias correction — are on `DRIVER_ITEMS` (`src/server.js:117`) except KPI
+  refresh and bias correction, which remain manual.
+
+What was lost with the sidecar is the thing the "Harder" section named as the
+top operational fact: a scheduler the app could not see. The replacement is a
+heartbeat the app writes and `/api/v1/health` reads, so the failure is detected
+rather than silent.
 
 ## Detecting a dead scheduler
 

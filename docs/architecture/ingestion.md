@@ -10,15 +10,17 @@ guards below exist only because that already happened.
 
 ## Trigger paths
 
-There is **no in-process timer**. Nothing in `src/` calls `setInterval` to drive
-ingestion. Recurrence is external, which means it can be turned off by stopping a
-container rather than by a config flag, and which means an API key is on the hot
-path.
+Recurrence is an **in-process timer**. The periodic driver
+(`createPeriodicDriver`, `src/server.js:443`) ticks every
+`LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` (default 900) and runs the driver items
+in order, ingestion among them. The paths below remain reachable by hand and by
+any external caller, which is what makes an API key relevant to them — the driver
+itself calls the functions, not the HTTP surface.
 
 | Path | Handler | Notes |
 |---|---|---|
 | `POST /api/v1/ingest/run` | `src/routes/ingestion.js:119` → `runIngestion` | Body may carry `sources`, `timeout_ms`, `retries`. Defaults to `PUBLIC_INGESTION_SOURCES`. |
-| `POST /api/v1/ingest/run-due` | `runDueIngestionSchedules` (`src/routes/ingestion.js:151`) | The scheduled path. Driven by the in-process periodic driver every 900 s (`src/server.js:112`, `LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS`, `src/server.js:374`). Only schedules with `status === 'active'` and `next_run_at <= now` run (`ingestionScheduleIsDue`, `src/ingestion.js:862`). |
+| `POST /api/v1/ingest/run-due` | `runDueIngestionSchedules` (`src/routes/ingestion.js:151`) | The scheduled path, and the first `DRIVER_ITEMS` entry (`src/server.js:118`), so the in-process driver runs it every `LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` (900 by default) without an HTTP hop. Only schedules with `status === 'active'` and `next_run_at <= now` run (`ingestionScheduleIsDue`, `src/ingestion.js:862`). |
 | `POST /api/v1/ingest/schedules/{id}/run` | `src/routes/ingestion.js:185` | Runs one schedule immediately, ignoring `next_run_at`. |
 | `POST /api/v1/service-assets` | `src/routes/operational.js:113` | **Implicit fourth path.** The body *is* the connector input; it calls `runIngestion(store, { ...body, sources: ['service_assets'] })`, so a request-body boolean gates the run, not a route check. |
 
@@ -27,7 +29,7 @@ path.
 `runIngestion` calls, each with its own `merged` accumulator and its own write.
 
 The periodic driver is a `setInterval` inside the server process (`createPeriodicDriver`,
-`src/server.js:408`), not a sidecar container: `docker-compose.yml` runs two services, `db`
+`src/server.js:443`), not a sidecar container: `docker-compose.yml` runs two services, `db`
 and `app`, and the shell loop that used to call `run-due` from outside was retired when the
 driver took over report schedules too.
 

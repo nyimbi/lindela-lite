@@ -12,48 +12,61 @@ and §6–§7 for the boundary failures and the deliberate limitations.
 
 ## 1. The single most important operational fact
 
-**If the `scheduler` container dies, ingestion stops, and nothing in the app
-notices.**
+**If the periodic driver stops ticking, ingestion stops, and `/api/v1/health`
+says so within one interval.**
 
-There is no in-process timer anywhere in `src/` — no `setInterval` for ingestion,
-no cron, no worker thread, no queue consumer. Recurrence is entirely a shell loop in
-a sidecar container that `curl`s the API every
-`LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` (default 900). The app has no heartbeat,
-holds no lock, and does not check whether anyone is calling `run-due`. A dead
-scheduler is indistinguishable, from inside the process, from a quiet night.
+The driver is a `setInterval` inside the server process
+(`createPeriodicDriver`, `src/server.js:443`), started from the listen callback
+(`src/server.js:1815`). It runs ingestion schedules, alert evaluation, outbox
+dispatch, retention and report schedules, and writes one `system_heartbeat` row
+per tick recording every item and whether it succeeded
+(`runPeriodicTick`, `src/server.js:320`). `/api/v1/health` returns 503 when that
+heartbeat is older than the interval, so a pipeline that has stopped running
+says so rather than looking idle.
 
-This is a deliberate trade, recorded in `system-overview.md` §3: a crash-looping
-app cannot also silently accumulate timers, and a deployment that forgets a
-scheduled job cannot also forget its lock. The cost is real and it is the reason
-this document exists.
+`docker-compose.yml` runs two services, `db` and `app`. An external shell loop
+that called `run-due` from a third container is gone — see ADR-009, whose
+**Decision** section is superseded while its reasoning about locks and
+crash loops still applies.
 
-**How to detect it.** `GET /api/v1/ingest/status`, per source:
+**How to detect it.** `GET /api/v1/health` first — it answers the liveness
+question directly:
 
-- **`age(last_run.completed_at)`** — the only reliable signal. If it exceeds the
-  scheduler interval by more than one cycle, the scheduler is not calling.
+- **`503` with a heartbeat age past the interval** — the driver is not ticking.
+  The tick is guarded by an `inFlight` flag, so a hung item stalls the loop
+  rather than stacking; the heartbeat stops and the check fires.
+- **`pipeline.items[].ok: false`** — an individual item failed. The tick
+  continues with the rest by design, and the failing item is logged as
+  `periodic_item_failed` with its message and stack.
+
+Per source, `GET /api/v1/ingest/status`:
+
+- **`age(last_run.completed_at)`** — if it exceeds the driver interval by more
+  than one cycle while the heartbeat is current, the driver is ticking and the
+  schedule is not due: check `next_run_at` and `status`, not liveness.
 - **`status: 'stale'`** — computed by `sourceHealth` against
   `schedule.stale_after_minutes ?? policy.stale_after_minutes`.
 - **`failure_streak: 0` does not mean healthy.** `failureStreak` counts
-  consecutive `source_runs` rows with `status === 'failed'`. **A scheduler that
-  never calls produces no rows at all**, so the streak stays at whatever it was —
+  consecutive `source_runs` rows with `status === 'failed'`. **A driver that
+  never runs produces no rows at all**, so the streak stays at whatever it was —
   usually zero. A rising streak means the connectors are failing. A zero streak
   with a growing `last_run` age means nothing is running. Reading the streak alone
-  is how a dead scheduler looks like a healthy one.
+  is how a stopped pipeline looks like a healthy one.
 
 **How to fix it.**
 
 ```bash
-docker compose ps scheduler
-docker compose logs -f scheduler
-docker compose restart scheduler
+curl -fsS http://127.0.0.1:4177/api/v1/health          # heartbeat age, item verdicts
+docker compose logs -f app | grep periodic_item_failed
+docker compose restart app                             # the driver lives in this process
 curl -fsS -X POST http://127.0.0.1:4177/api/v1/ingest/run-due \
   -H "x-api-key: $LINDELA_LITE_API_KEY"   # force one cycle by hand
 ```
 
-If it is running and still not calling: **both `curl` lines in the sidecar end in
-`|| true`**, so a `401` from a wrong or unset `x-api-key` is swallowed every cycle
-and nothing is logged anywhere. `docker compose logs scheduler` will be empty and
-the container will be healthy. Curl the endpoint by hand and read the status code.
+A `401` on that manual call means the key is wrong. The driver does not use one
+— it calls `runDueIngestionSchedules` in-process — so a bad key breaks manual and
+external callers only, which is a strictly smaller failure than the sidecar's
+silent `|| true` loop was.
 
 ## 2. Topology
 
@@ -62,26 +75,22 @@ flowchart LR
   subgraph compose["docker compose"]
     direction TB
     DB[("db<br/>postgres:16-alpine<br/>pg_isready healthcheck, 10s/5s/10")]
-    APP["app<br/>node src/server.js<br/>:4177, curl /api/v1/ready"]
-    SCH["scheduler<br/>sh -c 'while true; … '<br/>no healthcheck at all"]
+    APP["app<br/>node src/server.js<br/>:4177, curl /api/v1/ready<br/>in-process periodic driver"]
   end
 
   BROWSER["Browser"] -->|"HTTPS or LAN HTTP"| APP
   APP -->|"pg, DATABASE_URL"| DB
-  SCH -->|"POST /ingest/run-due<br/>then /report-schedules/run-due<br/>every 900 s"| APP
 
   classDef svc fill:#1a5f7a,stroke:#7fd4e8,color:#fff
-  classDef silent fill:#4a201f,stroke:#e08a80,color:#ffe8e4
   class APP,DB svc
-  class SCH silent
 ```
 
-Note what `scheduler` has and does not have: **no `healthcheck` stanza**. Compose
-cannot mark it unhealthy, so `depends_on: app: service_healthy` protects its *start*
-and nothing after that. `restart: unless-stopped` restarts it if the *process*
-exits, but the loop cannot exit — `curl … || true; curl … || true; sleep 900`
-never fails out. A scheduler wedged on an unreachable network is running, healthy by
-every signal compose has, and calling nothing.
+The driver is a timer in `app`, so `app` dying and the driver dying are the same
+event: compose restarts the container and the timer comes back with it. What
+compose still cannot see is the *item* level — a tick whose ingestion item throws
+records `ok: false` on the heartbeat and keeps going, so the container is healthy
+while a source is not. That is what `/api/v1/health` is for, and why it is the
+first command in the fix-it block above.
 
 ## 3. Startup
 
@@ -89,7 +98,7 @@ every signal compose has, and calling nothing.
 flowchart TD
   N["node src/server.js"] --> G{"import.meta.url ===<br/>file:// + argv[1] ?"}
   G -->|"no — someone imported it"| X["export createServer only.<br/>No CLI verbs, no subcommands,<br/>no migrate, no seed."]
-  G -->|"yes"| P["port = Number(LINDELA_LITE_PORT || 4177)"]
+  G -->|"yes"| P["port = listenPort(LINDELA_LITE_PORT)<br/>refused at startup if not 1–65535"]
   P --> V["createServer() reads package.json<br/>for APP_VERSION and throws if<br/>it cannot — the version is never<br/>invented"]
   V --> SP["createServer() calls getDefaultStore()<br/>eagerly, but does not await it.<br/>The promise is in flight while<br/>the socket is already open."]
   SP --> L["listen(port)"]
@@ -304,17 +313,10 @@ Three services, all `restart: unless-stopped`.
   `${LINDELA_LITE_PORT:-4177}:4177`. Its own `HEALTHCHECK` curl and one in the
   `Dockerfile` are near-duplicates; the compose one wins, and hardcodes `4177`
   rather than the port variable, so changing `LINDELA_LITE_PORT` breaks it.
-- **`scheduler`** — `depends_on: app: service_healthy`, same image, `command:
-  sh -c` overriding the image's `CMD`:
-
-```sh
-while true; do
-  curl -fsS -X POST http://app:4177/api/v1/ingest/run-due \
-    -H "x-api-key: $${LINDELA_LITE_API_KEY}" || true
-  curl -fsS -X POST http://app:4177/api/v1/report-schedules/run-due \
-    -H "x-api-key: $^{LINDELA_LITE_API_KEY}" || true
-  sleep "$${LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS:-900}"
-done
+- **`scheduler`** — **removed.** `docker-compose.yml` declares `db` and `app` and
+  nothing else. The shell loop above was retired when the in-process driver took
+  over report schedules; the block is kept only as a record of what an external
+  caller would have to do.
 ```
 
 It calls **two** endpoints, not one. Both are `POST`, both carry `|| true`, and both
@@ -355,8 +357,7 @@ With neither set, `handleApiRequest` skips the entire auth block and every route
 including `POST /api/v1/parametric/*` and the disbursement endpoints — is open to
 anything that can reach the port. This is a deliberate unauthenticated mode for
 local development. *Mitigation:* `deploy/one-click.sh` always generates
-`LINDELA_LITE_API_KEY`, and `docker-compose.yml` passes it to both `app` and
-`scheduler`. *Residual:* it is a default-closed-by-convention, not
+`LINDELA_LITE_API_KEY`, and `docker-compose.yml` passes it to `app`. *Residual:* it is a default-closed-by-convention, not
 default-closed-by-code. Bind to `127.0.0.1` for a laptop, and do not expose the port
 on a public interface without setting a key.
 
@@ -413,10 +414,11 @@ histograms — there is no client library and no pushgateway.
 | `workflow_created` | counter | `type` |
 | `workflow_transition_total` | counter | `type`, `from`, `to` |
 
-There is **no metric for the scheduler**, no metric for the service worker, and no
-metric for the store. `process_up` is a constant, not a probe. The absence of an
-ingestion metric is not evidence the scheduler is alive — the scheduler is a
-separate container that this process cannot see.
+There is **no metric for the driver**, no metric for the service worker, and no
+metric for the store. `process_up` is a constant, not a probe. Driver liveness is
+carried on `/api/v1/health` from the `system_heartbeat` row rather than as a
+Prometheus gauge, so a scraper that reads only `/metrics` cannot tell a stopped
+pipeline from an idle one.
 
 Histograms are unbounded: `values` is an array that is appended to and never
 trimmed, and `render()` recomputes buckets by iterating every stored value on every
@@ -497,11 +499,11 @@ flowchart TD
   Q0 -->|"Reports queued offline<br/>never appear"| Q4
   Q0 -->|"A fix is deployed but<br/>the screen is unchanged"| Q5
 
-  Q1 -->|"growing past 2x the scheduler<br/>interval, status stale"| A1["Scheduler is dead or stalled"]
+  Q1 -->|"growing past 2x the driver<br/>interval, status stale"| A1["The driver is dead or stalled"]
   Q1 -->|"fresh, but records unchanged"| A1b["Connectors ran and found nothing.<br/>Check source_runs[].records_processed<br/>and whether the connector is up to date."]
 
-  A1 --> F1["docker compose ps scheduler<br/>docker compose logs -f scheduler<br/>docker compose restart scheduler"]
-  A1 --> F2["If it is running: curl -fsS by hand.<br/>Both curl lines end in `|| true`, so a<br/>401 from a wrong x-api-key is swallowed<br/>every cycle and nothing is logged."]
+  A1 --> F1["GET /api/v1/health<br/>503 + old heartbeat = not ticking<br/>docker compose restart app"]
+  A1 --> F2["200 + fresh heartbeat but a stale<br/>source = the tick ran and that item<br/>failed. Read pipeline.items[].ok and<br/>grep the log for periodic_item_failed."]
 
   Q2 --> A2{"GET /api/v1/health"}
   A2 -->|"200 with counts"| A2b["The process and the store are<br/>both answering. /health reads the<br/>store, so a 200 here means the read<br/>succeeded. Check /api/v1/ready for<br/>a degraded rollup and latency."]
@@ -539,12 +541,12 @@ screen is unchanged" is almost never a deployment failure; it is
 
 | Risk | Mitigation | Residual |
 |---|---|---|
-| **Dead scheduler stops ingestion silently** | `docker compose restart scheduler`; monitor `age(last_run)` in `/api/v1/ingest/status` | No alert fires. `failure_streak` reads 0. The scheduler has no healthcheck, so compose cannot detect it. **This is the top operational risk.** |
+| **A stalled driver stops ingestion** | `GET /api/v1/health` returns 503 once the heartbeat is older than the interval; `docker compose restart app` | The check reads the heartbeat, so this is detected rather than silent. The residual risk is the *item*: one failing connector leaves the heartbeat current and the container healthy. |
 | **No tokens set = open API including writes** | `one-click.sh` always generates a key; compose passes it to both services | Default-open by code. Anyone deploying by hand without a key is unprotected. |
 | **`/metrics` open when no key is set** | Same as above | Route labels are an enumeration aid for whoever can reach the port. |
 | **Container runs as root** | — | **Unmitigated.** Needs a `USER node` plus a chown of `data/`. |
-| **Scheduler `\|\| true` swallows every error** | Curl the endpoint by hand | A wrong `LINDELA_LITE_API_KEY` produces a silent, permanently-401ing loop. Nothing is logged. |
-| **`LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` is compose-only** | — | Setting it in the app container's environment does nothing, because `src/` never reads it. |
+| **A failing driver item is not an alert** | `GET /api/v1/health`, `pipeline.items[].ok` | The tick continues past a failed item by design, so the container is healthy while a source is not. Only the log line `periodic_item_failed` and the heartbeat record it. |
+| **`LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` names the driver interval** | — | Read by `driverIntervalSeconds` (`src/server.js:409`). A value that is not a positive number falls back to 900 rather than becoming a zero-length timer. |
 | **Compose `app` healthcheck hardcodes 4177** | — | Changing `LINDELA_LITE_PORT` makes the check fail and compose marks the app unhealthy. |
 | **Histograms are unbounded** | Restart the process on a schedule | `render()` is O(values) per scrape and grows without limit. |
 | **`/health` is not a readiness probe** | Point the load balancer at `/api/v1/ready` | A store outage with a live process routes 500s to users. |
@@ -556,15 +558,17 @@ screen is unchanged" is almost never a deployment failure; it is
 
 Recorded because a reader who finds them in the code will assume a bug.
 
-- **No heartbeat, no lock, no scheduler liveness anywhere.** The only detection
-  mechanism is a human or an external monitor computing the age of `last_run`. A
-  `lindela_scheduler_last_cycle` gauge emitted by the sidecar and scraped from the
-  app would close this in about five lines; it does not exist.
-- **The scheduler has no `healthcheck` stanza**, so compose cannot mark it
-  unhealthy, and `restart: unless-stopped` cannot help because the loop cannot exit.
-- **`one-click.sh` does not verify the scheduler is calling.** It asserts
-  `/api/v1/health` once and then exits 0. A deployment where the scheduler is
-  wedged from the first minute reports success.
+- **The heartbeat has no lock.** Two processes against one store — a rolling
+  deploy, or a second container pointed at the same database — both tick and both
+  write `system_heartbeat`. The tick is idempotent per item, so the cost is
+  duplicated work rather than a wrong record, but nothing prevents it.
+- **Driver liveness is not a Prometheus gauge.** It lives on `/api/v1/health` as a
+  heartbeat age. A scraper that reads only `/metrics` sees `process_up 1` and
+  nothing about whether anything is running; a `lindela_driver_last_cycle` gauge
+  would close this in about five lines.
+- **`one-click.sh` asserts `/api/v1/health` once and exits 0.** That check does
+  read the heartbeat, so a driver that never started is caught — but a deployment
+  whose first tick fails every item still passes.
 - **`deploy/one-click.sh` re-running does not rotate secrets**, and the sed
   substitution will silently no-op if `.env.example` is ever restructured.
 - **`LINDELA_LITE_SCHEDULER_INTERVAL_SECONDS` in `.env.example` suggests it is an
@@ -582,7 +586,7 @@ Recorded because a reader who finds them in the code will assume a bug.
 
 - [frontend.md](frontend.md) — the eight surfaces, the service worker, and why the
   last triage branch is almost always the service worker
-- [ingestion.md](ingestion.md) — what the scheduler is actually asking for, and what
+- [ingestion.md](ingestion.md) — what the driver actually asks for, and what
   `run-due` does with it
 - [request-lifecycle.md](request-lifecycle.md) — where the auth gate sits on a
   request
