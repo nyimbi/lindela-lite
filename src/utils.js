@@ -223,6 +223,33 @@ export function parseLimit(raw, { fallback = DEFAULT_LIMIT, max = MAX_LIMIT } = 
   return Math.min(Math.max(Math.trunc(value), 1), max)
 }
 
+/**
+ * A bounded number from a query string, or a refusal.
+ *
+ * The same rule `parseLimit` applies, for the parameters that are not a page
+ * size. `Number(url.searchParams.get('monthsBack')) || 12` read `-5` as a real
+ * window: `computeMonthlyKpiSeries` loops `for (i = 0; i < monthsBack; i++)`,
+ * so a negative bound returns an empty series — a KPI trend that reports no
+ * months is indistinguishable from a programme with no data. `?threshold=abc`
+ * became `NaN`, every `precision < NaN` is false, and the equity breach scan
+ * reported no breaches: the parameter an operator widens to find problems
+ * widened the silence instead.
+ *
+ * Absent and blank keep `fallback`. A present value that is not a finite number
+ * is refused; a finite one is clamped into `[min, max]`.
+ */
+export function parseBoundedNumber(raw, { fallback, min = -Infinity, max = Infinity, name = 'value' } = {}) {
+  const text = raw === null || raw === undefined ? '' : String(raw).trim()
+  if (text === '') return fallback
+  const value = Number(text)
+  if (!Number.isFinite(value)) {
+    const error = new Error(`${name} must be a number; received ${JSON.stringify(String(raw))}`)
+    error.statusCode = 400
+    throw error
+  }
+  return Math.min(Math.max(value, min), max)
+}
+
 export function parseBbox(value) {
   if (!value) return null
   const parts = String(value).split(',').map((part) => Number(part.trim()))

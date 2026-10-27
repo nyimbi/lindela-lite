@@ -1288,7 +1288,20 @@ export function buildUndeliveredAlert(finding, { now = new Date().toISOString() 
 
 export function dueEscalations(data, options = {}) {
   const { now = new Date().toISOString(), env = process.env } = options
-  const nowMs = Date.parse(now)
+  // `Date.parse` reads an ISO string and returns NaN for a number, so the
+  // caller's clock has to arrive as one form or the other. The route passed
+  // `Date.now()` — a number — which made `nowMs` NaN; `nowMs < deadline` is
+  // false for every dispatch, and every unanswered page was reported as due the
+  // instant it was sent, with `elapsed_ms: null` beside it. A caller with an
+  // epoch in hand gets it read correctly rather than silently disarmed.
+  const nowMs = typeof now === 'number' ? now : Date.parse(now)
+  // `within_minutes` narrows the acknowledgement window: an operator checking
+  // escalations for a shift asks about pages whose SLA closed within it, and
+  // one with a longer SLA is not yet their problem. Absent means every closed
+  // window, which is what the route answered before this was read at all — the
+  // parameter was accepted, validated by nothing, and dropped on the floor.
+  const withinMinutes = toNumber(options.minutes)
+  const windowMs = withinMinutes !== null && withinMinutes > 0 ? withinMinutes * 60 * 1000 : null
   const dispatches = data?.rapidpro_dispatches || []
   const inbounds = (data?.rapidpro_inbound_messages || []).map((reply) => ({
     ...reply,
@@ -1322,6 +1335,10 @@ export function dueEscalations(data, options = {}) {
     const slaMinutes = ackSlaMinutes(severity, env)
     const deadline = dispatchedAt + slaMinutes * 60 * 1000
     if (nowMs < deadline) continue
+    // The window is measured from the deadline, not from the dispatch: what a
+    // shift handover asks is "which windows closed while I was on", and the
+    // deadline is when the window closed.
+    if (windowMs !== null && nowMs - deadline > windowMs) continue
 
     for (const recipient of dispatchRecipients(dispatch)) {
       const state = recipientStatus(dispatch, recipient, inbounds)

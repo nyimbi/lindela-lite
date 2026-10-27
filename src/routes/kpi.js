@@ -28,6 +28,7 @@
 import { computeQuarterlyKpi, computeMonthlyKpiSeries, refreshKpiSnapshots, quarterlyPdfSections } from '../kpi.js'
 import { renderQuarterlyReportPdf, renderQuarterlyReportMarkdown, quarterlyReportCoverage, DASHBOARD_SECTIONS } from '../pdf.js'
 import { buildExportNarrative, generateReportSections, normalizeReport, normalizeReportTemplate } from '../reports.js'
+import { parseBoundedNumber } from '../utils.js'
 
 /**
  * Which KPI route a request is, or null.
@@ -93,7 +94,15 @@ export async function handleKpiRoute(route, { store, data, req, res, url, jsonRe
   const ringRate = requestRing?.successRate()
 
   if (kind === 'monthly-series') {
-    const monthsBack = Number(url.searchParams.get('monthsBack')) || 12
+    // `Number(x) || 12` read a negative window as a real one, and
+    // `computeMonthlyKpiSeries` loops `for (i = 0; i < monthsBack; i++)`, so
+    // `?monthsBack=-5` answered with an empty series — a trend card reporting no
+    // months, which is what a programme with no data looks like. The ceiling is
+    // the same one `parseLimit` applies to a page, because this is a scan over
+    // every month's records and an unbounded window is an unbounded read.
+    const monthsBack = parseBoundedNumber(url.searchParams.get('monthsBack'), {
+      fallback: 12, min: 1, max: 120, name: 'monthsBack',
+    })
     jsonResponse(res, 200, { success: true, data: computeMonthlyKpiSeries(data, { monthsBack }) })
     return true
   }

@@ -48,7 +48,7 @@ import { actionLog, buildCreate } from '../operations.js'
 import { loadPolicy, redactPii } from '../pii.js'
 import { stampQuality } from '../quality.js'
 import { assertCategory } from '../taxonomy.js'
-import { collectionPage, readRawBody, readRequestJson, stableId } from '../utils.js'
+import { collectionPage, parseBoundedNumber, readRawBody, readRequestJson, stableId } from '../utils.js'
 import { findVisible } from '../visibility.js'
 import { DONE_OUTCOME_CODES, normalizeFieldOutcome } from '../field-outcomes.js'
 import {
@@ -469,8 +469,23 @@ export async function handleRapidProRoute(route, { store, data, req, res, url, j
 
   if (req.method === 'GET' && route.kind === 'escalations') {
     const due = dueEscalations(data, {
-      now: Date.now(),
-      minutes: url.searchParams.get('within_minutes') ? Number(url.searchParams.get('within_minutes')) : undefined,
+      // `now: Date.now()` passed an epoch where `Date.parse` expects a string,
+      // which returns NaN — and `NaN < deadline` is false for every dispatch, so
+      // every unanswered page was reported as already due, the instant it was
+      // sent. The route's own `escalatable` line said "escalations whose
+      // acknowledgement window has closed" over a list whose windows had all
+      // just opened, and each row carried `elapsed_ms: null` beside a future
+      // `deadline_at`. ISO, which is what every other caller and the default
+      // already use.
+      now: new Date().toISOString(),
+      // The parameter the contract documents and the route accepted but never
+      // passed on: `dueEscalations` read no `minutes` option, so `?within_minutes=`
+      // changed nothing. A present, unreadable value is refused rather than
+      // read as "no window", which would answer with every closed window while
+      // the caller believed it had narrowed the question.
+      minutes: parseBoundedNumber(url.searchParams.get('within_minutes'), {
+        fallback: undefined, min: 1, max: 60 * 24 * 30, name: 'within_minutes',
+      }),
     })
     jsonResponse(res, 200, {
       success: true,

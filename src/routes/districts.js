@@ -34,6 +34,7 @@
 
 import { KNOWN_DISTRICTS, districtOverview, districtSummary } from '../districts.js'
 import { createEquityAuditWorkflows, detectAccuracyBreaches, equityByDistrict } from '../equity.js'
+import { parseBoundedNumber } from '../utils.js'
 
 /**
  * Which district-or-equity route a request is, or null.
@@ -106,8 +107,14 @@ export async function handleDistrictRoute(route, { store, data, req, res, url, j
     // `Number(null)` is 0, so an absent threshold would otherwise report every
     // district with any determined dispatch as a breach. Absent stays absent and
     // the module's own default applies.
+    //
+    // A present but unreadable one is the other half. `?threshold=abc` became
+    // `NaN`, and `precision < NaN` is false for every district, so the scan
+    // reported no breaches — the parameter an operator narrows to find more
+    // problems widened the silence instead. The bounds are percentages: below 0
+    // every district breaches, above 100 none can.
     const threshold = url.searchParams.has('threshold')
-      ? Number(url.searchParams.get('threshold'))
+      ? parseBoundedNumber(url.searchParams.get('threshold'), { min: 0, max: 100, name: 'threshold' })
       : undefined
     jsonResponse(res, 200, {
       success: true,

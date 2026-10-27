@@ -132,6 +132,32 @@ describe('ARC-01 — the module handles what the dispatcher hands it', () => {
     assert.deepEqual(JSON.parse(snapRes.text()).data, [{ id: 'k1' }])
   })
 
+  it('refuses a window it cannot read rather than answering with no months', async () => {
+    // `Number(x) || 12` read `-5` as a real window, and `computeMonthlyKpiSeries`
+    // loops `for (i = 0; i < monthsBack; i++)`, so the route answered with an
+    // empty series — a trend card reporting no months, which is what a programme
+    // with no data looks like. A window is a bound, so it is clamped and a
+    // non-number is refused.
+    const months = async (search) => {
+      const res = fakeResponse()
+      await handleKpiRoute({ kind: 'monthly-series' }, {
+        store: {}, data: {}, req: req(), res,
+        url: new URL(`http://127.0.0.1/api/v1/kpi/monthly-series${search}`),
+        jsonResponse, requestRing: null,
+      })
+      return JSON.parse(res.text()).data.length
+    }
+    assert.equal(await months(''), 12, 'an absent window did not take the default')
+    assert.equal(await months('?monthsBack=-5'), 1, 'a negative window was honoured as a real one')
+    assert.equal(await months('?monthsBack=0'), 1, 'a zero window was honoured as a real one')
+    assert.equal(await months('?monthsBack=9999'), 120, 'the window is unbounded')
+    await assert.rejects(
+      () => months('?monthsBack=abc'),
+      (error) => error.statusCode === 400 && /monthsBack must be a number/.test(error.message),
+      'an unreadable window was accepted',
+    )
+  })
+
   it('returns false for a kind it does not own, rather than answering something', async () => {
     // The dispatcher reads `false` as "not mine, keep going". A handler that
     // answered a 200 for an unknown kind would swallow the route table.

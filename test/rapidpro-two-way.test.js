@@ -150,6 +150,43 @@ describe('acknowledgement SLA', () => {
   })
 })
 
+describe('escalation windows', () => {
+  const env = { RAPIDPRO_ESCALATION_URNS: '+254700000090' }
+  // Dispatched one minute ago, SLA 30 min for `high`: the window is open.
+  const fresh = () => data([dispatch({ created_at: '2026-10-01T08:59:00.000Z' })])
+  // Dispatched two hours ago: the 30-minute window closed 90 minutes ago.
+  const old = () => data([dispatch({ created_at: '2026-10-01T07:00:00.000Z' })])
+
+  it('reads an epoch clock rather than only an ISO string', () => {
+    // The route passed `Date.now()` — a number — into `Date.parse`, which
+    // returns NaN for one. `NaN < deadline` is false for every dispatch, so
+    // every unanswered page was reported due the instant it was sent, with
+    // `elapsed_ms: null` beside a future `deadline_at`.
+    const now = Date.parse('2026-10-01T09:00:00.000Z')
+    assert.equal(dueEscalations(fresh(), { now: '2026-10-01T09:00:00.000Z', env }).length, 0,
+      'an ISO clock already reported a fresh page as due')
+    assert.equal(dueEscalations(fresh(), { now, env }).length, 0,
+      'an epoch clock reported a page whose SLA had not closed as already due')
+    assert.equal(dueEscalations(old(), { now, env }).length, 1,
+      'an epoch clock hid a page whose SLA had closed')
+  })
+
+  it('narrows to the windows that closed inside the requested minutes', () => {
+    // The parameter the contract documents and the route accepted but never
+    // passed on, so `?within_minutes=` changed nothing.
+    const now = '2026-10-01T09:00:00.000Z'
+    // Closed at 07:30; an hour and a half ago.
+    assert.equal(dueEscalations(old(), { now, env }).length, 1, 'the closed window was not due at all')
+    assert.equal(dueEscalations(old(), { now, env, minutes: 120 }).length, 1,
+      'a window that closed inside 120 minutes was excluded')
+    assert.equal(dueEscalations(old(), { now, env, minutes: 30 }).length, 0,
+      'a window that closed 90 minutes ago was included in a 30-minute window')
+    // A negative or unreadable value means "no narrowing", not "no results".
+    assert.equal(dueEscalations(old(), { now, env, minutes: -1 }).length, 1)
+    assert.equal(dueEscalations(old(), { now, env, minutes: 'abc' }).length, 1)
+  })
+})
+
 describe('reply correlation', () => {
   const dispatches = [dispatch()]
 

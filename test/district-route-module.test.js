@@ -125,6 +125,22 @@ describe('ENH-60 — the equity figures travel with the sample behind them', () 
     assert.equal(zero.res.json().data.length, 0,
       'a threshold of zero was not honoured, so the parameter was read as absent')
   })
+  it('refuses a threshold it cannot read rather than reporting no breaches', async () => {
+    // `?threshold=abc` became `NaN`, and `precision < NaN` is false for every
+    // district, so the scan answered `[]` — the parameter an operator narrows to
+    // find more problems widened the silence instead. A threshold is a
+    // percentage, so a value outside 0–100 is clamped rather than refused.
+    const alerts = Array.from({ length: 6 }, (_, i) => alert('Turkana', { id: `Turkana-a${i}`, false_alert: i < 5 }))
+    const data = { alert_events: alerts, rapidpro_dispatches: alerts.map((a) => dispatch(a.id)) }
+    await assert.rejects(
+      () => call({ kind: 'equity-breaches' }, { data, search: '?threshold=abc' }),
+      (error) => error.statusCode === 400 && /threshold must be a number/.test(error.message),
+      'an unreadable threshold was accepted, so every district compared false against NaN',
+    )
+    const clamped = await call({ kind: 'equity-breaches' }, { data, search: '?threshold=-5' })
+    assert.deepEqual(clamped.res.json().data, [],
+      'a threshold below zero is every district breaching; it was not clamped')
+  })
 })
 
 describe('ENH-60 — the scan reports what it created, and creating nothing is an answer', () => {

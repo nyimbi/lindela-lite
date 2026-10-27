@@ -288,6 +288,51 @@ describe('ARC-01 — a reply is correlated by sender, not by a payload field', (
   })
 })
 
+describe('ARC-01 — the escalations route reads the clock and the window it is given', () => {
+  const ago = (minutes) => new Date(Date.now() - minutes * 60 * 1000).toISOString()
+  const page = (over = {}) => dispatch({ recipients: { urns: ['tel:+254700000001'], contacts: [], groups: [] }, ...over })
+
+  it('does not report a page as due the instant it was sent', async () => {
+    // The route passed `Date.now()` — a number — into `Date.parse`, which
+    // returns NaN for one. `NaN < deadline` is false for every dispatch, so
+    // every unanswered page was reported due immediately, with `elapsed_ms:
+    // null` beside a `deadline_at` in the future, and `escalatable` claiming
+    // the acknowledgement window had closed.
+    const store = recordingStore({ rapidpro_dispatches: [page({ created_at: ago(0) })] })
+    const { res } = await call({ kind: 'escalations' }, { store })
+    assert.equal(res.status, 200)
+    assert.equal(res.json().due, 0,
+      'a page sent seconds ago was reported as an escalation; its SLA has not closed')
+  })
+
+  it('reports a page whose window has closed', async () => {
+    // The control: without this the test above passes against a route that
+    // never reports anything.
+    const store = recordingStore({ rapidpro_dispatches: [page({ created_at: ago(120) })] })
+    const { res } = await call({ kind: 'escalations' }, { store })
+    assert.equal(res.json().due, 1, 'a page two hours past its 30-minute SLA was not due')
+    assert.ok(Number.isFinite(res.json().data[0].elapsed_ms), 'the elapsed time was not computed')
+  })
+
+  it('narrows to the windows that closed inside the requested minutes', async () => {
+    const store = recordingStore({ rapidpro_dispatches: [page({ created_at: ago(120) })] })
+    const wide = await call({ kind: 'escalations' }, { store, search: '?within_minutes=120' })
+    assert.equal(wide.res.json().due, 1, 'a window that closed inside 120 minutes was excluded')
+    const narrow = await call({ kind: 'escalations' }, { store, search: '?within_minutes=30' })
+    assert.equal(narrow.res.json().due, 0,
+      'a window that closed 90 minutes ago was included in a 30-minute window')
+  })
+
+  it('refuses a window it cannot read rather than answering with every closed window', async () => {
+    const store = recordingStore({ rapidpro_dispatches: [page({ created_at: ago(120) })] })
+    await assert.rejects(
+      () => call({ kind: 'escalations' }, { store, search: '?within_minutes=abc' }),
+      (error) => error.statusCode === 400 && /within_minutes must be a number/.test(error.message),
+      'an unreadable window was read as no window, answering a wider question than the caller asked',
+    )
+  })
+})
+
 describe('ARC-01 — a correlated DONE writes the inbound and the outcome in one merge', () => {
   it('records the field outcome beside the inbound, in the same merge', async () => {
     const store = recordingStore({
