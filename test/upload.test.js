@@ -523,3 +523,39 @@ describe('a dry run says what would happen and changes nothing', () => {
 		})
 	})
 })
+describe('a numeric column the file states but cannot be read is a row error', () => {
+  // `capacity` and `population_served` were converted only when the conversion
+  // succeeded, so an unreadable value was left in the record as the raw text and
+  // the import reported success. Every later reader then had to defend against a
+  // string in a numeric field, and the operator who could fix the file was told
+  // nothing. `value` and `fatalities` were already refused; these two were not.
+  const csv = (capacity, served) => `name,latitude,longitude,capacity,population_served\nClinic,-1.5,36.2,${capacity},${served}`
+
+  it('refuses a capacity that is not a number', () => {
+    const report = validateUpload(csv('12 beds', '500'), { collection: 'service_assets' })
+    assert.equal(report.ok, false, 'the file did not land')
+    assert.equal(report.rows.length, 0)
+    const error = report.errors.find((e) => e.column === 'capacity')
+    assert.ok(error, `expected a capacity error, got ${JSON.stringify(report.errors)}`)
+    assert.match(error.message, /zero or more/u)
+  })
+
+  it('refuses a negative population served', () => {
+    const report = validateUpload(csv('12', '-5'), { collection: 'service_assets' })
+    assert.equal(report.ok, false)
+    assert.ok(report.errors.some((e) => e.column === 'population_served'))
+  })
+
+  it('still converts a readable number and keeps a real zero', () => {
+    const report = validateUpload(csv('12', '0'), { collection: 'service_assets' })
+    assert.equal(report.ok, true, `unexpected errors: ${JSON.stringify(report.errors)}`)
+    assert.equal(report.rows[0].capacity, 12)
+    assert.equal(report.rows[0].population_served, 0, 'a facility serving nobody is a real answer')
+  })
+
+  it('leaves a blank column absent rather than zero', () => {
+    const report = validateUpload('name,latitude,longitude,capacity\nClinic,-1.5,36.2,', { collection: 'service_assets' })
+    assert.equal(report.ok, true)
+    assert.notEqual(report.rows[0].capacity, 0, 'a blank is not a measured zero')
+  })
+})

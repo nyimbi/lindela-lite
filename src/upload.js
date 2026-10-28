@@ -260,11 +260,25 @@ export function validateUpload(csvText, { collection: collectionId, existingIds 
     }
 
     if (definition.id === 'hazard_events' && record.severity) record.severity = normalizeSeverity(record.severity)
+    // A numeric column the file states but this cannot read is a row error, the
+    // same as `value` and `fatalities` above. It used to be skipped: the row was
+    // admitted with the raw text in a numeric field and the import reported
+    // success, so `capacity: '12 beds'` landed as a string. Every reader of the
+    // field then has to defend against it, and the operator who could fix the
+    // file is the one told nothing.
     for (const numeric of ['capacity', 'population_served']) {
       if (record[numeric] !== undefined && record[numeric] !== '') {
         const n = Number(record[numeric])
-        if (Number.isFinite(n)) record[numeric] = n
+        if (!Number.isFinite(n) || n < 0) {
+          rowErrors.push({ row: rowNumber, column: numeric, value: record[numeric], message: `'${numeric}' must be zero or more.` })
+        } else {
+          record[numeric] = n
+        }
       }
+    }
+    if (rowErrors.length) {
+      errors.push(...rowErrors)
+      continue
     }
     rows.push(record)
   }

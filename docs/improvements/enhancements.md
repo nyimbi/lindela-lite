@@ -596,7 +596,7 @@ users can get their own data in.
 
 **What actually shipped, against the proposal above.** `src/upload.js`,
 `GET /api/v1/upload` (the contract) and `POST /api/v1/upload` (the import),
-`test/upload.test.js` (52 tests). Three deviations from the proposal, each with a
+`test/upload.test.js` (56 tests). Three deviations from the proposal, each with a
 reason:
 
 - **It buffers rather than streaming to disk.** `readRawBody` already caps the
