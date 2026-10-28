@@ -1,5 +1,6 @@
 import { BLOCKED_SOURCE_IDS, INGESTION_SCHEDULE_STATUSES, SOURCE_IDS } from './schema.js'
 import { nowIso, stableId, toNumber, canonicalHash } from './utils.js'
+import { numericOrNull } from './analytics/numeric.js'
 import { metrics } from './observability.js'
 import { openMeteoConnector } from './connectors/open-meteo.js'
 import { gdacsConnector } from './connectors/gdacs.js'
@@ -743,7 +744,15 @@ const TRAILING_RUN_WINDOW = 12
 
 function trailingCountsFor(runs) {
   return runs.slice(0, TRAILING_RUN_WINDOW).map((run) => ({
-    records_processed: Number(run?.records_processed ?? 0),
+    // `numericOrNull`, not `Number(... ?? 0)`. A run row whose count was never
+    // recorded arrived as `''` or `undefined` and became 0, which joined the
+    // baseline as a genuine zero-record run — the median the count assertion
+    // divides by. `trailingCounts` downstream already refuses that coercion, but
+    // this is what it is handed, so the refusal never saw the blank: the 0 was
+    // minted here, one layer above the fix. A run with no recorded count is now
+    // `null`, which `trailingCounts` reads as "not a number" and drops, leaving
+    // the window it was meant to judge intact.
+    records_processed: numericOrNull(run?.records_processed),
     // The ground the count was measured over, when the connector states one. A
     // count is only comparable to a count taken over the same ground: a resumed
     // gdacs_archive walk re-reads one quarter where the run before it read a

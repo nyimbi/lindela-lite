@@ -131,6 +131,33 @@ describe('the count assertion runs in production (R-42)', () => {
     assert.equal(run.assertions_failed, 1)
   })
 
+  it('does not let a run with no recorded count become the baseline', async () => {
+    // Five healthy runs of 40, then seven whose count the store round-tripped
+    // without one. `trailingCountsFor` coerced each blank to `0` and
+    // `trailingCounts` read the resulting row as "one prior record", so the
+    // trailing median was 1 and a 40 -> 4 collapse -- the exact truncation this
+    // assertion exists to catch -- passed as healthy. A run that recorded no
+    // count is not a one-record run; it is a row that says nothing.
+    const store = await freshStore()
+    const row = (id, records) => ({
+      id, source: 'gdacs', status: 'success', run_type: 'manual',
+      started_at: '2026-09-01T00:00:00.000Z', completed_at: '2026-09-01T00:05:00.000Z',
+      records_processed: records,
+    })
+    const seeded = []
+    for (let i = 0; i < 5; i += 1) seeded.push(row(`good-${i}`, 40))
+    for (let i = 0; i < 7; i += 1) seeded.push(row(`blank-${i}`, null))
+    await store.merge({ source_runs: seeded })
+
+    await runIngestion(store, { sources: ['gdacs'] }, { connectors: connectors(gdacs(4)) })
+    const run = (await store.read()).source_runs.find((r) => !/^(good|blank)-/.test(r.id))
+    const report = run.assertion_report
+    assert.equal(report.trailing.median, 40,
+      `the baseline is the runs that recorded a count, not the ones that did not: ${JSON.stringify(report.trailing)}`)
+    assert.equal(report.ok, false, 'a 90% collapse must still trip with unrecorded runs in the window')
+    assert.equal(run.status, 'degraded')
+  })
+
   it('records the trailing baseline it was judged against, and what was unmeasured', async () => {
     const store = await freshStore()
     await runIngestion(store, { sources: ['gdacs'] }, { connectors: connectors(gdacs(40)) })

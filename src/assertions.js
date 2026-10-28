@@ -1414,6 +1414,25 @@ function checkMonotonicDates(assertion, { batch, unmeasured }) {
  * flat list of records read as one previous run. Returns one count per run,
  * which is what the comparison is actually about.
  */
+/**
+ * Fields that mark an object as a *run row* rather than a record.
+ *
+ * The distinction decides what an unrecorded count means. A run row with no
+ * readable `records_processed` is a run whose count was never written: it has no
+ * count, so it contributes nothing to the baseline. A bare record carries no
+ * count either, but it *is* one prior run's worth of data, so it counts once.
+ *
+ * Conflating them is not cosmetic. `trailingCountsFor` in `src/ingestion.js`
+ * emits `{ records_processed: null, windows: 1 }` for a run row the store
+ * round-tripped without a count; read as "one record", twelve such rows gave a
+ * trailing median of 1, and a 40 → 4 collapse — the GDACS truncation this
+ * assertion exists to catch — passed as healthy.
+ */
+const RUN_ROW_KEYS = [
+  'source', 'status', 'run_type', 'started_at', 'completed_at',
+  'records_by_collection', 'windows', 'schedule_id', 'completeness', 'diagnostics',
+]
+
 export function trailingCounts(trailingRecords) {
   const window = Array.isArray(trailingRecords) ? trailingRecords : []
   return window
@@ -1430,6 +1449,11 @@ export function trailingCounts(trailingRecords) {
         const stated = numericOrNull(entry.records_processed ?? entry.count)
         if (stated !== null) return stated
         if (Array.isArray(entry.records)) return entry.records.length
+        // A run row whose count was never recorded has no count. It is not a
+        // one-record run: it is a row that says nothing about how many records
+        // that run produced, and counting it as one pulls the median toward
+        // zero over a history of unrecorded runs.
+        if (RUN_ROW_KEYS.some((key) => Object.hasOwn(entry, key))) return NaN
         // Anything else object-shaped is a record from one previous run, so it
         // counts once. Returning NaN here instead would silently drop the whole
         // window and leave the count assertion permanently unmeasured.

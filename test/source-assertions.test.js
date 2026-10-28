@@ -420,6 +420,26 @@ describe('the GDACS cap: 4,000 of 40,000 is not a clean run', () => {
     assert.deepEqual(trailingCounts([{ records_processed: '40' }]), [40])
   })
 
+  it('drops a run row that recorded no count instead of counting it as one', () => {
+    // A run row is not a record. `trailingCountsFor` emits `records_processed:
+    // null` for a run the store never gave a count, and the one-record default
+    // meant for a bare record read each of those as a one-record run: twelve of
+    // them put the trailing median at 1, so a 40 -> 4 collapse passed. The
+    // row's other fields are what tell the two shapes apart.
+    const runRow = (records) => ({
+      source: 'gdacs', status: 'success', run_type: 'manual',
+      started_at: '2026-09-01T00:00:00.000Z', completed_at: '2026-09-01T00:05:00.000Z',
+      records_processed: records,
+    })
+    assert.deepEqual(trailingCounts([runRow(null), runRow(null)]), [],
+      'an unrecorded run contributes no count')
+    assert.deepEqual(trailingCounts([runRow(40), runRow(null), runRow(40)]), [40, 40],
+      'the runs that recorded a count still set the baseline')
+    // The control that keeps the one-record default alive: a bare record has
+    // none of the run row's fields, so it is still one prior run.
+    assert.deepEqual(trailingCounts([{ id: 'a' }, { id: 'b' }]), [1, 1])
+  })
+
   it('uses the lower median, so one backfill among daily runs does not become the norm', () => {
     const records = Array.from({ length: 20 }, (_, index) => archiveEvent(index))
     const withBackfill = runAssertions({ source: 'gdacs_archive', records, trailingRecords: [40, 40, 40, 40_000], options: { now: NOW } })
