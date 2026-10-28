@@ -4,7 +4,7 @@ import { computeFacilitiesAtRisk, computePopulationAtRisk } from '../src/analyti
 import { districtOverview } from '../src/districts.js'
 import { detectDispatchPrecisionBreaches, equityByDistrict } from '../src/equity.js'
 import { responseMetrics } from '../src/rapidpro.js'
-import { computeDataQuality } from '../src/analytics.js'
+import { calibrationReport, computeDataQuality } from '../src/analytics.js'
 
 // Turkana centre. 0.1 degrees of latitude is about 11 km, so the offsets below
 // are comfortably inside or outside the 25 km impact radius without depending
@@ -521,5 +521,59 @@ describe('source data quality reports a confidence it can support', () => {
     assert.equal(openMeteo.confidence_count, 1, 'one modelled row, two raw ones')
     assert.equal(openMeteo.confidence_sum, 0.82, 'the sum is over that same row')
     assert.equal(openMeteo.mean_confidence, 0.82)
+  })
+})
+
+describe('the calibration summary averages each quantity over the records that carry it', () => {
+  // The same defect as the source-quality mean above, one function over. The
+  // three totals shared one divisor, `item.count`, so a record with no score
+  // joined the average as a zero: two 80s and one unmeasured record reported a
+  // mean of 53, and the honesty envelope repeated that figure as the value it
+  // stood behind.
+  const scores = [
+    { type: 'flood', score: 80, confidence: 0.9, interval_width: 20 },
+    { type: 'flood', score: 80, confidence: 0.9, interval_width: 20 },
+    { type: 'flood', score: null, confidence: null, interval_width: null },
+  ]
+
+  it('reports the mean over the records that have a value', () => {
+    const flood = calibrationReport({ risk_scores: scores }).find((row) => row.type === 'flood')
+    assert.equal(flood.count, 3, 'the record still counts toward coverage')
+    assert.equal(flood.mean_score, 80, 'two measured 80s, not two 80s and a zero')
+    assert.equal(flood.mean_confidence, 0.9)
+    assert.equal(flood.mean_interval_width, 20)
+  })
+
+  it('publishes the divisor each mean was taken over', () => {
+    // Without it the mean is unreadable: 80 over two records and 80 over three
+    // are different statements and the payload has to tell them apart.
+    const flood = calibrationReport({ risk_scores: scores }).find((row) => row.type === 'flood')
+    assert.equal(flood.scored_count, 2)
+    assert.equal(flood.confident_count, 2)
+    assert.equal(flood.interval_count, 2)
+  })
+
+  it('keeps the honesty envelope in step with the mean it describes', () => {
+    const flood = calibrationReport({ risk_scores: scores }).find((row) => row.type === 'flood')
+    assert.equal(flood.honesty.value, flood.mean_score,
+      'the value the envelope stands behind is the one printed beside it')
+    assert.match(flood.honesty.evidence.basis, /over 2 scored/u)
+  })
+
+  it('reports null rather than zero when no record carries the quantity', () => {
+    const flood = calibrationReport({ risk_scores: [{ type: 'flood', score: null }] })
+      .find((row) => row.type === 'flood')
+    assert.equal(flood.mean_score, null, 'no mean is not a mean of zero')
+    assert.equal(flood.mean_confidence, null)
+    assert.equal(flood.honesty.value, null)
+  })
+
+  it('still reads a genuine zero as a measurement', () => {
+    const flood = calibrationReport({
+      risk_scores: [{ type: 'flood', score: 0, confidence: 0, interval_width: 0 }],
+    }).find((row) => row.type === 'flood')
+    assert.equal(flood.mean_score, 0)
+    assert.equal(flood.mean_confidence, 0)
+    assert.equal(flood.scored_count, 1, 'zero is a value and counts toward the divisor')
   })
 })

@@ -1471,24 +1471,42 @@ export function calibrationReport(data) {
         total_score: 0,
         total_confidence: 0,
         total_interval_width: 0,
+        // A separate divisor per quantity, because the three do not always
+        // arrive together. A record can carry a score and no model confidence,
+        // and averaging its absence in as a zero reported a confident model as
+        // a mediocre one — the same defect `computeDataQuality` fixed one
+        // function down, where the mean is now taken over the rows that carry
+        // the value and the count is published beside it.
+        scored_count: 0,
+        confident_count: 0,
+        interval_count: 0,
       })
     }
     const item = byType.get(type)
     item.count += 1
-    item.total_score += score.score || 0
-    item.total_confidence += score.confidence || 0
-    item.total_interval_width += score.interval_width || 0
+    const value = numericOrNull(score.score)
+    const confidence = numericOrNull(score.confidence)
+    const intervalWidth = numericOrNull(score.interval_width)
+    if (value !== null) { item.total_score += value; item.scored_count += 1 }
+    if (confidence !== null) { item.total_confidence += confidence; item.confident_count += 1 }
+    if (intervalWidth !== null) { item.total_interval_width += intervalWidth; item.interval_count += 1 }
   }
 
   return [...byType.values()].map((item) => ({
     type: item.type,
     count: item.count,
-    mean_score: item.count > 0 ? Math.round(item.total_score / item.count) : 0,
+    // Each mean is over the records that carry that quantity, and each carries
+    // its own count so a reader can tell 0.8 over four records from 0.8 over
+    // one. A mean of nothing is null, not zero.
+    mean_score: item.scored_count > 0 ? Math.round(item.total_score / item.scored_count) : null,
+    scored_count: item.scored_count,
     // Record confidence and interval width are 0-1 and 0-100 respectively;
     // rounding a 0-1 mean to an integer left it able to hold only 0 or 1.
-    mean_confidence: mean2dp(item.total_confidence, item.count),
-    mean_confidence_pct: asPct(mean2dp(item.total_confidence, item.count)),
-    mean_interval_width: mean2dp(item.total_interval_width, item.count),
+    mean_confidence: mean2dp(item.total_confidence, item.confident_count),
+    mean_confidence_pct: asPct(mean2dp(item.total_confidence, item.confident_count)),
+    confident_count: item.confident_count,
+    mean_interval_width: mean2dp(item.total_interval_width, item.interval_count),
+    interval_count: item.interval_count,
     brier_score: null,
     uncertainty: uncertaintyTiers({
       coverage: [
@@ -1498,10 +1516,13 @@ export function calibrationReport(data) {
       ],
     }),
     honesty: honestyEnvelope('calibration_summary', {
-      value: item.count > 0 ? Math.round(item.total_score / item.count) : 0,
+      // The same divisor the printed mean uses. These were both `item.count`,
+      // so the envelope's `value` disagreed with the `mean_score` beside it on
+      // any type holding a record with no score.
+      value: item.scored_count > 0 ? Math.round(item.total_score / item.scored_count) : null,
       basis: {
-        description: `arithmetic mean over ${item.count} stored ${item.type} record(s)`,
-        sample: { records_averaged: item.count, record_type: item.type },
+        description: `arithmetic mean over ${item.scored_count} scored ${item.type} record(s) of ${item.count} stored`,
+        sample: { records_averaged: item.scored_count, records_stored: item.count, record_type: item.type },
       },
       notIncluded: [
         'any comparison against observed outcomes; brier_score stays null because nothing joins these records to what happened',
