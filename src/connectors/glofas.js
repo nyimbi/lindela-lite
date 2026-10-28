@@ -1,6 +1,6 @@
 import { fetchWithRetry } from './http.js'
 import { stableId } from '../utils.js'
-import { defineConnector } from './spec.js'
+import { defineConnector, readFeedDate } from './spec.js'
 
 const FEEDS = [
   'https://global-flood.emergency.copernicus.eu/rss.xml',
@@ -9,6 +9,7 @@ const FEEDS = [
 async function glofasIngest(options = {}) {
     const hazard_events = []
     const errors = []
+    let undated = 0
     const feeds = options.glofas_feeds?.length ? options.glofas_feeds : FEEDS
 
     for (const feed of feeds) {
@@ -30,6 +31,11 @@ async function glofasIngest(options = {}) {
           const title = readTag(match[1], 'title') || 'GloFAS flood forecast update'
           const link = readTag(match[1], 'link') || feed
           const description = readTag(match[1], 'description')
+          // Same two failures as `gdacs`: an unreadable date threw out of the
+          // feed's try and took every later item with it, and an absent one
+          // stamped the forecast with the current time.
+          const occurredAt = readFeedDate(readTag(match[1], 'pubDate'))
+          if (occurredAt === null) { undated += 1; continue }
           hazard_events.push({
             id: stableId('hazard', ['glofas', link, title]),
             source: 'glofas',
@@ -45,7 +51,7 @@ async function glofasIngest(options = {}) {
             severity: null,
             title,
             description,
-            occurred_at: readTag(match[1], 'pubDate') ? new Date(readTag(match[1], 'pubDate')).toISOString() : new Date().toISOString(),
+            occurred_at: occurredAt,
             source_url: link,
             country: null,
             latitude: null,
@@ -64,6 +70,10 @@ async function glofasIngest(options = {}) {
       } catch (error) {
         errors.push(`${feed}: ${error.message}`)
       }
+    }
+
+    if (undated > 0) {
+      errors.push(`glofas: ${undated} item(s) carried no readable pubDate and were dropped; the feed dates every item, so the feed shape has changed.`)
     }
 
     return { hazard_events, errors }

@@ -1,7 +1,7 @@
 import { fetchWithRetry } from './http.js'
 import { normalizeSeverity } from '../schema.js'
 import { stableId, toNumber } from '../utils.js'
-import { defineConnector, readNamespacedTag } from './spec.js'
+import { defineConnector, readFeedDate, readNamespacedTag } from './spec.js'
 
 // GDACS serves one combined feed. The per-hazard URLs (rss_floods.xml,
 // rss_droughts.xml, rss_tropicalcyclones.xml) now return an HTML admin page
@@ -21,10 +21,18 @@ async function gdacsIngest(options = {}) {
     const errors = []
     const feeds = options.gdacs_feeds?.length ? options.gdacs_feeds : FEEDS
 
+    let undated = 0
+
     for (const feed of feeds) {
       try {
         const xml = await fetchWithRetry(feed, { timeoutMs: options.timeout_ms || 20000, retries: options.retries ?? 2, source: options.source })
         for (const item of parseRssItems(xml)) {
+          // Counted and skipped, not thrown. The loop is inside the feed's try,
+          // so a `RangeError` from one bad `pubDate` used to discard every item
+          // after it and report the feed as unreadable — and an empty date took
+          // the other branch and stamped the alert with the current time.
+          const occurredAt = readFeedDate(item.pubDate)
+          if (occurredAt === null) { undated += 1; continue }
           const parsed = parseGdacsItem(item)
           hazard_events.push({
             id: stableId('hazard', ['gdacs', parsed.source_id || item.link || item.title]),
@@ -34,7 +42,7 @@ async function gdacsIngest(options = {}) {
             severity: parsed.severity,
             title: item.title || 'GDACS alert',
             description: stripTags(item.description || ''),
-            occurred_at: item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString(),
+            occurred_at: occurredAt,
             source_url: item.link || feed,
             country: parsed.country,
             latitude: parsed.latitude,
@@ -57,6 +65,15 @@ async function gdacsIngest(options = {}) {
       } catch (error) {
         errors.push(`${feed}: ${error.message}`)
       }
+    }
+
+    // An undated item is an alert the feed published and this run did not
+    // carry. Stated rather than swallowed: an operator comparing the feed's
+    // item count against what arrived needs the difference to be a number, and
+    // GDACS fills `pubDate` on every item, so a gap means the feed changed
+    // shape.
+    if (undated > 0) {
+      errors.push(`gdacs: ${undated} item(s) carried no readable pubDate and were dropped; GDACS fills that element, so the feed shape has changed.`)
     }
 
     return { hazard_events, errors }

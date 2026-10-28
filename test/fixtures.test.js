@@ -367,6 +367,7 @@ describe('public source connector fixtures', () => {
     // 27.8E, in Chad. A point there plots a French event in the Sahel and feeds
     // risk scoring and road-access matching a confidently wrong location.
     const regional = '<item><title>Green flood alert in France</title>'
+      + '<pubDate>Mon, 18 May 2026 00:00:00 GMT</pubDate>'
       + '<gdacs:eventtype>FL</gdacs:eventtype><gdacs:alertlevel>green</gdacs:alertlevel>'
       + '<gdacs:bbox>-0.29 7.71 39.93 47.93</gdacs:bbox><gdacs:country>France</gdacs:country></item>';
     globalThis.fetch = async () => ({
@@ -386,6 +387,7 @@ describe('public source connector fixtures', () => {
 
   it('keeps the bbox centre when the box is a local footprint', async () => {
     const local = '<item><title>Flash flood</title>'
+      + '<pubDate>Mon, 18 May 2026 00:00:00 GMT</pubDate>'
       + '<gdacs:eventtype>FL</gdacs:eventtype><gdacs:alertlevel>orange</gdacs:alertlevel>'
       + '<gdacs:bbox>35.4 3.0 35.8 3.3</gdacs:bbox><gdacs:country>KE</gdacs:country></item>';
     globalThis.fetch = async () => ({
@@ -441,6 +443,103 @@ describe('public source connector fixtures', () => {
     assert.equal(result.hazard_events.length, 0)
     assert.equal(result.errors.length, 1)
     assert.match(result.errors[0], /usgs_earthquake/)
+  })
+
+  it('drops an undated quake rather than stamping it with the fetch time', async () => {
+    // `new Date().toISOString()` for an unreadable `time` put the quake at the
+    // top of every "most recent" query and inside every freshness window — a
+    // record the source could not date reading as the newest thing on the map.
+    const feature = (time) => JSON.stringify({
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        id: 'us7000abcd',
+        properties: { mag: 5.8, place: 'Somewhere', time, tsunami: 0 },
+        geometry: { type: 'Point', coordinates: [35.6, 3.1, 10] },
+      }],
+    })
+    for (const time of [undefined, null, '', 'abc']) {
+      globalThis.fetch = async () => new Response(feature(time), { status: 200, headers: { 'content-type': 'application/geo+json' } })
+      const result = await usgsEarthquakeConnector.ingest({ usgs_feed: 'https://fixture.test/usgs.json', retries: 0 })
+      assert.equal(result.hazard_events.length, 0, `time ${JSON.stringify(time)} must not be dated`)
+      assert.match(result.errors.join(' '), /no readable origin time/)
+    }
+    globalThis.fetch = async () => new Response(feature(1793140000000), { status: 200, headers: { 'content-type': 'application/geo+json' } })
+    const dated = await usgsEarthquakeConnector.ingest({ usgs_feed: 'https://fixture.test/usgs.json', retries: 0 })
+    assert.equal(dated.hazard_events[0].occurred_at, '2026-10-27T22:26:40.000Z')
+    assert.equal(dated.errors.length, 0)
+  })
+
+  it('drops a quake whose magnitude it cannot read rather than calling it M0.0', async () => {
+    // `toNumber(props.mag, 0)` graded a null, a blank and `'abc'` as M0.0 low —
+    // a detection published as a measured microquake, inside the [-2, 10]
+    // assertion so nothing flagged it.
+    const feature = (mag) => JSON.stringify({
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        id: 'us7000abcd',
+        properties: { mag, place: 'Somewhere', time: 1793140000000, tsunami: 0 },
+        geometry: { type: 'Point', coordinates: [35.6, 3.1, 10] },
+      }],
+    })
+    for (const mag of [null, '', '  ', 'abc', undefined]) {
+      globalThis.fetch = async () => new Response(feature(mag), { status: 200, headers: { 'content-type': 'application/geo+json' } })
+      const result = await usgsEarthquakeConnector.ingest({ usgs_feed: 'https://fixture.test/usgs.json', retries: 0 })
+      assert.equal(result.hazard_events.length, 0, `mag ${JSON.stringify(mag)} must not be graded`)
+      assert.match(result.errors.join(' '), /no readable magnitude/)
+    }
+    // A genuine small quake is still a measurement.
+    globalThis.fetch = async () => new Response(feature(0.4), { status: 200, headers: { 'content-type': 'application/geo+json' } })
+    const real = await usgsEarthquakeConnector.ingest({ usgs_feed: 'https://fixture.test/usgs.json', retries: 0 })
+    assert.equal(real.hazard_events[0].metadata.magnitude, 0.4)
+    assert.equal(real.hazard_events[0].severity, 'low')
+  })
+})
+
+describe('an RSS item with no readable date is dropped, not dated now, and does not take the feed with it', () => {
+  // `new Date(pubDate).toISOString()` throws `RangeError: Invalid time value`
+  // from inside the item loop, which sits inside the *feed's* try — so one bad
+  // date discarded every item after it and reported the feed as unreadable. An
+  // absent date took the other branch and stamped the item with `new Date()`.
+  const rss = (dates) => '<?xml version="1.0"?><rss><channel>'
+    + dates.map((d, i) => `<item><title>Flood ${i}</title><link>https://fixture.test/${i}</link><pubDate>${d}</pubDate><description>d</description></item>`).join('')
+    + '</channel></rss>'
+  const serve = (dates) => {
+    globalThis.fetch = async () => new Response(rss(dates), { status: 200, headers: { 'content-type': 'application/xml' } })
+  }
+  const DATES = ['Mon, 18 May 2026 00:00:00 GMT', 'Tue, 19 May 2026 00:00:00 GMT', 'Wed, 20 May 2026 00:00:00 GMT']
+
+  it('keeps every item after a bad date in the GDACS feed', async () => {
+    serve([DATES[0], 'not-a-date', DATES[1], DATES[2]])
+    const result = await gdacsConnector.ingest({ gdacs_feeds: ['https://fixture.test/gdacs.xml'], retries: 0 })
+    assert.equal(result.hazard_events.length, 3, 'the three dated items survive')
+    assert.deepEqual(
+      result.hazard_events.map((event) => event.occurred_at),
+      ['2026-05-18T00:00:00.000Z', '2026-05-19T00:00:00.000Z', '2026-05-20T00:00:00.000Z'],
+    )
+    assert.match(result.errors.join(' '), /1 item\(s\) carried no readable pubDate/)
+  })
+
+  it('keeps every item after a bad date in the GloFAS feed', async () => {
+    serve([DATES[0], 'not-a-date', DATES[1], DATES[2]])
+    const result = await glofasConnector.ingest({ glofas_feeds: ['https://fixture.test/glofas.xml'], retries: 0 })
+    assert.equal(result.hazard_events.length, 3)
+    assert.match(result.errors.join(' '), /1 item\(s\) carried no readable pubDate/)
+  })
+
+  it('does not stamp an undated item with the current time', async () => {
+    const before = Date.now()
+    serve([DATES[0], ''])
+    const result = await gdacsConnector.ingest({ gdacs_feeds: ['https://fixture.test/gdacs.xml'], retries: 0 })
+    assert.equal(result.hazard_events.length, 1)
+    for (const event of result.hazard_events) {
+      assert.ok(
+        Date.parse(event.occurred_at) < before,
+        `${event.occurred_at} must not be the fetch time`,
+      )
+    }
+    assert.match(result.errors.join(' '), /carried no readable pubDate/)
   })
 })
 

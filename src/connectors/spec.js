@@ -15,6 +15,28 @@ export function readNamespacedTag(xml, localName) {
   return match ? match[1].trim() : ''
 }
 
+/**
+ * An RSS `pubDate` as an ISO instant, or null when there is no readable one.
+ *
+ * Two failures collapsed into one value. `new Date('not-a-date').toISOString()`
+ * throws `RangeError: Invalid time value` from inside the item loop, and the
+ * loop sits inside the *feed's* try — so one unreadable date discarded every
+ * item after it in that feed and reported the feed itself as unreadable. An
+ * absent date took the other branch and stamped the item with `new Date()`,
+ * putting an undated alert at the top of every "most recent" query and inside
+ * every freshness window.
+ *
+ * Null is the answer to both, and the caller drops and counts the item: a
+ * hazard with no date cannot be aged, ordered, or windowed, and `occurred_at`
+ * is a required field, so keeping it with a null would quarantine the whole
+ * batch over one row.
+ */
+export function readFeedDate(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
 export function defineConnector(input) {
   const errors = validateConnectorInput(input)
   if (errors.length) {

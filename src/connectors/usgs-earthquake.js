@@ -14,6 +14,8 @@ const FEEDS = {
 async function usgsEarthquakeIngest(options = {}) {
   const hazard_events = []
   const errors = []
+  let unmagnituded = 0
+  let undated = 0
   const window = options.usgs_window || 'day'
   const feed = options.usgs_feed || FEEDS[window] || FEEDS.day
 
@@ -34,8 +36,18 @@ async function usgsEarthquakeIngest(options = {}) {
       const latitude = toNumber(coords[1])
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue
 
-      const magnitude = toNumber(props.mag, 0)
+      // A magnitude the feed could not state is not a magnitude of zero.
+      // `toNumber(props.mag, 0)` turned a null, a blank and `'abc'` into M0.0,
+      // which `magnitudeToSeverity` graded `low` and the title announced as
+      // "M0.0 earthquake" — a detection the source reported, published as a
+      // measured microquake, and inside the `value_range` assertion's [-2, 10]
+      // so nothing flagged it. The record is dropped instead: magnitude is the
+      // one field a `2.5_day` feed filters on, and a quake without one cannot
+      // be graded or ranked.
+      const magnitude = toNumber(props.mag)
+      if (magnitude === null) { unmagnituded += 1; continue }
       const occurredAt = toNumber(props.time)
+      if (occurredAt === null) { undated += 1; continue }
       const felt = toNumber(props.felt)
       const cdi = toNumber(props.cdi)
       const tsunami = toNumber(props.tsunami, 0) === 1
@@ -49,9 +61,11 @@ async function usgsEarthquakeIngest(options = {}) {
         severity: normalizeSeverity(magnitudeToSeverity(magnitude)),
         title: props.title?.trim() || `M${magnitude.toFixed(1)} earthquake`,
         description: props.title?.trim() || 'USGS earthquake event',
-        occurred_at: Number.isFinite(occurredAt)
-          ? new Date(occurredAt).toISOString()
-          : new Date().toISOString(),
+        // A quake with no readable origin time was stamped with the moment it
+        // was fetched, which put it at the top of every "recent" query and
+        // inside every freshness window — the same shape D21 fixed in FIRMS.
+        // Dropped and counted instead; `occurred_at` is required.
+        occurred_at: new Date(occurredAt).toISOString(),
         source_url: props.url || 'https://earthquake.usgs.gov/',
         country: null,
         latitude,
@@ -74,6 +88,17 @@ async function usgsEarthquakeIngest(options = {}) {
     }
   } catch (error) {
     errors.push(`usgs_earthquake: ${error.message}`)
+  }
+
+  // Dropped features are counted, not swallowed: a feed whose `mag` or `time`
+  // column stopped arriving would otherwise return a smaller batch that looks
+  // exactly like a quiet day, and the `min_count_vs_trailing` assertion is
+  // deliberately loose enough (ratio 0.2) that it would not catch it either.
+  if (unmagnituded > 0) {
+    errors.push(`usgs_earthquake: ${unmagnituded} feature(s) carried no readable magnitude and were dropped; every USGS feature has one, so the feed shape has changed.`)
+  }
+  if (undated > 0) {
+    errors.push(`usgs_earthquake: ${undated} feature(s) carried no readable origin time and were dropped; every USGS feature has one, so the feed shape has changed.`)
   }
 
   return { hazard_events, errors }
