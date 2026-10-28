@@ -273,8 +273,65 @@ describe('dhis2 connector', () => {
     }
   })
 
-  it('periodToDate derives the documented anchors', () => {
-    assert.equal(periodToDate('20261008'), '2026-10-08')
+  it('leaves a blank data value absent rather than reading it as zero', async () => {
+    // `Number('')` is 0 and `Number.isFinite(0)` is true, so a data value DHIS2
+    // writes blank — the shape an aggregate export leaves for a facility that
+    // did not report — arrived as a measured zero millimetres. Downstream that
+    // is a dry day, which lowers a flood score and earns climate confidence for
+    // a reading nobody made.
+    const stub = stubFetch(() => jsonResponse({
+      dataValues: [
+        { dataElement: 'DE_RAINFALL', orgUnit: 'OU_DIST1', period: '202610', value: '' },
+        { dataElement: 'DE_RAINFALL_ZERO', orgUnit: 'OU_DIST1', period: '202610', value: '0' },
+      ],
+    }))
+    try {
+      await withEnv(ENABLED, async () => {
+        const out = await dhis2Connector.ingest({
+          base_url: 'https://hmis.example.org',
+          period: '202610',
+          mappings: {
+            DE_RAINFALL: { kind: 'climate', indicator: 'rainfall_mm', unit: 'mm', district: 'turkana' },
+            DE_RAINFALL_ZERO: { kind: 'climate', indicator: 'rainfall_mm', unit: 'mm', district: 'turkana' },
+          },
+        })
+        // Records keep the dataValues order, so index 0 is the blank and index
+        // 1 the stated zero. The id is a hash and does not carry the element.
+        assert.equal(out.climate_observations.length, 2)
+        assert.equal(out.climate_observations[0].value, null, 'a blank data value is not a measurement')
+        assert.equal(out.climate_observations[1].value, 0, 'a stated zero is a measurement and stays one')
+      })
+    } finally {
+      stub.restore()
+    }
+  })
+
+  it('refuses an attendance pair with a blank headcount instead of recording zero present', async () => {
+    const stub = stubFetch(() => jsonResponse({
+      dataValues: [
+        { dataElement: 'DE_ENROLLED', orgUnit: 'OU_SCHOOL1', period: '2026Q3', value: '400' },
+        { dataElement: 'DE_PRESENT', orgUnit: 'OU_SCHOOL1', period: '2026Q3', value: '' },
+      ],
+    }))
+    try {
+      await withEnv(ENABLED, async () => {
+        const out = await dhis2Connector.ingest({
+          base_url: 'https://hmis.example.org',
+          mappings: {
+            pair: { kind: 'school_attendance', enrolled_from: 'DE_ENROLLED', present_from: 'DE_PRESENT', school_id: 'school_x' },
+          },
+        })
+        assert.equal(out.school_attendance_observations.length, 0,
+          'a school with a blank present count was published as a school where nobody came')
+        assert.ok(out.errors.some((e) => /no readable present/.test(e) && /did not report/.test(e)),
+          `expected the blank to be named, got: ${out.errors.join('; ')}`)
+      })
+    } finally {
+      stub.restore()
+    }
+  })
+
+  it('periodToDate derives the documented anchors', () => {    assert.equal(periodToDate('20261008'), '2026-10-08')
     assert.equal(periodToDate('2026Q3'), '2026-09-30')
     assert.equal(periodToDate('202610'), '2026-10-01')
     assert.equal(periodToDate('2026'), null)

@@ -1,6 +1,7 @@
 import { assertConnectorUrl } from '../webhooks.js'
 import { stableId } from '../utils.js'
 import { normalizeSchoolAttendance } from '../field-signals.js'
+import { numericOrNull } from '../analytics/numeric.js'
 import { defineConnector } from './spec.js'
 
 /**
@@ -202,13 +203,20 @@ async function dhis2Ingest(request = {}) {
       continue
     }
     const observedAt = periodToDate(row.period)
-    const value = Number(row.value)
+    // `numericOrNull`, not `Number` then a finiteness test. `Number('')` is 0,
+    // so a DHIS2 data value the instance left blank — the shape an aggregate
+    // export writes for a facility that did not report — arrived as a measured
+    // zero millimetres. Every reader downstream then treats it as a dry day
+    // rather than a missing one, which lowers a flood score and earns climate
+    // confidence for a reading nobody made. `Number.isFinite` cannot see this:
+    // zero is finite, and that is the whole defect.
+    const value = numericOrNull(row.value)
     climate_observations.push({
       id: stableId('climate', ['dhis2', row.dataElement, row.orgUnit, row.period]),
       source: 'dhis2',
       type: 'dhis2_data_element',
       indicator: mapping.indicator || 'dhis2_data_element',
-      value: Number.isFinite(value) ? value : null,
+      value,
       unit: mapping.unit || '',
       observed_at: observedAt || String(row.period),
       period: row.period,
@@ -241,10 +249,20 @@ async function dhis2Ingest(request = {}) {
         )
         continue
       }
-      const enrolled = Number(enrolledRaw)
-      const present = Number(presentRaw)
-      if (!Number.isFinite(enrolled) || !Number.isFinite(present)) {
-        errors.push(`dhis2: attendance pair '${key}' for ${triple} carried a non-numeric value; skipped.`)
+      // `numericOrNull`, not `Number`. A blank `value` in the dataValueSet is
+      // what DHIS2 writes for a facility that did not report that element, and
+      // `Number('')` is 0 — so a school that reported enrolment and no
+      // attendance count was recorded as 400 enrolled, 0 present, 0%. The
+      // `Number.isFinite` check below passed, because zero is finite.
+      const enrolled = numericOrNull(enrolledRaw)
+      const present = numericOrNull(presentRaw)
+      if (enrolled === null || present === null) {
+        const which = enrolled === null ? 'enrolled' : 'present'
+        errors.push(
+          `dhis2: attendance pair '${key}' for ${triple} carried no readable ${which} `
+          + `(got ${JSON.stringify(which === 'enrolled' ? enrolledRaw : presentRaw)}); skipped. `
+          + 'A blank data value is a facility that did not report, not a headcount of zero.',
+        )
         continue
       }
       if (!(enrolled > 0)) {
