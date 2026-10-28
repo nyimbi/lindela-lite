@@ -102,7 +102,14 @@ export async function handleFormsRoute(route, { store, data, req, res, url, json
   if (kind === 'form') {
     const requested = url.searchParams.get('version')
     const forms = activeForms(data)
-    const form = requested === null
+    // A blank `?version=` is the same absence as omitting it, which is what an
+    // HTML form with an unselected version sends. `Number('')` is 0, so it
+    // resolved to no version and answered 404 — "chw_symptom_report has no
+    // version ; this deployment holds 1" — for a request that named nothing.
+    // A *stated* version that cannot be read is still a 404 that names it,
+    // because the deployment genuinely does not hold it.
+    const blank = requested === null || requested.trim() === ''
+    const form = blank
       ? latestForm(forms, route.id)
       : formFor(forms, route.id, Number(requested))
     if (!form) {

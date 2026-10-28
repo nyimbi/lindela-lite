@@ -150,6 +150,17 @@ describe('ENH-60 — a version the deployment does not hold is a 404, not a fall
     assert.equal(res.status, 404)
     assert.match(res.json().error, /no form with id nope/)
   })
+
+  it('serves the newest version when the parameter is present but blank', async () => {
+    // `Number('')` is 0, so `?version=` — what an HTML form with no version
+    // selected sends — resolved to no version and answered
+    // "chw_symptom_report has no version ; this deployment holds 1". The
+    // request named nothing, so the default applies; a stated version the
+    // deployment does not hold is still a 404, which the case above covers.
+    const { res } = await call({ kind: 'form', id: builtin.id }, { search: '?version=' })
+    assert.equal(res.status, 200)
+    assert.equal(res.json().data.version, builtin.version)
+  })
 })
 
 describe('ENH-60 — activeForms is this family’s read', () => {
