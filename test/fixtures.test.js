@@ -188,6 +188,41 @@ describe('public source connector fixtures', () => {
     assert.match(result.errors[0], /1 detection\(s\) carried no acq_date/)
   })
 
+  it('keeps an unreadable FIRMS FRP unmeasured rather than publishing it as 0 MW', async () => {
+    // `toNumber(row.frp, 0)` graded a blank, a whitespace cell and `'abc'` as
+    // 0, which the severity ladder read as `low` and the title announced as
+    // "(0 MW FRP)" — an unmeasured detection published as a measured faint one.
+    // The detection itself is real, so it is kept with a null FRP.
+    const header = 'latitude,longitude,brightness,frp,acq_date,acq_time,satellite,confidence\n'
+    const read = async (frp) => {
+      globalThis.fetch = async () => ({
+        ok: true,
+        status: 200,
+        headers: new Map([['content-type', 'text/csv']]),
+        text: async () => header + ['3.1', '35.6', '320', frp, '2026-10-26', '0412', 'N', 'VIIRS'].join(',') + '\n',
+        json: async () => ({}),
+      })
+      const result = await nasaFirmsConnector.ingest({
+        nasa_firms_key: 'k', retries: 0,
+        firms_bboxes: [{ name: 'x', bbox: '33,-5,52,15', country: 'KE' }],
+      })
+      return result.hazard_events[0]
+    }
+    for (const blank of ['', '  ', 'abc']) {
+      const event = await read(blank)
+      assert.equal(event.metadata.frp, null, `FRP ${JSON.stringify(blank)} was read as a measurement`)
+      assert.equal(event.severity, null, 'an unmeasured FRP must not be graded')
+      assert.doesNotMatch(event.title, /0 MW/)
+    }
+    // A genuine 0 MW detection is a real reading and still grades low.
+    const zero = await read('0')
+    assert.equal(zero.metadata.frp, 0)
+    assert.equal(zero.severity, 'low')
+    assert.match(zero.title, /0 MW FRP/)
+    const strong = await read('120')
+    assert.equal(strong.severity, 'high')
+  })
+
   it('marks FIRMS as requiring credentials in the source catalog', async () => {
     // The catalog is what an operator reads to decide what needs configuring.
     const { publicSourceCatalog } = await import('../src/schema.js')

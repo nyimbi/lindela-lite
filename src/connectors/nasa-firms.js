@@ -1,5 +1,6 @@
 import { fetchWithRetry } from './http.js'
 import { normalizeSeverity } from '../schema.js'
+import { numericOrNull } from '../analytics/numeric.js'
 import { parseCsv, stableId, toNumber } from '../utils.js'
 
 const AREA_CSV = 'https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key}/VIIRS_SNPP_NRT/{bbox}/{days}'
@@ -61,14 +62,23 @@ export const nasaFirmsConnector = {
           // detection is *for*, so an undated row is dropped the same way a row
           // with unreadable coordinates is, rather than given one.
           if (!row.acq_date) { undated += 1; continue }
-          const frp = toNumber(row.frp, 0)
+          // A blank FRP is not a 0 MW fire. `toNumber(row.frp, 0)` graded a
+          // blank, a whitespace cell and `'abc'` as 0, which the severity ladder
+          // reads as `low` and the title announces as "(0 MW FRP)" — an
+          // unmeasured detection published as a measured faint one. The record
+          // is kept because the detection is real (position, date and satellite
+          // are all present and the coordinate assertion checks them), with
+          // `frp: null` and an ungraded severity. `severityWeight(null)` is
+          // below every measured level, so it contributes less rather than
+          // standing in for a reading.
+          const frp = numericOrNull(row.frp)
           hazard_events.push({
             id: stableId('hazard', ['nasa_firms', row.latitude, row.longitude, row.acq_date, row.acq_time, row.satellite]),
             source: 'nasa_firms',
             source_id: `${row.satellite || 'viirs'}:${row.acq_date}:${row.acq_time}:${lat}:${lon}`,
             event_type: 'fire',
-            severity: normalizeSeverity(frp > 100 ? 'high' : frp > 25 ? 'medium' : 'low'),
-            title: `Active fire detection (${frp || 0} MW FRP)`,
+            severity: frp === null ? null : normalizeSeverity(frp > 100 ? 'high' : frp > 25 ? 'medium' : 'low'),
+            title: frp === null ? 'Active fire detection (FRP not reported)' : `Active fire detection (${frp} MW FRP)`,
             description: `VIIRS active fire detection from NASA FIRMS.`,
             occurred_at: `${row.acq_date}T${String(row.acq_time || '0000').padStart(4, '0').slice(0, 2)}:${String(row.acq_time || '0000').padStart(4, '0').slice(2, 4)}:00Z`,
             source_url: 'https://firms.modaps.eosdis.nasa.gov/',
