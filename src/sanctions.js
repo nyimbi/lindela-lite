@@ -2,7 +2,28 @@ import { fetchWithRetry } from './connectors/http.js'
 
 const SDN_CSV = 'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV'
 
-const DEFAULT_TTL_MS = Number(process.env.OFAC_SDN_CACHE_TTL_MS || 24 * 60 * 60 * 1000)
+const SDN_DEFAULT_TTL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * How long a fetched SDN list is kept, from `OFAC_SDN_CACHE_TTL_MS`.
+ *
+ * `Number(env || 24h)` read a *nonsense* setting as `NaN`, and `Date.now() -
+ * loadedAt < NaN` is false, so the cache was never used: every screening
+ * downloaded the whole SDN export again. A disbursement loop screens one
+ * recipient at a time, so a typo in an env file turned into one ~10 MB fetch
+ * per recipient against a service nobody here controls. The failure is silent
+ * because nothing about it is wrong-looking — screening still works, only
+ * slower, and only under load.
+ *
+ * A non-positive or unreadable setting is the default, the same direction
+ * `queryBudgetLimits` falls: a nonsense value must not become "never cache".
+ */
+export function sdnCacheTtlMs(env = process.env) {
+  const raw = env.OFAC_SDN_CACHE_TTL_MS
+  if (raw === undefined || raw === null || String(raw).trim() === '') return SDN_DEFAULT_TTL_MS
+  const stated = Number(raw)
+  return Number.isFinite(stated) && stated > 0 ? stated : SDN_DEFAULT_TTL_MS
+}
 
 /**
  * Minimal OFAC SDN name matcher.
@@ -19,7 +40,7 @@ let cache = null
  * Returns the parsed SDN entries, fetching on first use and caching for TTL.
  */
 export async function loadSdnList(options = {}) {
-  if (cache && Date.now() - cache.loadedAt < (options.ttlMs ?? DEFAULT_TTL_MS)) {
+  if (cache && Date.now() - cache.loadedAt < (options.ttlMs ?? sdnCacheTtlMs())) {
     return cache
   }
   const text = await fetchWithRetry(SDN_CSV, {
@@ -33,23 +54,61 @@ export async function loadSdnList(options = {}) {
 /**
  * Parses the OFAC SDN legacy CSV export.
  * Columns: ent_num, SDN_Name, SDN_Type, Program, ... , Country, ..., Remarks
- * SDN_Name may contain commas inside a quoted field, so it is matched with a
- * regex rather than split(',') to avoid truncating names like
- * "ANGLO-CARIBBEAN CO., LTD.".
+ * SDN_Name may contain commas inside a quoted field, so the first three fields
+ * are read by a quote-aware scan rather than `split(',')`.
+ *
+ * The scan is written out because the regex that used to be here,
+ * `/^(\d+),((?:"[^"]*"|[^,])*),([^,]*),/`, *looked* quote-aware and was not.
+ * Its `((?:"[^"]*"|[^,])*)` can match a partial quoted run, so on a line with
+ * no trailing comma to satisfy the tail the engine backtracked out of the quote
+ * and matched `"ANGLO-CARIBBEAN CO.` as the name — dropping `, LTD.` from a
+ * person's or company's name with no error. A name is what this module matches
+ * on, so a truncated one is a screening that misses the entity it exists to
+ * find, and the SDN list is exactly the list whose names carry commas.
  */
 export function parseSdnCsv(text) {
   const entries = []
   for (const line of String(text).split('\n')) {
     if (!line.trim()) continue
-    const match = line.match(/^(\d+),((?:"[^"]*"|[^,])*),([^,]*),/)
-    if (!match) continue
+    const fields = readCsvFields(line, 3)
+    if (fields.length < 3 || !/^\d+$/.test(fields[0])) continue
     entries.push({
-      id: match[1],
-      name: match[2].replace(/^"|"$/g, '').replace(/""/g, '"').trim(),
-      type: match[3].trim().replace(/^"|"$/g, ''),
+      id: fields[0],
+      name: fields[1].trim(),
+      type: fields[2].trim(),
     })
   }
   return entries
+}
+
+/**
+ * The first `limit` comma-separated fields of one CSV line, unquoted.
+ *
+ * A doubled quote inside a quoted field is one literal quote. Stops once it has
+ * enough fields, so the remark column — which is free text and may hold an
+ * unbalanced quote — cannot affect the three fields read here.
+ */
+function readCsvFields(line, limit) {
+  const fields = []
+  let field = ''
+  let quoted = false
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i]
+    if (quoted) {
+      if (char === '"' && line[i + 1] === '"') { field += '"'; i += 1 } else if (char === '"') quoted = false
+      else field += char
+    } else if (char === '"') {
+      quoted = true
+    } else if (char === ',') {
+      fields.push(field)
+      field = ''
+      if (fields.length === limit) return fields
+    } else {
+      field += char
+    }
+  }
+  fields.push(field)
+  return fields
 }
 
 /**
