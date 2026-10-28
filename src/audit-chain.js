@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { logger } from './observability.js'
+import { numericOrNull } from './analytics/numeric.js'
 import { stableId } from './utils.js'
 
 /**
@@ -164,9 +165,38 @@ export function chainStateFrom(entries) {
  * chain in two, which is the one failure mode a chain cannot report on itself.
  */
 export function resolveChainHead(logEntries = [], state = null) {
-  const ordered = [...logEntries].sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0))
+  // `numericOrNull`, not `Number(x || 0)`. A last entry whose `seq` was never
+  // written arrived as `''` and read as 0 — a real sequence number — and one
+  // whose `seq` was unreadable returned `NaN`, which the comparator treats as
+  // "no swap", leaving the junk entry last and making it the head. `chainEntry`
+  // then computed `head.seq + 1`, and on a string head that is `"abc1"`: the
+  // chain silently acquired a head nothing can order or verify.
+  const seqOf = (entry) => numericOrNull(entry?.seq)
+  const ordered = [...logEntries].sort((a, b) => {
+    const left = seqOf(a)
+    const right = seqOf(b)
+    // An entry with no readable sequence goes last, so it is never mistaken for
+    // the head by accident of sort stability. Its own `missing_seq` defect is
+    // reported by the verifier; this function's job is only to not build on it.
+    if (left === null && right === null) return 0
+    if (left === null) return 1
+    if (right === null) return -1
+    return left - right
+  })
   if (!ordered.length) return { seq: 0, hash: GENESIS_HASH }
   const last = ordered[ordered.length - 1]
+  const lastSeq = seqOf(last)
+  // A log with entries and no readable head has no head. Returning genesis here
+  // would say "this new entry is the first one" about a log that already holds
+  // entries, and the next append would carry `prev_hash` of 64 zeros over a
+  // history it does not start. The chain cannot be extended from a position
+  // nothing can name, so the append is refused instead.
+  if (lastSeq === null) {
+    throw Object.assign(
+      new Error(`the audit log's last entry (${last?.id ?? 'no id'}) carries no readable seq; the chain cannot be extended from it`),
+      { statusCode: 409 },
+    )
+  }
   if (state && state.seq === last.seq && state.hash === last.entry_hash
     && computeEntryHash(last, last.prev_hash) === last.entry_hash) {
     return { seq: state.seq, hash: state.hash }

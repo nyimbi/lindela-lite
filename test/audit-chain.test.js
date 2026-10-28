@@ -107,6 +107,33 @@ describe('audit chain — construction', () => {
     const edited = [...entries.slice(0, 2), { ...entries[2], actor: 'someone_else' }]
     assert.notDeepEqual(resolveChainHead(edited, cached), cached)
   })
+
+  it('refuses to extend a log whose last entry has no readable seq', () => {
+    // `Number(a.seq || 0)` read a blank seq as 0 — a real sequence number — and
+    // an unreadable one as NaN, which the comparator treats as "no swap", so the
+    // junk entry stayed last and became the head. `chainEntry` then computed
+    // `head.seq + 1`; on a string head that is `"abc1"`, and the chain acquired
+    // a head nothing can order or verify. Returning genesis instead would be the
+    // same defect with a friendlier face: it says "this new entry is the first"
+    // about a log that already holds entries.
+    const junk = [
+      { id: 'e1', seq: 1, prev_hash: '0'.repeat(64), entry_hash: 'a'.repeat(64) },
+      { id: 'e2', seq: 'abc', prev_hash: 'a'.repeat(64), entry_hash: 'b'.repeat(64) },
+    ]
+    assert.throws(
+      () => resolveChainHead(junk),
+      (err) => err.statusCode === 409 && /no readable seq/u.test(err.message),
+    )
+    assert.throws(() => resolveChainHead([
+      { id: 'e1', seq: 1, entry_hash: 'a'.repeat(64) },
+      { id: 'e9', seq: '', entry_hash: 'b'.repeat(64) },
+    ]), (err) => err.statusCode === 409)
+
+    // The controls: an empty log is genuinely the genesis case, and a healthy
+    // log still resolves.
+    assert.deepEqual(resolveChainHead([]), chainGenesis())
+    assert.equal(resolveChainHead(build(2)).seq, 2)
+  })
 })
 
 describe('audit chain — verification', () => {

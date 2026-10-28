@@ -2514,7 +2514,7 @@ entry conflates "no file named after the module" with "no behavioural test",
 which is wrong for most of the list:
 
 - Six of the ten have a dedicated behavioural suite under a feature name:
-  `audit-chain` → `test/audit-chain.test.js` (28 tests), `observability` →
+  `audit-chain` → `test/audit-chain.test.js`, `observability` →
   `observability-substrate.test.js` + `observability-bounds.test.js`,
   `route-manifests` → `test/route-manifests.test.js`, `narrator` →
   `test/report-narrator.test.js`, `bitemporal` → `test/bitemporal-history.test.js`.
