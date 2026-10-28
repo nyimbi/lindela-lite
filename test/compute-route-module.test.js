@@ -155,6 +155,25 @@ describe('ENH-60 — flood-depth refuses a typo rather than answering 0 m', () =
     assert.match(res.json().error, /out of range/)
   })
 
+  it('refuses a grid_size that is not a number instead of answering a NaN grid', async () => {
+    // `Number('abc')` is NaN and `clamp(Math.floor(NaN), 2, 256)` is NaN —
+    // every comparison against it is false — so the response carried
+    // `size: NaN` with zero cells and `coverage_pct: 0`. A caller reading
+    // that sees a dry area rather than a rejected parameter. A blank was the
+    // other half: `Number('')` is 0, clamped silently to a 2x2 grid.
+    const box = 'south=3.0&west=35.5&north=3.2&east=35.7&level_m=520'
+    for (const bad of ['abc', '8px', 'NaN']) {
+      const { res } = await call({ kind: 'flood-depth' }, { search: `?${box}&grid_size=${bad}` })
+      assert.equal(res.status, 400, `grid_size=${bad} was accepted`)
+      assert.match(res.json().error, /grid_size must be a number/)
+    }
+    const blank = await call({ kind: 'flood-depth' }, { search: `?${box}&grid_size=` })
+    assert.equal(blank.res.status, 200, 'a blank grid_size must take the default, not be refused')
+    assert.equal(blank.res.json().data.size, 32, 'a blank grid_size was read as zero')
+    const clamped = await call({ kind: 'flood-depth' }, { search: `?${box}&grid_size=9999` })
+    assert.equal(clamped.res.json().data.size, 256, 'a huge grid_size was not clamped')
+  })
+
   it('bands every published depth and carries the cut points beside it', async () => {
     const { res } = await call({ kind: 'flood-depth' }, { search: '?lat=3.1&lon=35.6&level_m=520' })
     // Terrain may or may not cover this point in a test environment; either way

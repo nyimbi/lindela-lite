@@ -61,7 +61,7 @@ import { planPrepositioning } from '../prepositioning.js'
 import { compareScenarios } from '../scenario-compare.js'
 import { actorFor } from '../audit-chain.js'
 import { emit } from '../outbox.js'
-import { readRequestJson } from '../utils.js'
+import { parseBoundedNumber, readRequestJson } from '../utils.js'
 
 /**
  * Which compute route a request is, or null.
@@ -235,8 +235,23 @@ async function handleFloodDepth(url, res, jsonResponse) {
     ? url.searchParams.getAll('level_m')
     : (url.searchParams.get('levels_m') || url.searchParams.get('level_m') || '')
   const levels = parseLevels(rawLevels)
-  const rawGridSize = url.searchParams.get('grid_size')
-  const gridSize = rawGridSize === null || rawGridSize.trim() === '' ? 32 : Number(rawGridSize)
+  // `Number('abc')` is NaN, and `clamp(Math.floor(NaN), 2, 256)` is NaN because
+  // every comparison against it is false — so `?grid_size=abc` produced a grid
+  // whose own `size` field read NaN, with zero cells and `coverage_pct: 0`.
+  // A caller reading that sees a dry area rather than a rejected parameter.
+  // A blank was the other half: `Number('')` is 0, clamped silently to 2 — a
+  // 2x2 grid answering a question nobody asked.
+  let gridSize
+  try {
+    gridSize = parseBoundedNumber(url.searchParams.get('grid_size'), {
+      fallback: 32, min: 2, max: 256, name: 'grid_size',
+    })
+  } catch (error) {
+    // Answered here rather than left to the dispatcher, so every parameter
+    // refusal on this route comes out of the same place and in the same shape.
+    jsonResponse(res, 400, { success: false, error: error.message })
+    return true
+  }
 
   const hasPoint = Number.isFinite(lat) && Number.isFinite(lon)
   const boxParams = ['south', 'west', 'north', 'east'].map((key) => {

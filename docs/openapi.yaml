@@ -1788,8 +1788,12 @@ paths:
           schema: { type: number, minimum: -500, maximum: 9000 }
         - name: grid_size
           in: query
-          description: Cells per axis of the returned depth grid.
-          schema: { type: integer, minimum: 4, maximum: 256, default: 64 }
+          description: >-
+            Cells per axis of the returned depth grid. A value that is not a
+            number is a 400; blank takes the default. The bounds are the ones
+            the depth grid clamps to, so the spec does not promise a grid the
+            reader will not build.
+          schema: { type: integer, minimum: 2, maximum: 256, default: 32 }
       responses:
         '200':
           description: Depth grid with per-level coverage, extent polygons, and model limits
