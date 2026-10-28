@@ -31,7 +31,7 @@ import { fieldActionLatency, outcomeCounts } from '../field-outcomes.js'
 import { summarizeDiseaseObservations } from '../connectors/who-gho.js'
 import { actionLog } from '../operations.js'
 import { emit } from '../outbox.js'
-import { collectionPage, matchedAndPage, readCoordinate, readRequestJson, stableId } from '../utils.js'
+import { collectionPage, matchedAndPage, parseBoundedNumber, readCoordinate, readRequestJson, stableId } from '../utils.js'
 import { numericOrNull } from '../analytics/numeric.js'
 
 /**
@@ -269,9 +269,17 @@ export async function handleFieldSignalRoute(route, { store, data, req, res, url
       return true
     }
     const sensorType = url.searchParams.get('sensor_type')
-    const above = url.searchParams.get('above')
+    // `Number('abc')` is NaN, and `Number(row.value) > NaN` is false for every
+    // row, so `?above=abc` reported **0 breaches** — the parameter a cold-chain
+    // rule narrows on answered "nothing breached" for a typo, and 0 is the
+    // reassuring answer. `?above=` was the other half: `Number('')` is 0, so
+    // every reading breached. The same reader `?threshold` uses in
+    // `routes/districts.js` refuses the first and treats the blank as absent.
+    const above = url.searchParams.has('above')
+      ? parseBoundedNumber(url.searchParams.get('above'), { fallback: null, name: 'above' })
+      : null
     const summary = sensorType
-      ? latestSensorReadings(data, { sensorType, above: above === null ? null : Number(above) })
+      ? latestSensorReadings(data, { sensorType, above })
       : null
     jsonResponse(res, 200, {
       success: true,

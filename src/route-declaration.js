@@ -1557,7 +1557,12 @@ export const ROUTE_DECLARATION = Object.freeze([
           in: query
           required: false
           schema: { type: number }
-          description: With sensor_type, counts only readings above this value.
+          description: >-
+            With sensor_type, counts only readings above this value. A value
+            that is not a number is a 400; blank is the same as absent.
+            Number of "abc" is NaN and "value > NaN" is false for every row, so
+            an unreadable threshold used to report zero breaches — the
+            reassuring answer — while a blank one made every reading breach.
       responses:
         '200':
           description: Success

@@ -1467,7 +1467,7 @@ route then touches one file, and "nine live routes went undocumented" cannot rec
 > failure one entry over, and it recurred because the fix was written into ENH-60's
 > entry rather than into the shape of the register: a dated paragraph records what
 > was true when it was written, and a *verdict* is a separate claim that has to be
-> restated when it changes. What shipped is `src/route-declaration.js` (5,805 lines,
+> restated when it changes. What shipped is `src/route-declaration.js` (5,810 lines,
 > one `(METHOD, path)`-keyed entry per operation), `scripts/generate-openapi.mjs`
 > and `scripts/generate-route-manifests.mjs` emitting `docs/openapi.yaml` and
 > `src/route-manifests.js` from it, and two registered gates —

@@ -165,6 +165,45 @@ describe('ARC-01 — the map layer refuses a coordinate it cannot trust', () => 
   })
 })
 
+describe('the iot summary refuses an unreadable breach threshold instead of answering zero', () => {
+  // `Number('abc')` is NaN and `Number(row.value) > NaN` is false for every
+  // row, so `?above=abc` reported 0 breaches — the parameter a cold-chain rule
+  // narrows on answered "nothing breached" for a typo, and 0 is the reassuring
+  // answer. `?above=` was the other half: `Number('')` is 0, so every reading
+  // breached.
+  const data = {
+    iot_observations: [
+      { id: 'i1', sensor_id: 's1', sensor_type: 'cold_chain', value: 3, observed_at: '2026-01-01T00:00:00Z' },
+      { id: 'i2', sensor_id: 's2', sensor_type: 'cold_chain', value: 12, observed_at: '2026-01-01T00:00:00Z' },
+    ],
+  }
+
+  it('counts breaches above a readable threshold', async () => {
+    const { res } = await call({ kind: 'iot-list' }, { data, search: '?sensor_type=cold_chain&above=8' })
+    assert.equal(res.json().summary.breaches, 1)
+  })
+
+  it('throws a 400 for a threshold that is not a number', async () => {
+    for (const bad of ['abc', 'eight', '8C', 'NaN']) {
+      await assert.rejects(
+        () => call({ kind: 'iot-list' }, { data, search: `?sensor_type=cold_chain&above=${bad}` }),
+        (error) => error.statusCode === 400 && /above must be a number/.test(error.message),
+        `above=${bad} was read as a threshold`,
+      )
+    }
+  })
+
+  it('treats a blank threshold as absent rather than as zero', async () => {
+    const { res } = await call({ kind: 'iot-list' }, { data, search: '?sensor_type=cold_chain&above=' })
+    assert.equal(res.json().summary.breaches, null, 'a blank threshold counted every reading as a breach')
+  })
+
+  it('leaves the threshold absent when it is not supplied', async () => {
+    const { res } = await call({ kind: 'iot-list' }, { data, search: '?sensor_type=cold_chain' })
+    assert.equal(res.json().summary.breaches, null)
+  })
+})
+
 describe('ARC-01 — the module answers, or declines, without inventing a response', () => {
   it('returns false for a kind it does not own', async () => {
     const { handled, res } = await call({ kind: 'not-a-field-signal' }, {})
