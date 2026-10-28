@@ -209,6 +209,31 @@ export const MAX_LIMIT = 5000
  * raised limit is a request the server is entitled to decline), and a value
  * that is not a number is refused.
  */
+/**
+ * A date bound from a query string, or a refusal.
+ *
+ * `Date.parse('abc')` is NaN, and both comparisons in the date predicate —
+ * `timestamp < NaN`, `timestamp > NaN` — are false, so an unreadable `?from=`
+ * dropped the filter entirely and returned every record in the collection. The
+ * caller asked to be narrowed and was handed the full set, which is the same
+ * silence the `district` filter used to produce and the reason `parseLimit`
+ * refuses rather than defaults.
+ *
+ * Absent and blank are absent, the way they are in `parseLimit`: a blank form
+ * field is not a date the caller meant.
+ */
+export function parseDateBound(raw, name = 'date') {
+  const text = raw === null || raw === undefined ? '' : String(raw).trim()
+  if (text === '') return null
+  const value = Date.parse(text)
+  if (!Number.isFinite(value)) {
+    const error = new Error(`${name} must be a date; received ${JSON.stringify(String(raw))}`)
+    error.statusCode = 400
+    throw error
+  }
+  return value
+}
+
 export function parseLimit(raw, { fallback = DEFAULT_LIMIT, max = MAX_LIMIT } = {}) {
   // `Number('')` and `Number('   ')` are both 0, which would read as "one
   // record". An empty value is an absent one, the same way it is in `toNumber`.
@@ -393,8 +418,8 @@ export function filterRecords(records, query, context = {}, { unlimited = false 
   // collection — cross-district data handed to any caller that asked to be
   // scoped to one district. Both are now real filters.
   const districtFilter = resolveDistrictFilter(query.get('district') || query.get('region'))
-  const from = query.get('from') ? Date.parse(query.get('from')) : null
-  const to = query.get('to') ? Date.parse(query.get('to')) : null
+  const from = parseDateBound(query.get('from'), 'from')
+  const to = parseDateBound(query.get('to'), 'to')
   const limit = parseLimit(query.get('limit'))
 
   // SCL-03. One pass, not eighteen.

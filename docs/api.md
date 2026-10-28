@@ -112,6 +112,12 @@ All endpoints return JSON unless otherwise noted. The default server is local an
 - `service_type=health`
 - `from=2026-01-01`
 - `to=2026-01-31`
+
+`from` and `to` are dates. A value that is not one is a `400`, not a filter
+that quietly does nothing: `Date.parse('abc')` is `NaN`, and both comparisons
+in the date predicate are false against it, so an unreadable bound used to
+drop the filter and return every record — the caller asked to be narrowed and
+was handed the full set. Blank is the same as absent.
 - `limit=100` (default 500, clamped to 5000)
 - `cursor=<next_cursor>` (see below)
 

@@ -225,6 +225,51 @@ describe('QUA-07 — a limit that is not a number is refused, not silently empty
   })
 })
 
+describe('an unreadable from/to bound is refused, not silently dropped', () => {
+  // `Date.parse('abc')` is NaN, and both comparisons in the date predicate —
+  // `timestamp < NaN`, `timestamp > NaN` — are false, so `?from=abc` dropped
+  // the filter entirely and returned every record. The caller asked to be
+  // narrowed and was handed the full set: the same silence the `district`
+  // filter used to produce, one parameter over.
+  const RECORDS = [
+    { id: 'jan', created_at: '2026-01-01T00:00:00Z' },
+    { id: 'jun', created_at: '2026-06-01T00:00:00Z' },
+  ]
+  const matched = (query) => filterRecords(RECORDS, new URLSearchParams(query), {}, { unlimited: true }).map((r) => r.id)
+
+  it('still narrows on a readable bound', () => {
+    assert.deepEqual(matched('from=2026-05-01'), ['jun'])
+    assert.deepEqual(matched('to=2026-05-01'), ['jan'])
+    assert.deepEqual(matched('from=2026-01-01&to=2026-12-31'), ['jan', 'jun'])
+  })
+
+  it('refuses a bound that is not a date', () => {
+    for (const bad of ['abc', 'not-a-date', '2026-13-45', 'NaN']) {
+      assert.throws(
+        () => matched(`from=${bad}`),
+        (err) => err.statusCode === 400 && /from must be a date/.test(err.message),
+        `from=${JSON.stringify(bad)} was dropped instead of refused`,
+      )
+      assert.throws(
+        () => matched(`to=${bad}`),
+        (err) => err.statusCode === 400 && /to must be a date/.test(err.message),
+      )
+    }
+  })
+
+  it('treats a blank bound as absent, the way a blank limit is', () => {
+    // A blank form field is not a date the caller meant.
+    assert.deepEqual(matched('from=&to='), ['jan', 'jun'])
+  })
+
+  it('refuses it on both paging paths, not just the first', () => {
+    assert.throws(
+      () => matchedAndPage(RECORDS, new URLSearchParams({ from: 'abc' })),
+      (err) => err.statusCode === 400,
+    )
+  })
+})
+
 // ---------------------------------------------------------------- SCL-03
 
 describe('SCL-03 filterRecords walks the collection once, not once per filter', () => {
