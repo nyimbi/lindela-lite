@@ -6,7 +6,7 @@ import { describe, it } from 'node:test'
 
 import {
   BUILTIN_FORMS, CHW_SYMPTOM_FORM, FIELD_TYPES, applicableFields, formCatalogue,
-  formFor, isRelevant, isVersion, latestForm, mergeForms, validateAnswers,
+  fieldHook, formFor, isRelevant, isVersion, latestForm, mergeForms, readField, renderField, validateAnswers,
   validateFormDefinition,
 } from '../src/forms.js'
 import { createServer } from '../src/server.js'
@@ -445,3 +445,124 @@ describe('a submission carries the form version it was filled against', () => {
   })
 })
 
+
+/**
+ * A blank is not a zero, in the form module both realms run.
+ *
+ * `Number('  ')`, `Number([])` and `Number(false)` are all 0, and
+ * `Number.isFinite(0)` is true, so `coerce` turned every kind of nothing into a
+ * *measured zero*. A worker who typed a space into "days of fever" filed zero
+ * days of fever; a geopoint whose latitude was left blank filed the equator. Both
+ * read downstream as findings nobody made.
+ */
+describe('a form answer that states nothing is absence, not zero', () => {
+  const definition = {
+    id: 'blank_probe', version: 1,
+    fields: [
+      { name: 'fever_days', type: 'number' },
+      { name: 'age_years', type: 'integer' },
+      { name: 'location', type: 'geopoint' },
+    ],
+  }
+  const answersFor = (input) => validateAnswers(definition, input)
+
+  for (const blank of ['  ', '\t', '\n']) {
+    it(`refuses whitespace-only text where a number was asked for: ${JSON.stringify(blank)}`, () => {
+      const { answers, problems } = answersFor({ fever_days: blank })
+      assert.deepEqual(answers, {}, `a blank was stored as ${JSON.stringify(answers.fever_days)}`)
+      assert.deepEqual(problems, [])
+    })
+  }
+
+  it('still accepts a stated zero, which is a real answer', () => {
+    // The control. A guard that could not tell `0` from `''` would reject a
+    // facility that genuinely reported zero days of fever.
+    for (const stated of [0, '0', ' 0 ']) {
+      const { answers } = answersFor({ fever_days: stated })
+      assert.equal(answers.fever_days, 0, `${JSON.stringify(stated)} was not read as a stated zero`)
+    }
+  })
+
+  it('refuses an array, a boolean or a non-numeric string rather than coercing them', () => {
+    for (const value of [[], false, true, [5], 'abc']) {
+      const { answers } = answersFor({ fever_days: value })
+      assert.equal(answers.fever_days, undefined, `${JSON.stringify(value)} was coerced to a number`)
+    }
+  })
+
+  it('reports a required question filled with a space as unanswered', () => {
+    const required = {
+      id: 'blank_probe', version: 1,
+      fields: [{ name: 'fever_days', type: 'number', required: true }],
+    }
+    const { answers, problems } = validateAnswers(required, { fever_days: '  ' })
+    assert.deepEqual(answers, {})
+    assert.deepEqual(problems, ['fever_days is required'])
+  })
+
+  it('refuses a geopoint whose latitude is blank rather than placing it on the equator', () => {
+    for (const lat of ['', '  ', null, undefined]) {
+      const { answers, problems } = answersFor({ location: { latitude: lat, longitude: 35.6 } })
+      assert.equal(answers.location, undefined, `a blank latitude became ${JSON.stringify(answers.location)}`)
+      assert.ok(problems.some((p) => /location is not a valid geopoint/.test(p)), problems.join('; '))
+    }
+  })
+
+  it('still accepts a geopoint whose latitude really is zero', () => {
+    const { answers } = answersFor({ location: { latitude: 0, longitude: 35.6 } })
+    assert.deepEqual(answers.location, { latitude: 0, longitude: 35.6 })
+  })
+
+  it('reads a rendered geopoint the same way, so the widget and the validator agree', () => {
+    // `readField` is the mirror of `renderField`. A widget that hands back `0`
+    // for a blank half and a validator that refuses `0` would be two rules for
+    // one answer; worse, the pre-fix pair agreed on the wrong answer.
+    const part = (name, value) => ({ getAttribute: (attr) => (attr === 'data-geopoint-part' ? name : null), value })
+    // The hook lookup comes first: `readField` returns `undefined` for a field
+    // nothing rendered, so the stub has to hold the hidden holder as well as the
+    // two coordinate inputs or it never reaches the branch under test.
+    const docFor = (lat, lon) => ({
+      querySelectorAll: (selector) => (selector === `[${fieldHook('location')}]`
+        ? [{ getAttribute: () => 'location' }]
+        : selector === '[data-geopoint-part]' ? [part('latitude', lat), part('longitude', lon)] : []),
+    })
+    const field = { name: 'location', type: 'geopoint' }
+
+    assert.equal(readField(docFor('', '35.6'), field), undefined, 'a blank latitude was read as a coordinate')
+    assert.equal(readField(docFor('  ', '35.6'), field), undefined)
+    assert.equal(readField(docFor('3.1', ''), field), undefined)
+    assert.equal(readField(docFor('0', '0'), field), undefined, '(0, 0) is absence, not a location')
+    assert.deepEqual(readField(docFor('3.1', '35.6'), field), { latitude: 3.1, longitude: 35.6 })
+    assert.deepEqual(readField(docFor('0', '35.6'), field), { latitude: 0, longitude: 35.6 })
+  })
+
+  it('renders an absent half as blank rather than as the zero a bare Number makes', () => {
+    // The renderer is the other half of the pair. Reopening a half-filled report
+    // used to show `0` in the latitude box — a latitude the worker never typed,
+    // which then read back as a stated zero and was filed.
+    const makeElement = (tag) => {
+      const el = {
+        tag, children: [], attributes: {}, value: '', className: '', dataset: {},
+        setAttribute(name, v) { el.attributes[name] = v },
+        getAttribute(name) { return el.attributes[name] ?? null },
+        appendChild(child) { el.children.push(child); return child },
+        classList: { add() {}, remove() {}, contains: () => false },
+      }
+      return el
+    }
+    const doc = { createElement: makeElement }
+    const partsOf = (container) => container.children.flatMap((wrap) => wrap.children)
+      .filter((el) => el.getAttribute && el.getAttribute('data-geopoint-part'))
+    const valueFor = (container, name) => partsOf(container)
+      .find((el) => el.getAttribute('data-geopoint-part') === name).value
+
+    const field = { name: 'location', type: 'geopoint' }
+    const blank = renderField(doc, field, { selected: { latitude: '', longitude: 35.6 } })
+    assert.equal(partsOf(blank).length, 2, 'the geopoint did not render two parts')
+    assert.equal(valueFor(blank, 'latitude'), '', 'a blank latitude was rendered as a number')
+    assert.equal(valueFor(blank, 'longitude'), '35.6')
+
+    const stated = renderField(doc, field, { selected: { latitude: 0, longitude: 35.6 } })
+    assert.equal(valueFor(stated, 'latitude'), '0', 'a stated zero latitude was not rendered')
+  })
+})

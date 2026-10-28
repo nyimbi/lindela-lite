@@ -91,15 +91,36 @@ export function applicableFields(definition, answers = {}) {
  */
 export const INVALID = Symbol('invalid')
 
+/**
+ * A number the answer really states, or `null` when it states nothing.
+ *
+ * `Number('  ')` is `0`, `Number([])` is `0` and `Number(false)` is `0`, so a
+ * bare `Number` in `coerce` turned every kind of nothing into a *measured zero*.
+ * A field worker who typed a space into "days of fever" filed zero days of
+ * fever — a clinical finding nobody made — and an empty array filed a zero the
+ * same way. `Number.isFinite` cannot catch it, because zero is finite.
+ *
+ * This is the same rule as `numericOrNull` in `src/analytics/numeric.js`, which
+ * the browser cannot import; `charts.js` carries the same short copy for the
+ * same reason. A genuine `0` is a real answer and passes through.
+ */
+function readStatedNumber(value) {
+  if (value === null || value === undefined || typeof value === 'boolean') return null
+  if (Array.isArray(value)) return null
+  if (typeof value === 'string' && value.trim() === '') return null
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
 export function coerce(field, value) {
   switch (field.type) {
     case 'integer': {
-      const n = Number(value)
+      const n = readStatedNumber(value)
       return Number.isInteger(n) ? n : INVALID
     }
     case 'number': {
-      const n = Number(value)
-      return Number.isFinite(n) ? n : INVALID
+      const n = readStatedNumber(value)
+      return n === null ? INVALID : n
     }
     case 'boolean':
       return typeof value === 'boolean' ? value : INVALID
@@ -107,9 +128,14 @@ export function coerce(field, value) {
       return Array.isArray(value) ? value : INVALID
     case 'geopoint': {
       if (typeof value !== 'object' || Array.isArray(value)) return INVALID
-      const lat = Number(value.latitude)
-      const lon = Number(value.longitude)
-      return Number.isFinite(lat) && Number.isFinite(lon) ? { latitude: lat, longitude: lon } : INVALID
+      // Both halves, read the same way a number field is: a blank latitude is
+      // absence, not the equator. `Number('')` and `Number('  ')` are 0, and 0
+      // is a legal latitude — so a submission carrying `{latitude: '', longitude:
+      // 35.6}` used to be stored as a point on the equator, east of Lake Turkana,
+      // with nothing recording that the worker never typed a latitude.
+      const lat = readStatedNumber(value.latitude)
+      const lon = readStatedNumber(value.longitude)
+      return lat === null || lon === null ? INVALID : { latitude: lat, longitude: lon }
     }
     case 'date':
     case 'datetime':
@@ -146,7 +172,12 @@ export function validateAnswers(definition, input = {}) {
 
   for (const field of applicableFields(definition, input)) {
     const value = input[field.name]
+    // Whitespace-only text is absence, the same rule the server applies to a
+    // blank query parameter. Without this a space typed into a required question
+    // was answered by `coerce` — `Number('  ')` is 0 — so the form accepted a
+    // zero nobody wrote instead of reporting the question as unanswered.
     const absent = value === undefined || value === null || value === ''
+      || (typeof value === 'string' && value.trim() === '')
     if (absent) {
       if (field.required) problems.push(`${field.name} is required`)
       continue
@@ -329,7 +360,14 @@ export function renderField(doc, field, { selected } = {}) {
       const input = doc.createElement('input')
       input.type = 'number'
       input.setAttribute('data-geopoint-part', part)
-      if (selected && Number.isFinite(Number(selected[part]))) input.value = String(selected[part])
+      if (selected) {
+        // The mirror of `readField`: a part that states no number is left blank
+        // rather than rendered as the `0` a bare `Number` would make of it, so
+        // reopening a half-filled report does not show a latitude the worker
+        // never typed.
+        const stated = readStatedNumber(selected[part])
+        if (stated !== null) input.value = String(stated)
+      }
       wrap.appendChild(caption)
       wrap.appendChild(input)
       group.appendChild(wrap)
@@ -374,9 +412,15 @@ export function readField(doc, field) {
   if (field.type === 'boolean') return Boolean(widgets[0].checked)
   if (field.type === 'geopoint') {
     const parts = [...doc.querySelectorAll('[data-geopoint-part]')]
-    const lat = Number(parts.find((el) => el.getAttribute('data-geopoint-part') === 'latitude')?.value)
-    const lon = Number(parts.find((el) => el.getAttribute('data-geopoint-part') === 'longitude')?.value)
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return undefined
+    const partValue = (name) => parts.find((el) => el.getAttribute('data-geopoint-part') === name)?.value
+    // Read both halves through the same stated-number rule `coerce` uses. A bare
+    // `Number` here made a blank latitude `0`, so a worker who typed only a
+    // longitude filed a report on the equator instead of being told the pair was
+    // incomplete. `(0, 0)` is also refused below, and it has to be refused as a
+    // *stated* pair — the absence rule is what makes the difference visible.
+    const lat = readStatedNumber(partValue('latitude'))
+    const lon = readStatedNumber(partValue('longitude'))
+    if (lat === null || lon === null) return undefined
     // (0, 0) is in bounds and in the Gulf of Guinea. A report carrying it looks
     // located to every downstream join while pointing at open water, so a pair
     // that is both zero is absence, not a coordinate — the same guard the
