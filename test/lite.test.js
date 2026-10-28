@@ -4581,6 +4581,56 @@ describe('Demo seed', () => {
     assert.ok(counts.trigger_protocols >= 5, `trigger_protocols ${counts.trigger_protocols} < 5`)
   })
 
+  it('every seeded alert event carries its rule threshold, not a fabricated zero', async () => {
+    // `rule.threshold || 0` published a threshold of 0 for any event whose rule
+    // id was not in the map, alongside `metric: 'unknown'` and `operator: '>='`.
+    // A false-alert rate computed over those reads an alert that tripped at a
+    // threshold nobody set. The seed now refuses a dangling rule id outright;
+    // this asserts the consequence a reader sees, on the data itself.
+    const { seedAll } = await import('../scripts/seed-demo.mjs')
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lindela-alert-thresholds-'))
+    const store = new JsonStore(path.join(dir, 'store.json'))
+    await seedAll(store)
+    const data = await store.read()
+    const rules = new Map((data.alert_rules || []).map((rule) => [rule.id, rule]))
+    assert.ok((data.alert_events || []).length > 0, 'the seed builds alert events')
+    for (const event of data.alert_events) {
+      const rule = rules.get(event.rule_id)
+      assert.ok(rule, `event ${event.id} names rule ${event.rule_id}, which the seed does not build`)
+      assert.equal(event.threshold, rule.threshold, `${event.id} carries a threshold its rule does not have`)
+      assert.equal(event.metric, rule.metric)
+      assert.equal(event.operator, rule.operator)
+    }
+  })
+
+  it('refuses a seed alert whose rule is not in the seed', async () => {
+    // The guard the previous test cannot reach: seeding the real rule list means
+    // every id matches, so removing the guard changes nothing and the canary
+    // passes. Driving the builder with a rule list that omits one of its ids is
+    // what enters the branch.
+    const { buildAlertEvents } = await import('../src/demo-seed.js')
+    const rule = {
+      id: 'rule-flood-precip', name: 'Flood Watch', metric: 'precipitation_mm',
+      operator: '>=', threshold: 40, actions: ['notify_focal_point'],
+    }
+    assert.throws(
+      () => buildAlertEvents([rule]),
+      /alert event names rule rule-[a-z-]+, which buildAlertRules does not define/u,
+      'a seed event naming a rule the seed does not build is a seed defect',
+    )
+    // The control: with the rule present it builds, and carries the real values.
+    const events = buildAlertEvents([
+      rule,
+      { id: 'rule-drought-precip', name: 'Drought', metric: 'precipitation_mm', operator: '<=', threshold: 5, actions: [] },
+      { id: 'rule-heat-temp', name: 'Heat', metric: 'temperature_max_c', operator: '>=', threshold: 38, actions: [] },
+      { id: 'rule-disease-fever', name: 'Fever', metric: 'fever_case_rate_per_1000', operator: '>=', threshold: 20, actions: [] },
+      { id: 'rule-conflict-proximity', name: 'Conflict', metric: 'conflict_events_count_7d', operator: '>=', threshold: 3, actions: [] },
+    ])
+    assert.ok(events.length > 0)
+    assert.ok(events.every((event) => event.threshold !== 0), 'no event invents a threshold of zero')
+    assert.ok(events.every((event) => event.metric !== 'unknown'))
+  })
+
   it('every count the demo guide states matches the seeded store', async () => {
     // validate.mjs only checks that the guide *mentions* these numbers, so a
     // number could be wrong as long as it was written down. This compares each

@@ -303,7 +303,14 @@ function buildAlertRules() {
   ]
 }
 
-function buildAlertEvents(rules) {
+/**
+ * Exported so the dangling-rule guard can be exercised.
+ *
+ * A test that only seeds the real rule list cannot reach it: every id matches,
+ * so the guard is never entered and its removal changes nothing. The canary for
+ * this fix passed against the restored `|| {}` fallback for exactly that reason.
+ */
+export function buildAlertEvents(rules) {
   const ruleMap = Object.fromEntries(rules.map(r => [r.id, r]))
   const now = Date.now()
   const events = [
@@ -332,20 +339,27 @@ function buildAlertEvents(rules) {
   ]
 
   return events.map((e, i) => {
-    const rule = ruleMap[e.ruleId] || {}
+    // A seed event that names a rule the seed does not build is a defect in the
+    // seed, not a rule with a threshold of zero. `rule.threshold || 0` and its
+    // siblings published `threshold: 0`, `metric: 'unknown'` and `operator: '>='`
+    // for a rule that does not exist -- an alert that says it tripped at a
+    // threshold nobody set. Refused here, where the seed is authored, rather
+    // than discovered by whoever reads the false-alert rate off it.
+    const rule = ruleMap[e.ruleId]
+    if (!rule) throw new Error(`demo seed: alert event names rule ${e.ruleId}, which buildAlertRules does not define`)
     const createdAt = spreadTs(i, events.length)
     return {
       id: stableId('alert_event', [e.ruleId, e.district, e.daysAgoN]),
       rule_id: e.ruleId,
-      rule_name: rule.name || e.ruleId,
+      rule_name: rule.name,
       status: e.status,
       severity: e.severity,
-      metric: rule.metric || 'unknown',
+      metric: rule.metric,
       value: e.value,
-      threshold: rule.threshold || 0,
-      operator: rule.operator || '>=',
-      message: `${rule.name || e.ruleId}: value ${e.value} in ${e.district}`,
-      actions: rule.actions || [],
+      threshold: rule.threshold,
+      operator: rule.operator,
+      message: `${rule.name}: value ${e.value} in ${e.district}`,
+      actions: rule.actions,
       scope: { district: e.district, regions: [e.district] },
       approval: e.approval,
       resolution_note: e.resolution_note || null,
