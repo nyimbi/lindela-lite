@@ -1,6 +1,7 @@
 import { computeFloodRisk, computeClimateConflictRisk, computeServiceImpacts } from './analytics.js'
 import { PRIORITY_LEVELS } from './schema.js'
 import { stableId, nowIso } from './utils.js'
+import { numericOrNull } from './analytics/numeric.js'
 
 function round2(n) {
   return Math.round(n * 100) / 100
@@ -25,11 +26,15 @@ const LONGITUDE_LIMIT = 180
  * record describing nothing.
  */
 function coordinate(value, limit, field, index, kind) {
-  if (value === null || value === undefined || value === '') {
-    throw badRequest(`${kind} event ${index + 1} needs a ${field}`)
-  }
-  const n = Number(value)
-  if (!Number.isFinite(n)) {
+  // The absent-check tested only `''`, and the conversion was bare `Number`.
+  // `Number('  ')`, `Number([])` and `Number(false)` are all 0, so a coordinate
+  // the client left as spaces — or an empty array, or a boolean — became the
+  // point 0,0: a real position in the Gulf of Guinea, published as the location
+  // of a synthetic flood. `Number(true)` is 1, which is likewise a place. This
+  // is the guard's own jurisdiction; `numericOrNull` is the rule everywhere
+  // else, and the same coercion is the same bug.
+  const n = numericOrNull(value)
+  if (n === null) {
     throw badRequest(`${kind} event ${index + 1} ${field} must be a number, got ${JSON.stringify(value)}`)
   }
   if (n < -limit || n > limit) {
