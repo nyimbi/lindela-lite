@@ -294,3 +294,41 @@ describe('a real ensemble reaches the flood scorer, and an invented one does not
     assert.notEqual(risk.drivers.precipitation_mm, 12.4)
   })
 })
+
+describe('a region with no readable coordinates is refused, not queried at 0/0', () => {
+  // `Number(null)` and `Number('')` are both 0, so a region whose coordinates
+  // were never filled in was queried at 0/0 — a real position in the Gulf of
+  // Guinea — and every record it produced carried that position while being
+  // named for the district the region was configured for. The map layers were
+  // fixed for exactly this coercion; this is the place that *creates* the
+  // records rather than filtering them, so the same guard has to exist here.
+  const regionWith = (lat, lon) => ({ name: 'Turkana', country: 'KE', lat, lon })
+
+  it('records the region in errors and makes no request for it', async () => {
+    const seen = mockTwoHosts()
+    const result = await openMeteoConnector.ingest({ regions: [regionWith('', null)], retries: 0 })
+    assert.equal(seen.length, 0, 'a request was made for a region with no coordinates')
+    assert.equal(result.climate_observations.length, 0)
+    assert.ok(result.errors.some((e) => /no readable coordinates/.test(e) && /0\/0/.test(e)),
+      `expected the refusal to name the cause, got: ${result.errors.join('; ')}`)
+  })
+
+  it('still queries a region whose coordinates really are zero', async () => {
+    // 0/0 is a legal position, however unlikely for a Kenyan district. The
+    // refusal must be about an unreadable coordinate, not about a zero one —
+    // otherwise the fix is the falsy-zero bug wearing the guard's clothes.
+    const seen = mockTwoHosts()
+    const result = await openMeteoConnector.ingest({ regions: [regionWith('0', 0)], retries: 0 })
+    assert.equal(result.errors.length, 0, result.errors.join('; '))
+    assert.ok(seen.length > 0, 'a stated 0/0 was refused as if it were absent')
+    assert.ok(result.climate_observations.every((r) => r.latitude === 0 && r.longitude === 0))
+  })
+
+  it('keeps the readable regions in the same run', async () => {
+    mockTwoHosts()
+    const result = await openMeteoConnector.ingest({ regions: [regionWith('', ''), REGION], retries: 0 })
+    assert.ok(result.climate_observations.length > 0, 'one bad region cost the good one its forecast')
+    assert.ok(result.climate_observations.every((r) => r.latitude === REGION.lat))
+    assert.equal(result.errors.length, 1)
+  })
+})

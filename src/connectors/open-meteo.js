@@ -167,9 +167,26 @@ async function openMeteoIngest(options = {}) {
 
     for (const region of regions) {
       try {
+        // `Number(null)` and `Number('')` are both 0, so a region whose
+        // coordinates were never filled in was queried at 0/0 and every record
+        // it produced was stamped with that position — the Null Island failure
+        // this repository has fixed three times elsewhere, in the one place
+        // that *creates* the records rather than filtering them. The forecast
+        // for the Gulf of Guinea then sat in `climate_observations` as a
+        // rainfall reading for the district the region was named for.
+        const lat = readMeasurement(region.lat)
+        const lon = readMeasurement(region.lon)
+        if (lat === null || lon === null) {
+          errors.push(
+            `${region.name || 'unnamed region'}: region has no readable coordinates `
+            + `(lat=${JSON.stringify(region.lat)}, lon=${JSON.stringify(region.lon)}); skipped rather than `
+            + 'queried at 0/0, which is a real position in the Gulf of Guinea.',
+          )
+          continue
+        }
         const url = new URL('https://api.open-meteo.com/v1/forecast')
-        url.searchParams.set('latitude', region.lat)
-        url.searchParams.set('longitude', region.lon)
+        url.searchParams.set('latitude', lat)
+        url.searchParams.set('longitude', lon)
         url.searchParams.set('daily', 'precipitation_sum,precipitation_probability_max,temperature_2m_max,temperature_2m_min')
         url.searchParams.set('current', 'precipitation,temperature_2m,relative_humidity_2m')
         url.searchParams.set('forecast_days', String(forecastDays))
@@ -188,8 +205,8 @@ async function openMeteoIngest(options = {}) {
         if (useEnsemble) {
           try {
             const ensembleUrl = new URL(ENSEMBLE_URL)
-            ensembleUrl.searchParams.set('latitude', region.lat)
-            ensembleUrl.searchParams.set('longitude', region.lon)
+            ensembleUrl.searchParams.set('latitude', lat)
+            ensembleUrl.searchParams.set('longitude', lon)
             ensembleUrl.searchParams.set('daily', 'precipitation_sum')
             ensembleUrl.searchParams.set('forecast_days', String(forecastDays))
             ensembleUrl.searchParams.set('models', ensembleModel)
@@ -210,8 +227,8 @@ async function openMeteoIngest(options = {}) {
             type: 'current_weather',
             region_name: region.name,
             country: region.country,
-            latitude: Number(region.lat),
-            longitude: Number(region.lon),
+            latitude: lat,
+            longitude: lon,
             observed_at: asUtcTimestamp(data.current.time),
             precipitation_mm: readMeasurement(data.current.precipitation),
             temperature_c: readMeasurement(data.current.temperature_2m),
@@ -243,8 +260,8 @@ async function openMeteoIngest(options = {}) {
             type: 'precipitation_forecast',
             region_name: region.name,
             country: region.country,
-            latitude: Number(region.lat),
-            longitude: Number(region.lon),
+            latitude: lat,
+            longitude: lon,
             observed_at: asUtcTimestamp(daily.time[i]),
             precipitation_mm: precip,
             precipitation_probability_pct: readMeasurement(daily.precipitation_probability_max?.[i]),
