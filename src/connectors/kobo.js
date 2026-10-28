@@ -141,7 +141,19 @@ async function koboIngest(request = {}) {
 
     for (const mapping of attendanceMappings) {
       const fields = { school_id: mapping.school_id, date: mapping.date, enrolled: mapping.enrolled, present: mapping.present }
-      const missing = Object.entries(fields).filter(([name, koboField]) => !koboField || submission?.[koboField] === undefined || submission?.[koboField] === null)
+      // A blank cell is the same absence as a missing one. The check covered
+      // only `undefined` and `null`, so a submission carrying `present: ''` —
+      // the shape a Kobo form leaves when the enumerator skipped the question
+      // and the export still writes a column — passed as present and then
+      // became `Number('')`, which is 0. A school with 400 enrolled and a
+      // blank attendance count was published as a school where nobody came,
+      // and `normalizeSchoolAttendance`'s own refusal never saw it because the
+      // coercion happened first, one line below.
+      const absentField = (koboField) => !koboField
+        || submission?.[koboField] === undefined
+        || submission?.[koboField] === null
+        || (typeof submission[koboField] === 'string' && submission[koboField].trim() === '')
+      const missing = Object.entries(fields).filter(([, koboField]) => absentField(koboField))
       if (missing.length) {
         errors.push(
           `kobotoolbox: submission ${externalId ?? 'unknown'} is missing required attendance fields `
@@ -155,7 +167,12 @@ async function koboIngest(request = {}) {
       // Prefer the absent field the mapping names when this submission
       // actually carries it; otherwise fall back to the register arithmetic
       // (enrolled - present), stated in the module note.
-      const suppliedAbsent = mapping.absent ? Number(submission[mapping.absent]) : NaN
+      //
+      // `Number.isFinite(Number(''))` is true, so a blank absent column was
+      // read as a *stated* zero absentees and overrode the derivation — a form
+      // that leaves the column empty on every row reported every school at
+      // full attendance, which is the reassuring direction.
+      const suppliedAbsent = absentField(mapping.absent) ? NaN : Number(submission[mapping.absent])
       const absent = Number.isFinite(suppliedAbsent) ? suppliedAbsent : enrolled - present
       try {
         school_attendance_observations.push(normalizeSchoolAttendance({

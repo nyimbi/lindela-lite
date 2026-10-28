@@ -207,8 +207,53 @@ describe('kobo connector', () => {
     }
   })
 
-  it('records HTTP errors and malformed JSON honestly', async () => {
-    const failing = stubFetch(() => jsonResponse({ detail: 'Invalid token' }, { status: 403 }))
+  it('treats a blank attendance cell as absent, not as a measured zero', async () => {
+    // `Number('')` is 0 and the missing-field check covered only `undefined` and
+    // `null`, so a submission whose enumerator skipped the present question was
+    // published as a school where nobody came — 400 enrolled, 0 present, 0%.
+    // That is the reassuring-direction bug in reverse: it is not reassuring at
+    // all, it accuses a school, and `normalizeSchoolAttendance`'s own refusal
+    // could not see it because the coercion ran first.
+    const stub = stubFetch(() => jsonResponse({
+      results: [
+        { _id: 1, _submission_time: '2026-10-07T09:00:00Z', district: 'turkana', school_id: 's1', report_date: '2026-10-07', enrolled: 400, present: '  ' },
+        { _id: 2, _submission_time: '2026-10-07T09:00:00Z', district: 'turkana', school_id: 's2', report_date: '2026-10-07', enrolled: 400, present: '' },
+      ],
+    }))
+    try {
+      await withEnv(ENABLED, async () => {
+        const out = await koboConnector.ingest({ ...REQUEST, field_mapping: ATTENDANCE_MAPPING })
+        assert.deepEqual(out.school_attendance_observations, [], 'a blank present produced an attendance record')
+        assert.equal(out.errors.filter((e) => /missing required attendance fields/.test(e)).length, 2,
+          `expected both rows refused, got: ${out.errors.join('; ')}`)
+        assert.equal(out.field_reports.length, 2, 'the field reports are a separate claim and still return')
+      })
+    } finally {
+      stub.restore()
+    }
+  })
+
+  it('derives absent when the form leaves the absent column blank', async () => {
+    // `Number.isFinite(Number(''))` is true, so a blank absent column read as a
+    // *stated* zero and overrode the register arithmetic — every school on a
+    // form that leaves the column empty reported full attendance.
+    const stub = stubFetch(() => jsonResponse({
+      results: [
+        { _id: 3, _submission_time: '2026-10-07T09:00:00Z', district: 'turkana', school_id: 's3', report_date: '2026-10-07', enrolled: 400, present: 300, absent: '' },
+      ],
+    }))
+    try {
+      await withEnv(ENABLED, async () => {
+        const out = await koboConnector.ingest({ ...REQUEST, field_mapping: ATTENDANCE_MAPPING })
+        assert.equal(out.school_attendance_observations.length, 1, JSON.stringify(out.errors))
+        assert.equal(out.school_attendance_observations[0].absent, 100, 'a blank absent column is not a stated zero')
+      })
+    } finally {
+      stub.restore()
+    }
+  })
+
+  it('records HTTP errors and malformed JSON honestly', async () => {    const failing = stubFetch(() => jsonResponse({ detail: 'Invalid token' }, { status: 403 }))
     try {
       await withEnv(ENABLED, async () => {
         const out = await koboConnector.ingest(REQUEST)
