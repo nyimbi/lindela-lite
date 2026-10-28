@@ -6103,6 +6103,26 @@ describe('Lindela Lite IPC food security ingestion', () => {
       'the ISO2 spelling must be mapped onto the ISO3 feed codes')
   })
 
+  it('resolves the GeoJSON worker count from the option, not from truthiness', async () => {
+    // `Number(options.concurrency) || default` could not tell an absent option
+    // from one it could not read, and it passed `'1.5'` through as a worker
+    // count. `Array.from({ length: 1.5 })` truncates, so the fraction happened to
+    // work; the value reaching a pool is still not what the option means.
+    const { resolveConcurrency } = await import('../src/connectors/ipc-hdx.js')
+    assert.equal(resolveConcurrency(undefined), 2, 'an absent option takes the policy default')
+    for (const absent of [null, '', '  ', 'abc']) {
+      assert.equal(resolveConcurrency(absent), 2, `${JSON.stringify(absent)} is not a stated concurrency`)
+    }
+    assert.equal(resolveConcurrency('4'), 4)
+    assert.equal(resolveConcurrency(4), 4)
+    assert.equal(resolveConcurrency('1.5'), 1, 'a fraction of a worker is not a concurrency')
+    assert.equal(resolveConcurrency(-3), 1, 'a negative worker count still walks the feed once')
+    // The one that used to be wrong in the other direction: a stated zero read as
+    // falsy and became the default of two, so "I asked for none" quietly ran two.
+    assert.equal(resolveConcurrency(0), 1, 'a stated zero is a request, floored at one worker')
+    assert.equal(resolveConcurrency('0'), 1)
+  })
+
   it('rolls up the latest current window and excludes projections from it', async () => {
     const { summarizeFoodSecurity } = await import('../src/connectors/ipc-hdx.js')
     const earlier = { source: 'ipc_hdx', scope: 'national', country: 'KEN', area: null,

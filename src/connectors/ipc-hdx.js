@@ -269,16 +269,31 @@ function buildMetadata(row, { scope, area, level1, bbox, datasetUrl }) {
  * file's own comment above warns about. So the pool is here, and it never
  * drops: it is a worker count, not a semaphore with a `tryAcquire`.
  */
+/**
+ * How many GeoJSON fetches run at once.
+ *
+ * `toNumber`, not `Number(x) || default`. The coercion could not tell an absent
+ * option from a stated one it could not read — `''`, `null` and `'abc'` all fell
+ * through to the policy default, which happens to be right here — and it passed
+ * `'1.5'` straight through as a worker count. `Math.trunc` because a fraction of
+ * a worker is not a concurrency, and the floor of 1 because a stated `0` would
+ * otherwise mean "no workers, walk nothing".
+ *
+ * Exported so the resolver has a seam: `areaBboxes` needs a live feed to reach,
+ * and a rule about option parsing should not need one to be tested.
+ */
+export function resolveConcurrency(declared) {
+  const value = toNumber(declared)
+  return Math.max(1, Math.trunc(value ?? RATE_LIMIT_POLICIES.ipc_hdx?.concurrency ?? 2))
+}
+
 async function areaBboxes(isoCodes, options) {
   const bboxes = new Map()
   const geoErrors = []
   if (options.geometry === false) return { bboxes, geoErrors }
 
   const countries = [...new Set(isoCodes)]
-  const concurrency = Math.max(
-    1,
-    Number(options.concurrency) || RATE_LIMIT_POLICIES.ipc_hdx?.concurrency || 2,
-  )
+  const concurrency = resolveConcurrency(options.concurrency)
   let next = 0
 
   async function worker() {
