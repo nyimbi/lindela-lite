@@ -1133,11 +1133,13 @@ export function computeClimateConflictRisk(data, options = {}) {
     // over two declared periods describes neither. `rainfall` keeps the records
     // so `meanMeasured` can read each one's period.
     const rainfall = climate
-      .filter((item) => item.precipitation_mm !== null
-        && item.precipitation_mm !== undefined
-        && item.precipitation_mm !== '')
-      .map((item) => ({ ...item, precipitation_mm: Number(item.precipitation_mm) }))
-      .filter((item) => Number.isFinite(item.precipitation_mm))
+      .map((item) => ({ ...item, precipitation_mm: numericOrNull(item.precipitation_mm) }))
+      // The presence check above was spelled out by hand and covered `null`,
+      // `undefined` and `''` — but not whitespace. `Number('  ')` is 0, so a
+      // field an upstream system left as spaces passed `Number.isFinite` and
+      // summed as a measured dry day, which is the same defect this guard was
+      // written to stop and the one `numericOrNull` names in its docstring.
+      .filter((item) => item.precipitation_mm !== null)
     const rainfallMean = meanMeasured(rainfall, 'precipitation_mm')
     const meanRainfall = rainfallMean.mean ?? 0
     // The cap stays where it was. The term's scale is unchanged for a region

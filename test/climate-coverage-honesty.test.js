@@ -157,4 +157,18 @@ describe('climate confidence counts observations that carried a number', () => {
     assert.ok(dryButMeasured.confidence > unmeasured.confidence,
       'a measured zero millimetres is evidence; an absent value is not')
   })
+
+  it('does not count whitespace as a measurement', () => {
+    // The presence check here was spelled out by hand — `!== null`,
+    // `!== undefined`, `!== ''` — and a field an upstream system left as spaces
+    // passed all three. `Number('  ')` is 0, so it summed as a measured dry day
+    // and earned confidence the region had not measured. `numericOrNull` is the
+    // one conversion that rejects whitespace, and this route now uses it.
+    const blank = riskFor([measuredRecord('Turkana', '2026-01-01', '  ')])
+    const absent = riskFor([chirpsRecord('Turkana', '2026-01-01')])
+    const zero = riskFor([measuredRecord('Turkana', '2026-01-01', 0)])
+    assert.equal(blank.confidence, absent.confidence,
+      'a blank field and an absent one are the same evidence, which is none')
+    assert.ok(zero.confidence > blank.confidence, 'a real zero is still a measurement')
+  })
 })
