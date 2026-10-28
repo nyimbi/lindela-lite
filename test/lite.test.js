@@ -6281,6 +6281,36 @@ describe('Lindela Lite flood probability model basis', () => {
     assert.ok(wetAugust.max_7_day > 400, `max_7_day=${wetAugust.max_7_day}`)
   })
 
+  it('reads a blank or unreadable daily rainfall as absent, not as a dry day', async () => {
+    // The null check covered `null` and `undefined` only, so a blank CSV cell
+    // became `Number('')` = 0: a day the archive never reported counted as
+    // *present* for the 90% coverage gate and summed as a measured dry day.
+    // `'abc'` became `NaN`, which is `!== null` so it also counted as present,
+    // and `acc + NaN` in the trailing sums made the month's features NaN.
+    // The consequence that discriminates: the coverage gate. Blanking 12 of
+    // the last 90 days leaves 78/90 = 87% coverage, so the month must be
+    // skipped. A genuine 0 mm in those same 12 days is a measurement and keeps
+    // the month.
+    const fp = await fpImport()
+    const clean = deterministicDaily(1)
+    const lastMonth = fp.buildDistrictSamples(clean, [], { latitude: 0, longitude: 0, country: 'TL' }).samples.at(-1).month
+    const blankLastTwelve = (blank) => {
+      const dates = new Set(clean.slice(-12).map((d) => d.date))
+      return clean.map((d) => (dates.has(d.date) ? { ...d, precipitation_mm: blank } : d))
+    }
+    const keptMonths = (blank) => fp.buildDistrictSamples(
+      blankLastTwelve(blank), [], { latitude: 0, longitude: 0, country: 'TL' },
+    ).samples.map((s) => s.month)
+    for (const blank of [null, undefined, '', '  ', 'abc']) {
+      assert.ok(
+        !keptMonths(blank).includes(lastMonth),
+        `${JSON.stringify(blank)} counted as a measurement and kept a month with 87% coverage`,
+      )
+    }
+    // A genuine 0 mm day is a measurement, so the month survives.
+    assert.ok(keptMonths(0).includes(lastMonth), 'a real 0 mm day was read as absent')
+  })
+
   it('skips months whose trailing coverage falls below 90 percent', async () => {
     const fp = await fpImport()
     const daily = deterministicDaily(1).map((d) =>

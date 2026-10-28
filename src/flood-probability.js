@@ -1,5 +1,6 @@
 import { haversineKm } from './utils.js'
 import { stableId } from './utils.js'
+import { numericOrNull } from './analytics/numeric.js'
 import { DEFAULT_REGIONS } from './schema.js'
 
 /**
@@ -153,9 +154,23 @@ export function buildDistrictSamples(daily, floodEvents, district, options = {})
   }
 }
 
+/**
+ * One day's rainfall, with absence kept as absence.
+ *
+ * The null check covered `null` and `undefined` and nothing else, so a blank
+ * cell — the shape a CSV export leaves, and the one `src/agreement.js` was
+ * already fixed for — became `Number('')`, which is 0. A day the archive did
+ * not report then counted as *present* for the coverage gate and summed as a
+ * measured dry day. `'abc'` was worse: `Number('abc')` is `NaN`, `NaN !== null`
+ * so the coverage gate counted it as present, and `acc + NaN` in the trailing
+ * sums made the month's features `NaN` rather than absent.
+ *
+ * `numericOrNull` reads all of them as null, which is what the coverage gate
+ * and the `week.some((x) => x.mm === null)` test were written to handle.
+ */
 function normalizeDaily(daily) {
   return (daily || [])
-    .map((d) => ({ date: String(d.date).slice(0, 10), mm: d.precipitation_mm === null || d.precipitation_mm === undefined ? null : Number(d.precipitation_mm) }))
+    .map((d) => ({ date: String(d.date).slice(0, 10), mm: numericOrNull(d.precipitation_mm) }))
     .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.date))
     .sort((a, b) => String(a.date).localeCompare(String(b.date)))
 }
