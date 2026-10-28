@@ -4,6 +4,7 @@ import { stableId } from './utils.js'
 // resolved only because the uses are inside a function body.
 import { honestyEnvelope, uncertaintyTiers } from './envelope.js'
 import { MIN_EVENTS, MIN_MONTHS, wilsonInterval } from './flood-probability.js'
+import { numericOrNull } from './analytics/numeric.js'
 
 /**
  * Model-drift monitoring (ENH-05).
@@ -271,14 +272,27 @@ export function detectOutcomeDivergence(samples = [], model = null, { monthsFloo
 /** Logistic prediction, kept local so this module does not import the trainer. */
 function predictWith(model, features = {}) {
   if (!model?.standardization) return null
-  let z = Number(model.intercept)
-  if (!Number.isFinite(z)) return null
+  // `numericOrNull`, not `Number`. `Number(null)` is 0, so a month whose
+  // feature was never measured was scored as a month that measured zero — and
+  // the caller's guard (`predicted.length !== usable.length`, above) exists
+  // precisely to refuse those months and report them as not measurable. It
+  // never fired for the null spelling: only `undefined` and `'abc'` produced a
+  // NaN. A dry-season null scored as 0 mm is the reading most likely to make a
+  // model look calibrated when it is not, because 0 mm is a plausible feature
+  // value rather than an obviously missing one.
+  let z = numericOrNull(model.intercept)
+  if (z === null) return null
   for (const st of model.standardization) {
-    const value = Number(features?.[st.feature])
-    if (!Number.isFinite(value)) return null
-    const coefficient = model.coefficients?.find((c) => c.feature === st.feature)?.value
-    if (!Number.isFinite(coefficient)) return null
-    z += coefficient * ((value - st.mean) / st.sd)
+    const value = numericOrNull(features?.[st.feature])
+    if (value === null) return null
+    const coefficient = numericOrNull(model.coefficients?.find((c) => c.feature === st.feature)?.value)
+    if (coefficient === null) return null
+    const mean = numericOrNull(st.mean)
+    const sd = numericOrNull(st.sd)
+    // A standard deviation of zero is a division by zero, and a missing one is
+    // not the identity transform it would silently act as.
+    if (mean === null || sd === null || sd === 0) return null
+    z += coefficient * ((value - mean) / sd)
   }
   const p = 1 / (1 + Math.exp(-z))
   return Number.isFinite(p) ? Math.round(p * 10000) / 10000 : null

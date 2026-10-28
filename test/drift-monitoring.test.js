@@ -139,6 +139,24 @@ describe('score and outcome divergence', () => {
     assert.match(result.reason, /non-finite feature/)
   })
 
+  it('refuses a null feature rather than scoring it as zero', () => {
+    // `Number(null)` is 0, so a month whose feature was never measured was
+    // scored as a month that measured 0 mm — a plausible value, which is what
+    // makes it invisible. The refusal above only caught NaN and undefined.
+    const current = window(200, 0, { eventEvery: 2 })
+    current[3] = { ...current[3], features: { ...current[3].features, max_7_day: null } }
+    const result = detectOutcomeDivergence(current, stubModel)
+    assert.equal(result.verdict, 'not_measurable')
+    assert.match(result.reason, /non-finite feature/)
+  })
+
+  it('refuses a model whose standardisation is degenerate instead of dividing by zero', () => {
+    const flat = { ...stubModel, standardization: [{ feature: 'max_7_day', mean: 50, sd: 0 }] }
+    const result = detectOutcomeDivergence(window(200, 0, { eventEvery: 2 }), flat)
+    assert.equal(result.verdict, 'not_measurable')
+    assert.match(result.reason, /non-finite feature/)
+  })
+
   it('refuses without a model, and still reports the observed rate it did measure', () => {
     const result = detectOutcomeDivergence(window(40, 0, { eventEvery: 2 }), null)
     assert.equal(result.verdict, 'not_measurable')
