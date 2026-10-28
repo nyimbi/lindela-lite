@@ -53,6 +53,24 @@ describe('the vocabulary is the only source of a subject', () => {
     // nonsense comparison made.
     assert.equal(needleStatus({}, { confidenceFloor: 7 }).confidence_floor, NEEDLE_CONFIDENCE_FLOOR)
   })
+
+  it('reads a blank confidence floor as unset, not as a floor of zero', () => {
+    // `Number('')` is 0, and 0 is a legal floor, so it passed the range check and
+    // switched the gate off: every proposal the sidecar returned was accepted,
+    // however unsure the model said it was. `LINDELA_LITE_NEEDLE_CONFIDENCE=` is
+    // what a shell writes for an unset variable, so this is the common spelling
+    // of "not configured" rather than an exotic one.
+    for (const blank of ['', '  ', '\t']) {
+      assert.equal(needleStatus({ LINDELA_LITE_NEEDLE_CONFIDENCE: blank }).confidence_floor, NEEDLE_CONFIDENCE_FLOOR,
+        `${JSON.stringify(blank)} is an unset variable, not a floor`)
+    }
+    assert.equal(needleStatus({}).confidence_floor, NEEDLE_CONFIDENCE_FLOOR)
+    assert.equal(needleStatus({ LINDELA_LITE_NEEDLE_CONFIDENCE: 'abc' }).confidence_floor, NEEDLE_CONFIDENCE_FLOOR)
+    // The control that keeps the fix from over-reaching: a stated zero is a real
+    // floor — "accept anything the model proposes" is a policy someone can mean.
+    assert.equal(needleStatus({ LINDELA_LITE_NEEDLE_CONFIDENCE: '0' }).confidence_floor, 0)
+    assert.equal(needleStatus({ LINDELA_LITE_NEEDLE_CONFIDENCE: '0.9' }).confidence_floor, 0.9)
+  })
 })
 
 describe('every proposed slot is validated before it is used', () => {

@@ -66,6 +66,7 @@
 // graph cannot see.
 import { SUBJECTS, PREDICATES, WINDOWS } from './nl-vocabulary.js'
 import { KNOWN_DISTRICTS, resolveDistrict } from './districts.js'
+import { toNumber } from './utils.js'
 
 /**
  * The model basis, in the same voice as `NARRATOR_BASIS` and `MODEL_BASIS`: what
@@ -108,13 +109,22 @@ export const NEEDLE_CONFIDENCE_FLOOR = 0.5
 export function needleStatus(env = process.env, override = null) {
   const source = override || {}
   const enabled = source.enabled ?? String(env.LINDELA_LITE_NEEDLE || '') === '1'
-  const timeoutMs = Number(source.timeoutMs ?? env.LINDELA_LITE_NEEDLE_TIMEOUT_MS ?? 5000)
-  const floor = Number(source.confidenceFloor ?? env.LINDELA_LITE_NEEDLE_CONFIDENCE ?? NEEDLE_CONFIDENCE_FLOOR)
+  // `toNumber`, not `Number`. A blank `LINDELA_LITE_NEEDLE_CONFIDENCE` — the
+  // shape a shell writes for an unset variable, `LINDELA_LITE_NEEDLE_CONFIDENCE=`
+  // — is `Number('') === 0`, and 0 is a *legal* floor, so it passed the range
+  // check and switched the confidence gate off entirely: every proposal the
+  // sidecar returned was accepted, however unsure the model said it was. The
+  // timeout escaped this only because its guard is `> 0`; the floor's is `>= 0`.
+  const timeoutMs = toNumber(source.timeoutMs ?? env.LINDELA_LITE_NEEDLE_TIMEOUT_MS)
+  const floor = toNumber(source.confidenceFloor ?? env.LINDELA_LITE_NEEDLE_CONFIDENCE)
   return {
     enabled,
     base_url: String(source.baseUrl || env.NEEDLE_BASE_URL || '') || NEEDLE_BASE_URL_DEFAULT,
-    timeout_ms: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 5000,
-    confidence_floor: Number.isFinite(floor) && floor >= 0 && floor <= 1 ? floor : NEEDLE_CONFIDENCE_FLOOR,
+    timeout_ms: timeoutMs !== null && timeoutMs > 0 ? timeoutMs : 5000,
+    // A blank floor is absent, so the declared default applies. A stated one
+    // outside 0-1 is out of range and falls back the same way: `1.5` cannot be a
+    // confidence, and accepting it would refuse every proposal.
+    confidence_floor: floor !== null && floor >= 0 && floor <= 1 ? floor : NEEDLE_CONFIDENCE_FLOOR,
   }
 }
 
