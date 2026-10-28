@@ -78,6 +78,37 @@ export const DEFAULT_REPORT_SECTIONS = Object.freeze({
   ],
 })
 
+/**
+ * The version a template write lands at.
+ *
+ * `Number(x || 1)` could not tell an absent version from one it could not read:
+ * `version: 'abc'` became `NaN`, which the store round-trips as `null`, so a
+ * template lost the field entirely after an edit. A stated version that is not
+ * a number is the caller's to fix, so it is refused the same way an unreadable
+ * threshold is; an absent one takes the documented default.
+ */
+function nextTemplateVersion(input, existing) {
+  if (!existing) {
+    const stated = toNumber(input.version)
+    // A blank is the same absence as an omitted field, which is the rule every
+    // other numeric parameter follows. Only a value that was actually written
+    // and cannot be read is refused.
+    const written = input.version !== undefined && input.version !== null
+      && !(typeof input.version === 'string' && input.version.trim() === '')
+    if (written && stated === null) {
+      throw Object.assign(new Error(`version must be a number, got ${JSON.stringify(input.version)}`), { statusCode: 400 })
+    }
+    return stated === null ? 1 : stated
+  }
+  // An edit bumps the version it read. A stored version this cannot parse is a
+  // stored defect, not a client error: `Number(existing.version || 1)` published
+  // `null` and the next edit published `null` again, so the field never
+  // recovered. Falling back to 1 restarts the count from a value the store can
+  // hold rather than propagating the absence.
+  const stored = toNumber(existing.version)
+  return (stored === null ? 1 : stored) + 1
+}
+
 export function normalizeReportTemplate(input = {}, existing = null) {
   const now = new Date().toISOString()
   const reportType = enumValue(input.report_type || existing?.report_type || 'situation_report', REPORT_TYPES, 'report_type')
@@ -88,7 +119,7 @@ export function normalizeReportTemplate(input = {}, existing = null) {
     name,
     report_type: reportType,
     status: enumValue(input.status || existing?.status || 'active', REPORT_TEMPLATE_STATUSES, 'status'),
-    version: existing ? Number(existing.version || 1) + 1 : Number(input.version || 1),
+    version: nextTemplateVersion(input, existing),
     title_pattern: input.title_pattern || existing?.title_pattern || defaultTitlePattern(reportType),
     default_filters: objectValue(input.default_filters ?? existing?.default_filters),
     sections: sectionList(input.sections || existing?.sections || DEFAULT_REPORT_SECTIONS[reportType]),

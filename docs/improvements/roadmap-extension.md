@@ -714,9 +714,8 @@ The gaps are uneven in a way that matters:
   comment is corrected with it.
 - Alert SMS is monolingual (`src/rapidpro.js:301`), which is the one channel that
   reaches the field.
-- The plain-language report mode was not built. `src/reports.js` is **1,138** lines
-  now (849 when this was written) of template assembly, but it is written for an
-  analyst audience, not a community one. The coverage figure that stood beside the
+- The plain-language report mode was not built. `src/reports.js` is template
+  assembly written for an analyst audience, not a community one. The coverage figure that stood beside the
   line count — 90.58% — is not re-measured here and is not the axis to read:
   `scripts/check-coverage.mjs` runs the whole suite and reports lines, branches and
   functions against floors of 92/76/90. A single module's line percentage, from

@@ -512,3 +512,38 @@ describe('HX-06 — the reports list answers with a rail row, and the detail rou
       'the detail route no longer carries the sections, so the prose is unreachable from every surface')
   })
 })
+
+describe('a template version is a number, not an absence coerced into null', () => {
+  // `Number(input.version || 1)` turned an unreadable version into `NaN`, which
+  // the store round-trips as `null` — a template that lost the field after an
+  // edit, and stayed lost on every edit after that.
+  const base = { name: 'Weekly', report_type: 'situation_report' }
+
+  it('refuses a stated version it cannot read', async () => {
+    const { normalizeReportTemplate } = await import('../src/reports.js')
+    assert.throws(
+      () => normalizeReportTemplate({ ...base, version: 'abc' }),
+      (err) => err.statusCode === 400 && /version must be a number/u.test(err.message),
+    )
+  })
+
+  it('takes the documented default when no version is stated', async () => {
+    const { normalizeReportTemplate } = await import('../src/reports.js')
+    assert.equal(normalizeReportTemplate(base).version, 1)
+    assert.equal(normalizeReportTemplate({ ...base, version: '' }).version, 1)
+    assert.equal(normalizeReportTemplate({ ...base, version: null }).version, 1)
+    assert.equal(normalizeReportTemplate({ ...base, version: '3' }).version, 3)
+  })
+
+  it('bumps the version it read, and recovers a stored one it cannot', async () => {
+    const { normalizeReportTemplate } = await import('../src/reports.js')
+    const stored = (version) => ({ id: 't1', ...base, version })
+    assert.equal(normalizeReportTemplate(base, stored(3)).version, 4)
+    assert.equal(normalizeReportTemplate(base, stored('3')).version, 4)
+    // A stored defect is not the caller's error, but it must not propagate
+    // either: the old code published null and kept publishing null.
+    const recovered = normalizeReportTemplate(base, stored('abc'))
+    assert.equal(recovered.version, 2, 'the count restarts from a value the store can hold')
+    assert.notEqual(recovered.version, null)
+  })
+})
