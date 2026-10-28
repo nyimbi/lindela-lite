@@ -420,6 +420,30 @@ describe('public source connector fixtures', () => {
     assert.match(event.metadata.geolocation_note, /regional/i);
   });
 
+  it('withholds the location when the GDACS bbox has a blank segment', async () => {
+    // `Number('')` is `0`, so `" ,7.71 39.93 47.93"` parsed as a box with its
+    // south edge on the equator and its centre at latitude 0 -- a point in the
+    // Gulf of Guinea stamped onto an alert GDACS placed in France. The element is
+    // present and unreadable, which is not the same as a readable box.
+    const blank = '<item><title>Green flood alert</title>'
+      + '<pubDate>Mon, 18 May 2026 00:00:00 GMT</pubDate>'
+      + '<gdacs:eventtype>FL</gdacs:eventtype><gdacs:alertlevel>green</gdacs:alertlevel>'
+      + '<gdacs:bbox> ,7.71 39.93 47.93</gdacs:bbox><gdacs:country>France</gdacs:country></item>';
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'application/xml']]),
+      text: async () => `<rss><channel>${blank}</channel></rss>`,
+      json: async () => ({}),
+    });
+    const result = await gdacsConnector.ingest({ gdacs_feeds: ['https://fixture.test/gdacs.xml'], retries: 0 });
+    const event = result.hazard_events[0];
+    assert.equal(event.bbox, null, 'an unreadable box is no box');
+    assert.notEqual(event.latitude, 0, 'latitude 0 is a coordinate, not an absence');
+    assert.equal(event.latitude, null);
+    assert.equal(event.longitude, null);
+  })
+
   it('keeps the bbox centre when the box is a local footprint', async () => {
     const local = '<item><title>Flash flood</title>'
       + '<pubDate>Mon, 18 May 2026 00:00:00 GMT</pubDate>'

@@ -277,12 +277,27 @@ export function parseBoundedNumber(raw, { fallback, min = -Infinity, max = Infin
 
 export function parseBbox(value) {
   if (!value) return null
-  const parts = String(value).split(',').map((part) => Number(part.trim()))
+  // A blank segment is refused, not coerced. `Number('')` is `0`, which is a
+  // valid coordinate, so `bbox=-5,-10,,10` became a box whose east edge sits on
+  // Greenwich and answered "nothing east of it" -- a filter the caller never
+  // asked for, indistinguishable from a real one. `Number.isFinite` cannot see
+  // this: zero is finite. `parseBboxParam` in `routes/tile-packs.js` refuses the
+  // same input for the same reason.
+  const parts = String(value).split(',').map((part) => (part.trim() === '' ? NaN : Number(part.trim())))
   if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) {
-    throw new Error('bbox must be west,south,east,north')
+    // A malformed `?bbox=` is the caller's to fix, not a server fault. Without a
+    // status the handler answered 500 and hid the message, so the one caller who
+    // could have corrected the request was told "Internal server error".
+    const error = new Error('bbox must be west,south,east,north')
+    error.statusCode = 400
+    throw error
   }
   const [west, south, east, north] = parts
-  if (west >= east || south >= north) throw new Error('bbox bounds are invalid')
+  if (west >= east || south >= north) {
+    const error = new Error('bbox bounds are invalid')
+    error.statusCode = 400
+    throw error
+  }
   return { west, south, east, north }
 }
 
@@ -316,7 +331,7 @@ export function boxIntersectsBbox(inner, outer) {
 export function recordInBbox(item, bbox) {
   if (!bbox) return true
   if (pointInBbox(item, bbox)) return true
-  return boxIntersectsBbox(parseRecordBbox(item.bbox), bbox)
+  return boxIntersectsBbox(parseStoredBbox(item.bbox), bbox)
 }
 
 function parseRecordBbox(value) {
@@ -324,6 +339,21 @@ function parseRecordBbox(value) {
   if (Array.isArray(value)) return parseBbox(value.join(','))
   if (typeof value === 'object') return value
   return null
+}
+
+/**
+ * The same, for a box read out of stored data rather than out of the query.
+ *
+ * `recordInBbox` runs inside a filter over every row of a collection, so one
+ * record with a malformed `bbox` must not refuse a query the caller wrote
+ * correctly. A box that cannot be read is a box this record does not have.
+ */
+function parseStoredBbox(value) {
+  try {
+    return parseRecordBbox(value)
+  } catch {
+    return null
+  }
 }
 
 /**

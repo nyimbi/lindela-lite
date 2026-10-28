@@ -213,7 +213,10 @@ function parseGdacsItem(item) {
  * hazard can be mapped and proximity-matched, plus the bounds for filtering.
  */
 function parseBbox(value) {
-  const parts = String(value || '').trim().split(/[\s,]+/).map(Number)
+  // A blank segment is not a zero coordinate: `Number('')` is `0`, so an
+  // element like `" ,-10,10,10"` yielded a box centred on latitude 0 and the
+  // connector stamped that centroid onto a hazard it could not locate.
+  const parts = String(value || '').trim().split(/[\s,]+/).map((part) => (part.trim() === '' ? NaN : Number(part)))
   if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return null
   const [south, west, north, east] = parts
   if (south >= north || west >= east) return null

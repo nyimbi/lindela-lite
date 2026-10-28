@@ -270,6 +270,58 @@ describe('an unreadable from/to bound is refused, not silently dropped', () => {
   })
 })
 
+// ---------------------------------------------------------------- bbox
+
+describe('a blank bbox component is refused, not read as the equator', () => {
+  // `Number('')` is `0`, and 0 is a valid coordinate, so `bbox=-5,-10,,10` was
+  // parsed as a box whose east edge sits on Greenwich: every record east of it
+  // was excluded by a filter the caller never wrote, and the answer looked like
+  // a real one. `Number.isFinite` cannot see the defect because zero is finite.
+  const RECORDS = [
+    { id: 'west', latitude: 5, longitude: -2 },
+    { id: 'east', latitude: 5, longitude: 8 },
+  ]
+  const matched = (query) => filterRecords(RECORDS, new URLSearchParams(query), {}, { unlimited: true }).map((r) => r.id)
+
+  it('keeps both records for the box the caller meant', () => {
+    assert.deepEqual(matched('bbox=-5,-10,10,10'), ['west', 'east'])
+  })
+
+  it('refuses a blank segment instead of collapsing it to zero', () => {
+    for (const bad of ['-5,-10,,10', '-5,-10,10,', ',-10,10,10', '-5,,10,10', '-5,-10, ,10']) {
+      assert.throws(
+        () => matched(`bbox=${bad}`),
+        (err) => err.statusCode === 400 && /bbox must be west,south,east,north/.test(err.message),
+        `bbox=${JSON.stringify(bad)} became a box on the equator`,
+      )
+    }
+  })
+
+  it('answers 400, not 500, because the caller can fix the parameter', () => {
+    // Without a status the handler answered "Internal server error" and hid the
+    // message, which is the one answer the caller cannot act on.
+    assert.throws(() => matched('bbox=-5,-10,,10'), (err) => err.statusCode === 400)
+    assert.throws(() => matched('bbox=10,10,0,0'), (err) => err.statusCode === 400)
+  })
+
+  it('treats an absent or empty bbox as no filter at all', () => {
+    assert.deepEqual(matched(''), ['west', 'east'])
+    assert.deepEqual(matched('bbox='), ['west', 'east'])
+  })
+
+  it('does not let one unreadable stored box refuse a valid query', () => {
+    // `recordInBbox` reads every row's own `bbox`. A record whose stored box is
+    // malformed has no box; it must not throw out of a query the caller wrote
+    // correctly, and it must not silently match either.
+    const rows = [
+      { id: 'west', latitude: 5, longitude: -2 },
+      { id: 'malformed', bbox: '1,,3,4' },
+    ]
+    const kept = filterRecords(rows, new URLSearchParams('bbox=-5,-10,10,10'), {}, { unlimited: true }).map((r) => r.id)
+    assert.deepEqual(kept, ['west'])
+  })
+})
+
 // ---------------------------------------------------------------- SCL-03
 
 describe('SCL-03 filterRecords walks the collection once, not once per filter', () => {
