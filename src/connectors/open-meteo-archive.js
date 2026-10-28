@@ -2,7 +2,7 @@ import { fetchWithRetry } from './http.js'
 import { DEFAULT_REGIONS } from '../schema.js'
 import { stableId } from '../utils.js'
 import { defineConnector } from './spec.js'
-import { readMeasurement } from './open-meteo.js'
+import { readMeasurement, readRegionCoordinates } from './open-meteo.js'
 import {
   advanceBackfill,
   advanceWatermark,
@@ -186,9 +186,20 @@ function planRun({ options, state, now }) {
 
 /** One region, one window. Throws rather than reporting; the caller collects. */
 async function fetchRegion(region, startDate, endDate, { timeoutMs, retries, source }) {
+  // Same guard as the forecast connector: `Number('')` is 0, so a region with
+  // no coordinates was fetched at 0/0 and its reanalysis published under the
+  // district's name. The archive is the *training* series for the flood model,
+  // so a wrong location here teaches the model the wrong rainfall.
+  const coordinates = readRegionCoordinates(region)
+  if (!coordinates) {
+    throw new Error(
+      `region has no readable coordinates (lat=${JSON.stringify(region.lat)}, lon=${JSON.stringify(region.lon)}); `
+      + 'skipped rather than queried at 0/0, which is a real position in the Gulf of Guinea',
+    )
+  }
   const url = new URL(ARCHIVE_URL)
-  url.searchParams.set('latitude', String(region.lat))
-  url.searchParams.set('longitude', String(region.lon))
+  url.searchParams.set('latitude', String(coordinates.lat))
+  url.searchParams.set('longitude', String(coordinates.lon))
   url.searchParams.set('start_date', startDate)
   url.searchParams.set('end_date', endDate)
   url.searchParams.set('daily', 'precipitation_sum')
@@ -221,8 +232,8 @@ async function fetchRegion(region, startDate, endDate, { timeoutMs, retries, sou
     // checks and ordering behave like other climate observations.
     region_name: region.name,
     country: region.country,
-    latitude: Number(region.lat),
-    longitude: Number(region.lon),
+    latitude: coordinates.lat,
+    longitude: coordinates.lon,
     observed_at: `${seriesEnd}T00:00:00.000Z`,
     series_start: daily[0]?.date || startDate,
     series_end: seriesEnd,

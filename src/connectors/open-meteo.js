@@ -41,6 +41,23 @@ export function readMeasurement(value) {
   return Number.isFinite(number) ? number : null
 }
 
+/**
+ * A region's coordinates, or null when either is unreadable.
+ *
+ * Shared by all four Open-Meteo connectors, because they all built a request
+ * from `region.lat`/`region.lon` and stamped the same values onto the record —
+ * and `Number('')`, `Number(null)` and `Number('  ')` are all 0. A region whose
+ * coordinates were never filled in was fetched at 0/0, a real position in the
+ * Gulf of Guinea, and the forecast for that point was published under the
+ * district the region was named for. Fixing it in one connector and not the
+ * others would leave the same defect reachable through three sibling ids.
+ */
+export function readRegionCoordinates(region) {
+  const lat = readMeasurement(region?.lat)
+  const lon = readMeasurement(region?.lon)
+  return lat === null || lon === null ? null : { lat, lon }
+}
+
 export const ENSEMBLE_MODEL_LIMIT =
   'Deterministic point forecast only; no ensemble members are produced. ' +
   'Percentile fields are absent because this connector does not fetch a probabilistic forecast.'
@@ -174,9 +191,8 @@ async function openMeteoIngest(options = {}) {
         // that *creates* the records rather than filtering them. The forecast
         // for the Gulf of Guinea then sat in `climate_observations` as a
         // rainfall reading for the district the region was named for.
-        const lat = readMeasurement(region.lat)
-        const lon = readMeasurement(region.lon)
-        if (lat === null || lon === null) {
+        const coordinates = readRegionCoordinates(region)
+        if (!coordinates) {
           errors.push(
             `${region.name || 'unnamed region'}: region has no readable coordinates `
             + `(lat=${JSON.stringify(region.lat)}, lon=${JSON.stringify(region.lon)}); skipped rather than `
@@ -185,8 +201,8 @@ async function openMeteoIngest(options = {}) {
           continue
         }
         const url = new URL('https://api.open-meteo.com/v1/forecast')
-        url.searchParams.set('latitude', lat)
-        url.searchParams.set('longitude', lon)
+        url.searchParams.set('latitude', coordinates.lat)
+        url.searchParams.set('longitude', coordinates.lon)
         url.searchParams.set('daily', 'precipitation_sum,precipitation_probability_max,temperature_2m_max,temperature_2m_min')
         url.searchParams.set('current', 'precipitation,temperature_2m,relative_humidity_2m')
         url.searchParams.set('forecast_days', String(forecastDays))
@@ -205,8 +221,8 @@ async function openMeteoIngest(options = {}) {
         if (useEnsemble) {
           try {
             const ensembleUrl = new URL(ENSEMBLE_URL)
-            ensembleUrl.searchParams.set('latitude', lat)
-            ensembleUrl.searchParams.set('longitude', lon)
+            ensembleUrl.searchParams.set('latitude', coordinates.lat)
+            ensembleUrl.searchParams.set('longitude', coordinates.lon)
             ensembleUrl.searchParams.set('daily', 'precipitation_sum')
             ensembleUrl.searchParams.set('forecast_days', String(forecastDays))
             ensembleUrl.searchParams.set('models', ensembleModel)
@@ -227,8 +243,8 @@ async function openMeteoIngest(options = {}) {
             type: 'current_weather',
             region_name: region.name,
             country: region.country,
-            latitude: lat,
-            longitude: lon,
+            latitude: coordinates.lat,
+            longitude: coordinates.lon,
             observed_at: asUtcTimestamp(data.current.time),
             precipitation_mm: readMeasurement(data.current.precipitation),
             temperature_c: readMeasurement(data.current.temperature_2m),
@@ -260,8 +276,8 @@ async function openMeteoIngest(options = {}) {
             type: 'precipitation_forecast',
             region_name: region.name,
             country: region.country,
-            latitude: lat,
-            longitude: lon,
+            latitude: coordinates.lat,
+            longitude: coordinates.lon,
             observed_at: asUtcTimestamp(daily.time[i]),
             precipitation_mm: precip,
             precipitation_probability_pct: readMeasurement(daily.precipitation_probability_max?.[i]),

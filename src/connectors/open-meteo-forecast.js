@@ -2,7 +2,7 @@ import { fetchWithRetry } from './http.js'
 import { KNOWN_DISTRICTS } from '../districts.js'
 import { nowIso, stableId, zonedTimestamp } from '../utils.js'
 import { defineConnector } from './spec.js'
-import { ENSEMBLE_MODEL_LIMIT, readMeasurement } from './open-meteo.js'
+import { ENSEMBLE_MODEL_LIMIT, readMeasurement, readRegionCoordinates } from './open-meteo.js'
 
 /**
  * Current conditions and the 7-day daily forecast for the five pilot districts,
@@ -84,9 +84,23 @@ async function openMeteoForecastIngest(options = {}) {
     // issues as one.
     const asOf = nowIso()
     try {
+      // `searchParams.set` coerces, and `String(null)` is `'null'` while
+      // `String('')` is `''` — so a region with no coordinates either sent the
+      // API a literal `null` or sent nothing and let it default, and the
+      // district's forecast was published for a point nobody named. Refused
+      // before the request, with the region named, rather than after.
+      const coordinates = readRegionCoordinates(region)
+      if (!coordinates) {
+        errors.push(
+          `${region.name || 'unnamed region'}: region has no readable coordinates `
+          + `(lat=${JSON.stringify(region.lat)}, lon=${JSON.stringify(region.lon)}); skipped rather than `
+          + 'queried at 0/0, which is a real position in the Gulf of Guinea.',
+        )
+        continue
+      }
       const url = new URL(FORECAST_URL)
-      url.searchParams.set('latitude', region.lat)
-      url.searchParams.set('longitude', region.lon)
+      url.searchParams.set('latitude', coordinates.lat)
+      url.searchParams.set('longitude', coordinates.lon)
       url.searchParams.set('current', 'temperature_2m,precipitation,weather_code')
       url.searchParams.set('daily', 'temperature_2m_max,precipitation_sum,precipitation_probability_max,weather_code')
       url.searchParams.set('forecast_days', String(options.forecast_days || 7))
@@ -109,8 +123,8 @@ async function openMeteoForecastIngest(options = {}) {
           region_name: region.name,
           district: region.slug || null,
           country: region.country,
-          latitude: Number(region.lat),
-          longitude: Number(region.lon),
+          latitude: coordinates.lat,
+          longitude: coordinates.lon,
           observed_at: zonedTimestamp(data.current.time, FORECAST_TIMEZONE),
           as_of: asOf,
           temperature_c: readMeasurement(data.current.temperature_2m),
@@ -133,8 +147,8 @@ async function openMeteoForecastIngest(options = {}) {
           region_name: region.name,
           district: region.slug || null,
           country: region.country,
-          latitude: Number(region.lat),
-          longitude: Number(region.lon),
+          latitude: coordinates.lat,
+          longitude: coordinates.lon,
           observed_at: zonedTimestamp(daily.time[i], FORECAST_TIMEZONE),
           as_of: asOf,
           precipitation_mm: readMeasurement(daily.precipitation_sum?.[i]),
