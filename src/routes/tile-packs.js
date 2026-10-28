@@ -124,13 +124,27 @@ export function parseBboxParam(raw) {
   return { ok: true, bbox: { west, south, east, north } }
 }
 
-/** The zoom range from `?min_zoom=`/`?max_zoom=`, absent meaning the module's default. */
+/**
+ * The zoom range from `?min_zoom=`/`?max_zoom=`, absent meaning the module's
+ * default.
+ *
+ * A *blank* value is the same absence as an omitted one, which is the rule the
+ * rest of this server follows. `search.get` returns `''` for `?min_zoom=`, and
+ * `Number('')` is 0 — so a request that named no zoom was refused with "zoom
+ * range 0..14 is outside 2..15", quoting a lower bound the caller never wrote.
+ * A stated but unreadable value (`?min_zoom=abc`) stays NaN and is still
+ * refused, by the same `Number.isInteger` check that catches a non-integer.
+ */
 function zoomRange(search) {
-  const minZoom = search.get('min_zoom')
-  const maxZoom = search.get('max_zoom')
+  const stated = (name) => {
+    const raw = search.get(name)
+    return raw === null || raw.trim() === '' ? null : Number(raw)
+  }
+  const minZoom = stated('min_zoom')
+  const maxZoom = stated('max_zoom')
   return {
-    ...(minZoom === null ? {} : { minZoom: Number(minZoom) }),
-    ...(maxZoom === null ? {} : { maxZoom: Number(maxZoom) }),
+    ...(minZoom === null ? {} : { minZoom }),
+    ...(maxZoom === null ? {} : { maxZoom }),
   }
 }
 

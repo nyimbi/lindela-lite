@@ -161,6 +161,32 @@ describe('ENH-42 — the plan route sizes a pack without touching an upstream', 
     assert.ok(body.tile_count > 20000, `expected a count over the budget, got ${body.tile_count}`)
   })
 
+  it('treats a blank zoom as an omitted one, not as zoom zero', async () => {
+    // `?min_zoom=` gives `search.get` an empty string, and `Number('')` is 0 —
+    // so a request that named no zoom was refused with "zoom range 0..14 is
+    // outside 2..15", quoting a lower bound the caller never wrote. A blank
+    // parameter is the same absence as an omitted one, which is the rule the
+    // rest of this server follows.
+    const omitted = await run('/api/v1/tile-packs/plan', `?bbox=${WARD}`, { env: {} })
+    const blank = await run('/api/v1/tile-packs/plan', `?bbox=${WARD}&min_zoom=&max_zoom=`, { env: {} })
+    // Both must *succeed* and carry the module's defaults. Asserting only that
+    // the two agree was vacuous: a refusal quotes the same wrong bounds for both
+    // and compares equal, which is how this test first passed against the bug.
+    assert.equal(omitted.status, 200, omitted.json().error)
+    assert.equal(blank.status, 200, blank.json().error)
+    assert.equal(blank.json().data.min_zoom, omitted.json().data.min_zoom)
+    assert.equal(blank.json().data.max_zoom, omitted.json().data.max_zoom)
+    assert.equal(omitted.json().data.min_zoom, 2, 'the module default, not a zero the caller never wrote')
+  })
+
+  it('still refuses a zoom that is stated but unreadable', async () => {
+    // The blank case above must not swallow this one: `?min_zoom=abc` names a
+    // zoom, and the caller meant something by it. Refused, not defaulted.
+    const res = await run('/api/v1/tile-packs/plan', `?bbox=${WARD}&min_zoom=abc&max_zoom=12`, { env: {} })
+    assert.equal(res.status, 400)
+    assert.equal(res.json().reason, 'invalid_zoom')
+  })
+
   it('refuses an inverted bbox rather than answering an empty pack', async () => {
     const res = await run('/api/v1/tile-packs/plan', '?bbox=36,2.9,35.5,3.3', { env: {} })
     assert.equal(res.status, 400)
