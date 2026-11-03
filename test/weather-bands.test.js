@@ -87,6 +87,33 @@ describe('WMO weather codes', () => {
     assert.equal(weatherCodeLabel(99), 'Thunderstorm with heavy hail')
   })
 
+  it('does not label a blank code as Clear sky', () => {
+    // `Number('')`, `Number('  ')`, `Number([])` and `Number(false)` are all 0,
+    // which is WMO code 0 — "Clear sky". An unfilled code therefore rendered as
+    // the most reassuring label in the table, on the hazard overlay, and
+    // `Number.isInteger(0)` is true so the integer check could not catch it.
+    // The band functions beside this one already refuse a non-number; this one
+    // now does too.
+    for (const blank of ['', '  ', '\t', [], false, [0]]) {
+      assert.equal(weatherCodeLabel(blank), null,
+        `${JSON.stringify(blank)} was labelled ${JSON.stringify(weatherCodeLabel(blank))}`)
+    }
+  })
+
+  it('reads the code as a number, like its sibling band functions', () => {
+    // `precipBand('5')` and `tempBand('31')` are both null; a code arriving as
+    // text is a record the connector did not produce, and guessing at it here
+    // would be a second rule for the same field.
+    assert.equal(weatherCodeLabel('61'), null)
+  })
+
+  it('still labels a stated code zero, which really is Clear sky', () => {
+    // The control. 0 is a real WMO code and the one an absent value used to
+    // impersonate; a guard that could not tell them apart would delete a
+    // correct reading.
+    assert.equal(weatherCodeLabel(0), 'Clear sky')
+  })
+
   it('returns null for absent or unknown codes rather than guessing', () => {
     assert.equal(weatherCodeLabel(null), null)
     assert.equal(weatherCodeLabel(undefined), null)

@@ -102,10 +102,9 @@ export const WMO_WEATHER_CODES = Object.freeze({
 
 /** The human label for a WMO code, or null when the code is absent or unknown. */
 export function weatherCodeLabel(code) {
-  if (code === null || code === undefined) return null
-  const key = Number(code)
-  if (!Number.isInteger(key)) return null
-  return WMO_WEATHER_CODES[key] ?? null
+  // A number only. `Number('')` and `Number([])` are 0, which is code 0.
+  if (typeof code !== 'number' || !Number.isInteger(code)) return null
+  return WMO_WEATHER_CODES[code] ?? null
 }
 
 /**
