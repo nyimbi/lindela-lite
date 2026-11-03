@@ -206,7 +206,13 @@ describe('public/co/app.js — the period a chart describes', () => {
       const urls = routeFetch([['/monthly-series', ok(monthlySeries(2026, 10))]])
       await co.load()
       const series = urls.find((u) => u.includes('/api/v1/kpi/monthly-series'))
-      assert.match(series, /monthsBack=16/,
+      // The count walks back to today, so the literal shifts with the calendar.
+      // Asserting it as one constant was the defect: the test rotted when the
+      // month changed, and looked like a broken build rather than a reminder.
+      // The wiring is what matters: the URL carries the named monthsBack and not
+      // the (wrong) trailing default.
+      const expected = co.monthsBackFor('Q2', '2026')
+      assert.match(series, new RegExp(`monthsBack=${expected}`),
         'without the parameter the server returns months ending now, whatever the reader selected')
     })
 
