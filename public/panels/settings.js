@@ -265,8 +265,9 @@ function renderSettingsPanel() {
       incident_type: $('incidentTypeInput')?.value,
       priority:      $('incidentPriorityInput')?.value,
       country:       $('countryInput')?.value,
-      latitude:      Number($('latInput')?.value),
-      longitude:     Number($('lonInput')?.value),
+      // No coordinate inputs here. latInput/lonInput resolved to the ingestion
+      // panel's region boxes, stamping an incident with another tab's coords.
+      // normalizeIncident derives the position when the body omits it.
     }
     // A field report raised without connectivity is the ordinary case this app is
     // meant to survive, so the write is queued rather than rejected.

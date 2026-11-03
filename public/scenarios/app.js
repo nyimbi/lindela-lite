@@ -559,6 +559,7 @@ export function niceExtent(magnitude, floor = 1) {
 export function deltaExtent(values) {
   let peak = 0
   for (const v of values) {
+    if (v === null || v === undefined || v === '' || (typeof v === 'string' && v.trim() === '') || typeof v === 'boolean' || Array.isArray(v)) continue
     const n = Number(v)
     if (Number.isFinite(n)) peak = Math.max(peak, Math.abs(n))
   }
@@ -573,7 +574,7 @@ export function deltaExtent(values) {
  * looks like "no change".
  */
 export function deltaBar(value, extent, { maxPx = 48 } = {}) {
-  if (value === null || value === undefined || value === '') return null
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null
   const n = Number(value)
   if (!Number.isFinite(n)) return null
   const span = extent > 0 ? extent : 1

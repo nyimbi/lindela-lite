@@ -80,8 +80,14 @@ async function runIngestion() {
     regions: [{
       name:    $('regionInput')?.value,
       country: $('countryInput')?.value,
-      lat:     Number($('latInput')?.value),
-      lon:     Number($('lonInput')?.value),
+      lat:     (() => {
+        const raw = ($('latInput')?.value ?? '')
+        return raw.trim() === '' ? null : Number(raw)
+      })(),
+      lon:     (() => {
+        const raw = ($('lonInput')?.value ?? '')
+        return raw.trim() === '' ? null : Number(raw)
+      })(),
     }],
   })
   if (!payload.success) { setStatus(payload.error || 'Ingestion failed'); return }
