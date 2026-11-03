@@ -8,11 +8,9 @@
  * boundary that rendered 4 mm and 45 mm identically would hide exactly the
  * difference an operator routes around.
  *
- * The zero/absence discipline is the same one `src/connectors/open-meteo.js`
- * documents: 0 mm is a measured dry day, null is a day the API did not report.
- * `precipBand(null)` returns null — unknown — and never the dry band, because a
- * missing forecast reading as "no rain" is a claim nobody made.
+ * `precipBand(null)` is null, not dry (null is not a zero).
  */
+
 
 /**
  * Daily precipitation bands, mm per day, for the glyph's size and colour.
