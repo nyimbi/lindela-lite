@@ -5540,10 +5540,6 @@ function alertWhere(alert) {
     if (parts.length) return parts.join(', ')
     const blank = (v) => v === null || v === undefined || typeof v === 'boolean' || Array.isArray(v)
       || (typeof v === 'string' && v.trim() === '')
-    // A blank coordinate falls through to the district below rather than printing
-    // "0.0000, 0.0000": the location card would name a point in open water for a
-    // district that did report a name. It is the same rule `readStatedNumber`
-    // applies at the boundary, one level down this path.
     const lat = blank(_loc.latitude) ? NaN : Number(String(_loc.latitude).trim())
     const lon = blank(_loc.longitude) ? NaN : Number(String(_loc.longitude).trim())
     if (Number.isFinite(lat) && Number.isFinite(lon)) return `${lat.toFixed(4)}, ${lon.toFixed(4)}`

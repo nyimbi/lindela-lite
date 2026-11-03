@@ -20,9 +20,8 @@ import { caption } from '/shared/charts.js'
 
 /** A number, or null. `0` and absent are different answers and stay different. */
 function num(value) {
-  if (value === null || value === undefined || typeof value === 'boolean') return null
-  if (Array.isArray(value)) return null
-  if (typeof value === 'string' && value.trim() === '') return null
+  if (value === null || value === undefined || typeof value === 'boolean' || Array.isArray(value)
+    || (typeof value === 'string' && value.trim() === '')) return null
   const n = Number(value)
   return Number.isFinite(n) ? n : null
 }

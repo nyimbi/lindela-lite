@@ -559,7 +559,7 @@ export function niceExtent(magnitude, floor = 1) {
 export function deltaExtent(values) {
   let peak = 0
   for (const v of values) {
-    if (v === null || v === undefined || v === '' || (typeof v === 'string' && v.trim() === '') || typeof v === 'boolean' || Array.isArray(v)) continue
+    if (v === null || v === undefined || (typeof v === 'string' ? v.trim()==='' : (typeof v ==='boolean' || Array.isArray(v)))) continue
     const n = Number(v)
     if (Number.isFinite(n)) peak = Math.max(peak, Math.abs(n))
   }
