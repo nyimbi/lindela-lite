@@ -27,6 +27,8 @@ import { createInboundLimiter } from './inbound-rate-limit.js'
 import { executeTriggerProtocols } from './protocols.js'
 import { undeliveredDispatches, buildUndeliveredAlert } from './rapidpro.js'
 import { collectionsForRequest, needsHistory, recordScopeForRequest } from './route-manifests.js'
+import { createRegistry, runShadowDue, plannedModelsFromEnv } from './model-registry.js'
+import { runShadow } from './model-shadow.js'
 import { matchStacRoute, matchOgcRoute, handleStacRoute } from './routes/stac.js'
 import { ROUTE_FAMILIES, dispatchFamily } from './route-families.js'
 import { emit, emitMany, dispatchPending } from './outbox.js'
@@ -317,6 +319,12 @@ function tickStore(store) {
 }
 
 /** Run every periodic item once and record the outcome. Exported for tests. */
+const MODEL_REGISTRY = createRegistry()
+for (const id of plannedModelsFromEnv(process.env)) {
+  MODEL_REGISTRY.register({ id, version: '0.1.0', capability: 'shadow', status: 'active',
+    threshold: 0.5, features: [], algorithm_version: 'numeric-only-1' })
+}
+const MODEL_SHADOW_STATE = { lastRunMs: 0 }
 export async function runPeriodicTick(store, { at = new Date().toISOString() } = {}) {
   const results = []
   // SCL-02. One read for the tick, refreshed per written collection, rather than
@@ -343,6 +351,16 @@ export async function runPeriodicTick(store, { at = new Date().toISOString() } =
         err: { message: error?.message, stack: error?.stack },
       })
     }
+  }
+  // Phase 3: env-gated model-shadow pass. Advisory only; never changes dispatch.
+  if (plannedModelsFromEnv(process.env).length) {
+    try {
+      const shadow = await runShadowDue({ registry: MODEL_REGISTRY, records: [],
+        state: MODEL_SHADOW_STATE, runShadow, now: Date.now() })
+      results.push({ id: 'model_shadow', label: 'model shadow', ok: !shadow.skipped, ms: 0,
+        summary: (shadow.action_logs?.length || 0) + ' log(s)' })
+    } catch (e) { logger.error('model_shadow_failed', { message: e?.message })
+      results.push({ id: 'model_shadow', label: 'model shadow', ok: false, ms: 0, error: String(e?.message || e) }) }
   }
   const succeeded = results.filter((r) => r.ok).length
   const heartbeat = {

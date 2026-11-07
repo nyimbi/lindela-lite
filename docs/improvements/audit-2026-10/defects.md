@@ -846,7 +846,7 @@ iterates it in two loops — `pre` above the store read, `post` below. Measured 
 (2026-10-17): the dispatcher is **88 lines**
 (`functionBody('handleApiRequestInContext', src)`, line 1022 to 1109) whose route
 logic is two `for` loops and a `dispatchFamily` call, with no inline validation
-and no business logic; `src/server.js` is **1,828 lines** (re-measured 2026-10-25). (This paragraph said
+and no business logic; `src/server.js` is **1,846 lines** (re-measured 2026-10-25). (This paragraph said
 80 / `973 to 1052` / 1,613 when it was written; the numbers were right then and
 nothing re-measured them. It then said 1,661 for a day, which was this
 correction's own miscount — the file had 1,660 lines by `wc -l`, and 1,661 was

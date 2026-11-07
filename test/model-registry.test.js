@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { createRegistry, runShadowDue, plannedModelsFromEnv, ENV_FLAG } from '../src/model-registry.js'
+import { COUNTERFACTUAL_REFUSALS } from '../src/counterfactual.js'
 import { runShadow } from '../src/model-shadow.js'
 
 const rec = (id, vals) => ({ id, feature_values: vals, validated: true })
@@ -37,5 +38,4 @@ describe('model registry / orchestrator', () => {
     assert.deepEqual(plannedModelsFromEnv({}), [])
     assert.equal(ENV_FLAG, 'LITE_SHADOW_MODELS')
   })
-}
-)
+})
