@@ -15,7 +15,7 @@
          controls. Linked rather than injected by app.js: a dialog that renders
          before its stylesheet arrives is a dialog an operator reads wrong. -->
     <!-- Loaded by panel.js on first open. It was a blocking stylesheet for a
-         panel that appears only when an operator asks for it — 2 KB on every
+         panel that appears only when an operator asks for it, 2 KB on every
          field first load, for markup that is usually not there. -->
   </head>
   <body class="app-shell">
@@ -37,7 +37,7 @@
     <!-- The ribbon used to be eight tiles labelled with alert-rule names
          ("Anticipatory Alert", "Cold Chain Protection") carrying an open count
          and "closed: N". They read as eight KPIs when they are one number split
-         eight ways, and the actual totals — 9 open, 4 closed — appeared
+         eight ways, and the actual totals, 9 open, 4 closed, appeared
          nowhere. The summary leads; the breakdown is labelled as one. -->
 
     <!-- The console's own controls. The navbar injected by shared/navbar.js sits
@@ -50,8 +50,8 @@
          connection badge, the workflow summary, the filter trigger and the
          refresh/palette actions.
 
-         It replaces three stacked bars — a controls row, a filter row and a
-         workflow ribbon — that together stood 195px tall on a 1440x900 laptop
+         It replaces three stacked bars, a controls row, a filter row and a
+         workflow ribbon, that together stood 195px tall on a 1440x900 laptop
          and 539px on a 390x844 phone. On the phone that was 64% of the viewport
          spent before the first pixel of map, so the map began at y=603 and the
          primary decision surface was below the fold on first paint.
@@ -61,7 +61,7 @@
          and off the critical path: an operator changes severity far less often
          than they look at the map, and the map is what paid for the row.
 
-         A labelled region, not `role="toolbar"` — a toolbar is a widget, not a
+         A labelled region, not `role="toolbar"`, a toolbar is a widget, not a
          landmark, and the row holding the language picker and the connection
          badge was outside every landmark. -->
     <section class="console-toolbar" aria-label="Console controls">
@@ -86,7 +86,7 @@
            The eight tiles were a breakdown of the number printed beside them
            and put eight focusable controls on screen before the operator had
            seen a single record, so the count leads and the breakdown is one
-           keystroke away — as a popover, so opening it never reflows the band
+           keystroke away, as a popover, so opening it never reflows the band
            and never pushes the map down. -->
       <section id="workflowOverview" class="workflow-ribbon" aria-label="Workflow overview">
         <div class="workflow-summary">
@@ -253,7 +253,7 @@
                 land rings and everything the operator reads: where tiles are
                 loaded the imagery covers the rings, and where a tile failed
                 to fetch (offline, upstream down) the vector rings that painted
-                first show through — the map degrades to the old basemap
+                first show through, the map degrades to the old basemap
                 rather than blanking. Every layer above (districts, graticule,
                 risk, flood, discharge, hazards, route, roads, assets) paints
                 over the raster, which is the point of a basemap.
@@ -277,7 +277,7 @@
               <g id="mapRiverDischarge" class="river-discharge-layer"></g>
               <g id="mapDisease" class="disease-layer"></g>
               <!-- Sensors, above the hazards so a sensor pin is never hidden by a
-                   hazard marker on the same coordinate — the reading is the thing
+                   hazard marker on the same coordinate, the reading is the thing
                    the operator is looking for, and the hazard is context for it.
                    Drawn from /api/v1/iot-observations?map=1, which returns only
                    sensors with finite coordinates, so nothing here needs to be
@@ -291,7 +291,7 @@
             <!--
               The legend, the scale bar and the tile attribution used to live
               here as SVG groups anchored to the viewBox. The map is
-              `preserveAspectRatio="xMidYMid slice"` now — the viewBox is a fixed
+              `preserveAspectRatio="xMidYMid slice"` now, the viewBox is a fixed
               800x500 (1.6:1) coordinate system and the element is fluid, so the
               only way it fills an element of any aspect is to crop the viewBox
               to it. Chrome drawn in viewBox units would be cropped with it, and
@@ -302,7 +302,7 @@
           </svg>
           <!-- The map's own controls, on the map.
                They were in the console toolbar, three rows above the map and
-               past the filters, basemap picker and record count — so the control
+               past the filters, basemap picker and record count, so the control
                that changes what the map shows was the furthest thing from it on
                the screen, and at phone width it sat in the clipped row. Floating
                them over the corner the map leaves empty keeps the control with
@@ -314,7 +314,7 @@
             <span id="zoomLevel" aria-live="polite">100%</span>
           </div>
           <!-- Map chrome, over the map. These were SVG groups until the map
-               switched to `slice`, which crops the viewBox — the legend and the
+               switched to `slice`, which crops the viewBox, the legend and the
                scale bar fell outside the crop on the tall phone element. Pinned
                to the frame instead, they sit at the same corner at every aspect.
                The legend is built by renderMapLegend; the attribution is kept
@@ -325,8 +325,8 @@
               <div id="mapLegend" class="map-legend-rows" aria-label="Map legend"></div>
             </details>
             <!-- What the map does NOT show, beside what it does. The gap
-                 accounting — outside the frame, too large to place, left
-                 undetermined by the filter — was computed every render and
+                 accounting, outside the frame, too large to place, left
+                 undetermined by the filter, was computed every render and
                  reported only in the record count's `title` and `aria-label`,
                  which needs a hover a touch device has not got. ENH-70: an
                  operator reading a clean map should see the gaps in it.
@@ -365,15 +365,15 @@
             <!-- The advisory prose used to render here at 10px, all of it, every
                  refresh: five clauses about what CPC's criterion is, none of them
                  readable at that size. The summary carries the four facts a reader
-                 needs — the value, the threshold, the season count, and the
-                 qualification — and the full text is one click away rather than
+                 needs, the value, the threshold, the season count, and the
+                 qualification, and the full text is one click away rather than
                  forty characters tall. The qualification stays in the summary on
                  purpose: "this is an advisory, not a declared event" is the clause
                  that stops the strip being read as a prediction, and burying it is
                  how it gets misread. -->
             <p id="seasonalSummary" class="muted-sm"></p>
             <div class="seasonal-enhanced" aria-label="Seasonal advisory summary">
-              <p>The Niño 3.4 SST anomaly is <strong id="seasonalAdvisoryValue">—</strong> °C (threshold ±0.5 °C). <strong id="seasonalAdvisoryCount">—</strong> of the required 5 overlapping seasons currently qualify. This is <strong id="seasonalAdvisoryQual">not a declared ENSO event</strong> — advisory only.</p>
+              <p>The Niño 3.4 SST anomaly is <strong id="seasonalAdvisoryValue">—</strong> °C (threshold ±0.5 °C). <strong id="seasonalAdvisoryCount">—</strong> of the required 5 overlapping seasons currently qualify. This is <strong id="seasonalAdvisoryQual">not a declared ENSO event</strong>, advisory only.</p>
             </div>
             <details>
               <summary>Show the full advisory</summary>
@@ -383,7 +383,7 @@
             </details>
             <!-- The calendar, not another number.
                  A single anomaly value cannot show that an ENSO warm phase
-                 peaks in Nov-Dec and decays through the following spring — that
+                 peaks in Nov-Dec and decays through the following spring, that
                  annual shape is the thing an operator is actually looking for
                  and it is invisible in one figure. Twelve cells per year make it
                  legible, and make the months that were never ingested legible as
@@ -410,7 +410,7 @@
           </div>
 
           <!-- IPC and WHO GHO share a strip because they are the same kind of
-               claim — national context, not district evidence — and neither was
+               claim, national context, not district evidence, and neither was
                carrying anything. Each was a full panel reserved for an em dash and
                the words "not ingested". Collapsing them must not cost the empty
                state: #contextMissing names what is absent and why, and it is a
@@ -435,7 +435,7 @@
             </div>
             <p id="contextMissing" class="seasonal-note" hidden></p>
             <p id="ipcNote" class="seasonal-note" hidden>Phase 3+ figures as published, latest validity
-              window. Analytical classification by IPC — relayed verbatim, never re-derived. Fractions of
+              window. Analytical classification by IPC, relayed verbatim, never re-derived. Fractions of
               the analysed population: 0.35 means 35%.</p>
             <p id="diseaseNote" class="seasonal-note" hidden>
               National annual aggregates. Context, not district evidence; not an alert trigger.</p>
@@ -522,7 +522,7 @@
                moves when input coverage changes (ENH-17), what the situation
                looked like at a chosen moment in the archive (ENH-18), and
                whether any forecast issued here has been checked against an
-               outcome (ENH-21). Each is a lazy module — an operator who scrolls
+               outcome (ENH-21). Each is a lazy module, an operator who scrolls
                past this block never downloads one of them; see `lazy` in
                app.js and the reason in scripts/check-budget.mjs. Panels are
                hidden until their module reports something, so an empty group is
@@ -581,8 +581,8 @@
 
       <!-- The action rail.
            The map shows what is happening; this shows what the platform DID
-           about it. Without it the vision's central claim — "not a dashboard,
-           actual pre-authorised coordinated action" — is unfalsifiable: a protocol
+           about it. Without it the vision's central claim, "not a dashboard,
+           actual pre-authorised coordinated action", is unfalsifiable: a protocol
            that fires at 03:00 and opens an incident looks identical to one that
            never fired at all, and a playbook that opened an incident but refused
            to dispatch looks identical to one that did both.
@@ -590,7 +590,7 @@
            Refusals are rendered as first-class rows, not hidden as errors. For an
            operator whose deployment is half-configured, "the notify step declined
            because RapidPro is not configured" is the most useful sentence on the
-           page — and it is exactly what an error-styled, collapsed or filtered
+           page, and it is exactly what an error-styled, collapsed or filtered
            row would hide.
 
            Hidden until it has something to say, like every other panel here: an
@@ -689,7 +689,7 @@
 
                These four panels were 29.4% of this file raw and 33.5%
                gzipped, and 58 of the 99 interactive controls the console had
-               at boot — every one of them inside a panel that starts `hidden`
+               at boot, every one of them inside a panel that starts `hidden`
                and whose contents were laid out at `opacity: 0`, at coordinates
                identical to the visible panel's. So 59% of the console's
                interactive surface was keyboard-reachable and invisible: Tab
@@ -698,7 +698,7 @@
                An operator on a field connection paid 12 KB gzipped to download
                controls they could not see and could not reach. The tabs are the
                default view for 2 of 8 surfaces' users and an explicit choice for
-               the rest, so the panels are still one click away — they are just
+               the rest, so the panels are still one click away, they are just
                no longer shipped to everyone.
 
                `mountPanel` in app.js fetches the template, inserts it before
@@ -715,7 +715,7 @@
 
                These four panels were 29.4% of this file raw and 33.5%
                gzipped, and 58 of the 99 interactive controls the console had
-               at boot — every one of them inside a panel that starts `hidden`
+               at boot, every one of them inside a panel that starts `hidden`
                and whose contents were laid out at `opacity: 0`, at coordinates
                identical to the visible panel's. So 59% of the console's
                interactive surface was keyboard-reachable and invisible: Tab
@@ -724,7 +724,7 @@
                An operator on a field connection paid 12 KB gzipped to download
                controls they could not see and could not reach. The tabs are the
                default view for 2 of 8 surfaces' users and an explicit choice for
-               the rest, so the panels are still one click away — they are just
+               the rest, so the panels are still one click away, they are just
                no longer shipped to everyone.
 
                `mountPanel` in app.js fetches the template, inserts it before
@@ -741,7 +741,7 @@
 
                These four panels were 29.4% of this file raw and 33.5%
                gzipped, and 58 of the 99 interactive controls the console had
-               at boot — every one of them inside a panel that starts `hidden`
+               at boot, every one of them inside a panel that starts `hidden`
                and whose contents were laid out at `opacity: 0`, at coordinates
                identical to the visible panel's. So 59% of the console's
                interactive surface was keyboard-reachable and invisible: Tab
@@ -750,7 +750,7 @@
                An operator on a field connection paid 12 KB gzipped to download
                controls they could not see and could not reach. The tabs are the
                default view for 2 of 8 surfaces' users and an explicit choice for
-               the rest, so the panels are still one click away — they are just
+               the rest, so the panels are still one click away, they are just
                no longer shipped to everyone.
 
                `mountPanel` in app.js fetches the template, inserts it before
@@ -767,7 +767,7 @@
 
                These four panels were 29.4% of this file raw and 33.5%
                gzipped, and 58 of the 99 interactive controls the console had
-               at boot — every one of them inside a panel that starts `hidden`
+               at boot, every one of them inside a panel that starts `hidden`
                and whose contents were laid out at `opacity: 0`, at coordinates
                identical to the visible panel's. So 59% of the console's
                interactive surface was keyboard-reachable and invisible: Tab
@@ -776,7 +776,7 @@
                An operator on a field connection paid 12 KB gzipped to download
                controls they could not see and could not reach. The tabs are the
                default view for 2 of 8 surfaces' users and an explicit choice for
-               the rest, so the panels are still one click away — they are just
+               the rest, so the panels are still one click away, they are just
                no longer shipped to everyone.
 
                `mountPanel` in app.js fetches the template, inserts it before
