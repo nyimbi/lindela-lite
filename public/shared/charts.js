@@ -29,6 +29,7 @@
 //    follow it.
 
 import { esc } from './fmt.js'
+import { numericOrNull as numeric } from './numeric.js'
 
 /** Series/category palette, in order. Every entry is a CSS custom property. */
 export const SERIES_COLORS = Object.freeze([
@@ -46,11 +47,6 @@ export const SERIES_COLORS = Object.freeze([
  * file goes through here so that the answer to "is there a number here" is one
  * question with one answer.
  */
-const numeric = (value) => {
-  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null
-  const n = Number(value)
-  return Number.isFinite(n) ? n : null
-}
 
 const defaultFormat = (v) => {
   if (v === null || v === undefined || !Number.isFinite(Number(v))) return '—'

@@ -24,6 +24,8 @@
  */
 
 /** The field types a definition may use. Mirrors `src/forms.js`. */
+import { numericOrNull as readStatedNumber } from './numeric.js'
+
 export const FIELD_TYPES = Object.freeze([
   'text', 'textarea', 'number', 'integer', 'date', 'datetime',
   'select', 'multiselect', 'boolean', 'geopoint', 'image',
@@ -90,27 +92,6 @@ export function applicableFields(definition, answers = {}) {
  * the next is being made to guess.
  */
 export const INVALID = Symbol('invalid')
-
-/**
- * A number the answer really states, or `null` when it states nothing.
- *
- * `Number('  ')` is `0`, `Number([])` is `0` and `Number(false)` is `0`, so a
- * bare `Number` in `coerce` turned every kind of nothing into a *measured zero*.
- * A field worker who typed a space into "days of fever" filed zero days of
- * fever — a clinical finding nobody made — and an empty array filed a zero the
- * same way. `Number.isFinite` cannot catch it, because zero is finite.
- *
- * This is the same rule as `numericOrNull` in `src/analytics/numeric.js`, which
- * the browser cannot import; `charts.js` carries the same short copy for the
- * same reason. A genuine `0` is a real answer and passes through.
- */
-function readStatedNumber(value) {
-  if (value === null || value === undefined || typeof value === 'boolean') return null
-  if (Array.isArray(value)) return null
-  if (typeof value === 'string' && value.trim() === '') return null
-  const n = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(n) ? n : null
-}
 
 export function coerce(field, value) {
   switch (field.type) {

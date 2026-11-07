@@ -17,14 +17,8 @@
 
 import { sensitivityBandChart } from '/shared/viz-uncertainty.js'
 import { caption } from '/shared/charts.js'
+import { numericOrNull as num } from '/shared/numeric.js'
 
-/** A number, or null. `0` and absent are different answers and stay different. */
-function num(value) {
-  if (value === null || value === undefined || typeof value === 'boolean' || Array.isArray(value)
-    || (typeof value === 'string' && value.trim() === '')) return null
-  const n = Number(value)
-  return Number.isFinite(n) ? n : null
-}
 
 /** The band's three numbers, or null when the record carries none. */
 function boundsOf(record) {

@@ -5,7 +5,7 @@
       "id": "ENH-16",
       "title": "A chart component library, shared by all eight surfaces",
       "status": "shipped",
-      "detail": "`public/shared/charts.js` (786 lines) exists with all five named primitives plus `sparkline` and the scale helpers, and is exercised by `test/charts.test.js` (50 tests). It reaches 2 of the 8 surfaces — `public/co/app.js:11` (static) and `public/app.js` (lazy, at `:1280` and `:1705`, the latter also pulling the workflow wires that import it). Of the primitives the audit named as uncalled, `heatmap` now has a call site (`public/app.js:1300`, the seasonal calendar); `lineChart` and `stackedBar` still have none outside the library. `barChart` has three (`public/app.js:1745`, `public/co/app.js:415`, `public/workflow/wire-playback.js:168`), `sparkline` one (`public/co/app.js:478`) and `smallMultiples` one (`public/app.js:1766`).",
+      "detail": "`public/shared/charts.js` (783 lines) exists with all five named primitives plus `sparkline` and the scale helpers, and is exercised by `test/charts.test.js` (50 tests). It reaches 2 of the 8 surfaces — `public/co/app.js:11` (static) and `public/app.js` (lazy, at `:1280` and `:1705`, the latter also pulling the workflow wires that import it). Of the primitives the audit named as uncalled, `heatmap` now has a call site (`public/app.js:1300`, the seasonal calendar); `lineChart` and `stackedBar` still have none outside the library. `barChart` has three (`public/app.js:1745`, `public/co/app.js:415`, `public/workflow/wire-playback.js:168`), `sparkline` one (`public/co/app.js:478`) and `smallMultiples` one (`public/app.js:1766`).",
       "evidence": [
         "public/shared/charts.js:204",
         "public/shared/charts.js:341",
